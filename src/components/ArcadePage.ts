@@ -14,6 +14,8 @@ export class ArcadePage {
   private currentIndex: number = 0
   private isLoading: boolean = false
   private hasMore: boolean = true
+  private cache: Map<string, { games: Game[]; timestamp: number; hasMore: boolean }> = new Map()
+  private readonly CACHE_TTL = 5 * 60 * 1000 // 5 minutes
   private gameContainer: HTMLElement
   private floatingActions: HTMLElement | null = null
   private currentGameHandle: { destroy: () => void } | null = null
@@ -448,11 +450,39 @@ export class ArcadePage {
     loadingIndicator.style.display = 'block'
 
     try {
+      const cacheKey = 'trending:first'
+      const cached = this.cache.get(cacheKey)
+      const now = Date.now()
+      
+      // Check cache first
+      if (cached && (now - cached.timestamp) < this.CACHE_TTL) {
+        console.log('Using cached games data')
+        this.games = cached.games
+        this.hasMore = cached.hasMore
+        
+        if (this.games.length > 0) {
+          this.renderCurrentGame()
+        } else {
+          this.showEmptyState()
+        }
+        
+        this.isLoading = false
+        loadingIndicator.style.display = 'none'
+        return
+      }
+
       const response = await fetch('/api/games?trending=true', { credentials: 'include' })
       if (response.ok) {
         const data = await response.json() as { games: Game[]; hasMore?: boolean }
         this.games = data.games || []
         this.hasMore = data.hasMore || false
+
+        // Cache the response
+        this.cache.set(cacheKey, {
+          games: [...this.games], // Create a copy
+          timestamp: now,
+          hasMore: this.hasMore
+        })
 
         if (this.games.length > 0) {
           this.renderCurrentGame()
@@ -852,6 +882,17 @@ export class ArcadePage {
         if (likeBtn) {
           const icon = likeBtn.querySelector('span:first-child')
           if (icon) icon.textContent = '❤️'
+        }
+        
+        // Update local game data and clear cache
+        const gameIndex = this.games.findIndex(g => g.id === gameId)
+        if (gameIndex !== -1) {
+          const result = await response.json() as { freshed: boolean }
+          this.games[gameIndex].isFreshed = result.freshed
+          this.games[gameIndex].freshCount += result.freshed ? 1 : -1
+          
+          // Clear cache since data changed
+          this.cache.clear()
         }
       }
     } catch (error) {

@@ -15,6 +15,7 @@ type Bindings = {
   DB_TEST: D1Database
   BUCKET: R2Bucket
   RATE_LIMIT: KVNamespace
+  CACHE: KVNamespace
   SANDBOX_ORIGIN: string
   BASE_URL: string
   ADMIN_USERNAMES: string
@@ -292,7 +293,7 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
     console.log(`WVFS API: Extracting ZIP for postId=${postId}`)
     
     // Extract ZIP to WVFS
-    const zipData = await zipObject.arrayBuffer()
+    const zipData = await (zipObject as any).arrayBuffer()
     await extractZipToWvfs(zipData, postId)
     
     console.log(`WVFS API: ZIP extracted, serving file: ${filePath}`)
@@ -581,11 +582,43 @@ app.get('/api/games', async (c) => {
       return c.json({ error: 'Database not available' }, 500)
     }
 
+    // Generate cache key based on query parameters
+    const cacheKey = `games:${trending ? 'trending' : 'recent'}:${limit}:${cursor || 'first'}`
+    
+    // Try to get from cache first (exclude user-specific data)
+    const cachedData = await c.env.CACHE?.get(cacheKey)
+    if (cachedData && !cursor) { // Only use cache for first page, not paginated requests
+      const parsed = JSON.parse(cachedData)
+      
+      // Get current user for is_freshed check
+      const token = getSessionToken(c.req.raw)
+      const sessionData = token ? await getSession(c.env, token) : null
+      const currentUserId = sessionData?.user?.id
+      
+      // If user is authenticated, fetch their fresh status for cached games
+      if (currentUserId && parsed.games.length > 0) {
+        const gameIds = parsed.games.map((g: any) => g.id)
+        const freshResults = await c.env.DB.prepare(`
+          SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${gameIds.map(() => '?').join(',')})
+        `).bind(currentUserId, ...gameIds).all()
+        
+        const freshedPostIds = new Set(freshResults.results?.map((r: any) => r.post_id) || [])
+        
+        // Update isFreshed status for each game
+        parsed.games.forEach((game: any) => {
+          game.isFreshed = freshedPostIds.has(game.id)
+        })
+      }
+      
+      return c.json(parsed)
+    }
+
     // Get current user for is_freshed check
     const token = getSessionToken(c.req.raw)
     const sessionData = token ? await getSession(c.env, token) : null
     const currentUserId = sessionData?.user?.id
 
+    // Optimized query without LEFT JOIN for better performance
     let sql = `
       SELECT
         p.id as postId,
@@ -600,18 +633,16 @@ app.get('/api/games', async (c) => {
         p.created_at,
         u.username,
         u.display_name,
-        u.avatar_key,
-        CASE WHEN f.post_id IS NOT NULL THEN 1 ELSE 0 END as is_freshed
+        u.avatar_key
       FROM posts p
       JOIN users u ON p.user_id = u.id
-      LEFT JOIN freshs f ON f.post_id = p.id AND f.user_id = ?
       WHERE (p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL)
         AND p.status = 'published'
         AND p.hidden = 0
         AND p.parent_id IS NULL
     `
     
-    const params: (string | number)[] = [currentUserId || '']
+    const params: (string | number)[] = []
     
     if (cursor) {
       sql += ' AND p.created_at < ?'
@@ -642,8 +673,18 @@ app.get('/api/games', async (c) => {
       username: string
       display_name: string | null
       avatar_key: string | null
-      is_freshed: number
     }>()
+
+    // Fetch fresh status separately if user is authenticated (more efficient than JOIN)
+    let freshedPostIds: Set<string> = new Set()
+    if (currentUserId && results.length > 0) {
+      const postIds = results.map(row => row.postId)
+      const freshResults = await c.env.DB.prepare(`
+        SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})
+      `).bind(currentUserId, ...postIds).all()
+      
+      freshedPostIds = new Set(freshResults.results?.map((r: any) => r.post_id) || [])
+    }
 
     const games = (results || []).map(row => {
       const type = row.swf_key ? 'flash' : 'zip'
@@ -661,7 +702,7 @@ app.get('/api/games', async (c) => {
         freshCount: row.fresh_count,
         replyCount: row.reply_count,
         impressions: row.impressions,
-        isFreshed: row.is_freshed === 1,
+        isFreshed: freshedPostIds.has(row.postId),
         createdAt: row.created_at
       }
     })
@@ -670,11 +711,34 @@ app.get('/api/games', async (c) => {
     const trimmedGames = hasMore ? games.slice(0, limit) : games
     const nextCursor = hasMore ? trimmedGames[trimmedGames.length - 1]?.createdAt : null
 
-    return c.json({
+    const responseData = {
       games: trimmedGames,
       hasMore,
       cursor: nextCursor
-    })
+    }
+
+    // Cache the response for first page (non-paginated requests)
+    if (!cursor && c.env.CACHE) {
+      try {
+        // Cache without user-specific isFreshed data
+        const cacheData = {
+          games: trimmedGames.map(game => ({
+            ...game,
+            isFreshed: false // Reset to false for cache
+          })),
+          hasMore,
+          cursor: nextCursor
+        }
+        await c.env.CACHE.put(cacheKey, JSON.stringify(cacheData), {
+          expirationTtl: 300 // 5 minutes cache
+        })
+      } catch (cacheError) {
+        console.warn('Failed to cache games data:', cacheError)
+        // Continue without failing the request
+      }
+    }
+
+    return c.json(responseData)
   } catch (error: any) {
     console.error('Games fetch error:', error)
     return c.json({ error: 'Failed to fetch games', details: error?.message }, 500)
@@ -3185,7 +3249,7 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
   const postId = c.req.param('id')
   const userId = c.get('user')?.id || ''
   
-  // Get the post to check ownership for notification
+  // Get post to check ownership for notification
   const post = await c.env.DB.prepare(
     'SELECT user_id FROM posts WHERE id = ? AND status = \'published\''
   ).bind(postId).first()
@@ -3237,6 +3301,94 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
   }
 })
 
+// POST /api/posts/fresh/batch - batch toggle Fresh! for multiple posts (protected)
+app.post('/api/posts/fresh/batch', requireAuth, async (c) => {
+  try {
+    const { post_ids, action } = await c.req.json()
+    
+    if (!Array.isArray(post_ids) || post_ids.length === 0) {
+      return c.json({ error: 'Invalid post_ids array' }, 400)
+    }
+    
+    if (!['add', 'remove'].includes(action)) {
+      return c.json({ error: 'Invalid action. Must be "add" or "remove"' }, 400)
+    }
+    
+    const userId = c.get('user')?.id || ''
+    const maxBatchSize = 50
+    
+    if (post_ids.length > maxBatchSize) {
+      return c.json({ error: `Maximum batch size is ${maxBatchSize}` }, 400)
+    }
+    
+    // Get posts to check ownership for notifications
+    const posts = await c.env.DB.prepare(`
+      SELECT id, user_id FROM posts WHERE id IN (${post_ids.map(() => '?').join(',')}) AND status = 'published'
+    `).bind(...post_ids).all()
+    
+    const validPostIds = posts.results?.map(p => p.id) || []
+    const invalidIds = post_ids.filter(id => !validPostIds.includes(id))
+    
+    if (invalidIds.length > 0) {
+      return c.json({ error: 'Some posts not found', invalid_ids: invalidIds }, 404)
+    }
+    
+    if (action === 'add') {
+      // Check which posts are already freshed to avoid duplicates
+      const existingFreshes = await c.env.DB.prepare(`
+        SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${post_ids.map(() => '?').join(',')})
+      `).bind(userId, ...post_ids).all()
+      
+      const alreadyFreshed = new Set(existingFreshes.results?.map(f => f.post_id) || [])
+      const toFresh = post_ids.filter(id => !alreadyFreshed.has(id))
+      
+      if (toFresh.length > 0) {
+        // Batch insert freshs
+        const freshValues = toFresh.map(id => `('${id}', '${userId}')`).join(',')
+        await c.env.DB.prepare(`
+          INSERT INTO freshs (post_id, user_id) VALUES ${freshValues}
+        `).run()
+        
+        // Batch update fresh counts
+        await c.env.DB.prepare(`
+          UPDATE posts SET fresh_count = fresh_count + 1 WHERE id IN (${toFresh.map(() => '?').join(',')})
+        `).bind(...toFresh).run()
+        
+        // Create notifications for non-self posts
+        const notificationsToCreate = posts.results
+          .filter(p => toFresh.includes(p.id) && p.user_id !== userId)
+          .map(p => `('${nanoid()}', '${p.user_id}', 'fresh', '${p.id}', '${userId}')`)
+        
+        if (notificationsToCreate.length > 0) {
+          try {
+            await c.env.DB.prepare(`
+              INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES ${notificationsToCreate.join(',')}
+            `).run()
+          } catch (e) {
+            console.error('Failed to create batch fresh notifications:', e)
+          }
+        }
+      }
+      
+      return c.json({ freshed: toFresh, already_freshed: Array.from(alreadyFreshed) })
+    } else {
+      // Remove freshes
+      await c.env.DB.prepare(`
+        DELETE FROM freshs WHERE user_id = ? AND post_id IN (${post_ids.map(() => '?').join(',')})
+      `).bind(userId, ...post_ids).run()
+      
+      // Batch update fresh counts
+      await c.env.DB.prepare(`
+        UPDATE posts SET fresh_count = fresh_count - 1 WHERE id IN (${post_ids.map(() => '?').join(',')})
+      `).bind(...post_ids).run()
+      
+      return c.json({ unfreshed: post_ids })
+    }
+  } catch (error: any) {
+    console.error('Batch fresh error:', error)
+    return c.json({ error: 'Batch fresh operation failed', details: error?.message }, 500)
+  }
+})
 
 // GET /api/posts/:id/replies - get direct replies
 app.get('/api/posts/:id/replies', async (c) => {
