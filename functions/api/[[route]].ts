@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { User, getSession, getMeWithSession, getSessionToken, setSessionCookie, clearSessionCookie, registerUser, loginUser, deleteSession, hashPassword, verifyPassword } from '../lib/auth'
+import { User, getSession, getMeWithSession, getSessionToken, setSessionCookie, clearSessionCookie, registerUser, loginUser, deleteSession, extendSession, hashPassword, verifyPassword } from '../lib/auth'
 import { nanoid } from 'nanoid'
 import { checkRateLimit, rateLimitResponse } from '../../src/lib/rate-limit'
 import { isAdmin } from '../../src/lib/admin'
@@ -513,6 +513,7 @@ app.use('/api/*', async (c, next) => {
       (c.req.method === 'GET' && c.req.path.startsWith('/api/audio/')) ||
       (c.req.method === 'GET' && c.req.path.startsWith('/api/zip/')) ||
       (c.req.method === 'GET' && c.req.path.startsWith('/api/swf/')) ||
+      (c.req.method === 'GET' && c.req.path === '/api/games') ||
       (c.req.method === 'GET' && c.req.path.startsWith('/api/ads/') && c.req.path.endsWith('/payload')) ||
       (c.req.method === 'GET' && c.req.path.startsWith('/api/wvfs-zip/'))) {
     await next()
@@ -552,6 +553,11 @@ app.get('/api/me', requireAuth, async (c) => {
       return c.json({ error: 'Not authenticated' }, 401)
     }
     
+    // Extend session (sliding window) - keep user logged in if active
+    if (token) {
+      await extendSession(c.env, token)
+    }
+    
     return c.json({ 
       user: {
         ...sessionData.user,
@@ -561,6 +567,117 @@ app.get('/api/me', requireAuth, async (c) => {
   } catch (error: any) {
     console.error('Auth check error:', error)
     return c.json({ error: 'Auth check failed' }, 500)
+  }
+})
+
+// GET /api/games - get games (posts with SWF or ZIP payloads) for the arcade
+app.get('/api/games', async (c) => {
+  try {
+    const trending = c.req.query('trending') === 'true'
+    const limit = Math.min(Number(c.req.query('limit') || '20'), 50)
+    const cursor = c.req.query('cursor')
+    
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500)
+    }
+
+    // Get current user for is_freshed check
+    const token = getSessionToken(c.req.raw)
+    const sessionData = token ? await getSession(c.env, token) : null
+    const currentUserId = sessionData?.user?.id
+
+    let sql = `
+      SELECT
+        p.id as postId,
+        p.user_id,
+        p.text,
+        p.swf_key,
+        p.payload_key,
+        p.thumbnail_key,
+        p.fresh_count,
+        p.reply_count,
+        p.impressions,
+        p.created_at,
+        u.username,
+        u.display_name,
+        u.avatar_key,
+        CASE WHEN f.post_id IS NOT NULL THEN 1 ELSE 0 END as is_freshed
+      FROM posts p
+      JOIN users u ON p.user_id = u.id
+      LEFT JOIN freshs f ON f.post_id = p.id AND f.user_id = ?
+      WHERE (p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL)
+        AND p.status = 'published'
+        AND p.hidden = 0
+        AND p.parent_id IS NULL
+    `
+    
+    const params: (string | number)[] = [currentUserId || '']
+    
+    if (cursor) {
+      sql += ' AND p.created_at < ?'
+      params.push(cursor)
+    }
+    
+    // Order by trending (fresh_count + impressions) or recency
+    if (trending) {
+      sql += ' ORDER BY (p.fresh_count + p.impressions) DESC, p.created_at DESC'
+    } else {
+      sql += ' ORDER BY p.created_at DESC'
+    }
+    
+    sql += ' LIMIT ?'
+    params.push(limit + 1)
+
+    const { results } = await c.env.DB.prepare(sql).bind(...params).all<{
+      postId: string
+      user_id: string
+      text: string
+      swf_key: string | null
+      payload_key: string | null
+      thumbnail_key: string | null
+      fresh_count: number
+      reply_count: number
+      impressions: number
+      created_at: string
+      username: string
+      display_name: string | null
+      avatar_key: string | null
+      is_freshed: number
+    }>()
+
+    const games = (results || []).map(row => {
+      const type = row.swf_key ? 'flash' : 'zip'
+      return {
+        id: row.postId,
+        postId: row.postId,
+        title: row.text?.substring(0, 100) || `Game by @${row.username}`,
+        username: row.username,
+        displayName: row.display_name || undefined,
+        avatarKey: row.avatar_key || undefined,
+        type,
+        swfKey: row.swf_key || undefined,
+        payloadKey: row.payload_key || undefined,
+        thumbnailKey: row.thumbnail_key || undefined,
+        freshCount: row.fresh_count,
+        replyCount: row.reply_count,
+        impressions: row.impressions,
+        isFreshed: row.is_freshed === 1,
+        createdAt: row.created_at
+      }
+    })
+
+    const hasMore = games.length > limit
+    const trimmedGames = hasMore ? games.slice(0, limit) : games
+    const nextCursor = hasMore ? trimmedGames[trimmedGames.length - 1]?.createdAt : null
+
+    return c.json({
+      games: trimmedGames,
+      hasMore,
+      cursor: nextCursor
+    })
+  } catch (error: any) {
+    console.error('Games fetch error:', error)
+    return c.json({ error: 'Failed to fetch games', details: error?.message }, 500)
   }
 })
 

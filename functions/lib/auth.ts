@@ -124,6 +124,22 @@ export async function getMeWithSession(env: any, token: string): Promise<{ user:
   return result ? { user: result } : null
 }
 
+// Extend session (sliding window)
+export async function extendSession(env: any, token: string): Promise<boolean> {
+  if (!token) return false
+  
+  // Update session expiration to 7 days from now
+  const newExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+  
+  const result = await env.DB.prepare(`
+    UPDATE sessions 
+    SET expires_at = ? 
+    WHERE id = ? AND expires_at > datetime('now')
+  `).bind(newExpiresAt, token).run()
+  
+  return result.success && result.changes > 0
+}
+
 // Delete session
 export async function deleteSession(env: any, token: string): Promise<boolean> {
   const result = await env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(token).run()

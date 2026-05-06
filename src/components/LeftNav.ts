@@ -55,6 +55,7 @@ export class LeftNav {
       const items = [
         { id: 'home', label: 'Home', icon: '🏠' },
         { id: 'explore', label: 'Explore', icon: '🔍' },
+        { id: 'arcade', label: 'Arcade', icon: '🕹️' },
         { id: 'trending', label: 'Trending', icon: '📈' },
         { id: 'notifications', label: 'Notifications', icon: '🔔' },
         { id: 'profile', label: 'Profile', icon: '👤' }
@@ -89,7 +90,8 @@ export class LeftNav {
       // Simplified navigation for guests
       const items = [
         { id: 'home', label: 'Home', icon: '🏠' },
-        { id: 'explore', label: 'Explore', icon: '🔍' }
+        { id: 'explore', label: 'Explore', icon: '🔍' },
+        { id: 'arcade', label: 'Arcade', icon: '🕹️' }
       ]
 
       items.forEach(item => {
@@ -625,6 +627,7 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
       const items = [
         { id: 'home', label: 'Home', icon: '🏠' },
         { id: 'explore', label: 'Explore', icon: '🔍' },
+        { id: 'arcade', label: 'Arcade', icon: '🕹️' },
         { id: 'trending', label: 'Trending', icon: '📈' },
         { id: 'notifications', label: 'Notifications', icon: '🔔' },
         { id: 'profile', label: 'Profile', icon: '👤' }
@@ -645,7 +648,8 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
       // Simplified navigation for guests
       const items = [
         { id: 'home', label: 'Home', icon: '🏠' },
-        { id: 'explore', label: 'Explore', icon: '🔍' }
+        { id: 'explore', label: 'Explore', icon: '🔍' },
+        { id: 'arcade', label: 'Arcade', icon: '🕹️' }
       ]
 
       items.forEach(item => {

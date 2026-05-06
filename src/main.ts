@@ -8,6 +8,7 @@ import { createRegisterPage } from './components/RegisterPage.js'
 import { createProfilePage } from './components/ProfilePage.js'
 import { createExplorePage } from './components/ExplorePage.js'
 import { createTrendingModal } from './components/TrendingModal.js'
+import { createArcadePage } from './components/ArcadePage.js'
 import { createLegalPage } from './components/LegalPage.js'
 import { createNotificationsPage } from './components/NotificationsPage.js'
 import { createAdminLayout } from './components/AdminLayout.js'
@@ -31,7 +32,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log('App mounted')
     
     // Routing state
-    let currentView: 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'notifications' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings' = 'timeline'
+    let currentView: 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'notifications' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings' | 'arcade' = 'timeline'
     let currentPostId: string | null = null
     let currentUsername: string | null = null
     let currentTag: string | null = null
@@ -45,6 +46,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let legalPage: any = null
     let notificationsPage: any = null
     let settingsPage: any = null
+    let arcadePage: any = null
     let adminLayout: any = null
     let adminAlertsTab: any = null
     let adminHiddenTab: any = null
@@ -75,14 +77,25 @@ document.addEventListener('DOMContentLoaded', async () => {
           return true
         }
       } catch (error) {
-        console.log('Not authenticated')
+        console.log('Not authenticated:', error)
       }
+      
+      // Clear user state when not authenticated
+      const wasLoggedIn = currentUser !== null
       currentUser = null
       
       // Update all existing LeftNav instances to remove user area
       leftNavInstances.forEach(leftNav => {
         updateLeftNavUser(leftNav, null)
       })
+      
+      // If user was logged in and now is not, they were logged out
+      if (wasLoggedIn) {
+        console.log('User session expired - redirecting to login')
+        window.history.pushState({}, '', '/login')
+        navigateTo('login')
+        return false
+      }
       
       return false
     }
@@ -227,6 +240,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Public routes that don't require authentication:
       // - / (home/timeline)
       // - /explore (with or without tag parameter)
+      // - /arcade (game arcade)
       // - /users/:username (profile pages)
       // - /thread/:id (thread pages)
       // - /terms, /privacy, /about, /whitepaper (legal pages)
@@ -235,6 +249,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         cleanPath === '' || 
         cleanPath === '/' ||
         cleanPath === '/explore' ||
+        cleanPath === '/arcade' ||
         cleanPath === '/login' ||
         cleanPath === '/register' ||
         cleanPath === '/terms' ||
@@ -318,6 +333,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.log('Explore route detected, tag:', tag)
         return { view: 'explore' as const, postId: null, username: null, tag }
       }
+
+      // Arcade route - public, no auth required
+      if (cleanPath === '/arcade') {
+        console.log('Arcade route detected')
+        return { view: 'arcade' as const, postId: null, username: null, tag: null }
+      }
       
       // Thread route (check before profile) - public, no auth required
       const threadMatch = cleanPath.match(/^\/thread\/([^\/]+)$/)
@@ -382,8 +403,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     
     // Navigate to view
-    const navigateTo = async (view: 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'notifications' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings', postId?: string, username?: string, tag?: string, adminTab?: 'alerts' | 'hidden' | 'users') => {
+    const navigateTo = async (view: 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'notifications' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings' | 'arcade', postId?: string, username?: string, tag?: string, adminTab?: 'alerts' | 'hidden' | 'users') => {
       console.log('Navigate to:', view, postId, username, tag, 'Current view:', currentView, 'adminTab:', adminTab)
+      
+      // Always check auth state on navigation to ensure session is up-to-date
+      // This will trigger session extension via /api/me call
+      await checkAuth()
       
       // For auth routes, proceed directly
       if (view === 'login' || view === 'register') {
@@ -417,6 +442,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (settingsPage) {
           settingsPage.destroy()
           settingsPage = null
+        }
+        if (arcadePage) {
+          arcadePage.destroy()
+          arcadePage = null
         }
       } else {
         // Auth guard for protected routes
@@ -455,6 +484,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (settingsPage) {
           settingsPage.destroy()
           settingsPage = null
+        }
+        if (arcadePage) {
+          arcadePage.destroy()
+          arcadePage = null
         }
       }
       
@@ -682,6 +715,100 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         return
       }
+
+      // Handle arcade page (within 3-column layout)
+      if (view === 'arcade') {
+        currentView = 'arcade'
+        currentPostId = null
+        currentUsername = null
+        currentTag = null
+        
+        // Create main container for 3-column layout
+        const mainContainer = document.createElement('div')
+        mainContainer.className = 'main-container'
+        
+        // Create Left Nav
+        const leftNav = createLeftNav({
+          activeItem: 'arcade',
+          unreadCount: unreadNotificationCount,
+          currentUser: currentUser || undefined,
+          onNavigate: async (item) => {
+            console.log('Navigate to:', item)
+            if (item === 'home') {
+              window.history.pushState({}, '', '/')
+              navigateTo('timeline')
+            } else if (item === 'explore') {
+              window.history.pushState({}, '', '/explore')
+              navigateTo('explore')
+            } else if (item === 'trending') {
+              // Show trending modal
+              const trendingModal = createTrendingModal({
+                onClose: () => {
+                  safeRemoveFromBody(trendingModal)
+                },
+                onTagClick: (tag) => {
+                  safeRemoveFromBody(trendingModal)
+                  window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`)
+                  navigateTo('explore', undefined, undefined, tag)
+                }
+              })
+              document.body.appendChild(trendingModal)
+            } else if (item === 'notifications') {
+              window.history.pushState({}, '', '/notifications')
+              navigateTo('notifications')
+            } else if (item === 'profile') {
+              if (!currentUser) {
+                window.history.pushState({}, '', '/')
+                navigateTo('timeline')
+                return
+              }
+              window.history.pushState({}, '', `/profile/${currentUser.username}`)
+              navigateTo('profile', undefined, currentUser.username)
+            }
+          },
+          onSignIn: () => {
+            window.history.pushState({}, '', '/login')
+            navigateTo('login')
+          },
+          onSignUp: () => {
+            window.history.pushState({}, '', '/register')
+            navigateTo('register')
+          }
+        })
+        
+        leftNavInstances.add(leftNav)
+        
+        // Create Arcade Page (as main content)
+        const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app'
+        arcadePage = createArcadePage({
+          sandboxOrigin,
+          currentUser
+        })
+        
+        // Create Right Panel
+        const rightPanel = createRightPanel({
+          onSearch: (query) => {
+            console.log('Search:', query)
+            // Handle search here
+          },
+          onFollowUser: (userId) => {
+            console.log('Follow user:', userId)
+            // Handle follow here
+          }
+        })
+        
+        // Assemble layout
+        mainContainer.appendChild(leftNav.getElement())
+        mainContainer.appendChild(arcadePage.getElement())
+        mainContainer.appendChild(rightPanel.getElement())
+        
+        app.appendChild(mainContainer)
+        
+        // Setup mobile left nav
+        setupMobileLeftNav(leftNav.getElement())
+        
+        return
+      }
       
       // Handle profile page (within 3-column layout)
       if (view === 'profile' && username) {
@@ -707,6 +834,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'explore') {
               window.history.pushState({}, '', '/explore')
               navigateTo('explore')
+            } else if (item === 'arcade') {
+              window.history.pushState({}, '', '/arcade')
+              navigateTo('arcade')
             } else if (item === 'trending') {
               // Show trending modal
               const trendingModal = createTrendingModal({
@@ -807,6 +937,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'explore') {
               window.history.pushState({}, '', '/explore')
               navigateTo('explore')
+            } else if (item === 'arcade') {
+              window.history.pushState({}, '', '/arcade')
+              navigateTo('arcade')
             } else if (item === 'trending') {
               const trendingModal = createTrendingModal({
                 onClose: () => {
@@ -906,6 +1039,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'explore') {
               window.history.pushState({}, '', '/explore')
               navigateTo('explore')
+            } else if (item === 'arcade') {
+              window.history.pushState({}, '', '/arcade')
+              navigateTo('arcade')
             } else if (item === 'trending') {
               const trendingModal = createTrendingModal({
                 onClose: () => {
@@ -1054,6 +1190,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'explore') {
               window.history.pushState({}, '', '/explore')
               navigateTo('explore')
+            } else if (item === 'arcade') {
+              window.history.pushState({}, '', '/arcade')
+              navigateTo('arcade')
             } else if (item === 'trending') {
               // Show trending modal
               const trendingModal = createTrendingModal({
