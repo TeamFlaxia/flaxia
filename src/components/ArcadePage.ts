@@ -19,13 +19,43 @@ export class ArcadePage {
   private currentGameHandle: { destroy: () => void } | null = null
   private touchStartY: number = 0
   private touchEndY: number = 0
+  private touchStartX: number = 0
+  private touchEndX: number = 0
+  private touchStartTime: number = 0
   private isTransitioning: boolean = false
+  private isDragging: boolean = false
+  private dragStartY: number = 0
+  private currentTranslateY: number = 0
+  private prevTranslateY: number = 0
+  private animationID: number | null = null
+  private swipeVelocity: number = 0
+  private currentViewport: HTMLElement | null = null
+  
+  // Store bound event handlers for proper cleanup
+  private boundHandleTouchStart: (e: TouchEvent) => void
+  private boundHandleTouchMove: (e: TouchEvent) => void
+  private boundHandleTouchEnd: (e: TouchEvent) => void
+  private boundHandleMouseDown: (e: MouseEvent) => void
+  private boundHandleMouseMove: (e: MouseEvent) => void
+  private boundHandleMouseUp: (e: MouseEvent) => void
+  private boundHandleMouseLeave: (e: MouseEvent) => void
 
   constructor(props: ArcadePageProps) {
     this.props = props
     this.element = this.createElement()
     this.gameContainer = this.element.querySelector('.arcade-game-container') as HTMLElement
+    
+    // Initialize bound event handlers for proper cleanup
+    this.boundHandleTouchStart = this.handleTouchStart.bind(this)
+    this.boundHandleTouchMove = this.handleTouchMove.bind(this)
+    this.boundHandleTouchEnd = this.handleTouchEnd.bind(this)
+    this.boundHandleMouseDown = this.handleMouseDown.bind(this)
+    this.boundHandleMouseMove = this.handleMouseMove.bind(this)
+    this.boundHandleMouseUp = this.handleMouseUp.bind(this)
+    this.boundHandleMouseLeave = this.handleMouseUp.bind(this)
+    
     this.setupEventListeners()
+    this.setupLeftNavSwipeDetection()
     this.loadGames()
   }
 
@@ -180,15 +210,21 @@ export class ArcadePage {
   }
 
   private setupEventListeners(): void {
-    // Touch/swipe support
-    this.gameContainer.addEventListener('touchstart', (e) => {
-      this.touchStartY = e.touches[0].clientY
-    }, { passive: true })
+    // Enhanced touch/swipe support - listen on entire document
+    document.addEventListener('touchstart', this.boundHandleTouchStart, { passive: true })
 
-    this.gameContainer.addEventListener('touchend', (e) => {
-      this.touchEndY = e.changedTouches[0].clientY
-      this.handleSwipe()
-    }, { passive: true })
+    document.addEventListener('touchmove', this.boundHandleTouchMove, { passive: false })
+
+    document.addEventListener('touchend', this.boundHandleTouchEnd, { passive: true })
+
+    // Mouse support for desktop testing - listen on entire document
+    document.addEventListener('mousedown', this.boundHandleMouseDown, { passive: true })
+
+    document.addEventListener('mousemove', this.boundHandleMouseMove, { passive: false })
+
+    document.addEventListener('mouseup', this.boundHandleMouseUp, { passive: true })
+
+    document.addEventListener('mouseleave', this.boundHandleMouseLeave, { passive: true })
 
     // Keyboard navigation
     document.addEventListener('keydown', (e) => {
@@ -222,17 +258,186 @@ export class ArcadePage {
     }, { passive: false })
   }
 
-  private handleSwipe(): void {
-    const diff = this.touchStartY - this.touchEndY
-    const threshold = 50
+  private setupLeftNavSwipeDetection(): void {
+    // This method is no longer needed as left nav detection is integrated into existing touch handlers
+  }
 
-    if (Math.abs(diff) > threshold) {
-      if (diff > 0) {
-        this.navigateToNext()
-      } else {
-        this.navigateToPrevious()
+  private handleTouchStart(e: TouchEvent): void {
+    this.touchStartY = e.touches[0].clientY
+    this.touchStartX = e.touches[0].clientX
+    this.touchStartTime = Date.now()
+    this.isDragging = true
+    this.dragStartY = this.touchStartY
+    this.currentViewport = this.gameContainer.querySelector('.arcade-viewport') as HTMLElement
+    
+    if (this.currentViewport) {
+      this.prevTranslateY = this.currentTranslateY
+      this.cancelAnimation()
+    }
+  }
+
+  private handleTouchMove(e: TouchEvent): void {
+    if (!this.isDragging || this.isTransitioning) return
+    
+    e.preventDefault()
+    const currentY = e.touches[0].clientY
+    const diff = currentY - this.dragStartY
+    
+    // Add visual feedback during swipe
+    if (this.currentViewport) {
+      this.currentTranslateY = this.prevTranslateY + diff
+      this.updateViewportTransform()
+    }
+    
+    // Calculate velocity for momentum
+    const currentTime = Date.now()
+    const timeDiff = currentTime - this.touchStartTime
+    if (timeDiff > 0) {
+      this.swipeVelocity = diff / timeDiff
+    }
+  }
+
+  private handleTouchEnd(e: TouchEvent): void {
+    if (!this.isDragging) return
+    
+    this.touchEndY = e.changedTouches[0].clientY
+    this.touchEndX = e.changedTouches[0].clientX
+    this.isDragging = false
+    
+    const touchDuration = Date.now() - this.touchStartTime
+    const diffY = this.touchStartY - this.touchEndY
+    const diffX = this.touchStartX - this.touchEndX
+    
+    // Check for left edge gestures first (only on mobile)
+    if (window.innerWidth <= 768) {
+      const SWIPE_THRESHOLD = 80 // Minimum horizontal distance
+      const EDGE_THRESHOLD = 50  // Must start within this distance from left edge
+      const MAX_VERTICAL_DEVIATION = 100 // Maximum vertical movement allowed
+      const MAX_TIME = 500 // Maximum swipe duration in ms
+      const TAP_THRESHOLD = 10 // Maximum movement for tap
+      const TAP_TIME = 200 // Maximum time for tap
+
+      // Check if it's a valid right swipe from left edge
+      if (
+        diffX < -SWIPE_THRESHOLD && // Moving right (negative because we calculate start - end)
+        Math.abs(diffY) < MAX_VERTICAL_DEVIATION && // Not too much vertical movement
+        touchDuration < MAX_TIME && // Quick swipe
+        this.touchStartX < EDGE_THRESHOLD // Started near left edge
+      ) {
+        // Emit event to open left nav
+        this.element.dispatchEvent(new CustomEvent('openLeftNav', {
+          bubbles: true
+        }))
+        this.swipeVelocity = 0
+        return
+      }
+
+      // Check if it's a tap at the left edge
+      if (
+        Math.abs(diffX) < TAP_THRESHOLD && // Minimal horizontal movement
+        Math.abs(diffY) < TAP_THRESHOLD && // Minimal vertical movement
+        touchDuration < TAP_TIME && // Quick tap
+        this.touchStartX < EDGE_THRESHOLD // Tapped near left edge
+      ) {
+        // Emit event to open left nav
+        this.element.dispatchEvent(new CustomEvent('openLeftNav', {
+          bubbles: true
+        }))
+        this.swipeVelocity = 0
+        return
       }
     }
+    
+    // Enhanced swipe detection with velocity and distance thresholds
+    const minDistance = 30
+    const minVelocity = 0.3
+    
+    if (Math.abs(diffY) > minDistance || Math.abs(this.swipeVelocity) > minVelocity) {
+      // Prioritize vertical swipe
+      if (Math.abs(diffY) > Math.abs(diffX)) {
+        if (diffY > 0 || this.swipeVelocity < -minVelocity) {
+          // Swipe up (下から上) - go to next game
+          this.animateToNext()
+        } else {
+          // Swipe down (上から下) - go to previous game
+          this.animateToPrevious()
+        }
+      } else {
+        // Horizontal swipe - could be used for other actions
+        this.resetViewportPosition()
+      }
+    } else {
+      // Not a valid swipe - animate back to position
+      this.resetViewportPosition()
+    }
+    
+    this.swipeVelocity = 0
+  }
+
+  private handleMouseDown(e: MouseEvent): void {
+    this.touchStartY = e.clientY
+    this.touchStartX = e.clientX
+    this.touchStartTime = Date.now()
+    this.isDragging = true
+    this.dragStartY = this.touchStartY
+    this.currentViewport = this.gameContainer.querySelector('.arcade-viewport') as HTMLElement
+    
+    if (this.currentViewport) {
+      this.prevTranslateY = this.currentTranslateY
+      this.cancelAnimation()
+    }
+  }
+
+  private handleMouseMove(e: MouseEvent): void {
+    if (!this.isDragging || this.isTransitioning) return
+    
+    e.preventDefault()
+    const currentY = e.clientY
+    const diff = currentY - this.dragStartY
+    
+    if (this.currentViewport) {
+      this.currentTranslateY = this.prevTranslateY + diff
+      this.updateViewportTransform()
+    }
+    
+    const currentTime = Date.now()
+    const timeDiff = currentTime - this.touchStartTime
+    if (timeDiff > 0) {
+      this.swipeVelocity = diff / timeDiff
+    }
+  }
+
+  private handleMouseUp(e: MouseEvent): void {
+    if (!this.isDragging) return
+    
+    this.touchEndY = e.clientY
+    this.touchEndX = e.clientX
+    this.isDragging = false
+    
+    const touchDuration = Date.now() - this.touchStartTime
+    const diffY = this.touchStartY - this.touchEndY
+    const diffX = this.touchStartX - this.touchEndX
+    
+    const minDistance = 30
+    const minVelocity = 0.3
+    
+    if (Math.abs(diffY) > minDistance || Math.abs(this.swipeVelocity) > minVelocity) {
+      if (Math.abs(diffY) > Math.abs(diffX)) {
+        if (diffY > 0 || this.swipeVelocity < -minVelocity) {
+          // Swipe up (下から上) - go to next game
+          this.animateToNext()
+        } else {
+          // Swipe down (上から下) - go to previous game
+          this.animateToPrevious()
+        }
+      } else {
+        this.resetViewportPosition()
+      }
+    } else {
+      this.resetViewportPosition()
+    }
+    
+    this.swipeVelocity = 0
   }
 
   private async loadGames(): Promise<void> {
@@ -279,7 +484,7 @@ export class ArcadePage {
     // Clear previous game
     this.clearCurrentGame()
 
-    // Create game viewport
+    // Create game viewport with initial animation state
     const viewport = document.createElement('div')
     viewport.className = 'arcade-viewport'
     viewport.style.cssText = `
@@ -291,6 +496,9 @@ export class ArcadePage {
       display: flex;
       flex-direction: column;
       background: #000;
+      transform: translateY(100%);
+      opacity: 0;
+      transition: transform 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.4s ease;
     `
 
     // Game info overlay
@@ -344,9 +552,16 @@ export class ArcadePage {
     viewport.appendChild(this.floatingActions)
 
     this.gameContainer.appendChild(viewport)
+    this.currentViewport = viewport
 
     // Execute the game
     this.executeGame(game, gameArea)
+
+    // Animate in the new game
+    requestAnimationFrame(() => {
+      viewport.style.transform = 'translateY(0)'
+      viewport.style.opacity = '1'
+    })
 
     // Preload next game if available
     if (this.currentIndex < this.games.length - 1) {
@@ -484,9 +699,15 @@ export class ArcadePage {
 
   private clearCurrentGame(): void {
     // Remove current game viewport
-    const viewport = this.gameContainer.querySelector('.arcade-viewport')
+    const viewport = this.gameContainer.querySelector('.arcade-viewport') as HTMLElement
     if (viewport) {
-      viewport.remove()
+      viewport.style.transition = 'transform 0.3s ease, opacity 0.3s ease'
+      viewport.style.transform = 'translateY(-100%)'
+      viewport.style.opacity = '0'
+      
+      setTimeout(() => {
+        viewport.remove()
+      }, 300)
     }
 
     // Destroy game handle
@@ -496,11 +717,102 @@ export class ArcadePage {
     }
 
     this.floatingActions = null
+    this.currentViewport = null
   }
 
   private preloadNextGame(): void {
     // Preload logic can be implemented here
     // For now, we'll just ensure smooth transitions
+  }
+
+  private updateViewportTransform(): void {
+    if (this.currentViewport) {
+      this.currentViewport.style.transform = `translateY(${this.currentTranslateY}px)`
+      this.currentViewport.style.transition = 'none'
+      
+      // Add visual feedback based on drag position
+      const opacity = Math.max(0.3, 1 - Math.abs(this.currentTranslateY) / 500)
+      this.currentViewport.style.opacity = opacity.toString()
+    }
+  }
+
+  private resetViewportPosition(): void {
+    if (!this.currentViewport) return
+    
+    this.currentViewport.style.transition = 'transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.3s ease'
+    this.currentViewport.style.transform = 'translateY(0)'
+    this.currentViewport.style.opacity = '1'
+    this.currentTranslateY = 0
+    this.prevTranslateY = 0
+  }
+
+  private animateToNext(): void {
+    if (this.currentIndex >= this.games.length - 1) {
+      // Don't reset - just show boundary feedback
+      if (this.currentViewport) {
+        this.currentViewport.style.transition = 'transform 0.2s ease, opacity 0.2s ease'
+        this.currentViewport.style.transform = 'translateY(-20px)'
+        setTimeout(() => {
+          if (this.currentViewport) {
+            this.currentViewport.style.transform = 'translateY(0)'
+          }
+        }, 200)
+      }
+      return
+    }
+    
+    if (!this.currentViewport) return
+    
+    this.isTransitioning = true
+    this.currentViewport.style.transition = 'transform 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.4s ease'
+    this.currentViewport.style.transform = 'translateY(-100%)'
+    this.currentViewport.style.opacity = '0'
+    
+    setTimeout(() => {
+      this.currentIndex++
+      this.renderCurrentGame()
+      this.isTransitioning = false
+      this.currentTranslateY = 0
+      this.prevTranslateY = 0
+    }, 400)
+  }
+
+  private animateToPrevious(): void {
+    if (this.currentIndex <= 0) {
+      // Don't reset - just show boundary feedback
+      if (this.currentViewport) {
+        this.currentViewport.style.transition = 'transform 0.2s ease, opacity 0.2s ease'
+        this.currentViewport.style.transform = 'translateY(20px)'
+        setTimeout(() => {
+          if (this.currentViewport) {
+            this.currentViewport.style.transform = 'translateY(0)'
+          }
+        }, 200)
+      }
+      return
+    }
+    
+    if (!this.currentViewport) return
+    
+    this.isTransitioning = true
+    this.currentViewport.style.transition = 'transform 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.4s ease'
+    this.currentViewport.style.transform = 'translateY(100%)'
+    this.currentViewport.style.opacity = '0'
+    
+    setTimeout(() => {
+      this.currentIndex--
+      this.renderCurrentGame()
+      this.isTransitioning = false
+      this.currentTranslateY = 0
+      this.prevTranslateY = 0
+    }, 400)
+  }
+
+  private cancelAnimation(): void {
+    if (this.animationID) {
+      cancelAnimationFrame(this.animationID)
+      this.animationID = null
+    }
   }
 
   private navigateToNext(): void {
@@ -585,6 +897,15 @@ export class ArcadePage {
   }
 
   public destroy(): void {
+    // Clean up document event listeners using stored bound functions
+    document.removeEventListener('touchstart', this.boundHandleTouchStart)
+    document.removeEventListener('touchmove', this.boundHandleTouchMove)
+    document.removeEventListener('touchend', this.boundHandleTouchEnd)
+    document.removeEventListener('mousedown', this.boundHandleMouseDown)
+    document.removeEventListener('mousemove', this.boundHandleMouseMove)
+    document.removeEventListener('mouseup', this.boundHandleMouseUp)
+    document.removeEventListener('mouseleave', this.boundHandleMouseLeave)
+    
     this.clearCurrentGame()
     this.element.remove()
   }

@@ -1,6 +1,7 @@
 export interface TrendingModalProps {
   onClose: () => void
   onTagClick: (tag: string) => void
+  onArcadeClick?: () => void
 }
 
 export function createTrendingModal(props: TrendingModalProps): HTMLElement {
@@ -52,6 +53,26 @@ export function createTrendingModal(props: TrendingModalProps): HTMLElement {
     color: var(--text-primary);
   `
 
+  const arcadeBtn = document.createElement('button')
+  arcadeBtn.textContent = '🕹️'
+  arcadeBtn.style.cssText = `
+    background: none;
+    border: none;
+    font-size: 1.25rem;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 0.25rem;
+    margin-right: 0.5rem;
+    transition: color 0.2s;
+  `
+  arcadeBtn.title = 'Arcade'
+  arcadeBtn.onmouseover = () => arcadeBtn.style.color = 'var(--text-primary)'
+  arcadeBtn.onmouseout = () => arcadeBtn.style.color = 'var(--text-muted)'
+  arcadeBtn.onclick = () => {
+    props.onClose()
+    props.onArcadeClick?.()
+  }
+
   const closeBtn = document.createElement('button')
   closeBtn.textContent = '✕'
   closeBtn.style.cssText = `
@@ -65,6 +86,7 @@ export function createTrendingModal(props: TrendingModalProps): HTMLElement {
   closeBtn.onclick = props.onClose
 
   header.appendChild(title)
+  header.appendChild(arcadeBtn)
   header.appendChild(closeBtn)
 
   // Content

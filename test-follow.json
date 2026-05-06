@@ -3,5 +3,5 @@
   "id": "https://test.example.com/activities/follow-test-123",
   "type": "Follow",
   "actor": "https://test.example.com/actors/testuser",
-  "object": "https://a539c4d8.flaxia-egj.pages.dev/actors/remydrescarlet"
+  "object": "https://flaxia.app/actors/remydrescarlet"
 }

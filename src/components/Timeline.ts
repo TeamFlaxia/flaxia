@@ -18,6 +18,10 @@ export class Timeline {
   private touchStartX = 0
   private touchStartY = 0
   private touchStartTime = 0
+  
+  // Store bound event handlers for proper cleanup
+  private boundHandleProfileUpdate: () => void
+  private boundHandleResize: () => void
 
   constructor(props: TimelineProps) {
     this.props = props
@@ -30,8 +34,16 @@ export class Timeline {
       cursor: undefined,
       loading: false,
       hasMore: true,
-      ngWords: []
+      ngWords: [],
+      error: null,
+      retryCount: 0,
+      maxRetries: 3
     }
+    
+    // Initialize bound event handlers for proper cleanup
+    this.boundHandleProfileUpdate = this.handleProfileUpdate.bind(this)
+    this.boundHandleResize = this.updateSwipeHint.bind(this)
+    
     this.element = this.createElement()
     this.setupEventListeners()
     
@@ -273,9 +285,7 @@ export class Timeline {
     this.setupIntersectionObserver()
     
     // Listen for profile updates to refresh composer avatar
-    window.addEventListener('profileUpdated', () => {
-      this.handleProfileUpdate()
-    })
+    window.addEventListener('profileUpdated', this.boundHandleProfileUpdate)
 
     // Setup swipe detection for mobile left nav
     this.setupSwipeDetection()
@@ -289,6 +299,8 @@ export class Timeline {
     const EDGE_THRESHOLD = 50  // Must start within this distance from left edge
     const MAX_VERTICAL_DEVIATION = 100 // Maximum vertical movement allowed
     const MAX_TIME = 500 // Maximum swipe duration in ms
+    const TAP_THRESHOLD = 10 // Maximum movement for tap
+    const TAP_TIME = 200 // Maximum time for tap
 
     this.element.addEventListener('touchstart', (e) => {
       const touch = e.touches[0]
@@ -314,13 +326,25 @@ export class Timeline {
         this.element.dispatchEvent(new CustomEvent('openLeftNav', {
           bubbles: true
         }))
+        return
+      }
+
+      // Check if it's a tap at the left edge
+      if (
+        Math.abs(deltaX) < TAP_THRESHOLD && // Minimal horizontal movement
+        Math.abs(deltaY) < TAP_THRESHOLD && // Minimal vertical movement
+        deltaTime < TAP_TIME && // Quick tap
+        this.touchStartX < EDGE_THRESHOLD // Tapped near left edge
+      ) {
+        // Emit event to open left nav
+        this.element.dispatchEvent(new CustomEvent('openLeftNav', {
+          bubbles: true
+        }))
       }
     }, { passive: true })
 
     // Update hint visibility on resize
-    window.addEventListener('resize', () => {
-      this.updateSwipeHint()
-    })
+    window.addEventListener('resize', this.boundHandleResize)
   }
 
   private updateSwipeHint(): void {
@@ -665,6 +689,10 @@ export class Timeline {
       this.intersectionObserver.disconnect()
       this.intersectionObserver = null
     }
+    
+    // Clean up window event listeners
+    window.removeEventListener('profileUpdated', this.boundHandleProfileUpdate)
+    window.removeEventListener('resize', this.boundHandleResize)
     
     if (this.composer) {
       this.composer.destroy()

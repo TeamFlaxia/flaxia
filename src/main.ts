@@ -750,6 +750,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                   safeRemoveFromBody(trendingModal)
                   window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`)
                   navigateTo('explore', undefined, undefined, tag)
+                },
+                onArcadeClick: () => {
+                  window.history.pushState({}, '', '/arcade')
+                  navigateTo('arcade')
                 }
               })
               document.body.appendChild(trendingModal)
@@ -847,6 +851,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                   safeRemoveFromBody(trendingModal)
                   window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`)
                   navigateTo('explore', undefined, undefined, tag)
+                },
+                onArcadeClick: () => {
+                  window.history.pushState({}, '', '/arcade')
+                  navigateTo('arcade')
                 }
               })
               document.body.appendChild(trendingModal)
@@ -949,6 +957,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                   safeRemoveFromBody(trendingModal)
                   window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`)
                   navigateTo('explore', undefined, undefined, tag)
+                },
+                onArcadeClick: () => {
+                  window.history.pushState({}, '', '/arcade')
+                  navigateTo('arcade')
                 }
               })
               document.body.appendChild(trendingModal)
@@ -1051,6 +1063,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                   safeRemoveFromBody(trendingModal)
                   window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`)
                   navigateTo('explore', undefined, undefined, tag)
+                },
+                onArcadeClick: () => {
+                  window.history.pushState({}, '', '/arcade')
+                  navigateTo('arcade')
                 }
               })
               document.body.appendChild(trendingModal)
@@ -1203,6 +1219,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                   safeRemoveFromBody(trendingModal)
                   window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`)
                   navigateTo('explore', undefined, undefined, tag)
+                },
+                onArcadeClick: () => {
+                  window.history.pushState({}, '', '/arcade')
+                  navigateTo('arcade')
                 }
               })
               document.body.appendChild(trendingModal)

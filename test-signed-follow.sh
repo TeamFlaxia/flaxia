@@ -10,7 +10,7 @@ DIGEST=$(echo -n "$BODY" | openssl dgst -sha256 -binary | base64)
 
 # 署名対象文字列を作成
 TARGET="post /actors/remydrescarlet/inbox"
-HOST="a539c4d8.flaxia-egj.pages.dev"
+HOST="flaxia.app"
 DATE=$(date -u +"%a, %d %b %Y %H:%M:%S GMT")
 
 SIGNING_STRING="(request-target): $TARGET
@@ -22,7 +22,7 @@ digest: SHA-256=$DIGEST"
 SIGNATURE=$(echo -n "$SIGNING_STRING" | openssl dgst -sha256 -sign test-private.pem | base64 | tr -d '\n' | sed 's/+/-/g; s/\//_/g' | tr -d '=')
 
 # リクエスト送信
-curl -X POST https://a539c4d8.flaxia-egj.pages.dev/actors/remydrescarlet/inbox \
+curl -X POST https://flaxia.app/actors/remydrescarlet/inbox \
   -H "Content-Type: application/activity+json" \
   -H "Accept: application/activity+json" \
   -H "Date: $DATE" \

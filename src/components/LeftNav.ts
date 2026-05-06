@@ -21,10 +21,15 @@ export class LeftNav {
   private userAreaElement: HTMLElement | null = null
   private popupMenuElement: HTMLElement | null = null
   private isPopupMenuOpen = false
+  private boundHandleResize: () => void
 
   constructor(props: LeftNavProps = {}) {
     this.props = props
     this.activeItem = props.activeItem || 'home'
+    
+    // Initialize bound event handler for proper cleanup
+    this.boundHandleResize = this.handleWindowResize.bind(this)
+    
     this.element = this.createElement()
     this.setupEventListeners()
   }
@@ -285,15 +290,17 @@ export class LeftNav {
     })
 
     // Handle window resize for mobile detection
-    window.addEventListener('resize', () => {
-      if (this.userAreaElement) {
-        if (window.innerWidth <= 768) {
-          this.userAreaElement.style.display = 'none'
-        } else {
-          this.userAreaElement.style.display = 'flex'
-        }
+    window.addEventListener('resize', this.boundHandleResize)
+  }
+
+  private handleWindowResize(): void {
+    if (this.userAreaElement) {
+      if (window.innerWidth <= 768) {
+        this.userAreaElement.style.display = 'none'
+      } else {
+        this.userAreaElement.style.display = 'flex'
       }
-    })
+    }
   }
 
   public setActiveItem(item: string): void {
@@ -318,6 +325,9 @@ export class LeftNav {
   }
 
   public destroy(): void {
+    // Clean up window event listener
+    window.removeEventListener('resize', this.boundHandleResize)
+    
     // Clean up event listeners and remove element
     this.element.remove()
   }

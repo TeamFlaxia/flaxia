@@ -11,7 +11,7 @@ type Env = {
 export async function onRequest(context: { request: Request; env: Env; next: () => Promise<Response> }): Promise<Response> {
   const { request, env, next } = context
   const userAgent = request.headers.get('user-agent') || ''
-  const baseUrl = env.BASE_URL ?? 'https://flaxia-egj.pages.dev'
+  const baseUrl = env.BASE_URL ?? 'https://flaxia.app'
   const defaultImage = `${baseUrl}/og-default-v2.png`
 
   if (!isCrawler(userAgent)) {

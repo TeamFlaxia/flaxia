@@ -64,6 +64,9 @@ export class ThreadPage {
         } else if (item === 'explore') {
           window.history.pushState({}, '', '/explore')
           window.location.reload() // Simple navigation for now
+        } else if (item === 'arcade') {
+          window.history.pushState({}, '', '/arcade')
+          window.location.reload()
         } else if (item === 'notifications') {
           if (this.props.currentUser) {
             window.history.pushState({}, '', '/notifications')
@@ -179,6 +182,8 @@ export class ThreadPage {
     const EDGE_THRESHOLD = 50  // Must start within this distance from left edge
     const MAX_VERTICAL_DEVIATION = 100 // Maximum vertical movement allowed
     const MAX_TIME = 500 // Maximum swipe duration in ms
+    const TAP_THRESHOLD = 10 // Maximum movement for tap
+    const TAP_TIME = 200 // Maximum time for tap
 
     this.element.addEventListener('touchstart', (e) => {
       const touch = e.touches[0]
@@ -199,6 +204,20 @@ export class ThreadPage {
         Math.abs(deltaY) < MAX_VERTICAL_DEVIATION && // Not too much vertical movement
         deltaTime < MAX_TIME && // Quick swipe
         this.touchStartX < EDGE_THRESHOLD // Started near left edge
+      ) {
+        // Emit event to open left nav
+        this.element.dispatchEvent(new CustomEvent('openLeftNav', {
+          bubbles: true
+        }))
+        return
+      }
+
+      // Check if it's a tap at the left edge
+      if (
+        Math.abs(deltaX) < TAP_THRESHOLD && // Minimal horizontal movement
+        Math.abs(deltaY) < TAP_THRESHOLD && // Minimal vertical movement
+        deltaTime < TAP_TIME && // Quick tap
+        this.touchStartX < EDGE_THRESHOLD // Tapped near left edge
       ) {
         // Emit event to open left nav
         this.element.dispatchEvent(new CustomEvent('openLeftNav', {
