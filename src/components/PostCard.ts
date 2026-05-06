@@ -433,7 +433,7 @@ export class PostCard {
   private createMenuButton(isOwnPost: boolean): HTMLElement {
     const menuButton = document.createElement('button')
     menuButton.className = 'post-menu-button'
-    menuButton.innerHTML = '⋯'
+    menuButton.textContent = '⋯'
     menuButton.style.cssText = `
       background: none;
       border: none;
@@ -495,7 +495,7 @@ export class PostCard {
         font-size: 14px;
         transition: background 0.2s;
       `
-      deleteItem.innerHTML = '🗑 Delete'
+      deleteItem.textContent = '🗑 Delete'
       deleteItem.addEventListener('mouseenter', () => {
         deleteItem.style.background = 'var(--bg-secondary)'
       })
@@ -523,7 +523,7 @@ export class PostCard {
         font-size: 14px;
         transition: background 0.2s;
       `
-      reportItem.innerHTML = '🚩 Report'
+      reportItem.textContent = '🚩 Report'
       reportItem.addEventListener('mouseenter', () => {
         reportItem.style.background = 'var(--bg-secondary)'
       })
@@ -591,37 +591,42 @@ export class PostCard {
       width: 90%;
     `
 
-    dialog.innerHTML = `
-      <h3 style="margin: 0 0 16px 0; font-size: 18px; color: var(--text-primary);">Delete this post?</h3>
-      <p style="margin: 0 0 24px 0; color: var(--text-muted); font-size: 14px;">This cannot be undone.</p>
-      <div style="display: flex; gap: 12px; justify-content: flex-end;">
-        <button class="cancel-btn" style="
-          padding: 8px 16px;
-          background: none;
-          border: 1px solid var(--border);
-          border-radius: 4px;
-          color: var(--text-primary);
-          cursor: pointer;
-        ">Cancel</button>
-        <button class="delete-btn" style="
-          padding: 8px 16px;
-          background: var(--danger, #e74c3c);
-          border: none;
-          border-radius: 4px;
-          color: #fff;
-          cursor: pointer;
-        ">Delete</button>
-      </div>
-    `
+    const title = document.createElement('h3')
+    title.style.cssText = 'margin: 0 0 16px 0; font-size: 18px; color: var(--text-primary);'
+    title.textContent = 'Delete this post?'
+
+    const message = document.createElement('p')
+    message.style.cssText = 'margin: 0 0 24px 0; color: var(--text-muted); font-size: 14px;'
+    message.textContent = 'This cannot be undone.'
+
+    const buttonRow = document.createElement('div')
+    buttonRow.style.cssText = 'display: flex; gap: 12px; justify-content: flex-end;'
+
+    const cancelBtn = document.createElement('button')
+    cancelBtn.className = 'cancel-btn'
+    cancelBtn.style.cssText = 'padding: 8px 16px; background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); cursor: pointer;'
+    cancelBtn.textContent = 'Cancel'
+
+    const deleteBtn = document.createElement('button')
+    deleteBtn.className = 'delete-btn'
+    deleteBtn.style.cssText = 'padding: 8px 16px; background: var(--danger, #e74c3c); border: none; border-radius: 4px; color: #fff; cursor: pointer;'
+    deleteBtn.textContent = 'Delete'
+
+    buttonRow.appendChild(cancelBtn)
+    buttonRow.appendChild(deleteBtn)
+
+    dialog.appendChild(title)
+    dialog.appendChild(message)
+    dialog.appendChild(buttonRow)
 
     overlay.appendChild(dialog)
     document.body.appendChild(overlay)
 
-    dialog.querySelector('.cancel-btn')?.addEventListener('click', () => {
+    cancelBtn.addEventListener('click', () => {
       overlay.remove()
     })
 
-    dialog.querySelector('.delete-btn')?.addEventListener('click', async () => {
+    deleteBtn.addEventListener('click', async () => {
       overlay.remove()
       await this.deletePost()
     })

@@ -156,7 +156,10 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
         // Process bio with Markdown and links
         if (userData.bio) {
           processText(userData.bio).then(processedHtml => {
-            bio.innerHTML = processedHtml
+            bio.replaceChildren()
+            const template = document.createElement('template')
+            template.innerHTML = processedHtml
+            bio.appendChild(template.content.cloneNode(true))
             
             // Render math elements and linkify
             renderMathElements(bio)

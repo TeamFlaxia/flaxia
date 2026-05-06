@@ -106,7 +106,7 @@ export class Timeline {
     // Mobile menu button (only visible on mobile)
     const menuBtn = document.createElement('button')
     menuBtn.className = 'feed-toggle-btn feed-menu-btn'
-    menuBtn.innerHTML = '⋯'
+    menuBtn.textContent = '⋯'
     menuBtn.title = 'Menu'
     container.appendChild(menuBtn)
 
@@ -133,7 +133,7 @@ export class Timeline {
 
     const reloadBtn = document.createElement('button')
     reloadBtn.className = 'feed-toggle-btn feed-reload-btn'
-    reloadBtn.innerHTML = '↑ Reload'
+    reloadBtn.textContent = '↑ Reload'
     reloadBtn.title = 'Reload posts'
     container.appendChild(reloadBtn)
 
@@ -199,10 +199,13 @@ export class Timeline {
     // Add loading spinner (hidden by default)
     const loadingSpinner = document.createElement('div')
     loadingSpinner.className = 'loading-spinner'
-    loadingSpinner.innerHTML = `
-      <div class="spinner"></div>
-      <span>Loading...</span>
-    `
+
+    const spinner = document.createElement('div')
+    spinner.className = 'spinner'
+    const spinnerLabel = document.createElement('span')
+    spinnerLabel.textContent = 'Loading...'
+    loadingSpinner.appendChild(spinner)
+    loadingSpinner.appendChild(spinnerLabel)
     loadingSpinner.style.cssText = `
       display: none;
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;

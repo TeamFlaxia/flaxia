@@ -41,12 +41,20 @@ export class LeftNav {
     // Logo section
     const logo = document.createElement('div')
     logo.className = 'nav-logo'
-    logo.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 2rem; cursor: pointer;">
-        <span style="font-size: 1.5rem;">🌿</span>
-        <span style="font-size: 1.25rem; font-weight: 600; color: var(--accent);">Flaxia</span>
-      </div>
-    `
+    const logoInner = document.createElement('div')
+    logoInner.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; margin-bottom: 2rem; cursor: pointer;'
+
+    const logoIcon = document.createElement('span')
+    logoIcon.style.fontSize = '1.5rem'
+    logoIcon.textContent = '🌿'
+
+    const logoText = document.createElement('span')
+    logoText.style.cssText = 'font-size: 1.25rem; font-weight: 600; color: var(--accent);'
+    logoText.textContent = 'Flaxia'
+
+    logoInner.appendChild(logoIcon)
+    logoInner.appendChild(logoText)
+    logo.appendChild(logoInner)
     logo.addEventListener('click', () => {
       this.props.onNavigate?.('home')
     })
@@ -71,12 +79,20 @@ export class LeftNav {
         navItem.className = `nav-item ${this.activeItem === item.id ? 'nav-item--active' : ''}`
         navItem.setAttribute('data-nav-id', item.id)
 
-        // Base content
-        let itemContent = `<span style="margin-right: 0.75rem;">${item.icon}</span><span>${item.label}</span>`
+        const iconSpan = document.createElement('span')
+        iconSpan.style.marginRight = '0.75rem'
+        iconSpan.textContent = item.icon
 
-        // Add badge for notifications
+        const labelSpan = document.createElement('span')
+        labelSpan.textContent = item.label
+
+        navItem.appendChild(iconSpan)
+        navItem.appendChild(labelSpan)
+
         if (item.id === 'notifications' && this.props.unreadCount && this.props.unreadCount > 0) {
-          itemContent += `<span class="nav-badge" style="
+          const badge = document.createElement('span')
+          badge.className = 'nav-badge'
+          badge.style.cssText = `
             margin-left: auto;
             background: var(--accent);
             font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -85,10 +101,11 @@ export class LeftNav {
             border-radius: 9999px;
             min-width: 20px;
             text-align: center;
-          ">${this.props.unreadCount}</span>`
+          `
+          badge.textContent = String(this.props.unreadCount)
+          navItem.appendChild(badge)
         }
 
-        navItem.innerHTML = itemContent
         navItems.appendChild(navItem)
       })
     } else {
@@ -103,7 +120,16 @@ export class LeftNav {
         const navItem = document.createElement('button')
         navItem.className = `nav-item ${this.activeItem === item.id ? 'nav-item--active' : ''}`
         navItem.setAttribute('data-nav-id', item.id)
-        navItem.innerHTML = `<span style="margin-right: 0.75rem;">${item.icon}</span><span>${item.label}</span>`
+
+        const iconSpan = document.createElement('span')
+        iconSpan.style.marginRight = '0.75rem'
+        iconSpan.textContent = item.icon
+
+        const labelSpan = document.createElement('span')
+        labelSpan.textContent = item.label
+
+        navItem.appendChild(iconSpan)
+        navItem.appendChild(labelSpan)
         navItems.appendChild(navItem)
       })
     }

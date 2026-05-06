@@ -197,35 +197,45 @@ export class NotificationsPage {
       margin-bottom: 4px;
     `
 
+    const appendMuted = (text: string) => {
+      const span = document.createElement('span')
+      span.style.color = 'var(--text-muted)'
+      span.textContent = text
+      mainText.appendChild(span)
+    }
+
+    const appendStrong = (text: string) => {
+      const strong = document.createElement('strong')
+      strong.textContent = text
+      mainText.appendChild(strong)
+    }
+
     switch (notification.type) {
       case 'fresh':
       case 'ap_like':
         if (notification.actor) {
           const action = notification.type === 'fresh' ? 'freshed' : 'liked'
-          mainText.innerHTML = `
-            <strong>@${notification.actor.username}</strong> 
-            <span style="color: var(--text-muted);">(${notification.actor.display_name})</span>
-            ${action} your post
-          `
+          appendStrong(`@${notification.actor.username}`)
+          mainText.appendChild(document.createTextNode(' '))
+          appendMuted(`(${notification.actor.display_name})`)
+          mainText.appendChild(document.createTextNode(` ${action} your post`))
         }
         break
       case 'reply':
         if (notification.actor) {
-          mainText.innerHTML = `
-            <strong>@${notification.actor.username}</strong> 
-            <span style="color: var(--text-muted);">(${notification.actor.display_name})</span>
-            リプライされました
-          `
+          appendStrong(`@${notification.actor.username}`)
+          mainText.appendChild(document.createTextNode(' '))
+          appendMuted(`(${notification.actor.display_name})`)
+          mainText.appendChild(document.createTextNode(' リプライされました'))
         }
         break
       case 'ap_follow':
         if (notification.actor) {
           // Local user follow
-          mainText.innerHTML = `
-            <strong>@${notification.actor.username}</strong> 
-            <span style="color: var(--text-muted);">(${notification.actor.display_name})</span>
-            フォローされました
-          `
+          appendStrong(`@${notification.actor.username}`)
+          mainText.appendChild(document.createTextNode(' '))
+          appendMuted(`(${notification.actor.display_name})`)
+          mainText.appendChild(document.createTextNode(' フォローされました'))
         } else {
           // External actor follow - use actor_data if available
           let actorInfo = null
@@ -241,39 +251,33 @@ export class NotificationsPage {
             // Display as "MastodonのXXXさんがフォローしました"
             const displayName = actorInfo.display_name || actorInfo.username || 'ユーザー'
             const domain = actorInfo.domain || 'external'
-            mainText.innerHTML = `
-              <strong>${domain} の ${displayName}さん</strong>がフォローしました
-            `
+            appendStrong(`${domain} の ${displayName}さん`)
+            mainText.appendChild(document.createTextNode('がフォローしました'))
           } else {
             // Fallback for existing notifications without actor_data
             const actorUrl = notification.actor_id || 'external user'
             const domain = actorUrl.includes('://') ? new URL(actorUrl).hostname : actorUrl
-            mainText.innerHTML = `
-              <strong>${domain} のユーザー</strong>がフォローしました
-            `
+            appendStrong(`${domain} のユーザー`)
+            mainText.appendChild(document.createTextNode('がフォローしました'))
           }
         }
         break
       case 'ap_announce':
         if (notification.actor) {
-          mainText.innerHTML = `
-            <strong>@${notification.actor.username}</strong> 
-            <span style="color: var(--text-muted);">(${notification.actor.display_name})</span>
-            投稿をブーストしました
-          `
+          appendStrong(`@${notification.actor.username}`)
+          mainText.appendChild(document.createTextNode(' '))
+          appendMuted(`(${notification.actor.display_name})`)
+          mainText.appendChild(document.createTextNode(' 投稿をブーストしました'))
         } else {
           const actorUrl = notification.actor_id || 'external user'
           const domain = actorUrl.includes('://') ? new URL(actorUrl).hostname : actorUrl
-          mainText.innerHTML = `
-            <strong>${domain} のユーザー</strong>が投稿をブーストしました
-          `
+          appendStrong(`${domain} のユーザー`)
+          mainText.appendChild(document.createTextNode('が投稿をブーストしました'))
         }
         break
       default:
-        mainText.innerHTML = `
-          <strong> あなたの投稿が複数回報告されました</strong> 
-          見直しし、削除を検討してください。
-        `
+        appendStrong('あなたの投稿が複数回報告されました')
+        mainText.appendChild(document.createTextNode(' 見直しし、削除を検討してください。'))
     }
     content.appendChild(mainText)
 

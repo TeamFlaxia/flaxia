@@ -105,6 +105,9 @@ export interface TimelineState {
   loading: boolean
   hasMore: boolean
   ngWords: string[]
+  error: string | null
+  retryCount: number
+  maxRetries: number
 }
 
 export interface Ad {

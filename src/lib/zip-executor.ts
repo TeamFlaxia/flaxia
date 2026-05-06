@@ -51,13 +51,7 @@ export async function executeZip(
     const blobUrlMap = await generateBlobUrlMap(zip)
     
     // index.htmlを書き換えてBlob URLに置換
-    const indexFile = zip.files['index.html']
-    if (!indexFile || indexFile.dir) {
-      throw new Error('index.html not found at root')
-    }
-    
-    let htmlContent = await indexFile.async('string')
-    htmlContent = rewriteIndexHtml(zip, blobUrlMap)
+    const htmlContent = await rewriteIndexHtml(zip, blobUrlMap)
     
     // Blob URLを生成
     const htmlBlob = new Blob([htmlContent], { type: 'text/html' })
@@ -176,9 +170,8 @@ async function createSandboxIframe(postId: string, containerEl: HTMLElement, blo
       iframe.parentNode.removeChild(iframe)
     }
   }
-  const JSZip = await getJSZip()
-  const zip = await JSZip.loadAsync(zipData)
-  return generateBlobUrlMap(zip)
+
+  return { iframe, cleanup }
 }
 
 export async function rewriteIndexHtmlLegacy(zipData: ArrayBuffer, blobUrlMap: Map<string, string>): Promise<string> {

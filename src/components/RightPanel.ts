@@ -53,17 +53,22 @@ export class RightPanel {
   private createSearchSection(): HTMLElement {
     const section = document.createElement('div')
     section.className = 'search-section'
-    
-    section.innerHTML = `
-      <div class="search-box">
-        <input 
-          type="text" 
-          class="search-input" 
-          placeholder="Search Flaxia"
-        />
-        <span class="search-icon">🔍</span>
-      </div>
-    `
+
+    const searchBox = document.createElement('div')
+    searchBox.className = 'search-box'
+
+    const input = document.createElement('input')
+    input.type = 'text'
+    input.className = 'search-input'
+    input.placeholder = 'Search Flaxia'
+
+    const icon = document.createElement('span')
+    icon.className = 'search-icon'
+    icon.textContent = '🔍'
+
+    searchBox.appendChild(input)
+    searchBox.appendChild(icon)
+    section.appendChild(searchBox)
 
     return section
   }
@@ -71,13 +76,22 @@ export class RightPanel {
   private createTrendingSection(): HTMLElement {
     const section = document.createElement('div')
     section.className = 'trending-section'
-    
-    section.innerHTML = `
-      <h3 class="section-title">Trending</h3>
-      <div class="trending-list">
-        <div class="trending-loading" style="text-align: center; padding: 20px; color: var(--text-muted);">Loading...</div>
-      </div>
-    `
+
+    const title = document.createElement('h3')
+    title.className = 'section-title'
+    title.textContent = 'Trending'
+
+    const list = document.createElement('div')
+    list.className = 'trending-list'
+
+    const loading = document.createElement('div')
+    loading.className = 'trending-loading'
+    loading.style.cssText = 'text-align: center; padding: 20px; color: var(--text-muted);'
+    loading.textContent = 'Loading...'
+    list.appendChild(loading)
+
+    section.appendChild(title)
+    section.appendChild(list)
 
     return section
   }
@@ -86,13 +100,22 @@ export class RightPanel {
     const section = document.createElement('div')
     section.className = 'follow-section'
     section.style.display = 'none' // Hidden by default, shown when we have suggestions
-    
-    section.innerHTML = `
-      <h3 class="section-title">Who to follow</h3>
-      <div class="follow-list">
-        <div class="follow-loading" style="text-align: center; padding: 20px; color: var(--text-muted);">Loading...</div>
-      </div>
-    `
+
+    const title = document.createElement('h3')
+    title.className = 'section-title'
+    title.textContent = 'Who to follow'
+
+    const list = document.createElement('div')
+    list.className = 'follow-list'
+
+    const loading = document.createElement('div')
+    loading.className = 'follow-loading'
+    loading.style.cssText = 'text-align: center; padding: 20px; color: var(--text-muted);'
+    loading.textContent = 'Loading...'
+    list.appendChild(loading)
+
+    section.appendChild(title)
+    section.appendChild(list)
 
     return section
   }
@@ -247,12 +270,22 @@ export class RightPanel {
         transition: background 0.2s ease;
       `
 
-      item.innerHTML = `
-        <div class="trending-content">
-          <div class="trending-hashtag" style="font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--accent); font-size: 15px; font-weight: 600;"># ${tag}</div>
-          <div class="trending-count" style="font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--text-muted); font-size: 13px;">${percentage}% trending</div>
-        </div>
-      `
+      const content = document.createElement('div')
+      content.className = 'trending-content'
+
+      const hashtag = document.createElement('div')
+      hashtag.className = 'trending-hashtag'
+      hashtag.style.cssText = "font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--accent); font-size: 15px; font-weight: 600;"
+      hashtag.textContent = `# ${tag}`
+
+      const count = document.createElement('div')
+      count.className = 'trending-count'
+      count.style.cssText = "font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--text-muted); font-size: 13px;"
+      count.textContent = `${percentage}% trending`
+
+      content.appendChild(hashtag)
+      content.appendChild(count)
+      item.appendChild(content)
 
       item.addEventListener('click', () => {
         window.location.href = `/explore?tag=${encodeURIComponent(tag)}`

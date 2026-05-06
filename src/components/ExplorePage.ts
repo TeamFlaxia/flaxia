@@ -43,9 +43,10 @@ export class ExplorePage {
       // Tag view
       const tagHeader = document.createElement('div')
       tagHeader.className = 'explore-header'
-      tagHeader.innerHTML = `
-        <h1 class="explore-title"># ${this.props.tag}</h1>
-      `
+      const tagTitle = document.createElement('h1')
+      tagTitle.className = 'explore-title'
+      tagTitle.textContent = `# ${this.props.tag}`
+      tagHeader.appendChild(tagTitle)
       container.appendChild(tagHeader)
       const postsContainer = document.createElement('div')
       postsContainer.className = 'explore-posts'
@@ -54,9 +55,10 @@ export class ExplorePage {
       // Trending view
       const exploreHeader = document.createElement('div')
       exploreHeader.className = 'explore-header'
-      exploreHeader.innerHTML = `
-        <h1 class="explore-title">Explore</h1>
-      `
+      const title = document.createElement('h1')
+      title.className = 'explore-title'
+      title.textContent = 'Explore'
+      exploreHeader.appendChild(title)
       container.appendChild(exploreHeader)
       const trendingContainer = document.createElement('div')
       trendingContainer.className = 'explore-trending'
@@ -344,10 +346,16 @@ export class ExplorePage {
         transition: background-color 0.2s ease;
       `
 
-      item.innerHTML = `
-        <div style="font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--accent); font-size: 1rem; font-weight: 600; margin-bottom: 0.25rem;"># ${tag}</div>
-        <div style="font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--text-muted); font-size: 0.875rem;">${percentage}% trending</div>
-      `
+      const tagEl = document.createElement('div')
+      tagEl.style.cssText = "font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--accent); font-size: 1rem; font-weight: 600; margin-bottom: 0.25rem;"
+      tagEl.textContent = `# ${tag}`
+
+      const percentageEl = document.createElement('div')
+      percentageEl.style.cssText = "font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--text-muted); font-size: 0.875rem;"
+      percentageEl.textContent = `${percentage}% trending`
+
+      item.appendChild(tagEl)
+      item.appendChild(percentageEl)
 
       item.onmouseover = () => item.style.background = 'var(--bg-secondary)'
       item.onmouseout = () => item.style.background = 'transparent'
@@ -379,13 +387,25 @@ export class ExplorePage {
     const loadingElement = this.element.querySelector('.explore-loading') as HTMLElement
     if (loadingElement) {
       loadingElement.style.display = 'block'
-      loadingElement.innerHTML = `
-        <div style="text-align: center; padding: 2rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-          <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">🎉</div>
-          <div>You've reached the end!</div>
-          <div style="font-size: 0.875rem; margin-top: 0.5rem;">No more posts with #${this.props.tag}</div>
-        </div>
-      `
+      loadingElement.innerHTML = ''
+      const wrapper = document.createElement('div')
+      wrapper.style.cssText = "text-align: center; padding: 2rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;"
+
+      const icon = document.createElement('div')
+      icon.style.cssText = 'font-size: 1.5rem; margin-bottom: 0.5rem;'
+      icon.textContent = '🎉'
+
+      const title = document.createElement('div')
+      title.textContent = "You've reached the end!"
+
+      const subtitle = document.createElement('div')
+      subtitle.style.cssText = 'font-size: 0.875rem; margin-top: 0.5rem;'
+      subtitle.textContent = `No more posts with #${this.props.tag ?? ''}`
+
+      wrapper.appendChild(icon)
+      wrapper.appendChild(title)
+      wrapper.appendChild(subtitle)
+      loadingElement.appendChild(wrapper)
     }
   }
 
@@ -393,18 +413,31 @@ export class ExplorePage {
     const loadingElement = this.element.querySelector('.explore-loading') as HTMLElement
     if (loadingElement) {
       loadingElement.style.display = 'block'
-      loadingElement.innerHTML = `
-        <div style="text-align: center; padding: 2rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-          <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">⚠️</div>
-          <div>Failed to load more posts</div>
-          <button 
-            onclick="this.parentElement.parentElement.style.display='none'; document.querySelector('.explore-sentinel').click();"
-            style="margin-top: 1rem; padding: 0.5rem 1rem; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer; font-family: inherit;"
-          >
-            Retry
-          </button>
-        </div>
-      `
+      loadingElement.innerHTML = ''
+
+      const wrapper = document.createElement('div')
+      wrapper.style.cssText = "text-align: center; padding: 2rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;"
+
+      const icon = document.createElement('div')
+      icon.style.cssText = 'font-size: 1.5rem; margin-bottom: 0.5rem;'
+      icon.textContent = '⚠️'
+
+      const title = document.createElement('div')
+      title.textContent = 'Failed to load more posts'
+
+      const retryBtn = document.createElement('button')
+      retryBtn.textContent = 'Retry'
+      retryBtn.style.cssText = 'margin-top: 1rem; padding: 0.5rem 1rem; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer; font-family: inherit;'
+      retryBtn.addEventListener('click', () => {
+        loadingElement.style.display = 'none'
+        this.retryCount = 0
+        void this.loadMorePosts()
+      })
+
+      wrapper.appendChild(icon)
+      wrapper.appendChild(title)
+      wrapper.appendChild(retryBtn)
+      loadingElement.appendChild(wrapper)
     }
   }
 

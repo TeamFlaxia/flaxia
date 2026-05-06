@@ -1739,7 +1739,7 @@ app.patch('/api/users/me', requireAuth, async (c) => {
     
     // Build update query for text fields
     const updates: string[] = []
-    const values: any[] = []
+    const values: (string | null)[] = []
     
     if (display_name !== undefined) {
       updates.push('display_name = ?')
@@ -1774,16 +1774,28 @@ app.patch('/api/users/me', requireAuth, async (c) => {
     }
     
     // Return updated user
+    type UpdatedUserRow = {
+      id: string
+      email: string
+      username: string
+      display_name: string | null
+      bio: string | null
+      avatar_key: string | null
+      language: string | null
+      ng_words: string | null
+      created_at: string
+    }
+
     const updatedUser = await c.env.DB.prepare(`
       SELECT id, email, username, display_name, bio, avatar_key, language, ng_words, created_at 
       FROM users 
       WHERE id = ?
-    `).bind(userId).first()
+    `).bind(userId).first<UpdatedUserRow>()
     
     return c.json({ 
       user: {
         ...updatedUser,
-        ng_words: JSON.parse((updatedUser?.ng_words as string) ?? '[]') as string[]
+        ng_words: JSON.parse(updatedUser?.ng_words ?? '[]') as string[]
       }
     })
   } catch (error: any) {
@@ -2784,9 +2796,18 @@ app.patch('/api/admin/ads/:id', requireAuth, async (c) => {
     const adId = c.req.param('id')
     const body = await c.req.json()
 
-    // Reject javascript: URLs
-    if (body.click_url && body.click_url.startsWith('javascript:')) {
-      return c.json({ error: 'Invalid click_url format' }, 400)
+    if (body.click_url !== undefined && body.click_url !== null) {
+      if (typeof body.click_url !== 'string') {
+        return c.json({ error: 'Invalid click_url format' }, 400)
+      }
+      try {
+        const parsed = new URL(body.click_url)
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          return c.json({ error: 'Invalid click_url format' }, 400)
+        }
+      } catch {
+        return c.json({ error: 'Invalid click_url format' }, 400)
+      }
     }
 
     if (!c.env.DB) {
@@ -2795,7 +2816,7 @@ app.patch('/api/admin/ads/:id', requireAuth, async (c) => {
 
     // Build UPDATE query dynamically
     const updates: string[] = []
-    const values: any[] = []
+    const values: (string | number | null)[] = []
 
     if (body.title !== undefined) {
       updates.push('title = ?')

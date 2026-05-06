@@ -714,16 +714,20 @@ export class ArcadePage {
       }
     } catch (error) {
       console.error('Failed to execute game:', error)
-      container.innerHTML = `
-        <div style="
-          color: white;
-          text-align: center;
-          padding: 2rem;
-        ">
-          <div style="font-size: 3rem; margin-bottom: 1rem;">⚠️</div>
-          <div>Failed to load game</div>
-        </div>
-      `
+      container.replaceChildren()
+      const wrapper = document.createElement('div')
+      wrapper.style.cssText = 'color: white; text-align: center; padding: 2rem;'
+
+      const icon = document.createElement('div')
+      icon.style.cssText = 'font-size: 3rem; margin-bottom: 1rem;'
+      icon.textContent = '⚠️'
+
+      const message = document.createElement('div')
+      message.textContent = 'Failed to load game'
+
+      wrapper.appendChild(icon)
+      wrapper.appendChild(message)
+      container.appendChild(wrapper)
     }
   }
 

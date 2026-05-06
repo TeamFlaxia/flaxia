@@ -80,9 +80,11 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
   if (props.users.length > 0) {
     const usersSection = document.createElement('div')
     usersSection.className = 'search-results-section'
-    usersSection.innerHTML = `
-      <h4 style="margin: 0 0 1rem 0; font-size: 1rem; font-weight: 600; color: var(--text-primary);">Users</h4>
-    `
+
+    const usersTitle = document.createElement('h4')
+    usersTitle.style.cssText = 'margin: 0 0 1rem 0; font-size: 1rem; font-weight: 600; color: var(--text-primary);'
+    usersTitle.textContent = 'Users'
+    usersSection.appendChild(usersTitle)
 
     props.users.forEach(user => {
       const userItem = document.createElement('div')
@@ -127,10 +129,17 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
       avatar.textContent = user.display_name?.[0]?.toUpperCase() || user.username[0].toUpperCase()
 
       const userInfo = document.createElement('div')
-      userInfo.innerHTML = `
-        <div style="font-weight: 600; color: var(--text-primary);">@${user.username}</div>
-        <div style="font-size: 0.875rem; color: var(--text-muted);">${user.display_name || ''}</div>
-      `
+
+      const usernameEl = document.createElement('div')
+      usernameEl.style.cssText = 'font-weight: 600; color: var(--text-primary);'
+      usernameEl.textContent = `@${user.username}`
+
+      const displayNameEl = document.createElement('div')
+      displayNameEl.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);'
+      displayNameEl.textContent = user.display_name || ''
+
+      userInfo.appendChild(usernameEl)
+      userInfo.appendChild(displayNameEl)
 
       userItem.appendChild(avatar)
       userItem.appendChild(userInfo)
@@ -147,9 +156,11 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
     postsSection.style.cssText = `
       margin-top: 2rem;
     `
-    postsSection.innerHTML = `
-      <h4 style="margin: 0 0 1rem 0; font-size: 1rem; font-weight: 600; color: var(--text-primary);">Posts</h4>
-    `
+
+    const postsTitle = document.createElement('h4')
+    postsTitle.style.cssText = 'margin: 0 0 1rem 0; font-size: 1rem; font-weight: 600; color: var(--text-primary);'
+    postsTitle.textContent = 'Posts'
+    postsSection.appendChild(postsTitle)
 
     props.posts.forEach(post => {
       const postItem = document.createElement('div')
@@ -183,10 +194,17 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
         gap: 0.5rem;
         margin-bottom: 0.5rem;
       `
-      postHeader.innerHTML = `
-        <span style="font-weight: 600; color: var(--text-primary);">@${post.username}</span>
-        <span style="font-size: 0.75rem; color: var(--text-muted);">${new Date(post.created_at).toLocaleDateString()}</span>
-      `
+
+      const postUser = document.createElement('span')
+      postUser.style.cssText = 'font-weight: 600; color: var(--text-primary);'
+      postUser.textContent = `@${post.username}`
+
+      const postDate = document.createElement('span')
+      postDate.style.cssText = 'font-size: 0.75rem; color: var(--text-muted);'
+      postDate.textContent = new Date(post.created_at).toLocaleDateString()
+
+      postHeader.appendChild(postUser)
+      postHeader.appendChild(postDate)
 
       const postText = document.createElement('div')
       postText.style.cssText = `
@@ -207,11 +225,11 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
 
   // No results
   if (props.posts.length === 0 && props.users.length === 0) {
-    content.innerHTML = `
-      <div style="text-align: center; padding: 2rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-        No results found for "${props.query}"
-      </div>
-    `
+    content.replaceChildren()
+    const empty = document.createElement('div')
+    empty.style.cssText = "text-align: center; padding: 2rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;"
+    empty.textContent = `No results found for "${props.query}"`
+    content.appendChild(empty)
   }
 
   modal.appendChild(header)

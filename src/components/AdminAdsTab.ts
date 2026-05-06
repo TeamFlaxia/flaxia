@@ -393,7 +393,10 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       const interactions = document.createElement('div')
       if (ad.payload_type === 'zip' || ad.payload_type === 'swf') {
         const playCount = ad.interaction_count || 0
-        interactions.innerHTML = `<div style="color: #f1f5f9; font-size: 12px;">${playCount} plays</div>`
+        const playCountEl = document.createElement('div')
+        playCountEl.style.cssText = 'color: #f1f5f9; font-size: 12px;'
+        playCountEl.textContent = `${playCount} plays`
+        interactions.appendChild(playCountEl)
       } else {
         interactions.textContent = '—'
         interactions.style.cssText = 'color: #94a3b8;'

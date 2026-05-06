@@ -44,10 +44,12 @@ export function createUserPostList(props: {
   // Add loading spinner (hidden by default)
   const loadingSpinner = document.createElement('div')
   loadingSpinner.className = 'loading-spinner'
-  loadingSpinner.innerHTML = `
-    <div class="spinner"></div>
-    <span>Loading...</span>
-  `
+  const spinner = document.createElement('div')
+  spinner.className = 'spinner'
+  const spinnerLabel = document.createElement('span')
+  spinnerLabel.textContent = 'Loading...'
+  loadingSpinner.appendChild(spinner)
+  loadingSpinner.appendChild(spinnerLabel)
   loadingSpinner.style.display = 'none'
   loadingSpinner.style.textAlign = 'center'
   loadingSpinner.style.padding = '1rem'
