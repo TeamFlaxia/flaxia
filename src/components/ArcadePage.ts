@@ -32,6 +32,7 @@ export class ArcadePage {
   private animationID: number | null = null
   private swipeVelocity: number = 0
   private currentViewport: HTMLElement | null = null
+  private initialGameId: string | undefined
   
   // Store bound event handlers for proper cleanup
   private boundHandleTouchStart: (e: TouchEvent) => void
@@ -44,6 +45,7 @@ export class ArcadePage {
 
   constructor(props: ArcadePageProps) {
     this.props = props
+    this.initialGameId = props.initialGameId
     this.element = this.createElement()
     this.gameContainer = this.element.querySelector('.arcade-game-container') as HTMLElement
     
@@ -461,6 +463,16 @@ export class ArcadePage {
         this.hasMore = cached.hasMore
         
         if (this.games.length > 0) {
+          // Handle initialGameId if provided
+          if (this.initialGameId) {
+            const gameIndex = this.games.findIndex(game => game.id === this.initialGameId)
+            if (gameIndex !== -1) {
+              this.currentIndex = gameIndex
+              console.log(`Found game ${this.initialGameId} at index ${gameIndex}`)
+            } else {
+              console.warn(`Game ${this.initialGameId} not found, showing first game`)
+            }
+          }
           this.renderCurrentGame()
         } else {
           this.showEmptyState()
@@ -485,6 +497,16 @@ export class ArcadePage {
         })
 
         if (this.games.length > 0) {
+          // Handle initialGameId if provided
+          if (this.initialGameId) {
+            const gameIndex = this.games.findIndex(game => game.id === this.initialGameId)
+            if (gameIndex !== -1) {
+              this.currentIndex = gameIndex
+              console.log(`Found game ${this.initialGameId} at index ${gameIndex}`)
+            } else {
+              console.warn(`Game ${this.initialGameId} not found, showing first game`)
+            }
+          }
           this.renderCurrentGame()
         } else {
           this.showEmptyState()
@@ -605,7 +627,8 @@ export class ArcadePage {
     container.style.cssText = `
       position: absolute;
       right: 1rem;
-      bottom: 100px;
+      top: 50%;
+      transform: translateY(-50%);
       display: flex;
       flex-direction: column;
       gap: 1rem;
@@ -620,9 +643,6 @@ export class ArcadePage {
     )
     likeBtn.classList.add('arcade-like-btn')
 
-    // Share button
-    const shareBtn = this.createActionButton('📤', 'Share', () => this.handleShare(game.id))
-
     // Details button
     const detailsBtn = this.createActionButton('ℹ️', 'Details', () => this.handleDetails(game.id))
 
@@ -630,7 +650,6 @@ export class ArcadePage {
     const fullscreenBtn = this.createActionButton('⛶', 'Fullscreen', () => this.handleFullscreen())
 
     container.appendChild(likeBtn)
-    container.appendChild(shareBtn)
     container.appendChild(detailsBtn)
     container.appendChild(fullscreenBtn)
 
@@ -904,20 +923,7 @@ export class ArcadePage {
     }
   }
 
-  private handleShare(gameId: string): void {
-    const url = `${window.location.origin}/thread/${gameId}`
-    
-    if (navigator.share) {
-      navigator.share({
-        title: 'Check out this game on Flaxia Arcade!',
-        url
-      })
-    } else {
-      navigator.clipboard.writeText(url)
-      // Could show a toast notification here
-    }
-  }
-
+  
   private handleDetails(gameId: string): void {
     window.history.pushState({}, '', `/thread/${gameId}`)
     // Navigate to thread page

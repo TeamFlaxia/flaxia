@@ -230,14 +230,30 @@ app.get('/api/zip/:postId', async (c) => {
 // GET /api/wvfs-zip/:postId - serve ZIP files using WVFS
 // GET /api/wvfs-zip/:postId/* - serve individual files from ZIP using WVFS
 app.get('/api/wvfs-zip/:postId/*', async (c) => {
-  // Add rate limiting for WVFS endpoints
+  // Add rate limiting for WVFS endpoints with graceful KV handling
   const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
-  const rl = await checkRateLimit(c.env.RATE_LIMIT, {
-    key: `wvfs:${ip}`,
-    limit: 100,  // 100 requests per minute
-    windowSeconds: 60
-  })
-  if (!rl.allowed) return rateLimitResponse(c, rl.resetIn, 100)
+  
+  // Handle KV rate limit gracefully - if KV fails, continue with WVFS serving
+  let rl: { allowed: boolean; resetIn: number } | null = null
+  try {
+    rl = await checkRateLimit(c.env.RATE_LIMIT, {
+      key: `wvfs:${ip}`,
+      limit: 100,  // 100 requests per minute
+      windowSeconds: 60
+    })
+  } catch (kvError: any) {
+    // Log KV error but don't fail the request
+    console.warn('KV rate limit check failed for WVFS, proceeding anyway:', kvError.message)
+    // Check if it's specifically a KV put limit exceeded error
+    if (kvError.message && kvError.message.includes('KV put() limit exceeded')) {
+      console.warn('KV put limit exceeded, skipping rate limit check for WVFS')
+    }
+  }
+  
+  // Only apply rate limit if KV check succeeded
+  if (rl && !rl.allowed) {
+    return rateLimitResponse(c, rl.resetIn, 100)
+  }
 
   try {
     const postId = c.req.param('postId')
@@ -2315,12 +2331,28 @@ app.post('/api/ads/:id/impression', async (c) => {
   try {
     const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
     const isTestEnvironment = c.req.url.includes('localhost:8788')
-    const rl = await checkRateLimit(c.env.RATE_LIMIT, {
-      key: `ad-imp:${ip}`,
-      limit: 60,
-      windowSeconds: 60
-    })
-    if (!rl.allowed) return rateLimitResponse(c, rl.resetIn, 60)
+    
+    // Handle KV rate limit gracefully - if KV fails, continue with impression tracking
+    let rl: { allowed: boolean; resetIn: number } | null = null
+    try {
+      rl = await checkRateLimit(c.env.RATE_LIMIT, {
+        key: `ad-imp:${ip}`,
+        limit: 60,
+        windowSeconds: 60
+      })
+    } catch (kvError: any) {
+      // Log KV error but don't fail the request
+      console.warn('KV rate limit check failed, proceeding anyway:', kvError.message)
+      // Check if it's specifically a KV put limit exceeded error
+      if (kvError.message && kvError.message.includes('KV put() limit exceeded')) {
+        console.warn('KV put limit exceeded, skipping rate limit check for ad impression')
+      }
+    }
+    
+    // Only apply rate limit if KV check succeeded
+    if (rl && !rl.allowed) {
+      return rateLimitResponse(c, rl.resetIn, 60)
+    }
 
     const adId = c.req.param('id')
     
@@ -2339,7 +2371,9 @@ app.post('/api/ads/:id/impression', async (c) => {
     return c.json({ ok: true })
   } catch (error: any) {
     console.error('Record impression error:', error)
-    return c.json({ error: 'Failed to record impression', details: error?.message || 'Unknown error' }, 500)
+    // Always return success to ensure content display continues
+    // even if impression tracking fails
+    return c.json({ ok: true, warning: 'Impression tracking failed but content can still be displayed' })
   }
 })
 
@@ -2348,12 +2382,28 @@ app.post('/api/posts/:id/impression', async (c) => {
   try {
     const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
     const isTestEnvironment = c.req.url.includes('localhost:8788')
-    const rl = await checkRateLimit(c.env.RATE_LIMIT, {
-      key: `post-imp:${ip}`,
-      limit: 60,
-      windowSeconds: 60
-    })
-    if (!rl.allowed) return rateLimitResponse(c, rl.resetIn, 60)
+    
+    // Handle KV rate limit gracefully - if KV fails, continue with impression tracking
+    let rl: { allowed: boolean; resetIn: number } | null = null
+    try {
+      rl = await checkRateLimit(c.env.RATE_LIMIT, {
+        key: `post-imp:${ip}`,
+        limit: 60,
+        windowSeconds: 60
+      })
+    } catch (kvError: any) {
+      // Log KV error but don't fail the request
+      console.warn('KV rate limit check failed, proceeding anyway:', kvError.message)
+      // Check if it's specifically a KV put limit exceeded error
+      if (kvError.message && kvError.message.includes('KV put() limit exceeded')) {
+        console.warn('KV put limit exceeded, skipping rate limit check for post impression')
+      }
+    }
+    
+    // Only apply rate limit if KV check succeeded
+    if (rl && !rl.allowed) {
+      return rateLimitResponse(c, rl.resetIn, 60)
+    }
 
     const postId = c.req.param('id')
     
@@ -2372,7 +2422,9 @@ app.post('/api/posts/:id/impression', async (c) => {
     return c.json({ ok: true })
   } catch (error: any) {
     console.error('Record post impression error:', error)
-    return c.json({ error: 'Failed to record impression', details: error?.message || 'Unknown error' }, 500)
+    // Always return success to ensure content display continues
+    // even if impression tracking fails
+    return c.json({ ok: true, warning: 'Impression tracking failed but content can still be displayed' })
   }
 })
 
@@ -2390,12 +2442,28 @@ app.post('/api/posts/impressions/batch', async (c) => {
     }
 
     const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
-    const rl = await checkRateLimit(c.env.RATE_LIMIT, {
-      key: `post-imp-batch:${ip}`,
-      limit: 10,
-      windowSeconds: 60
-    })
-    if (!rl.allowed) return rateLimitResponse(c, rl.resetIn, 10)
+    
+    // Handle KV rate limit gracefully - if KV fails, continue with impression tracking
+    let rl: { allowed: boolean; resetIn: number } | null = null
+    try {
+      rl = await checkRateLimit(c.env.RATE_LIMIT, {
+        key: `post-imp-batch:${ip}`,
+        limit: 10,
+        windowSeconds: 60
+      })
+    } catch (kvError: any) {
+      // Log KV error but don't fail the request
+      console.warn('KV rate limit check failed, proceeding anyway:', kvError.message)
+      // Check if it's specifically a KV put limit exceeded error
+      if (kvError.message && kvError.message.includes('KV put() limit exceeded')) {
+        console.warn('KV put limit exceeded, skipping rate limit check for batch impressions')
+      }
+    }
+    
+    // Only apply rate limit if KV check succeeded
+    if (rl && !rl.allowed) {
+      return rateLimitResponse(c, rl.resetIn, 10)
+    }
     
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500)
@@ -2415,7 +2483,9 @@ app.post('/api/posts/impressions/batch', async (c) => {
     return c.json({ ok: true, updated: result.meta?.changes || 0 })
   } catch (error: any) {
     console.error('Batch post impressions error:', error)
-    return c.json({ error: 'Failed to record impressions', details: error?.message || 'Unknown error' }, 500)
+    // Always return success to ensure content display continues
+    // even if impression tracking fails
+    return c.json({ ok: true, updated: 0, warning: 'Batch impression tracking failed but content can still be displayed' })
   }
 })
 
@@ -2424,12 +2494,28 @@ app.post('/api/ads/:id/click', async (c) => {
   try {
     const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
     const isTestEnvironment = c.req.url.includes('localhost:8788')
-    const rl = await checkRateLimit(c.env.RATE_LIMIT, {
-      key: `ad-click:${ip}`,
-      limit: 20,
-      windowSeconds: 60
-    })
-    if (!rl.allowed) return rateLimitResponse(c, rl.resetIn, 20)
+    
+    // Handle KV rate limit gracefully - if KV fails, continue with click tracking
+    let rl: { allowed: boolean; resetIn: number } | null = null
+    try {
+      rl = await checkRateLimit(c.env.RATE_LIMIT, {
+        key: `ad-click:${ip}`,
+        limit: 20,
+        windowSeconds: 60
+      })
+    } catch (kvError: any) {
+      // Log KV error but don't fail the request
+      console.warn('KV rate limit check failed, proceeding anyway:', kvError.message)
+      // Check if it's specifically a KV put limit exceeded error
+      if (kvError.message && kvError.message.includes('KV put() limit exceeded')) {
+        console.warn('KV put limit exceeded, skipping rate limit check for ad click')
+      }
+    }
+    
+    // Only apply rate limit if KV check succeeded
+    if (rl && !rl.allowed) {
+      return rateLimitResponse(c, rl.resetIn, 20)
+    }
 
     const adId = c.req.param('id')
     
@@ -2448,7 +2534,9 @@ app.post('/api/ads/:id/click', async (c) => {
     return c.json({ ok: true })
   } catch (error: any) {
     console.error('Record click error:', error)
-    return c.json({ error: 'Failed to record click', details: error?.message || 'Unknown error' }, 500)
+    // Always return success to ensure content display continues
+    // even if click tracking fails
+    return c.json({ ok: true, warning: 'Click tracking failed but content can still be displayed' })
   }
 })
 
@@ -2457,12 +2545,28 @@ app.post('/api/ads/:id/interaction', async (c) => {
   try {
     const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
     const isTestEnvironment = c.req.url.includes('localhost:8788')
-    const rl = await checkRateLimit(c.env.RATE_LIMIT, {
-      key: `ad-int:${ip}`,
-      limit: 30,
-      windowSeconds: 60
-    })
-    if (!rl.allowed) return rateLimitResponse(c, rl.resetIn, 30)
+    
+    // Handle KV rate limit gracefully - if KV fails, continue with interaction tracking
+    let rl: { allowed: boolean; resetIn: number } | null = null
+    try {
+      rl = await checkRateLimit(c.env.RATE_LIMIT, {
+        key: `ad-int:${ip}`,
+        limit: 30,
+        windowSeconds: 60
+      })
+    } catch (kvError: any) {
+      // Log KV error but don't fail the request
+      console.warn('KV rate limit check failed, proceeding anyway:', kvError.message)
+      // Check if it's specifically a KV put limit exceeded error
+      if (kvError.message && kvError.message.includes('KV put() limit exceeded')) {
+        console.warn('KV put limit exceeded, skipping rate limit check for ad interaction')
+      }
+    }
+    
+    // Only apply rate limit if KV check succeeded
+    if (rl && !rl.allowed) {
+      return rateLimitResponse(c, rl.resetIn, 30)
+    }
 
     const adId = c.req.param('id')
     const { duration_ms } = await c.req.json()
@@ -2483,7 +2587,9 @@ app.post('/api/ads/:id/interaction', async (c) => {
     return c.json({ ok: true })
   } catch (error: any) {
     console.error('Record interaction error:', error)
-    return c.json({ error: 'Failed to record interaction', details: error?.message || 'Unknown error' }, 500)
+    // Always return success to ensure content display continues
+    // even if interaction tracking fails
+    return c.json({ ok: true, warning: 'Interaction tracking failed but content can still be displayed' })
   }
 })
 
@@ -2492,12 +2598,28 @@ app.post('/api/ads/:id/play', async (c) => {
   try {
     const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
     const isTestEnvironment = c.req.url.includes('localhost:8788')
-    const rl = await checkRateLimit(c.env.RATE_LIMIT, {
-      key: `ad-play:${ip}`,
-      limit: 30,
-      windowSeconds: 60
-    })
-    if (!rl.allowed) return rateLimitResponse(c, rl.resetIn, 30)
+    
+    // Handle KV rate limit gracefully - if KV fails, continue with play tracking
+    let rl: { allowed: boolean; resetIn: number } | null = null
+    try {
+      rl = await checkRateLimit(c.env.RATE_LIMIT, {
+        key: `ad-play:${ip}`,
+        limit: 30,
+        windowSeconds: 60
+      })
+    } catch (kvError: any) {
+      // Log KV error but don't fail the request
+      console.warn('KV rate limit check failed, proceeding anyway:', kvError.message)
+      // Check if it's specifically a KV put limit exceeded error
+      if (kvError.message && kvError.message.includes('KV put() limit exceeded')) {
+        console.warn('KV put limit exceeded, skipping rate limit check for ad play')
+      }
+    }
+    
+    // Only apply rate limit if KV check succeeded
+    if (rl && !rl.allowed) {
+      return rateLimitResponse(c, rl.resetIn, 30)
+    }
 
     const adId = c.req.param('id')
     
@@ -2518,7 +2640,9 @@ app.post('/api/ads/:id/play', async (c) => {
     return c.json({ ok: true })
   } catch (error: any) {
     console.error('Record play error:', error)
-    return c.json({ error: 'Failed to record play', details: error?.message || 'Unknown error' }, 500)
+    // Always return success to ensure content display continues
+    // even if play tracking fails
+    return c.json({ ok: true, warning: 'Play tracking failed but content can still be displayed' })
   }
 })
 
@@ -3201,7 +3325,12 @@ app.post('/api/posts', requireAuth, async (c) => {
     
     // Extract hashtags from text
     const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu
-    const hashtags = Array.from(text.matchAll(hashtagRegex), (m: RegExpMatchArray) => m[1])
+    const hashtagSet = new Set<string>()
+    let match
+    while ((match = hashtagRegex.exec(text)) !== null) {
+      hashtagSet.add(match[1])
+    }
+    const hashtags = Array.from(hashtagSet)
     
     // Check if database is available
     if (!c.env.DB) {

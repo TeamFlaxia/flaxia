@@ -334,6 +334,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         return { view: 'explore' as const, postId: null, username: null, tag }
       }
 
+      // Arcade game route - public, no auth required
+      const arcadeGameMatch = cleanPath.match(/^\/arcade\/([^\/]+)$/)
+      if (arcadeGameMatch) {
+        console.log('Arcade game route detected, gameId:', arcadeGameMatch[1])
+        return { view: 'arcade' as const, postId: arcadeGameMatch[1], username: null, tag: null }
+      }
+      
       // Arcade route - public, no auth required
       if (cleanPath === '/arcade') {
         console.log('Arcade route detected')
@@ -719,7 +726,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Handle arcade page (within 3-column layout)
       if (view === 'arcade') {
         currentView = 'arcade'
-        currentPostId = null
+        currentPostId = postId || null
         currentUsername = null
         currentTag = null
         
@@ -786,7 +793,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app'
         arcadePage = createArcadePage({
           sandboxOrigin,
-          currentUser
+          currentUser,
+          initialGameId: currentPostId || undefined
         })
         
         // Create Right Panel

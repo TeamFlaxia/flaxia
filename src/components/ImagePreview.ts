@@ -68,6 +68,14 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     object-fit: cover;
     cursor: pointer;
     transition: opacity 0.2s ease;
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: auto;
+    image-rendering: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    backface-visibility: hidden;
+    transform: translateZ(0);
+    filter: contrast(1.1) brightness(1.05);
   `
   
   // Use the API proxy endpoint for images

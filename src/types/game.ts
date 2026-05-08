@@ -21,6 +21,7 @@ export interface Game {
 export interface ArcadePageProps {
   sandboxOrigin: string
   currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null
+  initialGameId?: string
 }
 
 export interface GamePlayerProps {

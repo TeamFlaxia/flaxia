@@ -70,13 +70,18 @@ export async function executeFlash(
       width: 100%;
       height: 100%;
       position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
     }
     #flash-player {
       width: 100% !important;
       height: 100% !important;
-      position: absolute;
-      top: 0;
-      left: 0;
+      position: relative;
+      max-width: 133.33vh; /* 4:3 aspect ratio (4/3 = 1.3333) */
+      max-height: 75vw; /* 4:3 aspect ratio (3/4 = 0.75) */
+      object-fit: contain;
     }
   </style>
 </head>
@@ -91,7 +96,7 @@ export async function executeFlash(
       player.config = {
         autoplay: 'on',
         unmuteOverlay: 'visible',
-        letterbox: 'off',
+        letterbox: 'on',
         backgroundColor: '#ffffff',
         allowScriptAccess: 'never',
         allowNetworking: 'none',
@@ -99,7 +104,7 @@ export async function executeFlash(
         frameRate: 60,
         base: window.location.origin,
         quality: 'high',
-        scale: 'exactFit'
+        scale: 'showAll'
       };
       
       const container = document.getElementById('player');

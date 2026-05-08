@@ -215,12 +215,13 @@ async function handleCreateActivity(activity: any, username: string, actorId: st
   const userId = userResult.id
   const postId = activity.id ? activity.id.split('/create-')[1] : generatePostId()
 
-  const hashtags: string[] = []
+  const hashtagSet = new Set<string>()
   const hashtagRegex = /#(\w+)/g
   let match
   while ((match = hashtagRegex.exec(content)) !== null) {
-    hashtags.push(match[1])
+    hashtagSet.add(match[1])
   }
+  const hashtags = Array.from(hashtagSet)
 
   let parentId: string | null = null
   let rootId: string | null = null

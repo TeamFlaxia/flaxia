@@ -397,7 +397,12 @@ export class ReplyComposer {
     try {
       // Extract hashtags from text
       const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu
-      const hashtags = Array.from(text.matchAll(hashtagRegex), (m: RegExpMatchArray) => m[1])
+      const hashtagSet = new Set<string>()
+      let match
+      while ((match = hashtagRegex.exec(text)) !== null) {
+        hashtagSet.add(match[1])
+      }
+      const hashtags = Array.from(hashtagSet)
 
       const response = await fetch(`/api/posts/${this.props.postId}/replies/commit`, {
         method: 'POST',

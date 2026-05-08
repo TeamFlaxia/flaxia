@@ -237,7 +237,7 @@ export class PostComposer {
 
     // Check file extension
     const ext = file.name.toLowerCase().split('.').pop()
-    const allowedExts = ['gif', 'jpg', 'jpeg', 'png', 'swf', 'js', 'wasm', 'zip', 'rsp']
+    const allowedExts = ['gif', 'jpg', 'jpeg', 'png', 'swf', 'js', 'wasm', 'zip', 'rsp', 'mp3', 'wav', 'ogg', 'm4a', 'webm']
     
     if (!ext || !allowedExts.includes(ext)) {
       return { valid: false, error: 'Unsupported file type' }
@@ -615,7 +615,12 @@ export class PostComposer {
     try {
       // Extract hashtags from text - support Japanese and other Unicode characters
       const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu
-      const hashtags = Array.from(text.matchAll(hashtagRegex), (m: RegExpMatchArray) => m[1])
+      const hashtagSet = new Set<string>()
+      let match
+      while ((match = hashtagRegex.exec(text)) !== null) {
+        hashtagSet.add(match[1])
+      }
+      const hashtags = Array.from(hashtagSet)
 
       const response = await fetch('/api/posts/commit', {
         method: 'POST',
