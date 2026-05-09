@@ -165,12 +165,6 @@ export class Timeline {
     const list = document.createElement('div')
     list.className = 'post-list'
     
-    if (this.state.posts.length === 0 && !this.state.loading) {
-      const emptyState = document.createElement('p')
-      emptyState.className = 'font-mono'
-      list.appendChild(emptyState)
-    }
-    
     // Show skeleton cards while loading initial posts
     if (this.state.loading && this.state.posts.length === 0) {
       for (let i = 0; i < 3; i++) {
@@ -389,6 +383,7 @@ export class Timeline {
     }
   }
 
+  
   private switchMode(mode: 'following' | 'foryou'): void {
     if (mode === this.state.mode) return
 

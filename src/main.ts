@@ -239,6 +239,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       
       // Public routes that don't require authentication:
       // - / (home/timeline)
+      // - /home (landing page)
       // - /explore (with or without tag parameter)
       // - /arcade (game arcade)
       // - /users/:username (profile pages)
@@ -248,6 +249,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const isPublicRoute = 
         cleanPath === '' || 
         cleanPath === '/' ||
+        cleanPath === '/home' ||
         cleanPath === '/explore' ||
         cleanPath === '/arcade' ||
         cleanPath === '/login' ||
@@ -264,11 +266,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         return true
       }
       
-      // For /notifications, redirect to home if not authenticated
+      // For /notifications, redirect to arcade if not authenticated
       if (cleanPath === '/notifications') {
         if (!isAuthenticated) {
-          window.history.pushState({}, '', '/')
-          navigateTo('timeline')
+          window.history.pushState({}, '', '/arcade')
+          navigateTo('arcade')
           return false
         }
         return true
@@ -398,6 +400,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         return { view: 'admin' as const, postId: null, username: null, tag: null, adminTab: tab }
       }
 
+      // Home route - public, no auth required  
+      if (cleanPath === '/home') {
+        console.log('Home route detected')
+        return { view: 'timeline' as const, postId: null, username: null, tag: null }
+      }
+
       // Default timeline (only for root path) - public, no auth required
       if (cleanPath === '' || cleanPath === '/') {
         console.log('Timeline route detected')
@@ -509,8 +517,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         loginPage = createLoginPage({
           onSuccess: () => {
-            window.history.pushState({}, '', '/')
-            navigateTo('timeline')
+            window.history.pushState({}, '', '/arcade')
+            navigateTo('arcade')
           }
         })
         
@@ -525,8 +533,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         registerPage = createRegisterPage({
           onSuccess: () => {
-            window.history.pushState({}, '', '/')
-            navigateTo('timeline')
+            window.history.pushState({}, '', '/arcade')
+            navigateTo('arcade')
           }
         })
         
@@ -664,15 +672,15 @@ document.addEventListener('DOMContentLoaded', async () => {
           onNavigate: async (item) => {
             console.log('Navigate to:', item)
             if (item === 'home') {
-              window.history.pushState({}, '', '/')
+              window.history.pushState({}, '', '/home')
               navigateTo('timeline')
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')
             } else if (item === 'profile') {
               if (!currentUser) {
-                window.history.pushState({}, '', '/')
-                navigateTo('timeline')
+                window.history.pushState({}, '', '/arcade')
+                navigateTo('arcade')
                 return
               }
               window.history.pushState({}, '', `/profile/${currentUser.username}`)
@@ -742,7 +750,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           onNavigate: async (item) => {
             console.log('Navigate to:', item)
             if (item === 'home') {
-              window.history.pushState({}, '', '/')
+              window.history.pushState({}, '', '/home')
               navigateTo('timeline')
             } else if (item === 'explore') {
               window.history.pushState({}, '', '/explore')
@@ -769,8 +777,8 @@ document.addEventListener('DOMContentLoaded', async () => {
               navigateTo('notifications')
             } else if (item === 'profile') {
               if (!currentUser) {
-                window.history.pushState({}, '', '/')
-                navigateTo('timeline')
+                window.history.pushState({}, '', '/arcade')
+                navigateTo('arcade')
                 return
               }
               window.history.pushState({}, '', `/profile/${currentUser.username}`)
@@ -841,7 +849,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           onNavigate: async (item) => {
             console.log('Navigate to:', item)
             if (item === 'home') {
-              window.history.pushState({}, '', '/')
+              window.history.pushState({}, '', '/home')
               navigateTo('timeline')
             } else if (item === 'explore') {
               window.history.pushState({}, '', '/explore')
@@ -871,8 +879,8 @@ document.addEventListener('DOMContentLoaded', async () => {
               navigateTo('notifications')
             } else if (item === 'profile') {
               if (!currentUser) {
-                window.history.pushState({}, '', '/')
-                navigateTo('timeline')
+                window.history.pushState({}, '', '/arcade')
+                navigateTo('arcade')
                 return
               }
               window.history.pushState({}, '', `/profile/${currentUser.username}`)
@@ -948,7 +956,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           onNavigate: async (item) => {
             console.log('Navigate to:', item)
             if (item === 'home') {
-              window.history.pushState({}, '', '/')
+              window.history.pushState({}, '', '/home')
               navigateTo('timeline')
             } else if (item === 'explore') {
               window.history.pushState({}, '', '/explore')
@@ -974,8 +982,8 @@ document.addEventListener('DOMContentLoaded', async () => {
               document.body.appendChild(trendingModal)
             } else if (item === 'profile') {
               if (!currentUser) {
-                window.history.pushState({}, '', '/')
-                navigateTo('timeline')
+                window.history.pushState({}, '', '/arcade')
+                navigateTo('arcade')
                 return
               }
               window.history.pushState({}, '', `/profile/${currentUser.username}`)
@@ -1054,7 +1062,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           onNavigate: async (item) => {
             console.log('Navigate to:', item)
             if (item === 'home') {
-              window.history.pushState({}, '', '/')
+              window.history.pushState({}, '', '/home')
               navigateTo('timeline')
             } else if (item === 'explore') {
               window.history.pushState({}, '', '/explore')
@@ -1083,8 +1091,8 @@ document.addEventListener('DOMContentLoaded', async () => {
               navigateTo('notifications')
             } else if (item === 'profile') {
               if (!currentUser) {
-                window.history.pushState({}, '', '/')
-                navigateTo('timeline')
+                window.history.pushState({}, '', '/arcade')
+                navigateTo('arcade')
                 return
               }
               window.history.pushState({}, '', `/profile/${currentUser.username}`)
@@ -1179,9 +1187,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           sandboxOrigin,
           currentUser,
           onBack: () => {
-            console.log('Back button clicked, navigating to timeline')
-            window.history.pushState({}, '', '/')
-            navigateTo('timeline')
+            console.log('Back button clicked, navigating to arcade')
+            window.history.pushState({}, '', '/arcade')
+            navigateTo('arcade')
           }
         })
         
@@ -1209,7 +1217,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           onNavigate: async (item) => {
             console.log('Navigate to:', item)
             if (item === 'home') {
-              window.history.pushState({}, '', '/')
+              window.history.pushState({}, '', '/home')
               navigateTo('timeline')
             } else if (item === 'explore') {
               window.history.pushState({}, '', '/explore')
@@ -1239,8 +1247,8 @@ document.addEventListener('DOMContentLoaded', async () => {
               navigateTo('notifications')
             } else if (item === 'profile') {
               if (!currentUser) {
-                window.history.pushState({}, '', '/')
-                navigateTo('timeline')
+                window.history.pushState({}, '', '/arcade')
+                navigateTo('arcade')
                 return
               }
               window.history.pushState({}, '', `/profile/${currentUser.username}`)

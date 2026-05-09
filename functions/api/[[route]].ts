@@ -5040,6 +5040,70 @@ app.post('/api/users/:username/inbox', async (c) => {
   }
 })
 
+// Get current topic - randomly selected Flash/HTML post
+app.get('/api/current-topic', async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500)
+    }
+
+    // Get a random Flash/HTML post
+    // Use a seed based on current hour to keep the same post for 1 hour
+    const currentHour = new Date().getHours()
+    const result = await c.env.DB.prepare(`
+      SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.created_at,
+             u.display_name, u.avatar_key,
+             (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count,
+             COALESCE(p.impressions, 0) as impressions,
+             p.fresh_count
+      FROM posts p
+      LEFT JOIN users u ON p.user_id = u.id
+      WHERE (p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL)
+        AND p.status = 'published'
+        AND p.hidden = 0
+        AND p.parent_id IS NULL
+      ORDER BY RANDOM()
+      LIMIT 1
+    `).first()
+
+    if (!result) {
+      return c.json({ error: 'No Flash/HTML posts found' }, 404)
+    }
+
+    let hashtags = []
+    try {
+      hashtags = result.hashtags ? (typeof result.hashtags === 'string' ? JSON.parse(result.hashtags) : result.hashtags) : []
+    } catch (error) {
+      console.warn('Failed to parse hashtags:', error)
+      hashtags = []
+    }
+
+    const topicPost = {
+      id: result.id,
+      user_id: result.user_id,
+      username: result.username,
+      display_name: result.display_name,
+      avatar_key: result.avatar_key,
+      text: result.text,
+      hashtags,
+      gif_key: result.gif_key,
+      payload_key: result.payload_key,
+      swf_key: result.swf_key,
+      thumbnail_key: result.thumbnail_key,
+      fresh_count: result.fresh_count,
+      reply_count: result.reply_count,
+      impressions: result.impressions,
+      created_at: result.created_at,
+      type: result.swf_key ? 'flash' : 'html'
+    }
+
+    return c.json(topicPost)
+  } catch (error: any) {
+    console.error('Current topic fetch error:', error)
+    return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500)
+  }
+})
+
 // Export for Cloudflare Pages Functions
 export async function onRequest(context: any) {
   return app.fetch(context.request, context.env, context)
