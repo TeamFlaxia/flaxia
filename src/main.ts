@@ -7,7 +7,6 @@ import { createLoginPage } from './components/LoginPage.js'
 import { createRegisterPage } from './components/RegisterPage.js'
 import { createProfilePage } from './components/ProfilePage.js'
 import { createExplorePage } from './components/ExplorePage.js'
-import { createTrendingModal } from './components/TrendingModal.js'
 import { createArcadePage } from './components/ArcadePage.js'
 import { createLegalPage } from './components/LegalPage.js'
 import { createNotificationsPage } from './components/NotificationsPage.js'
@@ -188,11 +187,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const setupMobileLeftNav = (leftNavElement: HTMLElement): void => {
+      // Clean up existing button if it exists
+      if (leftNavOpenButton) {
+        leftNavOpenButton.remove()
+        leftNavOpenButton = null
+      }
+
       // Create the left-edge mobile nav button
       if (window.innerWidth <= 768) {
-        if (!leftNavOpenButton) {
-          leftNavOpenButton = createLeftNavOpenButton(leftNavElement)
-        }
+        leftNavOpenButton = createLeftNavOpenButton(leftNavElement)
         leftNavOpenButton.style.display = 'block'
       }
 
@@ -214,7 +217,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           // Close mobile nav when resizing to desktop
           closeLeftNav()
           if (leftNavOpenButton) {
-            leftNavOpenButton.style.display = 'none'
+            leftNavOpenButton.remove()
+            leftNavOpenButton = null
           }
         } else {
           if (!leftNavOpenButton) {
@@ -752,23 +756,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'explore') {
               window.history.pushState({}, '', '/explore')
               navigateTo('explore')
-            } else if (item === 'trending') {
-              // Show trending modal
-              const trendingModal = createTrendingModal({
-                onClose: () => {
-                  safeRemoveFromBody(trendingModal)
-                },
-                onTagClick: (tag) => {
-                  safeRemoveFromBody(trendingModal)
-                  window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`)
-                  navigateTo('explore', undefined, undefined, tag)
-                },
-                onArcadeClick: () => {
-                  window.history.pushState({}, '', '/arcade')
-                  navigateTo('arcade')
-                }
-              })
-              document.body.appendChild(trendingModal)
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')
@@ -854,23 +841,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'arcade') {
               window.history.pushState({}, '', '/arcade')
               navigateTo('arcade')
-            } else if (item === 'trending') {
-              // Show trending modal
-              const trendingModal = createTrendingModal({
-                onClose: () => {
-                  safeRemoveFromBody(trendingModal)
-                },
-                onTagClick: (tag) => {
-                  safeRemoveFromBody(trendingModal)
-                  window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`)
-                  navigateTo('explore', undefined, undefined, tag)
-                },
-                onArcadeClick: () => {
-                  window.history.pushState({}, '', '/arcade')
-                  navigateTo('arcade')
-                }
-              })
-              document.body.appendChild(trendingModal)
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')
@@ -961,22 +931,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'arcade') {
               window.history.pushState({}, '', '/arcade')
               navigateTo('arcade')
-            } else if (item === 'trending') {
-              const trendingModal = createTrendingModal({
-                onClose: () => {
-                  safeRemoveFromBody(trendingModal)
-                },
-                onTagClick: (tag) => {
-                  safeRemoveFromBody(trendingModal)
-                  window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`)
-                  navigateTo('explore', undefined, undefined, tag)
-                },
-                onArcadeClick: () => {
-                  window.history.pushState({}, '', '/arcade')
-                  navigateTo('arcade')
-                }
-              })
-              document.body.appendChild(trendingModal)
             } else if (item === 'profile') {
               if (!currentUser) {
                 window.history.pushState({}, '', '/arcade')
@@ -1067,22 +1021,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'arcade') {
               window.history.pushState({}, '', '/arcade')
               navigateTo('arcade')
-            } else if (item === 'trending') {
-              const trendingModal = createTrendingModal({
-                onClose: () => {
-                  safeRemoveFromBody(trendingModal)
-                },
-                onTagClick: (tag) => {
-                  safeRemoveFromBody(trendingModal)
-                  window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`)
-                  navigateTo('explore', undefined, undefined, tag)
-                },
-                onArcadeClick: () => {
-                  window.history.pushState({}, '', '/arcade')
-                  navigateTo('arcade')
-                }
-              })
-              document.body.appendChild(trendingModal)
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')
@@ -1222,23 +1160,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'arcade') {
               window.history.pushState({}, '', '/arcade')
               navigateTo('arcade')
-            } else if (item === 'trending') {
-              // Show trending modal
-              const trendingModal = createTrendingModal({
-                onClose: () => {
-                  safeRemoveFromBody(trendingModal)
-                },
-                onTagClick: (tag) => {
-                  safeRemoveFromBody(trendingModal)
-                  window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`)
-                  navigateTo('explore', undefined, undefined, tag)
-                },
-                onArcadeClick: () => {
-                  window.history.pushState({}, '', '/arcade')
-                  navigateTo('arcade')
-                }
-              })
-              document.body.appendChild(trendingModal)
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')

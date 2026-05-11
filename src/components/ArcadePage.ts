@@ -97,7 +97,7 @@ export class ArcadePage {
     `
 
     const subtitle = document.createElement('span')
-    subtitle.textContent = '0-second play'
+    subtitle.textContent = 'Play web as Shorts!'
     subtitle.style.cssText = `
       font-size: 0.875rem;
       color: var(--text-muted);
