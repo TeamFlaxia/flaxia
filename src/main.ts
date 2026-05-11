@@ -132,9 +132,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       return { notifications: [], unread_count: 0 }
     }
 
-    // Mobile left nav overlay and swipe hint management
+    // Mobile left nav overlay management
     let leftNavOverlay: HTMLElement | null = null
-    let swipeHint: HTMLElement | null = null
+    let leftNavOpenButton: HTMLButtonElement | null = null
 
     const createLeftNavOverlay = (): HTMLElement => {
       const overlay = document.createElement('div')
@@ -146,28 +146,29 @@ document.addEventListener('DOMContentLoaded', async () => {
       return overlay
     }
 
-    const createSwipeHint = (): HTMLElement => {
-      const hint = document.createElement('div')
-      hint.className = 'left-nav-swipe-hint'
-      document.body.appendChild(hint)
-      return hint
+    const createLeftNavOpenButton = (leftNavElement: HTMLElement): HTMLButtonElement => {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = 'left-nav-open-button'
+      button.setAttribute('aria-label', 'Open navigation')
+      button.textContent = '→'
+      button.addEventListener('click', () => {
+        openLeftNav(leftNavElement)
+      })
+      document.body.appendChild(button)
+      return button
     }
 
     const openLeftNav = (leftNavElement: HTMLElement): void => {
       if (window.innerWidth > 768) return
-      
+
       leftNavElement.classList.add('left-nav--open')
-      
+
       if (!leftNavOverlay) {
         leftNavOverlay = createLeftNavOverlay()
       }
       leftNavOverlay.classList.add('left-nav-overlay--visible')
-      
-      // Hide swipe hint
-      if (swipeHint) {
-        swipeHint.classList.add('left-nav-swipe-hint--hidden')
-      }
-      
+
       // Prevent body scroll
       document.body.style.overflow = 'hidden'
     }
@@ -177,27 +178,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (leftNavElement) {
         leftNavElement.classList.remove('left-nav--open')
       }
-      
+
       if (leftNavOverlay) {
         leftNavOverlay.classList.remove('left-nav-overlay--visible')
       }
-      
-      // Show swipe hint again
-      if (swipeHint) {
-        swipeHint.classList.remove('left-nav-swipe-hint--hidden')
-      }
-      
+
       // Restore body scroll
       document.body.style.overflow = ''
     }
 
     const setupMobileLeftNav = (leftNavElement: HTMLElement): void => {
-      // Create swipe hint on mobile
+      // Create the left-edge mobile nav button
       if (window.innerWidth <= 768) {
-        if (!swipeHint) {
-          swipeHint = createSwipeHint()
+        if (!leftNavOpenButton) {
+          leftNavOpenButton = createLeftNavOpenButton(leftNavElement)
         }
-        swipeHint.style.display = 'block'
+        leftNavOpenButton.style.display = 'block'
       }
 
       // Listen for openLeftNav events from timeline
@@ -217,13 +213,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (window.innerWidth > 768) {
           // Close mobile nav when resizing to desktop
           closeLeftNav()
-          if (swipeHint) {
-            swipeHint.style.display = 'none'
+          if (leftNavOpenButton) {
+            leftNavOpenButton.style.display = 'none'
           }
         } else {
-          if (swipeHint) {
-            swipeHint.style.display = 'block'
+          if (!leftNavOpenButton) {
+            leftNavOpenButton = createLeftNavOpenButton(leftNavElement)
           }
+          leftNavOpenButton.style.display = 'block'
         }
       })
     }
@@ -1187,9 +1184,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           sandboxOrigin,
           currentUser,
           onBack: () => {
-            console.log('Back button clicked, navigating to arcade')
-            window.history.pushState({}, '', '/arcade')
-            navigateTo('arcade')
+            console.log('Back button clicked, navigating to home')
+            window.history.pushState({}, '', '/home')
+            navigateTo('timeline')
           }
         })
         

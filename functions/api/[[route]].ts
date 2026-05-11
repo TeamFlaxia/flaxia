@@ -4117,6 +4117,34 @@ app.delete('/api/posts/:id', requireAuth, async (c) => {
       }
     }
     
+    // Invalidate cache entries related to the deleted post
+    if (c.env.CACHE) {
+      try {
+        // Delete games cache entries (since deleted posts might be games)
+        await c.env.CACHE.delete('games:recent:20:first')
+        await c.env.CACHE.delete('games:trending:20:first')
+        
+        // Delete any other cache keys that might contain this post
+        // Pattern: games:{trending|recent}:{limit}:{cursor}
+        // We'll delete the most common ones
+        const cacheKeysToDelete = [
+          'games:recent:20:first',
+          'games:trending:20:first',
+          'games:recent:50:first',
+          'games:trending:50:first'
+        ]
+        
+        for (const key of cacheKeysToDelete) {
+          await c.env.CACHE.delete(key)
+        }
+        
+        console.log('Cache invalidated for deleted post:', postId)
+      } catch (cacheError) {
+        console.warn('Failed to invalidate cache for deleted post:', cacheError)
+        // Don't fail the deletion if cache invalidation fails
+      }
+    }
+    
     return c.json({ success: true })
   } catch (error: any) {
     console.error('Delete post error:', error)
@@ -5037,6 +5065,36 @@ app.post('/api/users/:username/inbox', async (c) => {
   } catch (error: any) {
     console.error('Inbox error:', error)
     return c.json({ error: 'Inbox processing failed', details: error?.message || 'Unknown error' }, 500)
+  }
+})
+
+// GET /api/users/:username/inbox - ActivityPub inbox collection endpoint
+app.get('/api/users/:username/inbox', async (c) => {
+  try {
+    const username = c.req.param('username')
+    
+    if (!username) {
+      return c.json({ error: 'Username required' }, 400)
+    }
+
+    const acceptHeader = c.req.header('Accept') || ''
+    const isActivityPubRequest = acceptHeader.includes('application/activity+json') || 
+                                acceptHeader.includes('application/ld+json')
+
+    if (!isActivityPubRequest) {
+      return c.redirect(`/profile/${username}`, 302)
+    }
+
+    return c.json({
+      '@context': 'https://www.w3.org/ns/activitystreams',
+      type: 'OrderedCollection',
+      id: `${c.env.BASE_URL}/api/users/${username}/inbox`,
+      totalItems: 0,
+      orderedItems: []
+    }, 200, { 'Content-Type': 'application/activity+json' })
+  } catch (error: any) {
+    console.error('Inbox GET error:', error)
+    return c.json({ error: 'Failed to retrieve inbox', details: error?.message || 'Unknown error' }, 500)
   }
 })
 

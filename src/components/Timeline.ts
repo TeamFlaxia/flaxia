@@ -289,59 +289,8 @@ export class Timeline {
   }
 
   private setupSwipeDetection(): void {
-    // Only enable on mobile (< 768px)
-    if (window.innerWidth > 768) return
-
-    const SWIPE_THRESHOLD = 80 // Minimum horizontal distance
-    const EDGE_THRESHOLD = 50  // Must start within this distance from left edge
-    const MAX_VERTICAL_DEVIATION = 100 // Maximum vertical movement allowed
-    const MAX_TIME = 500 // Maximum swipe duration in ms
-    const TAP_THRESHOLD = 10 // Maximum movement for tap
-    const TAP_TIME = 200 // Maximum time for tap
-
-    this.element.addEventListener('touchstart', (e) => {
-      const touch = e.touches[0]
-      this.touchStartX = touch.clientX
-      this.touchStartY = touch.clientY
-      this.touchStartTime = Date.now()
-    }, { passive: true })
-
-    this.element.addEventListener('touchend', (e) => {
-      const touch = e.changedTouches[0]
-      const deltaX = touch.clientX - this.touchStartX
-      const deltaY = touch.clientY - this.touchStartY
-      const deltaTime = Date.now() - this.touchStartTime
-
-      // Check if it's a valid right swipe from left edge
-      if (
-        deltaX > SWIPE_THRESHOLD && // Moving right
-        Math.abs(deltaY) < MAX_VERTICAL_DEVIATION && // Not too much vertical movement
-        deltaTime < MAX_TIME && // Quick swipe
-        this.touchStartX < EDGE_THRESHOLD // Started near left edge
-      ) {
-        // Emit event to open left nav
-        this.element.dispatchEvent(new CustomEvent('openLeftNav', {
-          bubbles: true
-        }))
-        return
-      }
-
-      // Check if it's a tap at the left edge
-      if (
-        Math.abs(deltaX) < TAP_THRESHOLD && // Minimal horizontal movement
-        Math.abs(deltaY) < TAP_THRESHOLD && // Minimal vertical movement
-        deltaTime < TAP_TIME && // Quick tap
-        this.touchStartX < EDGE_THRESHOLD // Tapped near left edge
-      ) {
-        // Emit event to open left nav
-        this.element.dispatchEvent(new CustomEvent('openLeftNav', {
-          bubbles: true
-        }))
-      }
-    }, { passive: true })
-
-    // Update hint visibility on resize
-    window.addEventListener('resize', this.boundHandleResize)
+    // Mobile left nav gestures are disabled. Navigation is opened only by the explicit menu button.
+    return
   }
 
   private updateSwipeHint(): void {

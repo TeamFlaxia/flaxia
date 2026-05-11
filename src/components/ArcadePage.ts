@@ -312,44 +312,10 @@ export class ArcadePage {
     const diffY = this.touchStartY - this.touchEndY
     const diffX = this.touchStartX - this.touchEndX
     
-    // Check for left edge gestures first (only on mobile)
+    // Left edge gestures for opening navigation are disabled on mobile.
+    // Navigation should be opened only by the explicit menu button.
     if (window.innerWidth <= 768) {
-      const SWIPE_THRESHOLD = 80 // Minimum horizontal distance
-      const EDGE_THRESHOLD = 50  // Must start within this distance from left edge
-      const MAX_VERTICAL_DEVIATION = 100 // Maximum vertical movement allowed
-      const MAX_TIME = 500 // Maximum swipe duration in ms
-      const TAP_THRESHOLD = 10 // Maximum movement for tap
-      const TAP_TIME = 200 // Maximum time for tap
-
-      // Check if it's a valid right swipe from left edge
-      if (
-        diffX < -SWIPE_THRESHOLD && // Moving right (negative because we calculate start - end)
-        Math.abs(diffY) < MAX_VERTICAL_DEVIATION && // Not too much vertical movement
-        touchDuration < MAX_TIME && // Quick swipe
-        this.touchStartX < EDGE_THRESHOLD // Started near left edge
-      ) {
-        // Emit event to open left nav
-        this.element.dispatchEvent(new CustomEvent('openLeftNav', {
-          bubbles: true
-        }))
-        this.swipeVelocity = 0
-        return
-      }
-
-      // Check if it's a tap at the left edge
-      if (
-        Math.abs(diffX) < TAP_THRESHOLD && // Minimal horizontal movement
-        Math.abs(diffY) < TAP_THRESHOLD && // Minimal vertical movement
-        touchDuration < TAP_TIME && // Quick tap
-        this.touchStartX < EDGE_THRESHOLD // Tapped near left edge
-      ) {
-        // Emit event to open left nav
-        this.element.dispatchEvent(new CustomEvent('openLeftNav', {
-          bubbles: true
-        }))
-        this.swipeVelocity = 0
-        return
-      }
+      // No-op.
     }
     
     // Enhanced swipe detection with velocity and distance thresholds

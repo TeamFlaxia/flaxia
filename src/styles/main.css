@@ -502,18 +502,56 @@ p {
     left: 0;
     top: 50%;
     transform: translateY(-50%);
-    width: 8px;
-    height: 60px;
+    width: 12px;
+    height: 80px;
     background: rgba(34, 197, 94, 0.3);
-    border-radius: 0 4px 4px 0;
+    border-radius: 0 6px 6px 0;
     z-index: 1099;
-    transition: opacity 0.3s ease;
+    transition: opacity 0.3s ease, background-color 0.2s ease;
+    cursor: pointer;
+  }
+  
+  .left-nav-swipe-hint:hover {
+    background: rgba(34, 197, 94, 0.5);
   }
   
   .left-nav--open + .left-nav-swipe-hint,
   .left-nav-swipe-hint--hidden {
     opacity: 0;
     pointer-events: none;
+  }
+
+  .left-nav-open-button {
+    position: fixed;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 48px;
+    height: 88px;
+    font-size: 1.35rem;
+    font-weight: bold;
+    color: #ffffff;
+    background: rgba(34, 197, 94, 0.25);
+    border: none;
+    border-radius: 0 14px 14px 0;
+    z-index: 1080;
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.2s ease;
+    display: none;
+  }
+
+  .left-nav-open-button:hover {
+    background: rgba(34, 197, 94, 0.45);
+  }
+
+  .left-nav-open-button:active {
+    transform: translateY(-50%) scale(0.98);
+  }
+
+  @media (max-width: 768px) {
+    .left-nav-open-button {
+      display: block;
+    }
   }
   
   /* Overlay when nav is open */
