@@ -22,7 +22,7 @@ Updates DB record from pending to published.
 
 Checked at upload time (Step 2):
 
-- Content-Length must be 25MB or less
+- Content-Length must be 10MB or less
 - Content-Type must be application/zip
 
 No extraction is performed on the server. Cloudflare Workers memory constraints make full extraction impractical, and client-side validation covers the rest.

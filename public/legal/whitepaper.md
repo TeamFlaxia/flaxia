@@ -25,7 +25,7 @@ Flaxia operates on a modern edge computing stack designed for global scalability
 **Storage Infrastructure**
 - **Cloudflare R2**: Object storage for media files and ZIP payloads
 - **CDN Integration**: Automatic global content caching
-- **File Size Limits**: 25MB maximum for uploads, 100MB extracted size for ZIPs
+- **File Size Limits**: 10MB maximum for uploads, 100MB extracted size for ZIPs
 
 **Message Queuing**
 - **Cloudflare Queues**: ActivityPub delivery queue for federated content

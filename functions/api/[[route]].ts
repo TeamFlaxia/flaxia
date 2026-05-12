@@ -41,10 +41,10 @@ app.put('/api/upload/*', async (c) => {
       return c.json({ error: 'Missing file key' }, 400)
     }
     
-    // Check file size limit (25MB = 25 * 1024 * 1024 bytes)
-    const maxSize = 25 * 1024 * 1024
+    // Check file size limit (10MB = 10 * 1024 * 1024 bytes)
+    const maxSize = 10 * 1024 * 1024
     if (contentLength && Number(contentLength) > maxSize) {
-      return c.json({ error: 'File too large. Maximum size is 25MB' }, 413)
+      return c.json({ error: 'File too large. Maximum size is 10MB' }, 413)
     }
     
     // Get the file data from request body
@@ -52,7 +52,7 @@ app.put('/api/upload/*', async (c) => {
     
     // Double-check file size after reading
     if (fileData.byteLength > maxSize) {
-      return c.json({ error: 'File too large. Maximum size is 25MB' }, 413)
+      return c.json({ error: 'File too large. Maximum size is 10MB' }, 413)
     }
     
     if (!c.env.BUCKET) {
