@@ -230,9 +230,9 @@ export class PostComposer {
   }
 
   private validateFile(file: File): { valid: boolean; error?: string } {
-    const maxSize = 10 * 1024 * 1024
+    const maxSize = 25 * 1024 * 1024
     if (file.size > maxSize) {
-      return { valid: false, error: 'File must be under 10MB' }
+      return { valid: false, error: 'File must be under 25MB' }
     }
 
     // Check file extension

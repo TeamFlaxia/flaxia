@@ -143,7 +143,7 @@ const posts = await c.env.DB
 - GIF previews: `gif/{post_id}.gif` — public via R2 custom domain
 - Post payloads (JS/Wasm): `payload/{post_id}` — served **only** from sandbox origin
 - Upload from Pages Function via `c.env.BUCKET.put(key, body)`
-- 10MB hard limit enforced server-side: check `Content-Length` before streaming to R2
+- 25MB hard limit enforced server-side: check `Content-Length` before streaming to R2
 
 ---
 
@@ -233,7 +233,7 @@ DELETE /api/follows/:id                               # unfollow
 
 ## Constraints (enforced at both client and server)
 - Text: ≤ 200 characters
-- Payload: ≤ 10MB
+- Payload: ≤ 25MB
 - Timeline: chronological only, no algorithmic sorting, ever
 - Ads: static image only in `AdBanner`, no scripts, no tracking pixels
 

@@ -206,9 +206,9 @@ export class ReplyComposer {
   }
 
   private handleFileSelection(file: File): void {
-    // Check file size (10MB limit)
-    if (file.size > 10 * 1024 * 1024) {
-      alert('File size must be less than 10MB')
+    // Check file size (25MB limit)
+    if (file.size > 25 * 1024 * 1024) {
+      alert('File size must be less than 25MB')
       this.clearFileSelection()
       return
     }

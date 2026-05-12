@@ -44,8 +44,8 @@ export class RightPanel {
     container.appendChild(followSection)
 
     // Admax ad section
-    const adSection = this.createAdSection()
-    container.appendChild(adSection)
+    //const adSection = this.createAdSection()
+    //container.appendChild(adSection)
 
     return container
   }
