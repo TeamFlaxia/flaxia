@@ -294,7 +294,8 @@ export class ExplorePage {
       this.posts.forEach(post => {
         const postCard = createPostCard({
           post,
-          sandboxOrigin: this.props.sandboxOrigin
+          sandboxOrigin: this.props.sandboxOrigin,
+          depth: post.depth
         })
         fragment.appendChild(postCard.getElement())
       })
@@ -313,7 +314,8 @@ export class ExplorePage {
     newPosts.forEach(post => {
       const postCard = createPostCard({
         post,
-        sandboxOrigin: this.props.sandboxOrigin
+        sandboxOrigin: this.props.sandboxOrigin,
+        depth: post.depth
       })
       fragment.appendChild(postCard.getElement())
     })

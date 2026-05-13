@@ -118,6 +118,7 @@ export class ThreadView {
         post: data.root,
         sandboxOrigin: this.props.sandboxOrigin,
         currentUser: this.props.currentUser || undefined,
+        depth: data.root.depth,
         onDelete: () => {} // Add empty onDelete handler to prevent errors
       })
       content.appendChild(this.rootPostCard.getElement())

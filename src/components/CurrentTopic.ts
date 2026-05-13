@@ -206,7 +206,8 @@ export function createCurrentTopic(props: CurrentTopicProps): {
             post: state.topic,
             sandboxOrigin: props.sandboxOrigin,
             currentUser: props.currentUser,
-            initialMode: PostCardMode.PREVIEW
+            initialMode: PostCardMode.PREVIEW,
+            depth: state.topic.depth
           })
         }
         state.expanded = true

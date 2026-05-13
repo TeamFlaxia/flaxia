@@ -136,6 +136,7 @@ export class PostCard {
         replyCount: this.replyCount,
         impressions: this.impressions,
         isFreshed: this.isFreshed,
+        depth: this.props.depth ?? this.props.post.depth,
         onFreshToggle: () => this.handleFreshToggle(),
         onReplyToggle: () => this.handleReplyToggle(),
         onShare: () => this.handleShare()
@@ -413,6 +414,7 @@ export class PostCard {
         replyCount: this.replyCount,
         impressions: this.impressions,
         isFreshed: this.isFreshed,
+        depth: this.props.depth ?? this.props.post.depth,
         onFreshToggle: () => this.handleFreshToggle(),
         onReplyToggle: () => this.handleReplyToggle(),
         onShare: () => this.handleShare()

@@ -299,6 +299,7 @@ export class ThreadPage {
         post: data.root,
         sandboxOrigin: this.props.sandboxOrigin,
         currentUser: this.props.currentUser || undefined,
+        depth: data.root.depth,
         onDelete: () => {}, // Add empty onDelete handler to prevent errors
         disableReplyComposer: true // Disable only built-in reply composer, ThreadPage will handle replies
       })

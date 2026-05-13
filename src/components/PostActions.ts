@@ -8,9 +8,12 @@ export function createPostActions(props: PostActionsProps): HTMLElement {
   const freshButton = createActionButton('fresh', props.freshCount.toString(), props.isFreshed)
   freshButton.addEventListener('click', props.onFreshToggle)
 
-  // Reply button
-  const replyButton = createActionButton('reply', props.replyCount.toString(), false)
-  replyButton.addEventListener('click', props.onReplyToggle)
+  // Reply button (only show if depth < 2)
+  let replyButton: HTMLElement | null = null
+  if (props.depth < 2) {
+    replyButton = createActionButton('reply', props.replyCount.toString(), false)
+    replyButton.addEventListener('click', props.onReplyToggle)
+  }
 
   // Impressions button (display only, not clickable)
   const impressionsButton = createActionButton('impressions', props.impressions.toString(), false)
@@ -25,7 +28,9 @@ export function createPostActions(props: PostActionsProps): HTMLElement {
   })
 
   container.appendChild(freshButton)
-  container.appendChild(replyButton)
+  if (replyButton) {
+    container.appendChild(replyButton)
+  }
   container.appendChild(impressionsButton)
   container.appendChild(shareButton)
 

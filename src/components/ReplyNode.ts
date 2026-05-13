@@ -18,6 +18,9 @@ export class ReplyNode {
   private childReplyNodes: ReplyNode[] = []
   private isReplyComposerOpen: boolean = false
   private globalReplyListener?: (e: Event) => void
+  private isExpanded: boolean = false
+  private expandButton?: HTMLButtonElement
+  private childrenContainer?: HTMLElement
 
   constructor(props: ReplyNodeProps) {
     this.props = props
@@ -31,8 +34,7 @@ export class ReplyNode {
     container.style.cssText = `
       margin-bottom: 0.75rem;
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      border-left: 1px solid #e2e8f0;
-      padding-left: calc(${this.props.node.post.depth} * 1.25rem);
+      ${this.props.node.post.depth > 0 ? 'padding-left: 1rem;' : ''}
     `
 
     // Post card for this reply
@@ -41,9 +43,51 @@ export class ReplyNode {
       sandboxOrigin: this.props.sandboxOrigin,
       currentUser: this.props.currentUser || undefined,
       onDelete: () => {}, // Add empty onDelete handler to prevent errors
-      disableReplyComposer: true // Disable only PostCard's reply composer, ReplyNode handles replies
+      disableReplyComposer: true, // Disable only PostCard's reply composer, ReplyNode handles replies
+      depth: this.props.node.post.depth
     })
-    container.appendChild(this.postCard.getElement())
+    
+    // Create wrapper for post card and expand button
+    const postWrapper = document.createElement('div')
+    postWrapper.style.cssText = 'position: relative;'
+    postWrapper.appendChild(this.postCard.getElement())
+    
+    // Add expand button if this reply has children and depth > 0
+    if (this.props.node.children.length > 0 && this.props.node.post.depth > 0) {
+      this.expandButton = document.createElement('button')
+      this.expandButton.className = 'expand-button'
+      this.expandButton.innerHTML = '▶'
+      this.expandButton.style.cssText = `
+        position: absolute;
+        left: -1.5rem;
+        top: 0.5rem;
+        background: none;
+        border: none;
+        color: #64748b;
+        cursor: pointer;
+        font-size: 0.75rem;
+        padding: 0.25rem;
+        border-radius: 0.25rem;
+        transition: all 0.2s ease;
+        width: 1.25rem;
+        height: 1.25rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      `
+      this.expandButton.addEventListener('click', () => this.toggleExpanded())
+      this.expandButton.addEventListener('mouseenter', () => {
+        this.expandButton!.style.backgroundColor = '#f1f5f9'
+        this.expandButton!.style.color = '#334155'
+      })
+      this.expandButton.addEventListener('mouseleave', () => {
+        this.expandButton!.style.backgroundColor = 'none'
+        this.expandButton!.style.color = '#64748b'
+      })
+      postWrapper.appendChild(this.expandButton)
+    }
+    
+    container.appendChild(postWrapper)
 
     // Reply composer (hidden by default)
     this.replyComposer = createReplyComposer({
@@ -55,14 +99,15 @@ export class ReplyNode {
     this.replyComposer.getElement().style.display = 'none'
     container.appendChild(this.replyComposer.getElement())
 
-    // Children replies
+    // Children replies (hidden by default for depth >= 1)
     if (this.props.node.children.length > 0) {
-      const childrenContainer = document.createElement('div')
-      childrenContainer.className = 'reply-children'
-      childrenContainer.style.cssText = `
+      this.childrenContainer = document.createElement('div')
+      this.childrenContainer.className = 'reply-children'
+      this.childrenContainer.style.cssText = `
         margin-top: 0.75rem;
-        padding-left: 1.25rem;
-        border-left: 1px solid #e2e8f0;
+        padding-left: 1rem;
+        border-left: 2px solid #e2e8f0;
+        display: ${this.props.node.post.depth > 0 ? 'none' : 'block'};
       `
 
       this.props.node.children.forEach(childNode => {
@@ -73,10 +118,10 @@ export class ReplyNode {
           onReplyCreated: (newReply) => this.props.onReplyCreated(newReply)
         })
         this.childReplyNodes.push(childReplyNode)
-        childrenContainer.appendChild(childReplyNode.getElement())
+        this.childrenContainer!.appendChild(childReplyNode.getElement())
       })
 
-      container.appendChild(childrenContainer)
+      container.appendChild(this.childrenContainer)
     }
 
     return container
@@ -110,7 +155,7 @@ export class ReplyNode {
   }
 
   private showReplyComposer(): void {
-    if (this.replyComposer && this.props.node.post.depth < 5) {
+    if (this.replyComposer && this.props.node.post.depth < 2) {
       // Dispatch global event to close other reply composers
       document.dispatchEvent(new CustomEvent('replyComposerOpen', {
         detail: { postId: this.props.node.post.id }
@@ -125,6 +170,16 @@ export class ReplyNode {
     if (this.replyComposer) {
       this.replyComposer.getElement().style.display = 'none'
       this.isReplyComposerOpen = false
+    }
+  }
+
+  private toggleExpanded(): void {
+    this.isExpanded = !this.isExpanded
+    if (this.expandButton) {
+      this.expandButton.innerHTML = this.isExpanded ? '▼' : '▶'
+    }
+    if (this.childrenContainer) {
+      this.childrenContainer.style.display = this.isExpanded ? 'block' : 'none'
     }
   }
 

@@ -563,7 +563,8 @@ export class Timeline {
           post: item,
           currentUser: this.props.currentUser,
           sandboxOrigin: this.props.sandboxOrigin,
-          initialMode: 'preview' as any
+          initialMode: 'preview' as any,
+          depth: item.depth
         })
         
         // Insert post and check if we need to add an ad placeholder after it

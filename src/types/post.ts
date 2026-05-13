@@ -49,6 +49,7 @@ export interface PostCardProps {
   onDelete?: (postId: string) => void
   disableReply?: boolean
   disableReplyComposer?: boolean
+  depth?: number
 }
 
 export interface PostHeaderProps {
@@ -85,6 +86,7 @@ export interface PostActionsProps {
   replyCount: number
   impressions: number
   isFreshed: boolean
+  depth: number
   onFreshToggle: () => void
   onReplyToggle: () => void
   onShare?: () => void

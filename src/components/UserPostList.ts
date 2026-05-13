@@ -74,6 +74,7 @@ export function createUserPostList(props: {
         post,
         sandboxOrigin: props.sandboxOrigin,
         currentUser: props.currentUser,
+        depth: post.depth,
         onDelete: (postId) => {
           // Remove post from local state
           posts = posts.filter(p => p.id !== postId)
