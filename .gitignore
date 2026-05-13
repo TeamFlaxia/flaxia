@@ -19,6 +19,8 @@ build/
 
 # IDE
 .vscode/
+.gemini/
+.windsurf/
 .idea/
 *.swp
 *.swo

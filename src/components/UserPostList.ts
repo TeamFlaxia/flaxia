@@ -142,7 +142,9 @@ export function createUserPostList(props: {
       params.set('username', props.username)
       params.set('limit', '20')
       
-      const response = await fetch(`/api/posts?${params.toString()}`)
+      const response = await fetch(`/api/posts?${params.toString()}`, {
+        credentials: 'include'
+      })
 
       if (!response.ok) {
         throw new Error('Failed to fetch posts')
@@ -179,7 +181,9 @@ export function createUserPostList(props: {
       params.set('limit', '20')
       params.set('cursor', cursor)
       
-      const response = await fetch(`/api/posts?${params.toString()}`)
+      const response = await fetch(`/api/posts?${params.toString()}`, {
+        credentials: 'include'
+      })
 
       if (!response.ok) {
         throw new Error('Failed to fetch more posts')

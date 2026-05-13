@@ -675,9 +675,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (item === 'home') {
               window.history.pushState({}, '', '/home')
               navigateTo('timeline')
+            } else if (item === 'explore') {
+              window.history.pushState({}, '', '/explore')
+              navigateTo('explore')
+            } else if (item === 'arcade') {
+              window.history.pushState({}, '', '/arcade')
+              navigateTo('arcade')
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')
+            } else if (item === 'settings') {
+              window.history.pushState({}, '', '/settings')
+              navigateTo('settings')
             } else if (item === 'profile') {
               if (!currentUser) {
                 window.history.pushState({}, '', '/arcade')
@@ -756,9 +765,15 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'explore') {
               window.history.pushState({}, '', '/explore')
               navigateTo('explore')
+            } else if (item === 'arcade') {
+              window.history.pushState({}, '', '/arcade')
+              navigateTo('arcade')
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')
+            } else if (item === 'settings') {
+              window.history.pushState({}, '', '/settings')
+              navigateTo('settings')
             } else if (item === 'profile') {
               if (!currentUser) {
                 window.history.pushState({}, '', '/arcade')
@@ -844,6 +859,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')
+            } else if (item === 'settings') {
+              window.history.pushState({}, '', '/settings')
+              navigateTo('settings')
             } else if (item === 'profile') {
               if (!currentUser) {
                 window.history.pushState({}, '', '/arcade')
@@ -931,6 +949,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'arcade') {
               window.history.pushState({}, '', '/arcade')
               navigateTo('arcade')
+            } else if (item === 'notifications') {
+              window.history.pushState({}, '', '/notifications')
+              navigateTo('notifications')
+            } else if (item === 'settings') {
+              window.history.pushState({}, '', '/settings')
+              navigateTo('settings')
             } else if (item === 'profile') {
               if (!currentUser) {
                 window.history.pushState({}, '', '/arcade')
@@ -1024,6 +1048,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')
+            } else if (item === 'settings') {
+              window.history.pushState({}, '', '/settings')
+              navigateTo('settings')
             } else if (item === 'profile') {
               if (!currentUser) {
                 window.history.pushState({}, '', '/arcade')
@@ -1163,6 +1190,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')
+            } else if (item === 'settings') {
+              window.history.pushState({}, '', '/settings')
+              navigateTo('settings')
             } else if (item === 'profile') {
               if (!currentUser) {
                 window.history.pushState({}, '', '/arcade')

@@ -72,6 +72,9 @@ export class ThreadPage {
             window.history.pushState({}, '', '/notifications')
             window.location.reload()
           }
+        } else if (item === 'settings') {
+          window.history.pushState({}, '', '/settings')
+          window.location.reload()
         } else if (item === 'profile') {
           if (this.props.currentUser) {
             window.history.pushState({}, '', `/profile/${this.props.currentUser.username}`)

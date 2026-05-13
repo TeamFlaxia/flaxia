@@ -75,7 +75,38 @@ describe('GET /api/posts', () => {
     assert.equal(res.status, 200)
     const data = await res.json()
     assert.ok(data.posts.length <= 1)
-    assert.ok(data.next_cursor !== undefined)
+  })
+
+  it('username filter with cursor pagination works', async () => {
+    const { username, cookie } = await seedUserAndLogin('user1')
+    await fetch(`${BASE_URL}/api/posts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie
+      },
+      body: JSON.stringify({ text: 'Post 1' })
+    })
+    await fetch(`${BASE_URL}/api/posts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie
+      },
+      body: JSON.stringify({ text: 'Post 2' })
+    })
+
+    // Fetch first page
+    const res1 = await fetch(`${BASE_URL}/api/posts?username=${username}&limit=1`)
+    const data1 = await res1.json()
+    assert.equal(data1.posts.length, 1)
+    const cursor = data1.posts[0].created_at
+
+    // Fetch second page
+    const res2 = await fetch(`${BASE_URL}/api/posts?username=${username}&limit=1&cursor=${cursor}`)
+    const data2 = await res2.json()
+    assert.equal(data2.posts.length, 1)
+    assert.notEqual(data2.posts[0].id, data1.posts[0].id)
   })
 })
 

@@ -19,16 +19,14 @@ export class ExplorePage {
   private loadMoreSentinel: HTMLElement | null = null
   private retryCount = 0
   private maxRetries = 3
-  private touchStartX = 0
-  private touchStartY = 0
-  private touchStartTime = 0
+  private currentTab: 'recommended' | 'trending' = 'recommended'
+  private searchFilter: 'posts' | 'users' | 'arcade' = 'posts'
 
   constructor(props: ExplorePageProps) {
     this.props = props
     this.element = this.createElement()
     this.setupEventListeners()
-    this.setupSwipeDetection()
-    this.loadPosts()
+    this.loadContent()
   }
 
   private createElement(): HTMLElement {
@@ -48,21 +46,41 @@ export class ExplorePage {
       tagTitle.textContent = `# ${this.props.tag}`
       tagHeader.appendChild(tagTitle)
       container.appendChild(tagHeader)
+      
       const postsContainer = document.createElement('div')
       postsContainer.className = 'explore-posts'
       container.appendChild(postsContainer)
     } else {
-      // Trending view
-      const exploreHeader = document.createElement('div')
-      exploreHeader.className = 'explore-header'
-      const title = document.createElement('h1')
-      title.className = 'explore-title'
-      title.textContent = 'Explore'
-      exploreHeader.appendChild(title)
-      container.appendChild(exploreHeader)
-      const trendingContainer = document.createElement('div')
-      trendingContainer.className = 'explore-trending'
-      container.appendChild(trendingContainer)
+      // Explore tabs
+      const tabsContainer = document.createElement('div')
+      tabsContainer.className = 'explore-tabs'
+      tabsContainer.style.cssText = `
+        display: flex;
+        border-bottom: 1px solid var(--border);
+      `
+      
+      const recTab = this.createTab('For You', 'recommended')
+      const trendTab = this.createTab('Trending', 'trending')
+      
+      tabsContainer.appendChild(recTab)
+      tabsContainer.appendChild(trendTab)
+      container.appendChild(tabsContainer)
+
+      // Content container
+      const contentContainer = document.createElement('div')
+      contentContainer.className = 'explore-content'
+      
+      // Trending tags section (initially hidden or shown depending on tab)
+      const trendingTagsContainer = document.createElement('div')
+      trendingTagsContainer.className = 'explore-trending-tags'
+      trendingTagsContainer.style.display = 'none'
+      contentContainer.appendChild(trendingTagsContainer)
+
+      const postsContainer = document.createElement('div')
+      postsContainer.className = 'explore-posts'
+      contentContainer.appendChild(postsContainer)
+      
+      container.appendChild(contentContainer)
     }
 
     // Add loading container
@@ -71,7 +89,7 @@ export class ExplorePage {
     loadingContainer.style.cssText = 'display: none;'
     container.appendChild(loadingContainer)
     
-    // Add sentinel for intersection observer (outside posts container like Timeline)
+    // Add sentinel for intersection observer
     this.loadMoreSentinel = document.createElement('div')
     this.loadMoreSentinel.className = 'explore-sentinel'
     this.loadMoreSentinel.style.cssText = `
@@ -85,6 +103,43 @@ export class ExplorePage {
     container.appendChild(this.loadMoreSentinel)
     
     return container
+  }
+
+  private createTab(label: string, id: 'recommended' | 'trending'): HTMLElement {
+    const tab = document.createElement('div')
+    tab.className = `explore-tab ${this.currentTab === id ? 'active' : ''}`
+    tab.textContent = label
+    tab.style.cssText = `
+      flex: 1;
+      text-align: center;
+      padding: 1rem;
+      cursor: pointer;
+      font-weight: ${this.currentTab === id ? 'bold' : 'normal'};
+      color: ${this.currentTab === id ? 'var(--text-primary)' : 'var(--text-muted)'};
+      border-bottom: 2px solid ${this.currentTab === id ? 'var(--accent)' : 'transparent'};
+      transition: all 0.2s ease;
+    `
+    
+    tab.onclick = () => {
+      if (this.currentTab === id) return
+      this.currentTab = id
+      this.resetAndReload()
+      
+      // Update UI
+      this.element.querySelectorAll('.explore-tab').forEach(t => {
+        const h = t as HTMLElement
+        h.classList.remove('active')
+        h.style.fontWeight = 'normal'
+        h.style.color = 'var(--text-muted)'
+        h.style.borderBottomColor = 'transparent'
+      })
+      tab.classList.add('active')
+      tab.style.fontWeight = 'bold'
+      tab.style.color = 'var(--text-primary)'
+      tab.style.borderBottomColor = 'var(--accent)'
+    }
+    
+    return tab
   }
 
   private createSearchSection(): HTMLElement {
@@ -101,11 +156,45 @@ export class ExplorePage {
           type="text" 
           class="search-input" 
           placeholder="Search Flaxia"
-          style="width: 100%; padding: 0.75rem 1rem 0.75rem 2.5rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: 9999px; color: var(--text-primary); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 0.875rem; outline: none; transition: border-color 0.2s ease;"
+          style="width: 100%; padding: 0.75rem 1rem 0.75rem 2.5rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: 9999px; color: var(--text-primary); font-family: inherit; font-size: 0.875rem; outline: none; transition: border-color 0.2s ease;"
         />
         <span class="search-icon" style="position: absolute; left: 0.75rem; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 0.875rem;">🔍</span>
       </div>
+      <div class="search-filters" style="display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.25rem;">
+        <button class="filter-btn active" data-filter="posts">Posts</button>
+        <button class="filter-btn" data-filter="users">Users</button>
+        <button class="filter-btn" data-filter="arcade">Arcade</button>
+      </div>
     `
+
+    // Style filter buttons
+    const filterBtns = section.querySelectorAll('.filter-btn')
+    filterBtns.forEach(btn => {
+      const b = btn as HTMLElement
+      const isActive = b.dataset.filter === this.searchFilter
+      b.style.cssText = `
+        padding: 0.4rem 1rem;
+        border-radius: 999px;
+        border: 1px solid ${isActive ? 'var(--accent)' : 'var(--border)'};
+        background: ${isActive ? 'var(--accent)' : 'transparent'};
+        color: ${isActive ? 'white' : 'var(--text-muted)'};
+        font-size: 0.8rem;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all 0.2s ease;
+      `
+      
+      b.onclick = () => {
+        this.searchFilter = b.dataset.filter as any
+        filterBtns.forEach(other => {
+          const o = other as HTMLElement
+          const isNowActive = o.dataset.filter === this.searchFilter
+          o.style.border = `1px solid ${isNowActive ? 'var(--accent)' : 'var(--border)'}`
+          o.style.background = isNowActive ? 'var(--accent)' : 'transparent'
+          o.style.color = isNowActive ? 'white' : 'var(--text-muted)'
+        })
+      }
+    })
 
     return section
   }
@@ -114,10 +203,6 @@ export class ExplorePage {
     // Search functionality
     const searchInput = this.element.querySelector('.search-input') as HTMLInputElement
     if (searchInput) {
-      searchInput.addEventListener('input', (e) => {
-        // Just update input value, no auto-search
-      })
-
       searchInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') {
           const query = searchInput.value.trim()
@@ -132,81 +217,27 @@ export class ExplorePage {
     this.setupIntersectionObserver()
   }
 
-  private async performSearch(query: string): Promise<void> {
-    try {
-      console.log('Searching for:', query)
-      
-      // Show loading state
-      const searchBox = this.element.querySelector('.search-box')
-      if (searchBox) {
-        searchBox.classList.add('searching')
-      }
-
-      // Search posts
-      const postsResponse = await fetch(`/api/search?q=${encodeURIComponent(query)}&type=posts&limit=10`)
-      const postsData = postsResponse.ok ? await postsResponse.json() as { results: any[] } : { results: [] }
-
-      // Search users
-      const usersResponse = await fetch(`/api/search?q=${encodeURIComponent(query)}&type=users&limit=5`)
-      const usersData = usersResponse.ok ? await usersResponse.json() as { results: any[] } : { results: [] }
-
-      // Remove loading state
-      if (searchBox) {
-        searchBox.classList.remove('searching')
-      }
-
-      // Import and show search results
-      const { createSearchResults } = await import('./SearchResults.js')
-      const searchResults = createSearchResults({
-        query,
-        posts: postsData.results || [],
-        users: usersData.results || [],
-        onClose: () => {
-          safeRemoveFromBody(searchResults)
-        }
-      })
-
-      document.body.appendChild(searchResults)
-
-    } catch (error) {
-      console.error('Search error:', error)
-      
-      // Remove loading state
-      const searchBox = this.element.querySelector('.search-box')
-      if (searchBox) {
-        searchBox.classList.remove('searching')
-      }
-    }
+  private resetAndReload(): void {
+    this.posts = []
+    this.cursor = undefined
+    this.hasMore = true
+    const postsContainer = this.element.querySelector('.explore-posts')
+    if (postsContainer) postsContainer.innerHTML = ''
+    this.loadContent()
   }
 
-  private async loadPosts(): Promise<void> {
+  private async loadContent(): Promise<void> {
     if (this.loading) return
-
     this.loading = true
     this.updateLoadingState(true)
 
     try {
       if (this.props.tag) {
-        // Load posts with this tag
-        let url = `/api/posts?hashtag=${encodeURIComponent(this.props.tag)}&limit=10`
-        if (this.cursor) {
-          url += `&cursor=${encodeURIComponent(this.cursor)}`
-        }
-
-        const response = await fetch(url)
-        if (!response.ok) {
-          throw new Error('Failed to load posts')
-        }
-
-        const data = await response.json() as { posts: Post[] }
-        this.posts = data.posts || []
-        this.hasMore = this.posts.length === 10 && this.posts.length > 0
-        this.cursor = this.posts.length > 0 ? this.posts[this.posts.length - 1].created_at : undefined
-
-        this.renderPosts()
+        await this.loadTagPosts()
+      } else if (this.currentTab === 'recommended') {
+        await this.loadRecommendedPosts()
       } else {
-        // Load trending tags
-        await this.loadTrendingTags()
+        await this.loadTrendingContent()
       }
     } catch (error) {
       console.error('Failed to load explore content:', error)
@@ -217,65 +248,124 @@ export class ExplorePage {
   }
 
   private async loadMorePosts(): Promise<void> {
-    if (this.loading || !this.hasMore || !this.props.tag) return
+    if (this.loading || !this.hasMore) return
 
     this.loading = true
     this.updateLoadingState(true)
 
     try {
-      let url = `/api/posts?hashtag=${encodeURIComponent(this.props.tag)}&limit=10`
+      let url = ''
+      if (this.props.tag) {
+        url = `/api/posts?hashtag=${encodeURIComponent(this.props.tag)}&limit=10`
+      } else if (this.currentTab === 'trending') {
+        url = `/api/posts/trending?limit=10`
+      } else {
+        this.hasMore = false
+        return
+      }
+
       if (this.cursor) {
         url += `&cursor=${encodeURIComponent(this.cursor)}`
       }
 
       const response = await fetch(url)
-      if (!response.ok) {
-        throw new Error(`Failed to load more posts: ${response.status}`)
-      }
-
+      if (!response.ok) throw new Error('Failed to load more posts')
+      
       const data = await response.json() as { posts: Post[] }
       const newPosts = data.posts || []
 
       if (newPosts.length > 0) {
         this.posts.push(...newPosts)
         this.cursor = newPosts[newPosts.length - 1].created_at
-        this.hasMore = newPosts.length === 10 && newPosts.length > 0
-        this.appendNewPosts(newPosts)
-        this.retryCount = 0 // Reset retry count on success
+        this.hasMore = newPosts.length === 10
+        this.renderPosts()
       } else {
         this.hasMore = false
         this.showEndOfPosts()
       }
     } catch (error) {
       console.error('Failed to load more posts:', error)
-      this.retryCount++
-      
-      if (this.retryCount < this.maxRetries) {
-        // Retry with exponential backoff
-        const delay = Math.pow(2, this.retryCount) * 1000
-        setTimeout(() => this.loadMorePosts(), delay)
-      } else {
-        this.showLoadError()
-      }
+      this.showLoadError()
     } finally {
       this.loading = false
       this.updateLoadingState(false)
     }
   }
 
-  private async loadTrendingTags(): Promise<void> {
+  private async loadTagPosts(): Promise<void> {
+    let url = `/api/posts?hashtag=${encodeURIComponent(this.props.tag!)}&limit=10`
+    if (this.cursor) {
+      url += `&cursor=${encodeURIComponent(this.cursor)}`
+    }
+    const response = await fetch(url)
+    if (!response.ok) throw new Error('Failed to load tag posts')
+    const data = await response.json() as { posts: Post[] }
+    this.handleNewPosts(data.posts)
+  }
+
+  private async loadRecommendedPosts(): Promise<void> {
+    const url = `/api/posts/recommended?limit=10`
+    const response = await fetch(url)
+    if (!response.ok) throw new Error('Failed to load recommended posts')
+    const data = await response.json() as { posts: Post[] }
+    this.handleNewPosts(data.posts)
+    this.hasMore = false // Recommendation is currently single page
+  }
+
+  private async loadTrendingContent(): Promise<void> {
+    // Load both trending tags and trending posts
+    const [tagsRes, postsRes] = await Promise.all([
+      fetch('/api/tags/trending'),
+      fetch('/api/posts/trending?limit=10')
+    ])
+
+    if (tagsRes.ok) {
+      const tagsData = await tagsRes.json()
+      this.renderTrendingTags(tagsData.tags || [])
+    }
+
+    if (postsRes.ok) {
+      const postsData = await postsRes.json()
+      this.handleNewPosts(postsData.posts || [])
+    }
+  }
+
+  private handleNewPosts(newPosts: Post[]): void {
+    if (newPosts.length > 0) {
+      this.posts.push(...newPosts)
+      this.cursor = newPosts[newPosts.length - 1].created_at
+      this.hasMore = newPosts.length === 10
+      this.renderPosts()
+    } else {
+      this.hasMore = false
+      if (this.posts.length > 0) this.showEndOfPosts()
+    }
+  }
+
+  private async performSearch(query: string): Promise<void> {
     try {
-      const response = await fetch('/api/tags/trending')
-      if (!response.ok) {
-        throw new Error('Failed to load trending tags')
-      }
+      const searchBox = this.element.querySelector('.search-box')
+      if (searchBox) searchBox.classList.add('searching')
 
-      const data = await response.json() as { tags: Array<{ tag: string; count: number; percentage: number }> }
-      const tags = data.tags || []
+      const response = await fetch(`/api/search?q=${encodeURIComponent(query)}&type=${this.searchFilter}&limit=20`)
+      const data = await response.json()
 
-      this.renderTrendingTags(tags)
+      if (searchBox) searchBox.classList.remove('searching')
+
+      const { createSearchResults } = await import('./SearchResults.js')
+      const searchResults = createSearchResults({
+        query,
+        posts: this.searchFilter === 'users' ? [] : data.results || [],
+        users: this.searchFilter === 'users' ? data.results || [] : [],
+        type: this.searchFilter,
+        onClose: () => {
+          safeRemoveFromBody(searchResults)
+        }
+      })
+
+      document.body.appendChild(searchResults)
     } catch (error) {
-      console.error('Failed to load trending tags:', error)
+      console.error('Search error:', error)
     }
   }
 
@@ -283,35 +373,15 @@ export class ExplorePage {
     const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement
     if (!postsContainer) return
 
-    // Only clear and re-render if this is the initial load or if we need to refresh
-    // For infinite scroll, we'll append new posts instead
-    if (this.cursor === undefined || postsContainer.children.length === 0) {
+    // If initial load, clear container
+    if (this.posts.length <= 10 && postsContainer.children.length > 0 && !this.cursor) {
       postsContainer.innerHTML = ''
-      
-      // Use document fragment for better performance
-      const fragment = document.createDocumentFragment()
-      
-      this.posts.forEach(post => {
-        const postCard = createPostCard({
-          post,
-          sandboxOrigin: this.props.sandboxOrigin,
-          depth: post.depth
-        })
-        fragment.appendChild(postCard.getElement())
-      })
-      
-      postsContainer.appendChild(fragment)
     }
-  }
 
-  private appendNewPosts(newPosts: Post[]): void {
-    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement
-    if (!postsContainer) return
-
-    // Use document fragment for better performance
     const fragment = document.createDocumentFragment()
+    const startIndex = postsContainer.children.length
     
-    newPosts.forEach(post => {
+    this.posts.slice(startIndex).forEach(post => {
       const postCard = createPostCard({
         post,
         sandboxOrigin: this.props.sandboxOrigin,
@@ -323,51 +393,33 @@ export class ExplorePage {
     postsContainer.appendChild(fragment)
   }
 
-  private renderTrendingTags(tags: Array<{ tag: string; count: number; percentage: number }>): void {
-    const trendingContainer = this.element.querySelector('.explore-trending') as HTMLElement
-    if (!trendingContainer) return
+  private renderTrendingTags(tags: any[]): void {
+    const container = this.element.querySelector('.explore-trending-tags') as HTMLElement
+    if (!container) return
 
-    trendingContainer.innerHTML = ''
-
-    if (tags.length === 0) {
-      trendingContainer.innerHTML = `
-        <div style="text-align: center; padding: 2rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-          No trending tags yet
-        </div>
-      `
-      return
-    }
+    container.innerHTML = '<h2 style="padding: 1rem; font-size: 1.25rem; border-bottom: 1px solid var(--border);">Trending Tags</h2>'
+    container.style.display = this.currentTab === 'trending' ? 'block' : 'none'
+    container.style.background = 'var(--bg-secondary)'
+    container.style.marginBottom = '1rem'
 
     tags.forEach(({ tag, percentage }) => {
       const item = document.createElement('div')
       item.className = 'trending-item'
       item.style.cssText = `
-        padding: 1rem;
-        border-bottom: 1px solid var(--border);
+        padding: 0.75rem 1rem;
         cursor: pointer;
         transition: background-color 0.2s ease;
+        border-bottom: 1px solid var(--border);
       `
-
-      const tagEl = document.createElement('div')
-      tagEl.style.cssText = "font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--accent); font-size: 1rem; font-weight: 600; margin-bottom: 0.25rem;"
-      tagEl.textContent = `# ${tag}`
-
-      const percentageEl = document.createElement('div')
-      percentageEl.style.cssText = "font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--text-muted); font-size: 0.875rem;"
-      percentageEl.textContent = `${percentage}% trending`
-
-      item.appendChild(tagEl)
-      item.appendChild(percentageEl)
-
-      item.onmouseover = () => item.style.background = 'var(--bg-secondary)'
-      item.onmouseout = () => item.style.background = 'transparent'
-      
+      item.innerHTML = `
+        <div style="color: var(--accent); font-weight: 600;"># ${tag}</div>
+        <div style="font-size: 0.8rem; color: var(--text-muted);">${percentage}% trending</div>
+      `
       item.onclick = () => {
         window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`)
         window.location.reload()
       }
-
-      trendingContainer.appendChild(item)
+      container.appendChild(item)
     })
   }
 

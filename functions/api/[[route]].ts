@@ -2216,21 +2216,6 @@ app.get('/api/posts', async (c) => {
       }
     } else if (following && currentUserId) {
       // Following tab - show posts from followed users and current user's own posts
-      query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
-        (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, 
-        COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at 
-        FROM posts p 
-        LEFT JOIN users u ON p.user_id = u.id 
-        WHERE (
-          p.user_id IN (
-            SELECT followee_id FROM follows WHERE follower_id = ?
-          )
-          OR p.user_id = ?
-        )
-        AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL 
-        ORDER BY p.created_at DESC LIMIT ?`
-      params.push(currentUserId, currentUserId, limit)
-      
       if (cursor) {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
           (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, 
@@ -2245,25 +2230,40 @@ app.get('/api/posts', async (c) => {
           )
           AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? 
           ORDER BY p.created_at DESC LIMIT ?`
-        params.unshift(cursor)
+        params = [currentUserId, currentUserId, cursor, limit]
+      } else {
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
+          (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, 
+          COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at 
+          FROM posts p 
+          LEFT JOIN users u ON p.user_id = u.id 
+          WHERE (
+            p.user_id IN (
+              SELECT followee_id FROM follows WHERE follower_id = ?
+            )
+            OR p.user_id = ?
+          )
+          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL 
+          ORDER BY p.created_at DESC LIMIT ?`
+        params = [currentUserId, currentUserId, limit]
       }
     } else if (username) {
       // Username filter - show posts from specific user
-      query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 ORDER BY p.created_at DESC LIMIT ?'
-      params.push(username, limit)
-      
       if (cursor) {
         query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?'
-        params.unshift(cursor)
+        params = [username, cursor, limit]
+      } else {
+        query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 ORDER BY p.created_at DESC LIMIT ?'
+        params = [username, limit]
       }
     } else {
       // Regular timeline query (For You tab)
-      query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = \'published\' AND p.hidden = 0 AND p.parent_id IS NULL ORDER BY p.created_at DESC LIMIT ?'
-      params.push(limit)
-      
       if (cursor) {
         query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = \'published\' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?'
-        params.unshift(cursor)
+        params = [cursor, limit]
+      } else {
+        query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = \'published\' AND p.hidden = 0 AND p.parent_id IS NULL ORDER BY p.created_at DESC LIMIT ?'
+        params = [limit]
       }
     }
     
@@ -2299,6 +2299,144 @@ app.get('/api/posts', async (c) => {
   } catch (error: any) {
     console.error('Posts fetch error:', error)
     return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500)
+  }
+})
+
+// GET /api/posts/trending - get trending posts based on engagement and time decay
+app.get('/api/posts/trending', async (c) => {
+  try {
+    const limit = Math.min(Number(c.req.query('limit') || '20'), 50)
+    const cursor = c.req.query('cursor')
+    
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500)
+    }
+
+    // Get current user for fresh status
+    let currentUserId: string | null = null
+    const token = getSessionToken(c.req.raw)
+    const sessionData = token ? await getSession(c.env, token) : null
+    if (sessionData) {
+      currentUserId = sessionData.user.id
+    }
+
+    // Trending algorithm: (fresh_count * 2 + reply_count * 3 + impressions * 0.1 + 1) / (hours_since_creation + 2)^1.5
+    // SQLite doesn't have POW, so we use (hours + 2) * (hours + 2) as a simpler decay
+    let query = `
+      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
+      (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, 
+      COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+      ((p.fresh_count * 2.0 + (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') * 3.0 + p.impressions * 0.1 + 1.0) / 
+      ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0) * ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0)) as score
+      FROM posts p 
+      LEFT JOIN users u ON p.user_id = u.id 
+      WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
+    `
+    const params: any[] = []
+
+    if (cursor) {
+      query += ` AND p.created_at < ?`
+      params.push(cursor)
+    }
+
+    query += ` ORDER BY score DESC, p.created_at DESC LIMIT ?`
+    params.push(limit)
+
+    const result = await c.env.DB.prepare(query).bind(...params).all()
+    const posts = result.results || []
+
+    // Add fresh status for current user if logged in
+    if (currentUserId && posts.length > 0) {
+      const postIds = posts.map((p: any) => p.id)
+      const freshResult = await c.env.DB.prepare(
+        `SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`
+      ).bind(currentUserId, ...postIds).all()
+      
+      const freshedPostIds = new Set((freshResult.results || []).map((f: any) => f.post_id))
+      posts.forEach((post: any) => {
+        post.is_freshed = freshedPostIds.has(post.id)
+      })
+    }
+
+    return c.json({ posts })
+  } catch (error: any) {
+    console.error('Trending posts error:', error)
+    return c.json({ error: 'Internal server error' }, 500)
+  }
+})
+
+// GET /api/posts/recommended - get recommended posts for the user
+app.get('/api/posts/recommended', async (c) => {
+  try {
+    const limit = Math.min(Number(c.req.query('limit') || '20'), 50)
+    
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500)
+    }
+
+    const token = getSessionToken(c.req.raw)
+    const sessionData = token ? await getSession(c.env, token) : null
+    const currentUserId = sessionData?.user?.id
+
+    let query: string
+    let params: any[] = []
+
+    if (currentUserId) {
+      // For logged in users: 
+      // 1. Posts from people they follow that are recent and popular
+      // 2. Popular posts in their preferred language (if set)
+      // 3. Fallback to general trending
+      const userLang = sessionData.user.language || 'en'
+      
+      query = `
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
+        (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, 
+        COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
+        FROM posts p 
+        LEFT JOIN users u ON p.user_id = u.id 
+        WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
+        AND p.user_id != ?
+        ORDER BY 
+          (CASE WHEN p.user_id IN (SELECT followee_id FROM follows WHERE follower_id = ?) THEN 2 ELSE 1 END) * 
+          ((p.fresh_count * 2.0 + p.impressions * 0.1 + 1.0) / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0)) DESC
+        LIMIT ?
+      `
+      params = [currentUserId, currentUserId, limit]
+    } else {
+      // For guests: just show general trending/popular posts
+      query = `
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
+        (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, 
+        COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
+        FROM posts p 
+        LEFT JOIN users u ON p.user_id = u.id 
+        WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
+        ORDER BY (p.fresh_count * 2.0 + p.impressions * 0.1 + 1.0) / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0) DESC
+        LIMIT ?
+      `
+      params = [limit]
+    }
+
+    const result = await c.env.DB.prepare(query).bind(...params).all()
+    const posts = result.results || []
+
+    // Add fresh status if logged in
+    if (currentUserId && posts.length > 0) {
+      const postIds = posts.map((p: any) => p.id)
+      const freshResult = await c.env.DB.prepare(
+        `SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`
+      ).bind(currentUserId, ...postIds).all()
+      
+      const freshedPostIds = new Set((freshResult.results || []).map((f: any) => f.post_id))
+      posts.forEach((post: any) => {
+        post.is_freshed = freshedPostIds.has(post.id)
+      })
+    }
+
+    return c.json({ posts })
+  } catch (error: any) {
+    console.error('Recommended posts error:', error)
+    return c.json({ error: 'Internal server error' }, 500)
   }
 })
 
@@ -3994,29 +4132,44 @@ app.get('/api/search', async (c) => {
         LIMIT ?
       `).bind(searchTerm, searchTerm, limit).all()
       
-      return c.json({ 
+      return c.json({
         type: 'users',
         query,
         results: users.results || []
       })
-    } else {
-      // Search posts (default)
+      } else if (type === 'arcade') {
+      // Search arcade (posts with swf_key or payload_key)
       const posts = await c.env.DB.prepare(`
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at 
-        FROM posts p 
-        LEFT JOIN users u ON p.user_id = u.id 
-        WHERE p.status = 'published' AND (p.text LIKE ? OR p.username LIKE ?)
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
+        FROM posts p
+        LEFT JOIN users u ON p.user_id = u.id
+        WHERE p.status = 'published' AND p.hidden = 0 AND (p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL) AND (p.text LIKE ? OR p.username LIKE ?)
         ORDER BY p.created_at DESC
         LIMIT ?
       `).bind(searchTerm, searchTerm, limit).all()
-      
-      return c.json({ 
+
+      return c.json({
+        type: 'arcade',
+        query,
+        results: posts.results || []
+      })
+      } else {
+      // Search posts (default)
+      const posts = await c.env.DB.prepare(`
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
+        FROM posts p
+        LEFT JOIN users u ON p.user_id = u.id
+        WHERE p.status = 'published' AND p.hidden = 0 AND (p.text LIKE ? OR p.username LIKE ?)
+        ORDER BY p.created_at DESC
+        LIMIT ?
+      `).bind(searchTerm, searchTerm, limit).all()
+
+      return c.json({
         type: 'posts',
         query,
         results: posts.results || []
       })
-    }
-  } catch (error: any) {
+      }  } catch (error: any) {
     console.error('Search error:', error)
     return c.json({ error: 'Search failed', details: error?.message || 'Unknown error' }, 500)
   }

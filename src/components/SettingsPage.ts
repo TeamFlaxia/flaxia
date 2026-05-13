@@ -1,3 +1,5 @@
+import { clearMeCache } from '../lib/auth-cache'
+
 interface SettingsPageProps {
   currentUser?: {
     id: string
@@ -27,6 +29,105 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     margin-bottom: 2rem;
     color: var(--text-primary);
   `
+
+  container.appendChild(header)
+
+  // Account Section
+  if (currentUser) {
+    const accountSection = document.createElement('div')
+    accountSection.className = 'settings-section'
+    accountSection.style.cssText = `
+      margin-bottom: 2rem;
+      padding: 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg-primary);
+    `
+
+    const accountTitle = document.createElement('h2')
+    accountTitle.textContent = 'Account'
+    accountTitle.style.cssText = `
+      font-size: 1.125rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--text-primary);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.5rem;
+    `
+
+    const userChip = document.createElement('div')
+    userChip.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    `
+
+    const avatarUrl = currentUser.avatar_key ? `/api/images/${currentUser.avatar_key}` : '/api/images/default-avatar'
+    const displayName = currentUser.display_name || currentUser.username
+
+    userChip.innerHTML = `
+      <img src="${avatarUrl}" alt="${displayName}" style="
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 1px solid var(--border);
+      " onerror="this.src='/api/images/default-avatar'">
+      <div style="flex: 1; min-width: 0;">
+        <div style="font-size: 1.125rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>
+        <div style="color: var(--text-muted); font-family: monospace; font-size: 0.875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">@${currentUser.username}</div>
+      </div>
+    `
+
+    const logoutButton = document.createElement('button')
+    logoutButton.textContent = 'Log out'
+    logoutButton.style.cssText = `
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+      padding: 0.75rem 1.5rem;
+      border-radius: 9999px;
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 600;
+      transition: all 0.2s;
+    `
+
+    logoutButton.addEventListener('mouseenter', () => {
+      logoutButton.style.backgroundColor = 'var(--bg-tertiary)'
+    })
+    logoutButton.addEventListener('mouseleave', () => {
+      logoutButton.style.backgroundColor = 'var(--bg-secondary)'
+    })
+
+    logoutButton.addEventListener('click', async () => {
+      if (confirm(`Log out of @${currentUser.username}?`)) {
+        try {
+          const response = await fetch('/api/auth/logout', {
+            method: 'POST',
+            credentials: 'include'
+          })
+          
+          if (response.ok) {
+            clearMeCache()
+            window.location.href = '/'
+          } else {
+            alert('Logout failed')
+          }
+        } catch (error) {
+          console.error('Logout error:', error)
+          alert('Logout error')
+        }
+      }
+    })
+
+    accountSection.appendChild(accountTitle)
+    accountSection.appendChild(userChip)
+    accountSection.appendChild(logoutButton)
+    container.appendChild(accountSection)
+  }
+
 
   // Language Section
   const languageSection = document.createElement('div')
