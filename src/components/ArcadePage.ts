@@ -601,21 +601,12 @@ export class ArcadePage {
       z-index: 10;
     `
 
-    // Like button
-    const likeBtn = this.createActionButton(
-      game.isFreshed ? '❤️' : '🤍',
-      game.freshCount.toString(),
-      () => this.handleLike(game.id)
-    )
-    likeBtn.classList.add('arcade-like-btn')
-
     // Details button
     const detailsBtn = this.createActionButton('ℹ️', 'Details', () => this.handleDetails(game.id))
 
     // Fullscreen button
     const fullscreenBtn = this.createActionButton('⛶', 'Fullscreen', () => this.handleFullscreen())
 
-    container.appendChild(likeBtn)
     container.appendChild(detailsBtn)
     container.appendChild(fullscreenBtn)
 
@@ -858,38 +849,6 @@ export class ArcadePage {
     }, 300)
   }
 
-  private async handleLike(gameId: string): Promise<void> {
-    try {
-      const response = await fetch(`/api/posts/${gameId}/fresh`, {
-        method: 'POST',
-        credentials: 'include'
-      })
-      
-      if (response.ok) {
-        // Update UI
-        const likeBtn = this.floatingActions?.querySelector('.arcade-like-btn') as HTMLElement
-        if (likeBtn) {
-          const icon = likeBtn.querySelector('span:first-child')
-          if (icon) icon.textContent = '❤️'
-        }
-        
-        // Update local game data and clear cache
-        const gameIndex = this.games.findIndex(g => g.id === gameId)
-        if (gameIndex !== -1) {
-          const result = await response.json() as { freshed: boolean }
-          this.games[gameIndex].isFreshed = result.freshed
-          this.games[gameIndex].freshCount += result.freshed ? 1 : -1
-          
-          // Clear cache since data changed
-          this.cache.clear()
-        }
-      }
-    } catch (error) {
-      console.error('Failed to like game:', error)
-    }
-  }
-
-  
   private handleDetails(gameId: string): void {
     window.history.pushState({}, '', `/thread/${gameId}`)
     // Navigate to thread page
