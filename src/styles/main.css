@@ -646,6 +646,11 @@ p {
     display: block !important;
   }
   
+  .left-nav .nav-legal-links a {
+    display: block;
+    padding: 0.5rem 0;
+  }
+  
   .left-nav .nav-post-button {
     display: block !important;
   }

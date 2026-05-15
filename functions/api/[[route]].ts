@@ -41,10 +41,10 @@ app.put('/api/upload/*', async (c) => {
       return c.json({ error: 'Missing file key' }, 400)
     }
     
-    // Check file size limit (10MB = 10 * 1024 * 1024 bytes)
-    const maxSize = 10 * 1024 * 1024
+    // Check file size limit (25MB = 25 * 1024 * 1024 bytes)
+    const maxSize = 25 * 1024 * 1024
     if (contentLength && Number(contentLength) > maxSize) {
-      return c.json({ error: 'File too large. Maximum size is 10MB' }, 413)
+      return c.json({ error: 'File too large. Maximum size is 25MB' }, 413)
     }
     
     // Get the file data from request body
@@ -52,7 +52,7 @@ app.put('/api/upload/*', async (c) => {
     
     // Double-check file size after reading
     if (fileData.byteLength > maxSize) {
-      return c.json({ error: 'File too large. Maximum size is 10MB' }, 413)
+      return c.json({ error: 'File too large. Maximum size is 25MB' }, 413)
     }
     
     if (!c.env.BUCKET) {
@@ -4230,6 +4230,16 @@ app.delete('/api/posts/:id', requireAuth, async (c) => {
         }
       }
     }
+    
+    // Delete all replies (and their replies) to this post
+    const deleteReplies = async (id: string) => {
+      const replies = await c.env.DB.prepare('SELECT id FROM posts WHERE parent_id = ?').bind(id).all() as { results: { id: string }[] }
+      for (const reply of replies.results) {
+        await deleteReplies(reply.id)
+        await c.env.DB.prepare('DELETE FROM posts WHERE id = ?').bind(reply.id).run()
+      }
+    }
+    await deleteReplies(postId)
     
     // Delete the post
     const result = await c.env.DB.prepare('DELETE FROM posts WHERE id = ?').bind(postId).run()

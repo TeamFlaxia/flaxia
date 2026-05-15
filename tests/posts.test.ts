@@ -335,6 +335,47 @@ describe('DELETE /api/posts/:id', () => {
     assert.equal(res.status, 200)
   })
 
+  it('deletes own post with a reply → 200', async () => {
+    const { cookie } = await seedUserAndLogin('1')
+    
+    // Create parent post
+    const parentRes = await fetch(`${BASE_URL}/api/posts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie
+      },
+      body: JSON.stringify({ text: 'Parent post' })
+    })
+    const parentData = await parentRes.json()
+    const parentId = parentData.id
+
+    // Create reply
+    await fetch(`${BASE_URL}/api/posts/${parentId}/replies/prepare`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie
+      },
+      body: JSON.stringify({ text: 'Reply' })
+    })
+    await fetch(`${BASE_URL}/api/posts/${parentId}/replies/commit`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie
+      },
+      body: JSON.stringify({ text: 'Reply' })
+    })
+
+    // Try to delete parent post
+    const res = await fetch(`${BASE_URL}/api/posts/${parentId}`, {
+      method: 'DELETE',
+      headers: { Cookie: cookie }
+    })
+    assert.equal(res.status, 200)
+  })
+
   it('rejects deleting other\'s post → 403', async () => {
     await seedUserAndLogin('1')
     const { cookie: cookie2 } = await seedUserAndLogin('2')
