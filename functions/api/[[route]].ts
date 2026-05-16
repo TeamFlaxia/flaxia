@@ -2307,7 +2307,10 @@ app.get('/api/posts/trending', async (c) => {
   try {
     const limit = Math.min(Number(c.req.query('limit') || '20'), 50)
     const cursor = c.req.query('cursor')
-    
+    const [cursorScore, cursorCreatedAt] = cursor ? cursor.split(',') : [null, null]
+    let numericScore = cursorScore !== null ? parseFloat(cursorScore) : null
+    if (isNaN(numericScore!)) numericScore = null
+
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500)
     }
@@ -2331,16 +2334,11 @@ app.get('/api/posts/trending', async (c) => {
       FROM posts p 
       LEFT JOIN users u ON p.user_id = u.id 
       WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
+      ${numericScore !== null ? 'AND (score < ? OR (score = ? AND p.created_at < ?))' : ''}
+      ORDER BY score DESC, p.created_at DESC
+      LIMIT ?
     `
-    const params: any[] = []
-
-    if (cursor) {
-      query += ` AND p.created_at < ?`
-      params.push(cursor)
-    }
-
-    query += ` ORDER BY score DESC, p.created_at DESC LIMIT ?`
-    params.push(limit)
+    const params: any[] = numericScore !== null ? [numericScore, numericScore, cursorCreatedAt, limit] : [limit]
 
     const result = await c.env.DB.prepare(query).bind(...params).all()
     const posts = result.results || []
@@ -2369,7 +2367,12 @@ app.get('/api/posts/trending', async (c) => {
 app.get('/api/posts/recommended', async (c) => {
   try {
     const limit = Math.min(Number(c.req.query('limit') || '20'), 50)
-    
+    const cursor = c.req.query('cursor')
+    // Cursor is expected to be "score,created_at"
+    const [cursorScore, cursorCreatedAt] = cursor ? cursor.split(',') : [null, null]
+    let numericScore = cursorScore !== null ? parseFloat(cursorScore) : null
+    if (isNaN(numericScore!)) numericScore = null
+
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500)
     }
@@ -2381,40 +2384,37 @@ app.get('/api/posts/recommended', async (c) => {
     let query: string
     let params: any[] = []
 
+    const scoreFormula = `((p.fresh_count * 2.0 + p.impressions * 0.1 + 1.0) / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))`
+
     if (currentUserId) {
-      // For logged in users: 
-      // 1. Posts from people they follow that are recent and popular
-      // 2. Popular posts in their preferred language (if set)
-      // 3. Fallback to general trending
-      const userLang = sessionData.user.language || 'en'
-      
       query = `
         SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
         (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, 
-        COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
+        COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+        ${scoreFormula} as score
         FROM posts p 
         LEFT JOIN users u ON p.user_id = u.id 
         WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
         AND p.user_id != ?
-        ORDER BY 
-          (CASE WHEN p.user_id IN (SELECT followee_id FROM follows WHERE follower_id = ?) THEN 2 ELSE 1 END) * 
-          ((p.fresh_count * 2.0 + p.impressions * 0.1 + 1.0) / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0)) DESC
+        ${cursorScore !== null ? 'AND (score < ? OR (score = ? AND p.created_at < ?))' : ''}
+        ORDER BY score DESC, p.created_at DESC
         LIMIT ?
       `
-      params = [currentUserId, currentUserId, limit]
+      params = cursorScore !== null ? [currentUserId, numericScore, numericScore, cursorCreatedAt, limit] : [currentUserId, limit]
     } else {
-      // For guests: just show general trending/popular posts
       query = `
         SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
         (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, 
-        COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
+        COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+        ${scoreFormula} as score
         FROM posts p 
         LEFT JOIN users u ON p.user_id = u.id 
         WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
-        ORDER BY (p.fresh_count * 2.0 + p.impressions * 0.1 + 1.0) / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0) DESC
+        ${cursorScore !== null ? 'AND (score < ? OR (score = ? AND p.created_at < ?))' : ''}
+        ORDER BY score DESC, p.created_at DESC
         LIMIT ?
       `
-      params = [limit]
+      params = cursorScore !== null ? [numericScore, numericScore, cursorCreatedAt, limit] : [limit]
     }
 
     const result = await c.env.DB.prepare(query).bind(...params).all()
@@ -2435,8 +2435,8 @@ app.get('/api/posts/recommended', async (c) => {
 
     return c.json({ posts })
   } catch (error: any) {
-    console.error('Recommended posts error:', error)
-    return c.json({ error: 'Internal server error' }, 500)
+    console.error('Recommended posts error:', error, 'Query:', query, 'Params:', params)
+    return c.json({ error: 'Internal server error', details: error.message }, 500)
   }
 })
 

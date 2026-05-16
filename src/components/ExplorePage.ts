@@ -224,6 +224,9 @@ export class ExplorePage {
     const postsContainer = this.element.querySelector('.explore-posts')
     if (postsContainer) postsContainer.innerHTML = ''
     this.loadContent()
+
+    // Re-setup intersection observer
+    this.setupIntersectionObserver()
   }
 
   private async loadContent(): Promise<void> {
@@ -260,14 +263,19 @@ export class ExplorePage {
       } else if (this.currentTab === 'trending') {
         url = `/api/posts/trending?limit=10`
       } else {
-        this.hasMore = false
-        return
+        url = `/api/posts/recommended?limit=10`
       }
 
       if (this.cursor) {
-        url += `&cursor=${encodeURIComponent(this.cursor)}`
+        // Ensure legacy date-based cursors aren't sent to the recommended or trending endpoints
+        if ((this.currentTab === 'recommended' || this.currentTab === 'trending') && !this.cursor.includes(',')) {
+          this.cursor = undefined
+        } else {
+          url += `&cursor=${encodeURIComponent(this.cursor)}`
+        }
       }
 
+      console.log('Fetching URL:', url);
       const response = await fetch(url)
       if (!response.ok) throw new Error('Failed to load more posts')
       
@@ -276,7 +284,13 @@ export class ExplorePage {
 
       if (newPosts.length > 0) {
         this.posts.push(...newPosts)
-        this.cursor = newPosts[newPosts.length - 1].created_at
+        // If recommended or trending, use score,created_at as cursor
+        if (!this.props.tag && (this.currentTab === 'recommended' || this.currentTab === 'trending')) {
+          const lastPost = newPosts[newPosts.length - 1] as any
+          this.cursor = `${lastPost.score},${lastPost.created_at}`
+        } else {
+          this.cursor = newPosts[newPosts.length - 1].created_at
+        }
         this.hasMore = newPosts.length === 10
         this.renderPosts()
       } else {
@@ -309,7 +323,6 @@ export class ExplorePage {
     if (!response.ok) throw new Error('Failed to load recommended posts')
     const data = await response.json() as { posts: Post[] }
     this.handleNewPosts(data.posts)
-    this.hasMore = false // Recommendation is currently single page
   }
 
   private async loadTrendingContent(): Promise<void> {
