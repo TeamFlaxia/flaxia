@@ -26,7 +26,11 @@ type Variables = {
   user: User | null
 }
 
+import { crowdApp } from '../../src/crowd/index'
+
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
+
+app.route('/crowd', crowdApp)
 
 app.use('/*', cors())
 
