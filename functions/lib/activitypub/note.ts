@@ -4,7 +4,6 @@ interface Post {
   id: string
   text: string
   created_at: string
-  visibility: string
 }
 
 interface User {
@@ -26,20 +25,9 @@ export function buildNoteObject(post: Post, user: User, baseUrl: string): object
     attributedTo: actorUrl,
     content: post.text,
     published: post.created_at,
-    url: noteId
-  }
-
-  // Set visibility (to/cc)
-  if (post.visibility === 'public') {
-    note.to = ['https://www.w3.org/ns/activitystreams#Public']
-    note.cc = [`${baseUrl}/actors/${user.username}/followers`]
-  } else if (post.visibility === 'followers') {
-    note.to = [`${baseUrl}/actors/${user.username}/followers`]
-    note.cc = []
-  } else {
-    // Unlisted or private - only to the actor
-    note.to = [actorUrl]
-    note.cc = []
+    url: noteId,
+    to: ['https://www.w3.org/ns/activitystreams#Public'],
+    cc: [`${baseUrl}/actors/${user.username}/followers`]
   }
 
   return note

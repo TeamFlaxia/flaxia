@@ -12,40 +12,24 @@ interface SignatureHeader {
 }
 
 function parseSignatureHeader(signatureHeader: string): SignatureHeader {
-  console.log('Parsing signature header...')
-  console.log('Full signature header:', signatureHeader)
-  
-  const parts = signatureHeader.split(',').map(part => part.trim())
-  console.log('Signature parts count:', parts.length)
-  
-  const result: Partial<SignatureHeader> = {}
-
-  for (const part of parts) {
-    console.log('Processing part:', part)
-    const match = part.match(/(\w+)="([^"]+)"/)
-    if (match) {
-      const [, key, value] = match
-      console.log(`Found key: ${key}, value length: ${value.length}`)
-      console.log(`Value (first 50 chars): ${value.substring(0, 50)}`)
-      
-      if (key === 'headers') {
-        result[key] = value.split(' ')
-      } else {
-        result[key] = value
-      }
+  const result: any = {}
+  const regex = /(\w+)=("(?:\\.|[^"])*"|[^,]+)/g
+  let match
+  while ((match = regex.exec(signatureHeader)) !== null) {
+    const key = match[1]
+    let value = match[2]
+    if (value.startsWith('"') && value.endsWith('"')) {
+      value = value.substring(1, value.length - 1).replace(/\\"/g, '"')
+    }
+    if (key === 'headers') {
+      result[key] = value.split(' ')
     } else {
-      console.log('Failed to match part:', part)
+      result[key] = value
     }
   }
 
-  console.log('Parsed result keys:', Object.keys(result))
-  console.log('Has keyId:', !!result.keyId)
-  console.log('Has headers:', !!result.headers)
-  console.log('Has signature:', !!result.signature)
-
   if (!result.keyId || !result.headers || !result.signature) {
-    console.error('Missing required fields in signature header')
-    throw new Error('Invalid signature header format')
+    throw new Error('Invalid signature header format: missing required fields')
   }
 
   return result as SignatureHeader
@@ -58,29 +42,18 @@ export async function verifyHttpSignature(request: Request, publicKeyPem: string
   try {
     const signatureHeader = request.headers.get('Signature')
     if (!signatureHeader) {
-      console.error('Missing Signature header')
       return false
     }
-
-    console.log('Signature header found, length:', signatureHeader.length)
-    console.log('Signature header (first 100 chars):', signatureHeader.substring(0, 100))
 
     let parsed: SignatureHeader
     try {
       parsed = parseSignatureHeader(signatureHeader)
-      console.log('Signature header parsed successfully')
-      console.log('Key ID:', parsed.keyId)
-      console.log('Headers:', parsed.headers)
-      console.log('Signature length:', parsed.signature.length)
     } catch (error) {
-      console.error('Failed to parse signature header:', error)
       return false
     }
 
-    // Verify Date header is within ±30 minutes (replay attack protection)
     const dateHeader = request.headers.get('Date')
     if (!dateHeader) {
-      console.error('Missing Date header')
       return false
     }
 
@@ -89,98 +62,45 @@ export async function verifyHttpSignature(request: Request, publicKeyPem: string
     const thirtyMinutes = 30 * 60 * 1000
 
     if (Math.abs(now - requestTime) > thirtyMinutes) {
-      console.error('Request timestamp too old or too far in future')
       return false
     }
 
-    // Build signing string
     const signingString = buildSigningString(request, parsed.headers)
-
-    // Import public key
     const publicKey = await importPublicKey(publicKeyPem)
 
-    // Decode signature (handle URL-safe base64)
-    let signatureBase64 = parsed.signature
-    
-    console.log('Original signature length:', signatureBase64.length)
-    console.log('Original signature (first 50 chars):', signatureBase64.substring(0, 50))
-    console.log('Original signature (last 50 chars):', signatureBase64.substring(signatureBase64.length - 50))
-    console.log('Original signature (last 10 chars):', signatureBase64.substring(signatureBase64.length - 10))
-    
-    // Check for invalid characters at the end
-    const lastChar = signatureBase64.charAt(signatureBase64.length - 1)
-    console.log('Last character:', lastChar, 'charCode:', lastChar.charCodeAt(0))
-    
-    // Remove any whitespace
-    signatureBase64 = signatureBase64.replace(/\s/g, '')
-    console.log('After whitespace removal length:', signatureBase64.length)
-    
-    // Convert URL-safe to standard base64
+    let signatureBase64 = parsed.signature.replace(/\s/g, '')
     signatureBase64 = signatureBase64
       .replace(/-/g, '+')
       .replace(/_/g, '/')
     
-    console.log('Processed signature length:', signatureBase64.length)
-    console.log('Processed signature (first 50 chars):', signatureBase64.substring(0, 50))
-    console.log('Processed signature (last 10 chars):', signatureBase64.substring(signatureBase64.length - 10))
-    
-    // Pad with '=' to make length divisible by 4
-    const originalLength = signatureBase64.length
     while (signatureBase64.length % 4 !== 0) {
       signatureBase64 += '='
     }
     
-    console.log('Padded signature length:', signatureBase64.length)
-    console.log('Added padding:', signatureBase64.length - originalLength)
-    console.log('Final signature (last 10 chars):', signatureBase64.substring(signatureBase64.length - 10))
-    
-    // Validate base64 characters only
-    const invalidChars = signatureBase64.replace(/[A-Za-z0-9+/=]/g, '')
-    if (invalidChars) {
-      console.error('Invalid base64 characters found:', invalidChars)
-      console.error('Invalid chars count:', invalidChars.length)
+    if (/[^A-Za-z0-9+/=]/.test(signatureBase64)) {
       return false
     }
     
-    console.log('Base64 validation passed, attempting decode...')
-    
     try {
-      // Use atob() for Cloudflare Functions compatibility
       const signatureString = atob(signatureBase64)
       const signatureArray = new Uint8Array(signatureString.length)
       for (let i = 0; i < signatureString.length; i++) {
         signatureArray[i] = signatureString.charCodeAt(i)
       }
-      console.log('Base64 decode successful, signature length:', signatureArray.length)
-      console.log('Signature array created successfully')
 
-      // Verify signature
       const encoder = new TextEncoder()
       const signingStringArray = encoder.encode(signingString)
 
-      const isValid = await crypto.subtle.verify(
+      return await crypto.subtle.verify(
         'RSASSA-PKCS1-v1_5',
         publicKey,
         signatureArray,
         signingStringArray
       )
-
-      console.log('Signature verification result:', isValid)
-      return isValid
-    } catch (error: any) {
-      console.error('Base64 decode failed:', error?.message || error)
-      console.error('Error type:', error?.constructor?.name)
-      console.error('Stack trace:', error?.stack)
-      console.error('Signature being decoded (first 100 chars):', signatureBase64.substring(0, 100))
-      console.error('Full signature length:', signatureBase64.length)
-      console.error('Last 10 chars:', signatureBase64.substring(signatureBase64.length - 10))
+    } catch (error) {
       return false
     }
-  } catch (error: any) {
-    console.error('Signature verification error:', error?.message || error)
-    console.error('Error type:', error?.constructor?.name)
-    console.error('Stack trace:', error?.stack)
-    console.error('Error occurred in signature verification process')
+  } catch (error) {
     return false
   }
 }

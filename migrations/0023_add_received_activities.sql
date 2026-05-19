@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS received_activities (
+  id TEXT PRIMARY KEY,
+  received_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);

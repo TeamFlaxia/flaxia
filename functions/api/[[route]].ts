@@ -1003,179 +1003,74 @@ app.get('/api/.well-known/webfinger', async (c) => {
 
 // GET /api/actors/:username - ActivityPub Actor endpoint
 app.get('/api/actors/:username', async (c) => {
-  try {
-    const username = c.req.param('username')
-    
-    if (!username) {
-      return c.json({ error: 'Username required' }, 400)
-    }
-    
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500)
-    }
-    
-    // Check Accept header for ActivityPub content types
-    const acceptHeader = c.req.header('Accept') || ''
-    console.log('Actor endpoint Accept header:', acceptHeader)
-    const isActivityPubRequest = acceptHeader.includes('application/activity+json') || 
-                                acceptHeader.includes('application/ld+json') ||
-                                acceptHeader.includes('application/json')
-    
-    // Find user in database
-    const user = await c.env.DB.prepare(`
-      SELECT id, username, display_name, bio, avatar_key 
-      FROM users 
-      WHERE username = ? COLLATE NOCASE
-    `).bind(username).first()
-    
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404)
-    }
+  const username = c.req.param('username')
+  const user = await c.env.DB.prepare(`SELECT id, username, display_name, bio, avatar_key FROM users WHERE username = ? COLLATE NOCASE`).bind(username).first() as any
+  if (!user) return c.json({ error: 'User not found' }, 404)
 
-    // Get or generate cryptographic keys for this user
-    let keyRecord = await c.env.DB.prepare(`
-      SELECT public_key_pem FROM actor_keys WHERE user_id = ?
-    `).bind(user.id).first()
-
-    let publicKeyPem: string
-    if (!keyRecord) {
-      // Generate new key pair
-      const keyPair = await generateKeyPair()
-      publicKeyPem = await exportPublicKey(keyPair.publicKey)
-      const privateKeyPem = await exportPrivateKey(keyPair.privateKey)
-      
-      // Save to database
-      await c.env.DB.prepare(`
-        INSERT INTO actor_keys (user_id, public_key_pem, private_key_pem, created_at) 
-        VALUES (?, ?, ?, datetime('now'))
-      `).bind(user.id, publicKeyPem, privateKeyPem).run()
-    } else {
-      publicKeyPem = keyRecord.public_key_pem as string
-    }
-    
-    // If not ActivityPub request, redirect to UI
-    if (!isActivityPubRequest) {
-      return c.redirect(`/profile/${username}`, 302)
-    }
-    
-    // Return ActivityPub Actor object
-    const actor: any = {
-      "@context": "https://www.w3.org/ns/activitystreams",
-      "type": "Person",
-      "id": `${c.env.BASE_URL}/api/actors/${username}`,
-      "preferredUsername": user.username,
-      "name": user.display_name,
-      "summary": user.bio || "",
-      "inbox": `${c.env.BASE_URL}/api/users/${username}/inbox`,
-      "outbox": `${c.env.BASE_URL}/api/actors/${username}/outbox`,
-      "followers": `${c.env.BASE_URL}/api/actors/${username}/followers`,
-      "following": `${c.env.BASE_URL}/api/actors/${username}/following`,
-      "publicKey": {
-        "id": `${c.env.BASE_URL}/api/actors/${username}#main-key`,
-        "owner": `${c.env.BASE_URL}/api/actors/${username}`,
-        "publicKeyPem": publicKeyPem
-      }
-    }
-
-    // Add icon if avatar is available
-    if (user.avatar_key) {
-      actor.icon = {
-        "type": "Image",
-        "mediaType": "image/jpeg",
-        "url": `${c.env.BASE_URL}/api/images/${user.avatar_key}`
-      }
-    }
-    
-    return c.json(actor, 200, {
-      'Content-Type': 'application/activity+json'
-    })
-  } catch (error: any) {
-    console.error('Actor endpoint error:', error)
-    return c.json({ error: 'Actor endpoint failed', details: error?.message || 'Unknown error' }, 500)
+  const keyRecord = await c.env.DB.prepare(`SELECT public_key_pem FROM actor_keys WHERE user_id = ?`).bind(user.id).first() as any
+  let publicKeyPem = keyRecord?.public_key_pem
+  if (!publicKeyPem) {
+    const keyPair = await generateKeyPair()
+    publicKeyPem = await exportPublicKey(keyPair.publicKey)
+    await c.env.DB.prepare(`INSERT INTO actor_keys (user_id, public_key_pem, private_key_pem, created_at) VALUES (?, ?, ?, datetime('now'))`).bind(user.id, publicKeyPem, await exportPrivateKey(keyPair.privateKey)).run()
   }
+
+  return c.json({
+    "@context": "https://www.w3.org/ns/activitystreams",
+    "type": "Person",
+    "id": `${c.env.BASE_URL}/api/actors/${username}`,
+    "preferredUsername": user.username,
+    "name": user.display_name,
+    "summary": user.bio || "",
+    "inbox": `${c.env.BASE_URL}/api/actors/${username}/inbox`,
+    "outbox": `${c.env.BASE_URL}/api/actors/${username}/outbox`,
+    "publicKey": {
+      "id": `${c.env.BASE_URL}/api/actors/${username}#main-key`,
+      "owner": `${c.env.BASE_URL}/api/actors/${username}`,
+      "publicKeyPem": publicKeyPem
+    }
+  }, 200, { 'Content-Type': 'application/activity+json' })
 })
 
-
-// GET /api/actors/:username/outbox - ActivityPub Outbox endpoint (paginated)
+// GET /api/actors/:username/outbox - Outbox endpoint
 app.get('/api/actors/:username/outbox', async (c) => {
-  try {
-    const username = c.req.param('username')
-    const page = c.req.query('page')
-    const pageSize = 20
+  const username = c.req.param('username')
+  const page = c.req.query('page')
+  const pageSize = 20
 
-    if (!username) {
-      return c.json({ error: 'Username required' }, 400)
-    }
+  const user = await c.env.DB.prepare(`SELECT id FROM users WHERE username = ? COLLATE NOCASE`).bind(username).first() as any
+  if (!user) return c.json({ error: 'User not found' }, 404)
 
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500)
-    }
+  const totalItems = (await c.env.DB.prepare(`SELECT COUNT(*) as count FROM posts WHERE user_id = ? AND status = 'published'`).bind(user.id).first() as any).count
 
-    // Find user in database
-    const user = await c.env.DB.prepare(`
-      SELECT id, username, display_name FROM users 
-      WHERE username = ? COLLATE NOCASE
-    `).bind(username).first() as { id: string, username: string, display_name: string } | null
-
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404)
-    }
-
-    // Get total count of published posts
-    const countResult = await c.env.DB.prepare(`
-      SELECT COUNT(*) as total FROM posts
-      WHERE user_id = ? AND status = 'published'
-    `).bind(user.id).first() as { total: number }
-    const totalItems = countResult?.total || 0
-
-    // If page parameter is present, return OrderedCollectionPage
-    if (page === 'true') {
-      const offset = c.req.query('offset')
-      const offsetNum = offset ? parseInt(offset, 10) : 0
-
-      // Get posts for this page
-      const posts = await c.env.DB.prepare(`
-        SELECT id, text, created_at, status FROM posts
-        WHERE user_id = ? AND status = 'published'
-        ORDER BY created_at DESC LIMIT ? OFFSET ?
-      `).bind(user.id, pageSize, offsetNum).all() as { results: Array<{ id: string, text: string, created_at: string, status: string }> }
-
-      // Build activities from posts
-      const activities = posts.results.map(post => {
-        const note = buildNoteObject({
-          ...post,
-          visibility: post.status === 'published' ? 'public' : 'private'
-        }, user, c.env.BASE_URL)
-        return buildCreateActivity(note, user, c.env.BASE_URL)
-      })
-
-      const nextOffset = offsetNum + pageSize
-      const hasNext = nextOffset < totalItems
-
-      return c.json({
-        "@context": "https://www.w3.org/ns/activitystreams",
-        "type": "OrderedCollectionPage",
-        "id": `${c.env.BASE_URL}/api/actors/${username}/outbox?page=true&offset=${offsetNum}`,
-        "partOf": `${c.env.BASE_URL}/api/actors/${username}/outbox`,
-        "totalItems": totalItems,
-        "orderedItems": activities,
-        ...(hasNext && { "next": `${c.env.BASE_URL}/api/actors/${username}/outbox?page=true&offset=${nextOffset}` })
-      }, 200, { 'Content-Type': 'application/activity+json' })
-    }
-
-    // Return main OrderedCollection with first link
+  if (!page) {
     return c.json({
       "@context": "https://www.w3.org/ns/activitystreams",
       "type": "OrderedCollection",
       "id": `${c.env.BASE_URL}/api/actors/${username}/outbox`,
       "totalItems": totalItems,
-      "first": `${c.env.BASE_URL}/api/actors/${username}/outbox?page=true&offset=0`
+      "first": `${c.env.BASE_URL}/api/actors/${username}/outbox?page=1`,
+      "last": `${c.env.BASE_URL}/api/actors/${username}/outbox?page=${Math.ceil(totalItems / pageSize) || 1}`
     }, 200, { 'Content-Type': 'application/activity+json' })
-  } catch (error: any) {
-    console.error('Outbox endpoint error:', error)
-    return c.json({ error: 'Outbox endpoint failed', details: error?.message || 'Unknown error' }, 500)
   }
+
+  const currentPage = parseInt(page) || 1
+  const posts = await c.env.DB.prepare(`SELECT id, text, created_at FROM posts WHERE user_id = ? AND status = 'published' ORDER BY created_at DESC LIMIT ? OFFSET ?`).bind(user.id, pageSize, (currentPage - 1) * pageSize).all() as any
+  const activities = posts.results.map((post: any) => buildCreateActivity(buildNoteObject(post, user, c.env.BASE_URL), user, c.env.BASE_URL))
+
+  const response: any = {
+    "@context": "https://www.w3.org/ns/activitystreams",
+    "type": "OrderedCollectionPage",
+    "id": `${c.env.BASE_URL}/api/actors/${username}/outbox?page=${currentPage}`,
+    "partOf": `${c.env.BASE_URL}/api/actors/${username}/outbox`,
+    "orderedItems": activities
+  }
+  if ((currentPage * pageSize) < totalItems) response.next = `${c.env.BASE_URL}/api/actors/${username}/outbox?page=${currentPage + 1}`
+  if (currentPage > 1) response.prev = `${c.env.BASE_URL}/api/actors/${username}/outbox?page=${currentPage - 1}`
+
+  return c.json(response, 200, { 'Content-Type': 'application/activity+json' })
 })
+
 
 // GET /api/notes/:noteId - ActivityPub individual Note endpoint
 app.get('/api/notes/:noteId', async (c) => {
@@ -4802,463 +4697,74 @@ app.post('/api/test/reset', async (c) => {
   return c.json({ ok: true })
 })
 
-// POST /api/actors/:username/inbox - Legacy inbox endpoint (redirect to new location)
-app.post('/api/actors/:username/inbox', async (c) => {
-  // Redirect to the correct inbox endpoint
+// GET /api/actors/:username - ActivityPub Actor endpoint
+app.get('/api/actors/:username', async (c) => {
   const username = c.req.param('username')
-  const newInboxUrl = `${c.env.BASE_URL}/api/users/${username}/inbox`
-  
-  // Forward the request to the new endpoint
-  const body = await c.req.text()
-  const headers: Record<string, string> = {}
-  
-  // Copy all headers except host
-  for (const [key, value] of c.req.raw.headers.entries()) {
-    if (key.toLowerCase() !== 'host') {
-      headers[key] = value
+  const user = await c.env.DB.prepare(`SELECT id, username, display_name, bio, avatar_key FROM users WHERE username = ? COLLATE NOCASE`).bind(username).first() as any
+  if (!user) return c.json({ error: 'User not found' }, 404)
+
+  const keyRecord = await c.env.DB.prepare(`SELECT public_key_pem FROM actor_keys WHERE user_id = ?`).bind(user.id).first() as any
+  let publicKeyPem = keyRecord?.public_key_pem
+  if (!publicKeyPem) {
+    const keyPair = await generateKeyPair()
+    publicKeyPem = await exportPublicKey(keyPair.publicKey)
+    await c.env.DB.prepare(`INSERT INTO actor_keys (user_id, public_key_pem, private_key_pem, created_at) VALUES (?, ?, ?, datetime('now'))`).bind(user.id, publicKeyPem, await exportPrivateKey(keyPair.privateKey)).run()
+  }
+
+  return c.json({
+    "@context": "https://www.w3.org/ns/activitystreams",
+    "type": "Person",
+    "id": `${c.env.BASE_URL}/api/actors/${username}`,
+    "preferredUsername": user.username,
+    "name": user.display_name,
+    "summary": user.bio || "",
+    "inbox": `${c.env.BASE_URL}/api/actors/${username}/inbox`,
+    "outbox": `${c.env.BASE_URL}/api/actors/${username}/outbox`,
+    "publicKey": {
+      "id": `${c.env.BASE_URL}/api/actors/${username}#main-key`,
+      "owner": `${c.env.BASE_URL}/api/actors/${username}`,
+      "publicKeyPem": publicKeyPem
     }
-  }
-  
-  try {
-    const response = await fetch(newInboxUrl, {
-      method: 'POST',
-      headers,
-      body
-    })
-    
-    // Return the response from the new endpoint
-    const responseText = await response.text()
-    return new Response(responseText, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers
-    })
-  } catch (error) {
-    console.error('Failed to forward inbox request:', error)
-    return c.json({ error: 'Inbox forwarding failed' }, 500)
-  }
+  }, 200, { 'Content-Type': 'application/activity+json' })
 })
 
-// POST /api/users/:username/inbox - ActivityPub inbox endpoint
-app.post('/api/users/:username/inbox', async (c) => {
-  try {
-    const contentType = c.req.header('content-type')
-    if (!contentType?.includes('application/activity+json')) {
-      return c.json({ error: 'Invalid content type' }, 400)
-    }
+// GET /api/actors/:username/outbox - Outbox endpoint
+app.get('/api/actors/:username/outbox', async (c) => {
+  const username = c.req.param('username')
+  const page = c.req.query('page')
+  const pageSize = 20
 
-    const username = c.req.param('username')
-    if (!username) {
-      return c.json({ error: 'Username required' }, 400)
-    }
+  const user = await c.env.DB.prepare(`SELECT id FROM users WHERE username = ? COLLATE NOCASE`).bind(username).first() as any
+  if (!user) return c.json({ error: 'User not found' }, 404)
 
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500)
-    }
+  const totalItems = (await c.env.DB.prepare(`SELECT COUNT(*) as count FROM posts WHERE user_id = ? AND status = 'published'`).bind(user.id).first() as any).count
 
-    // Get target user
-    const targetUser = await c.env.DB.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE')
-      .bind(username).first()
-    
-    if (!targetUser) {
-      return c.json({ error: 'User not found' }, 404)
-    }
-
-    // Read request body (can only be read once)
-    const body = await c.req.text()
-    
-    // Debug: Log all headers
-    console.log('Inbox request headers:')
-    for (const [key, value] of c.req.raw.headers.entries()) {
-      console.log(`  ${key}: ${value}`)
-    }
-    
-    // Verify digest
-    const isValidDigest = await verifyDigest(c.req.raw, body)
-    if (!isValidDigest) {
-      console.error('Digest verification failed')
-      return c.json({ error: 'Invalid digest' }, 400)
-    }
-
-    // Parse activity after reading body
-    const activity = JSON.parse(body)
-    const { type, actor } = activity
-
-    // Fetch actor's public key
-    const publicKeyPem = await fetchActorPublicKey(actor)
-    if (!publicKeyPem) {
-      console.error('Failed to fetch actor public key')
-      return c.json({ error: 'Could not verify signature' }, 401)
-    }
-
-    // Verify HTTP signature
-    let isValidSignature = false
-    try {
-      console.log('Starting signature verification...')
-      
-      const signatureHeader = c.req.raw.headers.get('Signature')
-      if (!signatureHeader) {
-        console.error('No signature header found')
-        return c.json({ error: 'Missing signature' }, 401)
-      }
-
-      const publicKeyPem = await fetchActorPublicKey(actor)
-      if (!publicKeyPem) {
-        console.error('Could not fetch public key for actor:', actor)
-        return c.json({ error: 'Could not verify actor' }, 401)
-      }
-
-      isValidSignature = await verifyHttpSignature(c.req.raw, publicKeyPem)
-      console.log('Signature verification result:', isValidSignature)
-    } catch (error: any) {
-      console.error('Signature verification error:', error?.message || error)
-      console.error('Full error:', error)
-      return c.json({ error: 'Signature verification failed' }, 401)
-    }
-    
-    if (!isValidSignature) {
-      console.error('Signature verification failed')
-      return c.json({ error: 'Invalid signature' }, 401)
-    }
-
-    // Process activity based on type
-    const object = activity.object
-    
-    console.log('Processing activity:')
-    console.log('  Type:', type)
-    console.log('  Actor:', actor)
-    console.log('  Object:', object)
-    console.log('  Object type:', typeof object)
-
-    // Handle different activity types
-    switch (type) {
-      case 'Follow': {
-        if (!object || typeof object !== 'string') {
-          return c.json({ error: 'Invalid object' }, 400)
-        }
-
-        // Extract username from object URL
-        const objectUrl = new URL(object)
-        const objectUsername = objectUrl.pathname.split('/users/')[1] || 
-                          objectUrl.pathname.split('/actors/')[1] ||
-                          objectUrl.pathname.split('/').pop()
-        if (!objectUsername || objectUsername !== username) {
-          return c.json({ error: 'Object username mismatch' }, 400)
-        }
-
-        // Save to ap_followers table (remote follower tracking) and get actor info for notification
-        let actorUsername: string | null = null
-        let actorDisplayName: string | null = null
-        let actorDomain: string | null = null
-        
-        try {
-          // Get follower's actor info to find inbox URL
-          const actorResponse = await fetch(actor, {
-            headers: { 'Accept': 'application/activity+json' }
-          })
-          
-          if (actorResponse.ok) {
-            const actorData = await actorResponse.json() as any
-            const inboxUrl = actorData.inbox
-
-            if (inboxUrl) {
-              await c.env.DB.prepare(`
-                INSERT OR IGNORE INTO ap_followers (id, local_user_id, actor_url, inbox_url, created_at)
-                VALUES (lower(hex(randomblob(16))), ?, ?, ?, datetime('now'))
-              `).bind(targetUser.id, actor, inboxUrl).run()
-            }
-
-            // Extract actor information for notification
-            try {
-              const actorUrl = new URL(actor)
-              actorDomain = actorUrl.hostname
-              
-              // Extract username from actor URL or use preferredUsername
-              if (actorData.preferredUsername) {
-                actorUsername = actorData.preferredUsername
-              } else {
-                const pathParts = actorUrl.pathname.split('/')
-                const usernameIndex = pathParts.indexOf('users') + 1 || pathParts.indexOf('@') + 1
-                if (usernameIndex > 0 && pathParts[usernameIndex]) {
-                  actorUsername = pathParts[usernameIndex]
-                }
-              }
-              
-              // Use display name or fallback to username
-              actorDisplayName = actorData.name || actorData.preferredUsername || actorUsername
-            } catch (e) {
-              console.error('Failed to extract actor info:', e)
-            }
-          }
-        } catch (e) {
-          console.error('Failed to fetch actor info:', e)
-        }
-
-        // Insert follow relationship (for local UI)
-        await c.env.DB.prepare(
-          'INSERT OR IGNORE INTO follows (follower_id, followee_id) VALUES (?, ?)'
-        ).bind(actor, targetUser.id).run()
-
-        // Create notification for follow with actor information
-        const actorDataJson = actorUsername && actorDisplayName && actorDomain ? JSON.stringify({
-          username: actorUsername,
-          display_name: actorDisplayName,
-          domain: actorDomain,
-          actor_url: actor
-        }) : null
-        
-        await c.env.DB.prepare(
-          'INSERT INTO notifications (id, user_id, type, post_id, actor_id, actor_data) VALUES (?, ?, ?, ?, ?, ?)'
-        ).bind(nanoid(), targetUser.id, 'ap_follow', null, actor, actorDataJson).run()
-
-        // Send Accept activity automatically
-        try {
-          console.log('Sending Accept activity for follow from:', actor, 'to user:', username)
-          
-          // Get user's keys for signing
-          const keyResult = await c.env.DB.prepare(`
-            SELECT ak.private_key_pem, ak.public_key_pem FROM actor_keys ak
-            JOIN users u ON u.id = ak.user_id
-            WHERE u.username = ?
-          `).bind(username).first()
-
-          if (!keyResult || !keyResult.private_key_pem) {
-            console.error('No private key found for user:', username)
-          } else {
-            const privateKeyPem = keyResult.private_key_pem as string
-            const publicKeyPem = keyResult.public_key_pem as string
-            const keyId = `${c.env.BASE_URL}/actors/${username}#main-key`
-
-            // Get follower's inbox URL
-            let inboxUrl = actor
-            try {
-              const actorResponse = await fetch(actor, {
-                headers: {
-                  'Accept': 'application/activity+json, application/ld+json'
-                }
-              })
-
-              if (actorResponse.ok) {
-                const actorData = await actorResponse.json() as any
-                inboxUrl = actorData.inbox || actor
-              }
-            } catch (e) {
-              console.error('Failed to fetch actor inbox:', e)
-            }
-
-            console.log('Using inbox URL:', inboxUrl)
-
-            // Build Accept activity
-            const acceptActivity = {
-              '@context': 'https://www.w3.org/ns/activitystreams',
-              id: `${c.env.BASE_URL}/activities/accept-${nanoid()}`,
-              type: 'Accept',
-              actor: `${c.env.BASE_URL}/actors/${username}`,
-              object: activity, // Use the entire original Follow activity
-              to: [actor],
-              published: new Date().toISOString()
-            }
-
-            console.log('Accept activity:', JSON.stringify(acceptActivity, null, 2))
-
-            const body = JSON.stringify(acceptActivity)
-            const headers = await signRequest(inboxUrl, body, privateKeyPem, publicKeyPem, keyId)
-
-            console.log('Sending Accept activity to:', inboxUrl)
-            console.log('Headers:', Object.fromEntries(headers.entries()))
-
-            const response = await fetch(inboxUrl, {
-              method: 'POST',
-              headers: headers,
-              body: body
-            })
-
-            if (response.ok) {
-              console.log('Accept activity sent successfully to:', actor, 'status:', response.status)
-            } else {
-              const responseText = await response.text()
-              console.error('Failed to send Accept activity:', {
-                inboxUrl,
-                status: response.status,
-                statusText: response.statusText,
-                responseText: responseText.substring(0, 500)
-              })
-            }
-          }
-        } catch (e: any) {
-          console.error('Error sending Accept activity:', {
-            error: e.message,
-            stack: e.stack,
-            actor,
-            username
-          })
-        }
-
-        return c.json({ ok: true }, 200)
-      }
-
-      case 'Undo': {
-        if (!object || typeof object !== 'object' || object.type !== 'Follow') {
-          return c.json({ error: 'Invalid undo object' }, 400)
-        }
-
-        console.log('Processing Undo Follow activity')
-        console.log('Undo object:', JSON.stringify(object, null, 2))
-
-        // Extract username from object URL (handle both /actors/ and /users/ patterns)
-        const objectUrl = object.object
-        if (typeof objectUrl !== 'string') {
-          return c.json({ error: 'Invalid object URL' }, 400)
-        }
-
-        let objectUsername: string | null = null
-        
-        // Try different URL patterns
-        if (objectUrl.includes('/actors/')) {
-          objectUsername = objectUrl.split('/actors/')[1]
-        } else if (objectUrl.includes('/users/')) {
-          objectUsername = objectUrl.split('/users/')[1]
-        }
-
-        if (!objectUsername || objectUsername !== username) {
-          console.error('Object username mismatch:', { objectUsername, username })
-          return c.json({ error: 'Object username mismatch' }, 400)
-        }
-
-        console.log('Username match confirmed:', username)
-
-        // Delete follow relationship
-        await c.env.DB.prepare(
-          'DELETE FROM follows WHERE follower_id = ? AND followee_id = ?'
-        ).bind(actor, targetUser.id).run()
-
-        // Delete ap_follow notification
-        await c.env.DB.prepare(
-          'DELETE FROM notifications WHERE type = ? AND actor_id = ? AND user_id = ?'
-        ).bind('ap_follow', actor, targetUser.id).run()
-
-        // Delete from ap_followers table
-        await c.env.DB.prepare(
-          'DELETE FROM ap_followers WHERE local_user_id = ? AND actor_url = ?'
-        ).bind(targetUser.id, actor).run()
-
-        console.log('Undo Follow processed successfully')
-        return c.json({ ok: true }, 200)
-      }
-
-      case 'Like': {
-        if (!object || typeof object !== 'string') {
-          return c.json({ error: 'Invalid object' }, 400)
-        }
-
-        // Extract post ID from object URL
-        const objectUrl = new URL(object)
-        const postId = objectUrl.pathname.split('/posts/')[1]
-        if (!postId) {
-          return c.json({ error: 'Invalid post ID' }, 400)
-        }
-
-        // Check if post exists and increment fresh_count
-        const post = await c.env.DB.prepare('SELECT id FROM posts WHERE id = ?')
-          .bind(postId).first()
-        
-        if (!post) {
-          return c.json({ error: 'Post not found' }, 404)
-        }
-
-        await c.env.DB.prepare(
-          'UPDATE posts SET fresh_count = fresh_count + 1 WHERE id = ?'
-        ).bind(postId).run()
-
-        // Get post user_id to create notification
-        const likedPost = await c.env.DB.prepare(
-          'SELECT user_id FROM posts WHERE id = ?'
-        ).bind(postId).first()
-
-        if (likedPost) {
-          await c.env.DB.prepare(
-            'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
-          ).bind(nanoid(), likedPost.user_id, 'ap_like', postId, actor).run()
-        }
-
-        return c.json({ ok: true }, 200)
-      }
-
-      case 'Announce': {
-        if (!object || typeof object !== 'string') {
-          return c.json({ error: 'Invalid object' }, 400)
-        }
-
-        // Extract post ID from object URL
-        const objectUrl = new URL(object)
-        const postId = objectUrl.pathname.split('/posts/')[1]
-        if (!postId) {
-          return c.json({ error: 'Invalid post ID' }, 400)
-        }
-
-        // Check if post exists and increment fresh_count
-        const post = await c.env.DB.prepare('SELECT id FROM posts WHERE id = ?')
-          .bind(postId).first()
-        
-        if (!post) {
-          return c.json({ error: 'Post not found' }, 404)
-        }
-
-        await c.env.DB.prepare(
-          'UPDATE posts SET fresh_count = fresh_count + 1 WHERE id = ?'
-        ).bind(postId).run()
-
-        // Get post user_id to create notification
-        const announcedPost = await c.env.DB.prepare(
-          'SELECT user_id FROM posts WHERE id = ?'
-        ).bind(postId).first()
-
-        if (announcedPost) {
-          await c.env.DB.prepare(
-            'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
-          ).bind(nanoid(), announcedPost.user_id, 'ap_announce', postId, actor).run()
-        }
-
-        return c.json({ ok: true }, 200)
-      }
-      default:
-        // Ignore other activity types
-        return c.json({ ok: true }, 200)
-    }
-  } catch (error: any) {
-    console.error('Inbox error:', error)
-    return c.json({ error: 'Inbox processing failed', details: error?.message || 'Unknown error' }, 500)
-  }
-})
-
-// GET /api/users/:username/inbox - ActivityPub inbox collection endpoint
-app.get('/api/users/:username/inbox', async (c) => {
-  try {
-    const username = c.req.param('username')
-    
-    if (!username) {
-      return c.json({ error: 'Username required' }, 400)
-    }
-
-    const acceptHeader = c.req.header('Accept') || ''
-    const isActivityPubRequest = acceptHeader.includes('application/activity+json') || 
-                                acceptHeader.includes('application/ld+json')
-
-    if (!isActivityPubRequest) {
-      return c.redirect(`/profile/${username}`, 302)
-    }
-
+  if (!page) {
     return c.json({
-      '@context': 'https://www.w3.org/ns/activitystreams',
-      type: 'OrderedCollection',
-      id: `${c.env.BASE_URL}/api/users/${username}/inbox`,
-      totalItems: 0,
-      orderedItems: []
+      "@context": "https://www.w3.org/ns/activitystreams",
+      "type": "OrderedCollection",
+      "id": `${c.env.BASE_URL}/api/actors/${username}/outbox`,
+      "totalItems": totalItems,
+      "first": `${c.env.BASE_URL}/api/actors/${username}/outbox?page=1`,
+      "last": `${c.env.BASE_URL}/api/actors/${username}/outbox?page=${Math.ceil(totalItems / pageSize) || 1}`
     }, 200, { 'Content-Type': 'application/activity+json' })
-  } catch (error: any) {
-    console.error('Inbox GET error:', error)
-    return c.json({ error: 'Failed to retrieve inbox', details: error?.message || 'Unknown error' }, 500)
   }
+
+  const currentPage = parseInt(page) || 1
+  const posts = await c.env.DB.prepare(`SELECT id, text, created_at FROM posts WHERE user_id = ? AND status = 'published' ORDER BY created_at DESC LIMIT ? OFFSET ?`).bind(user.id, pageSize, (currentPage - 1) * pageSize).all() as any
+  const activities = posts.results.map((post: any) => buildCreateActivity(buildNoteObject(post, user, c.env.BASE_URL), user, c.env.BASE_URL))
+
+  const response: any = {
+    "@context": "https://www.w3.org/ns/activitystreams",
+    "type": "OrderedCollectionPage",
+    "id": `${c.env.BASE_URL}/api/actors/${username}/outbox?page=${currentPage}`,
+    "partOf": `${c.env.BASE_URL}/api/actors/${username}/outbox`,
+    "orderedItems": activities
+  }
+  if ((currentPage * pageSize) < totalItems) response.next = `${c.env.BASE_URL}/api/actors/${username}/outbox?page=${currentPage + 1}`
+  if (currentPage > 1) response.prev = `${c.env.BASE_URL}/api/actors/${username}/outbox?page=${currentPage - 1}`
+
+  return c.json(response, 200, { 'Content-Type': 'application/activity+json' })
 })
 
 // Get current topic - randomly selected Flash/HTML post
