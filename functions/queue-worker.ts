@@ -1,3 +1,6 @@
+export { TaskQueue } from '../src/crowd/durable/TaskQueue'
+export { NodeManager } from '../src/crowd/durable/NodeManager'
+
 /// <reference types="@cloudflare/workers-types" />
 
 interface DeliveryMessage {
