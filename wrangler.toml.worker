@@ -2,18 +2,6 @@ name = "flaxia-backend"
 main = "functions/queue-worker.ts"
 compatibility_date = "2024-01-01"
 
-[[durable_objects.bindings]]
-name = "TASK_QUEUE"
-class_name = "TaskQueue"
-
-[[durable_objects.bindings]]
-name = "NODE_MANAGER"
-class_name = "NodeManager"
-
-[[migrations]]
-tag = "v1"
-new_classes = ["TaskQueue", "NodeManager"]
-
 [[d1_databases]]
 binding = "DB"
 database_name = "flaxia"
