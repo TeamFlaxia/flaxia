@@ -1,6 +1,6 @@
 export interface Notification {
   id: string
-  type: 'reported' | 'fresh' | 'warned' | 'hidden' | 'ap_follow' | 'ap_like' | 'ap_announce' | 'reply'
+  type: 'reported' | 'fresh' | 'warned' | 'hidden' | 'ap_follow' | 'ap_like' | 'ap_announce' | 'reply' | 'mention'
   post_id: string | null
   post_text_preview: string | null
   actor?: {
@@ -168,6 +168,9 @@ export class NotificationsPage {
       case 'reply':
         icon.textContent = '💬'
         break
+      case 'mention':
+        icon.textContent = '📢'
+        break
       case 'reported':
         icon.textContent = '🚩'
         break
@@ -178,7 +181,7 @@ export class NotificationsPage {
         icon.textContent = '🙈'
         break
       default:
-        icon.textContent = '�'
+        icon.textContent = ''
     }
     row.appendChild(icon)
 
@@ -227,6 +230,14 @@ export class NotificationsPage {
           mainText.appendChild(document.createTextNode(' '))
           appendMuted(`(${notification.actor.display_name})`)
           mainText.appendChild(document.createTextNode(' リプライされました'))
+        }
+        break
+      case 'mention':
+        if (notification.actor) {
+          appendStrong(`@${notification.actor.username}`)
+          mainText.appendChild(document.createTextNode(' '))
+          appendMuted(`(${notification.actor.display_name})`)
+          mainText.appendChild(document.createTextNode(' にメンションされました'))
         }
         break
       case 'ap_follow':

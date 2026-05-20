@@ -3181,6 +3181,15 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
         return c.json({ error: 'Hashtags must be alphanumeric, Japanese characters, and ≤20 chars' }, 422)
       }
     }
+
+    // Extract mentions from text
+    const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g
+    const mentionSet = new Set<string>()
+    let mentionMatch
+    while ((mentionMatch = mentionRegex.exec(text)) !== null) {
+      mentionSet.add(mentionMatch[1])
+    }
+    const mentionedUsernames = Array.from(mentionSet)
     
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500)
@@ -3222,6 +3231,36 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
       post = await c.env.DB.prepare(`
         SELECT * FROM posts WHERE id = ?
       `).bind(postId).first()
+
+      // Create mention notifications for mentioned users
+      if (mentionedUsernames.length > 0) {
+        try {
+          const userId = c.get('user')?.id || ''
+          const username = c.get('user')?.username || 'anonymous'
+          
+          for (const mentionedUsername of mentionedUsernames) {
+            // Don't notify if mentioning yourself
+            if (mentionedUsername === username) {
+              continue
+            }
+
+            // Look up the mentioned user
+            const mentionedUser = await c.env.DB.prepare(
+              'SELECT id, username, display_name, avatar_key FROM users WHERE username = ? COLLATE NOCASE'
+            ).bind(mentionedUsername).first() as { id: string, username: string, display_name: string, avatar_key: string | null } | null
+
+            if (mentionedUser) {
+              // Create mention notification
+              await c.env.DB.prepare(
+                'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
+              ).bind(nanoid(), mentionedUser.id, 'mention', postId, userId).run()
+            }
+          }
+        } catch (e) {
+          // Don't fail the post creation if mention notifications fail
+          console.error('Failed to create mention notifications:', e)
+        }
+      }
     } else {
       // Create text-only post directly
       const result = await c.env.DB.prepare(`
@@ -3364,6 +3403,15 @@ app.post('/api/posts', requireAuth, async (c) => {
       hashtagSet.add(match[1])
     }
     const hashtags = Array.from(hashtagSet)
+
+    // Extract mentions from text
+    const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g
+    const mentionSet = new Set<string>()
+    let mentionMatch
+    while ((mentionMatch = mentionRegex.exec(text)) !== null) {
+      mentionSet.add(mentionMatch[1])
+    }
+    const mentionedUsernames = Array.from(mentionSet)
     
     // Check if database is available
     if (!c.env.DB) {
@@ -3379,6 +3427,33 @@ app.post('/api/posts', requireAuth, async (c) => {
     if (!result.success) {
       console.error('Database insert failed:', result)
       return c.json({ error: 'Failed to create post', details: result }, 500)
+    }
+
+    // Create mention notifications for mentioned users
+    if (mentionedUsernames.length > 0) {
+      try {
+        for (const mentionedUsername of mentionedUsernames) {
+          // Don't notify if mentioning yourself
+          if (mentionedUsername === username) {
+            continue
+          }
+
+          // Look up the mentioned user
+          const mentionedUser = await c.env.DB.prepare(
+            'SELECT id, username, display_name, avatar_key FROM users WHERE username = ? COLLATE NOCASE'
+          ).bind(mentionedUsername).first() as { id: string, username: string, display_name: string, avatar_key: string | null } | null
+
+          if (mentionedUser) {
+            // Create mention notification
+            await c.env.DB.prepare(
+              'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
+            ).bind(nanoid(), mentionedUser.id, 'mention', postId, userId).run()
+          }
+        }
+      } catch (e) {
+        // Don't fail the post creation if mention notifications fail
+        console.error('Failed to create mention notifications:', e)
+      }
     }
 
     // ActivityPub delivery for public posts
@@ -3864,6 +3939,15 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
         return c.json({ error: 'Hashtags must be alphanumeric, Japanese characters, and ≤20 chars' }, 422)
       }
     }
+
+    // Extract mentions from text
+    const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g
+    const mentionSet = new Set<string>()
+    let mentionMatch
+    while ((mentionMatch = mentionRegex.exec(text)) !== null) {
+      mentionSet.add(mentionMatch[1])
+    }
+    const mentionedUsernames = Array.from(mentionSet)
     
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500)
@@ -3973,10 +4057,10 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
           INSERT INTO notifications (id, user_id, type, post_id, actor_id) 
           VALUES (?, ?, ?, ?, ?)
         `).bind(
-          nanoid(), 
-          parentPost.user_id, 
-          'reply', 
-          postId, 
+          nanoid(),
+          parentPost.user_id,
+          'reply',
+          postId,
           c.get('user')?.id
         ).run()
       } catch (e) {
@@ -3984,7 +4068,37 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
         // Don't fail the whole operation, just log the error
       }
     }
-    
+
+    // Create mention notifications for mentioned users in the reply
+    if (mentionedUsernames.length > 0) {
+      try {
+        const userId = c.get('user')?.id || ''
+        const username = c.get('user')?.username || 'anonymous'
+
+        for (const mentionedUsername of mentionedUsernames) {
+          // Don't notify if mentioning yourself
+          if (mentionedUsername === username) {
+            continue
+          }
+
+          // Look up the mentioned user
+          const mentionedUser = await c.env.DB.prepare(
+            'SELECT id, username, display_name, avatar_key FROM users WHERE username = ? COLLATE NOCASE'
+          ).bind(mentionedUsername).first() as { id: string, username: string, display_name: string, avatar_key: string | null } | null
+
+          if (mentionedUser) {
+            // Create mention notification
+            await c.env.DB.prepare(
+              'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
+            ).bind(nanoid(), mentionedUser.id, 'mention', replyId, userId).run()
+          }
+        }
+      } catch (e) {
+        // Don't fail the reply creation if mention notifications fail
+        console.error('Failed to create mention notifications:', e)
+      }
+    }
+
     return c.json({ reply })
   } catch (error: any) {
     console.error('Commit reply error:', error)

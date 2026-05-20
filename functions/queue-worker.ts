@@ -224,6 +224,15 @@ async function handleCreateActivity(activity: any, username: string, actorId: st
   }
   const hashtags = Array.from(hashtagSet)
 
+  // Extract mentions from content
+  const mentionSet = new Set<string>()
+  const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g
+  let mentionMatch
+  while ((mentionMatch = mentionRegex.exec(content)) !== null) {
+    mentionSet.add(mentionMatch[1])
+  }
+  const mentionedUsernames = Array.from(mentionSet)
+
   let parentId: string | null = null
   let rootId: string | null = null
   let depth = 0
@@ -240,6 +249,39 @@ async function handleCreateActivity(activity: any, username: string, actorId: st
     INSERT INTO posts (id, user_id, username, text, hashtags, status, parent_id, root_id, depth, created_at)
     VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, datetime('now'))
   `).bind(postId, userId, username, content, JSON.stringify(hashtags), parentId, rootId, depth).run()
+
+  // Create mention notifications for mentioned users
+  if (mentionedUsernames.length > 0) {
+    try {
+      for (const mentionedUsername of mentionedUsernames) {
+        // Don't notify if mentioning yourself
+        if (mentionedUsername === username) {
+          continue
+        }
+
+        // Look up the mentioned user
+        const mentionedUser = await env.DB.prepare(
+          'SELECT id, username, display_name, avatar_key FROM users WHERE username = ? COLLATE NOCASE'
+        ).bind(mentionedUsername).first() as { id: string, username: string, display_name: string, avatar_key: string | null } | null
+
+        if (mentionedUser) {
+          // Create mention notification with actor_data for external actor
+          const actorData = JSON.stringify({
+            username: username,
+            display_name: username,
+            domain: new URL(actorId).hostname
+          })
+
+          await env.DB.prepare(
+            'INSERT INTO notifications (id, user_id, type, post_id, actor_id, actor_data) VALUES (?, ?, ?, ?, ?, ?)'
+          ).bind(generateId(), mentionedUser.id, 'mention', postId, actorId, actorData).run()
+        }
+      }
+    } catch (e) {
+      console.error('Failed to create mention notifications for ActivityPub post:', e)
+      // Don't fail the post creation if mention notifications fail
+    }
+  }
 
   console.log('Note received and stored:', postId)
 }
