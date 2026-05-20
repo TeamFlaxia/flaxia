@@ -84,6 +84,7 @@ async function processText(text: string): Promise<string> {
   
   // Step 3: Restore math placeholders BEFORE sanitization
   html = restoreMathPlaceholders(html, mathPlaceholders)
+  console.log('HTML before sanitization:', html)
   
   // Step 4: Sanitize HTML (now with proper math placeholders)
   html = DOMPurify.sanitize(html, {
@@ -91,6 +92,7 @@ async function processText(text: string): Promise<string> {
     ALLOWED_ATTR: ['href', 'target', 'rel', 'class', 'data-math-content', 'data-math-display'],
     ALLOW_DATA_ATTR: true,
   })
+  console.log('HTML after sanitization:', html)
   
   return html
 }
@@ -104,7 +106,7 @@ function escapeMathNotation(text: string): { textWithPlaceholders: string; mathP
   let placeholderId = 0
   
   // Match $$display math$$ or $inline math$
-  const mathRegex = /\$\$([^$]+)\$\$|\$([^$\s][^$]*[^$\s])\$/g
+  const mathRegex = /\$\$([^$]+)\$\$|\$([^$]+?)\$/g
   
   const textWithPlaceholders = text.replace(mathRegex, (match, displayContent, inlineContent) => {
     const content = displayContent || inlineContent
@@ -135,7 +137,7 @@ function restoreMathPlaceholders(html: string, mathPlaceholders: MathPlaceholder
     const placeholderRegex = new RegExp(`⚡${placeholder.id}⚡`, 'g')
     const before = restoredHtml
     // Store content directly in the element for immediate rendering
-    restoredHtml = restoredHtml.replace(placeholderRegex, `<span class="math-placeholder" data-math-content="${escapeHtml(placeholder.content)}" data-math-display="${placeholder.displayMode}">${escapeHtml(placeholder.content)}</span>`)
+    restoredHtml = restoredHtml.replace(placeholderRegex, `<span class="math-placeholder" data-math-content="${escapeHtml(placeholder.content)}" data-math-display="${placeholder.displayMode}"></span>`)
     
     // Debug: log if replacement happened
     if (before === restoredHtml) {
@@ -185,9 +187,11 @@ function renderMathElement(element: HTMLElement): void {
   
   if (window.katex) {
     try {
+      element.textContent = ''; // Clear existing content
       window.katex.render(unescapeHtml(content), element, {
         throwOnError: false,
-        displayMode
+        displayMode,
+        output: 'mathml'
       })
       element.classList.remove('math-placeholder')
       element.classList.add(displayMode ? 'math-display' : 'math-inline')
