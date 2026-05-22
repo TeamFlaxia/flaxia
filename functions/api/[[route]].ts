@@ -3234,11 +3234,12 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
         SELECT * FROM posts WHERE id = ?
       `).bind(postId).first()
 
-      // Create mention notifications for mentioned users
+      // Create mention notifications for mentioned users (skip self-mentions)
       if (mentionedUsernames.length > 0) {
         try {
           const mentionData = JSON.parse(mentionsJson) as Array<{username: string, user_id: string}>
           for (const mention of mentionData) {
+            if (mention.user_id === userId) continue
             await c.env.DB.prepare(
               'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
             ).bind(nanoid(), mention.user_id, 'mention', postId, userId).run()
@@ -3268,17 +3269,19 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
         SELECT * FROM posts WHERE id = ?
       `).bind(postId).first()
 
-      // Create mention notifications for mentioned users
+      // Create mention notifications for mentioned users (skip self-mentions)
       if (mentionedUsernames.length > 0) {
         try {
           const userId = c.get('user')?.id || ''
           const mentionData = JSON.parse(mentionsJson) as Array<{username: string, user_id: string}>
           for (const mention of mentionData) {
+            if (mention.user_id === userId) continue
             await c.env.DB.prepare(
               'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
             ).bind(nanoid(), mention.user_id, 'mention', postId, userId).run()
           }
         } catch (e) {
+          // Don't fail the post creation if mention notifications fail
           console.error('Failed to create mention notifications:', e)
         }
       }
@@ -3438,11 +3441,12 @@ app.post('/api/posts', requireAuth, async (c) => {
       return c.json({ error: 'Failed to create post', details: result }, 500)
     }
 
-    // Create mention notifications for mentioned users
+    // Create mention notifications for mentioned users (skip self-mentions)
     if (mentionedUsernames.length > 0) {
       try {
         const mentionData = JSON.parse(mentionsJson) as Array<{username: string, user_id: string}>
         for (const mention of mentionData) {
+          if (mention.user_id === userId) continue
           await c.env.DB.prepare(
             'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
           ).bind(nanoid(), mention.user_id, 'mention', postId, userId).run()
@@ -3963,7 +3967,6 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
     
     if (gifKey) {
       // Resolve mentions
-      const replyUserId = c.get('user')?.id || ''
       const replyUsername = c.get('user')?.username || 'anonymous'
       const mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, replyUsername)
 
@@ -4076,11 +4079,13 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
       }
     }
 
-    // Create mention notifications for mentioned users in the reply
+    // Create mention notifications for mentioned users in the reply (skip self-mentions)
     if (mentionedUsernames.length > 0) {
       try {
+        const replyUserId = c.get('user')?.id || ''
         const mentionData = JSON.parse(mentionsJson) as Array<{username: string, user_id: string}>
         for (const mention of mentionData) {
+          if (mention.user_id === replyUserId) continue
           await c.env.DB.prepare(
             'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
           ).bind(nanoid(), mention.user_id, 'mention', replyId, replyUserId).run()
@@ -4377,7 +4382,6 @@ function getPriority(category: ReportCategory): 'critical' | 'high' | 'normal' {
 async function resolveMentions(db: D1Database, mentionedUsernames: string[], currentUsername: string): Promise<string> {
   const mentionData: Array<{username: string, user_id: string}> = []
   for (const mentionedUsername of mentionedUsernames) {
-    if (mentionedUsername.toLowerCase() === currentUsername.toLowerCase()) continue
     const user = await db.prepare(
       'SELECT id, username FROM users WHERE username = ? COLLATE NOCASE'
     ).bind(mentionedUsername).first() as { id: string, username: string } | null
