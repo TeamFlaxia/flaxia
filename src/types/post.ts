@@ -20,6 +20,7 @@ export interface Post {
   avatar_key?: string
   text: string
   hashtags: string
+  mentions?: string
   gif_key?: string  // Stores all image formats (GIF, PNG, JPG), not just GIFs
   payload_key?: string  // Stores ZIP files for HTML execution
   swf_key?: string  // Stores SWF files for Flash execution
@@ -61,6 +62,7 @@ export interface PostHeaderProps {
 
 export interface PostTextProps {
   text: string
+  mentions?: string
 }
 
 export interface PostStageProps {

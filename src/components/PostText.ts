@@ -60,12 +60,13 @@ export async function createPostText(props: PostTextProps): Promise<HTMLElement>
   // Linkify hashtags and URLs
   linkifyHashtags(container)
   linkifyUrls(container)
+  linkifyMentions(container, props.mentions)
   
   return container
 }
 
 // Export processing functions for reuse
-export { processText, renderMathElements, linkifyHashtags, linkifyUrls }
+export { processText, renderMathElements, linkifyHashtags, linkifyUrls, linkifyMentions }
 
 /**
  * Unified text processing pipeline:
@@ -321,6 +322,89 @@ function linkifyUrls(container: HTMLElement): void {
       link.href = url
       link.className = 'url-link'
       link.textContent = displayUrl
+      link.target = '_blank'
+      link.rel = 'noopener noreferrer'
+      fragment.appendChild(link)
+      
+      lastIndex = match.index + match[0].length
+    }
+    
+    // Add remaining text
+    if (lastIndex < text.length) {
+      fragment.appendChild(document.createTextNode(text.slice(lastIndex)))
+    }
+    
+    parent.replaceChild(fragment, textNode)
+  }
+}
+
+/**
+ * Build a map from username → user_id from the mentions JSON string
+ */
+function parseMentions(mentions?: string): Map<string, string> {
+  const map = new Map<string, string>()
+  if (!mentions) return map
+  try {
+    const data = JSON.parse(mentions) as Array<{username: string, user_id: string}>
+    for (const m of data) {
+      map.set(m.username.toLowerCase(), m.user_id)
+    }
+  } catch {}
+  return map
+}
+
+/**
+ * Convert @username mentions to clickable links
+ */
+function linkifyMentions(container: HTMLElement, mentions?: string): void {
+  const mentionMap = parseMentions(mentions)
+
+  const walker = document.createTreeWalker(
+    container,
+    NodeFilter.SHOW_TEXT,
+    null
+  )
+  
+  const textNodes: Text[] = []
+  let node: Node | null
+  
+  while (node = walker.nextNode()) {
+    textNodes.push(node as Text)
+  }
+  
+  // Process text nodes and replace @mentions with links
+  for (const textNode of textNodes) {
+    const text = textNode.textContent || ''
+    const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g
+    
+    if (!mentionRegex.test(text)) continue
+    
+    // Reset regex lastIndex
+    mentionRegex.lastIndex = 0
+    
+    const parent = textNode.parentNode
+    if (!parent) continue
+    
+    // Skip if parent is already a link (e.g. inside an <a> tag)
+    if (parent.nodeName === 'A') continue
+    
+    const fragment = document.createDocumentFragment()
+    let lastIndex = 0
+    let match: RegExpExecArray | null
+    
+    while ((match = mentionRegex.exec(text)) !== null) {
+      // Add text before mention
+      if (match.index > lastIndex) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)))
+      }
+      
+      // Create mention link
+      const username = match[1]
+      const userId = mentionMap.get(username.toLowerCase())
+      const link = document.createElement('a')
+      link.href = userId ? `/profile/${userId}` : `/profile/${encodeURIComponent(username)}`
+      link.className = 'mention-link'
+      link.textContent = `@${username}`
       link.target = '_blank'
       link.rel = 'noopener noreferrer'
       fragment.appendChild(link)

@@ -103,7 +103,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     interface NotificationData {
       notifications: Array<{
         id: string
-        type: 'reported' | 'fresh' | 'warned' | 'hidden'
+        type: 'reported' | 'fresh' | 'warned' | 'hidden' | 'ap_follow' | 'ap_like' | 'ap_announce' | 'reply' | 'mention'
         post_id: string
         post_text_preview: string
         actor?: {

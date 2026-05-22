@@ -1900,6 +1900,18 @@ html {
   color: var(--accent-dark);
 }
 
+/* Mention Links */
+.mention-link {
+  color: #3b82f6;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.mention-link:hover {
+  text-decoration: underline;
+  color: #2563eb;
+}
+
 /* Math Elements */
 .math-inline,
 .math-display {

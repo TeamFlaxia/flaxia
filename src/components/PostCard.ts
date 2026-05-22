@@ -87,7 +87,8 @@ export class PostCard {
       (window as any).requestIdleCallback(async () => {
         try {
           const richText = await createPostText({
-            text: this.props.post.text
+            text: this.props.post.text,
+            mentions: this.props.post.mentions
           })
           // リッチテキストに置き換え
           textElement.replaceWith(richText)
@@ -101,7 +102,8 @@ export class PostCard {
       setTimeout(async () => {
         try {
           const richText = await createPostText({
-            text: this.props.post.text
+            text: this.props.post.text,
+            mentions: this.props.post.mentions
           })
           textElement.replaceWith(richText)
         } catch (error) {

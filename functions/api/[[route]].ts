@@ -2108,16 +2108,16 @@ app.get('/api/posts', async (c) => {
     if (hashtag) {
       // Filter by hashtag using json_each
       if (cursor) {
-        query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = \'published\' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?'
+        query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = \'published\' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?'
         params = [hashtag, cursor, limit]
       } else {
-        query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = \'published\' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ORDER BY p.created_at DESC LIMIT ?'
+        query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = \'published\' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ORDER BY p.created_at DESC LIMIT ?'
         params = [hashtag, limit]
       }
     } else if (following && currentUserId) {
       // Following tab - show posts from followed users and current user's own posts
       if (cursor) {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
           (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, 
           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at 
           FROM posts p 
@@ -2132,7 +2132,7 @@ app.get('/api/posts', async (c) => {
           ORDER BY p.created_at DESC LIMIT ?`
         params = [currentUserId, currentUserId, cursor, limit]
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
           (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, 
           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at 
           FROM posts p 
@@ -2150,19 +2150,19 @@ app.get('/api/posts', async (c) => {
     } else if (username) {
       // Username filter - show posts from specific user
       if (cursor) {
-        query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?'
+        query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?'
         params = [username, cursor, limit]
       } else {
-        query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 ORDER BY p.created_at DESC LIMIT ?'
+        query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 ORDER BY p.created_at DESC LIMIT ?'
         params = [username, limit]
       }
     } else {
       // Regular timeline query (For You tab)
       if (cursor) {
-        query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = \'published\' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?'
+        query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = \'published\' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?'
         params = [cursor, limit]
       } else {
-        query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = \'published\' AND p.hidden = 0 AND p.parent_id IS NULL ORDER BY p.created_at DESC LIMIT ?'
+        query = 'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = \'published\') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = \'published\' AND p.hidden = 0 AND p.parent_id IS NULL ORDER BY p.created_at DESC LIMIT ?'
         params = [limit]
       }
     }
@@ -2226,7 +2226,7 @@ app.get('/api/posts/trending', async (c) => {
     // Trending algorithm: (fresh_count * 2 + reply_count * 3 + impressions * 0.1 + 1) / (hours_since_creation + 2)^1.5
     // SQLite doesn't have POW, so we use (hours + 2) * (hours + 2) as a simpler decay
     let query = `
-      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
+      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
       (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, 
       COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
       ((p.fresh_count * 2.0 + (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') * 3.0 + p.impressions * 0.1 + 1.0) / 
@@ -2288,7 +2288,7 @@ app.get('/api/posts/recommended', async (c) => {
 
     if (currentUserId) {
       query = `
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
         (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, 
         COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
         ${scoreFormula} as score
@@ -2303,7 +2303,7 @@ app.get('/api/posts/recommended', async (c) => {
       params = cursorScore !== null ? [currentUserId, numericScore, numericScore, cursorCreatedAt, limit] : [currentUserId, limit]
     } else {
       query = `
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, 
         (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, 
         COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
         ${scoreFormula} as score
@@ -3213,20 +3213,17 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
         return c.json({ error: 'Invalid or expired post preparation' }, 422)
       }
       
-      // Check if file exists in R2 (simplified check for now)
-      // In production, this would be: await c.env.BUCKET.head(key)
-      const fileExists = true // Placeholder - implement actual R2 check
-      
-      if (!fileExists) {
-        return c.json({ error: 'File not uploaded' }, 422)
-      }
+      // Resolve mentions
+      const userId = c.get('user')?.id || ''
+      const username = c.get('user')?.username || 'anonymous'
+      const mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, username)
       
       // Update post to published status
       const updateResult = await c.env.DB.prepare(`
         UPDATE posts 
-        SET text = ?, hashtags = ?, status = 'published', created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        SET text = ?, hashtags = ?, mentions = ?, status = 'published', created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
         WHERE id = ?
-      `).bind(text, JSON.stringify(hashtags), postId).run()
+      `).bind(text, JSON.stringify(hashtags), mentionsJson, postId).run()
       
       if (!updateResult.success) {
         return c.json({ error: 'Failed to commit post' }, 500)
@@ -3240,26 +3237,11 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
       // Create mention notifications for mentioned users
       if (mentionedUsernames.length > 0) {
         try {
-          const userId = c.get('user')?.id || ''
-          const username = c.get('user')?.username || 'anonymous'
-          
-          for (const mentionedUsername of mentionedUsernames) {
-            // Don't notify if mentioning yourself
-            if (mentionedUsername === username) {
-              continue
-            }
-
-            // Look up the mentioned user
-            const mentionedUser = await c.env.DB.prepare(
-              'SELECT id, username, display_name, avatar_key FROM users WHERE username = ? COLLATE NOCASE'
-            ).bind(mentionedUsername).first() as { id: string, username: string, display_name: string, avatar_key: string | null } | null
-
-            if (mentionedUser) {
-              // Create mention notification
-              await c.env.DB.prepare(
-                'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
-              ).bind(nanoid(), mentionedUser.id, 'mention', postId, userId).run()
-            }
+          const mentionData = JSON.parse(mentionsJson) as Array<{username: string, user_id: string}>
+          for (const mention of mentionData) {
+            await c.env.DB.prepare(
+              'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
+            ).bind(nanoid(), mention.user_id, 'mention', postId, userId).run()
           }
         } catch (e) {
           // Don't fail the post creation if mention notifications fail
@@ -3267,11 +3249,15 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
         }
       }
     } else {
+      // Resolve mentions
+      const username = c.get('user')?.username || 'anonymous'
+      const mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, username)
+      
       // Create text-only post directly
       const result = await c.env.DB.prepare(`
-        INSERT INTO posts (id, user_id, username, text, hashtags, status)
-        VALUES (?, ?, ?, ?, ?, 'published')
-      `).bind(postId, c.get('user')?.id || '', c.get('user')?.username || 'anonymous', text, JSON.stringify(hashtags)).run()
+        INSERT INTO posts (id, user_id, username, text, hashtags, mentions, status)
+        VALUES (?, ?, ?, ?, ?, ?, 'published')
+      `).bind(postId, c.get('user')?.id || '', username, text, JSON.stringify(hashtags), mentionsJson).run()
       
       if (!result.success) {
         return c.json({ error: 'Failed to create post' }, 500)
@@ -3281,6 +3267,21 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
       post = await c.env.DB.prepare(`
         SELECT * FROM posts WHERE id = ?
       `).bind(postId).first()
+
+      // Create mention notifications for mentioned users
+      if (mentionedUsernames.length > 0) {
+        try {
+          const userId = c.get('user')?.id || ''
+          const mentionData = JSON.parse(mentionsJson) as Array<{username: string, user_id: string}>
+          for (const mention of mentionData) {
+            await c.env.DB.prepare(
+              'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
+            ).bind(nanoid(), mention.user_id, 'mention', postId, userId).run()
+          }
+        } catch (e) {
+          console.error('Failed to create mention notifications:', e)
+        }
+      }
       
       // Queue ActivityPub delivery for public posts
       if (post && post.visibility === 'public') {
@@ -3417,6 +3418,9 @@ app.post('/api/posts', requireAuth, async (c) => {
       mentionSet.add(mentionMatch[1])
     }
     const mentionedUsernames = Array.from(mentionSet)
+
+    // Resolve mentions
+    const mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, username)
     
     // Check if database is available
     if (!c.env.DB) {
@@ -3425,9 +3429,9 @@ app.post('/api/posts', requireAuth, async (c) => {
     }
     
     const result = await c.env.DB.prepare(`
-      INSERT INTO posts (id, user_id, username, text, hashtags, payload_key, gif_key, swf_key, thumbnail_key)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(postId, userId, username, text, JSON.stringify(hashtags), payloadKey || null, gifKey || null, swfKey || null, thumbnailKey || null).run()
+      INSERT INTO posts (id, user_id, username, text, hashtags, mentions, payload_key, gif_key, swf_key, thumbnail_key)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(postId, userId, username, text, JSON.stringify(hashtags), mentionsJson, payloadKey || null, gifKey || null, swfKey || null, thumbnailKey || null).run()
     
     if (!result.success) {
       console.error('Database insert failed:', result)
@@ -3437,23 +3441,11 @@ app.post('/api/posts', requireAuth, async (c) => {
     // Create mention notifications for mentioned users
     if (mentionedUsernames.length > 0) {
       try {
-        for (const mentionedUsername of mentionedUsernames) {
-          // Don't notify if mentioning yourself
-          if (mentionedUsername === username) {
-            continue
-          }
-
-          // Look up the mentioned user
-          const mentionedUser = await c.env.DB.prepare(
-            'SELECT id, username, display_name, avatar_key FROM users WHERE username = ? COLLATE NOCASE'
-          ).bind(mentionedUsername).first() as { id: string, username: string, display_name: string, avatar_key: string | null } | null
-
-          if (mentionedUser) {
-            // Create mention notification
-            await c.env.DB.prepare(
-              'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
-            ).bind(nanoid(), mentionedUser.id, 'mention', postId, userId).run()
-          }
+        const mentionData = JSON.parse(mentionsJson) as Array<{username: string, user_id: string}>
+        for (const mention of mentionData) {
+          await c.env.DB.prepare(
+            'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
+          ).bind(nanoid(), mention.user_id, 'mention', postId, userId).run()
         }
       } catch (e) {
         // Don't fail the post creation if mention notifications fail
@@ -3666,14 +3658,14 @@ app.get('/api/posts/:id/replies', async (c) => {
     
     // Verify parent post exists and is published
     const parentPost = await c.env.DB.prepare(
-      'SELECT id, user_id, username, text, hashtags, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, \'published\') as status, created_at FROM posts WHERE id = ? AND status = \'published\''
+      'SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, \'published\') as status, created_at FROM posts WHERE id = ? AND status = \'published\''
     ).bind(postId).first()
     
     if (!parentPost) {
       return c.json({ error: 'Post not found' }, 404)
     }
     
-    let query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+    let query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
        u.display_name, u.avatar_key
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
@@ -3682,7 +3674,7 @@ app.get('/api/posts/:id/replies', async (c) => {
     const params: any[] = [postId, limit]
     
     if (cursor) {
-      query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+      query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
        u.display_name, u.avatar_key
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
@@ -3769,7 +3761,7 @@ app.get('/api/posts/:id/thread', async (c) => {
     
     // First get the post to find root_id
     const post = await c.env.DB.prepare(
-      'SELECT id, user_id, username, text, hashtags, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, \'published\') as status, created_at FROM posts WHERE id = ? AND status = \'published\''
+      'SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, \'published\') as status, created_at FROM posts WHERE id = ? AND status = \'published\''
     ).bind(postId).first()
     
     if (!post) {
@@ -3780,7 +3772,7 @@ app.get('/api/posts/:id/thread', async (c) => {
     
     // Get root post with user info
     const rootPost = await c.env.DB.prepare(
-      `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+      `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
        u.display_name, u.avatar_key
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
@@ -3793,7 +3785,7 @@ app.get('/api/posts/:id/thread', async (c) => {
     
     // Get all replies in thread with user info (max 200 for MVP)
     const repliesResult = await c.env.DB.prepare(
-      `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+      `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
        u.display_name, u.avatar_key
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
@@ -3856,7 +3848,7 @@ app.post('/api/posts/:id/replies/prepare', requireAuth, async (c) => {
     
     // Validate parent post exists and is published
     const parentPost = await c.env.DB.prepare(
-      'SELECT id, user_id, username, text, hashtags, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, \'published\') as status, created_at FROM posts WHERE id = ? AND status = \'published\''
+      'SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, \'published\') as status, created_at FROM posts WHERE id = ? AND status = \'published\''
     ).bind(postId).first()
     
     if (!parentPost) {
@@ -3888,7 +3880,7 @@ app.post('/api/posts/:id/replies/prepare', requireAuth, async (c) => {
     
     // Store pending reply in D1
     const result = await c.env.DB.prepare(`
-      INSERT INTO posts (id, user_id, username, text, hashtags, gif_key, payload_key, swf_key, fresh_count, status, parent_id, root_id, depth, reply_count)
+      INSERT INTO posts (id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, status, parent_id, root_id, depth, reply_count)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'pending', ?, ?, ?, 0)
     `).bind(
       replyId, 
@@ -3960,7 +3952,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
     
     // Validate parent still exists and is published
     const parentPost = await c.env.DB.prepare(
-      'SELECT id, user_id, username, text, hashtags, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, \'published\') as status, created_at FROM posts WHERE id = ? AND status = \'published\''
+      'SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, \'published\') as status, created_at FROM posts WHERE id = ? AND status = \'published\''
     ).bind(postId).first()
     
     if (!parentPost) {
@@ -3970,6 +3962,11 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
     let reply: any
     
     if (gifKey) {
+      // Resolve mentions
+      const replyUserId = c.get('user')?.id || ''
+      const replyUsername = c.get('user')?.username || 'anonymous'
+      const mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, replyUsername)
+
       // Validate that this is a pending reply and gifKey matches
       const pendingReply = await c.env.DB.prepare(`
         SELECT * FROM posts WHERE id = ? AND status = 'pending' AND gif_key = ? AND parent_id = ?
@@ -3989,9 +3986,9 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
       // Update reply to published status
       const updateResult = await c.env.DB.prepare(`
         UPDATE posts 
-        SET text = ?, hashtags = ?, status = 'published', created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        SET text = ?, hashtags = ?, mentions = ?, status = 'published', created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
         WHERE id = ?
-      `).bind(text, JSON.stringify(hashtags), replyId).run()
+      `).bind(text, JSON.stringify(hashtags), mentionsJson, replyId).run()
       
       if (!updateResult.success) {
         return c.json({ error: 'Failed to commit reply' }, 500)
@@ -3999,23 +3996,28 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
       
       // Return the updated reply
       reply = await c.env.DB.prepare(`
-        SELECT id, user_id, username, text, hashtags, gif_key, payload_key, swf_key, fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = id AND status = 'published') as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ?
+        SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = id AND status = 'published') as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ?
       `).bind(replyId).first()
     } else {
+      // Resolve mentions
+      const replyUsername = c.get('user')?.username || 'anonymous'
+      const mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, replyUsername)
+
       // Create text-only reply directly
       const depth = Math.min(Number(parentPost.depth || 0) + 1, 5)
       const rootId = parentPost.root_id || parentPost.id
       
       try {
         const result = await c.env.DB.prepare(`
-          INSERT INTO posts (id, user_id, username, text, hashtags, gif_key, payload_key, swf_key, fresh_count, status, parent_id, root_id, depth, reply_count)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'published', ?, ?, ?, 0)
+          INSERT INTO posts (id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, status, parent_id, root_id, depth, reply_count)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'published', ?, ?, ?, 0)
         `).bind(
           replyId, 
           c.get('user')?.id || '', 
-          c.get('user')?.username || 'anonymous', 
+          replyUsername, 
           text, 
           JSON.stringify(hashtags),
+          mentionsJson,
           '',
           '',
           '',
@@ -4031,7 +4033,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
         
         // Return the created reply
         reply = await c.env.DB.prepare(`
-          SELECT id, user_id, username, text, hashtags, gif_key, payload_key, swf_key, fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = id AND status = 'published') as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ?
+          SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = id AND status = 'published') as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ?
         `).bind(replyId).first()
       } catch (dbError: any) {
         console.error('Database error creating reply:', dbError)
@@ -4077,26 +4079,11 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
     // Create mention notifications for mentioned users in the reply
     if (mentionedUsernames.length > 0) {
       try {
-        const userId = c.get('user')?.id || ''
-        const username = c.get('user')?.username || 'anonymous'
-
-        for (const mentionedUsername of mentionedUsernames) {
-          // Don't notify if mentioning yourself
-          if (mentionedUsername === username) {
-            continue
-          }
-
-          // Look up the mentioned user
-          const mentionedUser = await c.env.DB.prepare(
-            'SELECT id, username, display_name, avatar_key FROM users WHERE username = ? COLLATE NOCASE'
-          ).bind(mentionedUsername).first() as { id: string, username: string, display_name: string, avatar_key: string | null } | null
-
-          if (mentionedUser) {
-            // Create mention notification
-            await c.env.DB.prepare(
-              'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
-            ).bind(nanoid(), mentionedUser.id, 'mention', replyId, userId).run()
-          }
+        const mentionData = JSON.parse(mentionsJson) as Array<{username: string, user_id: string}>
+        for (const mention of mentionData) {
+          await c.env.DB.prepare(
+            'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
+          ).bind(nanoid(), mention.user_id, 'mention', replyId, replyUserId).run()
         }
       } catch (e) {
         // Don't fail the reply creation if mention notifications fail
@@ -4154,7 +4141,7 @@ app.get('/api/search', async (c) => {
       } else if (type === 'arcade') {
       // Search arcade (posts with swf_key or payload_key)
       const posts = await c.env.DB.prepare(`
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
         FROM posts p
         LEFT JOIN users u ON p.user_id = u.id
         WHERE p.status = 'published' AND p.hidden = 0 AND (p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL) AND (p.text LIKE ? OR p.username LIKE ?)
@@ -4170,7 +4157,7 @@ app.get('/api/search', async (c) => {
       } else {
       // Search posts (default)
       const posts = await c.env.DB.prepare(`
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
         FROM posts p
         LEFT JOIN users u ON p.user_id = u.id
         WHERE p.status = 'published' AND p.hidden = 0 AND (p.text LIKE ? OR p.username LIKE ?)
@@ -4384,6 +4371,21 @@ function getPriority(category: ReportCategory): 'critical' | 'high' | 'normal' {
     return 'high'
   }
   return 'normal'
+}
+
+// Helper function to resolve mentioned usernames to {username, user_id} objects
+async function resolveMentions(db: D1Database, mentionedUsernames: string[], currentUsername: string): Promise<string> {
+  const mentionData: Array<{username: string, user_id: string}> = []
+  for (const mentionedUsername of mentionedUsernames) {
+    if (mentionedUsername.toLowerCase() === currentUsername.toLowerCase()) continue
+    const user = await db.prepare(
+      'SELECT id, username FROM users WHERE username = ? COLLATE NOCASE'
+    ).bind(mentionedUsername).first() as { id: string, username: string } | null
+    if (user) {
+      mentionData.push({ username: user.username, user_id: user.id })
+    }
+  }
+  return JSON.stringify(mentionData)
 }
 
 // Helper function to insert notification
@@ -4897,7 +4899,7 @@ app.get('/api/current-topic', async (c) => {
     // Use a seed based on current hour to keep the same post for 1 hour
     const currentHour = new Date().getHours()
     const result = await c.env.DB.prepare(`
-      SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.created_at,
+      SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.created_at,
              u.display_name, u.avatar_key,
              (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count,
              COALESCE(p.impressions, 0) as impressions,

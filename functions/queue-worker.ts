@@ -255,7 +255,7 @@ async function handleCreateActivity(activity: any, username: string, actorId: st
     try {
       for (const mentionedUsername of mentionedUsernames) {
         // Don't notify if mentioning yourself
-        if (mentionedUsername === username) {
+        if (mentionedUsername.toLowerCase() === username.toLowerCase()) {
           continue
         }
 
