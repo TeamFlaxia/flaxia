@@ -398,16 +398,20 @@ function linkifyMentions(container: HTMLElement, mentions?: string): void {
         fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)))
       }
       
-      // Create mention link
+      // Create mention link only if user exists
       const username = match[1]
-      const userId = mentionMap.get(username.toLowerCase())
-      const link = document.createElement('a')
-      link.href = userId ? `/profile/${userId}` : `/profile/${encodeURIComponent(username)}`
-      link.className = 'mention-link'
-      link.textContent = `@${username}`
-      link.target = '_blank'
-      link.rel = 'noopener noreferrer'
-      fragment.appendChild(link)
+      const userExists = mentionMap.has(username.toLowerCase())
+      if (userExists) {
+        const link = document.createElement('a')
+        link.href = `/profile/${encodeURIComponent(username)}`
+        link.className = 'mention-link'
+        link.textContent = `@${username}`
+        link.target = '_blank'
+        link.rel = 'noopener noreferrer'
+        fragment.appendChild(link)
+      } else {
+        fragment.appendChild(document.createTextNode(`@${username}`))
+      }
       
       lastIndex = match.index + match[0].length
     }
