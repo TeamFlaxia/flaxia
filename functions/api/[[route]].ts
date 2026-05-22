@@ -3231,7 +3231,7 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
       
       // Return the updated post
       post = await c.env.DB.prepare(`
-        SELECT * FROM posts WHERE id = ?
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
       `).bind(postId).first()
 
       // Create mention notifications for mentioned users (skip self-mentions)
@@ -3266,7 +3266,7 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
       
       // Return the created post
       post = await c.env.DB.prepare(`
-        SELECT * FROM posts WHERE id = ?
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
       `).bind(postId).first()
 
       // Create mention notifications for mentioned users (skip self-mentions)
@@ -3999,7 +3999,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
       
       // Return the updated reply
       reply = await c.env.DB.prepare(`
-        SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = id AND status = 'published') as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ?
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
       `).bind(replyId).first()
     } else {
       // Resolve mentions
@@ -4036,7 +4036,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
         
         // Return the created reply
         reply = await c.env.DB.prepare(`
-          SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = id AND status = 'published') as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ?
+          SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
         `).bind(replyId).first()
       } catch (dbError: any) {
         console.error('Database error creating reply:', dbError)
