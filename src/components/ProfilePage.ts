@@ -344,8 +344,8 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
       // Show sign-in prompt for guests
       showSignInPrompt(
         'follow',
-        () => window.location.href = '/login',
-        () => window.location.href = '/register'
+        () => { window.history.pushState({}, '', '/login'); window.dispatchEvent(new PopStateEvent('popstate')) },
+        () => { window.history.pushState({}, '', '/register'); window.dispatchEvent(new PopStateEvent('popstate')) }
       )
       return
     }

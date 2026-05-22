@@ -252,6 +252,10 @@ export function createFollowerListModal({ username, initialTab = 'followers', cu
     const existingUserElements = content.querySelectorAll('.follower-list-user')
     existingUserElements.forEach(el => el.remove())
 
+    // Clear existing load more buttons
+    const existingLoadMore = content.querySelectorAll('.follower-list-load-more')
+    existingLoadMore.forEach(el => el.remove())
+
     if (users.length === 0) {
       emptyElement.style.display = 'flex'
       return
@@ -387,8 +391,8 @@ export function createFollowerListModal({ username, initialTab = 'followers', cu
         if (!currentUser || !followButton) {
           showSignInPrompt(
             'follow',
-            () => window.location.href = '/login',
-            () => window.location.href = '/register'
+            () => { window.history.pushState({}, '', '/login'); window.dispatchEvent(new PopStateEvent('popstate')) },
+            () => { window.history.pushState({}, '', '/register'); window.dispatchEvent(new PopStateEvent('popstate')) }
           )
           return
         }

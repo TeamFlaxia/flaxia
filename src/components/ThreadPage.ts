@@ -83,10 +83,10 @@ export class ThreadPage {
         }
       },
       onSignIn: () => {
-        window.location.href = '/login'
+        window.history.pushState({}, '', '/login'); window.dispatchEvent(new PopStateEvent('popstate'))
       },
       onSignUp: () => {
-        window.location.href = '/register'
+        window.history.pushState({}, '', '/register'); window.dispatchEvent(new PopStateEvent('popstate'))
       }
     })
     this.leftNav.getElement().style.cssText = `

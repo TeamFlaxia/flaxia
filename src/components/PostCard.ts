@@ -271,8 +271,8 @@ export class PostCard {
     if (!this.props.currentUser) {
       showSignInPrompt(
         'fresh',
-        () => window.location.href = '/login',
-        () => window.location.href = '/register'
+        () => { window.history.pushState({}, '', '/login'); window.dispatchEvent(new PopStateEvent('popstate')) },
+        () => { window.history.pushState({}, '', '/register'); window.dispatchEvent(new PopStateEvent('popstate')) }
       )
       return
     }
@@ -319,8 +319,8 @@ export class PostCard {
     if (!this.props.currentUser) {
       showSignInPrompt(
         'reply',
-        () => window.location.href = '/login',
-        () => window.location.href = '/register'
+        () => { window.history.pushState({}, '', '/login'); window.dispatchEvent(new PopStateEvent('popstate')) },
+        () => { window.history.pushState({}, '', '/register'); window.dispatchEvent(new PopStateEvent('popstate')) }
       )
       return
     }
@@ -542,8 +542,8 @@ export class PostCard {
         if (!this.props.currentUser) {
           showSignInPrompt(
             'report',
-            () => window.location.href = '/login',
-            () => window.location.href = '/register'
+            () => { window.history.pushState({}, '', '/login'); window.dispatchEvent(new PopStateEvent('popstate')) },
+            () => { window.history.pushState({}, '', '/register'); window.dispatchEvent(new PopStateEvent('popstate')) }
           )
           return
         }
