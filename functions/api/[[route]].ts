@@ -819,11 +819,16 @@ app.post('/api/auth/register', async (c) => {
 // POST /api/auth/login - user login
 app.post('/api/auth/login', async (c) => {
   const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
-  const rl = await checkRateLimit(c.env.RATE_LIMIT, {
-    key: `login:${ip}`,
-    limit: 20,
-    windowSeconds: 3600
-  })
+  let rl = { allowed: true, remaining: 0, resetIn: 0 }
+  try {
+    rl = await checkRateLimit(c.env.RATE_LIMIT, {
+      key: `login:${ip}`,
+      limit: 20,
+      windowSeconds: 3600
+    })
+  } catch (kvError: any) {
+    console.warn('Login rate limit check failed, proceeding anyway:', kvError.message)
+  }
   if (!rl.allowed) return rateLimitResponse(c, rl.resetIn, 20)
 
   try {
