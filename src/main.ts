@@ -58,6 +58,28 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentUser: { username: string; id: string; display_name?: string; avatar_key?: string } | null = null
     let unreadNotificationCount = 0
     let adminUsernames: string[] = []
+    let notificationPollInterval: ReturnType<typeof setInterval> | null = null
+
+    const refreshNotificationBadges = async () => {
+      await fetchNotifications()
+      leftNavInstances.forEach((leftNav: any) => {
+        if (typeof leftNav.setUnreadCount === 'function') {
+          leftNav.setUnreadCount(unreadNotificationCount)
+        }
+      })
+    }
+
+    const startNotificationPolling = () => {
+      if (notificationPollInterval) return
+      notificationPollInterval = setInterval(refreshNotificationBadges, 60000)
+    }
+
+    const stopNotificationPolling = () => {
+      if (notificationPollInterval) {
+        clearInterval(notificationPollInterval)
+        notificationPollInterval = null
+      }
+    }
     
     // Check current user session
     const checkAuth = async () => {
@@ -75,6 +97,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           leftNavInstances.forEach(leftNav => {
             updateLeftNavUser(leftNav, currentUser)
           })
+          
+          // Start background polling for unread notification count
+          startNotificationPolling()
           
           return true
         }
@@ -94,6 +119,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // If user was logged in and now is not, they were logged out
       if (wasLoggedIn) {
         console.log('User session expired - redirecting to login')
+        stopNotificationPolling()
         window.history.pushState({}, '', '/login')
         navigateTo('login')
         return false
@@ -440,6 +466,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Always check auth state on navigation to ensure session is up-to-date
       // This will trigger session extension via /api/me call
       await checkAuth()
+
+      // Refresh notification count for authenticated routes
+      if (view !== 'login' && view !== 'register') {
+        await fetchNotifications()
+      }
       
       // For auth routes, proceed directly
       if (view === 'login' || view === 'register') {
