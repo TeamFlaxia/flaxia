@@ -1,4 +1,5 @@
 import { clearMeCache } from '../lib/auth-cache'
+import { isModalOpen } from '../lib/modal-state'
 
 export interface LeftNavProps {
   activeItem?: string
@@ -56,6 +57,7 @@ export class LeftNav {
     logoInner.appendChild(logoText)
     logo.appendChild(logoInner)
     logo.addEventListener('click', () => {
+      if (isModalOpen()) return
       this.props.onNavigate?.('home')
     })
 
@@ -283,6 +285,7 @@ export class LeftNav {
     // Navigation items
     this.element.querySelectorAll('.nav-item').forEach(item => {
       item.addEventListener('click', (e) => {
+        if (isModalOpen()) return
         const target = e.currentTarget as HTMLElement
         const navId = target.getAttribute('data-nav-id')
         if (navId) {
@@ -424,6 +427,7 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
         }
 
         navItem.addEventListener('click', () => {
+          if (isModalOpen()) return
           (leftNav as any).setActiveItem(item.id)
           ;(leftNav as any).props.onNavigate?.(item.id)
         })
@@ -444,6 +448,7 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
         navItem.setAttribute('data-nav-id', item.id)
         navItem.innerHTML = `<span style="margin-right: 0.75rem;">${item.icon}</span><span>${item.label}</span>`
         navItem.addEventListener('click', () => {
+          if (isModalOpen()) return
           (leftNav as any).setActiveItem(item.id)
           ;(leftNav as any).props.onNavigate?.(item.id)
         })

@@ -1,5 +1,6 @@
 import { GifPreviewProps } from '../types/post.js'
 import { safeRemoveFromBody } from '../lib/dom-utils.js'
+import { registerModal } from '../lib/modal-state.js'
 
 export function createImagePreview(props: GifPreviewProps): HTMLElement {
   const container = document.createElement('div')
@@ -198,7 +199,9 @@ function createImageOverlay(imageUrl: string, postId: string): void {
   closeButton.onmouseout = () => closeButton.style.background = 'rgba(255, 255, 255, 0.2)'
   
   // Close handlers
+  const unregister = registerModal()
   const closeOverlay = () => {
+    unregister()
     safeRemoveFromBody(overlay)
   }
   

@@ -1,3 +1,5 @@
+import { registerModal } from '../lib/modal-state.js'
+
 export interface AdminAd {
   id: string
   title: string
@@ -24,6 +26,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
   let ads: AdminAd[] = []
   let everyN = 8
   let modalOpen = false
+  let unregisterModalFn: (() => void) | null = null
   let editingAd: AdminAd | null = null
 
   // Create container immediately
@@ -471,6 +474,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
   }
 
   const createModal = () => {
+    unregisterModalFn = registerModal()
     const modal = document.createElement('div')
     modal.style.cssText = `
       position: fixed;
@@ -529,6 +533,8 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       justify-content: center;
     `
     closeBtn.addEventListener('click', () => {
+      unregisterModalFn?.()
+      unregisterModalFn = null
       modalOpen = false
       editingAd = null
       render()
@@ -899,6 +905,8 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
 
     modal.addEventListener('click', (e) => {
       if (e.target === modal) {
+        unregisterModalFn?.()
+        unregisterModalFn = null
         modalOpen = false
         editingAd = null
         render()

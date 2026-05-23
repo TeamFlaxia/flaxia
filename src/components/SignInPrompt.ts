@@ -1,3 +1,5 @@
+import { registerModal } from '../lib/modal-state.js'
+
 export interface SignInPromptProps {
   subtitle?: string
   onSignIn?: () => void
@@ -6,6 +8,7 @@ export interface SignInPromptProps {
 }
 
 export function createSignInPrompt(props: SignInPromptProps = {}) {
+  const unregister = registerModal()
   const subtitle = props.subtitle || 'Sign up to Flaxia, follow people, and join the conversation.'
 
   // Create overlay
@@ -101,12 +104,14 @@ export function createSignInPrompt(props: SignInPromptProps = {}) {
   // Close on overlay click
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) {
+      unregister()
       destroy()
       props.onClose?.()
     }
   })
 
   function destroy() {
+    unregister()
     if (overlay.parentNode) {
       overlay.remove()
     }

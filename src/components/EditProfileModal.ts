@@ -1,4 +1,5 @@
 import { updateMeCache } from '../lib/auth-cache'
+import { registerModal } from '../lib/modal-state.js'
 
 interface EditProfileModalProps {
   currentUser: { username: string; display_name?: string; bio?: string; avatar_key?: string }
@@ -6,6 +7,7 @@ interface EditProfileModalProps {
 }
 
 export function createEditProfileModal({ currentUser, onSave }: EditProfileModalProps) {
+  const unregister = registerModal()
   const container = document.createElement('div')
   container.className = 'modal-overlay'
   container.style.cssText = `
@@ -460,6 +462,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   })
 
   function destroy() {
+    unregister()
     if (avatarPreviewUrl) {
       URL.revokeObjectURL(avatarPreviewUrl)
     }

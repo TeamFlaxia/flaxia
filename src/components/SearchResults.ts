@@ -1,3 +1,5 @@
+import { registerModal } from '../lib/modal-state.js'
+
 export interface SearchResultsProps {
   query: string
   posts: any[]
@@ -7,6 +9,7 @@ export interface SearchResultsProps {
 }
 
 export function createSearchResults(props: SearchResultsProps): HTMLElement {
+  const unregister = registerModal()
   const container = document.createElement('div')
   container.className = 'search-results-overlay'
   container.style.cssText = `
@@ -248,6 +251,7 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
   // Close on overlay click
   container.onclick = (e) => {
     if (e.target === container) {
+      unregister()
       props.onClose()
     }
   }

@@ -1,4 +1,5 @@
 import { showSignInPrompt } from './SignInPrompt.js'
+import { registerModal } from '../lib/modal-state.js'
 
 interface UserListItem {
   id: string
@@ -18,6 +19,7 @@ interface FollowerListModalProps {
 }
 
 export function createFollowerListModal({ username, initialTab = 'followers', currentUser, onClose }: FollowerListModalProps) {
+  const unregister = registerModal()
   const container = document.createElement('div')
   container.className = 'follower-list-modal-overlay'
   container.style.cssText = `
@@ -497,6 +499,7 @@ export function createFollowerListModal({ username, initialTab = 'followers', cu
 
   // Close modal
   const closeModal = () => {
+    unregister()
     container.remove()
     onClose()
   }
@@ -530,6 +533,7 @@ export function createFollowerListModal({ username, initialTab = 'followers', cu
   return {
     getElement: () => container,
     destroy: () => {
+      unregister()
       document.removeEventListener('keydown', handleEscape)
       container.remove()
     }

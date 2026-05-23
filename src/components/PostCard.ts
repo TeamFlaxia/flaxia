@@ -8,6 +8,7 @@ import { createShareModal } from './ShareModal.js'
 import { useSandboxBridge } from '../lib/sandbox-bridge.js'
 import { showSignInPrompt } from './SignInPrompt.js'
 import { impressionTracker } from '../lib/impression-tracker.js'
+import { registerModal } from '../lib/modal-state.js'
 
 export class PostCard {
   private element: HTMLElement
@@ -580,6 +581,7 @@ export class PostCard {
 
   private showDeleteConfirmation(): void {
     const overlay = document.createElement('div')
+    const unregister = registerModal()
     overlay.style.cssText = `
       position: fixed;
       top: 0;
@@ -635,16 +637,19 @@ export class PostCard {
     document.body.appendChild(overlay)
 
     cancelBtn.addEventListener('click', () => {
+      unregister()
       overlay.remove()
     })
 
     deleteBtn.addEventListener('click', async () => {
+      unregister()
       overlay.remove()
       await this.deletePost()
     })
 
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) {
+        unregister()
         overlay.remove()
       }
     })
@@ -679,6 +684,7 @@ export class PostCard {
 
   private showReportModal(): void {
     const overlay = document.createElement('div')
+    const unregister = registerModal()
     overlay.className = 'report-modal-overlay'
     overlay.style.cssText = `
       position: fixed;
@@ -849,6 +855,7 @@ export class PostCard {
     })
 
     closeBtn?.addEventListener('click', () => {
+      unregister()
       overlay.remove()
     })
 
@@ -864,12 +871,14 @@ export class PostCard {
         }
       }
 
+      unregister()
       overlay.remove()
       await this.submitReport(selectedCategory, dmcaData)
     })
 
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) {
+        unregister()
         overlay.remove()
       }
     })

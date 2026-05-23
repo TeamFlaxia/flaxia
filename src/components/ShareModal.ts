@@ -1,4 +1,5 @@
 import { sharePlatforms, createShareData, copyToClipboard, canUseWebShare, shareViaWebShare } from '../lib/share'
+import { registerModal } from '../lib/modal-state.js'
 
 export interface ShareModalProps {
   post: {
@@ -11,6 +12,7 @@ export interface ShareModalProps {
 }
 
 export function createShareModal({ post, onClose }: ShareModalProps): HTMLElement {
+  const unregister = registerModal()
   const overlay = document.createElement('div')
   overlay.className = 'share-modal-overlay'
   overlay.style.cssText = `
@@ -191,6 +193,7 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
   }
 
   const close = () => {
+    unregister()
     overlay.remove()
     onClose()
   }

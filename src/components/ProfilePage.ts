@@ -5,6 +5,7 @@ import { clearMeCache } from '../lib/auth-cache.js'
 import { showSignInPrompt } from './SignInPrompt.js'
 import { createUserPostList, CurrentUser } from './UserPostList.js'
 import { safeRemoveFromBody } from '../lib/dom-utils.js'
+import { registerModal } from '../lib/modal-state.js'
 
 interface ProfilePageProps {
   username: string
@@ -237,6 +238,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
     
     // Create confirmation modal
     const overlay = document.createElement('div')
+    const unregister = registerModal()
     overlay.setAttribute('style', `
       position: fixed;
       top: 0;
@@ -292,6 +294,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
     const confirmBtn = modal.querySelector('.logout-confirm-btn') as HTMLButtonElement
 
     cancelBtn.addEventListener('click', () => {
+      unregister()
       overlay.remove()
     })
 
@@ -314,10 +317,12 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
           window.location.href = '/'
         } else {
           console.error('Logout failed')
+          unregister()
           overlay.remove()
         }
       } catch (error) {
         console.error('Logout error:', error)
+        unregister()
         overlay.remove()
       }
     })
@@ -331,6 +336,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
 
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) {
+        unregister()
         overlay.remove()
       }
     })
