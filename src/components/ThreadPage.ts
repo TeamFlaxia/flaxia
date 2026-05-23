@@ -195,6 +195,9 @@ export class ThreadPage {
       }
       
       @media (max-width: 768px) {
+        .left-nav-open-button {
+          top: 30%;
+        }
         .thread-page .main-container {
           flex-direction: column;
           max-width: 100%;
