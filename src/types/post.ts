@@ -108,7 +108,6 @@ export interface TimelineState {
   cursor?: string
   loading: boolean
   hasMore: boolean
-  ngWords: string[]
   error: string | null
   retryCount: number
   maxRetries: number

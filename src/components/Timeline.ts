@@ -35,7 +35,6 @@ export class Timeline {
       cursor: undefined,
       loading: false,
       hasMore: true,
-      ngWords: [],
       error: null,
       retryCount: 0,
       maxRetries: 3
@@ -50,22 +49,8 @@ export class Timeline {
     
     // Load ads first, then posts
     this.loadAdConfig().then(() => {
-      // Load NG words if user is logged in
-      if (this.props.currentUser) {
-        this.loadInitialPosts()
-        this.loadNgWords()
-      } else {
-        this.loadInitialPosts()
-      }
+      this.loadInitialPosts()
     })
-  }
-
-  private filterNgWords(posts: Post[], ngWords: string[]): Post[] {
-    if (!ngWords.length) return posts
-    const lower = ngWords.map(w => w.toLowerCase())
-    return posts.filter(post =>
-      !lower.some(word => post.text.toLowerCase().includes(word))
-    )
   }
 
   private createElement(): HTMLElement {
@@ -503,17 +488,6 @@ export class Timeline {
     } else {
       // Global mode - same API endpoint, no following filter
       return `/api/posts?${params.toString()}`
-    }
-  }
-
-  private async loadNgWords(): Promise<void> {
-    try {
-      const data = await getMe()
-      if (data) {
-        this.state.ngWords = data.user.ng_words || []
-      }
-    } catch (error) {
-      console.error('Failed to load NG words:', error)
     }
   }
 
