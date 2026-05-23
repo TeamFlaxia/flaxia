@@ -51,6 +51,7 @@ export interface PostCardProps {
   disableReply?: boolean
   disableReplyComposer?: boolean
   depth?: number
+  postIndex?: number
 }
 
 export interface PostHeaderProps {

@@ -297,6 +297,11 @@ export class ThreadPage {
       }
 
       const data = await response.json() as { root: Post; replies: Post[] }
+
+      // Assign sequential indices: root=0, replies=1,2,3,...
+      const allPosts = [data.root, ...data.replies]
+      const postIdToIndex = new Map<string, number>()
+      allPosts.forEach((p, i) => postIdToIndex.set(p.id, i))
       
       // Clear loading state
       loading.style.display = 'none'
@@ -308,7 +313,8 @@ export class ThreadPage {
         currentUser: this.props.currentUser || undefined,
         depth: data.root.depth,
         onDelete: () => {}, // Add empty onDelete handler to prevent errors
-        disableReplyComposer: true // Disable only built-in reply composer, ThreadPage will handle replies
+        disableReplyComposer: true, // Disable only built-in reply composer, ThreadPage will handle replies
+        postIndex: 0
       })
       content.appendChild(this.rootPostCard.getElement())
 
@@ -360,7 +366,8 @@ export class ThreadPage {
             node,
             sandboxOrigin: this.props.sandboxOrigin,
             currentUser: this.props.currentUser,
-            onReplyCreated: (newReply) => this.handleReplyCreated(newReply)
+            onReplyCreated: (newReply) => this.handleReplyCreated(newReply),
+            postIndexMap: postIdToIndex
           })
           this.replyNodes.push(replyNode)
           repliesContainer.appendChild(replyNode.getElement())
@@ -379,6 +386,21 @@ export class ThreadPage {
         `
         content.appendChild(noReplies)
       }
+
+      // Add click handler for >>N post references
+      content.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement
+        if (target.classList.contains('post-ref-link')) {
+          e.preventDefault()
+          const index = target.dataset.postIndex
+          if (index) {
+            const targetPost = content.querySelector(`[data-post-index="${index}"]`)
+            if (targetPost) {
+              targetPost.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            }
+          }
+        }
+      })
 
     } catch (error) {
       console.error('Failed to load thread:', error)

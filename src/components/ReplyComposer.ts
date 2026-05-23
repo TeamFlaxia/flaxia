@@ -7,6 +7,7 @@ export interface ReplyComposerProps {
   sandboxOrigin: string
   onReplyCreated: (newReply: Post) => void
   onCancel: () => void
+  prefillText?: string
 }
 
 export class ReplyComposer {
@@ -118,6 +119,12 @@ export class ReplyComposer {
     this.submitButton = container.querySelector('.reply-composer-submit')!
     this.cancelButton = container.querySelector('.reply-composer-cancel')!
     this.charCount = container.querySelector('.reply-composer-char-count')!
+
+    // Pre-fill text if provided
+    if (this.props.prefillText) {
+      this.textarea.value = this.props.prefillText
+      this.charCount.textContent = `${this.props.prefillText.length}/200`
+    }
 
     return container
   }

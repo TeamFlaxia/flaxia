@@ -8,6 +8,7 @@ export interface ReplyNodeProps {
   sandboxOrigin: string
   onReplyCreated: (newReply: Post) => void
   currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null
+  postIndexMap?: Map<string, number>
 }
 
 export class ReplyNode {
@@ -37,6 +38,8 @@ export class ReplyNode {
       ${this.props.node.post.depth > 0 ? 'padding-left: 1rem;' : ''}
     `
 
+    const nodeIndex = this.props.postIndexMap?.get(this.props.node.post.id)
+
     // Post card for this reply
     this.postCard = createPostCard({
       post: this.props.node.post,
@@ -44,7 +47,8 @@ export class ReplyNode {
       currentUser: this.props.currentUser || undefined,
       onDelete: () => {}, // Add empty onDelete handler to prevent errors
       disableReplyComposer: true, // Disable only PostCard's reply composer, ReplyNode handles replies
-      depth: this.props.node.post.depth
+      depth: this.props.node.post.depth,
+      postIndex: nodeIndex
     })
     
     // Create wrapper for post card and expand button
@@ -90,11 +94,13 @@ export class ReplyNode {
     container.appendChild(postWrapper)
 
     // Reply composer (hidden by default)
+    const prefill = nodeIndex !== undefined ? `>>${nodeIndex} ` : undefined
     this.replyComposer = createReplyComposer({
       postId: this.props.node.post.id,
       sandboxOrigin: this.props.sandboxOrigin,
       onReplyCreated: (newReply) => this.handleReplyCreated(newReply),
-      onCancel: () => this.hideReplyComposer()
+      onCancel: () => this.hideReplyComposer(),
+      prefillText: prefill
     })
     this.replyComposer.getElement().style.display = 'none'
     container.appendChild(this.replyComposer.getElement())
@@ -115,7 +121,8 @@ export class ReplyNode {
           node: childNode,
           sandboxOrigin: this.props.sandboxOrigin,
           currentUser: this.props.currentUser,
-          onReplyCreated: (newReply) => this.props.onReplyCreated(newReply)
+          onReplyCreated: (newReply) => this.props.onReplyCreated(newReply),
+          postIndexMap: this.props.postIndexMap
         })
         this.childReplyNodes.push(childReplyNode)
         this.childrenContainer!.appendChild(childReplyNode.getElement())
@@ -155,7 +162,7 @@ export class ReplyNode {
   }
 
   private showReplyComposer(): void {
-    if (this.replyComposer && this.props.node.post.depth < 2) {
+    if (this.replyComposer) {
       // Dispatch global event to close other reply composers
       document.dispatchEvent(new CustomEvent('replyComposerOpen', {
         detail: { postId: this.props.node.post.id }

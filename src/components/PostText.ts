@@ -61,12 +61,13 @@ export async function createPostText(props: PostTextProps): Promise<HTMLElement>
   linkifyHashtags(container)
   linkifyUrls(container)
   linkifyMentions(container, props.mentions)
+  linkifyPostRefs(container)
   
   return container
 }
 
 // Export processing functions for reuse
-export { processText, renderMathElements, linkifyHashtags, linkifyUrls, linkifyMentions }
+export { processText, renderMathElements, linkifyHashtags, linkifyUrls, linkifyMentions, linkifyPostRefs }
 
 /**
  * Unified text processing pipeline:
@@ -457,6 +458,62 @@ function unescapeHtml(html: string): string {
   const div = document.createElement('div')
   div.innerHTML = html
   return div.textContent || ''
+}
+
+/**
+ * Convert >>(number) references to clickable links
+ */
+function linkifyPostRefs(container: HTMLElement): void {
+  const walker = document.createTreeWalker(
+    container,
+    NodeFilter.SHOW_TEXT,
+    null
+  )
+
+  const textNodes: Text[] = []
+  let node: Node | null
+
+  while (node = walker.nextNode()) {
+    textNodes.push(node as Text)
+  }
+
+  for (const textNode of textNodes) {
+    const text = textNode.textContent || ''
+    const postRefRegex = />>(\d+)/g
+
+    if (!postRefRegex.test(text)) continue
+    postRefRegex.lastIndex = 0
+
+    const parent = textNode.parentNode
+    if (!parent) continue
+
+    if (parent.nodeName === 'A') continue
+
+    const fragment = document.createDocumentFragment()
+    let lastIndex = 0
+    let match: RegExpExecArray | null
+
+    while ((match = postRefRegex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)))
+      }
+
+      const link = document.createElement('a')
+      link.href = `#post-${match[1]}`
+      link.className = 'post-ref-link'
+      link.textContent = `>>${match[1]}`
+      link.dataset.postIndex = match[1]
+      fragment.appendChild(link)
+
+      lastIndex = match.index + match[0].length
+    }
+
+    if (lastIndex < text.length) {
+      fragment.appendChild(document.createTextNode(text.slice(lastIndex)))
+    }
+
+    parent.replaceChild(fragment, textNode)
+  }
 }
 
 declare global {

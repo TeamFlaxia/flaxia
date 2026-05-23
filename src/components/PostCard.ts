@@ -43,6 +43,9 @@ export class PostCard {
     const container = document.createElement('article')
     container.className = 'post-card'
     container.setAttribute('data-post-id', this.props.post.id)
+    if (this.props.postIndex !== undefined) {
+      container.setAttribute('data-post-index', String(this.props.postIndex))
+    }
     container.style.cursor = 'pointer'
 
     // Header container with ... menu
@@ -62,6 +65,20 @@ export class PostCard {
       createdAt: this.props.post.created_at
     })
     headerContainer.appendChild(header)
+
+    // Post index
+    if (this.props.postIndex !== undefined) {
+      const indexEl = document.createElement('span')
+      indexEl.textContent = `${this.props.postIndex}`
+      indexEl.style.cssText = `
+        color: #94a3b8;
+        font-size: 0.8125rem;
+        font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        margin-left: 0.5rem;
+        flex-shrink: 0;
+      `
+      headerContainer.appendChild(indexEl)
+    }
 
     // ... menu button
     const isOwnPost = this.props.currentUser?.username === this.props.post.username
