@@ -1,4 +1,5 @@
 import { PostActionsProps } from '../types/post.js'
+import { t } from '../lib/i18n.js'
 
 export function createPostActions(props: PostActionsProps): HTMLElement {
   const container = document.createElement('div')
@@ -40,7 +41,7 @@ export function createPostActions(props: PostActionsProps): HTMLElement {
 function createActionButton(type: 'fresh' | 'reply' | 'share' | 'impressions', count: string, isActive: boolean): HTMLElement {
   const button = document.createElement('button')
   button.className = `action-button action-button--${type}`
-  button.setAttribute('aria-label', `${type} post`)
+  button.setAttribute('aria-label', t('post_actions.aria_label', { type }))
   
   if (isActive) {
     button.classList.add('action-button--active')

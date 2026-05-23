@@ -1,5 +1,6 @@
 import { GifPreviewProps } from '../types/post.js'
 import { AudioVisualizer } from './AudioVisualizer.js'
+import { t } from '../lib/i18n.js'
 
 export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
   const container = document.createElement('div')
@@ -9,7 +10,7 @@ export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
     // Fallback for posts without audio
     const fallback = document.createElement('div')
     fallback.className = 'audio-player-error'
-    fallback.textContent = 'No audio available'
+    fallback.textContent = t('audio.no_audio')
     container.appendChild(fallback)
     return container
   }
@@ -17,7 +18,7 @@ export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
   // Add loading indicator
   const loading = document.createElement('div')
   loading.className = 'audio-player-loading'
-  loading.textContent = 'Loading audio...'
+  loading.textContent = t('audio.loading')
   container.appendChild(loading)
   
   // Create visualizer canvas
@@ -91,7 +92,7 @@ export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
     visualizerCanvas.style.display = 'none'
     const fallback = document.createElement('div')
     fallback.className = 'audio-player-error'
-    fallback.textContent = `Audio failed to load: ${audio.error?.message || 'Unknown error'}`
+    fallback.textContent = t('audio.load_failed', { error: audio.error?.message || t('common.error') })
     container.appendChild(fallback)
   }
   
@@ -141,14 +142,14 @@ export function createGifPreview(props: GifPreviewProps): HTMLElement {
   if (!props.gifKey) {
     const fallback = document.createElement('div')
     fallback.className = 'image-preview-error'
-    fallback.textContent = 'No preview available'
+    fallback.textContent = t('image_preview.no_preview')
     container.appendChild(fallback)
     return container
   }
   
   const img = document.createElement('img')
   img.className = 'image-preview-img'
-  img.alt = `Post ${props.postId} preview`
+  img.alt = t('image_preview.post_preview', { id: props.postId })
   img.loading = 'lazy'
   
   const imageUrl = `/api/images/${props.gifKey}`
@@ -158,7 +159,7 @@ export function createGifPreview(props: GifPreviewProps): HTMLElement {
     img.style.display = 'none'
     const fallback = document.createElement('div')
     fallback.className = 'image-preview-error'
-    fallback.textContent = 'Image failed to load'
+    fallback.textContent = t('image_preview.load_failed')
     container.appendChild(fallback)
   }
   

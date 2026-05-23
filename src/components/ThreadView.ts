@@ -2,6 +2,7 @@ import { Post, PostCardProps } from '../types/post.js'
 import { buildTree, PostNode } from '../lib/thread.js'
 import { createPostCard, PostCard as PostCardClass } from './PostCard.js'
 import { createReplyNode, ReplyNode } from './ReplyNode.js'
+import { t } from '../lib/i18n.js'
 
 export interface ThreadViewProps {
   postId: string
@@ -46,7 +47,7 @@ export class ThreadView {
     `
 
     const title = document.createElement('h3')
-    title.textContent = 'Thread'
+    title.textContent = t('thread_view.title')
     title.style.cssText = `
       color: #f8fafc;
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -55,7 +56,7 @@ export class ThreadView {
     `
 
     const closeButton = document.createElement('button')
-    closeButton.textContent = '×'
+    closeButton.textContent = t('thread_view.close')
     closeButton.style.cssText = `
       background: none;
       border: none;
@@ -82,7 +83,7 @@ export class ThreadView {
     // Loading state
     const loading = document.createElement('div')
     loading.className = 'thread-loading'
-    loading.textContent = 'Loading thread...'
+    loading.textContent = t('thread_view.loading')
     loading.style.cssText = `
       color: #94a3b8;
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -140,7 +141,7 @@ export class ThreadView {
 
     } catch (error) {
       console.error('Failed to load thread:', error)
-      loading.textContent = 'Failed to load thread'
+      loading.textContent = t('thread_view.load_failed')
       loading.style.color = '#ef4444'
     } finally {
       this.isLoading = false

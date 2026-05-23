@@ -1,4 +1,5 @@
 import { registerModal } from '../lib/modal-state.js'
+import { t } from '../lib/i18n.js'
 
 export interface SearchResultsProps {
   query: string
@@ -50,7 +51,7 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
   `
 
   const title = document.createElement('h3')
-  title.textContent = `Search results for "${props.query}"`
+  title.textContent = t('search.results_for', { query: props.query })
   title.style.cssText = `
     margin: 0;
     font-size: 1.125rem;
@@ -59,7 +60,7 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
   `
 
   const closeBtn = document.createElement('button')
-  closeBtn.textContent = '✕'
+  closeBtn.textContent = t('search.close')
   closeBtn.style.cssText = `
     background: none;
     border: none;
@@ -87,7 +88,7 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
 
     const usersTitle = document.createElement('h4')
     usersTitle.style.cssText = 'margin: 0 0 1rem 0; font-size: 1rem; font-weight: 600; color: var(--text-primary);'
-    usersTitle.textContent = 'Users'
+    usersTitle.textContent = t('search.users')
     usersSection.appendChild(usersTitle)
 
     props.users.forEach(user => {
@@ -163,7 +164,7 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
 
     const postsTitle = document.createElement('h4')
     postsTitle.style.cssText = 'margin: 0 0 1rem 0; font-size: 1rem; font-weight: 600; color: var(--text-primary);'
-    postsTitle.textContent = props.type === 'arcade' ? 'Arcade Games' : 'Posts'
+    postsTitle.textContent = props.type === 'arcade' ? t('search.arcade_games') : t('search.posts')
     postsSection.appendChild(postsTitle)
 
     props.posts.forEach(post => {
@@ -223,7 +224,7 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
       if (props.type === 'arcade' || post.swf_key || post.payload_key) {
         const badge = document.createElement('span')
         badge.style.cssText = 'margin-left: 0.5rem; padding: 0.1rem 0.4rem; background: var(--accent); color: white; border-radius: 4px; font-size: 0.7rem; vertical-align: middle;'
-        badge.textContent = post.swf_key ? 'FLASH' : 'GAME'
+        badge.textContent = post.swf_key ? t('search.media_flash') : t('search.media_game')
         postHeader.appendChild(badge)
       }
 
@@ -240,7 +241,7 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
     content.replaceChildren()
     const empty = document.createElement('div')
     empty.style.cssText = "text-align: center; padding: 2rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;"
-    empty.textContent = `No results found for "${props.query}"`
+    empty.textContent = t('search.no_results', { query: props.query })
     content.appendChild(empty)
   }
 

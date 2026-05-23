@@ -1,3 +1,5 @@
+import { t } from '../lib/i18n.js'
+
 export interface AdminLayoutProps {
   activeTab: 'alerts' | 'hidden' | 'users' | 'ads'
   onTabChange: (tab: 'alerts' | 'hidden' | 'users' | 'ads') => void
@@ -27,12 +29,12 @@ export function createAdminLayout({ activeTab, onTabChange }: AdminLayoutProps) 
     `
 
     const logo = document.createElement('div')
-    logo.innerHTML = `<a href="/home" style="color: #22c55e; text-decoration: none; font-size: 20px; font-weight: 600;">🌿 Flaxia Admin</a>`
+    logo.innerHTML = `<a href="/home" style="color: #22c55e; text-decoration: none; font-size: 20px; font-weight: 600;">${t('admin_layout.title')}</a>`
     header.appendChild(logo)
 
     const backLink = document.createElement('a')
     backLink.href = '/home'
-    backLink.textContent = '← Back'
+    backLink.textContent = t('admin_layout.back')
     backLink.style.cssText = `
       color: #94a3b8;
       text-decoration: none;
@@ -56,10 +58,10 @@ export function createAdminLayout({ activeTab, onTabChange }: AdminLayoutProps) 
     `
 
     const tabs: { id: 'alerts' | 'hidden' | 'users' | 'ads'; label: string }[] = [
-      { id: 'alerts', label: 'Alerts' },
-      { id: 'hidden', label: 'Hidden posts' },
-      { id: 'users', label: 'Users' },
-      { id: 'ads', label: 'Ads' }
+      { id: 'alerts', label: t('admin_layout.tab_alerts') },
+      { id: 'hidden', label: t('admin_layout.tab_hidden') },
+      { id: 'users', label: t('admin_layout.tab_users') },
+      { id: 'ads', label: t('admin_layout.tab_ads') }
     ]
 
     tabs.forEach(tab => {
@@ -102,7 +104,7 @@ export function createAdminLayout({ activeTab, onTabChange }: AdminLayoutProps) 
   const setAccessDenied = () => {
     mainContentContainer.innerHTML = ''
     const deniedMsg = document.createElement('div')
-    deniedMsg.innerHTML = 'Access denied. You are not an administrator.'
+    deniedMsg.innerHTML = t('admin_layout.access_denied')
     deniedMsg.style.cssText = `
       color: #f1f5f9;
       font-size: 18px;

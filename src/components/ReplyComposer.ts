@@ -1,5 +1,6 @@
 import { Post } from '../types/post.js'
 import DOMPurify from 'dompurify'
+import { t } from '../lib/i18n.js'
 
 export interface ReplyComposerProps {
   postId: string
@@ -43,14 +44,14 @@ export class ReplyComposer {
           <div class="reply-composer-avatar"></div>
           <textarea 
             class="reply-composer-textarea" 
-            placeholder="Write a reply..."
+            placeholder="${t('reply_composer.placeholder')}"
             maxlength="200"
           ></textarea>
         </div>
         <div class="reply-composer-file-dropzone" style="display: none;">
           <div class="dropzone-content">
             <span class="dropzone-icon">📎</span>
-            <span class="dropzone-text">Optional: Add an image (GIF, PNG, JPG) or audio (MP3, WAV, OGG, M4A, WebM)</span>
+            <span class="dropzone-text">${t('reply_composer.file_hint')}</span>
           </div>
         </div>
         <div class="reply-composer-divider"></div>
@@ -80,7 +81,7 @@ export class ReplyComposer {
               font-size: 0.75rem;
               cursor: pointer;
               margin-right: 0.5rem;
-            ">Cancel</button>
+            ">${t('reply_composer.cancel')}</button>
             <button class="reply-composer-submit" type="button" disabled style="
               background: #22c55e;
               border: 1px solid #22c55e;
@@ -91,7 +92,7 @@ export class ReplyComposer {
               font-size: 0.75rem;
               font-weight: bold;
               cursor: pointer;
-            ">Reply</button>
+            ">${t('reply_composer.reply')}</button>
           </div>
         </div>
         <div class="reply-composer-file-preview" style="display: none;">
@@ -208,7 +209,7 @@ export class ReplyComposer {
   private handleFileSelection(file: File): void {
     // Check file size (25MB limit)
     if (file.size > 25 * 1024 * 1024) {
-      alert('File size must be less than 25MB')
+      alert(t('reply_composer.error_file_size'))
       this.clearFileSelection()
       return
     }
@@ -216,7 +217,7 @@ export class ReplyComposer {
     // Check if file is an accepted format
     const allowedTypes = ['image/gif', 'image/png', 'image/jpeg', 'image/jpg', 'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4', 'audio/webm']
     if (!allowedTypes.includes(file.type)) {
-      alert('Only image files (GIF, PNG, JPG) and audio files (MP3, WAV, OGG, M4A, WebM) are supported')
+      alert(t('reply_composer.error_file_type'))
       this.clearFileSelection()
       return
     }
@@ -247,15 +248,15 @@ export class ReplyComposer {
   }
 
   private formatFileSize(bytes: number): string {
-    if (bytes < 1024) return bytes + ' B'
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+    if (bytes < 1024) return t('file_size.bytes', { size: bytes })
+    if (bytes < 1024 * 1024) return t('file_size.kb', { size: (bytes / 1024).toFixed(1) })
+    return t('file_size.mb', { size: (bytes / (1024 * 1024)).toFixed(1) })
   }
 
   private updateSubmitButton(): void {
     const hasContent = this.textarea.value.trim().length > 0
     this.submitButton.disabled = !hasContent || this.isSubmitting
-    this.submitButton.textContent = this.isSubmitting ? 'Replying...' : 'Reply'
+    this.submitButton.textContent = this.isSubmitting ? t('reply_composer.replying') : t('reply_composer.reply')
     
     if (this.submitButton.disabled) {
       this.submitButton.style.background = '#e2e8f0'
@@ -319,7 +320,7 @@ export class ReplyComposer {
 
     } catch (error: any) {
       console.error('Failed to create reply:', error)
-      const errorMessage = error?.message || 'Failed to create reply. Please try again.'
+      const errorMessage = error?.message || t('composer.error_create_failed')
       alert(`${errorMessage}${error?.details ? ` (${error.details})` : ''}`)
     } finally {
       this.isSubmitting = false

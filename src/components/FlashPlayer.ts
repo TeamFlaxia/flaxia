@@ -1,3 +1,5 @@
+import { t } from '../lib/i18n.js'
+
 export interface FlashPlayerHandle {
   destroy: () => void
 }
@@ -55,7 +57,7 @@ export async function executeFlash(
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Flash Player</title>
+  <title>${t('flash_player.title')}</title>
   <script src="https://unpkg.com/@ruffle-rs/ruffle@0.1.0-nightly.2025.3.8/ruffle.js"></script>
   <style>
     body, html {
@@ -114,7 +116,7 @@ export async function executeFlash(
       const swfUrlFinal = window.location.origin + "${swfUrl}";
       player.load(swfUrlFinal).catch(error => {
         console.error('Failed to load SWF:', error);
-        container.innerHTML = '<div style="color: white; text-align: center; padding: 20px;">Failed to load Flash content</div>';
+        container.innerHTML = '<div style="color: white; text-align: center; padding: 20px;">' + t('flash_player.load_failed') + '</div>';
       });
     });
   </script>
@@ -142,7 +144,7 @@ export async function executeFlash(
 
     // Step 5: Add fullscreen button
     const fullscreenBtn = document.createElement('button')
-    fullscreenBtn.textContent = '⛶ Fullscreen'
+    fullscreenBtn.textContent = t('flash_player.fullscreen')
     fullscreenBtn.className = 'flash-fullscreen-btn'
     fullscreenBtn.style.cssText = `
       margin-top: 0;
@@ -226,8 +228,8 @@ export async function executeFlash(
         color: #666;
       ">
         <div style="font-size: 48px; margin-bottom: 16px;">⚡</div>
-        <div style="font-weight: bold; margin-bottom: 8px;">Flash Player Failed</div>
-        <div style="font-size: 14px;">${error instanceof Error ? error.message : 'Unknown error'}</div>
+        <div style="font-weight: bold; margin-bottom: 8px;">${t('flash_player.error_heading')}</div>
+        <div style="font-size: 14px;">${error instanceof Error ? error.message : t('common.error')}</div>
       </div>
     `
 

@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n.js'
 import { Ad } from '../types/post.js'
 import { executeUniversalZip, UniversalZipExecutorHandle } from '../lib/zip-manager.js'
 import { executeFlash, FlashPlayerHandle } from './FlashPlayer.js'
@@ -231,13 +232,13 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
     // Show click-to-run button
     const runButton = createExecutionButton({
       postId: ad.id,
-      label: '🚀 Play',
+      label: t('ad_card.play_zip'),
       icon: '📦',
       thumbnailUrl: ad.thumbnail_key ? `/api/thumbnail/${ad.id}` : undefined,
       onClick: async () => {
         // Show loading state
         const originalContent = placeholder.innerHTML
-        placeholder.innerHTML = '<span style="font-size: 20px;">⏳</span><span>Loading...</span>'
+        placeholder.innerHTML = t('ad_card.loading')
         placeholder.style.pointerEvents = 'none'
 
         try {
@@ -262,7 +263,7 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
           // After execution starts, show Visit button if click_url exists
           if (ad.click_url) {
             const visitBtn = document.createElement('button')
-            visitBtn.textContent = `Visit → ${ad.click_url}`
+            visitBtn.textContent = t('ad_card.visit', { url: ad.click_url })
             visitBtn.style.cssText = `
               background: #22c55e;
               color: white;
@@ -285,7 +286,7 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
           console.error('Failed to load ZIP:', error)
           placeholder.innerHTML = originalContent
           placeholder.style.pointerEvents = 'auto'
-          alert('Failed to load ZIP content. Please try again.')
+          alert(t('ad_card.load_zip_error'))
         }
       }
     })
@@ -295,13 +296,13 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
     // Show click-to-play button
     const playButton = createExecutionButton({
       postId: ad.id,
-      label: '⚡ Click to Play',
+      label: t('ad_card.play_swf'),
       icon: '🎮',
       thumbnailUrl: ad.thumbnail_key ? `/api/thumbnail/${ad.id}` : undefined,
       onClick: async () => {
         // Show loading state
         const originalContent = placeholder.innerHTML
-        placeholder.innerHTML = '<span style="font-size: 20px;">⏳</span><span>Loading...</span>'
+        placeholder.innerHTML = t('ad_card.loading')
         placeholder.style.pointerEvents = 'none'
 
         try {
@@ -326,7 +327,7 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
           // After execution starts, show Visit button if click_url exists
           if (ad.click_url) {
             const visitBtn = document.createElement('button')
-            visitBtn.textContent = `Visit → ${ad.click_url}`
+            visitBtn.textContent = t('ad_card.visit', { url: ad.click_url })
             visitBtn.style.cssText = `
               background: #22c55e;
               color: white;
@@ -349,7 +350,7 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
           console.error('Failed to load SWF:', error)
           placeholder.innerHTML = originalContent
           placeholder.style.pointerEvents = 'auto'
-          alert('Failed to load Flash content. Please try again.')
+          alert(t('ad_card.load_swf_error'))
         }
       }
     })
@@ -369,7 +370,7 @@ export function createAdCard(ad: Ad): HTMLElement {
   // Create ad label
   const adLabel = document.createElement('a')
   adLabel.className = 'ad-label'
-  adLabel.textContent = 'Sponsored'
+  adLabel.textContent = t('ad_card.sponsored')
   adLabel.style.cssText = `
     color: inherit;
     text-decoration: none;

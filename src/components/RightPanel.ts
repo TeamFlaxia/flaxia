@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n.js'
 import { createSearchResults } from './SearchResults.js'
 import { safeRemoveFromBody } from '../lib/dom-utils.js'
 
@@ -60,7 +61,7 @@ export class RightPanel {
     const input = document.createElement('input')
     input.type = 'text'
     input.className = 'search-input'
-    input.placeholder = 'Search Flaxia'
+    input.placeholder = t('right_panel.search_placeholder')
 
     const icon = document.createElement('span')
     icon.className = 'search-icon'
@@ -79,7 +80,7 @@ export class RightPanel {
 
     const title = document.createElement('h3')
     title.className = 'section-title'
-    title.textContent = 'Trending'
+    title.textContent = t('right_panel.trending')
 
     const list = document.createElement('div')
     list.className = 'trending-list'
@@ -87,7 +88,7 @@ export class RightPanel {
     const loading = document.createElement('div')
     loading.className = 'trending-loading'
     loading.style.cssText = 'text-align: center; padding: 20px; color: var(--text-muted);'
-    loading.textContent = 'Loading...'
+    loading.textContent = t('common.loading')
     list.appendChild(loading)
 
     section.appendChild(title)
@@ -103,7 +104,7 @@ export class RightPanel {
 
     const title = document.createElement('h3')
     title.className = 'section-title'
-    title.textContent = 'Who to follow'
+    title.textContent = t('right_panel.who_to_follow')
 
     const list = document.createElement('div')
     list.className = 'follow-list'
@@ -111,7 +112,7 @@ export class RightPanel {
     const loading = document.createElement('div')
     loading.className = 'follow-loading'
     loading.style.cssText = 'text-align: center; padding: 20px; color: var(--text-muted);'
-    loading.textContent = 'Loading...'
+    loading.textContent = t('common.loading')
     list.appendChild(loading)
 
     section.appendChild(title)
@@ -256,7 +257,7 @@ export class RightPanel {
     if (this.trendingTags.length === 0) {
       const emptyState = document.createElement('div')
       emptyState.style.cssText = 'padding: 20px; color: var(--text-muted); text-align: center;'
-      emptyState.textContent = 'No trending tags yet'
+      emptyState.textContent = t('right_panel.no_trending')
       trendingList.appendChild(emptyState)
       return
     }
@@ -276,12 +277,12 @@ export class RightPanel {
       const hashtag = document.createElement('div')
       hashtag.className = 'trending-hashtag'
       hashtag.style.cssText = "font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--accent); font-size: 15px; font-weight: 600;"
-      hashtag.textContent = `# ${tag}`
+      hashtag.textContent = t('right_panel.trending_tag', { tag })
 
       const count = document.createElement('div')
       count.className = 'trending-count'
       count.style.cssText = "font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--text-muted); font-size: 13px;"
-      count.textContent = `${percentage}% trending`
+      count.textContent = t('right_panel.trending_percent', { percentage })
 
       content.appendChild(hashtag)
       content.appendChild(count)
@@ -410,7 +411,7 @@ export class RightPanel {
         cursor: pointer;
         transition: all 0.2s ease;
       `
-      button.textContent = 'Follow'
+      button.textContent = t('right_panel.follow')
       
       button.addEventListener('click', async (e) => {
         e.preventDefault()

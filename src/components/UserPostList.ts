@@ -1,5 +1,6 @@
 import { Post } from '../types/post.js'
 import { createPostCard } from './PostCard.js'
+import { t } from '../lib/i18n.js'
 
 export interface CurrentUser {
   username: string
@@ -47,7 +48,7 @@ export function createUserPostList(props: {
   const spinner = document.createElement('div')
   spinner.className = 'spinner'
   const spinnerLabel = document.createElement('span')
-  spinnerLabel.textContent = 'Loading...'
+  spinnerLabel.textContent = t('common.loading')
   loadingSpinner.appendChild(spinner)
   loadingSpinner.appendChild(spinnerLabel)
   loadingSpinner.style.display = 'none'

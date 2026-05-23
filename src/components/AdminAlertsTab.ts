@@ -1,3 +1,5 @@
+import { t } from '../lib/i18n.js'
+
 export interface AdminAlert {
   id: string
   post_id: string
@@ -81,10 +83,10 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
     const diffHours = Math.floor(diffMs / 3600000)
     const diffDays = Math.floor(diffMs / 86400000)
 
-    if (diffMins < 1) return 'just now'
-    if (diffMins < 60) return `${diffMins}m ago`
-    if (diffHours < 24) return `${diffHours}h ago`
-    if (diffDays < 7) return `${diffDays}d ago`
+    if (diffMins < 1) return t('time.just_now')
+    if (diffMins < 60) return t('time.minutes_ago', { n: diffMins })
+    if (diffHours < 24) return t('time.hours_ago', { n: diffHours })
+    if (diffDays < 7) return t('time.days_ago', { n: diffDays })
     return date.toLocaleDateString()
   }
 
@@ -131,7 +133,7 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
 
     const postId = document.createElement('span')
     postId.style.cssText = 'color: #94a3b8; font-size: 14px;'
-    postId.textContent = `post_id: ${alert.post_id}`
+    postId.textContent = t('admin_alerts.post_id', { id: alert.post_id })
     header.appendChild(postId)
 
     const time = document.createElement('span')
@@ -152,9 +154,9 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
         color: #94a3b8;
       `
       dmcaInfo.innerHTML = `
-        <div>work: "${alert.dmca_work_description}"</div>
-        <div>email: "${alert.dmca_reporter_email}"</div>
-        <div style="margin-top: 4px;">sworn: ${alert.dmca_sworn ? '✓' : '✗'}</div>
+        <div>${t('admin_alerts.dmca_work')}${alert.dmca_work_description}"</div>
+        <div>${t('admin_alerts.dmca_email')}${alert.dmca_reporter_email}"</div>
+        <div style="margin-top: 4px;">${t('admin_alerts.dmca_sworn')}${alert.dmca_sworn ? '✓' : '✗'}</div>
       `
       row.appendChild(dmcaInfo)
     }
@@ -171,7 +173,7 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
         color: #f1f5f9;
       `
       warning.innerHTML = `
-        <div style="margin-bottom: 8px;">⚠ Do not open this content. Mark as resolved and delete from R2 manually:</div>
+        <div style="margin-bottom: 8px;">${t('admin_alerts.warning_csam')}</div>
         <code style="background: #0f172a; padding: 8px; border-radius: 4px; display: block; overflow-x: auto;">wrangler r2 object delete flaxia-content --key "${alert.payload_key || ''}"</code>
       `
       row.appendChild(warning)
@@ -182,7 +184,7 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
 
     if (alert.category !== 'csam' && alert.category !== 'malware') {
       const viewBtn = document.createElement('button')
-      viewBtn.textContent = 'View post'
+      viewBtn.textContent = t('admin_alerts.view_post')
       viewBtn.style.cssText = `
         background: #334155;
         color: #f1f5f9;
@@ -200,7 +202,7 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
     }
 
     const hideBtn = document.createElement('button')
-    hideBtn.textContent = 'Hide'
+    hideBtn.textContent = t('admin_alerts.hide')
     hideBtn.style.cssText = `
       background: #334155;
       color: #f1f5f9;
@@ -212,7 +214,7 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
       transition: background 0.2s;
     `
     hideBtn.addEventListener('click', async () => {
-      if (confirm('Hide this post? This cannot be undone without admin access.')) {
+      if (confirm(t('admin_alerts.hide_confirm'))) {
         const success = await hidePost(alert.post_id, alert.id)
         if (success) {
           await resolveAlert(alert.id)
@@ -224,7 +226,7 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
     actions.appendChild(hideBtn)
 
     const dismissBtn = document.createElement('button')
-    dismissBtn.textContent = 'Dismiss'
+    dismissBtn.textContent = t('admin_alerts.dismiss')
     dismissBtn.style.cssText = `
       background: #334155;
       color: #f1f5f9;
@@ -253,7 +255,7 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
     element.innerHTML = ''
 
     const title = document.createElement('h2')
-    title.textContent = 'Alerts'
+    title.textContent = t('admin_alerts.title')
     title.style.cssText = `
       color: #f1f5f9;
       font-size: 24px;
@@ -264,7 +266,7 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
 
     if (alerts.length === 0) {
       const empty = document.createElement('div')
-      empty.textContent = 'No alerts'
+      empty.textContent = t('admin_alerts.empty')
       empty.style.cssText = 'color: #64748b; font-size: 14px; padding: 24px; text-align: center;'
       element.appendChild(empty)
     } else {

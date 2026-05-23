@@ -1,4 +1,5 @@
 import { PostStageProps, PostCardMode } from '../types/post.js'
+import { t } from '../lib/i18n.js'
 import { createImagePreview } from './ImagePreview.js'
 import { createAudioPlayer } from './AudioPlayer.js'
 import { executeZipAuto } from '../lib/zip-manager.js'
@@ -69,7 +70,7 @@ function createSwfExecutionButton(props: {
     
     // Show loading state
     const originalContent = container.innerHTML
-    container.innerHTML = '<span style="font-size: 20px;">⏳</span><span>Loading Flash...</span>'
+    container.innerHTML = t('post_stage.loading_flash')
     container.style.pointerEvents = 'none'
 
     try {
@@ -80,7 +81,7 @@ function createSwfExecutionButton(props: {
       console.error('Failed to load SWF:', error)
       container.innerHTML = originalContent
       container.style.pointerEvents = 'auto'
-      alert('Failed to load Flash file. Please try again.')
+      alert(t('post_stage.load_failed_flash'))
     }
   })
 
@@ -179,7 +180,7 @@ function createExecutionButton(props: ZipExecutionButtonProps): HTMLElement {
     
     // Show loading state
     const originalContent = container.innerHTML
-    container.innerHTML = '<span style="font-size: 20px;">⏳</span><span>Loading...</span>'
+    container.innerHTML = t('post_stage.loading_zip')
     container.style.pointerEvents = 'none'
 
     try {
@@ -209,7 +210,7 @@ function createExecutionButton(props: ZipExecutionButtonProps): HTMLElement {
       console.error('Failed to load ZIP:', error)
       container.innerHTML = originalContent
       container.style.pointerEvents = 'auto'
-      alert('Failed to load ZIP file. Please try again.')
+      alert(t('post_stage.zip_load_failed'))
     }
   })
 
@@ -295,7 +296,7 @@ function createThumbnailWithOverlay(props: {
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 0.875rem;
     `
-    fallback.textContent = 'Thumbnail unavailable'
+    fallback.textContent = t('post_stage.thumbnail_unavailable')
     imageContainer.appendChild(fallback)
   }
   
@@ -390,7 +391,7 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
         mediaElement = createThumbnailWithOverlay({
           postId: props.post.id,
           thumbnailKey: props.post.thumbnail_key,
-          overlayLabel: '🚀 Run',
+          overlayLabel: t('post_stage.run_zip'),
           aspectRatio: '56.25', // 16:9
           onClick: () => props.onModeChange(PostCardMode.EXECUTING)
         })
@@ -398,7 +399,7 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
         // Create ZIP execution button (existing behavior)
         mediaElement = createExecutionButton({
           postId: props.post.id,
-          label: 'Click to Execute ZIP',
+          label: t('post_stage.click_execute_zip'),
           icon: '🚀',
           onClick: () => props.onModeChange(PostCardMode.EXECUTING)
         })
@@ -409,7 +410,7 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
         mediaElement = createThumbnailWithOverlay({
           postId: props.post.id,
           thumbnailKey: props.post.thumbnail_key,
-          overlayLabel: '⚡ Play',
+          overlayLabel: t('post_stage.play_flash'),
           aspectRatio: '75', // 4:3 = 75%
           onClick: () => props.onModeChange(PostCardMode.EXECUTING)
         })
@@ -419,7 +420,7 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
         // Create SWF execution button (existing behavior)
         mediaElement = createSwfExecutionButton({
           postId: props.post.id,
-          label: 'Click to Play Flash',
+          label: t('post_stage.click_play_flash'),
           icon: '⚡',
           onClick: () => props.onModeChange(PostCardMode.EXECUTING)
         })
@@ -444,7 +445,7 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
     if (!props.post.payload_key?.startsWith('zip/') && !props.post.swf_key?.startsWith('swf/') && !props.post.gif_key) {
       const hint = document.createElement('div')
       hint.className = 'stage-hint'
-      hint.textContent = 'Click to run'
+      hint.textContent = t('post_stage.click_to_run')
       container.appendChild(hint)
     }
   } else {
@@ -453,13 +454,13 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
       // The executeZipAuto function will handle creating the iframe and cleanup
       executeZipAuto(props.post.id, container).catch((error: Error) => {
         console.error('Failed to execute ZIP:', error)
-        container.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;">Failed to load ZIP content</div>'
+        container.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;">' + t('post_stage.zip_load_error') + '</div>'
       })
     } else if (props.post.swf_key && props.post.swf_key.startsWith('swf/')) {
       // Execute Flash/SWF content using Ruffle
       executeFlash(props.post.id, container).catch(error => {
         console.error('Failed to execute SWF:', error)
-        container.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;">Failed to load Flash content</div>'
+        container.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;">' + t('post_stage.flash_load_error') + '</div>'
       })
     } else {
       // For non-ZIP files, use the old sandbox frame

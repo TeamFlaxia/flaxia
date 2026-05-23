@@ -1,6 +1,7 @@
 import { executeFlash } from './FlashPlayer.js'
 import { executeWvfsZip } from '../lib/wvfs-zip-client.js'
 import type { Game, ArcadePageProps, GameType } from '../types/game.js'
+import { t } from '../lib/i18n.js'
 
 export interface ArcadePageHandle {
   destroy: () => void
@@ -88,7 +89,7 @@ export class ArcadePage {
     `
 
     const title = document.createElement('h1')
-    title.textContent = '🕹️ Shot Arcade'
+    title.textContent = t('arcade.title')
     title.style.cssText = `
       margin: 0;
       font-size: 1.25rem;
@@ -97,7 +98,7 @@ export class ArcadePage {
     `
 
     const subtitle = document.createElement('span')
-    subtitle.textContent = 'Play web as Shorts!'
+    subtitle.textContent = t('arcade.subtitle')
     subtitle.style.cssText = `
       font-size: 0.875rem;
       color: var(--text-muted);
@@ -182,7 +183,7 @@ export class ArcadePage {
       color: var(--text-muted);
       display: none;
     `
-    loadingIndicator.textContent = 'Loading games...'
+    loadingIndicator.textContent = t('arcade.loading')
 
     gameContainer.appendChild(navUp)
     gameContainer.appendChild(navDown)
@@ -202,8 +203,8 @@ export class ArcadePage {
     `
     emptyState.innerHTML = `
       <div style="font-size: 4rem; margin-bottom: 1rem;">🎮</div>
-      <div style="font-size: 1.25rem; margin-bottom: 0.5rem;">No games yet</div>
-      <div style="font-size: 0.875rem;">Upload SWF or ZIP files to share games!</div>
+      <div style="font-size: 1.25rem; margin-bottom: 0.5rem;">${t('arcade.no_games_title')}</div>
+      <div style="font-size: 0.875rem;">${t('arcade.no_games_subtitle')}</div>
     `
     gameContainer.appendChild(emptyState)
 
@@ -538,14 +539,14 @@ export class ArcadePage {
       font-weight: 600;
       margin-bottom: 0.25rem;
     `
-    gameTitle.textContent = game.title || `Game by @${game.username}`
+    gameTitle.textContent = game.title || t('arcade.game_by', { username: game.username })
 
     const gameAuthor = document.createElement('div')
     gameAuthor.style.cssText = `
       font-size: 0.875rem;
       opacity: 0.9;
     `
-    gameAuthor.textContent = `@${game.username}`
+    gameAuthor.textContent = t('arcade.game_author', { username: game.username })
 
     infoOverlay.appendChild(gameTitle)
     infoOverlay.appendChild(gameAuthor)
@@ -602,10 +603,10 @@ export class ArcadePage {
     `
 
     // Details button
-    const detailsBtn = this.createActionButton('ℹ️', 'Details', () => this.handleDetails(game.id))
+    const detailsBtn = this.createActionButton('ℹ️', t('arcade.details'), () => this.handleDetails(game.id))
 
     // Fullscreen button
-    const fullscreenBtn = this.createActionButton('⛶', 'Fullscreen', () => this.handleFullscreen())
+    const fullscreenBtn = this.createActionButton('⛶', t('arcade.fullscreen'), () => this.handleFullscreen())
 
     container.appendChild(detailsBtn)
     container.appendChild(fullscreenBtn)
@@ -699,7 +700,7 @@ export class ArcadePage {
       icon.textContent = '⚠️'
 
       const message = document.createElement('div')
-      message.textContent = 'Failed to load game'
+      message.textContent = t('arcade.load_failed')
 
       wrapper.appendChild(icon)
       wrapper.appendChild(message)

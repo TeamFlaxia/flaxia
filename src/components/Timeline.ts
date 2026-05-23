@@ -6,6 +6,7 @@ import { createAdCard } from './AdCard.js'
 import { injectAds } from '../lib/inject-ads.js'
 import { getMe } from '../lib/auth-cache.js'
 import { createSkeletonCard } from './SkeletonCard.js'
+import { t } from '../lib/i18n.js'
 
 export class Timeline {
   private element: HTMLElement
@@ -106,15 +107,15 @@ export class Timeline {
     // Mobile menu button (only visible on mobile)
     const menuBtn = document.createElement('button')
     menuBtn.className = 'feed-toggle-btn feed-menu-btn'
-    menuBtn.textContent = '⋯'
-    menuBtn.title = 'Menu'
+    menuBtn.textContent = t('timeline.menu')
+    menuBtn.title = t('timeline.menu_title')
     container.appendChild(menuBtn)
 
     // Only show Following tab for logged-in users
     if (this.props.currentUser) {
       const followingBtn = document.createElement('button')
       followingBtn.className = 'feed-toggle-btn'
-      followingBtn.textContent = 'Following'
+      followingBtn.textContent = t('timeline.following')
       followingBtn.dataset.mode = 'following'
       if (this.state.mode === 'following') {
         followingBtn.classList.add('active')
@@ -124,7 +125,7 @@ export class Timeline {
 
     const forYouBtn = document.createElement('button')
     forYouBtn.className = 'feed-toggle-btn'
-    forYouBtn.textContent = 'Global'
+    forYouBtn.textContent = t('timeline.global')
     forYouBtn.dataset.mode = 'foryou'
     if (this.state.mode === 'foryou') {
       forYouBtn.classList.add('active')
@@ -133,8 +134,8 @@ export class Timeline {
 
     const reloadBtn = document.createElement('button')
     reloadBtn.className = 'feed-toggle-btn feed-reload-btn'
-    reloadBtn.textContent = '↑ Reload'
-    reloadBtn.title = 'Reload posts'
+    reloadBtn.textContent = t('timeline.reload')
+    reloadBtn.title = t('timeline.reload_title')
     container.appendChild(reloadBtn)
 
     return container
@@ -147,13 +148,13 @@ export class Timeline {
 
     const input = document.createElement('input')
     input.type = 'text'
-    input.placeholder = 'Enter hashtag...'
+    input.placeholder = t('timeline.hashtag_placeholder')
     input.className = 'hashtag-input-field'
     input.value = this.state.hashtag
 
     const searchBtn = document.createElement('button')
     searchBtn.className = 'hashtag-search-btn'
-    searchBtn.textContent = 'Search'
+    searchBtn.textContent = t('timeline.search')
 
     container.appendChild(input)
     container.appendChild(searchBtn)
@@ -197,7 +198,7 @@ export class Timeline {
     const spinner = document.createElement('div')
     spinner.className = 'spinner'
     const spinnerLabel = document.createElement('span')
-    spinnerLabel.textContent = 'Loading...'
+    spinnerLabel.textContent = t('common.loading')
     loadingSpinner.appendChild(spinner)
     loadingSpinner.appendChild(spinnerLabel)
     loadingSpinner.style.cssText = `
@@ -543,7 +544,7 @@ export class Timeline {
             color: #666;
             font-size: 14px;
           `
-          placeholder.innerHTML = 'Loading ad...'
+          placeholder.innerHTML = t('timeline.loading_ad')
           postList.appendChild(placeholder)
           adPlaceholders.push(placeholder)
         }

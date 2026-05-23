@@ -414,9 +414,9 @@ export class PostComposer {
   }
 
   private formatFileSize(bytes: number): string {
-    if (bytes < 1024) return bytes + ' B'
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+    if (bytes < 1024) return t('file_size.bytes', { size: bytes })
+    if (bytes < 1024 * 1024) return t('file_size.kb', { size: (bytes / 1024).toFixed(1) })
+    return t('file_size.mb', { size: (bytes / (1024 * 1024)).toFixed(1) })
   }
 
   private updateSubmitButton(): void {

@@ -1,3 +1,5 @@
+import { t } from '../lib/i18n.js'
+
 interface LegalPageProps {
   type: 'terms' | 'privacy' | 'about' | 'whitepaper'
 }
@@ -18,7 +20,7 @@ export function createLegalPage({ type }: LegalPageProps) {
   const wordmark = document.createElement('a')
   wordmark.href = '/'
   wordmark.className = 'legal-wordmark'
-  wordmark.textContent = '🌿 Flaxia'
+  wordmark.textContent = t('legal.brand')
   wordmark.addEventListener('click', (e) => {
     e.preventDefault()
     window.history.pushState({}, '', '/')
@@ -34,7 +36,7 @@ export function createLegalPage({ type }: LegalPageProps) {
   // Load and render markdown
   const loadContent = async () => {
     const fileName = type === 'terms' ? 'terms.md' : type === 'privacy' ? 'privacy.md' : type === 'about' ? 'about.md' : 'whitepaper.md'
-    const title = type === 'terms' ? 'Terms of Service' : type === 'privacy' ? 'Privacy Policy' : type === 'about' ? 'About Flaxia' : 'Technical White Paper'
+    const title = type === 'terms' ? t('legal.terms_title') : type === 'privacy' ? t('legal.privacy_title') : type === 'about' ? t('legal.about_title') : t('legal.whitepaper_title')
 
     try {
       const response = await fetch(`/legal/${fileName}`)
@@ -61,7 +63,7 @@ export function createLegalPage({ type }: LegalPageProps) {
       if (effectiveDate) {
         const dateEl = document.createElement('div')
         dateEl.className = 'legal-effective-date'
-        dateEl.textContent = `Effective Date: ${effectiveDate}`
+        dateEl.textContent = t('legal.effective_date', { date: effectiveDate })
         content.appendChild(dateEl)
       }
 
@@ -75,7 +77,7 @@ export function createLegalPage({ type }: LegalPageProps) {
     } catch (error) {
       const errorEl = document.createElement('div')
       errorEl.className = 'legal-error'
-      errorEl.textContent = 'Failed to load content. Please try again later.'
+      errorEl.textContent = t('legal.load_failed')
       content.appendChild(errorEl)
     }
   }
@@ -207,7 +209,7 @@ export function createLegalPage({ type }: LegalPageProps) {
   
   const termsLink = document.createElement('a')
   termsLink.href = '/terms'
-  termsLink.textContent = 'Terms of Service'
+  termsLink.textContent = t('legal.footer_terms')
   termsLink.className = 'legal-footer-link'
   termsLink.addEventListener('click', (e) => {
     e.preventDefault()
@@ -217,7 +219,7 @@ export function createLegalPage({ type }: LegalPageProps) {
   
   const privacyLink = document.createElement('a')
   privacyLink.href = '/privacy'
-  privacyLink.textContent = 'Privacy Policy'
+  privacyLink.textContent = t('legal.footer_privacy')
   privacyLink.className = 'legal-footer-link'
   privacyLink.addEventListener('click', (e) => {
     e.preventDefault()
@@ -227,7 +229,7 @@ export function createLegalPage({ type }: LegalPageProps) {
   
   const aboutLink = document.createElement('a')
   aboutLink.href = '/about'
-  aboutLink.textContent = 'About flaxia'
+  aboutLink.textContent = t('legal.footer_about')
   aboutLink.className = 'legal-footer-link'
   aboutLink.addEventListener('click', (e) => {
     e.preventDefault()
@@ -237,7 +239,7 @@ export function createLegalPage({ type }: LegalPageProps) {
   
   const whitepaperLink = document.createElement('a')
   whitepaperLink.href = '/whitepaper'
-  whitepaperLink.textContent = 'Technical White Paper'
+  whitepaperLink.textContent = t('legal.footer_whitepaper')
   whitepaperLink.className = 'legal-footer-link'
   whitepaperLink.addEventListener('click', (e) => {
     e.preventDefault()
@@ -251,7 +253,7 @@ export function createLegalPage({ type }: LegalPageProps) {
   // Add separator
   const separator1 = document.createElement('span')
   separator1.className = 'legal-footer-separator'
-  separator1.textContent = ' | '
+  separator1.textContent = t('legal.footer_separator')
   footerLinks.appendChild(separator1)
   
   footerLinks.appendChild(privacyLink)
@@ -259,7 +261,7 @@ export function createLegalPage({ type }: LegalPageProps) {
   // Add separator
   const separator2 = document.createElement('span')
   separator2.className = 'legal-footer-separator'
-  separator2.textContent = ' | '
+  separator2.textContent = t('legal.footer_separator')
   footerLinks.appendChild(separator2)
   
   footerLinks.appendChild(aboutLink)
@@ -267,7 +269,7 @@ export function createLegalPage({ type }: LegalPageProps) {
   // Add separator
   const separator3 = document.createElement('span')
   separator3.className = 'legal-footer-separator'
-  separator3.textContent = ' | '
+  separator3.textContent = t('legal.footer_separator')
   footerLinks.appendChild(separator3)
   
   footerLinks.appendChild(whitepaperLink)

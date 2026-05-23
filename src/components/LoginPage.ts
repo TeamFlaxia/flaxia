@@ -1,3 +1,5 @@
+import { t } from '../lib/i18n.js'
+
 interface LoginProps {
   onSuccess: () => void
 }
@@ -14,12 +16,12 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   // Logo
   const logo = document.createElement('div')
   logo.className = 'auth-logo'
-  logo.textContent = 'Flaxia'
+  logo.textContent = t('login.title')
 
   // Heading
   const heading = document.createElement('h1')
   heading.className = 'auth-heading'
-  heading.textContent = 'Sign in to Flaxia'
+  heading.textContent = t('login.heading')
 
   // Form
   const form = document.createElement('form')
@@ -31,7 +33,7 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   
   const emailInput = document.createElement('input')
   emailInput.type = 'email'
-  emailInput.placeholder = 'Email'
+  emailInput.placeholder = t('login.email_placeholder')
   emailInput.className = 'auth-input'
   emailInput.required = true
 
@@ -41,7 +43,7 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   
   const passwordInput = document.createElement('input')
   passwordInput.type = 'password'
-  passwordInput.placeholder = 'Password'
+  passwordInput.placeholder = t('login.password_placeholder')
   passwordInput.className = 'auth-input'
   passwordInput.required = true
 
@@ -54,18 +56,18 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   const submitButton = document.createElement('button')
   submitButton.type = 'submit'
   submitButton.className = 'auth-button'
-  submitButton.textContent = 'Sign in'
+  submitButton.textContent = t('login.submit')
   submitButton.disabled = true
 
   // Register link
   const registerLink = document.createElement('div')
   registerLink.className = 'auth-link'
-  registerLink.innerHTML = 'Don\'t have an account? <a href="/register">Register</a>'
+  registerLink.innerHTML = t('login.register_link')
 
   // Legal notice
   const legalNotice = document.createElement('div')
   legalNotice.className = 'legal-notice'
-  legalNotice.innerHTML = 'By logging in, you agree to our <a href="/terms" target="_blank" rel="noopener noreferrer" class="legal-notice-link">Terms of Service</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer" class="legal-notice-link">Privacy Policy</a>.'
+  legalNotice.innerHTML = t('login.agree_terms')
 
   // Validation
   const validateForm = () => {
@@ -85,20 +87,20 @@ export function createLoginPage({ onSuccess }: LoginProps) {
     const password = passwordInput.value.trim()
 
     if (!email || !password) {
-      errorDiv.textContent = 'Please fill in all fields'
+      errorDiv.textContent = t('login.error_fill_all')
       errorDiv.style.display = 'block'
       return
     }
 
     // Validate email format
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      errorDiv.textContent = 'Invalid email format'
+      errorDiv.textContent = t('login.error_email_invalid')
       errorDiv.style.display = 'block'
       return
     }
 
     submitButton.disabled = true
-    submitButton.textContent = 'Signing in...'
+    submitButton.textContent = t('login.submitting')
 
     try {
       const response = await fetch('/api/auth/login', {
@@ -114,16 +116,16 @@ export function createLoginPage({ onSuccess }: LoginProps) {
       if (response.ok) {
         onSuccess()
       } else {
-        errorDiv.textContent = data.error || 'Invalid email or password'
+        errorDiv.textContent = data.error || t('login.error_invalid')
         errorDiv.style.display = 'block'
       }
     } catch (error) {
       console.error('Login error:', error)
-      errorDiv.textContent = 'Failed to connect. Please try again.'
+      errorDiv.textContent = t('login.error_network')
       errorDiv.style.display = 'block'
     } finally {
       submitButton.disabled = false
-      submitButton.textContent = 'Sign in'
+      submitButton.textContent = t('login.submit')
     }
   })
 

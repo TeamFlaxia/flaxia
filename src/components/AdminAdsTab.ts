@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n.js'
 import { registerModal } from '../lib/modal-state.js'
 
 export interface AdminAd {
@@ -38,7 +39,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       const response = await fetch('/api/admin/ads', { credentials: 'include' })
       if (response.status === 403) {
         console.error('Admin access denied - check if user has admin privileges')
-        alert('Admin access denied. You need admin privileges to manage ads.')
+        alert(t('admin_ads.access_denied'))
         return []
       }
       if (!response.ok) {
@@ -50,7 +51,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       return (data as { ads: AdminAd[] }).ads || []
     } catch (error) {
       console.error('Fetch ads error:', error)
-      alert(`Failed to load ads: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      alert(t('admin_ads.load_failed', { error: error instanceof Error ? error.message : t('common.error') }))
       return []
     }
   }
@@ -133,13 +134,13 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
   }
 
   const getFormatLabel = (payloadType: string | null, adType?: string): string => {
-    if (adType === 'admax') return 'Admax'
+    if (adType === 'admax') return t('admin_ads.format_admax')
     switch (payloadType) {
-      case 'zip': return 'ZIP'
-      case 'swf': return 'SWF'
-      case 'gif': return 'GIF'
-      case 'image': return 'Image'
-      default: return '—'
+      case 'zip': return t('admin_ads.format_zip')
+      case 'swf': return t('admin_ads.format_swf')
+      case 'gif': return t('admin_ads.format_gif')
+      case 'image': return t('admin_ads.format_image')
+      default: return t('admin_ads.format_default')
     }
   }
 
@@ -153,7 +154,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     `
 
     const title = document.createElement('h3')
-    title.textContent = 'Global settings'
+    title.textContent = t('admin_ads.global_settings')
     title.style.cssText = `
       color: #f1f5f9;
       font-size: 18px;
@@ -166,7 +167,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     form.style.cssText = 'display: flex; align-items: center; gap: 12px;'
 
     const label = document.createElement('label')
-    label.textContent = 'every_n:'
+    label.textContent = t('admin_ads.every_n_label')
     label.style.cssText = 'color: #94a3b8; font-size: 14px;'
     form.appendChild(label)
 
@@ -185,7 +186,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     `
 
     const saveBtn = document.createElement('button')
-    saveBtn.textContent = 'Save'
+    saveBtn.textContent = t('common.save')
     saveBtn.style.cssText = `
       background: #22c55e;
       color: #f1f5f9;
@@ -202,12 +203,12 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         const success = await saveConfig(newEveryN)
         if (success) {
           everyN = newEveryN
-          showMessage('Settings saved successfully', 'success')
+          showMessage(t('admin_ads.settings_saved'), 'success')
         } else {
-          showMessage('Failed to save settings', 'error')
+          showMessage(t('admin_ads.settings_save_failed'), 'error')
         }
       } else {
-        showMessage('every_n must be at least 1', 'error')
+        showMessage(t('admin_ads.every_n_validation'), 'error')
       }
     })
 
@@ -244,7 +245,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     section.style.cssText = 'margin-bottom: 24px;'
 
     const title = document.createElement('h3')
-    title.textContent = 'Ad list'
+    title.textContent = t('admin_ads.ad_list')
     title.style.cssText = `
       color: #f1f5f9;
       font-size: 18px;
@@ -257,7 +258,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     section.appendChild(title)
 
     const newAdBtn = document.createElement('button')
-    newAdBtn.textContent = '+ New Ad'
+    newAdBtn.textContent = t('admin_ads.new_ad')
     newAdBtn.style.cssText = `
       background: #22c55e;
       color: #f1f5f9;
@@ -279,7 +280,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
 
     if (ads.length === 0) {
       const empty = document.createElement('div')
-      empty.textContent = 'No ads created yet'
+      empty.textContent = t('admin_ads.no_ads')
       empty.style.cssText = 'color: #64748b; font-size: 14px; padding: 24px; text-align: center; background: #1e293b; border-radius: 8px;'
       section.appendChild(empty)
       return section
@@ -305,16 +306,16 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       color: var(--text-muted);
     `
     header.innerHTML = `
-      <div>Title</div>
-      <div>Type</div>
-      <div>Format</div>
-      <div>Active</div>
-      <div>Impressions</div>
-      <div>Clicks</div>
-      <div>CTR</div>
-      <div>Plays</div>
-      <div>Age</div>
-      <div>Actions</div>
+      <div>${t('admin_ads.header_title')}</div>
+      <div>${t('admin_ads.header_type')}</div>
+      <div>${t('admin_ads.header_format')}</div>
+      <div>${t('admin_ads.header_active')}</div>
+      <div>${t('admin_ads.header_impressions')}</div>
+      <div>${t('admin_ads.header_clicks')}</div>
+      <div>${t('admin_ads.header_ctr')}</div>
+      <div>${t('admin_ads.header_plays')}</div>
+      <div>${t('admin_ads.header_age')}</div>
+      <div>${t('admin_ads.header_actions')}</div>
     `
     table.appendChild(header)
 
@@ -340,10 +341,10 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       // Ad Type column
       const adType = document.createElement('div')
       if (ad.ad_type === 'admax') {
-        adType.textContent = 'Admax'
+        adType.textContent = t('admin_ads.type_admax')
         adType.style.cssText = 'color: #8b5cf6; font-weight: 500;'
       } else {
-        adType.textContent = 'Self'
+        adType.textContent = t('admin_ads.type_self')
         adType.style.cssText = 'color: #22c55e; font-weight: 500;'
       }
       row.appendChild(adType)
@@ -354,7 +355,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       row.appendChild(format)
 
       const active = document.createElement('button')
-      active.textContent = ad.active ? '✓' : '✗'
+      active.textContent = ad.active ? t('admin_ads.active_yes') : t('admin_ads.active_no')
       active.style.cssText = `
         background: ${ad.active ? '#065f46' : '#dc2626'};
         color: #f1f5f9;
@@ -370,7 +371,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         const success = await updateAdActive(ad.id, newActive)
         if (success) {
           ad.active = newActive ? 1 : 0
-          active.textContent = newActive ? '✓' : '✗'
+          active.textContent = newActive ? t('admin_ads.active_yes') : t('admin_ads.active_no')
           active.style.background = newActive ? '#065f46' : '#dc2626'
         }
       })
@@ -398,7 +399,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         const playCount = ad.interaction_count || 0
         const playCountEl = document.createElement('div')
         playCountEl.style.cssText = 'color: #f1f5f9; font-size: 12px;'
-        playCountEl.textContent = `${playCount} plays`
+        playCountEl.textContent = t('admin_ads.plays_count', { count: playCount })
         interactions.appendChild(playCountEl)
       } else {
         interactions.textContent = '—'
@@ -416,7 +417,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       const nowUTC = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
       const daysDiff = Math.floor((nowUTC - createdUTC) / (1000 * 60 * 60 * 24))
       
-      age.textContent = `${daysDiff}d`
+      age.textContent = t('admin_ads.age_days', { days: daysDiff })
       age.style.cssText = 'color: #94a3b8; font-size: 12px;'
       row.appendChild(age)
 
@@ -424,7 +425,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       actions.style.cssText = 'display: flex; gap: 8px;'
 
       const editBtn = document.createElement('button')
-      editBtn.textContent = 'Edit'
+      editBtn.textContent = t('admin_ads.edit')
       editBtn.style.cssText = `
         background: #334155;
         color: #f1f5f9;
@@ -443,7 +444,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       actions.appendChild(editBtn)
 
       const deleteBtn = document.createElement('button')
-      deleteBtn.textContent = 'Delete'
+      deleteBtn.textContent = t('admin_ads.delete')
       deleteBtn.style.cssText = `
         background: #dc2626;
         color: #f1f5f9;
@@ -455,7 +456,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         transition: background 0.2s;
       `
       deleteBtn.addEventListener('click', async () => {
-        if (confirm(`Delete ad "${ad.title}"? This cannot be undone.`)) {
+        if (confirm(t('admin_ads.delete_confirm', { title: ad.title }))) {
           const success = await deleteAd(ad.id)
           if (success) {
             ads = ads.filter(a => a.id !== ad.id)
@@ -509,7 +510,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     `
 
     const title = document.createElement('h3')
-    title.textContent = editingAd ? 'Edit Ad' : 'Create New Ad'
+    title.textContent = editingAd ? t('admin_ads.modal_edit_title') : t('admin_ads.modal_create_title')
     title.style.cssText = `
       color: #f1f5f9;
       font-size: 20px;
@@ -518,7 +519,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     `
 
     const closeBtn = document.createElement('button')
-    closeBtn.textContent = '×'
+    closeBtn.textContent = t('admin_ads.modal_close')
     closeBtn.style.cssText = `
       background: none;
       border: none;
@@ -552,7 +553,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     adTypeField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;'
 
     const adTypeLabel = document.createElement('label')
-    adTypeLabel.textContent = 'Ad Type'
+    adTypeLabel.textContent = t('admin_ads.form_ad_type')
     adTypeLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;'
     adTypeField.appendChild(adTypeLabel)
 
@@ -568,11 +569,11 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     
     const selfHostedOption = document.createElement('option')
     selfHostedOption.value = 'self_hosted'
-    selfHostedOption.textContent = 'Self-hosted (ZIP/SWF/GIF/Image)'
+    selfHostedOption.textContent = t('admin_ads.form_self_hosted')
     
     const admaxOption = document.createElement('option')
     admaxOption.value = 'admax'
-    admaxOption.textContent = 'Admax (JavaScript ads)'
+    admaxOption.textContent = t('admin_ads.form_admax')
     
     adTypeSelect.appendChild(selfHostedOption)
     adTypeSelect.appendChild(admaxOption)
@@ -589,7 +590,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     titleField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;'
 
     const titleLabel = document.createElement('label')
-    titleLabel.textContent = 'Title'
+    titleLabel.textContent = t('admin_ads.form_title')
     titleLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;'
     titleField.appendChild(titleLabel)
 
@@ -623,7 +624,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     bodyField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;'
 
     const bodyLabel = document.createElement('label')
-    bodyLabel.textContent = 'Body text'
+    bodyLabel.textContent = t('admin_ads.form_body')
     bodyLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;'
     bodyField.appendChild(bodyLabel)
 
@@ -659,14 +660,14 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     urlField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;'
 
     const urlLabel = document.createElement('label')
-    urlLabel.textContent = 'Click URL (optional)'
+    urlLabel.textContent = t('admin_ads.form_click_url')
     urlLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;'
     urlField.appendChild(urlLabel)
 
     const urlInput = document.createElement('input')
     urlInput.type = 'url'
     urlInput.value = editingAd?.click_url || ''
-    urlInput.placeholder = 'https://example.com'
+    urlInput.placeholder = t('admin_ads.form_click_url_placeholder')
     urlInput.style.cssText = `
       background: #0f172a;
       border: 1px solid #334155;
@@ -685,7 +686,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     payloadField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;'
 
     const payloadLabel = document.createElement('label')
-    payloadLabel.textContent = 'Payload (optional)'
+    payloadLabel.textContent = t('admin_ads.form_payload')
     payloadLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;'
     payloadField.appendChild(payloadLabel)
 
@@ -703,7 +704,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
 
     if (editingAd?.payload_key) {
       const currentFile = document.createElement('div')
-      currentFile.textContent = `Current file: ${editingAd.payload_key}`
+      currentFile.textContent = t('admin_ads.form_current_file', { key: editingAd.payload_key })
       currentFile.style.cssText = 'color: #64748b; font-size: 12px; margin-top: 4px;'
       payloadField.appendChild(currentFile)
     }
@@ -716,7 +717,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     thumbnailField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;'
 
     const thumbnailLabel = document.createElement('label')
-    thumbnailLabel.textContent = 'Thumbnail (optional, for ZIP/SWF ads)'
+    thumbnailLabel.textContent = t('admin_ads.form_thumbnail')
     thumbnailLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;'
     thumbnailField.appendChild(thumbnailLabel)
 
@@ -733,12 +734,12 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
     `
 
     const thumbnailHint = document.createElement('div')
-    thumbnailHint.textContent = 'accepts .jpg .png .gif, max 1MB'
+    thumbnailHint.textContent = t('admin_ads.form_thumbnail_hint')
     thumbnailHint.style.cssText = 'color: #64748b; font-size: 12px; margin-top: 4px;'
 
     if (editingAd?.thumbnail_key) {
       const currentThumbnail = document.createElement('div')
-      currentThumbnail.textContent = `Current thumbnail: ${editingAd.thumbnail_key}`
+      currentThumbnail.textContent = t('admin_ads.form_current_thumbnail', { key: editingAd.thumbnail_key })
       currentThumbnail.style.cssText = 'color: #64748b; font-size: 12px; margin-bottom: 4px;'
       thumbnailField.appendChild(currentThumbnail)
     }
@@ -795,7 +796,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
 
     // Submit button
     const submitBtn = document.createElement('button')
-    submitBtn.textContent = editingAd ? 'Update Ad' : 'Create Ad'
+    submitBtn.textContent = editingAd ? t('admin_ads.form_submit_update') : t('admin_ads.form_submit_create')
     submitBtn.style.cssText = `
       background: #22c55e;
       color: #f1f5f9;
@@ -815,13 +816,13 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       const adType = adTypeSelect.value as 'self_hosted' | 'admax'
 
       if (!title || !bodyText) {
-        alert('Title and body text are required')
+        alert(t('admin_ads.validation_title_body'))
         return
       }
 
       // Validate admax ads (no payload files allowed)
       if (adType === 'admax' && payloadInput.files?.[0]) {
-        alert('Admax ads do not support payload files')
+        alert(t('admin_ads.validation_admax_no_payload'))
         return
       }
 
@@ -829,12 +830,12 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       const maxFileSize = 100 * 1024 * 1024 // 100MB
       if (payloadInput.files?.[0] && payloadInput.files[0].size > maxFileSize) {
         const fileSizeMB = (payloadInput.files[0].size / 1024 / 1024).toFixed(1)
-        alert(`File too large: ${fileSizeMB}MB. Maximum allowed: 100MB.\n\nFor larger files, upgrade to Cloudflare Business plan (200MB limit).`)
+        alert(t('admin_ads.validation_file_size', { size: fileSizeMB }))
         return
       }
 
       if (thumbnailInput.files?.[0] && thumbnailInput.files[0].size > 1024 * 1024) {
-        alert(`Thumbnail too large: ${(thumbnailInput.files[0].size / 1024 / 1024).toFixed(1)}MB. Maximum allowed: 1MB.`)
+        alert(t('admin_ads.validation_thumbnail_size', { size: (thumbnailInput.files[0].size / 1024 / 1024).toFixed(1) }))
         return
       }
 
@@ -893,9 +894,9 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         if (error.error && error.limit && error.actualSize) {
           const actualMB = (error.actualSize / 1024 / 1024).toFixed(1)
           const limitMB = (error.limit / 1024 / 1024).toFixed(1)
-          alert(`File too large: ${actualMB}MB. Maximum allowed: ${limitMB}MB.\n\n${error.error}`)
+          alert(t('admin_ads.validation_file_size', { size: actualMB }))
         } else {
-          alert(`Failed to save ad: ${error?.error || error?.message || 'Unknown error'}`)
+          alert(t('admin_ads.save_error', { error: error?.error || error?.message || t('common.error') }))
         }
       }
     })

@@ -1,3 +1,5 @@
+import { t } from '../lib/i18n.js'
+
 export interface AdminUser {
   id: string
   username: string
@@ -107,7 +109,7 @@ export function createAdminUsersTab({ onNavigateToTab, adminUsernames = [] }: Ad
     const isAdmin = adminUsernames.includes(user.username)
     if (!isAdmin) {
       const deleteBtn = document.createElement('button')
-      deleteBtn.textContent = 'Delete account'
+      deleteBtn.textContent = t('admin_users.delete_account')
       deleteBtn.style.cssText = `
         background: #334155;
         color: #f1f5f9;
@@ -119,7 +121,7 @@ export function createAdminUsersTab({ onNavigateToTab, adminUsernames = [] }: Ad
         transition: background 0.2s;
       `
       deleteBtn.addEventListener('click', async () => {
-        if (confirm(`Permanently delete @${user.username}? This cannot be undone.`)) {
+        if (confirm(t('admin_users.delete_confirm', { username: user.username }))) {
           const success = await deleteUser(user.id)
           if (success) {
             users = users.filter(u => u.id !== user.id)
@@ -131,7 +133,7 @@ export function createAdminUsersTab({ onNavigateToTab, adminUsernames = [] }: Ad
       row.appendChild(deleteBtn)
     } else {
       const adminBadge = document.createElement('span')
-      adminBadge.textContent = 'Admin'
+      adminBadge.textContent = t('admin_users.admin_badge')
       adminBadge.style.cssText = `
         background: #22c55e20;
         color: #22c55e;
@@ -151,7 +153,7 @@ export function createAdminUsersTab({ onNavigateToTab, adminUsernames = [] }: Ad
     element.innerHTML = ''
 
     const title = document.createElement('h2')
-    title.textContent = 'Users'
+    title.textContent = t('admin_users.title')
     title.style.cssText = `
       color: #f1f5f9;
       font-size: 24px;
@@ -180,7 +182,7 @@ export function createAdminUsersTab({ onNavigateToTab, adminUsernames = [] }: Ad
     `
 
     const countLabel = document.createElement('span')
-    countLabel.textContent = 'Total users:'
+    countLabel.textContent = t('admin_users.total_users')
     countLabel.style.cssText = 'color: #94a3b8; font-weight: 500;'
 
     const countNumber = document.createElement('span')
@@ -201,7 +203,7 @@ export function createAdminUsersTab({ onNavigateToTab, adminUsernames = [] }: Ad
 
     const searchInput = document.createElement('input')
     searchInput.type = 'text'
-    searchInput.placeholder = 'Search: username or email'
+    searchInput.placeholder = t('admin_users.search_placeholder')
     searchInput.style.cssText = `
       width: 100%;
       max-width: 300px;
@@ -234,10 +236,10 @@ export function createAdminUsersTab({ onNavigateToTab, adminUsernames = [] }: Ad
       letter-spacing: 0.5px;
     `
     tableHeader.innerHTML = `
-      <span style="min-width: 150px;">Username</span>
-      <span style="min-width: 120px;">Display Name</span>
-      <span style="min-width: 200px;">Email</span>
-      <span style="margin-left: auto;">Joined</span>
+      <span style="min-width: 150px;">${t('admin_users.header_username')}</span>
+      <span style="min-width: 120px;">${t('admin_users.header_display_name')}</span>
+      <span style="min-width: 200px;">${t('admin_users.header_email')}</span>
+      <span style="margin-left: auto;">${t('admin_users.header_joined')}</span>
     `
     element.appendChild(tableHeader)
 
@@ -250,7 +252,7 @@ export function createAdminUsersTab({ onNavigateToTab, adminUsernames = [] }: Ad
 
     if (filteredUsers.length === 0) {
       const empty = document.createElement('div')
-      empty.textContent = searchQuery ? 'No users match your search' : 'No users found'
+      empty.textContent = searchQuery ? t('admin_users.no_results') : t('admin_users.empty')
       empty.style.cssText = 'color: #64748b; font-size: 14px; padding: 24px; text-align: center;'
       tableBody.appendChild(empty)
     } else {
@@ -268,7 +270,7 @@ export function createAdminUsersTab({ onNavigateToTab, adminUsernames = [] }: Ad
       tableBody.innerHTML = ''
       if (filteredUsers.length === 0) {
         const empty = document.createElement('div')
-        empty.textContent = searchQuery ? 'No users match your search' : 'No users found'
+        empty.textContent = searchQuery ? t('admin_users.no_results') : t('admin_users.empty')
         empty.style.cssText = 'color: #64748b; font-size: 14px; padding: 24px; text-align: center;'
         tableBody.appendChild(empty)
       } else {

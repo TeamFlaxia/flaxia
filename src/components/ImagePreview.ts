@@ -1,6 +1,7 @@
 import { GifPreviewProps } from '../types/post.js'
 import { safeRemoveFromBody } from '../lib/dom-utils.js'
 import { registerModal } from '../lib/modal-state.js'
+import { t } from '../lib/i18n.js'
 
 export function createImagePreview(props: GifPreviewProps): HTMLElement {
   const container = document.createElement('div')
@@ -10,7 +11,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     // Fallback for posts without image
     const fallback = document.createElement('div')
     fallback.className = 'image-preview-error'
-    fallback.textContent = 'No preview available'
+    fallback.textContent = t('image_preview.no_preview')
     container.appendChild(fallback)
     return container
   }
@@ -44,7 +45,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     font-family: monospace;
     font-size: 0.875rem;
   `
-  loading.textContent = 'Loading...'
+  loading.textContent = t('common.loading')
   
   // Create image container with proper sizing
   const imageContainer = document.createElement('div')
@@ -61,7 +62,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   
   const img = document.createElement('img')
   img.className = 'image-preview-img'
-  img.alt = `Post ${props.postId} preview`
+  img.alt = t('image_preview.post_preview', { id: props.postId })
   img.loading = 'lazy'
   img.style.cssText = `
     width: 100%;
@@ -111,7 +112,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
       text-align: center;
       padding: 2rem;
     `
-    fallback.textContent = 'Image failed to load'
+    fallback.textContent = t('image_preview.load_failed')
     imageContainer.appendChild(fallback)
   }
   
@@ -163,7 +164,7 @@ function createImageOverlay(imageUrl: string, postId: string): void {
   // Create full-size image
   const fullImage = document.createElement('img')
   fullImage.src = imageUrl
-  fullImage.alt = `Post ${postId} full size`
+  fullImage.alt = t('image_preview.post_full_size', { id: postId })
   fullImage.style.cssText = `
     max-width: 100%;
     max-height: 100%;
@@ -176,7 +177,7 @@ function createImageOverlay(imageUrl: string, postId: string): void {
   
   // Create close button
   const closeButton = document.createElement('button')
-  closeButton.textContent = '✕'
+  closeButton.textContent = t('image_preview.close')
   closeButton.style.cssText = `
     position: absolute;
     top: -40px;

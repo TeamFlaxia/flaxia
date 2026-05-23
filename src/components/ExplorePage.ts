@@ -2,6 +2,7 @@ import { createPostCard } from './PostCard.js'
 import { Post } from '../types/post.js'
 import { safeRemoveFromBody } from '../lib/dom-utils.js'
 import { createSkeletonCard } from './SkeletonCard.js'
+import { t } from '../lib/i18n.js'
 
 export interface ExplorePageProps {
   tag?: string
@@ -43,7 +44,7 @@ export class ExplorePage {
       tagHeader.className = 'explore-header'
       const tagTitle = document.createElement('h1')
       tagTitle.className = 'explore-title'
-      tagTitle.textContent = `# ${this.props.tag}`
+      tagTitle.textContent = t('explore.tag_title', { tag: this.props.tag })
       tagHeader.appendChild(tagTitle)
       container.appendChild(tagHeader)
       
@@ -59,8 +60,8 @@ export class ExplorePage {
         border-bottom: 1px solid var(--border);
       `
       
-      const recTab = this.createTab('For You', 'recommended')
-      const trendTab = this.createTab('Trending', 'trending')
+      const recTab = this.createTab(t('explore.tab_for_you'), 'recommended')
+      const trendTab = this.createTab(t('explore.tab_trending'), 'trending')
       
       tabsContainer.appendChild(recTab)
       tabsContainer.appendChild(trendTab)
@@ -155,15 +156,15 @@ export class ExplorePage {
         <input 
           type="text" 
           class="search-input" 
-          placeholder="Search Flaxia"
+          placeholder="${t('explore.search_placeholder')}"
           style="width: 100%; padding: 0.75rem 1rem 0.75rem 2.5rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: 9999px; color: var(--text-primary); font-family: inherit; font-size: 0.875rem; outline: none; transition: border-color 0.2s ease;"
         />
         <span class="search-icon" style="position: absolute; left: 0.75rem; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 0.875rem;">🔍</span>
       </div>
       <div class="search-filters" style="display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.25rem;">
-        <button class="filter-btn active" data-filter="posts">Posts</button>
-        <button class="filter-btn" data-filter="users">Users</button>
-        <button class="filter-btn" data-filter="arcade">Arcade</button>
+        <button class="filter-btn active" data-filter="posts">${t('explore.filter_posts')}</button>
+        <button class="filter-btn" data-filter="users">${t('explore.filter_users')}</button>
+        <button class="filter-btn" data-filter="arcade">${t('explore.filter_arcade')}</button>
       </div>
     `
 
@@ -410,7 +411,7 @@ export class ExplorePage {
     const container = this.element.querySelector('.explore-trending-tags') as HTMLElement
     if (!container) return
 
-    container.innerHTML = '<h2 style="padding: 1rem; font-size: 1.25rem; border-bottom: 1px solid var(--border);">Trending Tags</h2>'
+    container.innerHTML = `<h2 style="padding: 1rem; font-size: 1.25rem; border-bottom: 1px solid var(--border);">${t('explore.trending_tags')}</h2>`
     container.style.display = this.currentTab === 'trending' ? 'block' : 'none'
     container.style.background = 'var(--bg-secondary)'
     container.style.marginBottom = '1rem'
@@ -426,7 +427,7 @@ export class ExplorePage {
       `
       item.innerHTML = `
         <div style="color: var(--accent); font-weight: 600;"># ${tag}</div>
-        <div style="font-size: 0.8rem; color: var(--text-muted);">${percentage}% trending</div>
+        <div style="font-size: 0.8rem; color: var(--text-muted);">${t('explore.trending_percent', { percentage })}</div>
       `
       item.onclick = () => {
         window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`)
@@ -460,14 +461,14 @@ export class ExplorePage {
 
       const icon = document.createElement('div')
       icon.style.cssText = 'font-size: 1.5rem; margin-bottom: 0.5rem;'
-      icon.textContent = '🎉'
+      icon.textContent = t('explore.end_icon')
 
       const title = document.createElement('div')
-      title.textContent = "You've reached the end!"
+      title.textContent = t('explore.end_message')
 
       const subtitle = document.createElement('div')
       subtitle.style.cssText = 'font-size: 0.875rem; margin-top: 0.5rem;'
-      subtitle.textContent = `No more posts with #${this.props.tag ?? ''}`
+      subtitle.textContent = t('explore.end_subtitle', { tag: this.props.tag ?? '' })
 
       wrapper.appendChild(icon)
       wrapper.appendChild(title)
@@ -490,10 +491,10 @@ export class ExplorePage {
       icon.textContent = '⚠️'
 
       const title = document.createElement('div')
-      title.textContent = 'Failed to load more posts'
+      title.textContent = t('explore.load_error')
 
       const retryBtn = document.createElement('button')
-      retryBtn.textContent = 'Retry'
+      retryBtn.textContent = t('common.retry')
       retryBtn.style.cssText = 'margin-top: 1rem; padding: 0.5rem 1rem; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer; font-family: inherit;'
       retryBtn.addEventListener('click', () => {
         loadingElement.style.display = 'none'

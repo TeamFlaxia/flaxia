@@ -1,3 +1,5 @@
+import { t } from '../lib/i18n.js'
+
 interface RegisterProps {
   onSuccess: () => void
 }
@@ -14,12 +16,12 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
   // Logo
   const logo = document.createElement('div')
   logo.className = 'auth-logo'
-  logo.textContent = 'Flaxia'
+  logo.textContent = t('register.title')
 
   // Heading
   const heading = document.createElement('h1')
   heading.className = 'auth-heading'
-  heading.textContent = 'Create your account'
+  heading.textContent = t('register.heading')
 
   // Form
   const form = document.createElement('form')
@@ -31,7 +33,7 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
   
   const emailInput = document.createElement('input')
   emailInput.type = 'email'
-  emailInput.placeholder = 'Email'
+  emailInput.placeholder = t('register.email_placeholder')
   emailInput.className = 'auth-input'
   emailInput.required = true
 
@@ -44,13 +46,13 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
   
   const usernameInput = document.createElement('input')
   usernameInput.type = 'text'
-  usernameInput.placeholder = 'Username'
+  usernameInput.placeholder = t('register.username_placeholder')
   usernameInput.className = 'auth-input'
   usernameInput.required = true
 
   const usernameHint = document.createElement('div')
   usernameHint.className = 'field-hint'
-  usernameHint.textContent = 'Letters, numbers, underscores. Max 20 chars.'
+  usernameHint.textContent = t('register.username_hint')
 
   const usernameError = document.createElement('div')
   usernameError.className = 'field-error'
@@ -61,7 +63,7 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
   
   const displayNameInput = document.createElement('input')
   displayNameInput.type = 'text'
-  displayNameInput.placeholder = 'Display name'
+  displayNameInput.placeholder = t('register.display_name_placeholder')
   displayNameInput.className = 'auth-input'
   displayNameInput.required = true
 
@@ -74,7 +76,7 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
   
   const passwordInput = document.createElement('input')
   passwordInput.type = 'password'
-  passwordInput.placeholder = 'Password'
+  passwordInput.placeholder = t('register.password_placeholder')
   passwordInput.className = 'auth-input'
   passwordInput.required = true
 
@@ -87,7 +89,7 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
   
   const confirmPasswordInput = document.createElement('input')
   confirmPasswordInput.type = 'password'
-  confirmPasswordInput.placeholder = 'Confirm password'
+  confirmPasswordInput.placeholder = t('register.confirm_password_placeholder')
   confirmPasswordInput.className = 'auth-input'
   confirmPasswordInput.required = true
 
@@ -108,7 +110,7 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
 
   const consentText = document.createElement('span')
   consentText.className = 'consent-text'
-  consentText.innerHTML = 'I agree to the <a href="/terms" target="_blank" rel="noopener noreferrer" class="consent-link">Terms of Service</a> and <a href="/privacy" target="_blank" rel="noopener noreferrer" class="consent-link">Privacy Policy</a>.'
+  consentText.innerHTML = t('register.agree_terms')
 
   consentLabel.appendChild(consentCheckbox)
   consentLabel.appendChild(consentText)
@@ -118,13 +120,13 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
   const submitButton = document.createElement('button')
   submitButton.type = 'submit'
   submitButton.className = 'auth-button'
-  submitButton.textContent = 'Create account'
+  submitButton.textContent = t('register.submit')
   submitButton.disabled = true
 
   // Login link
   const loginLink = document.createElement('div')
   loginLink.className = 'auth-link'
-  loginLink.innerHTML = 'Already have an account? <a href="/login">Sign in</a>'
+  loginLink.innerHTML = t('register.login_link')
 
   // Validation
   const validateForm = () => {
@@ -145,55 +147,55 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
 
     // Email validation
     if (!email) {
-      emailError.textContent = 'Email is required'
+      emailError.textContent = t('register.error_email_required')
       emailError.style.display = 'block'
       isValid = false
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      emailError.textContent = 'Invalid email format'
+      emailError.textContent = t('register.error_email_invalid')
       emailError.style.display = 'block'
       isValid = false
     }
 
     // Username validation
     if (!username) {
-      usernameError.textContent = 'Username is required'
+      usernameError.textContent = t('register.error_username_required')
       usernameError.style.display = 'block'
       isValid = false
     } else if (!/^[a-zA-Z0-9_]{1,20}$/.test(username)) {
-      usernameError.textContent = 'Invalid username format'
+      usernameError.textContent = t('register.error_username_invalid')
       usernameError.style.display = 'block'
       isValid = false
     }
 
     // Display name validation
     if (!displayName) {
-      displayNameError.textContent = 'Display name is required'
+      displayNameError.textContent = t('register.error_display_name_required')
       displayNameError.style.display = 'block'
       isValid = false
     } else if (displayName.length > 50) {
-      displayNameError.textContent = 'Display name must be ≤50 characters'
+      displayNameError.textContent = t('register.error_display_name_length')
       displayNameError.style.display = 'block'
       isValid = false
     }
 
     // Password validation
     if (!password) {
-      passwordError.textContent = 'Password is required'
+      passwordError.textContent = t('register.error_password_required')
       passwordError.style.display = 'block'
       isValid = false
     } else if (password.length < 8 || password.length > 128) {
-      passwordError.textContent = 'Password must be 8-128 characters'
+      passwordError.textContent = t('register.error_password_length')
       passwordError.style.display = 'block'
       isValid = false
     }
 
     // Confirm password validation
     if (!confirmPassword) {
-      confirmPasswordError.textContent = 'Please confirm your password'
+      confirmPasswordError.textContent = t('register.error_confirm_password')
       confirmPasswordError.style.display = 'block'
       isValid = false
     } else if (password !== confirmPassword) {
-      confirmPasswordError.textContent = 'Passwords do not match'
+      confirmPasswordError.textContent = t('register.error_password_mismatch')
       confirmPasswordError.style.display = 'block'
       isValid = false
     }
@@ -223,7 +225,7 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
     const password = passwordInput.value.trim()
 
     submitButton.disabled = true
-    submitButton.textContent = 'Creating account...'
+    submitButton.textContent = t('register.submitting')
 
     try {
       const response = await fetch('/api/auth/register', {
@@ -253,17 +255,17 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
           usernameError.style.display = 'block'
         } else {
           // General error - show on first field
-          emailError.textContent = data.error || 'Registration failed'
+          emailError.textContent = data.error || t('register.error_general')
           emailError.style.display = 'block'
         }
       }
     } catch (error) {
       console.error('Registration error:', error)
-      emailError.textContent = 'Failed to connect. Please try again.'
+      emailError.textContent = t('register.error_network')
       emailError.style.display = 'block'
     } finally {
       submitButton.disabled = false
-      submitButton.textContent = 'Create account'
+      submitButton.textContent = t('register.submit')
     }
   })
 

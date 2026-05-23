@@ -1,4 +1,5 @@
 import { PostHeaderProps } from '../types/post.js'
+import { t } from '../lib/i18n.js'
 
 export function createPostHeader(props: PostHeaderProps): HTMLElement {
   const header = document.createElement('div')
@@ -109,10 +110,10 @@ function formatTimestamp(isoString: string): string {
   const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
   
-  if (diffMins < 1) return 'now'
-  if (diffMins < 60) return `${diffMins}m`
-  if (diffHours < 24) return `${diffHours}h`
-  if (diffDays < 7) return `${diffDays}d`
+  if (diffMins < 1) return t('post_header.now')
+  if (diffMins < 60) return t('post_header.minutes', { n: diffMins })
+  if (diffHours < 24) return t('post_header.hours', { n: diffHours })
+  if (diffDays < 7) return t('post_header.days', { n: diffDays })
   
   return date.toLocaleDateString()
 }

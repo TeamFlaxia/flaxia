@@ -1,3 +1,5 @@
+import { t } from '../lib/i18n.js'
+
 export interface HiddenPost {
   id: string
   user_id: string
@@ -62,10 +64,10 @@ export function createAdminHiddenTab({ onNavigateToTab }: AdminHiddenTabProps) {
     const diffHours = Math.floor(diffMs / 3600000)
     const diffDays = Math.floor(diffMs / 86400000)
 
-    if (diffMins < 1) return 'just now'
-    if (diffMins < 60) return `${diffMins}m ago`
-    if (diffHours < 24) return `${diffHours}h ago`
-    if (diffDays < 7) return `${diffDays}d ago`
+    if (diffMins < 1) return t('time.just_now')
+    if (diffMins < 60) return t('time.minutes_ago', { n: diffMins })
+    if (diffHours < 24) return t('time.hours_ago', { n: diffHours })
+    if (diffDays < 7) return t('time.days_ago', { n: diffDays })
     return date.toLocaleDateString()
   }
 
@@ -117,14 +119,14 @@ export function createAdminHiddenTab({ onNavigateToTab }: AdminHiddenTabProps) {
       line-height: 1.5;
     `
     const truncatedText = post.text.length > 50 ? post.text.substring(0, 50) + '...' : post.text
-    text.textContent = `"${truncatedText}"`
+    text.textContent = t('admin_hidden.quoted_text', { text: truncatedText })
     row.appendChild(text)
 
     const actions = document.createElement('div')
     actions.style.cssText = 'display: flex; gap: 8px; flex-wrap: wrap;'
 
     const viewBtn = document.createElement('button')
-    viewBtn.textContent = 'View'
+    viewBtn.textContent = t('admin_hidden.view')
     viewBtn.style.cssText = `
       background: #334155;
       color: #f1f5f9;
@@ -141,7 +143,7 @@ export function createAdminHiddenTab({ onNavigateToTab }: AdminHiddenTabProps) {
     actions.appendChild(viewBtn)
 
     const unhideBtn = document.createElement('button')
-    unhideBtn.textContent = 'Unhide'
+    unhideBtn.textContent = t('admin_hidden.unhide')
     unhideBtn.style.cssText = `
       background: #334155;
       color: #f1f5f9;
@@ -153,7 +155,7 @@ export function createAdminHiddenTab({ onNavigateToTab }: AdminHiddenTabProps) {
       transition: background 0.2s;
     `
     unhideBtn.addEventListener('click', async () => {
-      if (confirm('Restore this post? It will become visible to all users.')) {
+      if (confirm(t('admin_hidden.restore_confirm'))) {
         const success = await unhidePost(post.id)
         if (success) {
           posts = posts.filter(p => p.id !== post.id)
@@ -172,7 +174,7 @@ export function createAdminHiddenTab({ onNavigateToTab }: AdminHiddenTabProps) {
     element.innerHTML = ''
 
     const title = document.createElement('h2')
-    title.textContent = 'Hidden posts'
+    title.textContent = t('admin_hidden.title')
     title.style.cssText = `
       color: #f1f5f9;
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -183,7 +185,7 @@ export function createAdminHiddenTab({ onNavigateToTab }: AdminHiddenTabProps) {
 
     if (posts.length === 0) {
       const empty = document.createElement('div')
-      empty.textContent = 'No hidden posts'
+      empty.textContent = t('admin_hidden.empty')
       empty.style.cssText = 'color: #64748b; font-size: 14px; padding: 24px; text-align: center; font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;'
       empty.style.cssText = 'color: #64748b; font-size: 14px; padding: 24px; text-align: center;'
       element.appendChild(empty)
