@@ -1,4 +1,5 @@
 import { ParentMessage, SandboxMessage, isParentMessage } from '../lib/bridge.js'
+import { t } from '../lib/i18n.js'
 import type { Post } from '../types/post.js'
 import { registerModal } from './modal-state.js'
 
@@ -83,10 +84,10 @@ export class SandboxBridge {
 
     overlay.innerHTML = `
       <div class="fullscreen-modal">
-        <p class="fullscreen-message">"${postText}" is requesting fullscreen</p>
+        <p class="fullscreen-message">${t('sandbox.fullscreen_request', { postText })}</p>
         <div class="fullscreen-buttons">
-          <button class="fullscreen-allow">Allow</button>
-          <button class="fullscreen-deny">Deny</button>
+          <button class="fullscreen-allow">${t('sandbox.allow')}</button>
+          <button class="fullscreen-deny">${t('sandbox.deny')}</button>
         </div>
       </div>
     `

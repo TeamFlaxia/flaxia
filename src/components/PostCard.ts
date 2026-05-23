@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n.js'
 import { PostCardProps, PostCardMode } from '../types/post.js'
 import { createPostHeader } from './PostHeader.js'
 import { createPostText } from './PostText.js'
@@ -508,7 +509,7 @@ export class PostCard {
         font-size: 14px;
         transition: background 0.2s;
       `
-      deleteItem.textContent = '🗑 Delete'
+      deleteItem.textContent = t('post.menu_delete')
       deleteItem.addEventListener('mouseenter', () => {
         deleteItem.style.background = 'var(--bg-secondary)'
       })
@@ -536,7 +537,7 @@ export class PostCard {
         font-size: 14px;
         transition: background 0.2s;
       `
-      reportItem.textContent = '🚩 Report'
+      reportItem.textContent = t('post.menu_report')
       reportItem.addEventListener('mouseenter', () => {
         reportItem.style.background = 'var(--bg-secondary)'
       })
@@ -607,11 +608,11 @@ export class PostCard {
 
     const title = document.createElement('h3')
     title.style.cssText = 'margin: 0 0 16px 0; font-size: 18px; color: var(--text-primary);'
-    title.textContent = 'Delete this post?'
+    title.textContent = t('post.delete_title')
 
     const message = document.createElement('p')
     message.style.cssText = 'margin: 0 0 24px 0; color: var(--text-muted); font-size: 14px;'
-    message.textContent = 'This cannot be undone.'
+    message.textContent = t('post.delete_message')
 
     const buttonRow = document.createElement('div')
     buttonRow.style.cssText = 'display: flex; gap: 12px; justify-content: flex-end;'
@@ -619,12 +620,12 @@ export class PostCard {
     const cancelBtn = document.createElement('button')
     cancelBtn.className = 'cancel-btn'
     cancelBtn.style.cssText = 'padding: 8px 16px; background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); cursor: pointer;'
-    cancelBtn.textContent = 'Cancel'
+    cancelBtn.textContent = t('common.cancel')
 
     const deleteBtn = document.createElement('button')
     deleteBtn.className = 'delete-btn'
     deleteBtn.style.cssText = 'padding: 8px 16px; background: var(--danger, #e74c3c); border: none; border-radius: 4px; color: #fff; cursor: pointer;'
-    deleteBtn.textContent = 'Delete'
+    deleteBtn.textContent = t('common.delete')
 
     buttonRow.appendChild(cancelBtn)
     buttonRow.appendChild(deleteBtn)
@@ -675,10 +676,10 @@ export class PostCard {
         this.destroy()
       }, 300)
 
-      this.showToast('Post deleted')
+      this.showToast(t('post.deleted'))
     } catch (error) {
       console.error('Delete post error:', error)
-      this.showToast('Failed to delete post', true)
+      this.showToast(t('post.delete_failed'), true)
     }
   }
 
@@ -712,21 +713,21 @@ export class PostCard {
     `
 
     const categories = [
-      { value: 'spam', label: 'Spam' },
-      { value: 'harassment', label: 'Harassment' },
-      { value: 'hate_speech', label: 'Hate speech' },
-      { value: 'inappropriate', label: 'Inappropriate content' },
-      { value: 'misinformation', label: 'Misinformation' },
-      { value: 'privacy', label: 'Privacy violation' },
-      { value: 'copyright', label: 'Copyright infringement (DMCA)' },
-      { value: 'malware', label: 'Malware / malicious content' },
-      { value: 'csam', label: 'CSAM' },
-      { value: 'other', label: 'Other' }
+      { value: 'spam', label: t('post.report_category_spam') },
+      { value: 'harassment', label: t('post.report_category_harassment') },
+      { value: 'hate_speech', label: t('post.report_category_hate_speech') },
+      { value: 'inappropriate', label: t('post.report_category_inappropriate') },
+      { value: 'misinformation', label: t('post.report_category_misinformation') },
+      { value: 'privacy', label: t('post.report_category_privacy') },
+      { value: 'copyright', label: t('post.report_category_copyright') },
+      { value: 'malware', label: t('post.report_category_malware') },
+      { value: 'csam', label: t('post.report_category_csam') },
+      { value: 'other', label: t('post.report_category_other') }
     ]
 
     dialog.innerHTML = `
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-        <h3 style="margin: 0; font-size: 18px; color: var(--text-primary);">🚩 Report post</h3>
+        <h3 style="margin: 0; font-size: 18px; color: var(--text-primary);">${t('post.report_title')}</h3>
         <button class="close-btn" style="
           background: none;
           border: none;
@@ -735,7 +736,7 @@ export class PostCard {
           cursor: pointer;
         ">✕</button>
       </div>
-      <p style="margin: 0 0 16px 0; color: var(--text-muted); font-size: 14px;">Why are you reporting this post?</p>
+      <p style="margin: 0 0 16px 0; color: var(--text-muted); font-size: 14px;">${t('post.report_question')}</p>
       <div class="categories" style="margin-bottom: 24px;">
         ${categories.map(c => `
           <label style="
@@ -751,9 +752,9 @@ export class PostCard {
         `).join('')}
       </div>
       <div class="dmca-section" style="display: none; margin-bottom: 24px; padding: 16px; background: var(--bg-secondary); border-radius: 8px;">
-        <h4 style="margin: 0 0 12px 0; font-size: 14px; color: var(--text-primary);">DMCA Information</h4>
+        <h4 style="margin: 0 0 12px 0; font-size: 14px; color: var(--text-primary);">${t('post.report_dmca_title')}</h4>
         <div style="margin-bottom: 12px;">
-          <label style="display: block; margin-bottom: 4px; font-size: 12px; color: var(--text-muted);">Describe the copyrighted work:</label>
+          <label style="display: block; margin-bottom: 4px; font-size: 12px; color: var(--text-muted);">${t('post.report_dmca_work_label')}</label>
           <input type="text" class="dmca-work" style="
             width: 100%;
             padding: 8px;
@@ -763,10 +764,10 @@ export class PostCard {
             color: var(--text-primary);
             font-size: 14px;
             box-sizing: border-box;
-          " placeholder="e.g., My original artwork, My song, etc.">
+          " placeholder="${t('post.report_dmca_work_placeholder')}">
         </div>
         <div style="margin-bottom: 12px;">
-          <label style="display: block; margin-bottom: 4px; font-size: 12px; color: var(--text-muted);">Your email address:</label>
+          <label style="display: block; margin-bottom: 4px; font-size: 12px; color: var(--text-muted);">${t('post.report_dmca_email_label')}</label>
           <input type="email" class="dmca-email" style="
             width: 100%;
             padding: 8px;
@@ -776,11 +777,11 @@ export class PostCard {
             color: var(--text-primary);
             font-size: 14px;
             box-sizing: border-box;
-          " placeholder="your@email.com">
+          " placeholder="${t('post.report_dmca_email_placeholder')}">
         </div>
         <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
           <input type="checkbox" class="dmca-sworn" style="margin-top: 2px;">
-          <span style="font-size: 12px; color: var(--text-muted);">I swear that this report is made in good faith and under penalty of perjury.</span>
+          <span style="font-size: 12px; color: var(--text-muted);">${t('post.report_dmca_swear')}</span>
         </label>
       </div>
       <div style="display: flex; justify-content: flex-end;">
@@ -794,7 +795,7 @@ export class PostCard {
           font-size: 14px;
           cursor: pointer;
           opacity: 0.5;
-        ">Submit</button>
+        ">${t('common.submit')}</button>
       </div>
     `
 
@@ -899,7 +900,7 @@ export class PostCard {
       })
 
       if (response.status === 409) {
-        this.showToast('You have already reported this post.')
+        this.showToast(t('post.report_already'))
         return
       }
 
@@ -908,7 +909,7 @@ export class PostCard {
         throw new Error(errorData?.error || 'Failed to submit report')
       }
 
-      this.showToast('Report submitted. Thank you.')
+      this.showToast(t('post.report_submitted'))
     } catch (error) {
       console.error('Report error:', error)
       console.error('Error details:', {
@@ -917,7 +918,7 @@ export class PostCard {
         post_id: this.props.post.id,
         category: category || 'unknown'
       })
-      this.showToast('Failed to submit report', true)
+      this.showToast(t('post.report_failed'), true)
     }
   }
 

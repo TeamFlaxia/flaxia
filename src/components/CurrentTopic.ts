@@ -1,5 +1,6 @@
 import { Post, PostCardMode } from '../types/post.js'
 import { createPostCard } from './PostCard.js'
+import { t } from '../lib/i18n.js'
 
 export interface CurrentTopicProps {
   onTopicClick: (post: Post) => void
@@ -53,7 +54,7 @@ export function createCurrentTopic(props: CurrentTopicProps): {
   `
 
   const title = document.createElement('div')
-  title.textContent = '今のお題'
+  title.textContent = t('topic.title')
   title.style.cssText = `
     font-size: 14px;
     font-weight: 600;
@@ -82,7 +83,7 @@ export function createCurrentTopic(props: CurrentTopicProps): {
   loadingElement.innerHTML = `
     <div style="display: flex; align-items: center; gap: 8px;">
       <div style="width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-top: 2px solid white; border-radius: 50%; animation: spin 1s linear infinite;"></div>
-      <span style="font-size: 14px;">お題を読み込み中...</span>
+      <span style="font-size: 14px;">${t('topic.loading')}</span>
     </div>
     <style>
       @keyframes spin {
@@ -98,7 +99,7 @@ export function createCurrentTopic(props: CurrentTopicProps): {
     opacity: 0.8;
     font-style: italic;
   `
-  errorElement.textContent = 'お題が見つかりませんでした'
+  errorElement.textContent = t('topic.not_found')
 
   const topicElement = document.createElement('div')
   topicElement.style.cssText = `
@@ -147,7 +148,7 @@ export function createCurrentTopic(props: CurrentTopicProps): {
       const response = await fetch('/api/current-topic')
       if (!response.ok) {
         if (response.status === 404) {
-          state.error = 'お題が見つかりませんでした'
+          state.error = t('topic.not_found')
         } else {
           throw new Error('Failed to fetch current topic')
         }
@@ -159,7 +160,7 @@ export function createCurrentTopic(props: CurrentTopicProps): {
       state.error = null
     } catch (error) {
       console.error('Failed to fetch current topic:', error)
-      state.error = '読み込みに失敗しました'
+      state.error = t('topic.load_failed')
     } finally {
       state.loading = false
       render()
@@ -173,6 +174,7 @@ export function createCurrentTopic(props: CurrentTopicProps): {
     if (state.loading) {
       content.appendChild(loadingElement)
     } else if (state.error) {
+      errorElement.textContent = state.error
       content.appendChild(errorElement)
     } else if (state.topic) {
       if (state.expanded && state.postCard) {

@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n.js'
 import { createEditProfileModal } from './EditProfileModal.js'
 import { createFollowerListModal } from './FollowerListModal.js'
 import { processText, renderMathElements, linkifyHashtags, linkifyUrls } from './PostText.js'
@@ -35,7 +36,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
 
   const displayName = document.createElement('div')
   displayName.className = 'profile-display-name'
-  displayName.textContent = 'Loading...'
+  displayName.textContent = t('profile.loading')
 
   const usernameElement = document.createElement('div')
   usernameElement.className = 'profile-username'
@@ -48,7 +49,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
   const joinedDate = document.createElement('div')
   joinedDate.className = 'profile-joined-date'
   joinedDate.style.cssText = 'color: var(--text-muted); font-family: \'Noto Sans\', monospace, -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; font-size: 0.875rem; margin-top: 0.5rem;'
-  joinedDate.textContent = 'Joined: Loading...'
+  joinedDate.textContent = t('profile.joined', { date: t('common.loading') })
 
   info.appendChild(displayName)
   info.appendChild(usernameElement)
@@ -70,7 +71,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
   postsCountSpan.className = 'stat-number'
   postsCountSpan.textContent = '0'
   postsStat.appendChild(postsCountSpan)
-  postsStat.appendChild(document.createTextNode(' Posts'))
+  postsStat.appendChild(document.createTextNode(' ' + t('profile.posts_label')))
 
   const followersStat = document.createElement('div')
   followersStat.className = 'profile-stat'
@@ -79,7 +80,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
   followersCountSpan.className = 'stat-number'
   followersCountSpan.textContent = '0'
   followersStat.appendChild(followersCountSpan)
-  followersStat.appendChild(document.createTextNode(' Followers'))
+  followersStat.appendChild(document.createTextNode(' ' + t('profile.followers_label')))
 
   const followingStat = document.createElement('div')
   followingStat.className = 'profile-stat'
@@ -88,7 +89,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
   followingCountSpan.className = 'stat-number'
   followingCountSpan.textContent = '0'
   followingStat.appendChild(followingCountSpan)
-  followingStat.appendChild(document.createTextNode(' Following'))
+  followingStat.appendChild(document.createTextNode(' ' + t('profile.following_label')))
 
   statsRow.appendChild(postsStat)
   statsRow.appendChild(followersStat)
@@ -101,20 +102,20 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
   // Edit Profile button (only for own profile)
   const editButton = document.createElement('button')
   editButton.className = 'profile-button profile-button--primary'
-  editButton.textContent = 'Edit Profile'
+  editButton.textContent = t('profile.edit')
   editButton.style.display = currentUser?.username === username ? 'block' : 'none'
 
   // Logout button (only for own profile)
   const logoutButton = document.createElement('button')
   logoutButton.className = 'profile-button profile-button--secondary'
-  logoutButton.textContent = 'Log out'
+  logoutButton.textContent = t('profile.log_out')
   logoutButton.style.display = currentUser?.username === username ? 'block' : 'none'
   logoutButton.style.marginTop = '0.5rem'
 
   // Follow/Unfollow button (only for others' profiles)
   const followButton = document.createElement('button')
   followButton.className = 'profile-button profile-button--secondary'
-  followButton.textContent = 'Follow'
+  followButton.textContent = t('profile.follow')
   followButton.style.display = currentUser?.username === username ? 'none' : 'block'
 
   actionsRow.appendChild(editButton)
@@ -178,7 +179,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
         const joinedDateElement = container.querySelector('.profile-joined-date') as HTMLElement
         if (joinedDateElement && userData.created_at) {
           const joinedDate = new Date(userData.created_at)
-          joinedDateElement.textContent = `Joined: ${joinedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`
+          joinedDateElement.textContent = t('profile.joined', { date: joinedDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) })
         }
         
         if (userData.avatar_key) {
@@ -206,7 +207,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
 
   // Update follow button text and state
   const updateFollowButton = () => {
-    followButton.textContent = isFollowing ? 'Following' : 'Follow'
+    followButton.textContent = isFollowing ? t('profile.following') : t('profile.follow')
     followButton.className = isFollowing 
       ? 'profile-button profile-button--primary' 
       : 'profile-button profile-button--secondary'
@@ -264,7 +265,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
     `)
 
     modal.innerHTML = `
-      <h3 style="margin: 0 0 1rem 0; color: var(--text-primary); font-size: 1.125rem;">Log out of @${currentUser.username}?</h3>
+      <h3 style="margin: 0 0 1rem 0; color: var(--text-primary); font-size: 1.125rem;">${t('profile.logout_title', { username: currentUser.username })}</h3>
       <div style="display: flex; gap: 0.75rem; justify-content: center;">
         <button class="logout-cancel-btn" style="
           padding: 0.5rem 1rem;
@@ -275,7 +276,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
           cursor: pointer;
           font-size: 0.875rem;
           transition: background-color 0.2s;
-        ">Cancel</button>
+        ">${t('common.cancel')}</button>
         <button class="logout-confirm-btn" style="
           padding: 0.5rem 1rem;
           background: var(--text-primary);
@@ -286,7 +287,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
           font-size: 0.875rem;
           font-weight: 600;
           transition: opacity 0.2s;
-        ">Log out</button>
+        ">${t('auth.sign_out')}</button>
       </div>
     `
 
@@ -360,7 +361,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
 
     // Disable button during operation
     followButton.disabled = true
-    followButton.textContent = isFollowing ? 'Unfollowing...' : 'Following...'
+    followButton.textContent = isFollowing ? t('profile.unfollowing') : t('profile.following')
 
     try {
       if (isFollowing) {

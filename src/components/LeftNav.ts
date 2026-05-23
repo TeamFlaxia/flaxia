@@ -1,5 +1,6 @@
 import { clearMeCache } from '../lib/auth-cache'
 import { isModalOpen } from '../lib/modal-state'
+import { t } from '../lib/i18n.js'
 
 export interface LeftNavProps {
   activeItem?: string
@@ -51,7 +52,7 @@ export class LeftNav {
 
     const logoText = document.createElement('span')
     logoText.style.cssText = 'font-size: 1.25rem; font-weight: 600; color: var(--accent);'
-    logoText.textContent = 'Flaxia'
+    logoText.textContent = t('nav.logo')
 
     logoInner.appendChild(logoIcon)
     logoInner.appendChild(logoText)
@@ -68,12 +69,12 @@ export class LeftNav {
     if (this.props.currentUser) {
       // Full navigation for logged-in users
       const items = [
-        { id: 'home', label: 'Home', icon: '🏠' },
-        { id: 'explore', label: 'Explore', icon: '🔍' },
-        { id: 'arcade', label: 'Arcade', icon: '🕹️' },
-        { id: 'notifications', label: 'Notifications', icon: '🔔' },
-        { id: 'profile', label: 'Profile', icon: '👤' },
-        { id: 'settings', label: 'Settings', icon: '⚙️' }
+        { id: 'home', label: t('nav.home'), icon: '🏠' },
+        { id: 'explore', label: t('nav.explore'), icon: '🔍' },
+        { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
+        { id: 'notifications', label: t('nav.notifications'), icon: '🔔' },
+        { id: 'profile', label: t('nav.profile'), icon: '👤' },
+        { id: 'settings', label: t('nav.settings'), icon: '⚙️' }
       ]
 
       items.forEach(item => {
@@ -113,10 +114,10 @@ export class LeftNav {
     } else {
       // Simplified navigation for guests
       const items = [
-        { id: 'home', label: 'Home', icon: '🏠' },
-        { id: 'explore', label: 'Explore', icon: '🔍' },
-        { id: 'arcade', label: 'Arcade', icon: '🕹️' },
-        { id: 'settings', label: 'Settings', icon: '⚙️' }
+        { id: 'home', label: t('nav.home'), icon: '🏠' },
+        { id: 'explore', label: t('nav.explore'), icon: '🔍' },
+        { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
+        { id: 'settings', label: t('nav.settings'), icon: '⚙️' }
       ]
 
       items.forEach(item => {
@@ -394,12 +395,12 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
     if (currentUser) {
       // Full navigation for logged-in users
       const items = [
-        { id: 'home', label: 'Home', icon: '🏠' },
-        { id: 'explore', label: 'Explore', icon: '🔍' },
-        { id: 'arcade', label: 'Arcade', icon: '🕹️' },
-        { id: 'notifications', label: 'Notifications', icon: '🔔' },
-        { id: 'profile', label: 'Profile', icon: '👤' },
-        { id: 'settings', label: 'Settings', icon: '⚙️' }
+        { id: 'home', label: t('nav.home'), icon: '🏠' },
+        { id: 'explore', label: t('nav.explore'), icon: '🔍' },
+        { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
+        { id: 'notifications', label: t('nav.notifications'), icon: '🔔' },
+        { id: 'profile', label: t('nav.profile'), icon: '👤' },
+        { id: 'settings', label: t('nav.settings'), icon: '⚙️' }
       ]
 
       items.forEach(item => {
@@ -436,10 +437,10 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
     } else {
       // Simplified navigation for guests
       const items = [
-        { id: 'home', label: 'Home', icon: '🏠' },
-        { id: 'explore', label: 'Explore', icon: '🔍' },
-        { id: 'arcade', label: 'Arcade', icon: '🕹️' },
-        { id: 'settings', label: 'Settings', icon: '⚙️' }
+        { id: 'home', label: t('nav.home'), icon: '🏠' },
+        { id: 'explore', label: t('nav.explore'), icon: '🔍' },
+        { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
+        { id: 'settings', label: t('nav.settings'), icon: '⚙️' }
       ]
 
       items.forEach(item => {

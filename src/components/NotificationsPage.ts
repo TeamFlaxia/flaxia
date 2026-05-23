@@ -1,3 +1,5 @@
+import { t } from '../lib/i18n.js'
+
 export interface Notification {
   id: string
   type: 'reported' | 'fresh' | 'warned' | 'hidden' | 'ap_follow' | 'ap_like' | 'ap_announce' | 'reply' | 'mention'
@@ -52,7 +54,7 @@ export class NotificationsPage {
     `
 
     const title = document.createElement('h1')
-    title.textContent = 'Notifications'
+    title.textContent = t('notifications.title')
     title.style.cssText = `
       margin: 0;
       font-size: 24px;
@@ -64,7 +66,7 @@ export class NotificationsPage {
     // Mark all read button (only show if there are unread)
     if (this.props.unreadCount > 0) {
       const markAllBtn = document.createElement('button')
-      markAllBtn.textContent = 'Mark all read'
+      markAllBtn.textContent = t('notifications.mark_all_read')
       markAllBtn.style.cssText = `
         padding: 8px 16px;
         background: var(--bg-secondary);
@@ -98,7 +100,7 @@ export class NotificationsPage {
         padding: 48px 24px;
         color: var(--text-muted);
       `
-      empty.textContent = 'No notifications yet'
+      empty.textContent = t('notifications.empty')
       container.appendChild(empty)
     } else {
       const list = document.createElement('div')
@@ -218,11 +220,11 @@ export class NotificationsPage {
       case 'fresh':
       case 'ap_like':
         if (notification.actor) {
-          const action = notification.type === 'fresh' ? 'freshed' : 'liked'
+          const freshKey = notification.type === 'fresh' ? 'notifications.freshed_your_post' : 'notifications.liked_your_post'
           appendStrong(`@${notification.actor.username}`)
           mainText.appendChild(document.createTextNode(' '))
           appendMuted(`(${notification.actor.display_name})`)
-          mainText.appendChild(document.createTextNode(` ${action} your post`))
+          mainText.appendChild(document.createTextNode(t(freshKey, { actor: '' })))
         }
         break
       case 'reply':
@@ -230,7 +232,7 @@ export class NotificationsPage {
           appendStrong(`@${notification.actor.username}`)
           mainText.appendChild(document.createTextNode(' '))
           appendMuted(`(${notification.actor.display_name})`)
-          mainText.appendChild(document.createTextNode(' リプライされました'))
+          mainText.appendChild(document.createTextNode(t('notifications.replied_to_you', { actor: '' })))
         }
         break
       case 'mention':
@@ -238,7 +240,7 @@ export class NotificationsPage {
           appendStrong(`@${notification.actor.username}`)
           mainText.appendChild(document.createTextNode(' '))
           appendMuted(`(${notification.actor.display_name})`)
-          mainText.appendChild(document.createTextNode(' にメンションされました'))
+          mainText.appendChild(document.createTextNode(t('notifications.mentioned_you', { actor: '' })))
         }
         break
       case 'ap_follow':
@@ -247,7 +249,7 @@ export class NotificationsPage {
           appendStrong(`@${notification.actor.username}`)
           mainText.appendChild(document.createTextNode(' '))
           appendMuted(`(${notification.actor.display_name})`)
-          mainText.appendChild(document.createTextNode(' フォローされました'))
+          mainText.appendChild(document.createTextNode(t('notifications.followed_you', { actor: '' })))
         } else {
           // External actor follow - use actor_data if available
           let actorInfo = null
@@ -261,16 +263,14 @@ export class NotificationsPage {
           
           if (actorInfo) {
             // Display as "MastodonのXXXさんがフォローしました"
-            const displayName = actorInfo.display_name || actorInfo.username || 'ユーザー'
+            const displayName = actorInfo.display_name || actorInfo.username || t('notifications.user_fallback_ja')
             const domain = actorInfo.domain || 'external'
-            appendStrong(`${domain} の ${displayName}さん`)
-            mainText.appendChild(document.createTextNode('がフォローしました'))
+            mainText.textContent = t('notifications.follow_external', { domain, name: displayName })
           } else {
             // Fallback for existing notifications without actor_data
             const actorUrl = notification.actor_id || 'external user'
             const domain = actorUrl.includes('://') ? new URL(actorUrl).hostname : actorUrl
-            appendStrong(`${domain} のユーザー`)
-            mainText.appendChild(document.createTextNode('がフォローしました'))
+            mainText.textContent = t('notifications.follow_external_fallback', { domain })
           }
         }
         break
@@ -279,17 +279,16 @@ export class NotificationsPage {
           appendStrong(`@${notification.actor.username}`)
           mainText.appendChild(document.createTextNode(' '))
           appendMuted(`(${notification.actor.display_name})`)
-          mainText.appendChild(document.createTextNode(' 投稿をブーストしました'))
+          mainText.appendChild(document.createTextNode(t('notifications.boosted_your_post', { actor: '' })))
         } else {
           const actorUrl = notification.actor_id || 'external user'
           const domain = actorUrl.includes('://') ? new URL(actorUrl).hostname : actorUrl
-          appendStrong(`${domain} のユーザー`)
-          mainText.appendChild(document.createTextNode('が投稿をブーストしました'))
+          mainText.textContent = t('notifications.boost_external', { domain })
         }
         break
       default:
-        appendStrong('あなたの投稿が複数回報告されました')
-        mainText.appendChild(document.createTextNode(' 見直しし、削除を検討してください。'))
+        appendStrong(t('notifications.your_post_reported'))
+        mainText.appendChild(document.createTextNode(t('notifications.reported_hint_ja')))
     }
     content.appendChild(mainText)
 
@@ -330,10 +329,10 @@ export class NotificationsPage {
     const diffHours = Math.floor(diffMs / 3600000)
     const diffDays = Math.floor(diffMs / 86400000)
 
-    if (diffMins < 1) return 'just now'
-    if (diffMins < 60) return `${diffMins}min ago`
-    if (diffHours < 24) return `${diffHours}hr ago`
-    if (diffDays < 7) return `${diffDays}d ago`
+    if (diffMins < 1) return t('time.just_now')
+    if (diffMins < 60) return t('time.minutes_ago', { n: diffMins })
+    if (diffHours < 24) return t('time.hours_ago', { n: diffHours })
+    if (diffDays < 7) return t('time.days_ago', { n: diffDays })
     return date.toLocaleDateString()
   }
 
@@ -347,7 +346,7 @@ export class NotificationsPage {
 
     // Remove the "Mark all read" button
     const markAllBtn = this.element.querySelector('button')
-    if (markAllBtn && markAllBtn.textContent === 'Mark all read') {
+    if (markAllBtn) {
       markAllBtn.remove()
     }
   }

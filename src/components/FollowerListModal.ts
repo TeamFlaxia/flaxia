@@ -1,5 +1,6 @@
 import { showSignInPrompt } from './SignInPrompt.js'
 import { registerModal } from '../lib/modal-state.js'
+import { t } from '../lib/i18n.js'
 
 interface UserListItem {
   id: string
@@ -99,7 +100,7 @@ export function createFollowerListModal({ username, initialTab = 'followers', cu
   `
 
   const followersTab = document.createElement('button')
-  followersTab.textContent = 'Followers'
+  followersTab.textContent = t('follower_list.followers')
   followersTab.className = 'follower-list-tab'
   followersTab.style.cssText = `
     flex: 1;
@@ -115,7 +116,7 @@ export function createFollowerListModal({ username, initialTab = 'followers', cu
   `
 
   const followingTab = document.createElement('button')
-  followingTab.textContent = 'Following'
+  followingTab.textContent = t('follower_list.following')
   followingTab.className = 'follower-list-tab'
   followingTab.style.cssText = `
     flex: 1;

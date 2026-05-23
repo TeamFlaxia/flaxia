@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n.js'
 import { Post } from '../types/post.js'
 import { buildTree, PostNode } from '../lib/thread.js'
 import { createPostCard } from './PostCard.js'
@@ -113,7 +114,7 @@ export class ThreadPage {
     // Loading state
     const loading = document.createElement('div')
     loading.className = 'thread-loading'
-    loading.textContent = 'Loading thread...'
+    loading.textContent = t('thread.loading')
     loading.style.cssText = `
       color: #64748b;
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -135,7 +136,7 @@ export class ThreadPage {
     `
 
     const backButton = document.createElement('button')
-    backButton.textContent = '← Back'
+    backButton.textContent = t('common.back')
     backButton.style.cssText = `
       background: none;
       border: none;
@@ -149,7 +150,7 @@ export class ThreadPage {
     backButton.addEventListener('click', this.props.onBack)
 
     const title = document.createElement('h1')
-    title.textContent = 'Thread'
+    title.textContent = t('thread.title')
     title.style.cssText = `
       color: #0f172a;
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -338,7 +339,7 @@ export class ThreadPage {
 
       // Add replies header
       const repliesHeader = document.createElement('h2')
-      repliesHeader.textContent = `Replies (${data.replies.length})`
+      repliesHeader.textContent = t('thread.replies_header', { count: data.replies.length })
       repliesHeader.style.cssText = `
         color: #64748b;
         font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -368,7 +369,7 @@ export class ThreadPage {
         content.appendChild(repliesContainer)
       } else {
         const noReplies = document.createElement('p')
-        noReplies.textContent = 'No replies yet. Be the first to reply!'
+        noReplies.textContent = t('thread.no_replies')
         noReplies.style.cssText = `
           color: #64748b;
           font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -381,7 +382,7 @@ export class ThreadPage {
 
     } catch (error) {
       console.error('Failed to load thread:', error)
-      loading.textContent = 'Failed to load thread'
+      loading.textContent = t('thread.load_failed')
       loading.style.color = '#ef4444'
     } finally {
       this.isLoading = false

@@ -1,4 +1,5 @@
 import { clearMeCache } from '../lib/auth-cache'
+import { t, setLocale, getLocale, initI18n } from '../lib/i18n.js'
 
 interface SettingsPageProps {
   currentUser?: {
@@ -22,7 +23,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   `
 
   const header = document.createElement('h1')
-  header.textContent = 'Settings'
+  header.textContent = t('settings.title')
   header.style.cssText = `
     font-size: 1.5rem;
     font-weight: 600;
@@ -45,7 +46,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     `
 
     const accountTitle = document.createElement('h2')
-    accountTitle.textContent = 'Account'
+    accountTitle.textContent = t('settings.account')
     accountTitle.style.cssText = `
       font-size: 1.125rem;
       font-weight: 600;
@@ -81,7 +82,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     `
 
     const logoutButton = document.createElement('button')
-    logoutButton.textContent = 'Log out'
+    logoutButton.textContent = t('auth.sign_out')
     logoutButton.style.cssText = `
       background: var(--bg-secondary);
       color: var(--text-primary);
@@ -102,7 +103,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     })
 
     logoutButton.addEventListener('click', async () => {
-      if (confirm(`Log out of @${currentUser.username}?`)) {
+      if (confirm(t('auth.logout_confirm', { username: currentUser.username }))) {
         try {
           const response = await fetch('/api/auth/logout', {
             method: 'POST',
@@ -113,11 +114,11 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
             clearMeCache()
             window.location.href = '/'
           } else {
-            alert('Logout failed')
+            alert(t('auth.logout_failed'))
           }
         } catch (error) {
           console.error('Logout error:', error)
-          alert('Logout error')
+          alert(t('auth.logout_error'))
         }
       }
     })
@@ -141,7 +142,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   `
 
   const languageTitle = document.createElement('h2')
-  languageTitle.textContent = 'Language'
+  languageTitle.textContent = t('settings.language')
   languageTitle.style.cssText = `
     font-size: 1.125rem;
     font-weight: 600;
@@ -181,7 +182,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   }
 
   const languageSaveButton = document.createElement('button')
-  languageSaveButton.textContent = 'Save'
+  languageSaveButton.textContent = t('common.save')
   languageSaveButton.style.cssText = `
     background: var(--accent);
     color: white;
@@ -218,7 +219,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   `
 
   const mutedWordsTitle = document.createElement('h2')
-  mutedWordsTitle.textContent = 'Muted Words'
+  mutedWordsTitle.textContent = t('settings.muted_words')
   mutedWordsTitle.style.cssText = `
     font-size: 1.125rem;
     font-weight: 600;
@@ -251,7 +252,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
   const ngWordInput = document.createElement('input')
   ngWordInput.type = 'text'
-  ngWordInput.placeholder = 'Enter word to mute'
+  ngWordInput.placeholder = t('settings.muted_words_input_placeholder')
   ngWordInput.style.cssText = `
     flex: 1;
     padding: 0.75rem;
@@ -264,7 +265,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   `
 
   const addButton = document.createElement('button')
-  addButton.textContent = 'Add'
+  addButton.textContent = t('settings.muted_words_add')
   addButton.style.cssText = `
     background: var(--accent);
     color: white;
@@ -285,7 +286,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   `
 
   const mutedWordsSaveButton = document.createElement('button')
-  mutedWordsSaveButton.textContent = 'Save'
+  mutedWordsSaveButton.textContent = t('common.save')
   mutedWordsSaveButton.style.cssText = `
     background: var(--accent);
     color: white;
@@ -348,7 +349,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     if (ngWords.length >= 100) {
       ngWordInput.disabled = true
       addButton.disabled = true
-      mutedWordsMessage.textContent = 'Maximum 100 words reached'
+      mutedWordsMessage.textContent = t('settings.muted_words_max_reached')
       mutedWordsMessage.style.color = 'var(--text-muted)'
     } else {
       ngWordInput.disabled = false
@@ -363,13 +364,13 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     if (!word) return
     
     if (word.length > 50) {
-      mutedWordsMessage.textContent = 'Word must be ≤50 characters'
+      mutedWordsMessage.textContent = t('settings.muted_words_word_too_long')
       mutedWordsMessage.style.color = 'var(--danger)'
       return
     }
 
     if (ngWords.includes(word)) {
-      mutedWordsMessage.textContent = 'Word already added'
+      mutedWordsMessage.textContent = t('settings.muted_words_already_added')
       mutedWordsMessage.style.color = 'var(--text-muted)'
       return
     }
@@ -403,15 +404,15 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
       })
 
       if (response.ok) {
-        mutedWordsMessage.textContent = '✓ Saved'
+        mutedWordsMessage.textContent = t('settings.muted_words_saved')
         mutedWordsMessage.style.color = 'var(--success, #10b981)'
       } else {
         const errorData = await response.json() as { error?: string }
-        mutedWordsMessage.textContent = errorData.error || 'Failed to save'
+        mutedWordsMessage.textContent = errorData.error || t('settings.muted_words_save_failed')
         mutedWordsMessage.style.color = 'var(--danger)'
       }
     } catch (error: any) {
-      mutedWordsMessage.textContent = 'Network error'
+      mutedWordsMessage.textContent = t('settings.muted_words_network_error')
       mutedWordsMessage.style.color = 'var(--danger)'
     } finally {
       mutedWordsSaveButton.disabled = false
@@ -467,7 +468,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   `
 
   const emailTitle = document.createElement('h2')
-  emailTitle.textContent = 'Change Email'
+  emailTitle.textContent = t('settings.change_email')
   emailTitle.style.cssText = `
     font-size: 1.125rem;
     font-weight: 600;
@@ -478,7 +479,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   `
 
   const currentPasswordLabel = document.createElement('label')
-  currentPasswordLabel.textContent = 'Current password'
+  currentPasswordLabel.textContent = t('settings.email_current_password')
   currentPasswordLabel.style.cssText = `
     display: block;
     margin-bottom: 0.5rem;
@@ -488,7 +489,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
   const currentPasswordInput = document.createElement('input')
   currentPasswordInput.type = 'password'
-  currentPasswordInput.placeholder = 'Enter current password'
+  currentPasswordInput.placeholder = t('settings.email_current_password_placeholder')
   currentPasswordInput.style.cssText = `
     width: 100%;
     padding: 0.75rem;
@@ -502,7 +503,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   `
 
   const newEmailLabel = document.createElement('label')
-  newEmailLabel.textContent = 'New email'
+  newEmailLabel.textContent = t('settings.email_new_email')
   newEmailLabel.style.cssText = `
     display: block;
     margin-bottom: 0.5rem;
@@ -512,7 +513,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
   const newEmailInput = document.createElement('input')
   newEmailInput.type = 'email'
-  newEmailInput.placeholder = 'Enter new email'
+  newEmailInput.placeholder = t('settings.email_new_email_placeholder')
   newEmailInput.style.cssText = `
     width: 100%;
     padding: 0.75rem;
@@ -526,7 +527,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   `
 
   const emailSaveButton = document.createElement('button')
-  emailSaveButton.textContent = 'Save'
+  emailSaveButton.textContent = t('common.save')
   emailSaveButton.style.cssText = `
     background: var(--accent);
     color: white;
@@ -566,7 +567,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   `
 
   const passwordTitle = document.createElement('h2')
-  passwordTitle.textContent = 'Change Password'
+  passwordTitle.textContent = t('settings.change_password')
   passwordTitle.style.cssText = `
     font-size: 1.125rem;
     font-weight: 600;
@@ -577,7 +578,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   `
 
   const currentPasswordLabel2 = document.createElement('label')
-  currentPasswordLabel2.textContent = 'Current password'
+  currentPasswordLabel2.textContent = t('settings.password_current')
   currentPasswordLabel2.style.cssText = `
     display: block;
     margin-bottom: 0.5rem;
@@ -587,7 +588,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
   const currentPasswordInput2 = document.createElement('input')
   currentPasswordInput2.type = 'password'
-  currentPasswordInput2.placeholder = 'Enter current password'
+  currentPasswordInput2.placeholder = t('settings.password_current_placeholder')
   currentPasswordInput2.style.cssText = `
     width: 100%;
     padding: 0.75rem;
@@ -601,7 +602,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   `
 
   const newPasswordLabel = document.createElement('label')
-  newPasswordLabel.textContent = 'New password'
+  newPasswordLabel.textContent = t('settings.password_new')
   newPasswordLabel.style.cssText = `
     display: block;
     margin-bottom: 0.5rem;
@@ -611,7 +612,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
   const newPasswordInput = document.createElement('input')
   newPasswordInput.type = 'password'
-  newPasswordInput.placeholder = 'Enter new password'
+  newPasswordInput.placeholder = t('settings.password_new_placeholder')
   newPasswordInput.style.cssText = `
     width: 100%;
     padding: 0.75rem;
@@ -625,7 +626,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   `
 
   const confirmPasswordLabel = document.createElement('label')
-  confirmPasswordLabel.textContent = 'Confirm password'
+  confirmPasswordLabel.textContent = t('settings.password_confirm')
   confirmPasswordLabel.style.cssText = `
     display: block;
     margin-bottom: 0.5rem;
@@ -635,7 +636,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
   const confirmPasswordInput = document.createElement('input')
   confirmPasswordInput.type = 'password'
-  confirmPasswordInput.placeholder = 'Confirm new password'
+  confirmPasswordInput.placeholder = t('settings.password_confirm_placeholder')
   confirmPasswordInput.style.cssText = `
     width: 100%;
     padding: 0.75rem;
@@ -649,7 +650,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   `
 
   const passwordSaveButton = document.createElement('button')
-  passwordSaveButton.textContent = 'Save'
+  passwordSaveButton.textContent = t('common.save')
   passwordSaveButton.style.cssText = `
     background: var(--accent);
     color: white;
@@ -696,15 +697,16 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
       })
 
       if (response.ok) {
-        languageMessage.textContent = '✓ Saved'
+        languageMessage.textContent = t('settings.language_saved')
         languageMessage.style.color = 'var(--success, #10b981)'
+        await setLocale(language)
       } else {
         const errorData = await response.json() as { error?: string }
-        languageMessage.textContent = errorData.error || 'Failed to save'
+        languageMessage.textContent = errorData.error || t('settings.language_save_failed')
         languageMessage.style.color = 'var(--danger)'
       }
     } catch (error: any) {
-      languageMessage.textContent = 'Network error'
+      languageMessage.textContent = t('settings.language_network_error')
       languageMessage.style.color = 'var(--danger)'
     } finally {
       languageSaveButton.disabled = false
@@ -717,7 +719,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     const newEmail = newEmailInput.value.trim()
 
     if (!currentPassword || !newEmail) {
-      emailMessage.textContent = 'Please fill in all fields'
+      emailMessage.textContent = t('settings.email_fill_all')
       emailMessage.style.color = 'var(--danger)'
       return
     }
@@ -736,17 +738,17 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
       })
 
       if (response.ok) {
-        emailMessage.textContent = '✓ Saved'
+        emailMessage.textContent = t('settings.email_saved')
         emailMessage.style.color = 'var(--success, #10b981)'
         currentPasswordInput.value = ''
         newEmailInput.value = ''
       } else {
         const errorData = await response.json() as { error?: string }
-        emailMessage.textContent = errorData.error || 'Failed to save'
+        emailMessage.textContent = errorData.error || t('settings.email_save_failed')
         emailMessage.style.color = 'var(--danger)'
       }
     } catch (error: any) {
-      emailMessage.textContent = 'Network error'
+      emailMessage.textContent = t('settings.email_network_error')
       emailMessage.style.color = 'var(--danger)'
     } finally {
       emailSaveButton.disabled = false
@@ -760,19 +762,19 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     const confirmPassword = confirmPasswordInput.value.trim()
 
     if (!currentPassword || !newPassword || !confirmPassword) {
-      passwordMessage.textContent = 'Please fill in all fields'
+      passwordMessage.textContent = t('settings.password_fill_all')
       passwordMessage.style.color = 'var(--danger)'
       return
     }
 
     if (newPassword !== confirmPassword) {
-      passwordMessage.textContent = 'Passwords do not match'
+      passwordMessage.textContent = t('settings.password_mismatch')
       passwordMessage.style.color = 'var(--danger)'
       return
     }
 
     if (newPassword.length < 8 || newPassword.length > 128) {
-      passwordMessage.textContent = 'Password must be 8-128 characters'
+      passwordMessage.textContent = t('settings.password_length')
       passwordMessage.style.color = 'var(--danger)'
       return
     }
@@ -791,18 +793,18 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
       })
 
       if (response.ok) {
-        passwordMessage.textContent = '✓ Saved'
+        passwordMessage.textContent = t('settings.password_saved')
         passwordMessage.style.color = 'var(--success, #10b981)'
         currentPasswordInput2.value = ''
         newPasswordInput.value = ''
         confirmPasswordInput.value = ''
       } else {
         const errorData = await response.json() as { error?: string }
-        passwordMessage.textContent = errorData.error || 'Failed to save'
+        passwordMessage.textContent = errorData.error || t('settings.password_save_failed')
         passwordMessage.style.color = 'var(--danger)'
       }
     } catch (error: any) {
-      passwordMessage.textContent = 'Network error'
+      passwordMessage.textContent = t('settings.password_network_error')
       passwordMessage.style.color = 'var(--danger)'
     } finally {
       passwordSaveButton.disabled = false

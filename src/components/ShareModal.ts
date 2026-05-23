@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n.js'
 import { sharePlatforms, createShareData, copyToClipboard, canUseWebShare, shareViaWebShare } from '../lib/share'
 import { registerModal } from '../lib/modal-state.js'
 
@@ -41,6 +42,16 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
   `
 
+  const platformNameKey: Record<string, string> = {
+    X: 'share.platform_x',
+    Facebook: 'share.platform_facebook',
+    LinkedIn: 'share.platform_linkedin',
+    Reddit: 'share.platform_reddit',
+    Bluesky: 'share.platform_bluesky',
+    Threads: 'share.platform_threads',
+  }
+  const getPlatformName = (name: string) => t(platformNameKey[name] || name)
+
   const shareData = createShareData(post)
   const shareUrl = shareData.url
   const shareText = shareData.text
@@ -58,7 +69,7 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
         font-size: 1.125rem;
         font-weight: 600;
         color: var(--text-primary);
-      ">Share</h3>
+      ">${t('share.title')}</h3>
       <button class="share-modal-close" style="
         background: none;
         border: none;
@@ -93,7 +104,7 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
           transition: opacity 0.2s;
         ">
           <span style="font-size: 1.25rem;">📤</span>
-          <span>Share via device</span>
+          <span>${t('share.native')}</span>
         </button>
       ` : ''}
       <button class="share-button share-button--clipboard" style="
@@ -114,7 +125,7 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
         transition: background 0.2s;
       ">
         <span style="font-size: 1.25rem;">📋</span>
-        <span>Copy link</span>
+        <span>${t('share.copy_link')}</span>
       </button>
       <div class="share-toast" style="
         display: none;
@@ -135,7 +146,7 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
         font-size: 0.8125rem;
       ">
         <span style="flex: 1; height: 1px; background: var(--border);"></span>
-        <span>Share to</span>
+        <span>${t('share.share_to')}</span>
         <span style="flex: 1; height: 1px; background: var(--border);"></span>
       </div>
       <div class="share-grid" style="
@@ -169,7 +180,7 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
               font-weight: 600;
               margin-bottom: 0.375rem;
             ">${platform.icon}</span>
-            <span style="font-size: 0.75rem; font-weight: 500;">${platform.name}</span>
+            <span style="font-size: 0.75rem; font-weight: 500;">${getPlatformName(platform.name)}</span>
           </a>
         `).join('')}
       </div>
@@ -218,7 +229,7 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
       if (success) {
         close()
       } else {
-        showToast('Sharing failed. Try another method.')
+        showToast(t('share.native_failed'))
       }
     })
   }
@@ -226,9 +237,9 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
   clipboardButton.addEventListener('click', async () => {
     const success = await copyToClipboard(shareUrl)
     if (success) {
-      showToast('Link copied!')
+      showToast(t('share.copy_success'))
     } else {
-      showToast('Failed to copy. Please try again.')
+      showToast(t('share.copy_failed'))
     }
   })
 

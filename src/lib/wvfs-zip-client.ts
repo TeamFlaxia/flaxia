@@ -1,3 +1,5 @@
+import { t } from './i18n.js'
+
 export interface WvfsZipExecutorHandle {
   destroy: () => void
   postId: string
@@ -88,7 +90,7 @@ async function createWvfsIframe(
   
   // Add fullscreen button
   const fullscreenBtn = document.createElement('button')
-  fullscreenBtn.textContent = '⛶ Fullscreen'
+  fullscreenBtn.textContent = t('fullscreen.button')
   fullscreenBtn.className = 'wvfs-fullscreen-btn'
   fullscreenBtn.style.cssText = `
     margin-top: 8px;

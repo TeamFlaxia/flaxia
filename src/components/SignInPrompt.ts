@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n.js'
 import { registerModal } from '../lib/modal-state.js'
 
 export interface SignInPromptProps {
@@ -9,7 +10,7 @@ export interface SignInPromptProps {
 
 export function createSignInPrompt(props: SignInPromptProps = {}) {
   const unregister = registerModal()
-  const subtitle = props.subtitle || 'Sign up to Flaxia, follow people, and join the conversation.'
+  const subtitle = props.subtitle || t('auth.sign_up_subtitle')
 
   // Create overlay
   const overlay = document.createElement('div')
@@ -41,7 +42,7 @@ export function createSignInPrompt(props: SignInPromptProps = {}) {
   `
 
   dialog.innerHTML = `
-    <h3 style="margin: 0 0 0.5rem 0; color: var(--text-primary); font-size: 1.25rem; font-weight: 600;">Sign up to Flaxia</h3>
+    <h3 style="margin: 0 0 0.5rem 0; color: var(--text-primary); font-size: 1.25rem; font-weight: 600;">${t('auth.sign_up_title')}</h3>
     <p style="margin: 0 0 1.5rem 0; color: var(--text-muted); font-size: 0.875rem; line-height: 1.5;">${subtitle}</p>
     <div style="display: flex; gap: 1rem; justify-content: center;">
       <button class="signin-btn" style="
@@ -54,7 +55,7 @@ export function createSignInPrompt(props: SignInPromptProps = {}) {
         font-size: 0.875rem;
         font-weight: 600;
         transition: opacity 0.2s;
-      ">Sign up</button>
+      ">${t('auth.sign_up')}</button>
       <button class="signup-btn" style="
         padding: 0.75rem 1.5rem;
         background: transparent;
@@ -65,7 +66,7 @@ export function createSignInPrompt(props: SignInPromptProps = {}) {
         font-size: 0.875rem;
         font-weight: 600;
         transition: all 0.2s;
-      ">Sign in</button>
+      ">${t('auth.sign_in')}</button>
     </div>
   `
 
@@ -125,11 +126,11 @@ export function createSignInPrompt(props: SignInPromptProps = {}) {
 
 // Preset subtitles for different actions
 export const SignInPromptSubtitles = {
-  fresh: 'Sign in to Fresh!',
-  reply: 'Sign in to reply',
-  follow: 'Sign in to follow people',
-  report: 'Sign in to report posts',
-  post: 'Sign in to post'
+  fresh: t('auth.sign_in_to_fresh'),
+  reply: t('auth.sign_in_to_reply'),
+  follow: t('auth.sign_in_to_follow'),
+  report: t('auth.sign_in_to_report'),
+  post: t('auth.sign_in_to_post')
 } as const
 
 export type SignInPromptAction = keyof typeof SignInPromptSubtitles

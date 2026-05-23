@@ -1,4 +1,5 @@
 import { ALLOWED_EXTENSIONS, validateFileType } from './file-extensions'
+import { t } from './i18n.js'
 
 export interface ZipExecutorHandle {
   destroy: () => void
@@ -123,7 +124,7 @@ async function createSandboxIframe(postId: string, containerEl: HTMLElement, blo
   
   // Add fullscreen button
   const fullscreenBtn = document.createElement('button')
-  fullscreenBtn.textContent = '⛶ Fullscreen'
+  fullscreenBtn.textContent = t('fullscreen.button')
   fullscreenBtn.className = 'zip-fullscreen-btn'
   fullscreenBtn.style.cssText = `
     margin-top: 8px;

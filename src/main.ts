@@ -17,6 +17,7 @@ import { createAdminUsersTab } from './components/AdminUsersTab.js'
 import { createAdminAdsTab } from './components/AdminAdsTab.js'
 import { createSettingsPage } from './components/SettingsPage.js'
 import { initPerformanceMonitoring } from './lib/performance.js'
+import { initI18n } from './lib/i18n.js'
 import { safeRemoveFromBody } from './lib/dom-utils.js'
 
 console.log('Flaxia initialized')
@@ -29,6 +30,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const app = document.getElementById('app')
   if (app) {
     console.log('App mounted')
+    
+    await initI18n()
     
     // Routing state
     let currentView: 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'notifications' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings' | 'arcade' = 'timeline'

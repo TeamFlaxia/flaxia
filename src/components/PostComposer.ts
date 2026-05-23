@@ -3,6 +3,7 @@ export interface PostComposerProps {
   currentUser?: { username: string; display_name?: string; avatar_key?: string } | null
 }
 
+import { t } from '../lib/i18n.js'
 import DOMPurify from 'dompurify'
 
 export class PostComposer {
@@ -35,14 +36,14 @@ export class PostComposer {
           <div class="composer-avatar"></div>
           <textarea 
             class="composer-textarea" 
-            placeholder="What's happening?"
+            placeholder="${t('composer.placeholder')}"
             maxlength="200"
           ></textarea>
         </div>
         <div class="composer-file-dropzone" style="display: none;">
           <div class="dropzone-content">
             <span class="dropzone-icon">📎</span>
-            <span class="dropzone-text">Optional: Add an image (GIF, PNG, JPG), audio (MP3, WAV, OGG, M4A, WebM), ZIP, or SWF file</span>
+            <span class="dropzone-text">${t('composer.file_hint')}</span>
           </div>
         </div>
         <div class="composer-divider"></div>
@@ -52,10 +53,10 @@ export class PostComposer {
             <button class="composer-file-button" type="button">
               📎
             </button>
-            <span class="composer-char-count">0/200</span>
+            <span class="composer-char-count">${t('composer.char_count', { current: 0, max: 200 })}</span>
           </div>
           <button class="composer-submit" type="button" disabled>
-            Post
+            ${t('composer.post_button')}
           </button>
         </div>
         <div class="composer-file-preview" style="display: none;">
@@ -66,14 +67,14 @@ export class PostComposer {
         </div>
         <div class="composer-thumbnail-section" style="display: none;">
           <div class="thumbnail-header">
-            <span>Thumbnail (optional)</span>
+            <span>${t('composer.thumbnail_label')}</span>
           </div>
           <div class="thumbnail-input-area">
             <input type="file" class="composer-thumbnail-input" accept=".jpg,.jpeg,.png,.gif" />
             <button class="thumbnail-button" type="button">
-              📷 Add thumbnail
+              ${t('composer.thumbnail_button')}
             </button>
-            <span class="thumbnail-hint">accepts .jpg .png .gif, max 1MB</span>
+            <span class="thumbnail-hint">${t('composer.thumbnail_hint')}</span>
           </div>
           <div class="thumbnail-preview" style="display: none;">
             <img class="thumbnail-image" />
@@ -135,7 +136,7 @@ export class PostComposer {
     // Textarea input handling
     this.textarea.addEventListener('input', () => {
       const length = this.textarea.value.length
-      this.charCount.textContent = `${length}/200`
+      this.charCount.textContent = t('composer.char_count', { current: length, max: 200 })
       if (length > 180) {
         this.charCount.style.color = length >= 200 ? 'var(--danger)' : 'var(--accent)'
       } else {
@@ -232,7 +233,7 @@ export class PostComposer {
   private validateFile(file: File): { valid: boolean; error?: string } {
     const maxSize = 25 * 1024 * 1024
     if (file.size > maxSize) {
-      return { valid: false, error: 'File must be under 25MB' }
+      return { valid: false, error: t('composer.error_file_too_large') }
     }
 
     // Check file extension
@@ -240,7 +241,7 @@ export class PostComposer {
     const allowedExts = ['gif', 'jpg', 'jpeg', 'png', 'swf', 'js', 'wasm', 'zip', 'rsp', 'mp3', 'wav', 'ogg', 'm4a', 'webm']
     
     if (!ext || !allowedExts.includes(ext)) {
-      return { valid: false, error: 'Unsupported file type' }
+      return { valid: false, error: t('composer.error_unsupported_type') }
     }
 
     return { valid: true }
@@ -307,7 +308,7 @@ export class PostComposer {
     const isValidType = allowedTypes.includes(file.type) || isSwfByExtension || file.name.toLowerCase().endsWith('.js') || file.name.toLowerCase().endsWith('.wasm') || file.name.toLowerCase().endsWith('.zip') || file.name.toLowerCase().endsWith('.rsp')
     
     if (!isValidType) {
-      this.showError('Unsupported file type')
+      this.showError(t('composer.error_unsupported_type'))
       this.clearFileSelection()
       return
     }
@@ -342,7 +343,7 @@ export class PostComposer {
 
     // Validate thumbnail size (1MB max)
     if (file.size > 1024 * 1024) {
-      this.showError('Thumbnail must be ≤1MB')
+      this.showError(t('composer.error_thumbnail_size'))
       this.clearThumbnailSelection()
       return
     }
@@ -351,7 +352,7 @@ export class PostComposer {
     const allowedExts = ['jpg', 'jpeg', 'png', 'gif']
     const ext = file.name.toLowerCase().split('.').pop()
     if (!ext || !allowedExts.includes(ext)) {
-      this.showError('Thumbnail must be .jpg, .jpeg, .png, or .gif')
+      this.showError(t('composer.error_thumbnail_type'))
       this.clearThumbnailSelection()
       return
     }
@@ -421,7 +422,7 @@ export class PostComposer {
   private updateSubmitButton(): void {
     const hasContent = this.textarea.value.trim().length > 0
     this.submitButton.disabled = !hasContent || this.isSubmitting
-    this.submitButton.textContent = this.isSubmitting ? 'Posting...' : 'Post'
+    this.submitButton.textContent = this.isSubmitting ? t('composer.posting') : t('composer.post_button')
   }
 
   private async handleSubmit(): Promise<void> {
@@ -506,7 +507,7 @@ export class PostComposer {
 
       // Clear form
       this.textarea.value = ''
-      this.charCount.textContent = '0/200'
+      this.charCount.textContent = t('composer.char_count', { current: 0, max: 200 })
       this.clearFileSelection()
 
       // Notify parent
@@ -516,7 +517,7 @@ export class PostComposer {
 
     } catch (error: any) {
       console.error('Failed to create post:', error)
-      const errorMessage = error?.message || 'Failed to create post. Please try again.'
+      const errorMessage = error?.message || t('composer.error_create_failed')
       alert(`${errorMessage}${error?.details ? ` (${error.details})` : ''}`)
     } finally {
       this.isSubmitting = false

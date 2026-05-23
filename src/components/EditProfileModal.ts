@@ -1,5 +1,6 @@
 import { updateMeCache } from '../lib/auth-cache'
 import { registerModal } from '../lib/modal-state.js'
+import { t } from '../lib/i18n.js'
 
 interface EditProfileModalProps {
   currentUser: { username: string; display_name?: string; bio?: string; avatar_key?: string }
@@ -45,7 +46,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   `
 
   const title = document.createElement('h2')
-  title.textContent = 'Edit profile'
+  title.textContent = t('edit_profile.title')
   title.style.cssText = `
     margin: 0;
     font-size: 1.25rem;
@@ -148,7 +149,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   `
 
   const displayNameLabel = document.createElement('label')
-  displayNameLabel.textContent = 'Display name'
+  displayNameLabel.textContent = t('edit_profile.display_name')
   displayNameLabel.style.cssText = `
     display: block;
     margin-bottom: 0.5rem;
@@ -181,7 +182,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   `
 
   const bioLabel = document.createElement('label')
-  bioLabel.textContent = 'Bio'
+  bioLabel.textContent = t('edit_profile.bio')
   bioLabel.style.cssText = `
     display: block;
     margin-bottom: 0.5rem;
@@ -239,7 +240,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   hiddenFileInput.style.display = 'none'
 
   const saveButton = document.createElement('button')
-  saveButton.textContent = 'Save'
+  saveButton.textContent = t('edit_profile.save')
   saveButton.style.cssText = `
     background: var(--accent);
     color: white;
@@ -435,7 +436,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
     } catch (error) {
       console.error('Failed to save profile:', error)
       saveButton.disabled = false
-      saveButton.textContent = 'Save'
+      saveButton.textContent = t('edit_profile.save')
       saveButton.style.cursor = 'pointer'
       alert('Failed to save. Please try again.')
     }
@@ -443,7 +444,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
 
   closeButton.addEventListener('click', () => {
     if (hasChanges) {
-      if (confirm('You have unsaved changes. Are you sure you want to close?')) {
+      if (confirm(t('edit_profile.unsaved_changes'))) {
         destroy()
       }
     } else {
@@ -453,7 +454,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
 
   container.addEventListener('click', (e) => {
     if (e.target === container && hasChanges) {
-      if (confirm('You have unsaved changes. Are you sure you want to close?')) {
+      if (confirm(t('edit_profile.unsaved_changes'))) {
         destroy()
       }
     } else if (e.target === container) {
