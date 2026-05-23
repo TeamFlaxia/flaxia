@@ -36,7 +36,6 @@ export class NotificationsPage {
     container.style.cssText = `
       max-width: 600px;
       margin: 0 auto;
-      padding: 24px;
     `
 
     // Header
@@ -45,6 +44,8 @@ export class NotificationsPage {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
       margin-bottom: 24px;
       padding-bottom: 16px;
       border-bottom: 1px solid var(--border);

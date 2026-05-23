@@ -433,6 +433,28 @@ p {
   color: var(--text-muted);
 }
 
+/* Notifications Page */
+.notifications-page {
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+@media (max-width: 768px) {
+  .notifications-page {
+    padding: 16px 12px;
+  }
+
+  .notifications-page h1 {
+    font-size: 20px;
+  }
+
+  .notification-row {
+    padding: 12px 10px !important;
+  }
+}
+
 /* Layout Container Styles */
 .main-container {
   display: flex;
