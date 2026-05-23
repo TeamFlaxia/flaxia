@@ -700,6 +700,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
         languageMessage.textContent = t('settings.language_saved')
         languageMessage.style.color = 'var(--success, #10b981)'
         await setLocale(language)
+        location.reload()
       } else {
         const errorData = await response.json() as { error?: string }
         languageMessage.textContent = errorData.error || t('settings.language_save_failed')

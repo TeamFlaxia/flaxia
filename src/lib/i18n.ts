@@ -10,7 +10,9 @@ const STORAGE_KEY = 'flaxia_locale'
 
 function getInitialLocale(): Locale {
   try {
-    return localStorage.getItem(STORAGE_KEY) || navigator.language.startsWith('ja') ? 'ja' : 'en'
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (stored) return stored
+    return navigator.language.startsWith('ja') ? 'ja' : 'en'
   } catch {
     return 'en'
   }

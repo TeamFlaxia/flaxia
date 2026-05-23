@@ -156,7 +156,7 @@ export class LeftNav {
 
     const privacyLink = document.createElement('a')
     privacyLink.href = '/privacy'
-    privacyLink.textContent = 'Privacy Policy'
+    privacyLink.textContent = t('legal.footer_privacy')
     privacyLink.style.cssText = `
       color: var(--text-muted);
       text-decoration: none;
@@ -166,7 +166,7 @@ export class LeftNav {
 
     const termsLink = document.createElement('a')
     termsLink.href = '/terms'
-    termsLink.textContent = 'Terms of Service'
+    termsLink.textContent = t('legal.footer_terms')
     termsLink.style.cssText = `
       color: var(--text-muted);
       text-decoration: none;
@@ -191,7 +191,7 @@ export class LeftNav {
     // Create About flaxia link
     const aboutLink = document.createElement('a')
     aboutLink.href = '/about'
-    aboutLink.textContent = 'About flaxia'
+    aboutLink.textContent = t('legal.footer_about')
     aboutLink.style.cssText = `
       color: var(--text-muted);
       text-decoration: none;
@@ -217,7 +217,7 @@ export class LeftNav {
     // Create White Paper link
     const whitepaperLink = document.createElement('a')
     whitepaperLink.href = '/whitepaper'
-    whitepaperLink.textContent = 'Technical White Paper'
+  whitepaperLink.textContent = t('legal.footer_whitepaper')
     whitepaperLink.style.cssText = `
       color: var(--text-muted);
       text-decoration: none;
@@ -483,7 +483,7 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
 
   const privacyLink = document.createElement('a')
   privacyLink.href = '/privacy'
-  privacyLink.textContent = 'Privacy Policy'
+  privacyLink.textContent = t('legal.footer_privacy')
   privacyLink.style.cssText = `
     color: var(--text-muted);
     text-decoration: none;
@@ -493,7 +493,7 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
 
   const termsLink = document.createElement('a')
   termsLink.href = '/terms'
-  termsLink.textContent = 'Terms of Service'
+  termsLink.textContent = t('legal.footer_terms')
   termsLink.style.cssText = `
     color: var(--text-muted);
     text-decoration: none;
@@ -518,7 +518,7 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
   // Create About flaxia link
   const aboutLink = document.createElement('a')
   aboutLink.href = '/about'
-  aboutLink.textContent = 'About flaxia'
+  aboutLink.textContent = t('legal.footer_about')
   aboutLink.style.cssText = `
     color: var(--text-muted);
     text-decoration: none;
@@ -544,7 +544,7 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
   // Create White Paper link
   const whitepaperLink = document.createElement('a')
   whitepaperLink.href = '/whitepaper'
-  whitepaperLink.textContent = 'Technical White Paper'
+  whitepaperLink.textContent = t('legal.footer_whitepaper')
   whitepaperLink.style.cssText = `
     color: var(--text-muted);
     text-decoration: none;
