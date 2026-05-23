@@ -298,10 +298,9 @@ export class ThreadPage {
 
       const data = await response.json() as { root: Post; replies: Post[] }
 
-      // Assign sequential indices: root=0, replies=1,2,3,...
-      const allPosts = [data.root, ...data.replies]
+      // Assign sequential indices only to replies (root excluded)
       const postIdToIndex = new Map<string, number>()
-      allPosts.forEach((p, i) => postIdToIndex.set(p.id, i))
+      data.replies.forEach((p, i) => postIdToIndex.set(p.id, i + 1))
       
       // Clear loading state
       loading.style.display = 'none'
@@ -313,8 +312,7 @@ export class ThreadPage {
         currentUser: this.props.currentUser || undefined,
         depth: data.root.depth,
         onDelete: () => {}, // Add empty onDelete handler to prevent errors
-        disableReplyComposer: true, // Disable only built-in reply composer, ThreadPage will handle replies
-        postIndex: 0
+        disableReplyComposer: true // Disable only built-in reply composer, ThreadPage will handle replies
       })
       content.appendChild(this.rootPostCard.getElement())
 

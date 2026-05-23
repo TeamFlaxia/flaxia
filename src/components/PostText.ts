@@ -61,7 +61,9 @@ export async function createPostText(props: PostTextProps): Promise<HTMLElement>
   linkifyHashtags(container)
   linkifyUrls(container)
   linkifyMentions(container, props.mentions)
-  linkifyPostRefs(container)
+  if (props.enablePostRefs) {
+    linkifyPostRefs(container)
+  }
   
   return container
 }

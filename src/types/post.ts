@@ -52,6 +52,7 @@ export interface PostCardProps {
   disableReplyComposer?: boolean
   depth?: number
   postIndex?: number
+  enablePostRefs?: boolean
 }
 
 export interface PostHeaderProps {
@@ -64,6 +65,7 @@ export interface PostHeaderProps {
 export interface PostTextProps {
   text: string
   mentions?: string
+  enablePostRefs?: boolean
 }
 
 export interface PostStageProps {

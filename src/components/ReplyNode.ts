@@ -48,7 +48,8 @@ export class ReplyNode {
       onDelete: () => {}, // Add empty onDelete handler to prevent errors
       disableReplyComposer: true, // Disable only PostCard's reply composer, ReplyNode handles replies
       depth: this.props.node.post.depth,
-      postIndex: nodeIndex
+      postIndex: nodeIndex,
+      enablePostRefs: true
     })
     
     // Create wrapper for post card and expand button

@@ -108,7 +108,8 @@ export class PostCard {
         try {
           const richText = await createPostText({
             text: this.props.post.text,
-            mentions: this.props.post.mentions
+            mentions: this.props.post.mentions,
+            enablePostRefs: this.props.enablePostRefs
           })
           // リッチテキストに置き換え
           textElement.replaceWith(richText)
@@ -123,7 +124,8 @@ export class PostCard {
         try {
           const richText = await createPostText({
             text: this.props.post.text,
-            mentions: this.props.post.mentions
+            mentions: this.props.post.mentions,
+            enablePostRefs: this.props.enablePostRefs
           })
           textElement.replaceWith(richText)
         } catch (error) {
