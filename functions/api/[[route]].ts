@@ -1334,14 +1334,16 @@ app.get('/api/users/:username', async (c) => {
       return c.json({ error: 'User not found' }, 404)
     }
     
-    // Get follow counts
-    const [followersResult, followingResult] = await Promise.all([
+    // Get follow counts and post count
+    const [followersResult, followingResult, postsResult] = await Promise.all([
       c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE followee_id = ?').bind(user.id).first(),
-      c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE follower_id = ?').bind(user.id).first()
+      c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE follower_id = ?').bind(user.id).first(),
+      c.env.DB.prepare('SELECT COUNT(*) as count FROM posts WHERE user_id = ?').bind(user.id).first()
     ])
     
     const followers_count = (followersResult?.count as number) || 0
     const following_count = (followingResult?.count as number) || 0
+    const posts_count = (postsResult?.count as number) || 0
     
     // Check if current user follows this user (if authenticated)
     let is_following = false
@@ -1359,6 +1361,7 @@ app.get('/api/users/:username', async (c) => {
         ...user,
         followers_count,
         following_count,
+        posts_count,
         is_following
       }
     })

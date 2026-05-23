@@ -189,7 +189,8 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
           avatar.textContent = ''
         }
 
-        // Update follow counts
+        // Update counts
+        postsCountSpan.textContent = String(userData.posts_count || 0)
         followersCountSpan.textContent = String(userData.followers_count || 0)
         followingCountSpan.textContent = String(userData.following_count || 0)
         
