@@ -3528,20 +3528,20 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
       'DELETE FROM freshs WHERE post_id = ? AND user_id = ?'
     ).bind(postId, userId).run()
     
-    await c.env.DB.prepare(
-      'UPDATE posts SET fresh_count = fresh_count - 1 WHERE id = ?'
-    ).bind(postId).run()
+    const result = await c.env.DB.prepare(
+      'UPDATE posts SET fresh_count = fresh_count - 1 WHERE id = ? RETURNING fresh_count'
+    ).bind(postId).first<{ fresh_count: number }>()
     
-    return c.json({ freshed: false })
+    return c.json({ freshed: false, fresh_count: result?.fresh_count ?? 0 })
   } else {
     // Add fresh
     await c.env.DB.prepare(
       'INSERT INTO freshs (post_id, user_id) VALUES (?, ?)'
     ).bind(postId, userId).run()
     
-    await c.env.DB.prepare(
-      'UPDATE posts SET fresh_count = fresh_count + 1 WHERE id = ?'
-    ).bind(postId).run()
+    const result = await c.env.DB.prepare(
+      'UPDATE posts SET fresh_count = fresh_count + 1 WHERE id = ? RETURNING fresh_count'
+    ).bind(postId).first<{ fresh_count: number }>()
     
     // Create notification for post author (only if not self-freshing)
     if (post.user_id !== userId) {
@@ -3556,7 +3556,7 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
       }
     }
     
-    return c.json({ freshed: true })
+    return c.json({ freshed: true, fresh_count: result?.fresh_count ?? 0 })
   }
 })
 

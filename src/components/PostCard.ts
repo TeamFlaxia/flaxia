@@ -297,11 +297,11 @@ export class PostCard {
         throw new Error('Failed to toggle fresh')
       }
 
-      const result = await response.json() as { freshed: boolean }
+      const result = await response.json() as { freshed: boolean; fresh_count: number }
       
-      // Sync with server response
+      // Sync with server response (use authoritative fresh_count from server)
       this.isFreshed = result.freshed
-      this.freshCount = result.freshed ? previousCount + 1 : previousCount - 1
+      this.freshCount = result.fresh_count
 
     } catch (error) {
       // Rollback on error
