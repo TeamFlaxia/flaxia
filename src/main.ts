@@ -421,7 +421,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Navigate to view
     const navigateTo = async (view: 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'notifications' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings' | 'arcade', postId?: string, username?: string, tag?: string, adminTab?: 'alerts' | 'hidden' | 'users') => {
       console.log('Navigate to:', view, postId, username, tag, 'Current view:', currentView, 'adminTab:', adminTab)
-      
+
+      // Close mobile nav if open
+      closeLeftNav()
+
       // Always check auth state on navigation to ensure session is up-to-date
       // This will trigger session extension via /api/me call
       await checkAuth()
