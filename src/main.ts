@@ -230,6 +230,15 @@ document.addEventListener('DOMContentLoaded', async () => {
           leftNavOpenButton.style.display = 'block'
         }
       })
+
+      // Close mobile nav when modal opens
+      const handleModalChange = () => {
+        closeLeftNav()
+        if (leftNavOpenButton) {
+          leftNavOpenButton.style.display = 'none'
+        }
+      }
+      window.addEventListener('modalchange', handleModalChange)
     }
 
     // Auth guard - redirect to login if not authenticated (only for protected routes)

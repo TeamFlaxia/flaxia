@@ -24,6 +24,7 @@ export class LeftNav {
   private popupMenuElement: HTMLElement | null = null
   private isPopupMenuOpen = false
   private boundHandleResize: () => void
+  private boundHandleModalChange: (e: Event) => void
 
   constructor(props: LeftNavProps = {}) {
     this.props = props
@@ -31,6 +32,7 @@ export class LeftNav {
     
     // Initialize bound event handler for proper cleanup
     this.boundHandleResize = this.handleWindowResize.bind(this)
+    this.boundHandleModalChange = this.handleModalChange.bind(this)
     
     this.element = this.createElement()
     this.setupEventListeners()
@@ -58,7 +60,6 @@ export class LeftNav {
     logoInner.appendChild(logoText)
     logo.appendChild(logoInner)
     logo.addEventListener('click', () => {
-      if (isModalOpen()) return
       this.props.onNavigate?.('home')
     })
 
@@ -286,7 +287,6 @@ export class LeftNav {
     // Navigation items
     this.element.querySelectorAll('.nav-item').forEach(item => {
       item.addEventListener('click', (e) => {
-        if (isModalOpen()) return
         const target = e.currentTarget as HTMLElement
         const navId = target.getAttribute('data-nav-id')
         if (navId) {
@@ -298,9 +298,21 @@ export class LeftNav {
 
     // Handle window resize for mobile detection
     window.addEventListener('resize', this.boundHandleResize)
+
+    // Hide nav when modal is open
+    window.addEventListener('modalchange', this.boundHandleModalChange)
+    this.updateModalVisibility()
   }
 
   private handleWindowResize(): void {
+  }
+
+  private handleModalChange(): void {
+    this.updateModalVisibility()
+  }
+
+  private updateModalVisibility(): void {
+    this.element.style.display = isModalOpen() ? 'none' : ''
   }
 
   public setActiveItem(item: string): void {
@@ -352,8 +364,9 @@ export class LeftNav {
   }
 
   public destroy(): void {
-    // Clean up window event listener
+    // Clean up window event listeners
     window.removeEventListener('resize', this.boundHandleResize)
+    window.removeEventListener('modalchange', this.boundHandleModalChange)
     
     // Clean up event listeners and remove element
     this.element.remove()
@@ -428,7 +441,6 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
         }
 
         navItem.addEventListener('click', () => {
-          if (isModalOpen()) return
           (leftNav as any).setActiveItem(item.id)
           ;(leftNav as any).props.onNavigate?.(item.id)
         })
@@ -449,7 +461,6 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
         navItem.setAttribute('data-nav-id', item.id)
         navItem.innerHTML = `<span style="margin-right: 0.75rem;">${item.icon}</span><span>${item.label}</span>`
         navItem.addEventListener('click', () => {
-          if (isModalOpen()) return
           (leftNav as any).setActiveItem(item.id)
           ;(leftNav as any).props.onNavigate?.(item.id)
         })
