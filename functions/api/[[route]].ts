@@ -2007,7 +2007,7 @@ app.post('/api/users/:username/follow', requireAuth, async (c) => {
     // Get updated follow counts
     const [followersResult, followingResult] = await Promise.all([
       c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE followee_id = ?').bind(followeeId).first(),
-      c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE follower_id = ?').bind(followerId).first()
+      c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE follower_id = ?').bind(followeeId).first()
     ])
     
     return c.json({
@@ -2060,7 +2060,7 @@ app.delete('/api/users/:username/follow', requireAuth, async (c) => {
     // Get updated follow counts
     const [followersResult, followingResult] = await Promise.all([
       c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE followee_id = ?').bind(followeeId).first(),
-      c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE follower_id = ?').bind(followerId).first()
+      c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE follower_id = ?').bind(followeeId).first()
     ])
     
     return c.json({

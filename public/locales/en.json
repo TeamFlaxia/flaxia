@@ -197,6 +197,11 @@
 
   "follower_list.followers": "Followers",
   "follower_list.following": "Following",
+  "follower_list.loading": "Loading...",
+  "follower_list.empty": "No users found",
+  "follower_list.error": "Failed to load users. Please try again.",
+  "follower_list.load_more": "Load more",
+  "follower_list.title": "{username} - {tab}",
 
   "error.unauthorized": "Unauthorized",
   "error.not_authenticated": "Not authenticated",

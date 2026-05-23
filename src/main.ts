@@ -258,10 +258,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       })
 
       // Close mobile nav when modal opens
-      const handleModalChange = () => {
+      const handleModalChange = (e: Event) => {
+        const { open } = (e as CustomEvent<{ open: boolean }>).detail
         closeLeftNav()
         if (leftNavOpenButton) {
-          leftNavOpenButton.style.display = 'none'
+          leftNavOpenButton.style.display = open ? 'none' : 'block'
         }
       }
       window.addEventListener('modalchange', handleModalChange)

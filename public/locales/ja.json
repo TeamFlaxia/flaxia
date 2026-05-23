@@ -197,6 +197,11 @@
 
   "follower_list.followers": "フォロワー",
   "follower_list.following": "フォロー中",
+  "follower_list.loading": "読み込み中...",
+  "follower_list.empty": "ユーザーが見つかりません",
+  "follower_list.error": "ユーザーの読み込みに失敗しました。もう一度お試しください。",
+  "follower_list.load_more": "もっと見る",
+  "follower_list.title": "{username} - {tab}",
 
   "error.unauthorized": "認証が必要です",
   "error.not_authenticated": "ログインしていません",

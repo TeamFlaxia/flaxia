@@ -153,7 +153,7 @@ export function createFollowerListModal({ username, initialTab = 'followers', cu
     padding: 3rem;
     color: var(--text-muted);
   `
-  loadingElement.textContent = 'Loading...'
+  loadingElement.textContent = t('common.loading')
 
   // Error state
   const errorElement = document.createElement('div')
@@ -180,7 +180,7 @@ export function createFollowerListModal({ username, initialTab = 'followers', cu
   `
   emptyElement.innerHTML = `
     <div style="font-size: 2rem; margin-bottom: 1rem;">👥</div>
-    <div style="font-size: 1rem;">No users found</div>
+    <div style="font-size: 1rem;">${t('follower_list.empty')}</div>
   `
 
   content.appendChild(loadingElement)
@@ -242,7 +242,7 @@ export function createFollowerListModal({ username, initialTab = 'followers', cu
     } catch (error) {
       console.error('Load users error:', error)
       errorElement.style.display = 'flex'
-      errorElement.textContent = 'Failed to load users. Please try again.'
+      errorElement.textContent = t('follower_list.error')
     } finally {
       isLoading = false
       loadingElement.style.display = 'none'
@@ -275,7 +275,7 @@ export function createFollowerListModal({ username, initialTab = 'followers', cu
     if (hasMore) {
       const loadMoreButton = document.createElement('button')
       loadMoreButton.className = 'follower-list-load-more'
-      loadMoreButton.textContent = 'Load more'
+      loadMoreButton.textContent = t('follower_list.load_more')
       loadMoreButton.style.cssText = `
         width: 100%;
         padding: 1rem;
@@ -402,7 +402,7 @@ export function createFollowerListModal({ username, initialTab = 'followers', cu
 
         const originalText = followButton.textContent
         followButton.disabled = true
-        followButton.textContent = user.is_following ? 'Unfollowing...' : 'Following...'
+        followButton.textContent = user.is_following ? t('profile.unfollowing') : t('profile.following')
 
         try {
           const method = user.is_following ? 'DELETE' : 'POST'
@@ -473,12 +473,12 @@ export function createFollowerListModal({ username, initialTab = 'followers', cu
   // Update follow button
   const updateFollowButton = (button: HTMLButtonElement, isFollowing: boolean) => {
     if (isFollowing) {
-      button.textContent = 'Following'
+      button.textContent = t('profile.following')
       button.style.backgroundColor = 'var(--accent)'
       button.style.color = 'white'
       button.style.borderColor = 'var(--accent)'
     } else {
-      button.textContent = 'Follow'
+      button.textContent = t('profile.follow')
       button.style.backgroundColor = 'transparent'
       button.style.color = 'var(--text-primary)'
       button.style.borderColor = 'var(--border)'
@@ -491,7 +491,8 @@ export function createFollowerListModal({ username, initialTab = 'followers', cu
     
     currentTab = tab
     updateTabStyles()
-    title.textContent = `${username.charAt(0).toUpperCase() + username.slice(1)} - ${tab.charAt(0).toUpperCase() + tab.slice(1)}`
+    const tabLabel = tab === 'followers' ? t('follower_list.followers') : t('follower_list.following')
+    title.textContent = t('follower_list.title', { username, tab: tabLabel })
     loadUsers(true)
   }
 
@@ -523,7 +524,8 @@ export function createFollowerListModal({ username, initialTab = 'followers', cu
 
   // Initialize
   updateTabStyles()
-  title.textContent = `${username.charAt(0).toUpperCase() + username.slice(1)} - ${initialTab.charAt(0).toUpperCase() + initialTab.slice(1)}`
+  const initialTabLabel = initialTab === 'followers' ? t('follower_list.followers') : t('follower_list.following')
+  title.textContent = t('follower_list.title', { username, tab: initialTabLabel })
   loadUsers(true)
 
   modal.appendChild(header)
