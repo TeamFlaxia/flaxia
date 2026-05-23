@@ -1,5 +1,6 @@
 import { ParentMessage, SandboxMessage, isParentMessage } from '../lib/bridge.js'
 import type { Post } from '../types/post.js'
+import { registerModal } from './modal-state.js'
 
 export interface SandboxBridgeOptions {
   iframe: HTMLIFrameElement
@@ -14,6 +15,7 @@ export class SandboxBridge {
   private messageHandler: (event: MessageEvent) => void
   private overlay?: HTMLElement
   private toast?: HTMLElement
+  private unregisterOverlay?: () => void
 
   constructor(options: SandboxBridgeOptions) {
     this.iframe = options.iframe
@@ -110,10 +112,13 @@ export class SandboxBridge {
 
     document.body.appendChild(overlay)
     this.overlay = overlay
+    this.unregisterOverlay = registerModal()
   }
 
   private hideFullscreenOverlay(): void {
     if (this.overlay) {
+      this.unregisterOverlay?.()
+      this.unregisterOverlay = undefined
       this.overlay.remove()
       this.overlay = undefined
     }
