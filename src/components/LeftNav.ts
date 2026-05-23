@@ -102,7 +102,7 @@ export class LeftNav {
             min-width: 20px;
             text-align: center;
           `
-          badge.textContent = String(this.props.unreadCount)
+          badge.textContent = this.props.unreadCount >= 99 ? '99+' : String(this.props.unreadCount)
           navItem.appendChild(badge)
         }
 
@@ -318,6 +318,33 @@ export class LeftNav {
   }
 
   public setUnreadCount(count: number): void {
+    this.props.unreadCount = count
+    const navItem = this.element.querySelector('[data-nav-id="notifications"]')
+    if (!navItem) return
+
+    const existingBadge = navItem.querySelector('.nav-badge')
+    if (count > 0) {
+      if (existingBadge) {
+        existingBadge.textContent = count >= 99 ? '99+' : String(count)
+      } else {
+        const badge = document.createElement('span')
+        badge.className = 'nav-badge'
+        badge.style.cssText = `
+          margin-left: auto;
+          background: var(--accent);
+          font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          font-size: 0.75rem;
+          padding: 2px 8px;
+          border-radius: 9999px;
+          min-width: 20px;
+          text-align: center;
+        `
+        badge.textContent = count >= 99 ? '99+' : String(count)
+        navItem.appendChild(badge)
+      }
+    } else if (existingBadge) {
+      existingBadge.remove()
+    }
   }
 
   public destroy(): void {
@@ -377,6 +404,25 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
         navItem.className = `nav-item ${(leftNav as any).activeItem === item.id ? 'nav-item--active' : ''}`
         navItem.setAttribute('data-nav-id', item.id)
         navItem.innerHTML = `<span style="margin-right: 0.75rem;">${item.icon}</span><span>${item.label}</span>`
+
+        // Add unread badge for notifications
+        if (item.id === 'notifications' && (leftNav as any).props.unreadCount > 0) {
+          const badge = document.createElement('span')
+          badge.className = 'nav-badge'
+          badge.style.cssText = `
+            margin-left: auto;
+            background: var(--accent);
+            font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 9999px;
+            min-width: 20px;
+            text-align: center;
+          `
+          badge.textContent = (leftNav as any).props.unreadCount >= 99 ? '99+' : String((leftNav as any).props.unreadCount)
+          navItem.appendChild(badge)
+        }
+
         navItem.addEventListener('click', () => {
           (leftNav as any).setActiveItem(item.id)
           ;(leftNav as any).props.onNavigate?.(item.id)

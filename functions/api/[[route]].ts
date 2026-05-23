@@ -3545,14 +3545,21 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
     
     // Create notification for post author (only if not self-freshing)
     if (post.user_id !== userId) {
-      try {
-        await c.env.DB
-          .prepare('INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)')
-          .bind(nanoid(), post.user_id, 'fresh', postId, userId)
-          .run()
-      } catch (e) {
-        // Don't fail the fresh operation if notification fails
-        console.error('Failed to create fresh notification:', e)
+      // Check if notification already exists to prevent duplicates from rapid clicks
+      const existingNotif = await c.env.DB.prepare(
+        'SELECT id FROM notifications WHERE user_id = ? AND actor_id = ? AND post_id = ? AND type = \'fresh\''
+      ).bind(post.user_id, userId, postId).first()
+
+      if (!existingNotif) {
+        try {
+          await c.env.DB
+            .prepare('INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)')
+            .bind(nanoid(), post.user_id, 'fresh', postId, userId)
+            .run()
+        } catch (e) {
+          // Don't fail the fresh operation if notification fails
+          console.error('Failed to create fresh notification:', e)
+        }
       }
     }
     

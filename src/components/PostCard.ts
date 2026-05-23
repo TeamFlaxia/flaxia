@@ -23,6 +23,7 @@ export class PostCard {
   private replyComposer?: ReplyComposer
   private isReplyComposerOpen: boolean = false
   private menuDropdown?: HTMLElement
+  private freshLoading: boolean = false
 
   constructor(props: PostCardProps) {
     this.props = props
@@ -267,6 +268,9 @@ export class PostCard {
   }
 
   private async handleFreshToggle(): Promise<void> {
+    // Prevent concurrent fresh requests
+    if (this.freshLoading) return
+
     // Check if user is logged in
     if (!this.props.currentUser) {
       showSignInPrompt(
@@ -286,6 +290,8 @@ export class PostCard {
 
     // Update UI immediately
     this.updateActions()
+
+    this.freshLoading = true
 
     try {
       const response = await fetch(`/api/posts/${this.props.post.id}/fresh`, {
@@ -308,6 +314,8 @@ export class PostCard {
       this.isFreshed = previousFreshed
       this.freshCount = previousCount
       console.error('Failed to toggle fresh:', error)
+    } finally {
+      this.freshLoading = false
     }
 
     this.updateActions()
