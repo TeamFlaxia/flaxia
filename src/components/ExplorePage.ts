@@ -1,6 +1,5 @@
 import { createPostCard } from './PostCard.js'
 import { Post } from '../types/post.js'
-import { safeRemoveFromBody } from '../lib/dom-utils.js'
 import { createSkeletonCard } from './SkeletonCard.js'
 import { t } from '../lib/i18n.js'
 
@@ -356,31 +355,11 @@ export class ExplorePage {
     }
   }
 
-  private async performSearch(query: string): Promise<void> {
-    try {
-      const searchBox = this.element.querySelector('.search-box')
-      if (searchBox) searchBox.classList.add('searching')
-
-      const response = await fetch(`/api/search?q=${encodeURIComponent(query)}&type=${this.searchFilter}&limit=20`)
-      const data = await response.json()
-
-      if (searchBox) searchBox.classList.remove('searching')
-
-      const { createSearchResults } = await import('./SearchResults.js')
-      const searchResults = createSearchResults({
-        query,
-        posts: this.searchFilter === 'users' ? [] : data.results || [],
-        users: this.searchFilter === 'users' ? data.results || [] : [],
-        type: this.searchFilter,
-        onClose: () => {
-          safeRemoveFromBody(searchResults)
-        }
-      })
-
-      document.body.appendChild(searchResults)
-    } catch (error) {
-      console.error('Search error:', error)
-    }
+  private performSearch(query: string): void {
+    window.history.pushState({}, '', `/search?q=${encodeURIComponent(query)}&type=${this.searchFilter}`)
+    window.dispatchEvent(new CustomEvent('spaNavigate', {
+      detail: { view: 'search', searchQuery: query, searchType: this.searchFilter }
+    }))
   }
 
   private renderPosts(): void {

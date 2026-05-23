@@ -1,6 +1,4 @@
 import { t } from '../lib/i18n.js'
-import { createSearchResults } from './SearchResults.js'
-import { safeRemoveFromBody } from '../lib/dom-utils.js'
 
 export interface RightPanelProps {
   onSearch?: (query: string) => void
@@ -186,51 +184,11 @@ export class RightPanel {
     // Follow buttons will be set up dynamically when user suggestions are loaded
   }
 
-  private async performSearch(query: string): Promise<void> {
-    try {
-      console.log('Searching for:', query)
-      
-      // Show loading state
-      const searchBox = this.element.querySelector('.search-box')
-      if (searchBox) {
-        searchBox.classList.add('searching')
-      }
-
-      // Search posts
-      const postsResponse = await fetch(`/api/search?q=${encodeURIComponent(query)}&type=posts&limit=10`)
-      const postsData = postsResponse.ok ? await postsResponse.json() as { results: any[] } : { results: [] }
-
-      // Search users
-      const usersResponse = await fetch(`/api/search?q=${encodeURIComponent(query)}&type=users&limit=5`)
-      const usersData = usersResponse.ok ? await usersResponse.json() as { results: any[] } : { results: [] }
-
-      // Remove loading state
-      if (searchBox) {
-        searchBox.classList.remove('searching')
-      }
-
-      // Import and show search results
-      const { createSearchResults } = await import('./SearchResults.js')
-      const searchResults = createSearchResults({
-        query,
-        posts: postsData.results || [],
-        users: usersData.results || [],
-        onClose: () => {
-          safeRemoveFromBody(searchResults)
-        }
-      })
-
-      document.body.appendChild(searchResults)
-
-    } catch (error) {
-      console.error('Search error:', error)
-      
-      // Remove loading state
-      const searchBox = this.element.querySelector('.search-box')
-      if (searchBox) {
-        searchBox.classList.remove('searching')
-      }
-    }
+  private performSearch(query: string): void {
+    window.history.pushState({}, '', `/search?q=${encodeURIComponent(query)}&type=posts`)
+    window.dispatchEvent(new CustomEvent('spaNavigate', {
+      detail: { view: 'search', searchQuery: query, searchType: 'posts' }
+    }))
   }
 
   private async loadTrendingTags(): Promise<void> {

@@ -16,6 +16,7 @@ import { createAdminHiddenTab } from './components/AdminHiddenTab.js'
 import { createAdminUsersTab } from './components/AdminUsersTab.js'
 import { createAdminAdsTab } from './components/AdminAdsTab.js'
 import { createSettingsPage } from './components/SettingsPage.js'
+import { createSearchPage } from './components/SearchPage.js'
 import { initPerformanceMonitoring } from './lib/performance.js'
 import { initI18n } from './lib/i18n.js'
 import { safeRemoveFromBody } from './lib/dom-utils.js'
@@ -34,7 +35,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await initI18n()
     
     // Routing state
-    let currentView: 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'notifications' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings' | 'arcade' = 'timeline'
+    let currentView: 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'search' | 'notifications' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings' | 'arcade' = 'timeline'
     let currentPostId: string | null = null
     let currentUsername: string | null = null
     let currentTag: string | null = null
@@ -49,6 +50,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let notificationsPage: any = null
     let settingsPage: any = null
     let arcadePage: any = null
+    let searchPage: any = null
     let adminLayout: any = null
     let adminAlertsTab: any = null
     let adminHiddenTab: any = null
@@ -291,6 +293,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         cleanPath === '/' ||
         cleanPath === '/home' ||
         cleanPath === '/explore' ||
+        cleanPath === '/search' ||
         cleanPath === '/arcade' ||
         cleanPath === '/login' ||
         cleanPath === '/register' ||
@@ -376,6 +379,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         return { view: 'explore' as const, postId: null, username: null, tag }
       }
 
+      // Search route - public, no auth required
+      if (cleanPath === '/search') {
+        const urlParams = new URLSearchParams(window.location.search)
+        const q = urlParams.get('q') || ''
+        const type = urlParams.get('type') || 'posts'
+        console.log('Search route detected, query:', q, 'type:', type)
+        return { view: 'search' as const, postId: null, username: null, tag: null, searchQuery: q, searchType: type as 'posts' | 'users' | 'arcade' }
+      }
+
       // Arcade game route - public, no auth required
       const arcadeGameMatch = cleanPath.match(/^\/arcade\/([^\/]+)$/)
       if (arcadeGameMatch) {
@@ -458,7 +470,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     
     // Navigate to view
-    const navigateTo = async (view: 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'notifications' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings' | 'arcade', postId?: string, username?: string, tag?: string, adminTab?: 'alerts' | 'hidden' | 'users') => {
+    const navigateTo = async (view: 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'search' | 'notifications' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings' | 'arcade', postId?: string, username?: string, tag?: string, adminTab?: 'alerts' | 'hidden' | 'users', searchQuery?: string, searchType?: 'posts' | 'users' | 'arcade') => {
       console.log('Navigate to:', view, postId, username, tag, 'Current view:', currentView, 'adminTab:', adminTab)
 
       // Close mobile nav if open
@@ -510,6 +522,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           arcadePage.destroy()
           arcadePage = null
         }
+        if (searchPage) {
+          searchPage.destroy()
+          searchPage = null
+        }
       } else {
         // Auth guard for protected routes
         const isAuthenticated = await requireAuth()
@@ -551,6 +567,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (arcadePage) {
           arcadePage.destroy()
           arcadePage = null
+        }
+        if (searchPage) {
+          searchPage.destroy()
+          searchPage = null
         }
       }
       
@@ -785,6 +805,86 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Setup mobile left nav
         setupMobileLeftNav(leftNav.getElement())
         
+        return
+      }
+
+      // Handle search page (within 3-column layout)
+      if (view === 'search') {
+        currentView = 'search'
+        currentPostId = null
+        currentUsername = null
+        currentTag = null
+
+        const mainContainer = document.createElement('div')
+        mainContainer.className = 'main-container'
+
+        const leftNav = createLeftNav({
+          activeItem: 'explore',
+          unreadCount: unreadNotificationCount,
+          currentUser: currentUser || undefined,
+          onNavigate: async (item) => {
+            if (item === 'home') {
+              window.history.pushState({}, '', '/home')
+              navigateTo('timeline')
+            } else if (item === 'explore') {
+              window.history.pushState({}, '', '/explore')
+              navigateTo('explore')
+            } else if (item === 'arcade') {
+              window.history.pushState({}, '', '/arcade')
+              navigateTo('arcade')
+            } else if (item === 'notifications') {
+              window.history.pushState({}, '', '/notifications')
+              navigateTo('notifications')
+            } else if (item === 'settings') {
+              window.history.pushState({}, '', '/settings')
+              navigateTo('settings')
+            } else if (item === 'profile') {
+              if (!currentUser) {
+                window.history.pushState({}, '', '/arcade')
+                navigateTo('arcade')
+                return
+              }
+              window.history.pushState({}, '', `/profile/${currentUser.username}`)
+              navigateTo('profile', undefined, currentUser.username)
+            }
+          },
+          onSignIn: () => {
+            window.history.pushState({}, '', '/login')
+            navigateTo('login')
+          },
+          onSignUp: () => {
+            window.history.pushState({}, '', '/register')
+            navigateTo('register')
+          }
+        })
+
+        leftNavInstances.add(leftNav)
+
+        const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app'
+        searchPage = createSearchPage({
+          query: searchQuery || '',
+          type: searchType || 'posts',
+          currentUser: currentUser,
+          sandboxOrigin
+        })
+
+        const rightPanel = createRightPanel({
+          onSearch: (query) => {
+            console.log('Search:', query)
+          },
+          onFollowUser: (userId) => {
+            console.log('Follow user:', userId)
+          }
+        })
+
+        mainContainer.appendChild(leftNav.getElement())
+        mainContainer.appendChild(searchPage.getElement())
+        mainContainer.appendChild(rightPanel.getElement())
+
+        app.appendChild(mainContainer)
+
+        setupMobileLeftNav(leftNav.getElement())
+
         return
       }
 
@@ -1319,7 +1419,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Handle SPA navigation events
     window.addEventListener('spaNavigate', async (e: any) => {
       const detail = e.detail
-      await navigateTo(detail.view, detail.postId, detail.username, detail.tag, detail.adminTab)
+      await navigateTo(detail.view, detail.postId, detail.username, detail.tag, detail.adminTab, detail.searchQuery, detail.searchType)
     })
     
     // Initial navigation
@@ -1334,7 +1434,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const initialRoute = parseCurrentRoute()
     console.log('Initial route:', initialRoute)
     if (initialRoute) {
-      await navigateTo(initialRoute.view, initialRoute.postId || undefined, initialRoute.username || undefined, initialRoute.tag || undefined, initialRoute.adminTab || undefined)
+      await navigateTo(initialRoute.view, initialRoute.postId || undefined, initialRoute.username || undefined, initialRoute.tag || undefined, initialRoute.adminTab || undefined, initialRoute.searchQuery || undefined, initialRoute.searchType || undefined)
     }
   }
 })
