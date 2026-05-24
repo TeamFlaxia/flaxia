@@ -228,6 +228,8 @@
 
   "post_stage.loading_flash": "⏳<span>Flashを読み込み中...</span>",
   "post_stage.load_failed_flash": "Flashファイルの読み込みに失敗しました。もう一度お試しください。",
+  "post_stage.loading_dos": "⏳<span>DOSを読み込み中...</span>",
+  "post_stage.dos_load_failed": "DOSゲームの読み込みに失敗しました。もう一度お試しください。",
   "post_stage.loading_zip": "⏳<span>読み込み中...</span>",
   "post_stage.zip_load_failed": "ZIPファイルの読み込みに失敗しました。もう一度お試しください。",
   "post_stage.thumbnail_unavailable": "サムネイルなし",
@@ -235,15 +237,18 @@
   "post_stage.click_execute_zip": "クリックしてZIPを実行",
   "post_stage.play_flash": "⚡ 再生",
   "post_stage.click_play_flash": "クリックしてFlashを再生",
+  "post_stage.play_dos": "💾 DOSを再生",
+  "post_stage.click_play_dos": "クリックしてDOSを実行",
   "post_stage.click_to_run": "クリックして実行",
   "post_stage.zip_load_error": "ZIPコンテンツの読み込みに失敗しました",
   "post_stage.flash_load_error": "Flashコンテンツの読み込みに失敗しました",
+  "post_stage.dos_load_error": "DOSコンテンツの読み込みに失敗しました",
 
   "arcade.title": "🕹️ Shot Arcade",
   "arcade.subtitle": "WebをShortsとしてプレイ！",
   "arcade.loading": "ゲームを読み込み中...",
   "arcade.no_games_title": "まだゲームがありません",
-  "arcade.no_games_subtitle": "SWFまたはZIPファイルをアップロードしてゲームを共有しましょう！",
+  "arcade.no_games_subtitle": "SWF、ZIP、またはDOSファイルをアップロードしてゲームを共有しましょう！",
   "arcade.game_by": "@{username} のゲーム",
   "arcade.game_author": "@{username}",
   "arcade.details": "詳細",
@@ -368,6 +373,7 @@
   "search.posts": "投稿",
   "search.media_flash": "FLASH",
   "search.media_game": "GAME",
+  "search.media_dos": "DOS",
   "search.no_results": "「{query}」に一致する結果はありません",
 
   "register.title": "Flaxia",
@@ -445,6 +451,11 @@
   "flash_player.load_failed": "Flashコンテンツの読み込みに失敗しました",
   "flash_player.fullscreen": "⛶ フルスクリーン",
   "flash_player.error_heading": "Flash Player エラー",
+
+  "dos_player.title": "DOS Player",
+  "dos_player.load_failed": "DOSゲームの読み込みに失敗しました",
+  "dos_player.fullscreen": "⛶ フルスクリーン",
+  "dos_player.error_heading": "DOS Player エラー",
 
   "right_panel.search_placeholder": "Flaxiaを検索",
   "right_panel.trending": "トレンド",

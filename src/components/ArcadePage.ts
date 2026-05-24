@@ -1,4 +1,5 @@
 import { executeFlash } from './FlashPlayer.js'
+import { executeDos } from './DosPlayer.js'
 import { executeWvfsZip } from '../lib/wvfs-zip-client.js'
 import type { Game, ArcadePageProps, GameType } from '../types/game.js'
 import { t } from '../lib/i18n.js'
@@ -672,6 +673,9 @@ export class ArcadePage {
       } else if (game.type === 'zip' && game.payloadKey) {
         // Use WVFS for ZIP execution
         const handle = await executeWvfsZip(game.postId, container)
+        this.currentGameHandle = handle
+      } else if (game.type === 'dos' && game.payloadKey) {
+        const handle = await executeDos(game.postId, container, `/api/zip/${game.postId}`)
         this.currentGameHandle = handle
       } else if (game.type === 'html5') {
         // HTML5 games would use iframe

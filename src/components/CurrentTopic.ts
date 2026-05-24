@@ -9,7 +9,7 @@ export interface CurrentTopicProps {
 }
 
 interface CurrentTopicState {
-  topic: (Post & { type: 'flash' | 'html' }) | null
+  topic: (Post & { type: 'flash' | 'html' | 'dos' }) | null
   loading: boolean
   error: string | null
   expanded: boolean
@@ -155,7 +155,7 @@ export function createCurrentTopic(props: CurrentTopicProps): {
         return
       }
 
-      const topic = await response.json() as Post & { type: 'flash' | 'html' }
+      const topic = await response.json() as Post & { type: 'flash' | 'html' | 'dos' }
       state.topic = topic
       state.error = null
     } catch (error) {
@@ -187,7 +187,7 @@ export function createCurrentTopic(props: CurrentTopicProps): {
         // Update topic content
         topicText.textContent = state.topic.text
         
-        const typeIcon = state.topic.type === 'flash' ? '⚡' : '🚀'
+        const typeIcon = state.topic.type === 'flash' ? '⚡' : state.topic.type === 'dos' ? '💾' : '🚀'
         const displayName = state.topic.display_name || state.topic.username
         topicMeta.innerHTML = `
           <span>${typeIcon} ${displayName}</span>

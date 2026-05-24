@@ -693,7 +693,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
 
     const payloadInput = document.createElement('input')
     payloadInput.type = 'file'
-    payloadInput.accept = '.zip,.swf,.gif,.png,.jpg,.jpeg'
+    payloadInput.accept = '.zip,.swf,.jsdos,.gif,.png,.jpg,.jpeg'
     payloadInput.style.cssText = `
       background: #0f172a;
       border: 1px solid #334155;

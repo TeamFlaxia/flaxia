@@ -190,7 +190,75 @@ app.get('/api/audio/*', async (c) => {
   }
 })
 
-// GET /api/zip/:postId - serve ZIP files from R2
+// GET /api/dos-player/:postId - serve DOS player iframe HTML
+app.get('/api/dos-player/:postId', async (c) => {
+  try {
+    const postId = c.req.param('postId')
+    const loadFailed = c.req.query('load_failed') || 'Failed to load game'
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>DOS Game</title>
+  <script src="https://v8.js-dos.com/latest/js-dos.js"></script>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+    #dos-container { width: 100%; height: 100%; }
+    #dos-container canvas { display: block; margin: 0 auto; }
+    .error-overlay {
+      position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: #000; color: #fff; font-family: monospace; padding: 20px; text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div id="dos-container"></div>
+  <div id="error-overlay" class="error-overlay" style="display:none;"></div>
+  <script>
+    var zipUrl = window.location.origin + '/api/zip/' + '${postId}';
+
+    async function init() {
+      var container = document.getElementById('dos-container');
+      var errorOverlay = document.getElementById('error-overlay');
+
+      try {
+        if (typeof Dos === 'undefined') {
+          throw new Error('js-dos failed to load');
+        }
+
+        await Dos(container, { url: zipUrl, autolock: true });
+      } catch (err) {
+        console.error('DOS Player error:', err);
+        errorOverlay.style.display = 'flex';
+        errorOverlay.textContent = '${loadFailed}';
+      }
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  </script>
+</body>
+</html>`
+
+    return new Response(html, {
+      headers: {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        'X-Frame-Options': 'SAMEORIGIN'
+      }
+    })
+  } catch (error: any) {
+    console.error('DOS player error:', error)
+    return c.json({ error: 'Failed to serve DOS player', details: error?.message || 'Unknown error' }, 500)
+  }
+})
+
+// GET /api/zip/:postId - serve ZIP files from R2 (supports zip/ and dos/ prefixes)
 app.get('/api/zip/:postId', async (c) => {
   try {
     const postId = c.req.param('postId')
@@ -203,11 +271,14 @@ app.get('/api/zip/:postId', async (c) => {
       return c.json({ error: 'Storage not available' }, 500)
     }
     
-    // Construct the ZIP key
-    const zipKey = `zip/${postId}.zip`
+    // Try HTML5 ZIP key first, then DOS ZIP key, then JSDOS key
+    const keysToTry = [`zip/${postId}.zip`, `dos/${postId}.zip`, `jsdos/${postId}.jsdos`]
+    let object = null
     
-    // Get object from R2
-    const object = await c.env.BUCKET.get(zipKey)
+    for (const zipKey of keysToTry) {
+      object = await c.env.BUCKET.get(zipKey)
+      if (object) break
+    }
     
     if (!object) {
       return c.json({ error: 'ZIP not found' }, 404)
@@ -703,7 +774,14 @@ app.get('/api/games', async (c) => {
     }
 
     const games = (results || []).map(row => {
-      const type = row.swf_key ? 'flash' : 'zip'
+      let type: string
+      if (row.swf_key) {
+        type = 'flash'
+      } else if (row.payload_key && row.payload_key.startsWith('dos/')) {
+        type = 'dos'
+      } else {
+        type = 'zip'
+      }
       return {
         id: row.postId,
         postId: row.postId,
@@ -3074,7 +3152,7 @@ app.delete('/api/admin/ads/:id', requireAuth, async (c) => {
 // Step 1 — POST /api/posts/prepare (protected)
 app.post('/api/posts/prepare', requireAuth, async (c) => {
   try {
-    const { filename, contentType: initialContentType } = await c.req.json()
+    const { filename, contentType: initialContentType, payloadType } = await c.req.json()
     
     if (!filename || !initialContentType) {
       return c.json({ error: 'Missing filename or contentType' }, 400)
@@ -3082,13 +3160,16 @@ app.post('/api/posts/prepare', requireAuth, async (c) => {
     
     const allowedTypes = ['image/gif', 'image/png', 'image/jpeg', 'image/jpg', 'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4', 'audio/webm', 'application/zip', 'application/x-shockwave-flash']
     
-    // Also check file extension for SWF files (browsers may not report correct MIME type)
+    // Also check file extension for SWF and JSDOS files (browsers may not report correct MIME type)
     const isSwfByExtension = filename.toLowerCase().endsWith('.swf')
+    const isJsdosByExtension = filename.toLowerCase().endsWith('.jsdos')
     let contentType = initialContentType
     
-    // Always set correct content type for SWF files by extension
+    // Always set correct content type for SWF and JSDOS files by extension
     if (isSwfByExtension) {
       contentType = 'application/x-shockwave-flash'
+    } else if (isJsdosByExtension) {
+      contentType = 'application/zip'
     }
     
     const isValidType = allowedTypes.includes(contentType)
@@ -3111,7 +3192,9 @@ app.post('/api/posts/prepare', requireAuth, async (c) => {
                      contentType === 'audio/mp4' ? '.m4a' : '.webm'
       storageKey = `audio/${postId}${fileExtension}`
     } else if (contentType === 'application/zip') {
-      storageKey = `zip/${postId}.zip`
+      // Auto-detect DOS for .jsdos files, even if payloadType is not set
+      const isJsdos = filename.toLowerCase().endsWith('.jsdos')
+      storageKey = (payloadType === 'dos' || isJsdos) ? `dos/${postId}.zip` : `zip/${postId}.zip`
     } else if (contentType === 'application/x-shockwave-flash') {
       storageKey = `swf/${postId}.swf`
     } else {
@@ -3252,6 +3335,41 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
         } catch (e) {
           // Don't fail the post creation if mention notifications fail
           console.error('Failed to create mention notifications:', e)
+        }
+      }
+
+      // Patch DOS ZIP with js-dos.json for auto-execution
+      if (zipKey && zipKey.startsWith('dos/')) {
+        try {
+          const fflate = await import('fflate')
+          const object = await c.env.BUCKET.get(zipKey)
+          if (object) {
+            const zipData = await object.arrayBuffer()
+            const unzipped = fflate.unzipSync(new Uint8Array(zipData))
+
+            let command = 'run.bat'
+            const files = Object.keys(unzipped)
+            const lower = files.map(f => f.toLowerCase())
+            const runBatIdx = lower.indexOf('run.bat')
+            if (runBatIdx !== -1) {
+              command = files[runBatIdx]
+            } else {
+              const exeFile = files.find(f => f.toLowerCase().endsWith('.exe') || f.toLowerCase().endsWith('.com'))
+              if (exeFile) command = exeFile
+            }
+
+            unzipped['js-dos.json'] = new TextEncoder().encode(JSON.stringify({
+              executable: command,
+              exit: true
+            }))
+
+            const patched = fflate.zipSync(unzipped, { level: 9 })
+            await c.env.BUCKET.put(zipKey, patched, {
+              httpMetadata: { contentType: 'application/zip' }
+            })
+          }
+        } catch (e) {
+          console.error('Failed to patch DOS ZIP:', e)
         }
       }
     } else {
@@ -4958,7 +5076,7 @@ app.get('/api/current-topic', async (c) => {
       reply_count: result.reply_count,
       impressions: result.impressions,
       created_at: result.created_at,
-      type: result.swf_key ? 'flash' : 'html'
+      type: result.swf_key ? 'flash' : ((result as any).payload_key && (result as any).payload_key.startsWith('dos/') ? 'dos' : 'html')
     }
 
     return c.json(topicPost)

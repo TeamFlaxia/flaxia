@@ -228,6 +228,8 @@
 
   "post_stage.loading_flash": "⏳<span>Loading Flash...</span>",
   "post_stage.load_failed_flash": "Failed to load Flash file. Please try again.",
+  "post_stage.loading_dos": "⏳<span>Loading DOS...</span>",
+  "post_stage.dos_load_failed": "Failed to load DOS game. Please try again.",
   "post_stage.loading_zip": "⏳<span>Loading...</span>",
   "post_stage.zip_load_failed": "Failed to load ZIP file. Please try again.",
   "post_stage.thumbnail_unavailable": "Thumbnail unavailable",
@@ -235,15 +237,18 @@
   "post_stage.click_execute_zip": "Click to Execute ZIP",
   "post_stage.play_flash": "⚡ Play",
   "post_stage.click_play_flash": "Click to Play Flash",
+  "post_stage.play_dos": "💾 Play DOS",
+  "post_stage.click_play_dos": "Click to Play DOS",
   "post_stage.click_to_run": "Click to run",
   "post_stage.zip_load_error": "Failed to load ZIP content",
   "post_stage.flash_load_error": "Failed to load Flash content",
+  "post_stage.dos_load_error": "Failed to load DOS content",
 
   "arcade.title": "🕹️ Shot Arcade",
   "arcade.subtitle": "Play web as Shorts!",
   "arcade.loading": "Loading games...",
   "arcade.no_games_title": "No games yet",
-  "arcade.no_games_subtitle": "Upload SWF or ZIP files to share games!",
+  "arcade.no_games_subtitle": "Upload SWF, ZIP, or DOS files to share games!",
   "arcade.game_by": "Game by @{username}",
   "arcade.game_author": "@{username}",
   "arcade.details": "Details",
@@ -368,6 +373,7 @@
   "search.posts": "Posts",
   "search.media_flash": "FLASH",
   "search.media_game": "GAME",
+  "search.media_dos": "DOS",
   "search.no_results": "No results found for \"{query}\"",
 
   "register.title": "Flaxia",
@@ -445,6 +451,11 @@
   "flash_player.load_failed": "Failed to load Flash content",
   "flash_player.fullscreen": "⛶ Fullscreen",
   "flash_player.error_heading": "Flash Player Failed",
+
+  "dos_player.title": "DOS Player",
+  "dos_player.load_failed": "Failed to load DOS game",
+  "dos_player.fullscreen": "⛶ Fullscreen",
+  "dos_player.error_heading": "DOS Player Failed",
 
   "right_panel.search_placeholder": "Search Flaxia",
   "right_panel.trending": "Trending",

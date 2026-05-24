@@ -42,7 +42,19 @@ export const ALLOWED_EXTENSIONS: Record<string, string> = {
   '.txt': 'text/plain',
   '.glsl': 'text/plain',
   '.wgsl': 'text/plain',
-  '.rsp': 'text/plain'
+  '.rsp': 'text/plain',
+
+  // DOS executables and support files
+  '.exe': 'application/x-msdos-program',
+  '.com': 'application/x-msdos-program',
+  '.bat': 'text/plain',
+  '.conf': 'text/plain',
+  '.img': 'application/octet-stream',
+  '.iso': 'application/x-iso9660',
+  '.dosz': 'application/octet-stream',
+  '.jsdos': 'application/zip',
+  '.ovl': 'application/octet-stream',
+  '.cfg': 'text/plain'
 }
 
 export function isExtensionAllowed(filename: string): boolean {

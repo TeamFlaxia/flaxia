@@ -4,6 +4,7 @@ import { createImagePreview } from './ImagePreview.js'
 import { createAudioPlayer } from './AudioPlayer.js'
 import { executeZipAuto } from '../lib/zip-manager.js'
 import { executeFlash } from './FlashPlayer.js'
+import { executeDos } from './DosPlayer.js'
 
 // Create SWF execution button (similar to ZIP but for Flash)
 function createSwfExecutionButton(props: {
@@ -384,8 +385,27 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
   if (props.mode === PostCardMode.PREVIEW) {
     let mediaElement
     
-    // Check if it's a ZIP file (payload_key starting with 'zip/')
-    if (props.post.payload_key && props.post.payload_key.startsWith('zip/')) {
+    // Check if it's a DOS ZIP file (payload_key starting with 'dos/')
+    if (props.post.payload_key && props.post.payload_key.startsWith('dos/')) {
+      if (props.post.thumbnail_key) {
+        mediaElement = createThumbnailWithOverlay({
+          postId: props.post.id,
+          thumbnailKey: props.post.thumbnail_key,
+          overlayLabel: t('post_stage.play_dos'),
+          aspectRatio: '75',
+          onClick: () => props.onModeChange(PostCardMode.EXECUTING)
+        })
+        container.classList.add('post-stage--dos')
+      } else {
+        mediaElement = createSwfExecutionButton({
+          postId: props.post.id,
+          label: t('post_stage.click_play_dos'),
+          icon: '💾',
+          onClick: () => props.onModeChange(PostCardMode.EXECUTING)
+        })
+        container.classList.add('post-stage--dos')
+      }
+    } else if (props.post.payload_key && props.post.payload_key.startsWith('zip/')) {
       if (props.post.thumbnail_key) {
         // Show thumbnail with overlay button
         mediaElement = createThumbnailWithOverlay({
@@ -442,15 +462,20 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
     container.appendChild(mediaElement)
     
     // Add click hint only for executable content (not images or audio)
-    if (!props.post.payload_key?.startsWith('zip/') && !props.post.swf_key?.startsWith('swf/') && !props.post.gif_key) {
+    if (!props.post.payload_key?.startsWith('zip/') && !props.post.payload_key?.startsWith('dos/') && !props.post.swf_key?.startsWith('swf/') && !props.post.gif_key) {
       const hint = document.createElement('div')
       hint.className = 'stage-hint'
       hint.textContent = t('post_stage.click_to_run')
       container.appendChild(hint)
     }
   } else {
-    // For ZIP files, use the new ZIP execution engine
-    if (props.post.payload_key && props.post.payload_key.startsWith('zip/')) {
+    // For DOS ZIP files, use the DOS player
+    if (props.post.payload_key && props.post.payload_key.startsWith('dos/')) {
+      executeDos(props.post.id, container).catch((error: Error) => {
+        console.error('Failed to execute DOS:', error)
+        container.innerHTML = '<div style="padding: 20px; text-align: center; color: #666;">' + t('post_stage.dos_load_error') + '</div>'
+      })
+    } else if (props.post.payload_key && props.post.payload_key.startsWith('zip/')) {
       // The executeZipAuto function will handle creating the iframe and cleanup
       executeZipAuto(props.post.id, container).catch((error: Error) => {
         console.error('Failed to execute ZIP:', error)

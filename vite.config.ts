@@ -71,6 +71,15 @@ export default defineConfig({
           copyDirectory(functionsDir, distFunctionsDir)
           console.log('Functions directory copied successfully!')
         }
+
+        // Copy js-dos dist files for self-hosted DOS player
+        const jsdosSrc = 'node_modules/js-dos/dist'
+        const jsdosDest = 'dist/js-dos'
+        if (existsSync(jsdosSrc)) {
+          console.log('Copying js-dos files to dist...')
+          copyDirectory(jsdosSrc, jsdosDest)
+          console.log('js-dos files copied successfully!')
+        }
       }
     }
   ]

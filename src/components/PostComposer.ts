@@ -4,7 +4,41 @@ export interface PostComposerProps {
 }
 
 import { t } from '../lib/i18n.js'
+import { getMimeType } from '../lib/file-extensions.js'
 import DOMPurify from 'dompurify'
+
+async function detectZipType(file: File): Promise<'html5' | 'dos' | null> {
+  try {
+    const buffer = await file.arrayBuffer()
+    const view = new DataView(buffer)
+    let eocdOffset = buffer.byteLength - 22
+    while (eocdOffset >= 0) {
+      if (view.getUint32(eocdOffset, true) === 0x06054b50) break
+      eocdOffset--
+    }
+    if (eocdOffset < 0) return null
+    const cdOffset = view.getUint32(eocdOffset + 16, true)
+    const numEntries = view.getUint16(eocdOffset + 10, true)
+    let hasIndexHtml = false
+    let hasExe = false
+    let offset = cdOffset
+    for (let i = 0; i < numEntries; i++) {
+      if (view.getUint32(offset, true) !== 0x02014b50) break
+      const nameLen = view.getUint16(offset + 28, true)
+      const extraLen = view.getUint16(offset + 30, true)
+      const commentLen = view.getUint16(offset + 32, true)
+      let name = ''
+      for (let j = 0; j < nameLen; j++) name += String.fromCharCode(view.getUint8(offset + 46 + j))
+      const lower = name.toLowerCase()
+      if (lower === 'index.html' || lower === 'index.htm') hasIndexHtml = true
+      if (lower.endsWith('.exe') || lower.endsWith('.bat') || lower.endsWith('.com')) hasExe = true
+      offset += 46 + nameLen + extraLen + commentLen
+    }
+    if (hasIndexHtml) return 'html5'
+    if (hasExe) return 'dos'
+    return null
+  } catch { return null }
+}
 
 export class PostComposer {
   private element: HTMLElement
@@ -16,6 +50,7 @@ export class PostComposer {
   private charCount!: HTMLSpanElement
   private selectedFile: File | null = null
   private selectedThumbnail: File | null = null
+  private zipType: 'html5' | 'dos' | null = null
   private isSubmitting = false
   private dragCounter = 0
   private errorDisplay!: HTMLElement
@@ -49,7 +84,7 @@ export class PostComposer {
         <div class="composer-divider"></div>
         <div class="composer-footer">
           <div class="composer-actions">
-            <input type="file" class="composer-file-input" accept=".js,.wasm,.html,.gif,.png,.jpg,.jpeg,.mp3,.wav,.ogg,.m4a,.webm,.zip,.swf" />
+            <input type="file" class="composer-file-input" accept=".js,.wasm,.html,.gif,.png,.jpg,.jpeg,.mp3,.wav,.ogg,.m4a,.webm,.zip,.swf,.jsdos" />
             <button class="composer-file-button" type="button">
               📎
             </button>
@@ -238,7 +273,7 @@ export class PostComposer {
 
     // Check file extension
     const ext = file.name.toLowerCase().split('.').pop()
-    const allowedExts = ['gif', 'jpg', 'jpeg', 'png', 'swf', 'js', 'wasm', 'zip', 'rsp', 'mp3', 'wav', 'ogg', 'm4a', 'webm']
+    const allowedExts = ['gif', 'jpg', 'jpeg', 'png', 'swf', 'js', 'wasm', 'zip', 'rsp', 'jsdos', 'mp3', 'wav', 'ogg', 'm4a', 'webm']
     
     if (!ext || !allowedExts.includes(ext)) {
       return { valid: false, error: t('composer.error_unsupported_type') }
@@ -305,7 +340,7 @@ export class PostComposer {
     
     // Also check file extension for SWF files (browsers may not report correct MIME type)
     const isSwfByExtension = file.name.toLowerCase().endsWith('.swf')
-    const isValidType = allowedTypes.includes(file.type) || isSwfByExtension || file.name.toLowerCase().endsWith('.js') || file.name.toLowerCase().endsWith('.wasm') || file.name.toLowerCase().endsWith('.zip') || file.name.toLowerCase().endsWith('.rsp')
+    const isValidType = allowedTypes.includes(file.type) || isSwfByExtension || file.name.toLowerCase().endsWith('.js') || file.name.toLowerCase().endsWith('.wasm') || file.name.toLowerCase().endsWith('.zip') || file.name.toLowerCase().endsWith('.rsp') || file.name.toLowerCase().endsWith('.jsdos')
     
     if (!isValidType) {
       this.showError(t('composer.error_unsupported_type'))
@@ -316,10 +351,29 @@ export class PostComposer {
     this.selectedFile = file
     this.showFilePreview(file)
 
-    // Show thumbnail section for ZIP or SWF files
+    // Detect ZIP type for DOS vs HTML5
     const isZip = file.name.toLowerCase().endsWith('.zip')
+    const isJsdos = file.name.toLowerCase().endsWith('.jsdos')
+    if (isZip) {
+      this.zipType = null
+      detectZipType(file).then(type => {
+        this.zipType = type
+        if (type === 'dos') {
+          const fileInfo = this.element.querySelector('.file-name') as HTMLElement
+          if (fileInfo) fileInfo.textContent = file.name + ' (DOS)'
+        }
+      })
+    } else if (isJsdos) {
+      this.zipType = 'dos'
+      const fileInfo = this.element.querySelector('.file-name') as HTMLElement
+      if (fileInfo) fileInfo.textContent = file.name + ' (DOS)'
+    } else {
+      this.zipType = null
+    }
+
+    // Show thumbnail section for ZIP, JSDOS, or SWF files
     const isSwf = file.name.toLowerCase().endsWith('.swf')
-    if (isZip || isSwf) {
+    if (isZip || isJsdos || isSwf) {
       this.showThumbnailSection()
     } else {
       this.hideThumbnailSection()
@@ -330,6 +384,7 @@ export class PostComposer {
 
   private clearFileSelection(): void {
     this.selectedFile = null
+    this.zipType = null
     this.fileInput.value = ''
     this.hideFilePreview()
     this.hideThumbnailSection()
@@ -491,8 +546,15 @@ export class PostComposer {
         })
 
         if (!response.ok) {
-          const error = await response.json() as any
-          throw new Error(error?.error || 'Failed to create post')
+          let errMsg = 'Failed to create post'
+          try {
+            const errBody = await response.json() as any
+            if (errBody?.error) errMsg += `: ${errBody.error}`
+          } catch {
+            const errText = await response.text().catch(() => '')
+            if (errText) errMsg += `: ${errText.slice(0, 200)}`
+          }
+          throw new Error(errMsg)
         }
 
         commitResult = await response.json()
@@ -535,12 +597,18 @@ export class PostComposer {
         credentials: 'include',
         body: JSON.stringify({
           filename: file.name,
-          contentType: file.type
+          contentType: file.type || getMimeType(file.name),
+          payloadType: this.zipType === 'dos' ? 'dos' : undefined
         })
       })
 
       if (!response.ok) {
-        throw new Error('Failed to prepare post')
+        let errMsg = 'Failed to prepare post'
+        try {
+          const errBody = await response.json() as any
+          if (errBody?.error) errMsg += `: ${errBody.error}`
+        } catch {}
+        throw new Error(errMsg)
       }
 
       const result = await response.json() as any
@@ -567,7 +635,7 @@ export class PostComposer {
       }
     } catch (error) {
       console.error('Prepare post failed:', error)
-      return null
+      throw error
     }
   }
 
@@ -640,8 +708,15 @@ export class PostComposer {
       })
 
       if (!response.ok) {
-        const error = await response.json() as any
-        throw new Error(error?.error || 'Failed to commit post')
+        let errMsg = 'Failed to commit post'
+        try {
+          const errBody = await response.json() as any
+          if (errBody?.error) errMsg += `: ${errBody.error}`
+        } catch {
+          const errText = await response.text().catch(() => '')
+          if (errText) errMsg += `: ${errText.slice(0, 200)}`
+        }
+        throw new Error(errMsg)
       }
 
       return await response.json() as { post: any }
