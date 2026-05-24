@@ -1,20 +1,21 @@
 import { PostActionsProps } from '../types/post.js'
 import { t } from '../lib/i18n.js'
+import { formatCount } from '../lib/format.js'
 
 export function createPostActions(props: PostActionsProps): HTMLElement {
   const container = document.createElement('div')
   container.className = 'post-actions'
 
   // Fresh! button
-  const freshButton = createActionButton('fresh', props.freshCount.toString(), props.isFreshed)
+  const freshButton = createActionButton('fresh', formatCount(props.freshCount), props.isFreshed)
   freshButton.addEventListener('click', props.onFreshToggle)
 
   // Reply button
-  const replyButton = createActionButton('reply', props.replyCount.toString(), false)
+  const replyButton = createActionButton('reply', formatCount(props.replyCount), false)
   replyButton.addEventListener('click', props.onReplyToggle)
 
   // Impressions button (display only, not clickable)
-  const impressionsButton = createActionButton('impressions', props.impressions.toString(), false)
+  const impressionsButton = createActionButton('impressions', formatCount(props.impressions), false)
   impressionsButton.style.cursor = 'default'
 
   // Share button

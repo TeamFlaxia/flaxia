@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js'
+import { formatCount } from '../lib/format.js'
 import { registerModal } from '../lib/modal-state.js'
 
 export interface AdminAd {
@@ -378,12 +379,12 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       row.appendChild(active)
 
       const impressions = document.createElement('div')
-      impressions.textContent = ad.impressions.toString()
+      impressions.textContent = formatCount(ad.impressions)
       impressions.style.cssText = 'color: #94a3b8;'
       row.appendChild(impressions)
 
       const clicks = document.createElement('div')
-      clicks.textContent = ad.clicks.toString()
+      clicks.textContent = formatCount(ad.clicks)
       clicks.style.cssText = 'color: #94a3b8;'
       row.appendChild(clicks)
 
@@ -399,7 +400,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         const playCount = ad.interaction_count || 0
         const playCountEl = document.createElement('div')
         playCountEl.style.cssText = 'color: #f1f5f9; font-size: 12px;'
-        playCountEl.textContent = t('admin_ads.plays_count', { count: playCount })
+        playCountEl.textContent = t('admin_ads.plays_count', { count: formatCount(playCount) })
         interactions.appendChild(playCountEl)
       } else {
         interactions.textContent = '—'
@@ -776,14 +777,14 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       `
       
       let statsHTML = `
-        <div>Impressions: <strong style="color: #f1f5f9;">${editingAd.impressions}</strong></div>
-        <div>Clicks: <strong style="color: #f1f5f9;">${editingAd.clicks}</strong></div>
+        <div>Impressions: <strong style="color: #f1f5f9;">${formatCount(editingAd.impressions)}</strong></div>
+        <div>Clicks: <strong style="color: #f1f5f9;">${formatCount(editingAd.clicks)}</strong></div>
         <div>CTR: <strong style="color: #f1f5f9;">${editingAd.impressions > 0 ? ((editingAd.clicks / editingAd.impressions) * 100).toFixed(2) : '—'}%</strong></div>
       `
       
       if (editingAd.payload_type === 'zip' || editingAd.payload_type === 'swf') {
         const playCount = editingAd.interaction_count || 0
-        statsHTML += `<div>Plays: <strong style="color: #f1f5f9;">${playCount}</strong></div>`
+        statsHTML += `<div>Plays: <strong style="color: #f1f5f9;">${formatCount(playCount)}</strong></div>`
       } else {
         statsHTML += `<div>Type: <strong style="color: #f1f5f9;">${getFormatLabel(editingAd.payload_type)}</strong></div>`
       }

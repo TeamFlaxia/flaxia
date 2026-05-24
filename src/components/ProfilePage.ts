@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js'
+import { formatCount } from '../lib/format.js'
 import { createEditProfileModal } from './EditProfileModal.js'
 import { createFollowerListModal } from './FollowerListModal.js'
 import { processText, renderMathElements, linkifyHashtags, linkifyUrls } from './PostText.js'
@@ -190,9 +191,9 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
         }
 
         // Update counts
-        postsCountSpan.textContent = String(userData.posts_count || 0)
-        followersCountSpan.textContent = String(userData.followers_count || 0)
-        followingCountSpan.textContent = String(userData.following_count || 0)
+        postsCountSpan.textContent = formatCount(userData.posts_count || 0)
+        followersCountSpan.textContent = formatCount(userData.followers_count || 0)
+        followingCountSpan.textContent = formatCount(userData.following_count || 0)
         
         // Update follow button state
         isFollowing = userData.is_following || false
@@ -375,8 +376,8 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
         if (response.ok) {
           const result = await response.json() as { followers_count: number; following_count: number }
           isFollowing = false
-          followersCountSpan.textContent = String(result.followers_count)
-          followingCountSpan.textContent = String(result.following_count)
+          followersCountSpan.textContent = formatCount(result.followers_count)
+          followingCountSpan.textContent = formatCount(result.following_count)
           updateFollowButton()
         } else {
           console.error('Failed to unfollow:', await response.text())
@@ -392,8 +393,8 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
         if (response.ok) {
           const result = await response.json() as { followers_count: number; following_count: number }
           isFollowing = true
-          followersCountSpan.textContent = String(result.followers_count)
-          followingCountSpan.textContent = String(result.following_count)
+          followersCountSpan.textContent = formatCount(result.followers_count)
+          followingCountSpan.textContent = formatCount(result.following_count)
           updateFollowButton()
         } else {
           console.error('Failed to follow:', await response.text())

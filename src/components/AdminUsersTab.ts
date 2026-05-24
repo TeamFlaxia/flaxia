@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js'
+import { formatCount } from '../lib/format.js'
 
 export interface AdminUser {
   id: string
@@ -186,7 +187,7 @@ export function createAdminUsersTab({ onNavigateToTab, adminUsernames = [] }: Ad
     countLabel.style.cssText = 'color: #94a3b8; font-weight: 500;'
 
     const countNumber = document.createElement('span')
-    countNumber.textContent = users.length.toString()
+    countNumber.textContent = formatCount(users.length)
     countNumber.style.cssText = `
       color: #22c55e;
       font-weight: 600;
