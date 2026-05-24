@@ -1,4 +1,4 @@
-import { t } from '../lib/i18n.js'
+import { t, getLocale } from '../lib/i18n.js'
 
 interface LegalPageProps {
   type: 'terms' | 'privacy' | 'about' | 'whitepaper'
@@ -35,17 +35,28 @@ export function createLegalPage({ type }: LegalPageProps) {
 
   // Load and render markdown
   const loadContent = async () => {
-    const fileName = type === 'terms' ? 'terms.md' : type === 'privacy' ? 'privacy.md' : type === 'about' ? 'about.md' : 'whitepaper.md'
+    const locale = getLocale()
+    const fileName = (type === 'terms' ? 'terms' : type === 'privacy' ? 'privacy' : type === 'about' ? 'about' : 'whitepaper') + `.${locale}.md`
     const title = type === 'terms' ? t('legal.terms_title') : type === 'privacy' ? t('legal.privacy_title') : type === 'about' ? t('legal.about_title') : t('legal.whitepaper_title')
 
+    let markdown: string
     try {
       const response = await fetch(`/legal/${fileName}`)
       if (!response.ok) {
         throw new Error('Failed to load content')
       }
+      markdown = await response.text()
+    } catch {
+      // Fallback to English if locale file not found
+      const fallbackFile = (type === 'terms' ? 'terms' : type === 'privacy' ? 'privacy' : type === 'about' ? 'about' : 'whitepaper') + `.en.md`
+      const response = await fetch(`/legal/${fallbackFile}`)
+      if (!response.ok) {
+        throw new Error('Failed to load content')
+      }
+      markdown = await response.text()
+    }
 
-      const markdown = await response.text()
-
+    try {
       // Parse effective date from markdown (first line starting with "Effective Date:")
       const effectiveDateMatch = markdown.match(/^Effective Date:\s*(.+)$/m)
       const effectiveDate = effectiveDateMatch ? effectiveDateMatch[1] : null
@@ -73,7 +84,6 @@ export function createLegalPage({ type }: LegalPageProps) {
       bodyEl.className = 'legal-body'
       bodyEl.innerHTML = htmlContent
       content.appendChild(bodyEl)
-
     } catch (error) {
       const errorEl = document.createElement('div')
       errorEl.className = 'legal-error'

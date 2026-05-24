@@ -154,40 +154,6 @@ export class LeftNav {
       border-top: 1px solid var(--border);
     `
 
-    const privacyLink = document.createElement('a')
-    privacyLink.href = '/privacy'
-    privacyLink.textContent = t('legal.footer_privacy')
-    privacyLink.style.cssText = `
-      color: var(--text-muted);
-      text-decoration: none;
-      font-size: 0.875rem;
-      transition: color 0.2s;
-    `
-
-    const termsLink = document.createElement('a')
-    termsLink.href = '/terms'
-    termsLink.textContent = t('legal.footer_terms')
-    termsLink.style.cssText = `
-      color: var(--text-muted);
-      text-decoration: none;
-      font-size: 0.875rem;
-      transition: color 0.2s;
-    `
-
-    privacyLink.addEventListener('mouseenter', () => {
-      privacyLink.style.color = 'var(--text-primary)'
-    })
-    privacyLink.addEventListener('mouseleave', () => {
-      privacyLink.style.color = 'var(--text-muted)'
-    })
-
-    termsLink.addEventListener('mouseenter', () => {
-      termsLink.style.color = 'var(--text-primary)'
-    })
-    termsLink.addEventListener('mouseleave', () => {
-      termsLink.style.color = 'var(--text-muted)'
-    })
-
     // Create About flaxia link
     const aboutLink = document.createElement('a')
     aboutLink.href = '/about'
@@ -210,14 +176,46 @@ export class LeftNav {
       aboutLink.style.color = 'var(--text-muted)'
     })
 
-    legalLinks.appendChild(privacyLink)
-    legalLinks.appendChild(termsLink)
+    const termsLink = document.createElement('a')
+    termsLink.href = '/terms'
+    termsLink.textContent = t('legal.footer_terms')
+    termsLink.style.cssText = `
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.875rem;
+      transition: color 0.2s;
+    `
+    termsLink.addEventListener('mouseenter', () => {
+      termsLink.style.color = 'var(--text-primary)'
+    })
+    termsLink.addEventListener('mouseleave', () => {
+      termsLink.style.color = 'var(--text-muted)'
+    })
+
+    const privacyLink = document.createElement('a')
+    privacyLink.href = '/privacy'
+    privacyLink.textContent = t('legal.footer_privacy')
+    privacyLink.style.cssText = `
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.875rem;
+      transition: color 0.2s;
+    `
+    privacyLink.addEventListener('mouseenter', () => {
+      privacyLink.style.color = 'var(--text-primary)'
+    })
+    privacyLink.addEventListener('mouseleave', () => {
+      privacyLink.style.color = 'var(--text-muted)'
+    })
+
     legalLinks.appendChild(aboutLink)
+    legalLinks.appendChild(termsLink)
+    legalLinks.appendChild(privacyLink)
     
     // Create White Paper link
     const whitepaperLink = document.createElement('a')
     whitepaperLink.href = '/whitepaper'
-  whitepaperLink.textContent = t('legal.footer_whitepaper')
+    whitepaperLink.textContent = t('legal.footer_whitepaper')
     whitepaperLink.style.cssText = `
       color: var(--text-muted);
       text-decoration: none;
@@ -250,7 +248,7 @@ export class LeftNav {
         margin-top: 1rem;
       `
 
-      // Sign up button (changed from sign in)
+      // Sign up button
       const signUpButton = document.createElement('button')
       signUpButton.className = 'nav-signin-button'
       signUpButton.textContent = 'Sign up'
@@ -275,8 +273,33 @@ export class LeftNav {
         this.props.onSignUp?.()
       })
 
-      
+      // Sign in button
+      const signInButton = document.createElement('button')
+      signInButton.className = 'nav-signin-button'
+      signInButton.textContent = 'Sign in'
+      signInButton.style.cssText = `
+        padding: 0.75rem 1.5rem;
+        background: transparent;
+        color: var(--text-primary);
+        border: 1px solid var(--border);
+        border-radius: 9999px;
+        cursor: pointer;
+        font-size: 0.875rem;
+        font-weight: 600;
+        transition: background 0.2s;
+      `
+      signInButton.addEventListener('mouseenter', () => {
+        signInButton.style.background = 'var(--bg-secondary)'
+      })
+      signInButton.addEventListener('mouseleave', () => {
+        signInButton.style.background = 'transparent'
+      })
+      signInButton.addEventListener('click', () => {
+        this.props.onSignIn?.()
+      })
+
       authButtons.appendChild(signUpButton)
+      authButtons.appendChild(signInButton)
       nav.appendChild(authButtons)
     }
 
@@ -481,40 +504,6 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
     border-top: 1px solid var(--border);
   `
 
-  const privacyLink = document.createElement('a')
-  privacyLink.href = '/privacy'
-  privacyLink.textContent = t('legal.footer_privacy')
-  privacyLink.style.cssText = `
-    color: var(--text-muted);
-    text-decoration: none;
-    font-size: 0.875rem;
-    transition: color 0.2s;
-  `
-
-  const termsLink = document.createElement('a')
-  termsLink.href = '/terms'
-  termsLink.textContent = t('legal.footer_terms')
-  termsLink.style.cssText = `
-    color: var(--text-muted);
-    text-decoration: none;
-    font-size: 0.875rem;
-    transition: color 0.2s;
-  `
-
-  privacyLink.addEventListener('mouseenter', () => {
-    privacyLink.style.color = 'var(--text-primary)'
-  })
-  privacyLink.addEventListener('mouseleave', () => {
-    privacyLink.style.color = 'var(--text-muted)'
-  })
-
-  termsLink.addEventListener('mouseenter', () => {
-    termsLink.style.color = 'var(--text-primary)'
-  })
-  termsLink.addEventListener('mouseleave', () => {
-    termsLink.style.color = 'var(--text-muted)'
-  })
-
   // Create About flaxia link
   const aboutLink = document.createElement('a')
   aboutLink.href = '/about'
@@ -537,9 +526,41 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
     aboutLink.style.color = 'var(--text-muted)'
   })
 
-  legalLinks.appendChild(privacyLink)
-  legalLinks.appendChild(termsLink)
+  const termsLink = document.createElement('a')
+  termsLink.href = '/terms'
+  termsLink.textContent = t('legal.footer_terms')
+  termsLink.style.cssText = `
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.875rem;
+    transition: color 0.2s;
+  `
+  termsLink.addEventListener('mouseenter', () => {
+    termsLink.style.color = 'var(--text-primary)'
+  })
+  termsLink.addEventListener('mouseleave', () => {
+    termsLink.style.color = 'var(--text-muted)'
+  })
+
+  const privacyLink = document.createElement('a')
+  privacyLink.href = '/privacy'
+  privacyLink.textContent = t('legal.footer_privacy')
+  privacyLink.style.cssText = `
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.875rem;
+    transition: color 0.2s;
+  `
+  privacyLink.addEventListener('mouseenter', () => {
+    privacyLink.style.color = 'var(--text-primary)'
+  })
+  privacyLink.addEventListener('mouseleave', () => {
+    privacyLink.style.color = 'var(--text-muted)'
+  })
+
   legalLinks.appendChild(aboutLink)
+  legalLinks.appendChild(termsLink)
+  legalLinks.appendChild(privacyLink)
   
   // Create White Paper link
   const whitepaperLink = document.createElement('a')

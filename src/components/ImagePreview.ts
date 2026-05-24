@@ -180,7 +180,7 @@ function createImageOverlay(imageUrl: string, postId: string): void {
   closeButton.textContent = t('image_preview.close')
   closeButton.style.cssText = `
     position: absolute;
-    top: -40px;
+    top: 8px;
     right: 0;
     background: rgba(255, 255, 255, 0.2);
     border: none;
