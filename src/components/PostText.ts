@@ -82,9 +82,17 @@ async function processText(text: string): Promise<string> {
   // Step 1: Escape math notation with placeholders
   const { textWithPlaceholders, mathPlaceholders } = escapeMathNotation(text)
   
+  // Step 1.5: Escape post references (>>N) to prevent markdown blockquote parsing
+  const refPlaceholders: { id: string; index: string }[] = []
+  const textWithRefPlaceholders = textWithPlaceholders.replace(/>>(\d+)/g, (match, index) => {
+    const id = `ref-${refPlaceholders.length}`
+    refPlaceholders.push({ id, index })
+    return `⚡${id}⚡`
+  })
+  
   // Step 2: Parse Markdown (dynamically import markdown-it)
   const md = await getMarkdownIt()
-  let html = md.render(textWithPlaceholders)
+  let html = md.render(textWithRefPlaceholders)
   
   // Step 3: Restore math placeholders BEFORE sanitization
   html = restoreMathPlaceholders(html, mathPlaceholders)
@@ -93,10 +101,16 @@ async function processText(text: string): Promise<string> {
   // Step 4: Sanitize HTML (now with proper math placeholders)
   html = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li', 'a', 'span'],
-    ALLOWED_ATTR: ['href', 'target', 'rel', 'class', 'data-math-content', 'data-math-display'],
+    ALLOWED_ATTR: ['href', 'target', 'rel', 'class', 'data-math-content', 'data-math-display', 'data-post-index'],
     ALLOW_DATA_ATTR: true,
   })
   console.log('HTML after sanitization:', html)
+  
+  // Step 4.5: Restore post reference placeholders as clickable links
+  for (const ref of refPlaceholders) {
+    const placeholderRegex = new RegExp(`⚡${ref.id}⚡`, 'g')
+    html = html.replace(placeholderRegex, `<a class="post-ref-link" href="#post-${ref.index}" data-post-index="${ref.index}">>>${ref.index}</a>`)
+  }
   
   return html
 }

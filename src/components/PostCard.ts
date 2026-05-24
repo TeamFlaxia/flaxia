@@ -57,6 +57,20 @@ export class PostCard {
       position: relative;
     `
 
+    // Post index (left side)
+    if (this.props.postIndex !== undefined) {
+      const indexEl = document.createElement('span')
+      indexEl.textContent = `${this.props.postIndex}`
+      indexEl.style.cssText = `
+        color: #94a3b8;
+        font-size: 0.8125rem;
+        font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        margin-right: 0.5rem;
+        flex-shrink: 0;
+      `
+      headerContainer.appendChild(indexEl)
+    }
+
     // Post header
     const header = createPostHeader({
       username: this.props.post.username,
@@ -65,20 +79,6 @@ export class PostCard {
       createdAt: this.props.post.created_at
     })
     headerContainer.appendChild(header)
-
-    // Post index
-    if (this.props.postIndex !== undefined) {
-      const indexEl = document.createElement('span')
-      indexEl.textContent = `${this.props.postIndex}`
-      indexEl.style.cssText = `
-        color: #94a3b8;
-        font-size: 0.8125rem;
-        font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        margin-left: 0.5rem;
-        flex-shrink: 0;
-      `
-      headerContainer.appendChild(indexEl)
-    }
 
     // ... menu button
     const isOwnPost = this.props.currentUser?.username === this.props.post.username

@@ -6,25 +6,8 @@ export interface PostNode {
 }
 
 export function buildTree(posts: Post[]): PostNode[] {
-  const map = new Map<string, PostNode>()
-  const roots: PostNode[] = []
-
-  // Create nodes for all posts
-  for (const post of posts) {
-    map.set(post.id, { post, children: [] })
-  }
-
-  // Build the tree structure
-  for (const post of posts) {
-    const node = map.get(post.id)!
-    if (post.parent_id && map.has(post.parent_id)) {
-      map.get(post.parent_id)!.children.push(node)
-    } else {
-      roots.push(node)
-    }
-  }
-
-  return roots
+  // Return all posts as flat root nodes (no nesting)
+  return posts.map(post => ({ post, children: [] }))
 }
 
 export function findNode(tree: PostNode[], postId: string): PostNode | null {
