@@ -239,11 +239,13 @@ export function getSessionToken(request: Request): string | null {
 }
 
 // Set session cookie
-export function setSessionCookie(response: Response, token: string): void {
-  response.headers.set('Set-Cookie', `session=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${7 * 24 * 60 * 60}`)
+export function setSessionCookie(response: Response, token: string, isSecure = true): void {
+  const secure = isSecure ? '; Secure' : ''
+  response.headers.set('Set-Cookie', `session=${token}; HttpOnly${secure}; SameSite=Lax; Path=/; Max-Age=${7 * 24 * 60 * 60}`)
 }
 
 // Clear session cookie
-export function clearSessionCookie(response: Response): void {
-  response.headers.set('Set-Cookie', 'session=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0')
+export function clearSessionCookie(response: Response, isSecure = true): void {
+  const secure = isSecure ? '; Secure' : ''
+  response.headers.set('Set-Cookie', `session=; HttpOnly${secure}; SameSite=Lax; Path=/; Max-Age=0`)
 }

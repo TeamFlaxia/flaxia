@@ -17,8 +17,9 @@ CREATE TABLE ads_new (
   adsense_client TEXT DEFAULT 'ca-pub-8703789531673358'
 );
 
--- Copy data from old table
-INSERT INTO ads_new SELECT * FROM ads;
+-- Copy data from old table with explicit column mapping
+INSERT INTO ads_new (id, title, body_text, payload_key, payload_type, click_url, active, impressions, clicks, created_at, thumbnail_key, ad_type)
+SELECT id, title, body_text, payload_key, payload_type, click_url, active, impressions, clicks, created_at, thumbnail_key, ad_type FROM ads;
 
 -- Drop old table
 DROP TABLE ads;

@@ -842,8 +842,9 @@ app.post('/api/auth/login', async (c) => {
     const result = await loginUser(c.env, email, password)
     
     // Set session cookie
+    const isSecure = c.req.url.startsWith('https')
     const response = c.json({ user: result.user })
-    setSessionCookie(response, result.session.id)
+    setSessionCookie(response, result.session.id, isSecure)
     
     return response
   } catch (error: any) {
@@ -861,8 +862,9 @@ app.post('/api/auth/logout', requireAuth, async (c) => {
     }
     
     // Clear session cookie
+    const isSecure = c.req.url.startsWith('https')
     const response = c.json({ success: true })
-    clearSessionCookie(response)
+    clearSessionCookie(response, isSecure)
     
     return response
   } catch (error: any) {
