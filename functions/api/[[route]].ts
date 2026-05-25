@@ -201,7 +201,7 @@ app.get('/api/dos-player/:postId', async (c) => {
 <head>
   <meta charset="utf-8">
   <title>DOS Game</title>
-  <script src="https://v8.js-dos.com/latest/js-dos.js"></script>
+  <link rel="stylesheet" href="/js-dos/js-dos.css">
   <style>
     html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
     #dos-container { width: 100%; height: 100%; }
@@ -218,21 +218,41 @@ app.get('/api/dos-player/:postId', async (c) => {
   <div id="error-overlay" class="error-overlay" style="display:none;"></div>
   <script>
     var zipUrl = window.location.origin + '/api/zip/' + '${postId}';
+    var loadFailedMsg = '${loadFailed}';
+    var loadAttempts = 0;
+
+    function loadJsdos() {
+      return new Promise(function (resolve, reject) {
+        var script = document.createElement('script');
+        if (loadAttempts === 0) {
+          script.src = '/js-dos/js-dos.js';
+        } else if (loadAttempts === 1) {
+          script.src = 'https://v8.js-dos.com/latest/js-dos.js';
+        } else {
+          reject(new Error('All js-dos sources failed'));
+          return;
+        }
+        loadAttempts++;
+        script.onload = resolve;
+        script.onerror = function () {
+          document.head.removeChild(script);
+          loadJsdos().then(resolve).catch(reject);
+        };
+        document.head.appendChild(script);
+      });
+    }
 
     async function init() {
       var container = document.getElementById('dos-container');
       var errorOverlay = document.getElementById('error-overlay');
 
       try {
-        if (typeof Dos === 'undefined') {
-          throw new Error('js-dos failed to load');
-        }
-
+        await loadJsdos();
         await Dos(container, { url: zipUrl, autolock: true });
       } catch (err) {
         console.error('DOS Player error:', err);
         errorOverlay.style.display = 'flex';
-        errorOverlay.textContent = '${loadFailed}';
+        errorOverlay.textContent = loadFailedMsg;
       }
     }
 
