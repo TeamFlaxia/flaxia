@@ -4,9 +4,9 @@
   "description": "Chronological SNS where posts are living, interactive applications",
   "type": "module",
   "scripts": {
-    "dev": "vite build && wrangler pages dev dist --d1=DB --r2=BUCKET --port 8787",
-    "dev:hot": "vite build --watch & wrangler pages dev dist --d1=DB --r2=BUCKET --port 8787",
-    "dev:api": "wrangler pages dev dist --d1=DB --r2=BUCKET --port 8787",
+    "dev": "npm run migrate:local && vite build && wrangler pages dev dist --port 8787",
+    "dev:hot": "npm run migrate:local && vite build --watch & wrangler pages dev dist --port 8787",
+    "dev:api": "npm run migrate:local && wrangler pages dev dist --port 8787",
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "wrangler pages deploy dist",

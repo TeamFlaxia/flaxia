@@ -862,11 +862,16 @@ app.get('/api/games', async (c) => {
 // POST /api/auth/register - user registration
 app.post('/api/auth/register', async (c) => {
   const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
-  const rl = await checkRateLimit(c.env.RATE_LIMIT, {
-    key: `register:${ip}`,
-    limit: 3,
-    windowSeconds: 3600
-  })
+  let rl = { allowed: true, remaining: 0, resetIn: 0 }
+  try {
+    rl = await checkRateLimit(c.env.RATE_LIMIT, {
+      key: `register:${ip}`,
+      limit: 3,
+      windowSeconds: 3600
+    })
+  } catch (kvError: any) {
+    console.warn('Register rate limit check failed, proceeding anyway:', kvError.message)
+  }
   if (!rl.allowed) return rateLimitResponse(c, rl.resetIn, 3)
 
   try {
@@ -3472,11 +3477,16 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
 // POST /api/posts - create post (protected)
 app.post('/api/posts', requireAuth, async (c) => {
   const isTestEnvironment = c.req.url.includes('localhost:8788')
-  const rl = await checkRateLimit(c.env.RATE_LIMIT, {
-    key: `post:${c.get('user')?.id}`,
-    limit: 5,
-    windowSeconds: 60
-  })
+  let rl = { allowed: true, remaining: 0, resetIn: 0 }
+  try {
+    rl = await checkRateLimit(c.env.RATE_LIMIT, {
+      key: `post:${c.get('user')?.id}`,
+      limit: 5,
+      windowSeconds: 60
+    })
+  } catch (kvError: any) {
+    console.warn('Post rate limit check failed, proceeding anyway:', kvError.message)
+  }
   if (!rl.allowed) return rateLimitResponse(c, rl.resetIn, 5)
 
   try {
@@ -4211,6 +4221,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
     }
 
     // Create notification for the parent post author (if not replying to own post)
+    const notifiedUserIds = new Set<string>()
     if (parentPost.user_id !== c.get('user')?.id) {
       try {
         await c.env.DB.prepare(`
@@ -4223,6 +4234,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
           postId,
           c.get('user')?.id
         ).run()
+        notifiedUserIds.add(parentPost.user_id)
       } catch (e) {
         console.error('Failed to create reply notification:', e)
         // Don't fail the whole operation, just log the error
@@ -4247,6 +4259,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
     }
 
     // Create notifications for >>N post references in the reply
+    // Skip if the referenced post author was already notified (e.g., parent post author)
     try {
       const refRegex = />>(\d+)/g
       const referencedIndices = new Set<number>()
@@ -4269,7 +4282,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
           const arrayIndex = refIndex - 1
           if (arrayIndex >= 0 && arrayIndex < allReplies.length) {
             const referencedPost = allReplies[arrayIndex] as any
-            if (referencedPost.user_id && referencedPost.user_id !== replyUserId) {
+            if (referencedPost.user_id && referencedPost.user_id !== replyUserId && !notifiedUserIds.has(referencedPost.user_id)) {
               await c.env.DB.prepare(
                 'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
               ).bind(nanoid(), referencedPost.user_id, 'reply', replyId, replyUserId).run()
@@ -4599,11 +4612,16 @@ async function insertAdminAlert(db: D1Database, postId: string, category: Report
 
 // POST /api/report - unified report endpoint (protected)
 app.post('/api/report', requireAuth, async (c) => {
-  const rl = await checkRateLimit(c.env.RATE_LIMIT, {
-    key: `report:${c.get('user')?.id}`,
-    limit: 10,
-    windowSeconds: 60
-  })
+  let rl = { allowed: true, remaining: 0, resetIn: 0 }
+  try {
+    rl = await checkRateLimit(c.env.RATE_LIMIT, {
+      key: `report:${c.get('user')?.id}`,
+      limit: 10,
+      windowSeconds: 60
+    })
+  } catch (kvError: any) {
+    console.warn('Report rate limit check failed, proceeding anyway:', kvError.message)
+  }
   if (!rl.allowed) return rateLimitResponse(c, rl.resetIn, 10)
 
   try {
