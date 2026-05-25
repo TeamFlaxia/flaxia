@@ -4246,6 +4246,41 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
       }
     }
 
+    // Create notifications for >>N post references in the reply
+    try {
+      const refRegex = />>(\d+)/g
+      const referencedIndices = new Set<number>()
+      let refMatch
+      while ((refMatch = refRegex.exec(text)) !== null) {
+        const index = parseInt(refMatch[1], 10)
+        if (index > 0) referencedIndices.add(index)
+      }
+
+      if (referencedIndices.size > 0) {
+        const rootId = parentPost.root_id || parentPost.id
+        const allRepliesResult = await c.env.DB.prepare(
+          'SELECT id, user_id, username FROM posts WHERE root_id = ? AND status = \'published\' AND id != ? ORDER BY created_at ASC'
+        ).bind(rootId, rootId).all()
+
+        const allReplies = allRepliesResult.results || []
+        const replyUserId = c.get('user')?.id || ''
+
+        for (const refIndex of referencedIndices) {
+          const arrayIndex = refIndex - 1
+          if (arrayIndex >= 0 && arrayIndex < allReplies.length) {
+            const referencedPost = allReplies[arrayIndex] as any
+            if (referencedPost.user_id && referencedPost.user_id !== replyUserId) {
+              await c.env.DB.prepare(
+                'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
+              ).bind(nanoid(), referencedPost.user_id, 'reply', replyId, replyUserId).run()
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to create >>N reference notifications:', e)
+    }
+
     return c.json({ reply })
   } catch (error: any) {
     console.error('Commit reply error:', error)

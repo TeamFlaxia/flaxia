@@ -51,7 +51,7 @@ export async function createPostText(props: PostTextProps): Promise<HTMLElement>
   container.className = 'post-text'
   
   // Process the text through the unified pipeline
-  const processedHtml = await processText(props.text)
+  const processedHtml = await processText(props.text, props.enablePostRefs)
   container.innerHTML = processedHtml
   
   // Render math elements after HTML is inserted
@@ -78,7 +78,7 @@ export { processText, renderMathElements, linkifyHashtags, linkifyUrls, linkifyM
  * 3. Sanitize HTML
  * 4. Expand KaTeX placeholders
  */
-async function processText(text: string): Promise<string> {
+async function processText(text: string, enablePostRefs?: boolean): Promise<string> {
   // Step 1: Escape math notation with placeholders
   const { textWithPlaceholders, mathPlaceholders } = escapeMathNotation(text)
   
@@ -106,10 +106,13 @@ async function processText(text: string): Promise<string> {
   })
   console.log('HTML after sanitization:', html)
   
-  // Step 4.5: Restore post reference placeholders as clickable links
+  // Step 4.5: Restore post reference placeholders as clickable links (or plain text)
   for (const ref of refPlaceholders) {
     const placeholderRegex = new RegExp(`⚡${ref.id}⚡`, 'g')
-    html = html.replace(placeholderRegex, `<a class="post-ref-link" href="#post-${ref.index}" data-post-index="${ref.index}">>>${ref.index}</a>`)
+    const replacement = enablePostRefs
+      ? `<a class="post-ref-link" href="#post-${ref.index}" data-post-index="${ref.index}">>>${ref.index}</a>`
+      : `>>${ref.index}`
+    html = html.replace(placeholderRegex, replacement)
   }
   
   return html

@@ -52,7 +52,6 @@ export class PostCard {
     const headerContainer = document.createElement('div')
     headerContainer.style.cssText = `
       display: flex;
-      justify-content: space-between;
       align-items: flex-start;
       position: relative;
     `
@@ -83,6 +82,7 @@ export class PostCard {
     // ... menu button
     const isOwnPost = this.props.currentUser?.username === this.props.post.username
     const menuButton = this.createMenuButton(isOwnPost)
+    menuButton.style.marginLeft = 'auto'
     headerContainer.appendChild(menuButton)
 
     container.appendChild(headerContainer)
@@ -459,8 +459,17 @@ export class PostCard {
   }
 
   public updatePost(post: Partial<typeof this.props.post>): void {
+    if (post.reply_count !== undefined) {
+      this.replyCount = post.reply_count
+    }
+    if (post.fresh_count !== undefined) {
+      this.freshCount = post.fresh_count
+    }
+    if (post.is_freshed !== undefined) {
+      this.isFreshed = post.is_freshed
+    }
     this.props.post = { ...this.props.post, ...post }
-    // Re-render if needed
+    this.updateActions()
   }
 
   private createMenuButton(isOwnPost: boolean): HTMLElement {

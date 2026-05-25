@@ -42,6 +42,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentAdminTab: 'alerts' | 'hidden' | 'users' | 'ads' = 'alerts'
     let timeline: any = null
     let threadPage: any = null
+    let savedTimelineContainer: HTMLElement | null = null
     let loginPage: any = null
     let registerPage: any = null
     let profilePage: any = null
@@ -533,11 +534,19 @@ document.addEventListener('DOMContentLoaded', async () => {
           return // Auth guard will redirect to login
         }
         
-        // Cleanup current view
+        // Cleanup current view - save timeline container when opening thread
         if (timeline) {
-          console.log('Cleaning up timeline')
-          timeline.destroy()
-          timeline = null
+          if (view === 'thread' && currentView === 'timeline') {
+            const container = timeline.getElement().closest('.main-container') as HTMLElement
+            if (container) {
+              savedTimelineContainer = container
+              container.remove()
+            }
+          } else {
+            console.log('Cleaning up timeline')
+            timeline.destroy()
+            timeline = null
+          }
         }
         if (threadPage) {
           console.log('Cleaning up thread page')
@@ -572,6 +581,21 @@ document.addEventListener('DOMContentLoaded', async () => {
           searchPage.destroy()
           searchPage = null
         }
+      }
+      
+      // Restore saved timeline container when going back from thread
+      if (view === 'timeline' && savedTimelineContainer) {
+        app.innerHTML = ''
+        app.appendChild(savedTimelineContainer)
+        savedTimelineContainer = null
+        currentView = 'timeline'
+        currentPostId = null
+        return
+      }
+      
+      // Clear saved timeline container if navigating somewhere other than back to timeline
+      if (view !== 'timeline') {
+        savedTimelineContainer = null
       }
       
       // Clear app content
@@ -1296,7 +1320,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           sandboxOrigin,
           currentUser,
           onBack: () => {
-            console.log('Back button clicked, navigating to home')
+            console.log('Back button clicked, returning to timeline')
             window.history.pushState({}, '', '/home')
             navigateTo('timeline')
           }
