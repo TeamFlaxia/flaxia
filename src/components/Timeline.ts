@@ -412,6 +412,9 @@ export class Timeline {
       
       this.state.hasMore = data.posts.length === 20
       this.renderPostList()
+      
+      // Dispatch ready event for scroll restoration
+      this.element.dispatchEvent(new CustomEvent('timelineReady'))
 
     } catch (error) {
       console.error('Failed to load posts:', error)
