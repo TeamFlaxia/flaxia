@@ -62,6 +62,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let unreadNotificationCount = 0
     let adminUsernames: string[] = []
     let notificationPollInterval: ReturnType<typeof setInterval> | null = null
+    let cachedContentComponent: { view: string; component: any; scrollY: number } | null = null
 
     const refreshNotificationBadges = async () => {
       await fetchNotifications()
@@ -534,14 +535,35 @@ document.addEventListener('DOMContentLoaded', async () => {
           return // Auth guard will redirect to login
         }
         
-        // Save scroll position when leaving timeline (for back navigation)
+        // Cache current view when navigating to thread (for back navigation with preserved content)
+        if (view === 'thread' && currentView !== 'thread') {
+          console.log('Caching current view for back navigation:', currentView)
+          if (currentView === 'timeline' && timeline) {
+            cachedContentComponent = { view: 'timeline', component: timeline, scrollY: window.scrollY }
+            timeline = null
+          } else if (currentView === 'profile' && profilePage) {
+            cachedContentComponent = { view: 'profile', component: profilePage, scrollY: window.scrollY }
+            profilePage = null
+          } else if (currentView === 'explore' && explorePage) {
+            cachedContentComponent = { view: 'explore', component: explorePage, scrollY: window.scrollY }
+            explorePage = null
+          } else if (currentView === 'search' && searchPage) {
+            cachedContentComponent = { view: 'search', component: searchPage, scrollY: window.scrollY }
+            searchPage = null
+          } else if (currentView === 'arcade' && arcadePage) {
+            cachedContentComponent = { view: 'arcade', component: arcadePage, scrollY: window.scrollY }
+            arcadePage = null
+          }
+        }
+
+        // Save scroll position when leaving timeline (for fresh timeline creation back navigation)
         if (currentView === 'timeline' && view !== 'timeline') {
           savedScrollY = window.scrollY
         } else if (view !== 'timeline') {
           savedScrollY = 0
         }
 
-        // Cleanup current view
+        // Cleanup current view (cached components already nulled above)
         if (timeline) {
           console.log('Cleaning up timeline')
           timeline.destroy()
@@ -784,12 +806,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         leftNavInstances.add(leftNav)
         
-        // Create Explore Page (as main content)
         const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app'
-        explorePage = createExplorePage({
-          tag: currentTag || undefined,
-          sandboxOrigin
-        })
+        
+        if (cachedContentComponent?.view === 'explore') {
+          console.log('Restoring cached explore page')
+          explorePage = cachedContentComponent.component
+          const scrollY = cachedContentComponent.scrollY
+          cachedContentComponent = null
+          
+          requestAnimationFrame(() => {
+            window.scrollTo(0, scrollY)
+          })
+        } else {
+          // Create fresh explore page
+          explorePage = createExplorePage({
+            tag: currentTag || undefined,
+            sandboxOrigin
+          })
+        }
         
         // Create Right Panel
         const rightPanel = createRightPanel({
@@ -869,12 +903,24 @@ document.addEventListener('DOMContentLoaded', async () => {
         leftNavInstances.add(leftNav)
 
         const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app'
-        searchPage = createSearchPage({
-          query: searchQuery || '',
-          type: searchType || 'posts',
-          currentUser: currentUser,
-          sandboxOrigin
-        })
+        
+        if (cachedContentComponent?.view === 'search') {
+          console.log('Restoring cached search page')
+          searchPage = cachedContentComponent.component
+          const scrollY = cachedContentComponent.scrollY
+          cachedContentComponent = null
+          
+          requestAnimationFrame(() => {
+            window.scrollTo(0, scrollY)
+          })
+        } else {
+          searchPage = createSearchPage({
+            query: searchQuery || '',
+            type: searchType || 'posts',
+            currentUser: currentUser,
+            sandboxOrigin
+          })
+        }
 
         const rightPanel = createRightPanel({
           onSearch: (query) => {
@@ -951,13 +997,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         leftNavInstances.add(leftNav)
         
-        // Create Arcade Page (as main content)
         const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app'
-        arcadePage = createArcadePage({
-          sandboxOrigin,
-          currentUser,
-          initialGameId: currentPostId || undefined
-        })
+        
+        if (cachedContentComponent?.view === 'arcade') {
+          console.log('Restoring cached arcade page')
+          arcadePage = cachedContentComponent.component
+          const scrollY = cachedContentComponent.scrollY
+          cachedContentComponent = null
+          
+          requestAnimationFrame(() => {
+            window.scrollTo(0, scrollY)
+          })
+        } else {
+          // Create fresh arcade page
+          arcadePage = createArcadePage({
+            sandboxOrigin,
+            currentUser,
+            initialGameId: currentPostId || undefined
+          })
+        }
         
         // Create Right Panel
         const rightPanel = createRightPanel({
@@ -1039,13 +1097,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         leftNavInstances.add(leftNav)
         
-        // Create Profile Page (as main content)
         const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app'
-        profilePage = createProfilePage({
-          username,
-          currentUser,
-          sandboxOrigin
-        })
+        
+        if (cachedContentComponent?.view === 'profile') {
+          console.log('Restoring cached profile')
+          profilePage = cachedContentComponent.component
+          const scrollY = cachedContentComponent.scrollY
+          cachedContentComponent = null
+          
+          requestAnimationFrame(() => {
+            window.scrollTo(0, scrollY)
+          })
+        } else {
+          // Create fresh profile page
+          profilePage = createProfilePage({
+            username,
+            currentUser,
+            sandboxOrigin
+          })
+        }
         
         // Create Right Panel
         const rightPanel = createRightPanel({
@@ -1304,9 +1374,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           sandboxOrigin,
           currentUser,
           onBack: () => {
-            console.log('Back button clicked, returning to timeline')
-            window.history.pushState({}, '', '/home')
-            navigateTo('timeline')
+            console.log('Back button clicked, returning to previous view')
+            window.history.back()
           }
         })
         
@@ -1370,36 +1439,48 @@ document.addEventListener('DOMContentLoaded', async () => {
         
         leftNavInstances.add(leftNav)
         
-        // Create Timeline
         const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app'
-        timeline = createTimeline({
-          sandboxOrigin,
-          currentUser
-        })
         
-        // Listen for navigation events from timeline
-        timeline.getElement().addEventListener('navigateToThread', (e: any) => {
-          const postId = e.detail.postId
-          window.history.pushState({ postId }, '', `/thread/${postId}`)
-          navigateTo('thread', postId)
-        })
-
-        // Listen for openLeftNav events from timeline (mobile swipe)
-        timeline.getElement().addEventListener('openLeftNav', () => {
-          const leftNavElement = document.querySelector('.left-nav') as HTMLElement
-          if (leftNavElement) {
-            openLeftNav(leftNavElement)
-          }
-        })
-        
-        // Restore scroll position after timeline posts load
-        timeline.getElement().addEventListener('timelineReady', () => {
-          if (savedScrollY > 0) {
-            const scrollY = savedScrollY
-            savedScrollY = 0
+        if (cachedContentComponent?.view === 'timeline') {
+          console.log('Restoring cached timeline')
+          timeline = cachedContentComponent.component
+          const scrollY = cachedContentComponent.scrollY
+          cachedContentComponent = null
+          
+          requestAnimationFrame(() => {
             window.scrollTo(0, scrollY)
-          }
-        }, { once: true })
+          })
+        } else {
+          // Create fresh timeline
+          timeline = createTimeline({
+            sandboxOrigin,
+            currentUser
+          })
+          
+          // Listen for navigation events from timeline
+          timeline.getElement().addEventListener('navigateToThread', (e: any) => {
+            const postId = e.detail.postId
+            window.history.pushState({ postId }, '', `/thread/${postId}`)
+            navigateTo('thread', postId)
+          })
+
+          // Listen for openLeftNav events from timeline (mobile swipe)
+          timeline.getElement().addEventListener('openLeftNav', () => {
+            const leftNavElement = document.querySelector('.left-nav') as HTMLElement
+            if (leftNavElement) {
+              openLeftNav(leftNavElement)
+            }
+          })
+          
+          // Restore scroll position after timeline posts load
+          timeline.getElement().addEventListener('timelineReady', () => {
+            if (savedScrollY > 0) {
+              const scrollY = savedScrollY
+              savedScrollY = 0
+              window.scrollTo(0, scrollY)
+            }
+          }, { once: true })
+        }
         
         // Setup mobile left nav functionality
         setupMobileLeftNav(leftNav.getElement())
