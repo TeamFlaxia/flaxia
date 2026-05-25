@@ -10,8 +10,13 @@ export interface Notification {
     display_name: string
     avatar_key: string | null
   }
+  actors?: Array<{
+    username: string
+    display_name: string
+    avatar_key: string | null
+  } | null>
   actor_id?: string | null
-  actor_data?: string | null  // JSON string for external actor info
+  actor_data?: string | null  // JSON string for external actor info or grouped actor IDs
   read: boolean
   created_at: string
 }
@@ -219,7 +224,27 @@ export class NotificationsPage {
     switch (notification.type) {
       case 'fresh':
       case 'ap_like':
-        if (notification.actor) {
+        if (notification.actors && notification.actors.length > 1) {
+          // Grouped fresh notification
+          const validActors = notification.actors.filter((a): a is NonNullable<typeof a> => a !== null)
+          if (validActors.length > 0) {
+            appendStrong(`@${validActors[0].username}`)
+            if (validActors.length === 2) {
+              mainText.appendChild(document.createTextNode(' '))
+              appendMuted(`(${validActors[0].display_name})`)
+              mainText.appendChild(document.createTextNode(t('notifications.freshed_and', { actor: '' })))
+              appendStrong(`@${validActors[1].username}`)
+              mainText.appendChild(document.createTextNode(' '))
+              appendMuted(`(${validActors[1].display_name})`)
+            } else {
+              const othersCount = validActors.length - 1
+              mainText.appendChild(document.createTextNode(' '))
+              appendMuted(`(${validActors[0].display_name})`)
+              mainText.appendChild(document.createTextNode(t('notifications.freshed_and_others', { n: othersCount })))
+            }
+            mainText.appendChild(document.createTextNode(t('notifications.freshed_your_post', { actor: '' })))
+          }
+        } else if (notification.actor) {
           const freshKey = notification.type === 'fresh' ? 'notifications.freshed_your_post' : 'notifications.liked_your_post'
           appendStrong(`@${notification.actor.username}`)
           mainText.appendChild(document.createTextNode(' '))

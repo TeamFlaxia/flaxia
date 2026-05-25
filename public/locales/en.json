@@ -113,6 +113,8 @@
   "notifications.reported_hint_ja": "見直しし、削除を検討してください。",
   "notifications.user_fallback_ja": "ユーザー",
   "notifications.freshed_your_post": "{actor} freshed your post",
+  "notifications.freshed_and": " and ",
+  "notifications.freshed_and_others": " and {n} others ",
   "notifications.liked_your_post": "{actor} liked your post",
   "notifications.followed_you": "{actor} followed you",
   "notifications.boosted_your_post": "{actor} boosted your post",

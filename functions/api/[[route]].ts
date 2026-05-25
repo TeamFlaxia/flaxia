@@ -3698,21 +3698,33 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
     
     // Create notification for post author (only if not self-freshing)
     if (post.user_id !== userId) {
-      // Check if notification already exists to prevent duplicates from rapid clicks
-      const existingNotif = await c.env.DB.prepare(
-        'SELECT id FROM notifications WHERE user_id = ? AND actor_id = ? AND post_id = ? AND type = \'fresh\''
-      ).bind(post.user_id, userId, postId).first()
+      try {
+        // Check if there's already a fresh notification for this post (group multiple actors)
+        const existingNotif = await c.env.DB.prepare(
+          'SELECT id, actor_id, actor_data FROM notifications WHERE user_id = ? AND post_id = ? AND type = \'fresh\' ORDER BY created_at DESC LIMIT 1'
+        ).bind(post.user_id, postId).first() as any
 
-      if (!existingNotif) {
-        try {
+        if (existingNotif) {
+          const actorData = existingNotif.actor_data
+            ? JSON.parse(existingNotif.actor_data)
+            : existingNotif.actor_id
+              ? [existingNotif.actor_id]
+              : []
+          if (!actorData.includes(userId)) {
+            actorData.push(userId)
+          }
+          await c.env.DB.prepare(
+            'UPDATE notifications SET actor_id = ?, actor_data = ?, created_at = strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\'), read = 0 WHERE id = ?'
+          ).bind(actorData[0], JSON.stringify(actorData), existingNotif.id).run()
+        } else {
           await c.env.DB
             .prepare('INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)')
             .bind(nanoid(), post.user_id, 'fresh', postId, userId)
             .run()
-        } catch (e) {
-          // Don't fail the fresh operation if notification fails
-          console.error('Failed to create fresh notification:', e)
         }
+      } catch (e) {
+        // Don't fail the fresh operation if notification fails
+        console.error('Failed to create fresh notification:', e)
       }
     }
     
@@ -3773,16 +3785,51 @@ app.post('/api/posts/fresh/batch', requireAuth, async (c) => {
           UPDATE posts SET fresh_count = fresh_count + 1 WHERE id IN (${toFresh.map(() => '?').join(',')})
         `).bind(...toFresh).run()
         
-        // Create notifications for non-self posts
-        const notificationsToCreate = posts.results
-          .filter(p => toFresh.includes(p.id) && p.user_id !== userId)
-          .map(p => `('${nanoid()}', '${p.user_id}', 'fresh', '${p.id}', '${userId}')`)
+        // Create notifications for non-self posts (grouped)
+        const nonSelfPosts = posts.results.filter(p => toFresh.includes(p.id) && p.user_id !== userId)
         
-        if (notificationsToCreate.length > 0) {
+        if (nonSelfPosts.length > 0) {
           try {
-            await c.env.DB.prepare(`
-              INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES ${notificationsToCreate.join(',')}
-            `).run()
+            // Get existing fresh notifications for these posts
+            const userPostPairs = nonSelfPosts.map(p => ({ userId: p.user_id, postId: p.id }))
+            const existingNotifs = await c.env.DB.prepare(`
+              SELECT id, user_id, post_id, actor_id, actor_data FROM notifications 
+              WHERE (user_id, post_id) IN (${userPostPairs.map(() => '(?, ?)').join(',')}) AND type = 'fresh'
+            `).bind(...userPostPairs.flatMap(p => [p.userId, p.postId])).all()
+            
+            const existingMap = new Map<string, any>()
+            for (const row of (existingNotifs.results || [])) {
+              existingMap.set(`${row.user_id}:${row.post_id}`, row)
+            }
+            
+            const inserts: string[] = []
+            
+            for (const p of nonSelfPosts) {
+              const key = `${p.user_id}:${p.id}`
+              const existing = existingMap.get(key)
+              
+              if (existing) {
+                const actorData = existing.actor_data
+                  ? JSON.parse(existing.actor_data)
+                  : existing.actor_id
+                    ? [existing.actor_id]
+                    : []
+                if (!actorData.includes(userId)) {
+                  actorData.push(userId)
+                }
+                await c.env.DB.prepare(
+                  'UPDATE notifications SET actor_id = ?, actor_data = ?, created_at = strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\'), read = 0 WHERE id = ?'
+                ).bind(actorData[0], JSON.stringify(actorData), existing.id).run()
+              } else {
+                inserts.push(`('${nanoid()}', '${p.user_id}', 'fresh', '${p.id}', '${userId}')`)
+              }
+            }
+            
+            if (inserts.length > 0) {
+              await c.env.DB.prepare(`
+                INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES ${inserts.join(',')}
+              `).run()
+            }
           } catch (e) {
             console.error('Failed to create batch fresh notifications:', e)
           }
@@ -4955,21 +5002,62 @@ app.get('/api/notifications', requireAuth, async (c) => {
     ).bind(userId).first() as { count: number }
     
     // Format notifications
-    const notifications = (result.results || []).map((row: any) => ({
-      id: row.id,
-      type: row.type,
-      post_id: row.post_id,
-      post_text_preview: row.post_text_preview,
-      actor: row.actor_username ? {
-        username: row.actor_username,
-        display_name: row.actor_display_name,
-        avatar_key: row.actor_avatar_key
-      } : undefined,
-      actor_id: row.actor_id,
-      actor_data: row.actor_data,
-      read: row.read === 1,
-      created_at: row.created_at
-    }))
+    const rows = (result.results || [])
+    
+    // Collect all actor IDs from actor_data for grouped fresh notifications
+    const allActorIds = new Set<string>()
+    for (const row of rows) {
+      if (row.type === 'fresh' && row.actor_data) {
+        try {
+          const ids = JSON.parse(row.actor_data)
+          if (Array.isArray(ids)) ids.forEach((id: string) => allActorIds.add(id))
+        } catch {}
+      }
+    }
+    
+    // Fetch user info for all grouped actors
+    const actorUserMap = new Map<string, any>()
+    if (allActorIds.size > 0) {
+      const userRows = await c.env.DB.prepare(`
+        SELECT id, username, display_name, avatar_key FROM users WHERE id IN (${Array.from(allActorIds).map(() => '?').join(',')})
+      `).bind(...Array.from(allActorIds)).all()
+      for (const u of (userRows.results || [])) {
+        actorUserMap.set(u.id, u)
+      }
+    }
+    
+    const notifications = rows.map((row: any) => {
+      const notif: any = {
+        id: row.id,
+        type: row.type,
+        post_id: row.post_id,
+        post_text_preview: row.post_text_preview,
+        actor: row.actor_username ? {
+          username: row.actor_username,
+          display_name: row.actor_display_name,
+          avatar_key: row.actor_avatar_key
+        } : undefined,
+        actor_id: row.actor_id,
+        actor_data: row.actor_data,
+        read: row.read === 1,
+        created_at: row.created_at
+      }
+      
+      // For fresh notifications with grouped actors, include all actors
+      if (row.type === 'fresh' && row.actor_data) {
+        try {
+          const ids = JSON.parse(row.actor_data)
+          if (Array.isArray(ids) && ids.length > 1) {
+            notif.actors = ids.map((id: string) => {
+              const u = actorUserMap.get(id)
+              return u ? { username: u.username, display_name: u.display_name, avatar_key: u.avatar_key } : null
+            }).filter(Boolean)
+          }
+        } catch {}
+      }
+      
+      return notif
+    })
     
     return c.json({
       notifications,

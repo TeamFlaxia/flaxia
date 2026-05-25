@@ -43,6 +43,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let timeline: any = null
     let threadPage: any = null
     let savedTimelineContainer: HTMLElement | null = null
+    let savedScrollY = 0
     let loginPage: any = null
     let registerPage: any = null
     let profilePage: any = null
@@ -540,6 +541,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const container = timeline.getElement().closest('.main-container') as HTMLElement
             if (container) {
               savedTimelineContainer = container
+              savedScrollY = window.scrollY
               container.remove()
             }
           } else {
@@ -588,6 +590,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         app.innerHTML = ''
         app.appendChild(savedTimelineContainer)
         savedTimelineContainer = null
+        const scrollY = savedScrollY
+        savedScrollY = 0
+        requestAnimationFrame(() => window.scrollTo(0, scrollY))
         currentView = 'timeline'
         currentPostId = null
         return
@@ -596,6 +601,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Clear saved timeline container if navigating somewhere other than back to timeline
       if (view !== 'timeline') {
         savedTimelineContainer = null
+        savedScrollY = 0
       }
       
       // Clear app content
