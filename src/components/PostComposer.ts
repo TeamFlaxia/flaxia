@@ -6,6 +6,7 @@ export interface PostComposerProps {
 import { t } from '../lib/i18n.js'
 import { getMimeType } from '../lib/file-extensions.js'
 import DOMPurify from 'dompurify'
+import { showToast } from '../lib/toast.js'
 
 async function detectZipType(file: File): Promise<'html5' | 'dos' | null> {
   try {
@@ -95,7 +96,7 @@ export class PostComposer {
             <button class="composer-file-button" type="button">
               📎
             </button>
-            <button class="composer-poll-button" type="button" title="Add poll">
+            <button class="composer-poll-button" type="button" title="${t('poll.toggle_button')}">
               📊
             </button>
             <span class="composer-char-count">${t('composer.char_count', { current: 0, max: 200 })}</span>
@@ -106,9 +107,19 @@ export class PostComposer {
         </div>
         <div class="composer-poll-section" style="display: none;">
           <div class="poll-form">
-            <input type="text" class="poll-question-input" placeholder="Ask a question..." maxlength="100" />
+            <input type="text" class="poll-question-input" placeholder="${t('poll.question_placeholder')}" maxlength="100" />
             <div class="poll-options-list"></div>
-            <button class="poll-add-option" type="button">+ Add option</button>
+            <div class="poll-duration-row">
+              <span class="poll-duration-label">${t('poll.duration')}:</span>
+              <select class="poll-duration-select">
+                <option value="3600000">${t('poll.duration_1h')}</option>
+                <option value="21600000">${t('poll.duration_6h')}</option>
+                <option value="86400000" selected>${t('poll.duration_1d')}</option>
+                <option value="259200000">${t('poll.duration_3d')}</option>
+                <option value="604800000">${t('poll.duration_7d')}</option>
+              </select>
+            </div>
+            <button class="poll-add-option" type="button">${t('poll.add_option')}</button>
           </div>
         </div>
         <div class="composer-file-preview" style="display: none;">
@@ -542,8 +553,8 @@ export class PostComposer {
 
     const validation = this.validateFile(file)
     if (!validation.valid) {
-      this.showError(validation.error!)
       this.clearFileSelection()
+      showToast(validation.error!, true)
       return
     }
 
@@ -555,8 +566,8 @@ export class PostComposer {
     const isValidType = allowedTypes.includes(file.type) || isSwfByExtension || file.name.toLowerCase().endsWith('.js') || file.name.toLowerCase().endsWith('.wasm') || file.name.toLowerCase().endsWith('.zip') || file.name.toLowerCase().endsWith('.rsp') || file.name.toLowerCase().endsWith('.jsdos')
     
     if (!isValidType) {
-      this.showError(t('composer.error_unsupported_type'))
       this.clearFileSelection()
+      showToast(t('composer.error_unsupported_type'), true)
       return
     }
 
@@ -610,8 +621,8 @@ export class PostComposer {
 
     // Validate thumbnail size (1MB max)
     if (file.size > 1024 * 1024) {
-      this.showError(t('composer.error_thumbnail_size'))
       this.clearThumbnailSelection()
+      showToast(t('composer.error_thumbnail_size'), true)
       return
     }
 
@@ -619,8 +630,8 @@ export class PostComposer {
     const allowedExts = ['jpg', 'jpeg', 'png', 'gif']
     const ext = file.name.toLowerCase().split('.').pop()
     if (!ext || !allowedExts.includes(ext)) {
-      this.showError(t('composer.error_thumbnail_type'))
       this.clearThumbnailSelection()
+      showToast(t('composer.error_thumbnail_type'), true)
       return
     }
 
@@ -703,7 +714,7 @@ export class PostComposer {
       const input = document.createElement('input')
       input.type = 'text'
       input.className = 'poll-option-input'
-      input.placeholder = `Option ${i + 1}`
+      input.placeholder = t('poll.option_placeholder', { n: i + 1 })
       input.maxLength = 50
       input.value = val
       input.addEventListener('input', () => {
@@ -715,7 +726,7 @@ export class PostComposer {
         const removeBtn = document.createElement('button')
         removeBtn.type = 'button'
         removeBtn.className = 'poll-option-remove'
-        removeBtn.textContent = '✕'
+        removeBtn.textContent = t('poll.remove_option')
         removeBtn.addEventListener('click', () => this.removePollOption(i))
         item.appendChild(removeBtn)
       }
@@ -723,12 +734,15 @@ export class PostComposer {
     })
   }
 
-  private getPollData(): { question: string; options: string[]; multipleChoice: boolean } | null {
+  private getPollData(): { question: string; options: string[]; multipleChoice: boolean; endsAt?: string } | null {
     if (!this.pollActive) return null
     const question = this.pollQuestion.trim()
     const options = this.pollOptionsArr.map(o => o.trim()).filter(o => o.length > 0)
     if (!question || options.length < 2) return null
-    return { question, options, multipleChoice: false }
+    const select = this.element.querySelector('.poll-duration-select') as HTMLSelectElement
+    const durationMs = parseInt(select.value, 10)
+    const endsAt = new Date(Date.now() + durationMs).toISOString()
+    return { question, options, multipleChoice: false, endsAt }
   }
 
   private showFilePreview(file: File): void {
@@ -859,7 +873,7 @@ export class PostComposer {
     } catch (error: any) {
       console.error('Failed to create post:', error)
       const errorMessage = error?.message || t('composer.error_create_failed')
-      alert(`${errorMessage}${error?.details ? ` (${error.details})` : ''}`)
+      showToast(`${errorMessage}${error?.details ? ` (${error.details})` : ''}`, true)
     } finally {
       this.isSubmitting = false
       this.updateSubmitButton()
@@ -959,7 +973,7 @@ export class PostComposer {
     }
   }
 
-  private async commitPost(postId: string | undefined, gifKey: string | undefined, zipKey: string | undefined, swfKey: string | undefined, text: string, poll?: { question: string; options: string[]; multipleChoice: boolean } | null): Promise<{ post: any } | null> {
+  private async commitPost(postId: string | undefined, gifKey: string | undefined, zipKey: string | undefined, swfKey: string | undefined, text: string, poll?: { question: string; options: string[]; multipleChoice: boolean; endsAt?: string } | null): Promise<{ post: any } | null> {
     try {
       // Extract hashtags from text - support Japanese and other Unicode characters
       const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu

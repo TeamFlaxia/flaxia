@@ -136,7 +136,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     interface NotificationData {
       notifications: Array<{
         id: string
-        type: 'reported' | 'fresh' | 'warned' | 'hidden' | 'ap_follow' | 'ap_like' | 'ap_announce' | 'reply' | 'mention'
+        type: 'reported' | 'fresh' | 'warned' | 'hidden' | 'ap_follow' | 'ap_like' | 'ap_announce' | 'reply' | 'mention' | 'poll_ended'
         post_id: string
         post_text_preview: string
         actor?: {
@@ -1149,10 +1149,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         currentUsername = null
         currentTag = null
         
-        // Fetch notifications and user data in parallel
+        // Save unread count before fetching notifications data (the API might mark
+        // notifications as read, which would reset the count and lose the badge)
+        const savedUnreadCount = unreadNotificationCount
+        
+        // Fetch notifications data for the page content
         const [notificationsData] = await Promise.all([
           fetchNotifications()
         ])
+        
+        // Restore the pre-fetch unread count so the badge reflects the actual unread count
+        // (fetchNotifications may have changed it)
+        if (notificationsData.unread_count === 0 && savedUnreadCount > 0) {
+          unreadNotificationCount = savedUnreadCount
+        }
         
         // Create main container for 3-column layout
         const mainContainer = document.createElement('div')
@@ -1380,6 +1390,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           postId,
           sandboxOrigin,
           currentUser,
+          unreadCount: unreadNotificationCount,
           onBack: () => {
             console.log('Back button clicked, returning to previous view')
             window.history.back()

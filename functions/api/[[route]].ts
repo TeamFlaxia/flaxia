@@ -3511,7 +3511,15 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
         }
       }
     }
-    
+
+    if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
+      try {
+        await enrichPostsWithPolls([post], c.env.DB, c.get('user')?.id)
+      } catch (e) {
+        console.error('Failed to enrich post with poll:', e)
+      }
+    }
+
     return c.json({ post })
   } catch (error: any) {
     console.error('Commit post error:', error)
@@ -3726,8 +3734,21 @@ app.post('/api/posts', requireAuth, async (c) => {
       // Queue not available or other error - skip delivery in development
       console.error('ActivityPub delivery skipped:', String(e))
     }
-    
-    return c.json({ id: postId })
+
+    // Fetch the created post for enrichment
+    const fullPost = await c.env.DB.prepare(
+      'SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key as payloadKey, p.swf_key as swfKey, p.thumbnail_key as thumbnailKey, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, \'published\') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?'
+    ).bind(postId).first() as any
+
+    if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
+      try {
+        await enrichPostsWithPolls([fullPost], c.env.DB, c.get('user')?.id)
+      } catch (e) {
+        console.error('Failed to enrich post with poll:', e)
+      }
+    }
+
+    return c.json({ post: fullPost })
   } catch (error: any) {
     console.error('Post creation error:', error)
     return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500)
@@ -3760,7 +3781,29 @@ app.get('/api/polls/:postId', async (c) => {
       if (vote) userVote = vote.option_id
     }
 
-    return c.json({ poll, options, userVote })
+    const now = new Date()
+    const endsAt = poll.ends_at || null
+    const expired = endsAt ? new Date(endsAt) <= now : false
+
+    if (expired && !poll.ended_notified) {
+      try {
+        const post = await c.env.DB.prepare(
+          'SELECT user_id FROM posts WHERE id = ?'
+        ).bind(postId).first() as { user_id: string } | null
+        if (post) {
+          await c.env.DB.prepare(
+            'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
+          ).bind(crypto.randomUUID(), post.user_id, 'poll_ended', postId, '').run()
+          await c.env.DB.prepare(
+            'UPDATE polls SET ended_notified = 1 WHERE id = ?'
+          ).bind(poll.id).run()
+        }
+      } catch (e) {
+        console.error('Failed to create poll ended notification:', e)
+      }
+    }
+
+    return c.json({ poll, options, userVote, expired })
   } catch (error: any) {
     console.error('Get poll error:', error)
     return c.json({ error: 'Failed to get poll', details: error?.message }, 500)
@@ -3783,6 +3826,10 @@ app.post('/api/polls/:pollId/vote', requireAuth, async (c) => {
 
     if (!poll) return c.json({ error: 'Poll not found' }, 404)
 
+    if (poll.ends_at && new Date(poll.ends_at) <= new Date()) {
+      return c.json({ error: 'Poll has ended' }, 400)
+    }
+
     const option = await c.env.DB.prepare(
       'SELECT * FROM poll_options WHERE id = ? AND poll_id = ?'
     ).bind(optionId, pollId).first() as any | null
@@ -3791,9 +3838,20 @@ app.post('/api/polls/:pollId/vote', requireAuth, async (c) => {
 
     const existingVote = await c.env.DB.prepare(
       'SELECT * FROM poll_votes WHERE poll_id = ? AND user_id = ?'
-    ).bind(pollId, userId).first()
+    ).bind(pollId, userId).first() as any | null
 
-    if (existingVote) return c.json({ error: 'Already voted' }, 409)
+    if (existingVote) {
+      if (existingVote.option_id === optionId) {
+        return c.json({ error: 'Already voted for this option' }, 409)
+      }
+      // Change vote: remove old vote, decrement old option, add new vote, increment new option
+      await c.env.DB.prepare(
+        'DELETE FROM poll_votes WHERE id = ?'
+      ).bind(existingVote.id).run()
+      await c.env.DB.prepare(
+        'UPDATE poll_options SET votes_count = MAX(0, votes_count - 1) WHERE id = ?'
+      ).bind(existingVote.option_id).run()
+    }
 
     await c.env.DB.prepare(
       'INSERT INTO poll_votes (id, poll_id, option_id, user_id) VALUES (?, ?, ?, ?)'
@@ -4439,18 +4497,31 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
 
     // Create notification for the parent post author (if not replying to own post)
     const notifiedUserIds = new Set<string>()
-    if (parentPost.user_id !== c.get('user')?.id) {
+    const replyUserId = c.get('user')?.id || ''
+    if (parentPost.user_id !== replyUserId) {
       try {
-        await c.env.DB.prepare(`
-          INSERT INTO notifications (id, user_id, type, post_id, actor_id) 
-          VALUES (?, ?, ?, ?, ?)
-        `).bind(
-          nanoid(),
-          parentPost.user_id,
-          'reply',
-          postId,
-          c.get('user')?.id
-        ).run()
+        // Group reply notifications: check for existing reply notification for this post
+        const existingNotif = await c.env.DB.prepare(
+          'SELECT id, actor_id, actor_data FROM notifications WHERE user_id = ? AND post_id = ? AND type = \'reply\' ORDER BY created_at DESC LIMIT 1'
+        ).bind(parentPost.user_id, postId).first() as any
+
+        if (existingNotif) {
+          const actorData = existingNotif.actor_data
+            ? JSON.parse(existingNotif.actor_data)
+            : existingNotif.actor_id
+              ? [existingNotif.actor_id]
+              : []
+          if (!actorData.includes(replyUserId)) {
+            actorData.push(replyUserId)
+          }
+          await c.env.DB.prepare(
+            'UPDATE notifications SET actor_id = ?, actor_data = ?, created_at = strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\'), read = 0 WHERE id = ?'
+          ).bind(actorData[0], JSON.stringify(actorData), existingNotif.id).run()
+        } else {
+          await c.env.DB.prepare(
+            'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
+          ).bind(nanoid(), parentPost.user_id, 'reply', postId, replyUserId).run()
+        }
         notifiedUserIds.add(parentPost.user_id)
       } catch (e) {
         console.error('Failed to create reply notification:', e)
@@ -4461,7 +4532,6 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
     // Create mention notifications for mentioned users in the reply (skip self-mentions)
     if (mentionedUsernames.length > 0) {
       try {
-        const replyUserId = c.get('user')?.id || ''
         const mentionData = JSON.parse(mentionsJson) as Array<{username: string, user_id: string}>
         for (const mention of mentionData) {
           if (mention.user_id === replyUserId) continue
@@ -4493,7 +4563,6 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
         ).bind(rootId, rootId).all()
 
         const allReplies = allRepliesResult.results || []
-        const replyUserId = c.get('user')?.id || ''
 
         for (const refIndex of referencedIndices) {
           const arrayIndex = refIndex - 1
@@ -4899,19 +4968,36 @@ async function enrichPostsWithPolls(posts: any[], db: D1Database, currentUserId?
     }
   }
 
-  posts.forEach((post: any) => {
+  for (const post of posts) {
     const poll = pollMap.get(post.id)
     if (poll) {
+      const now = new Date()
+      const endsAt = poll.ends_at || null
+      const expired = endsAt ? new Date(endsAt) <= now : false
       post.poll = {
         id: poll.id,
         question: poll.question,
         multipleChoice: !!poll.multiple_choice,
-        endsAt: poll.ends_at,
+        endsAt,
         options: optsByPoll.get(poll.id) || [],
-        userVote: userVotes.get(poll.id) || null
+        userVote: userVotes.get(poll.id) || null,
+        expired
+      }
+
+      if (expired && !poll.ended_notified) {
+        try {
+          await db.prepare(
+            'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
+          ).bind(nanoid(), post.user_id, 'poll_ended', post.id, '').run()
+          await db.prepare(
+            'UPDATE polls SET ended_notified = 1 WHERE id = ?'
+          ).bind(poll.id).run()
+        } catch (e) {
+          console.error('Failed to create poll ended notification:', e)
+        }
       }
     }
-  })
+  }
 }
 
 // POST /api/report - unified report endpoint (protected)

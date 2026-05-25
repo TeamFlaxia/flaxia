@@ -2,7 +2,7 @@ import { t } from '../lib/i18n.js'
 
 export interface Notification {
   id: string
-  type: 'reported' | 'fresh' | 'warned' | 'hidden' | 'ap_follow' | 'ap_like' | 'ap_announce' | 'reply' | 'mention'
+  type: 'reported' | 'fresh' | 'warned' | 'hidden' | 'ap_follow' | 'ap_like' | 'ap_announce' | 'reply' | 'mention' | 'poll_ended'
   post_id: string | null
   post_text_preview: string | null
   actor?: {
@@ -188,6 +188,9 @@ export class NotificationsPage {
       case 'hidden':
         icon.textContent = '🙈'
         break
+      case 'poll_ended':
+        icon.textContent = '📊'
+        break
       default:
         icon.textContent = ''
     }
@@ -253,7 +256,26 @@ export class NotificationsPage {
         }
         break
       case 'reply':
-        if (notification.actor) {
+        if (notification.actors && notification.actors.length > 1) {
+          const validActors = notification.actors.filter((a): a is NonNullable<typeof a> => a !== null)
+          if (validActors.length > 0) {
+            appendStrong(`@${validActors[0].username}`)
+            if (validActors.length === 2) {
+              mainText.appendChild(document.createTextNode(' '))
+              appendMuted(`(${validActors[0].display_name})`)
+              mainText.appendChild(document.createTextNode(t('notifications.freshed_and', { actor: '' })))
+              appendStrong(`@${validActors[1].username}`)
+              mainText.appendChild(document.createTextNode(' '))
+              appendMuted(`(${validActors[1].display_name})`)
+            } else {
+              const othersCount = validActors.length - 1
+              mainText.appendChild(document.createTextNode(' '))
+              appendMuted(`(${validActors[0].display_name})`)
+              mainText.appendChild(document.createTextNode(t('notifications.freshed_and_others', { n: othersCount })))
+            }
+            mainText.appendChild(document.createTextNode(t('notifications.replied_to_you', { actor: '' })))
+          }
+        } else if (notification.actor) {
           appendStrong(`@${notification.actor.username}`)
           mainText.appendChild(document.createTextNode(' '))
           appendMuted(`(${notification.actor.display_name})`)
@@ -310,6 +332,9 @@ export class NotificationsPage {
           const domain = actorUrl.includes('://') ? new URL(actorUrl).hostname : actorUrl
           mainText.textContent = t('notifications.boost_external', { domain })
         }
+        break
+      case 'poll_ended':
+        mainText.textContent = t('notifications.poll_ended')
         break
       default:
         appendStrong(t('notifications.your_post_reported'))

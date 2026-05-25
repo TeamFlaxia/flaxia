@@ -100,6 +100,7 @@
   "notifications.title": "Notifications",
   "notifications.mark_all_read": "Mark all read",
   "notifications.empty": "No notifications yet",
+  "notifications.poll_ended": "Your poll has ended",
   "notifications.fresh": "{actor} freshed your post",
   "notifications.like": "{actor} liked your post",
   "notifications.reply_ja": "{actor} にリプライされました",
@@ -189,6 +190,8 @@
   "edit_profile.avatar": "Avatar",
   "edit_profile.save": "Save",
   "edit_profile.unsaved_changes": "You have unsaved changes. Are you sure you want to close?",
+  "edit_profile.avatar_size_error": "Image is too large. Please select an image under 1MB.",
+  "edit_profile.avatar_type_error": "Only JPEG, PNG, GIF, and WebP images are allowed.",
 
   "follower_list.followers": "Followers",
   "follower_list.following": "Following",
@@ -477,5 +480,29 @@
 
   "file_size.bytes": "{size} B",
   "file_size.kb": "{size} KB",
-  "file_size.mb": "{size} MB"
+  "file_size.mb": "{size} MB",
+
+  "poll.toggle_button": "Poll",
+  "poll.question_placeholder": "Ask a question...",
+  "poll.option_placeholder": "Option {n}",
+  "poll.add_option": "+ Add option",
+  "poll.remove_option": "✕",
+  "poll.duration": "Duration",
+  "poll.duration_1h": "1 hour",
+  "poll.duration_6h": "6 hours",
+  "poll.duration_1d": "1 day",
+  "poll.duration_3d": "3 days",
+  "poll.duration_7d": "7 days",
+  "poll.votes": "{count} vote",
+  "poll.votes_plural": "{count} votes",
+  "poll.voted": "Voted",
+  "poll.ended": "Ended",
+  "poll.remaining": "{time} left",
+  "poll.remaining_hours": "{count}h",
+  "poll.remaining_days": "{count}d",
+  "poll.remaining_minutes": "{count}m",
+  "poll.remaining_less_minute": "<1m",
+  "poll.vote_error": "Failed to vote",
+  "poll.already_voted": "Already voted",
+  "poll.click_to_change": "Click to change"
 }

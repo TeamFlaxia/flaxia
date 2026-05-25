@@ -200,27 +200,29 @@ export class PostCard {
     this.element.addEventListener('click', (e) => {
       console.log('PostCard clicked, target:', e.target)
       
-      // Don't navigate if clicking on buttons, inputs, or links
+      // Don't navigate if clicking on buttons, inputs, links, or poll options
       const target = e.target as HTMLElement
       const closestButton = target.closest('button')
       const closestInput = target.closest('input')
       const closestTextarea = target.closest('textarea')
       const closestLink = target.closest('a')
-      
+      const closestPollOption = target.closest('.poll-option')
+
       // Check if text is being selected
       const selection = window.getSelection()
       const isSelectingText = selection && selection.toString().length > 0
-      
+
       console.log('Checking if should prevent navigation:', {
         closestButton,
         closestInput,
         closestTextarea,
         closestLink,
+        closestPollOption,
         isSelectingText,
         selectedText: selection?.toString()
       })
-      
-      if (closestButton || closestInput || closestTextarea || closestLink || isSelectingText) {
+
+      if (closestButton || closestInput || closestTextarea || closestLink || closestPollOption || isSelectingText) {
         console.log('Navigation prevented - clicked on interactive element or text is being selected')
         return
       }
@@ -1056,8 +1058,12 @@ export class PostCard {
   }
 
   private createPollElement(poll: any): HTMLElement {
-    const totalVotes = poll.options.reduce((sum: number, opt: any) => sum + (opt.votes_count || 0), 0)
+    const totalVotes = poll.options.reduce((sum: number, opt: any) => sum + Number(opt.votes_count || 0), 0)
     const hasVoted = !!poll.userVote
+    const isExpired = poll.expired
+    const showResults = hasVoted || isExpired
+    const canChangeVote = hasVoted && !isExpired
+
     const container = document.createElement('div')
     container.className = 'post-poll'
     container.style.cssText = `margin: 12px 0; padding: 12px; background: var(--bg-secondary); border-radius: 8px;`
@@ -1068,25 +1074,35 @@ export class PostCard {
     question.textContent = poll.question
     container.appendChild(question)
 
+    if (isExpired) {
+      const endedBadge = document.createElement('div')
+      endedBadge.style.cssText = `font-size: 0.75rem; color: var(--text-muted); margin-bottom: 6px;`
+      endedBadge.textContent = t('poll.ended')
+      container.appendChild(endedBadge)
+    }
+
     poll.options.forEach((opt: any) => {
       const optEl = document.createElement('div')
       optEl.className = 'poll-option'
       const pct = totalVotes > 0 ? Math.round((opt.votes_count / totalVotes) * 100) : 0
+      const isOwnVote = opt.id === poll.userVote
+      const clickable = !isExpired && !isOwnVote
       optEl.style.cssText = `
         position: relative; padding: 8px 12px; margin-bottom: 6px; border-radius: 6px;
-        cursor: ${hasVoted ? 'default' : 'pointer'};
+        cursor: ${clickable ? 'pointer' : 'default'};
         background: var(--bg-primary); overflow: hidden;
         transition: opacity 0.2s; border: 1px solid var(--border);
-        ${hasVoted || opt.votes_count > 0 ? '' : 'opacity: 0.9;'}
+        ${showResults || opt.votes_count > 0 ? '' : 'opacity: 0.9;'}
+        ${isOwnVote ? 'border-color: var(--accent);' : ''}
       `
 
       const bar = document.createElement('div')
       bar.className = 'poll-bar'
       bar.style.cssText = `
         position: absolute; top: 0; left: 0; height: 100%; 
-        background: ${opt.id === poll.userVote ? 'var(--accent)' : 'var(--bg-hover)'};
-        width: ${hasVoted ? pct : 0}%; transition: width 0.5s ease; border-radius: 5px;
-        opacity: ${opt.id === poll.userVote ? '0.2' : '0.5'};
+        background: ${isOwnVote ? 'var(--accent)' : 'var(--bg-hover)'};
+        width: ${showResults ? pct : 0}%; transition: width 0.5s ease; border-radius: 5px;
+        opacity: ${isOwnVote ? '0.2' : '0.5'};
       `
       optEl.appendChild(bar)
 
@@ -1097,13 +1113,14 @@ export class PostCard {
       textSpan.textContent = opt.label
       const countSpan = document.createElement('span')
       countSpan.style.cssText = `font-size: 0.8rem; color: var(--text-muted); margin-left: 8px;`
-      countSpan.textContent = hasVoted ? `${pct}%` : ''
+      countSpan.textContent = showResults ? `${pct}%` : ''
       label.appendChild(textSpan)
       label.appendChild(countSpan)
       optEl.appendChild(label)
 
-      if (!hasVoted) {
-        optEl.addEventListener('click', async () => {
+      if (clickable) {
+        optEl.addEventListener('click', async (e) => {
+          e.stopPropagation()
           try {
             const response = await fetch(`/api/polls/${poll.id}/vote`, {
               method: 'POST',
@@ -1114,9 +1131,12 @@ export class PostCard {
             if (response.status === 409) {
               return
             }
-            if (!response.ok) return
+            if (!response.ok) {
+              const errBody = await response.json().catch(() => ({}))
+              if (errBody?.error) console.error(t('poll.vote_error'), errBody.error)
+              return
+            }
             const data = await response.json()
-            // Re-render with results
             const newPoll = { ...poll, options: data.options, userVote: data.userVote }
             container.replaceWith(this.createPollElement(newPoll))
           } catch (e) {
@@ -1135,10 +1155,32 @@ export class PostCard {
 
     const footer = document.createElement('div')
     footer.style.cssText = `font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;`
-    footer.textContent = `${totalVotes} vote${totalVotes !== 1 ? 's' : ''}${hasVoted ? ' · Voted' : ''}`
+
+    const voteText = totalVotes === 1 ? t('poll.votes', { count: totalVotes }) : t('poll.votes_plural', { count: totalVotes })
+    const votedText = hasVoted ? ` · ${t('poll.voted')}` : ''
+    const changeHint = canChangeVote ? ` · ${t('poll.click_to_change')}` : ''
+    let timeText = ''
+    if (poll.ends_at && !isExpired) {
+      const remaining = this.formatRemainingTime(poll.ends_at)
+      timeText = ` · ${t('poll.remaining', { time: remaining })}`
+    }
+
+    footer.textContent = `${voteText}${votedText}${changeHint}${timeText}`
     container.appendChild(footer)
 
     return container
+  }
+
+  private formatRemainingTime(endsAt: string): string {
+    const diff = new Date(endsAt).getTime() - Date.now()
+    if (diff <= 0) return t('poll.ended')
+    const hours = Math.floor(diff / 3600000)
+    const days = Math.floor(hours / 24)
+    const minutes = Math.floor((diff % 3600000) / 60000)
+    if (days > 0) return t('poll.remaining_days', { count: days })
+    if (hours > 0) return t('poll.remaining_hours', { count: hours })
+    if (minutes > 0) return t('poll.remaining_minutes', { count: minutes })
+    return t('poll.remaining_less_minute')
   }
 }
 

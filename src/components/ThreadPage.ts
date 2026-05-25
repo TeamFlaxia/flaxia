@@ -11,6 +11,7 @@ export interface ThreadPageProps {
   sandboxOrigin: string
   onBack: () => void
   currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null
+  unreadCount?: number
 }
 
 export class ThreadPage {
@@ -55,6 +56,7 @@ export class ThreadPage {
     // Create Left Nav
     this.leftNav = createLeftNav({
       activeItem: 'home',
+      unreadCount: this.props.unreadCount ?? 0,
       currentUser: this.props.currentUser || undefined,
       onNavigate: async (item) => {
         console.log('Navigate to:', item)

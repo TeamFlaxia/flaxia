@@ -1,6 +1,7 @@
 import { Post } from '../types/post.js'
 import DOMPurify from 'dompurify'
 import { t } from '../lib/i18n.js'
+import { showToast } from '../lib/toast.js'
 
 export interface ReplyComposerProps {
   postId: string
@@ -355,7 +356,7 @@ export class ReplyComposer {
   private handleFileSelection(file: File): void {
     // Check file size (25MB limit)
     if (file.size > 25 * 1024 * 1024) {
-      alert(t('reply_composer.error_file_size'))
+      showToast(t('reply_composer.error_file_size'), true)
       this.clearFileSelection()
       return
     }
@@ -363,7 +364,7 @@ export class ReplyComposer {
     // Check if file is an accepted format
     const allowedTypes = ['image/gif', 'image/png', 'image/jpeg', 'image/jpg', 'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4', 'audio/webm']
     if (!allowedTypes.includes(file.type)) {
-      alert(t('reply_composer.error_file_type'))
+      showToast(t('reply_composer.error_file_type'), true)
       this.clearFileSelection()
       return
     }
@@ -467,7 +468,7 @@ export class ReplyComposer {
     } catch (error: any) {
       console.error('Failed to create reply:', error)
       const errorMessage = error?.message || t('composer.error_create_failed')
-      alert(`${errorMessage}${error?.details ? ` (${error.details})` : ''}`)
+      showToast(`${errorMessage}${error?.details ? ` (${error.details})` : ''}`, true)
     } finally {
       this.isSubmitting = false
       this.updateSubmitButton()

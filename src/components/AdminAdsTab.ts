@@ -1,6 +1,7 @@
 import { t } from '../lib/i18n.js'
 import { formatCount } from '../lib/format.js'
 import { registerModal } from '../lib/modal-state.js'
+import { showToast } from '../lib/toast.js'
 
 export interface AdminAd {
   id: string
@@ -817,13 +818,13 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       const adType = adTypeSelect.value as 'self_hosted' | 'admax'
 
       if (!title || !bodyText) {
-        alert(t('admin_ads.validation_title_body'))
+        showToast(t('admin_ads.validation_title_body'), true)
         return
       }
 
       // Validate admax ads (no payload files allowed)
       if (adType === 'admax' && payloadInput.files?.[0]) {
-        alert(t('admin_ads.validation_admax_no_payload'))
+        showToast(t('admin_ads.validation_admax_no_payload'), true)
         return
       }
 
@@ -831,12 +832,12 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       const maxFileSize = 100 * 1024 * 1024 // 100MB
       if (payloadInput.files?.[0] && payloadInput.files[0].size > maxFileSize) {
         const fileSizeMB = (payloadInput.files[0].size / 1024 / 1024).toFixed(1)
-        alert(t('admin_ads.validation_file_size', { size: fileSizeMB }))
+        showToast(t('admin_ads.validation_file_size', { size: fileSizeMB }), true)
         return
       }
 
       if (thumbnailInput.files?.[0] && thumbnailInput.files[0].size > 1024 * 1024) {
-        alert(t('admin_ads.validation_thumbnail_size', { size: (thumbnailInput.files[0].size / 1024 / 1024).toFixed(1) }))
+        showToast(t('admin_ads.validation_thumbnail_size', { size: (thumbnailInput.files[0].size / 1024 / 1024).toFixed(1) }), true)
         return
       }
 
@@ -895,9 +896,9 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         if (error.error && error.limit && error.actualSize) {
           const actualMB = (error.actualSize / 1024 / 1024).toFixed(1)
           const limitMB = (error.limit / 1024 / 1024).toFixed(1)
-          alert(t('admin_ads.validation_file_size', { size: actualMB }))
+          showToast(t('admin_ads.validation_file_size', { size: actualMB }), true)
         } else {
-          alert(t('admin_ads.save_error', { error: error?.error || error?.message || t('common.error') }))
+          showToast(t('admin_ads.save_error', { error: error?.error || error?.message || t('common.error') }), true)
         }
       }
     })

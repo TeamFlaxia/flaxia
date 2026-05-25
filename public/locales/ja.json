@@ -100,6 +100,7 @@
   "notifications.title": "通知",
   "notifications.mark_all_read": "すべて既読にする",
   "notifications.empty": "通知はありません",
+  "notifications.poll_ended": "あなたの投稿の投票が終了しました",
   "notifications.fresh": "{actor} が投稿にいいねしました",
   "notifications.like": "{actor} が投稿にいいねしました",
   "notifications.reply_ja": "{actor} にリプライされました",
@@ -189,6 +190,8 @@
   "edit_profile.avatar": "アバター",
   "edit_profile.save": "保存",
   "edit_profile.unsaved_changes": "未保存の変更があります。閉じてもよろしいですか？",
+  "edit_profile.avatar_size_error": "画像サイズが大きすぎます。1MB以下の画像を選択してください。",
+  "edit_profile.avatar_type_error": "JPEG、PNG、GIF、WebP形式の画像のみ選択できます。",
 
   "follower_list.followers": "フォロワー",
   "follower_list.following": "フォロー中",
@@ -477,5 +480,29 @@
 
   "file_size.bytes": "{size} B",
   "file_size.kb": "{size} KB",
-  "file_size.mb": "{size} MB"
+  "file_size.mb": "{size} MB",
+
+  "poll.toggle_button": "投票",
+  "poll.question_placeholder": "質問を入力...",
+  "poll.option_placeholder": "選択肢 {n}",
+  "poll.add_option": "+ 選択肢を追加",
+  "poll.remove_option": "✕",
+  "poll.duration": "期間",
+  "poll.duration_1h": "1時間",
+  "poll.duration_6h": "6時間",
+  "poll.duration_1d": "1日",
+  "poll.duration_3d": "3日",
+  "poll.duration_7d": "7日",
+  "poll.votes": "{count} 票",
+  "poll.votes_plural": "{count} 票",
+  "poll.voted": "投票済み",
+  "poll.ended": "終了",
+  "poll.remaining": "残り{time}",
+  "poll.remaining_hours": "{count}時間",
+  "poll.remaining_days": "{count}日",
+  "poll.remaining_minutes": "{count}分",
+  "poll.remaining_less_minute": "1分未満",
+  "poll.vote_error": "投票に失敗しました",
+  "poll.already_voted": "既に投票済みです",
+  "poll.click_to_change": "クリックして変更"
 }

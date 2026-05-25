@@ -1,6 +1,7 @@
 import { updateMeCache } from '../lib/auth-cache'
 import { registerModal } from '../lib/modal-state.js'
 import { t } from '../lib/i18n.js'
+import { showToast } from '../lib/toast.js'
 
 interface EditProfileModalProps {
   currentUser: { username: string; display_name?: string; bio?: string; avatar_key?: string }
@@ -225,15 +226,6 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
     min-height: 1.25rem;
   `
 
-  const avatarError = document.createElement('div')
-  avatarError.className = 'field-error'
-  avatarError.style.cssText = `
-    color: var(--danger);
-    font-size: 0.875rem;
-    margin-top: 0.5rem;
-    min-height: 1.25rem;
-  `
-
   const hiddenFileInput = document.createElement('input')
   hiddenFileInput.type = 'file'
   hiddenFileInput.accept = 'image/jpeg,image/png,image/gif,image/webp,.jpg,.jpeg,.png,.gif,.webp'
@@ -261,7 +253,6 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   form.appendChild(bioTextarea)
   form.appendChild(bioCharCounter)
   form.appendChild(bioError)
-  form.appendChild(avatarError)
   form.appendChild(hiddenFileInput)
   form.appendChild(saveButton)
 
@@ -356,12 +347,12 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
     if (!file) return
 
     if (!file.type.match(/^image\/(jpeg|jpg|png|gif|webp)$/)) {
-      avatarError.textContent = 'Only JPEG, PNG, GIF, and WebP images are allowed'
+      showToast(t('edit_profile.avatar_type_error'), true)
       return
     }
 
     if (file.size > 1024 * 1024) {
-      avatarError.textContent = 'Image must be 1MB or less'
+      showToast(t('edit_profile.avatar_size_error'), true)
       return
     }
 
@@ -438,7 +429,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
       saveButton.disabled = false
       saveButton.textContent = t('edit_profile.save')
       saveButton.style.cursor = 'pointer'
-      alert('Failed to save. Please try again.')
+      showToast('Failed to save. Please try again.', true)
     }
   })
 
