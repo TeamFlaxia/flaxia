@@ -54,6 +54,13 @@ export class PostComposer {
   private isSubmitting = false
   private dragCounter = 0
   private errorDisplay!: HTMLElement
+  private mentionDropdown!: HTMLElement
+  private mentionTimeout: ReturnType<typeof setTimeout> | null = null
+  private mentionQuery: string = ''
+  private mentionStartPos: number = -1
+  private pollActive: boolean = false
+  private pollQuestion: string = ''
+  private pollOptionsArr: string[] = ['', '']
 
   constructor(props: PostComposerProps) {
     this.props = props
@@ -88,11 +95,21 @@ export class PostComposer {
             <button class="composer-file-button" type="button">
               📎
             </button>
+            <button class="composer-poll-button" type="button" title="Add poll">
+              📊
+            </button>
             <span class="composer-char-count">${t('composer.char_count', { current: 0, max: 200 })}</span>
           </div>
           <button class="composer-submit" type="button" disabled>
             ${t('composer.post_button')}
           </button>
+        </div>
+        <div class="composer-poll-section" style="display: none;">
+          <div class="poll-form">
+            <input type="text" class="poll-question-input" placeholder="Ask a question..." maxlength="100" />
+            <div class="poll-options-list"></div>
+            <button class="poll-add-option" type="button">+ Add option</button>
+          </div>
         </div>
         <div class="composer-file-preview" style="display: none;">
           <div class="file-info">
@@ -133,6 +150,27 @@ export class PostComposer {
     const body = container.querySelector('.composer-body')
     if (body) {
       body.insertBefore(this.errorDisplay, body.querySelector('.composer-file-preview'))
+    }
+
+    // Create mention suggestion dropdown
+    this.mentionDropdown = document.createElement('div')
+    this.mentionDropdown.className = 'mention-dropdown'
+    this.mentionDropdown.style.cssText = `
+      position: absolute;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      z-index: 100;
+      max-height: 200px;
+      overflow-y: auto;
+      display: none;
+      min-width: 200px;
+    `
+    const composerHeader = container.querySelector('.composer-header')
+    if (composerHeader) {
+      composerHeader.style.position = 'relative'
+      composerHeader.appendChild(this.mentionDropdown)
     }
 
     // Set avatar
@@ -178,6 +216,7 @@ export class PostComposer {
         this.charCount.style.color = 'var(--text-muted)'
       }
       this.updateSubmitButton()
+      this.handleMentionInput()
     })
 
     // Textarea keydown for inline hashtag detection - DISABLED for unified approach
@@ -234,11 +273,47 @@ export class PostComposer {
       this.handleSubmit()
     })
 
+    // Poll button toggle
+    const pollButton = this.element.querySelector('.composer-poll-button')!
+    pollButton.addEventListener('click', () => {
+      this.togglePollSection()
+    })
+
+    // Poll question input
+    const pollQuestion = this.element.querySelector('.poll-question-input') as HTMLInputElement
+    if (pollQuestion) {
+      pollQuestion.addEventListener('input', () => {
+        this.pollQuestion = pollQuestion.value
+        this.updateSubmitButton()
+      })
+    }
+
+    // Poll add option button
+    const addOptionBtn = this.element.querySelector('.poll-add-option')!
+    addOptionBtn.addEventListener('click', () => {
+      this.addPollOption()
+    })
+
     // Keyboard shortcuts
     this.textarea.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !this.submitButton.disabled) {
         e.preventDefault()
         this.handleSubmit()
+        return
+      }
+      if (this.mentionDropdown.style.display !== 'none') {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault()
+          this.navigateMention(e.key === 'ArrowDown' ? 1 : -1)
+        } else if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault()
+          const selected = this.mentionDropdown.querySelector('.mention-item--active') as HTMLElement
+          if (selected) {
+            selected.click()
+          }
+        } else if (e.key === 'Escape') {
+          this.hideMentionDropdown()
+        }
       }
     })
 
@@ -246,6 +321,143 @@ export class PostComposer {
     this.textarea.addEventListener('paste', (e) => {
       this.handlePaste(e)
     })
+  }
+
+  private handleMentionInput(): void {
+    const text = this.textarea.value
+    const pos = this.textarea.selectionStart
+
+    // Find the @ being typed
+    const textBeforeCursor = text.slice(0, pos)
+    const atMatch = textBeforeCursor.match(/@([a-zA-Z0-9_]*)$/)
+
+    if (atMatch && atMatch[1] !== undefined) {
+      this.mentionQuery = atMatch[1]
+      this.mentionStartPos = pos - atMatch[0].length
+
+      if (this.mentionTimeout) clearTimeout(this.mentionTimeout)
+      this.mentionTimeout = setTimeout(() => {
+        if (this.mentionQuery.length > 0) {
+          this.fetchMentionSuggestions(this.mentionQuery)
+        } else {
+          this.fetchMentionSuggestions('')
+        }
+      }, 200)
+    } else {
+      this.hideMentionDropdown()
+    }
+  }
+
+  private async fetchMentionSuggestions(query: string): Promise<void> {
+    try {
+      const url = query ? `/api/search?type=users&q=${encodeURIComponent(query)}&limit=5` : '/api/search?type=users&q=a&limit=5'
+      const response = await fetch(url, { credentials: 'include' })
+      if (!response.ok) return
+      const data = await response.json() as { results: Array<{ username: string; display_name: string; avatar_key: string | null }> }
+      const users = data.results || []
+      this.showMentionDropdown(users)
+    } catch {
+      this.hideMentionDropdown()
+    }
+  }
+
+  private showMentionDropdown(users: Array<{ username: string; display_name: string; avatar_key: string | null }>): void {
+    if (users.length === 0) {
+      this.hideMentionDropdown()
+      return
+    }
+
+    this.mentionDropdown.innerHTML = ''
+    users.forEach((user, index) => {
+      const item = document.createElement('div')
+      item.className = `mention-item ${index === 0 ? 'mention-item--active' : ''}`
+      item.style.cssText = `
+        padding: 8px 12px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        transition: background 0.15s;
+      `
+      const avatarSpan = document.createElement('span')
+      avatarSpan.style.cssText = `
+        width: 24px; height: 24px; border-radius: 50%;
+        background: var(--accent); display: flex; align-items: center;
+        justify-content: center; color: white; font-size: 0.7rem; font-weight: bold; flex-shrink: 0;
+      `
+      avatarSpan.textContent = user.username.charAt(0).toUpperCase()
+      if (user.avatar_key) {
+        avatarSpan.style.backgroundImage = `url(/api/images/${user.avatar_key})`
+        avatarSpan.style.backgroundSize = 'cover'
+        avatarSpan.style.backgroundPosition = 'center'
+        avatarSpan.textContent = ''
+      }
+
+      const textSpan = document.createElement('span')
+      textSpan.style.cssText = 'display: flex; flex-direction: column;'
+      const nameSpan = document.createElement('span')
+      nameSpan.style.cssText = 'color: var(--text-primary); font-size: 0.875rem; font-weight: 500;'
+      nameSpan.textContent = user.display_name || user.username
+      const handleSpan = document.createElement('span')
+      handleSpan.style.cssText = 'color: var(--text-muted); font-size: 0.75rem;'
+      handleSpan.textContent = `@${user.username}`
+
+      textSpan.appendChild(nameSpan)
+      textSpan.appendChild(handleSpan)
+      item.appendChild(avatarSpan)
+      item.appendChild(textSpan)
+
+      item.addEventListener('click', () => this.selectMention(user.username))
+      item.addEventListener('mouseenter', () => {
+        this.mentionDropdown.querySelectorAll('.mention-item--active').forEach(el => el.classList.remove('mention-item--active'))
+        item.classList.add('mention-item--active')
+      })
+
+      this.mentionDropdown.appendChild(item)
+    })
+
+    this.mentionDropdown.style.display = 'block'
+  }
+
+  private hideMentionDropdown(): void {
+    this.mentionDropdown.style.display = 'none'
+    if (this.mentionTimeout) {
+      clearTimeout(this.mentionTimeout)
+      this.mentionTimeout = null
+    }
+  }
+
+  private navigateMention(direction: number): void {
+    const items = this.mentionDropdown.querySelectorAll('.mention-item')
+    if (items.length === 0) return
+
+    const active = this.mentionDropdown.querySelector('.mention-item--active')
+    let nextIndex = 0
+
+    if (active) {
+      const currentIndex = Array.from(items).indexOf(active)
+      active.classList.remove('mention-item--active')
+      nextIndex = (currentIndex + direction + items.length) % items.length
+    }
+
+    items[nextIndex].classList.add('mention-item--active')
+  }
+
+  private selectMention(username: string): void {
+    if (this.mentionStartPos < 0) return
+
+    const text = this.textarea.value
+    const before = text.slice(0, this.mentionStartPos)
+    const after = text.slice(this.textarea.selectionStart)
+    this.textarea.value = `${before}@${username} ${after}`
+
+    const newPos = this.mentionStartPos + username.length + 2
+    this.textarea.setSelectionRange(newPos, newPos)
+    this.textarea.focus()
+
+    this.hideMentionDropdown()
+    this.charCount.textContent = t('composer.char_count', { current: this.textarea.value.length, max: 200 })
+    this.updateSubmitButton()
   }
 
   private handlePaste(e: ClipboardEvent): void {
@@ -455,6 +667,70 @@ export class PostComposer {
     preview.style.display = 'none'
   }
 
+  private togglePollSection(): void {
+    this.pollActive = !this.pollActive
+    const section = this.element.querySelector('.composer-poll-section') as HTMLElement
+    section.style.display = this.pollActive ? 'block' : 'none'
+    if (!this.pollActive) {
+      this.pollQuestion = ''
+      this.pollOptionsArr = ['', '']
+      this.renderPollOptions()
+      const questionInput = this.element.querySelector('.poll-question-input') as HTMLInputElement
+      if (questionInput) questionInput.value = ''
+    }
+    this.updateSubmitButton()
+  }
+
+  private addPollOption(): void {
+    if (this.pollOptionsArr.length >= 10) return
+    this.pollOptionsArr.push('')
+    this.renderPollOptions()
+  }
+
+  private removePollOption(index: number): void {
+    if (this.pollOptionsArr.length <= 2) return
+    this.pollOptionsArr.splice(index, 1)
+    this.renderPollOptions()
+  }
+
+  private renderPollOptions(): void {
+    const list = this.element.querySelector('.poll-options-list') as HTMLElement
+    if (!list) return
+    list.innerHTML = ''
+    this.pollOptionsArr.forEach((val, i) => {
+      const item = document.createElement('div')
+      item.className = 'poll-option-row'
+      const input = document.createElement('input')
+      input.type = 'text'
+      input.className = 'poll-option-input'
+      input.placeholder = `Option ${i + 1}`
+      input.maxLength = 50
+      input.value = val
+      input.addEventListener('input', () => {
+        this.pollOptionsArr[i] = input.value
+        this.updateSubmitButton()
+      })
+      item.appendChild(input)
+      if (this.pollOptionsArr.length > 2) {
+        const removeBtn = document.createElement('button')
+        removeBtn.type = 'button'
+        removeBtn.className = 'poll-option-remove'
+        removeBtn.textContent = '✕'
+        removeBtn.addEventListener('click', () => this.removePollOption(i))
+        item.appendChild(removeBtn)
+      }
+      list.appendChild(item)
+    })
+  }
+
+  private getPollData(): { question: string; options: string[]; multipleChoice: boolean } | null {
+    if (!this.pollActive) return null
+    const question = this.pollQuestion.trim()
+    const options = this.pollOptionsArr.map(o => o.trim()).filter(o => o.length > 0)
+    if (!question || options.length < 2) return null
+    return { question, options, multipleChoice: false }
+  }
+
   private showFilePreview(file: File): void {
     const preview = this.element.querySelector('.composer-file-preview')! as HTMLElement
     const fileName = preview.querySelector('.file-name')!
@@ -530,6 +806,7 @@ export class PostComposer {
 
       // Step 2: Create post using multipart form data if thumbnail is present, otherwise use commit
       let commitResult: any
+      const poll = this.getPollData()
       if (this.selectedThumbnail && (zipKey || swfKey)) {
         // Use multipart form data for thumbnail upload
         const formData = new FormData()
@@ -538,6 +815,7 @@ export class PostComposer {
         if (zipKey) formData.append('payloadKey', zipKey)
         if (swfKey) formData.append('swfKey', swfKey)
         formData.append('thumbnail', this.selectedThumbnail)
+        if (poll) formData.append('poll', JSON.stringify(poll))
 
         const response = await fetch('/api/posts', {
           method: 'POST',
@@ -560,7 +838,7 @@ export class PostComposer {
         commitResult = await response.json()
       } else {
         // Use existing commit flow for posts without thumbnails
-        commitResult = await this.commitPost(postId, gifKey, zipKey, swfKey, text)
+        commitResult = await this.commitPost(postId, gifKey, zipKey, swfKey, text, poll)
         
         if (!commitResult) {
           throw new Error('Failed to commit post')
@@ -571,6 +849,7 @@ export class PostComposer {
       this.textarea.value = ''
       this.charCount.textContent = t('composer.char_count', { current: 0, max: 200 })
       this.clearFileSelection()
+      if (this.pollActive) this.togglePollSection()
 
       // Notify parent
       if (this.props.onPostCreated && commitResult.post) {
@@ -680,7 +959,7 @@ export class PostComposer {
     }
   }
 
-  private async commitPost(postId: string | undefined, gifKey: string | undefined, zipKey: string | undefined, swfKey: string | undefined, text: string): Promise<{ post: any } | null> {
+  private async commitPost(postId: string | undefined, gifKey: string | undefined, zipKey: string | undefined, swfKey: string | undefined, text: string, poll?: { question: string; options: string[]; multipleChoice: boolean } | null): Promise<{ post: any } | null> {
     try {
       // Extract hashtags from text - support Japanese and other Unicode characters
       const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu
@@ -703,7 +982,8 @@ export class PostComposer {
           zipKey: zipKey,
           swfKey: swfKey,
           text,
-          hashtags
+          hashtags,
+          poll: poll || undefined
         })
       })
 

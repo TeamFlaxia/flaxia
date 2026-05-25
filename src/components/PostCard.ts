@@ -141,6 +141,12 @@ export class PostCard {
       container.appendChild(tagChips)
     }
 
+    // Poll section
+    if (this.props.post.poll) {
+      const pollEl = this.createPollElement(this.props.post.poll)
+      container.appendChild(pollEl)
+    }
+
     // Post stage (16:9 container for GIF/iframe) - only show if has attachments
     if (this.props.post.gif_key || this.props.post.payload_key || this.props.post.swf_key) {
       this.postStageElement = createPostStage({
@@ -1045,6 +1051,92 @@ export class PostCard {
 
       container.appendChild(chip)
     })
+
+    return container
+  }
+
+  private createPollElement(poll: any): HTMLElement {
+    const totalVotes = poll.options.reduce((sum: number, opt: any) => sum + (opt.votes_count || 0), 0)
+    const hasVoted = !!poll.userVote
+    const container = document.createElement('div')
+    container.className = 'post-poll'
+    container.style.cssText = `margin: 12px 0; padding: 12px; background: var(--bg-secondary); border-radius: 8px;`
+
+    const question = document.createElement('div')
+    question.className = 'poll-question'
+    question.style.cssText = `font-weight: 600; margin-bottom: 8px; color: var(--text-primary);`
+    question.textContent = poll.question
+    container.appendChild(question)
+
+    poll.options.forEach((opt: any) => {
+      const optEl = document.createElement('div')
+      optEl.className = 'poll-option'
+      const pct = totalVotes > 0 ? Math.round((opt.votes_count / totalVotes) * 100) : 0
+      optEl.style.cssText = `
+        position: relative; padding: 8px 12px; margin-bottom: 6px; border-radius: 6px;
+        cursor: ${hasVoted ? 'default' : 'pointer'};
+        background: var(--bg-primary); overflow: hidden;
+        transition: opacity 0.2s; border: 1px solid var(--border);
+        ${hasVoted || opt.votes_count > 0 ? '' : 'opacity: 0.9;'}
+      `
+
+      const bar = document.createElement('div')
+      bar.className = 'poll-bar'
+      bar.style.cssText = `
+        position: absolute; top: 0; left: 0; height: 100%; 
+        background: ${opt.id === poll.userVote ? 'var(--accent)' : 'var(--bg-hover)'};
+        width: ${hasVoted ? pct : 0}%; transition: width 0.5s ease; border-radius: 5px;
+        opacity: ${opt.id === poll.userVote ? '0.2' : '0.5'};
+      `
+      optEl.appendChild(bar)
+
+      const label = document.createElement('span')
+      label.className = 'poll-option-label'
+      label.style.cssText = `position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center;`
+      const textSpan = document.createElement('span')
+      textSpan.textContent = opt.label
+      const countSpan = document.createElement('span')
+      countSpan.style.cssText = `font-size: 0.8rem; color: var(--text-muted); margin-left: 8px;`
+      countSpan.textContent = hasVoted ? `${pct}%` : ''
+      label.appendChild(textSpan)
+      label.appendChild(countSpan)
+      optEl.appendChild(label)
+
+      if (!hasVoted) {
+        optEl.addEventListener('click', async () => {
+          try {
+            const response = await fetch(`/api/polls/${poll.id}/vote`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({ optionId: opt.id })
+            })
+            if (response.status === 409) {
+              return
+            }
+            if (!response.ok) return
+            const data = await response.json()
+            // Re-render with results
+            const newPoll = { ...poll, options: data.options, userVote: data.userVote }
+            container.replaceWith(this.createPollElement(newPoll))
+          } catch (e) {
+            console.error('Vote failed:', e)
+          }
+        })
+        optEl.addEventListener('mouseenter', () => {
+          optEl.style.borderColor = 'var(--accent)'
+        })
+        optEl.addEventListener('mouseleave', () => {
+          optEl.style.borderColor = 'var(--border)'
+        })
+      }
+      container.appendChild(optEl)
+    })
+
+    const footer = document.createElement('div')
+    footer.style.cssText = `font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;`
+    footer.textContent = `${totalVotes} vote${totalVotes !== 1 ? 's' : ''}${hasVoted ? ' · Voted' : ''}`
+    container.appendChild(footer)
 
     return container
   }

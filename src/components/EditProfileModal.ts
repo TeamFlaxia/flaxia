@@ -236,8 +236,8 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
 
   const hiddenFileInput = document.createElement('input')
   hiddenFileInput.type = 'file'
-  hiddenFileInput.accept = 'image/jpeg,image/png,image/gif'
-  hiddenFileInput.style.display = 'none'
+  hiddenFileInput.accept = 'image/jpeg,image/png,image/gif,image/webp,.jpg,.jpeg,.png,.gif,.webp'
+  hiddenFileInput.style.cssText = 'position: absolute; left: -9999px; opacity: 0; width: 0; height: 0;'
 
   const saveButton = document.createElement('button')
   saveButton.textContent = t('edit_profile.save')
@@ -289,8 +289,8 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
 
   const validateDisplayName = () => {
     const value = displayNameInput.value.trim()
-    if (value.length < 1 || value.length > 50) {
-      displayNameError.textContent = 'Display name must be 1–50 characters'
+    if (value.length > 50) {
+      displayNameError.textContent = 'Display name must be 50 characters or less'
       return false
     }
     displayNameError.textContent = ''

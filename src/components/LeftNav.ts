@@ -382,6 +382,8 @@ export class LeftNav {
         navItem.appendChild(badge)
       }
     } else if (existingBadge) {
+      existingBadge.textContent = ''
+      existingBadge.style.display = 'none'
       existingBadge.remove()
     }
   }

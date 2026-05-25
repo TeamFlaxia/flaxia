@@ -1213,6 +1213,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             })
             unreadNotificationCount = 0
             leftNav.setUnreadCount(0)
+            leftNavInstances.forEach((ln: any) => {
+              if (typeof ln.setUnreadCount === 'function') {
+                ln.setUnreadCount(0)
+              }
+            })
+            stopNotificationPolling()
+            startNotificationPolling()
           },
           onNavigateToPost: (postId) => {
             window.history.pushState({}, '', `/thread/${postId}`)

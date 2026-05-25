@@ -35,6 +35,14 @@ export interface Post {
   hidden: number
   created_at: string
   is_freshed?: boolean  // Whether current user has freshed this post
+  poll?: {
+    id: string
+    question: string
+    multipleChoice: boolean
+    endsAt?: string | null
+    options: Array<{ id: string; label: string; votes_count: number }>
+    userVote: string | null
+  }
 }
 
 export enum PostCardMode {

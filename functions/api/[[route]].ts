@@ -2302,6 +2302,9 @@ app.get('/api/posts', async (c) => {
         })
       }
     }
+
+    // Batch fetch poll data for posts with polls
+    await enrichPostsWithPolls(posts as any[], c.env.DB, currentUserId)
     
     return c.json({ posts })
   } catch (error: any) {
@@ -2363,6 +2366,8 @@ app.get('/api/posts/trending', async (c) => {
         post.is_freshed = freshedPostIds.has(post.id)
       })
     }
+
+    await enrichPostsWithPolls(posts as any[], c.env.DB, currentUserId)
 
     return c.json({ posts })
   } catch (error: any) {
@@ -2441,9 +2446,11 @@ app.get('/api/posts/recommended', async (c) => {
       })
     }
 
+    await enrichPostsWithPolls(posts as any[], c.env.DB, currentUserId)
+
     return c.json({ posts })
   } catch (error: any) {
-    console.error('Recommended posts error:', error, 'Query:', query, 'Params:', params)
+    console.error('Recommended posts error:', error)
     return c.json({ error: 'Internal server error', details: error.message }, 500)
   }
 })
@@ -3282,7 +3289,7 @@ app.post('/api/posts/prepare', requireAuth, async (c) => {
 // Step 3 — POST /api/posts/commit (protected)
 app.post('/api/posts/commit', requireAuth, async (c) => {
   try {
-    const { postId, gifKey, zipKey, swfKey, text, hashtags } = await c.req.json()
+    const { postId, gifKey, zipKey, swfKey, text, hashtags, poll: pollData } = await c.req.json()
     
     // Validate text
     if (!text || text.length < 1 || text.length > 200) {
@@ -3363,6 +3370,25 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
         }
       }
 
+      // Create poll if poll data was provided
+      if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
+        try {
+          const pId = crypto.randomUUID()
+          await c.env.DB.prepare(`
+            INSERT INTO polls (id, post_id, question, multiple_choice, ends_at)
+            VALUES (?, ?, ?, ?, ?)
+          `).bind(pId, postId, pollData.question, pollData.multipleChoice ? 1 : 0, pollData.endsAt || null).run()
+          for (const label of pollData.options) {
+            await c.env.DB.prepare(`
+              INSERT INTO poll_options (id, poll_id, label)
+              VALUES (?, ?, ?)
+            `).bind(crypto.randomUUID(), pId, label).run()
+          }
+        } catch (e) {
+          console.error('Failed to create poll:', e)
+        }
+      }
+
       // Patch DOS ZIP with js-dos.json for auto-execution
       if (zipKey && zipKey.startsWith('dos/')) {
         try {
@@ -3433,7 +3459,26 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
           console.error('Failed to create mention notifications:', e)
         }
       }
-      
+
+      // Create poll if poll data was provided
+      if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
+        try {
+          const pId = crypto.randomUUID()
+          await c.env.DB.prepare(`
+            INSERT INTO polls (id, post_id, question, multiple_choice, ends_at)
+            VALUES (?, ?, ?, ?, ?)
+          `).bind(pId, postId, pollData.question, pollData.multipleChoice ? 1 : 0, pollData.endsAt || null).run()
+          for (const label of pollData.options) {
+            await c.env.DB.prepare(`
+              INSERT INTO poll_options (id, poll_id, label)
+              VALUES (?, ?, ?)
+            `).bind(crypto.randomUUID(), pId, label).run()
+          }
+        } catch (e) {
+          console.error('Failed to create poll:', e)
+        }
+      }
+
       // Queue ActivityPub delivery for public posts
       if (post && post.visibility === 'public') {
         try {
@@ -3498,6 +3543,8 @@ app.post('/api/posts', requireAuth, async (c) => {
     let thumbnailKey: string | undefined
     let thumbnailFile: File | undefined
 
+    let pollData: { question: string; options: string[]; multipleChoice: boolean; endsAt?: string } | null = null
+
     if (contentType?.includes('multipart/form-data')) {
       // Handle multipart/form-data (for thumbnail uploads)
       const formData = await c.req.formData()
@@ -3540,6 +3587,13 @@ app.post('/api/posts', requireAuth, async (c) => {
           }
         })
       }
+
+      const formPoll = formData.get('poll')
+      if (formPoll) {
+        try {
+          pollData = JSON.parse(formPoll as string)
+        } catch { /* ignore invalid poll data */ }
+      }
     } else {
       // Handle JSON request (existing behavior)
       const body = await c.req.json()
@@ -3547,6 +3601,7 @@ app.post('/api/posts', requireAuth, async (c) => {
       payloadKey = body.payloadKey
       gifKey = body.gifKey
       swfKey = body.swfKey
+      pollData = body.poll || null
     }
     
     if (!text || text.length > 200) {
@@ -3592,6 +3647,30 @@ app.post('/api/posts', requireAuth, async (c) => {
     if (!result.success) {
       console.error('Database insert failed:', result)
       return c.json({ error: 'Failed to create post', details: result }, 500)
+    }
+
+    // Create poll if poll data was provided
+    if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
+      try {
+        const pollId = crypto.randomUUID()
+        await c.env.DB.prepare(`
+          INSERT INTO polls (id, post_id, question, multiple_choice, ends_at)
+          VALUES (?, ?, ?, ?, ?)
+        `).bind(pollId, postId, pollData.question, pollData.multipleChoice ? 1 : 0, pollData.endsAt || null).run()
+
+        const optionIds: string[] = []
+        for (const label of pollData.options) {
+          const optId = crypto.randomUUID()
+          optionIds.push(optId)
+          await c.env.DB.prepare(`
+            INSERT INTO poll_options (id, poll_id, label)
+            VALUES (?, ?, ?)
+          `).bind(optId, pollId, label).run()
+        }
+      } catch (e) {
+        console.error('Failed to create poll:', e)
+        // Don't fail post creation if poll creation fails
+      }
     }
 
     // Create mention notifications for mentioned users (skip self-mentions)
@@ -3652,6 +3731,86 @@ app.post('/api/posts', requireAuth, async (c) => {
   } catch (error: any) {
     console.error('Post creation error:', error)
     return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500)
+  }
+})
+
+// GET /api/polls/:postId - get poll data
+app.get('/api/polls/:postId', async (c) => {
+  try {
+    const postId = c.req.param('postId')
+    if (!c.env.DB) return c.json({ error: 'Database not available' }, 500)
+
+    const poll = await c.env.DB.prepare(
+      'SELECT * FROM polls WHERE post_id = ?'
+    ).bind(postId).first() as any | null
+
+    if (!poll) return c.json({ error: 'Poll not found' }, 404)
+
+    const { results: options } = await c.env.DB.prepare(
+      'SELECT * FROM poll_options WHERE poll_id = ? ORDER BY rowid'
+    ).bind(poll.id).all()
+
+    let userVote: string | null = null
+    const token = getSessionToken(c.req.raw)
+    const sessionData = token ? await getSession(c.env, token) : null
+    if (sessionData) {
+      const vote = await c.env.DB.prepare(
+        'SELECT option_id FROM poll_votes WHERE poll_id = ? AND user_id = ?'
+      ).bind(poll.id, sessionData.user.id).first() as { option_id: string } | null
+      if (vote) userVote = vote.option_id
+    }
+
+    return c.json({ poll, options, userVote })
+  } catch (error: any) {
+    console.error('Get poll error:', error)
+    return c.json({ error: 'Failed to get poll', details: error?.message }, 500)
+  }
+})
+
+// POST /api/polls/:pollId/vote - vote on a poll option (protected)
+app.post('/api/polls/:pollId/vote', requireAuth, async (c) => {
+  try {
+    const pollId = c.req.param('pollId')
+    const userId = c.get('user')?.id
+    const { optionId } = await c.req.json()
+
+    if (!c.env.DB) return c.json({ error: 'Database not available' }, 500)
+    if (!optionId) return c.json({ error: 'optionId is required' }, 400)
+
+    const poll = await c.env.DB.prepare(
+      'SELECT * FROM polls WHERE id = ?'
+    ).bind(pollId).first() as any | null
+
+    if (!poll) return c.json({ error: 'Poll not found' }, 404)
+
+    const option = await c.env.DB.prepare(
+      'SELECT * FROM poll_options WHERE id = ? AND poll_id = ?'
+    ).bind(optionId, pollId).first() as any | null
+
+    if (!option) return c.json({ error: 'Option not found' }, 404)
+
+    const existingVote = await c.env.DB.prepare(
+      'SELECT * FROM poll_votes WHERE poll_id = ? AND user_id = ?'
+    ).bind(pollId, userId).first()
+
+    if (existingVote) return c.json({ error: 'Already voted' }, 409)
+
+    await c.env.DB.prepare(
+      'INSERT INTO poll_votes (id, poll_id, option_id, user_id) VALUES (?, ?, ?, ?)'
+    ).bind(crypto.randomUUID(), pollId, optionId, userId).run()
+
+    await c.env.DB.prepare(
+      'UPDATE poll_options SET votes_count = votes_count + 1 WHERE id = ?'
+    ).bind(optionId).run()
+
+    const { results: options } = await c.env.DB.prepare(
+      'SELECT * FROM poll_options WHERE poll_id = ? ORDER BY rowid'
+    ).bind(pollId).all()
+
+    return c.json({ options, userVote: optionId })
+  } catch (error: any) {
+    console.error('Vote error:', error)
+    return c.json({ error: 'Failed to vote', details: error?.message }, 500)
   }
 })
 
@@ -3863,6 +4022,11 @@ app.get('/api/posts/:id/replies', async (c) => {
     const cursor = c.req.query('cursor')
     const limit = Math.min(Number(c.req.query('limit') || '20'), 50)
     
+    // Get current user ID from session (optional)
+    const token = getSessionToken(c.req.raw)
+    const sessionData = token ? await getSession(c.env, token) : null
+    const currentUserId = sessionData?.user?.id || null
+
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500)
     }
@@ -3902,6 +4066,8 @@ app.get('/api/posts/:id/replies', async (c) => {
     
     const replies = result.results || []
     const nextCursor = replies.length === limit ? replies[replies.length - 1].created_at : null
+
+    await enrichPostsWithPolls(replies as any[], c.env.DB, currentUserId)
     
     return c.json({ replies, nextCursor })
   } catch (error: any) {
@@ -4031,6 +4197,10 @@ app.get('/api/posts/:id/thread', async (c) => {
       }
     }
     
+    // Add poll data
+    await enrichPostsWithPolls([rootPost as any], c.env.DB, currentUserId)
+    await enrichPostsWithPolls(replies as any[], c.env.DB, currentUserId)
+
     return c.json({ root: rootPost, replies })
   } catch (error: any) {
     console.error('Thread fetch error:', error)
@@ -4329,6 +4499,12 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
           const arrayIndex = refIndex - 1
           if (arrayIndex >= 0 && arrayIndex < allReplies.length) {
             const referencedPost = allReplies[arrayIndex] as any
+            // Increment reply_count for the referenced post (skip if it's the direct parent to avoid double-count)
+            if (referencedPost.id !== postId) {
+              await c.env.DB.prepare(
+                'UPDATE posts SET reply_count = COALESCE(reply_count, 0) + 1 WHERE id = ?'
+              ).bind(referencedPost.id).run()
+            }
             if (referencedPost.user_id && referencedPost.user_id !== replyUserId && !notifiedUserIds.has(referencedPost.user_id)) {
               await c.env.DB.prepare(
                 'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
@@ -4588,6 +4764,26 @@ app.get('/api/posts/:id', async (c) => {
       return c.json({ error: 'Gone' }, 410)
     }
 
+    // Fetch poll data if available
+    const poll = await c.env.DB.prepare('SELECT * FROM polls WHERE post_id = ?').bind(postId).first() as any | null
+    if (poll) {
+      const { results: options } = await c.env.DB.prepare('SELECT * FROM poll_options WHERE poll_id = ? ORDER BY rowid').bind(poll.id).all()
+      let userVote: string | null = null
+      const currentUserId = c.get('user')?.id
+      if (currentUserId) {
+        const vote = await c.env.DB.prepare('SELECT option_id FROM poll_votes WHERE poll_id = ? AND user_id = ?').bind(poll.id, currentUserId).first() as { option_id: string } | null
+        if (vote) userVote = vote.option_id
+      }
+      post.poll = {
+        id: poll.id,
+        question: poll.question,
+        multipleChoice: !!poll.multiple_choice,
+        endsAt: poll.ends_at,
+        options,
+        userVote
+      }
+    }
+
     return c.json(post)
   } catch (error: any) {
     console.error('Get post error:', error)
@@ -4652,9 +4848,70 @@ async function insertNotification(db: D1Database, userId: string, type: 'fresh' 
 
 // Helper function to insert admin alert
 async function insertAdminAlert(db: D1Database, postId: string, category: ReportCategory, priority: 'critical' | 'high' | 'normal') {
-  await db.prepare(
-    'INSERT INTO admin_alerts (id, post_id, category, priority) VALUES (?, ?, ?, ?)'
-  ).bind(nanoid(), postId, category, priority).run()
+  const id = nanoid()
+  const result = await db.prepare(
+    'INSERT INTO alerts (id, post_id, category, priority, status) VALUES (?, ?, ?, ?, ?)'
+  ).bind(id, postId, category, priority, 'open').run()
+  if (!result.success) {
+    console.error('Failed to create admin alert')
+  }
+}
+
+async function enrichPostsWithPolls(posts: any[], db: D1Database, currentUserId?: string | null): Promise<void> {
+  if (posts.length === 0) return
+  const postIds = posts.map(p => p.id)
+  const placeholders = postIds.map(() => '?').join(',')
+  const pollsResult = await db.prepare(
+    `SELECT * FROM polls WHERE post_id IN (${placeholders})`
+  ).bind(...postIds).all()
+
+  if (!pollsResult.success || pollsResult.results.length === 0) return
+
+  const pollMap = new Map<string, any>()
+  for (const poll of pollsResult.results) {
+    pollMap.set((poll as any).post_id, poll)
+  }
+
+  const pollIds = pollsResult.results.map((p: any) => p.id)
+  const optPlaceholders = pollIds.map(() => '?').join(',')
+  const optsResult = await db.prepare(
+    `SELECT * FROM poll_options WHERE poll_id IN (${optPlaceholders}) ORDER BY rowid`
+  ).bind(...pollIds).all()
+
+  const optsByPoll = new Map<string, any[]>()
+  if (optsResult.success) {
+    for (const opt of optsResult.results) {
+      const pid = (opt as any).poll_id
+      if (!optsByPoll.has(pid)) optsByPoll.set(pid, [])
+      optsByPoll.get(pid)!.push(opt)
+    }
+  }
+
+  let userVotes = new Map<string, string>()
+  if (currentUserId) {
+    const votesResult = await db.prepare(
+      `SELECT poll_id, option_id FROM poll_votes WHERE poll_id IN (${optPlaceholders}) AND user_id = ?`
+    ).bind(...pollIds, currentUserId).all()
+    if (votesResult.success) {
+      for (const v of votesResult.results) {
+        userVotes.set((v as any).poll_id, (v as any).option_id)
+      }
+    }
+  }
+
+  posts.forEach((post: any) => {
+    const poll = pollMap.get(post.id)
+    if (poll) {
+      post.poll = {
+        id: poll.id,
+        question: poll.question,
+        multipleChoice: !!poll.multiple_choice,
+        endsAt: poll.ends_at,
+        options: optsByPoll.get(poll.id) || [],
+        userVote: userVotes.get(poll.id) || null
+      }
+    }
+  })
 }
 
 // POST /api/report - unified report endpoint (protected)

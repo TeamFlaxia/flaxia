@@ -20,6 +20,10 @@ export class ReplyComposer {
   private charCount!: HTMLSpanElement
   private selectedFile: File | null = null
   private isSubmitting = false
+  private mentionDropdown!: HTMLElement
+  private mentionTimeout: ReturnType<typeof setTimeout> | null = null
+  private mentionQuery: string = ''
+  private mentionStartPos: number = -1
 
   constructor(props: ReplyComposerProps) {
     this.props = props
@@ -126,6 +130,27 @@ export class ReplyComposer {
       this.charCount.textContent = `${this.props.prefillText.length}/200`
     }
 
+    // Create mention suggestion dropdown
+    this.mentionDropdown = document.createElement('div')
+    this.mentionDropdown.className = 'mention-dropdown'
+    this.mentionDropdown.style.cssText = `
+      position: absolute;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      z-index: 100;
+      max-height: 200px;
+      overflow-y: auto;
+      display: none;
+      min-width: 200px;
+    `
+    const composerHeader = container.querySelector('.reply-composer-header')
+    if (composerHeader) {
+      composerHeader.style.position = 'relative'
+      composerHeader.appendChild(this.mentionDropdown)
+    }
+
     return container
   }
 
@@ -140,15 +165,31 @@ export class ReplyComposer {
         this.charCount.style.color = '#94a3b8'
       }
       this.updateSubmitButton()
+      this.handleMentionInput()
     })
 
     // Keyboard shortcuts
     this.textarea.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+        if (this.mentionDropdown.style.display !== 'none') {
+          this.hideMentionDropdown()
+          return
+        }
         this.props.onCancel()
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !this.submitButton.disabled) {
         e.preventDefault()
         this.handleSubmit()
+        return
+      }
+      if (this.mentionDropdown.style.display !== 'none') {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault()
+          this.navigateMention(e.key === 'ArrowDown' ? 1 : -1)
+        } else if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault()
+          const selected = this.mentionDropdown.querySelector('.mention-item--active') as HTMLElement
+          if (selected) selected.click()
+        }
       }
     })
 
@@ -194,6 +235,104 @@ export class ReplyComposer {
     this.element.addEventListener('drop', (e) => {
       console.log('Drop event:', e)
     })
+  }
+
+  private handleMentionInput(): void {
+    const text = this.textarea.value
+    const pos = this.textarea.selectionStart
+    const textBeforeCursor = text.slice(0, pos)
+    const atMatch = textBeforeCursor.match(/@([a-zA-Z0-9_]*)$/)
+
+    if (atMatch && atMatch[1] !== undefined) {
+      this.mentionQuery = atMatch[1]
+      this.mentionStartPos = pos - atMatch[0].length
+      if (this.mentionTimeout) clearTimeout(this.mentionTimeout)
+      this.mentionTimeout = setTimeout(() => {
+        this.fetchMentionSuggestions(this.mentionQuery || '')
+      }, 200)
+    } else {
+      this.hideMentionDropdown()
+    }
+  }
+
+  private async fetchMentionSuggestions(query: string): Promise<void> {
+    try {
+      const url = query ? `/api/search?type=users&q=${encodeURIComponent(query)}&limit=5` : '/api/search?type=users&q=a&limit=5'
+      const response = await fetch(url, { credentials: 'include' })
+      if (!response.ok) return
+      const data = await response.json() as { results: Array<{ username: string; display_name: string; avatar_key: string | null }> }
+      this.showMentionDropdown(data.results || [])
+    } catch {
+      this.hideMentionDropdown()
+    }
+  }
+
+  private showMentionDropdown(users: Array<{ username: string; display_name: string; avatar_key: string | null }>): void {
+    if (users.length === 0) { this.hideMentionDropdown(); return }
+    this.mentionDropdown.innerHTML = ''
+    users.forEach((user, index) => {
+      const item = document.createElement('div')
+      item.className = `mention-item ${index === 0 ? 'mention-item--active' : ''}`
+      item.style.cssText = `padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;`
+      const avatarSpan = document.createElement('span')
+      avatarSpan.style.cssText = `width: 24px; height: 24px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; color: white; font-size: 0.7rem; font-weight: bold; flex-shrink: 0;`
+      avatarSpan.textContent = user.username.charAt(0).toUpperCase()
+      if (user.avatar_key) {
+        avatarSpan.style.backgroundImage = `url(/api/images/${user.avatar_key})`
+        avatarSpan.style.backgroundSize = 'cover'
+        avatarSpan.style.backgroundPosition = 'center'
+        avatarSpan.textContent = ''
+      }
+      const textSpan = document.createElement('span')
+      textSpan.style.cssText = 'display: flex; flex-direction: column;'
+      const nameSpan = document.createElement('span')
+      nameSpan.style.cssText = 'color: var(--text-primary); font-size: 0.875rem; font-weight: 500;'
+      nameSpan.textContent = user.display_name || user.username
+      const handleSpan = document.createElement('span')
+      handleSpan.style.cssText = 'color: var(--text-muted); font-size: 0.75rem;'
+      handleSpan.textContent = `@${user.username}`
+      textSpan.appendChild(nameSpan); textSpan.appendChild(handleSpan)
+      item.appendChild(avatarSpan); item.appendChild(textSpan)
+      item.addEventListener('click', () => this.selectMention(user.username))
+      item.addEventListener('mouseenter', () => {
+        this.mentionDropdown.querySelectorAll('.mention-item--active').forEach(el => el.classList.remove('mention-item--active'))
+        item.classList.add('mention-item--active')
+      })
+      this.mentionDropdown.appendChild(item)
+    })
+    this.mentionDropdown.style.display = 'block'
+  }
+
+  private hideMentionDropdown(): void {
+    this.mentionDropdown.style.display = 'none'
+    if (this.mentionTimeout) { clearTimeout(this.mentionTimeout); this.mentionTimeout = null }
+  }
+
+  private navigateMention(direction: number): void {
+    const items = this.mentionDropdown.querySelectorAll('.mention-item')
+    if (items.length === 0) return
+    const active = this.mentionDropdown.querySelector('.mention-item--active')
+    let nextIndex = 0
+    if (active) {
+      const currentIndex = Array.from(items).indexOf(active)
+      active.classList.remove('mention-item--active')
+      nextIndex = (currentIndex + direction + items.length) % items.length
+    }
+    items[nextIndex].classList.add('mention-item--active')
+  }
+
+  private selectMention(username: string): void {
+    if (this.mentionStartPos < 0) return
+    const text = this.textarea.value
+    const before = text.slice(0, this.mentionStartPos)
+    const after = text.slice(this.textarea.selectionStart)
+    this.textarea.value = `${before}@${username} ${after}`
+    const newPos = this.mentionStartPos + username.length + 2
+    this.textarea.setSelectionRange(newPos, newPos)
+    this.textarea.focus()
+    this.hideMentionDropdown()
+    this.charCount.textContent = `${this.textarea.value.length}/200`
+    this.updateSubmitButton()
   }
 
   private handlePaste(e: ClipboardEvent): void {
