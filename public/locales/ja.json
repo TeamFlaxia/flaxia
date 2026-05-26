@@ -386,6 +386,7 @@
 
   "search.results_for": "「{query}」の検索結果",
   "search.close": "✕",
+  "search.results_meta": "{type}の検索結果",
   "search.users": "ユーザー",
   "search.arcade_games": "アーケードゲーム",
   "search.posts": "投稿",
@@ -452,6 +453,7 @@
   "timeline.loading_ad": "広告を読み込み中...",
 
   "explore.tag_title": "# {tag}",
+  "explore.tag_count": "{count}件",
   "explore.tab_for_you": "おすすめ",
   "explore.tab_trending": "トレンド",
   "explore.search_placeholder": "Flaxiaを検索",

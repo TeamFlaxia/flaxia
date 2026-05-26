@@ -1324,7 +1324,9 @@ p {
 }
 
 /* Timeline Styles */
-.timeline {
+.timeline,
+.explore-page,
+.search-page {
   width: 100%;
 }
 

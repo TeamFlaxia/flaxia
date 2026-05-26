@@ -14,28 +14,66 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   const header = document.createElement('div')
   header.className = 'search-page-header'
   header.style.cssText = `
-    padding: 1rem 1.5rem;
+    padding: 0.75rem 1rem;
     border-bottom: 1px solid var(--border);
     position: sticky;
     top: 0;
     background: var(--bg-primary);
     z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
   `
 
-  const title = document.createElement('h2')
-  title.textContent = t('search.results_for', { query })
-  title.style.cssText = `
-    margin: 0;
+  const backBtn = document.createElement('button')
+  backBtn.textContent = '←'
+  backBtn.style.cssText = `
+    background: none;
+    border: none;
     font-size: 1.25rem;
-    font-weight: 600;
+    cursor: pointer;
     color: var(--text-primary);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    transition: background 0.2s;
+    flex-shrink: 0;
   `
-  header.appendChild(title)
+  backBtn.addEventListener('mouseenter', () => { backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))' })
+  backBtn.addEventListener('mouseleave', () => { backBtn.style.background = 'none' })
+  backBtn.addEventListener('click', () => {
+    window.history.pushState({}, '', '/explore')
+    window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore' } }))
+  })
+
+  const titleGroup = document.createElement('div')
+  titleGroup.style.cssText = 'display: flex; flex-direction: column; gap: 0.15rem;'
+
+  const title = document.createElement('span')
+  title.textContent = query.startsWith('#') ? query : `"${query}"`
+  title.style.cssText = `
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.2;
+  `
+
+  const meta = document.createElement('span')
+  const typeLabel = type === 'users' ? t('explore.filter_users') : type === 'arcade' ? t('explore.filter_arcade') : t('explore.filter_posts')
+  meta.textContent = t('search.results_meta', { type: typeLabel })
+  meta.style.cssText = `
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  `
+
+  titleGroup.appendChild(title)
+  titleGroup.appendChild(meta)
+  header.appendChild(backBtn)
+  header.appendChild(titleGroup)
 
   const content = document.createElement('div')
   content.className = 'search-page-content'
   content.style.cssText = `
-    padding: 1rem 1.5rem;
+    padding: 1rem;
   `
 
   container.appendChild(header)

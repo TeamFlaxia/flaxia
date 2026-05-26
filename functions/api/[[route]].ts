@@ -4180,6 +4180,37 @@ LIMIT 5
   }
 })
 
+// GET /api/tags/suggest?q=prefix - suggest hashtags matching prefix
+app.get('/api/tags/suggest', async (c) => {
+  try {
+    const q = c.req.query('q')
+    if (!q || q.length < 1) {
+      return c.json({ tags: [] })
+    }
+
+    const limit = Math.min(parseInt(c.req.query('limit') || '10', 10), 20)
+    const prefix = q.toLowerCase()
+
+    const result = await c.env.DB.prepare(`
+      SELECT DISTINCT value AS tag, COUNT(*) AS count
+      FROM posts, json_each(posts.hashtags)
+      WHERE posts.hidden = 0 AND posts.status = 'published'
+        AND LOWER(value) LIKE ?
+      GROUP BY value
+      ORDER BY count DESC
+      LIMIT ?
+    `).bind(prefix + '%', limit).all()
+
+    const tags = result.results || []
+    return c.json({ tags }, 200, {
+      'Cache-Control': 'public, max-age=30'
+    })
+  } catch (error: any) {
+    console.error('Tag suggest error:', error)
+    return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500)
+  }
+})
+
 // GET /api/posts/:id/thread - get full thread
 app.get('/api/posts/:id/thread', async (c) => {
   try {
@@ -4605,67 +4636,79 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
 app.get('/api/search', async (c) => {
   try {
     const query = c.req.query('q')
-    const type = c.req.query('type') || 'posts' // 'posts' or 'users'
+    const type = c.req.query('type') || 'posts'
     const limit = Math.min(Number(c.req.query('limit') || '20'), 50)
-    
+
     if (!query || query.trim().length === 0) {
       return c.json({ error: 'Search query required' }, 400)
     }
-    
+
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500)
     }
-    
-    const searchTerm = `%${query.trim()}%`
-    
+
+    const tokens = query.trim().split(/\s+/).filter(Boolean)
+
     if (type === 'users') {
-      // Search users
+      const searchTerm = `%${query.trim()}%`
       const users = await c.env.DB.prepare(`
-        SELECT id, username, display_name, bio, avatar_key, created_at 
-        FROM users 
+        SELECT id, username, display_name, bio, avatar_key, created_at
+        FROM users
         WHERE username LIKE ? OR display_name LIKE ?
         ORDER BY created_at DESC
         LIMIT ?
       `).bind(searchTerm, searchTerm, limit).all()
-      
+
       return c.json({
         type: 'users',
         query,
         results: users.results || []
       })
-      } else if (type === 'arcade') {
-      // Search arcade (posts with swf_key or payload_key)
-      const posts = await c.env.DB.prepare(`
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
-        FROM posts p
-        LEFT JOIN users u ON p.user_id = u.id
-        WHERE p.status = 'published' AND p.hidden = 0 AND (p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL) AND (p.text LIKE ? OR p.username LIKE ?)
-        ORDER BY p.created_at DESC
-        LIMIT ?
-      `).bind(searchTerm, searchTerm, limit).all()
+    }
 
-      return c.json({
-        type: 'arcade',
-        query,
-        results: posts.results || []
-      })
+    // Build multi-term AND search for posts / arcade
+    const conditions: string[] = []
+    const params: any[] = []
+
+    if (type === 'arcade') {
+      conditions.push('(p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL)')
+    }
+
+    for (const token of tokens) {
+      if (token.startsWith('#')) {
+        const tag = token.slice(1).trim()
+        if (tag) {
+          conditions.push(`EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?)`)
+          params.push(tag)
+        }
       } else {
-      // Search posts (default)
-      const posts = await c.env.DB.prepare(`
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
-        FROM posts p
-        LEFT JOIN users u ON p.user_id = u.id
-        WHERE p.status = 'published' AND p.hidden = 0 AND (p.text LIKE ? OR p.username LIKE ?)
-        ORDER BY p.created_at DESC
-        LIMIT ?
-      `).bind(searchTerm, searchTerm, limit).all()
+        conditions.push('LOWER(p.text) LIKE ?')
+        params.push(`%${token.toLowerCase()}%`)
+      }
+    }
 
-      return c.json({
-        type: 'posts',
-        query,
-        results: posts.results || []
-      })
-      }  } catch (error: any) {
+    if (conditions.length === 0) {
+      return c.json({ type, query, results: [] })
+    }
+
+    const whereClause = `WHERE p.status = 'published' AND p.hidden = 0 AND (${conditions.join(' AND ')})`
+
+    const selectColumns = `
+      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
+      FROM posts p
+      LEFT JOIN users u ON p.user_id = u.id
+    `
+
+    const posts = await c.env.DB.prepare(
+      `${selectColumns} ${whereClause} ORDER BY p.created_at DESC LIMIT ?`
+    ).bind(...params, limit).all()
+
+    return c.json({
+      type,
+      query,
+      results: posts.results || []
+    })
+  } catch (error: any) {
     console.error('Search error:', error)
     return c.json({ error: 'Search failed', details: error?.message || 'Unknown error' }, 500)
   }

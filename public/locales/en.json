@@ -386,6 +386,7 @@
 
   "search.results_for": "Search results for \"{query}\"",
   "search.close": "✕",
+  "search.results_meta": "{type} results",
   "search.users": "Users",
   "search.arcade_games": "Arcade Games",
   "search.posts": "Posts",
@@ -452,6 +453,7 @@
   "timeline.loading_ad": "Loading ad...",
 
   "explore.tag_title": "# {tag}",
+  "explore.tag_count": "{count} posts",
   "explore.tab_for_you": "For You",
   "explore.tab_trending": "Trending",
   "explore.search_placeholder": "Search Flaxia",

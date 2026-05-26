@@ -21,9 +21,9 @@ export class ExplorePage {
   private loadMoreSentinel: HTMLElement | null = null
   private retryCount = 0
   private maxRetries = 3
-  private currentTab: 'recommended' | 'trending' = 'recommended'
   private searchFilter: 'posts' | 'users' | 'arcade' = 'posts'
   private fabButton: HTMLElement | null = null
+  private tagCountEl: HTMLElement | null = null
 
   constructor(props: ExplorePageProps) {
     this.props = props
@@ -43,46 +43,77 @@ export class ExplorePage {
     if (this.props.tag) {
       // Tag view
       const tagHeader = document.createElement('div')
-      tagHeader.className = 'explore-header'
-      const tagTitle = document.createElement('h1')
+      tagHeader.className = 'explore-header explore-tag-header'
+      tagHeader.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 1rem;
+        border-bottom: 1px solid var(--border);
+      `
+
+      const backBtn = document.createElement('button')
+      backBtn.className = 'explore-tag-back'
+      backBtn.textContent = '←'
+      backBtn.style.cssText = `
+        background: none;
+        border: none;
+        font-size: 1.25rem;
+        cursor: pointer;
+        color: var(--text-primary);
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        transition: background 0.2s;
+      `
+      backBtn.addEventListener('mouseenter', () => { backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))' })
+      backBtn.addEventListener('mouseleave', () => { backBtn.style.background = 'none' })
+      backBtn.addEventListener('click', () => {
+        window.history.pushState({}, '', '/explore')
+        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore' } }))
+      })
+
+      const tagInfo = document.createElement('div')
+      tagInfo.style.cssText = 'display: flex; flex-direction: column;'
+
+      const tagTitle = document.createElement('span')
       tagTitle.className = 'explore-title'
-      tagTitle.textContent = t('explore.tag_title', { tag: this.props.tag })
-      tagHeader.appendChild(tagTitle)
+      tagTitle.textContent = `# ${this.props.tag}`
+      tagTitle.style.cssText = `
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: var(--text-primary);
+        line-height: 1.3;
+      `
+
+      this.tagCountEl = document.createElement('span')
+      this.tagCountEl.className = 'explore-tag-count'
+      this.tagCountEl.textContent = t('explore.tag_count', { count: 0 })
+      this.tagCountEl.style.cssText = `
+        font-size: 0.8rem;
+        color: var(--text-muted);
+      `
+
+      tagInfo.appendChild(tagTitle)
+      tagInfo.appendChild(this.tagCountEl)
+      tagHeader.appendChild(backBtn)
+      tagHeader.appendChild(tagInfo)
       container.appendChild(tagHeader)
-      
+
       const postsContainer = document.createElement('div')
       postsContainer.className = 'explore-posts'
       container.appendChild(postsContainer)
     } else {
-      // Explore tabs
-      const tabsContainer = document.createElement('div')
-      tabsContainer.className = 'explore-tabs'
-      tabsContainer.style.cssText = `
-        display: flex;
-        border-bottom: 1px solid var(--border);
-      `
-      
-      const recTab = this.createTab(t('explore.tab_for_you'), 'recommended')
-      const trendTab = this.createTab(t('explore.tab_trending'), 'trending')
-      
-      tabsContainer.appendChild(recTab)
-      tabsContainer.appendChild(trendTab)
-      container.appendChild(tabsContainer)
-
-      // Content container
       const contentContainer = document.createElement('div')
       contentContainer.className = 'explore-content'
-      
-      // Trending tags section (initially hidden or shown depending on tab)
+
       const trendingTagsContainer = document.createElement('div')
       trendingTagsContainer.className = 'explore-trending-tags'
-      trendingTagsContainer.style.display = 'none'
       contentContainer.appendChild(trendingTagsContainer)
 
       const postsContainer = document.createElement('div')
       postsContainer.className = 'explore-posts'
       contentContainer.appendChild(postsContainer)
-      
+
       container.appendChild(contentContainer)
     }
 
@@ -121,43 +152,6 @@ export class ExplorePage {
     return container
   }
 
-  private createTab(label: string, id: 'recommended' | 'trending'): HTMLElement {
-    const tab = document.createElement('div')
-    tab.className = `explore-tab ${this.currentTab === id ? 'active' : ''}`
-    tab.textContent = label
-    tab.style.cssText = `
-      flex: 1;
-      text-align: center;
-      padding: 1rem;
-      cursor: pointer;
-      font-weight: ${this.currentTab === id ? 'bold' : 'normal'};
-      color: ${this.currentTab === id ? 'var(--text-primary)' : 'var(--text-muted)'};
-      border-bottom: 2px solid ${this.currentTab === id ? 'var(--accent)' : 'transparent'};
-      transition: all 0.2s ease;
-    `
-    
-    tab.onclick = () => {
-      if (this.currentTab === id) return
-      this.currentTab = id
-      this.resetAndReload()
-      
-      // Update UI
-      this.element.querySelectorAll('.explore-tab').forEach(t => {
-        const h = t as HTMLElement
-        h.classList.remove('active')
-        h.style.fontWeight = 'normal'
-        h.style.color = 'var(--text-muted)'
-        h.style.borderBottomColor = 'transparent'
-      })
-      tab.classList.add('active')
-      tab.style.fontWeight = 'bold'
-      tab.style.color = 'var(--text-primary)'
-      tab.style.borderBottomColor = 'var(--accent)'
-    }
-    
-    return tab
-  }
-
   private createSearchSection(): HTMLElement {
     const section = document.createElement('div')
     section.className = 'explore-search-section'
@@ -165,25 +159,71 @@ export class ExplorePage {
       padding: 1rem;
       border-bottom: 1px solid var(--border);
     `
-    
-    section.innerHTML = `
-      <div class="search-box" style="position: relative; margin-bottom: 1rem;">
-        <input 
-          type="text" 
-          class="search-input" 
-          placeholder="${t('explore.search_placeholder')}"
-          style="width: 100%; padding: 0.75rem 1rem 0.75rem 2.5rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: 9999px; color: var(--text-primary); font-family: inherit; font-size: 0.875rem; outline: none; transition: border-color 0.2s ease;"
-        />
-        <span class="search-icon" style="position: absolute; left: 0.75rem; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 0.875rem;">🔍</span>
-      </div>
-      <div class="search-filters" style="display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.25rem;">
-        <button class="filter-btn active" data-filter="posts">${t('explore.filter_posts')}</button>
-        <button class="filter-btn" data-filter="users">${t('explore.filter_users')}</button>
-        <button class="filter-btn" data-filter="arcade">${t('explore.filter_arcade')}</button>
-      </div>
-    `
 
-    // Style filter buttons
+    const searchBox = document.createElement('div')
+    searchBox.className = 'search-box'
+    searchBox.style.cssText = 'position: relative; margin-bottom: 1rem;'
+
+    const input = document.createElement('input')
+    input.type = 'text'
+    input.className = 'search-input'
+    input.placeholder = t('explore.search_placeholder')
+    input.style.cssText = 'width: 100%; padding: 0.75rem 1rem 0.75rem 2.5rem; background: var(--bg-input); border: 1px solid var(--border); border-radius: 9999px; color: var(--text-primary); font-family: inherit; font-size: 0.875rem; outline: none; transition: border-color 0.2s ease; box-sizing: border-box;'
+
+    const icon = document.createElement('span')
+    icon.className = 'search-icon'
+    icon.style.cssText = 'position: absolute; left: 0.75rem; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 0.875rem; pointer-events: none;'
+    icon.textContent = '🔍'
+
+    searchBox.appendChild(input)
+    searchBox.appendChild(icon)
+
+    const suggestDropdown = document.createElement('div')
+    suggestDropdown.className = 'tag-suggest-dropdown'
+    suggestDropdown.style.cssText = `
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      z-index: 100;
+      max-height: 300px;
+      overflow-y: auto;
+      margin-top: 4px;
+    `
+    searchBox.appendChild(suggestDropdown)
+
+    section.appendChild(searchBox)
+
+    const filters = document.createElement('div')
+    filters.className = 'search-filters'
+    filters.style.cssText = 'display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.25rem;'
+
+    const filterPosts = document.createElement('button')
+    filterPosts.className = 'filter-btn active'
+    filterPosts.dataset.filter = 'posts'
+    filterPosts.textContent = t('explore.filter_posts')
+
+    const filterUsers = document.createElement('button')
+    filterUsers.className = 'filter-btn'
+    filterUsers.dataset.filter = 'users'
+    filterUsers.textContent = t('explore.filter_users')
+
+    const filterArcade = document.createElement('button')
+    filterArcade.className = 'filter-btn'
+    filterArcade.dataset.filter = 'arcade'
+    filterArcade.textContent = t('explore.filter_arcade')
+
+    filters.appendChild(filterPosts)
+    filters.appendChild(filterUsers)
+    filters.appendChild(filterArcade)
+    section.appendChild(filters)
+
+    // Initial filter button styling
     const filterBtns = section.querySelectorAll('.filter-btn')
     filterBtns.forEach(btn => {
       const b = btn as HTMLElement
@@ -199,7 +239,94 @@ export class ExplorePage {
         white-space: nowrap;
         transition: all 0.2s ease;
       `
-      
+    })
+
+    return section
+  }
+
+  private suggestDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  private suggestAbortController: AbortController | null = null
+
+  private setupEventListeners(): void {
+    const searchInput = this.element.querySelector('.search-input') as HTMLInputElement
+    const suggestDropdown = this.element.querySelector('.tag-suggest-dropdown') as HTMLElement
+
+    if (searchInput && suggestDropdown) {
+      searchInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+          const query = searchInput.value.trim()
+          suggestDropdown.style.display = 'none'
+          if (query.startsWith('#')) {
+            const afterHash = query.slice(1).trim()
+            const spaceIdx = afterHash.indexOf(' ')
+            if (spaceIdx === -1 && afterHash) {
+              // Just #tag → tag view
+              window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(afterHash)}`)
+              window.location.reload()
+              return
+            }
+            // #tag word → search with combined query
+            this.performSearch(query)
+            return
+          }
+          this.performSearch(query)
+        }
+      })
+
+      searchInput.addEventListener('input', () => {
+        const val = searchInput.value.trim()
+
+        if (!val.startsWith('#') || val.length < 2 || val.includes(' ')) {
+          suggestDropdown.style.display = 'none'
+          return
+        }
+
+        const prefix = val.slice(1).trim()
+        if (!prefix) {
+          suggestDropdown.style.display = 'none'
+          return
+        }
+
+        if (this.suggestDebounceTimer) clearTimeout(this.suggestDebounceTimer)
+        if (this.suggestAbortController) this.suggestAbortController.abort()
+
+        this.suggestDebounceTimer = setTimeout(async () => {
+          const controller = new AbortController()
+          this.suggestAbortController = controller
+
+          try {
+            const res = await fetch(`/api/tags/suggest?q=${encodeURIComponent(prefix)}`, {
+              signal: controller.signal
+            })
+            if (!res.ok) return
+            const data = await res.json() as { tags: { tag: string; count: number }[] }
+            this.renderTagSuggestions(suggestDropdown, searchInput, data.tags || [])
+          } catch (err: any) {
+            if (err?.name !== 'AbortError') {
+              console.error('Tag suggest error:', err)
+            }
+          }
+        }, 200)
+      })
+
+      // Close on blur (with delay to allow click)
+      searchInput.addEventListener('blur', () => {
+        setTimeout(() => { suggestDropdown.style.display = 'none' }, 200)
+      })
+
+      // Close on Escape
+      searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          suggestDropdown.style.display = 'none'
+          searchInput.blur()
+        }
+      })
+    }
+
+    // Style filter buttons
+    const filterBtns = this.element.querySelectorAll('.filter-btn')
+    filterBtns.forEach(btn => {
+      const b = btn as HTMLElement
       b.onclick = () => {
         this.searchFilter = b.dataset.filter as any
         filterBtns.forEach(other => {
@@ -212,25 +339,51 @@ export class ExplorePage {
       }
     })
 
-    return section
+    this.setupIntersectionObserver()
   }
 
-  private setupEventListeners(): void {
-    // Search functionality
-    const searchInput = this.element.querySelector('.search-input') as HTMLInputElement
-    if (searchInput) {
-      searchInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-          const query = searchInput.value.trim()
-          if (query) {
-            this.performSearch(query)
-          }
-        }
-      })
+  private renderTagSuggestions(dropdown: HTMLElement, input: HTMLInputElement, tags: { tag: string; count: number }[]): void {
+    dropdown.innerHTML = ''
+
+    if (tags.length === 0) {
+      dropdown.style.display = 'none'
+      return
     }
 
-    // Setup intersection observer for infinite scroll
-    this.setupIntersectionObserver()
+    dropdown.style.display = 'block'
+
+    for (const t of tags) {
+      const item = document.createElement('div')
+      item.style.cssText = `
+        padding: 0.6rem 0.75rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        transition: background 0.15s;
+      `
+      item.addEventListener('mouseenter', () => { item.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))' })
+      item.addEventListener('mouseleave', () => { item.style.background = 'none' })
+
+      const tagName = document.createElement('span')
+      tagName.textContent = `# ${t.tag}`
+      tagName.style.cssText = 'font-weight: 600; color: var(--accent); font-size: 0.875rem;'
+
+      const count = document.createElement('span')
+      count.textContent = `${t.count}`
+      count.style.cssText = 'margin-left: auto; color: var(--text-muted); font-size: 0.75rem;'
+
+      item.appendChild(tagName)
+      item.appendChild(count)
+
+      item.addEventListener('click', () => {
+        dropdown.style.display = 'none'
+        window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(t.tag)}`)
+        window.location.reload()
+      })
+
+      dropdown.appendChild(item)
+    }
   }
 
   private resetAndReload(): void {
@@ -253,8 +406,6 @@ export class ExplorePage {
     try {
       if (this.props.tag) {
         await this.loadTagPosts()
-      } else if (this.currentTab === 'recommended') {
-        await this.loadRecommendedPosts()
       } else {
         await this.loadTrendingContent()
       }
@@ -276,22 +427,18 @@ export class ExplorePage {
       let url = ''
       if (this.props.tag) {
         url = `/api/posts?hashtag=${encodeURIComponent(this.props.tag)}&limit=10`
-      } else if (this.currentTab === 'trending') {
-        url = `/api/posts/trending?limit=10`
       } else {
-        url = `/api/posts/recommended?limit=10`
+        url = `/api/posts/trending?limit=10`
       }
 
       if (this.cursor) {
-        // Ensure legacy date-based cursors aren't sent to the recommended or trending endpoints
-        if ((this.currentTab === 'recommended' || this.currentTab === 'trending') && !this.cursor.includes(',')) {
+        if (!this.props.tag && !this.cursor.includes(',')) {
           this.cursor = undefined
         } else {
           url += `&cursor=${encodeURIComponent(this.cursor)}`
         }
       }
 
-      console.log('Fetching URL:', url);
       const response = await fetch(url)
       if (!response.ok) throw new Error('Failed to load more posts')
       
@@ -300,8 +447,7 @@ export class ExplorePage {
 
       if (newPosts.length > 0) {
         this.posts.push(...newPosts)
-        // If recommended or trending, use score,created_at as cursor
-        if (!this.props.tag && (this.currentTab === 'recommended' || this.currentTab === 'trending')) {
+        if (!this.props.tag) {
           const lastPost = newPosts[newPosts.length - 1] as any
           this.cursor = `${lastPost.score},${lastPost.created_at}`
         } else {
@@ -329,14 +475,6 @@ export class ExplorePage {
     }
     const response = await fetch(url)
     if (!response.ok) throw new Error('Failed to load tag posts')
-    const data = await response.json() as { posts: Post[] }
-    this.handleNewPosts(data.posts)
-  }
-
-  private async loadRecommendedPosts(): Promise<void> {
-    const url = `/api/posts/recommended?limit=10`
-    const response = await fetch(url)
-    if (!response.ok) throw new Error('Failed to load recommended posts')
     const data = await response.json() as { posts: Post[] }
     this.handleNewPosts(data.posts)
   }
@@ -369,6 +507,7 @@ export class ExplorePage {
       this.hasMore = false
       if (this.posts.length > 0) this.showEndOfPosts()
     }
+    this.updateTagCount()
   }
 
   private performSearch(query: string): void {
@@ -408,7 +547,7 @@ export class ExplorePage {
     if (!container) return
 
     container.innerHTML = `<h2 style="padding: 1rem; font-size: 1.25rem; border-bottom: 1px solid var(--border);">${t('explore.trending_tags')}</h2>`
-    container.style.display = this.currentTab === 'trending' ? 'block' : 'none'
+    container.style.display = 'block'
     container.style.background = 'var(--bg-secondary)'
     container.style.marginBottom = '1rem'
 
@@ -541,6 +680,13 @@ export class ExplorePage {
         createPostCard({ post, sandboxOrigin: this.props.sandboxOrigin, currentUser: this.props.currentUser || undefined }).getElement(),
         postsContainer.firstChild
       )
+    }
+    this.updateTagCount()
+  }
+
+  private updateTagCount(): void {
+    if (this.tagCountEl && this.props.tag) {
+      this.tagCountEl.textContent = t('explore.tag_count', { count: this.posts.length })
     }
   }
 
