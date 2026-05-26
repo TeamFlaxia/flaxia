@@ -422,10 +422,15 @@ export class PostCard {
   }
 
   private handlePostClick(): void {
-    console.log('handlePostClick called for post:', this.props.post.id)
+    if (window.location.pathname.startsWith('/thread/')) {
+      return
+    }
+    const threadUrl = `/thread/${this.props.post.id}`
+    if (window.location.pathname === threadUrl) {
+      return
+    }
     
     // Navigate to thread page using SPA navigation
-    const threadUrl = `/thread/${this.props.post.id}`
     console.log('Pushing state to URL:', threadUrl)
     window.history.pushState({ postId: this.props.post.id }, '', threadUrl)
     
@@ -1025,9 +1030,8 @@ export class PostCard {
     `
 
     hashtags.forEach(tag => {
-      const chip = document.createElement('a')
+      const chip = document.createElement('span')
       chip.className = 'post-tag-chip'
-      chip.href = `/explore?tag=${encodeURIComponent(tag)}`
       chip.textContent = `#${tag}`
       chip.style.cssText = `
         display: inline-block;
@@ -1037,15 +1041,22 @@ export class PostCard {
         font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         font-size: 13px;
         border-radius: 9999px;
-        text-decoration: none;
+        cursor: pointer;
         transition: all 0.2s ease;
       `
-      
+
+      chip.addEventListener('click', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`)
+        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore', tag } }))
+      })
+
       chip.addEventListener('mouseenter', () => {
         chip.style.background = 'var(--accent)'
         chip.style.color = '#000'
       })
-      
+
       chip.addEventListener('mouseleave', () => {
         chip.style.background = 'var(--bg-secondary)'
         chip.style.color = 'var(--accent)'
@@ -1100,9 +1111,9 @@ export class PostCard {
       bar.className = 'poll-bar'
       bar.style.cssText = `
         position: absolute; top: 0; left: 0; height: 100%; 
-        background: ${isOwnVote ? 'var(--accent)' : 'var(--bg-hover)'};
+        background: var(--accent);
         width: ${showResults ? pct : 0}%; transition: width 0.5s ease; border-radius: 5px;
-        opacity: ${isOwnVote ? '0.2' : '0.5'};
+        opacity: 0.25;
       `
       optEl.appendChild(bar)
 

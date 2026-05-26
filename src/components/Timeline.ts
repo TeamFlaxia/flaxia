@@ -57,9 +57,12 @@ export class Timeline {
     const container = document.createElement('section')
     container.className = 'timeline'
 
-    // Sticky tabs at top
+    // Sticky header: feed tabs + post composer
+    const timelineHeader = document.createElement('div')
+    timelineHeader.className = 'timeline-header'
+
     const feedToggle = this.createFeedToggle()
-    container.appendChild(feedToggle)
+    timelineHeader.appendChild(feedToggle)
 
     // Post composer pinned directly below tabs (only for logged-in users)
     if (this.props.currentUser) {
@@ -67,8 +70,10 @@ export class Timeline {
         onPostCreated: (post) => this.handleNewPost(post),
         currentUser: this.props.currentUser
       })
-      container.appendChild(this.composer.getElement())
+      timelineHeader.appendChild(this.composer.getElement())
     }
+
+    container.appendChild(timelineHeader)
 
     // Hashtag input (hidden by default)
     const hashtagInput = this.createHashtagInput()

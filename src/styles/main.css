@@ -469,6 +469,10 @@ p {
   padding: 1rem;
   border-right: 1px solid var(--border);
   background: white;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
 }
 
 .main-content {
@@ -482,6 +486,10 @@ p {
   width: 350px;
   flex-shrink: 0;
   padding: 1rem;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
 }
 
 /* Mobile Responsive */
@@ -1245,6 +1253,33 @@ p {
   background: var(--accent-dark);
 }
 
+.composer-save-draft,
+.composer-list-drafts {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  border-radius: 50%;
+  transition: background-color 0.2s ease;
+  opacity: 0.6;
+}
+
+.composer-save-draft:hover,
+.composer-list-drafts:hover {
+  background: var(--bg-secondary);
+  opacity: 1;
+}
+
+.composer-drafts-dropdown {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
 .composer-submit:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -1297,10 +1332,13 @@ p {
   display: flex;
   border-bottom: 1px solid var(--border);
   margin-bottom: 0;
+}
+
+.timeline-header {
   position: sticky;
   top: 0;
-  background: var(--bg-primary);
   z-index: 10;
+  background: var(--bg-primary);
 }
 
 .feed-toggle-btn {

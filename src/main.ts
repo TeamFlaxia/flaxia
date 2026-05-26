@@ -1393,7 +1393,12 @@ document.addEventListener('DOMContentLoaded', async () => {
           unreadCount: unreadNotificationCount,
           onBack: () => {
             console.log('Back button clicked, returning to previous view')
-            window.history.back()
+            if (cachedContentComponent) {
+              window.history.back()
+            } else {
+              window.history.pushState({}, '', '/home')
+              navigateTo('timeline')
+            }
           }
         })
         

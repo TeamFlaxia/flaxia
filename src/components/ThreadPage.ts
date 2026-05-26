@@ -60,28 +60,27 @@ export class ThreadPage {
       currentUser: this.props.currentUser || undefined,
       onNavigate: async (item) => {
         console.log('Navigate to:', item)
-        // Handle navigation - this will need to be passed from parent
         if (item === 'home') {
-          window.history.pushState({}, '', '/')
-          this.props.onBack()
+          window.history.pushState({}, '', '/home')
+          window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'timeline' } }))
         } else if (item === 'explore') {
           window.history.pushState({}, '', '/explore')
-          window.location.reload() // Simple navigation for now
+          window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore' } }))
         } else if (item === 'arcade') {
           window.history.pushState({}, '', '/arcade')
-          window.location.reload()
+          window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade' } }))
         } else if (item === 'notifications') {
           if (this.props.currentUser) {
             window.history.pushState({}, '', '/notifications')
-            window.location.reload()
+            window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'notifications' } }))
           }
         } else if (item === 'settings') {
           window.history.pushState({}, '', '/settings')
-          window.location.reload()
+          window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'settings' } }))
         } else if (item === 'profile') {
           if (this.props.currentUser) {
             window.history.pushState({}, '', `/profile/${this.props.currentUser.username}`)
-            window.location.reload()
+            window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'profile', username: this.props.currentUser.username } }))
           }
         }
       },
@@ -108,33 +107,26 @@ export class ThreadPage {
       border-right: 1px solid #e2e8f0;
     `
 
-    // Thread content (will be populated by loadThread)
-    const threadContent = document.createElement('div')
-    threadContent.className = 'thread-content'
-    threadContent.id = `thread-content-${this.props.postId}`
-
-    // Loading state
-    const loading = document.createElement('div')
-    loading.className = 'thread-loading'
-    loading.textContent = t('thread.loading')
-    loading.style.cssText = `
-      color: #64748b;
-      font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      text-align: center;
-      padding: 4rem 2rem;
-      font-size: 1.125rem;
+    // Sticky top section: header + root post
+    const topSection = document.createElement('div')
+    topSection.className = 'thread-top-section'
+    topSection.style.cssText = `
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: #ffffff;
+      border-bottom: 1px solid #e2e8f0;
+      margin-bottom: 1rem;
     `
 
-
-    // Add thread header to main content
+    // Thread header
     const header = document.createElement('div')
     header.className = 'thread-header'
     header.style.cssText = `
       display: flex;
       align-items: center;
-      margin-bottom: 1.5rem;
       padding-bottom: 1rem;
-      border-bottom: 1px solid #e2e8f0;
+      padding-top: 0.5rem;
     `
 
     const backButton = document.createElement('button')
@@ -163,10 +155,33 @@ export class ThreadPage {
 
     header.appendChild(backButton)
     header.appendChild(title)
+    topSection.appendChild(header)
+
+    // Root post area inside top section (populated by loadThread)
+    const rootPostContainer = document.createElement('div')
+    rootPostContainer.className = 'thread-root-post-container'
+    topSection.appendChild(rootPostContainer)
+
+    // Replies content (scrollable)
+    const repliesContent = document.createElement('div')
+    repliesContent.className = 'thread-replies-content'
+    repliesContent.id = `thread-replies-${this.props.postId}`
+
+    // Loading state
+    const loading = document.createElement('div')
+    loading.className = 'thread-loading'
+    loading.textContent = t('thread.loading')
+    loading.style.cssText = `
+      color: #64748b;
+      font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      text-align: center;
+      padding: 4rem 2rem;
+      font-size: 1.125rem;
+    `
 
     // Assemble main content
-    mainContent.appendChild(header)
-    mainContent.appendChild(threadContent)
+    mainContent.appendChild(topSection)
+    mainContent.appendChild(repliesContent)
     mainContent.appendChild(loading)
 
     // Assemble layout
@@ -260,9 +275,6 @@ export class ThreadPage {
   }
 
   private clearThreadContent(): void {
-    const content = this.element.querySelector('.thread-content') as HTMLElement
-    if (!content) return
-
     // Clean up existing reply nodes
     this.replyNodes.forEach(node => node.destroy())
     this.replyNodes = []
@@ -279,14 +291,20 @@ export class ThreadPage {
       this.rootReplyComposer = undefined
     }
 
-    // Clear all content
-    content.innerHTML = ''
+    // Clear containers
+    const rootContainer = this.element.querySelector('.thread-root-post-container') as HTMLElement
+    if (rootContainer) rootContainer.innerHTML = ''
+
+    const repliesContent = this.element.querySelector('.thread-replies-content') as HTMLElement
+    if (repliesContent) repliesContent.innerHTML = ''
+
     this.isRootReplyComposerOpen = false
   }
 
   private async loadThread(): Promise<void> {
     this.isLoading = true
-    const content = this.element.querySelector('.thread-content') as HTMLElement
+    const rootContainer = this.element.querySelector('.thread-root-post-container') as HTMLElement
+    const repliesContent = this.element.querySelector('.thread-replies-content') as HTMLElement
     const loading = this.element.querySelector('.thread-loading') as HTMLElement
 
     // Clear existing content before reloading
@@ -316,7 +334,10 @@ export class ThreadPage {
         onDelete: () => {}, // Add empty onDelete handler to prevent errors
         disableReplyComposer: true // Disable only built-in reply composer, ThreadPage will handle replies
       })
-      content.appendChild(this.rootPostCard.getElement())
+      rootContainer.appendChild(this.rootPostCard.getElement())
+
+      // Sync post card reply count with actual thread data
+      this.rootPostCard.updatePost({ reply_count: data.replies.length })
 
       // Root reply composer (hidden by default)
       this.rootReplyComposer = createReplyComposer({
@@ -326,7 +347,7 @@ export class ThreadPage {
         onCancel: () => this.hideRootReplyComposer()
       })
       this.rootReplyComposer.getElement().style.display = 'none'
-      content.appendChild(this.rootReplyComposer.getElement())
+      rootContainer.appendChild(this.rootReplyComposer.getElement())
 
       // Setup event listener for root post reply toggle
       this.rootPostCard.getElement().addEventListener('replyToggle', (e: any) => {
@@ -334,14 +355,6 @@ export class ThreadPage {
           this.toggleRootReplyComposer()
         }
       })
-
-      // Add separator
-      const separator = document.createElement('div')
-      separator.style.cssText = `
-        border-top: 1px solid #e2e8f0;
-        margin: 1.5rem 0;
-      `
-      content.appendChild(separator)
 
       // Add replies header
       const repliesHeader = document.createElement('h2')
@@ -351,9 +364,10 @@ export class ThreadPage {
         font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         font-size: 1rem;
         margin: 0 0 1rem 0;
+        padding-top: 1rem;
         font-weight: normal;
       `
-      content.appendChild(repliesHeader)
+      repliesContent.appendChild(repliesHeader)
 
       // Build reply tree and render
       if (data.replies.length > 0) {
@@ -373,7 +387,7 @@ export class ThreadPage {
           repliesContainer.appendChild(replyNode.getElement())
         })
 
-        content.appendChild(repliesContainer)
+        repliesContent.appendChild(repliesContainer)
       } else {
         const noReplies = document.createElement('p')
         noReplies.textContent = t('thread.no_replies')
@@ -384,17 +398,17 @@ export class ThreadPage {
           padding: 2rem;
           font-style: italic;
         `
-        content.appendChild(noReplies)
+        repliesContent.appendChild(noReplies)
       }
 
       // Add click handler for >>N post references
-      content.addEventListener('click', (e) => {
+      repliesContent.addEventListener('click', (e) => {
         const target = e.target as HTMLElement
         if (target.classList.contains('post-ref-link')) {
           e.preventDefault()
           const index = target.dataset.postIndex
           if (index) {
-            const targetPost = content.querySelector(`[data-post-index="${index}"]`)
+            const targetPost = repliesContent.querySelector(`[data-post-index="${index}"]`)
             if (targetPost) {
               targetPost.scrollIntoView({ behavior: 'smooth', block: 'center' })
             }

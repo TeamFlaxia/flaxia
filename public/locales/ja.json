@@ -86,6 +86,10 @@
   "composer.error_unsupported_type": "サポートされていないファイル形式です",
   "composer.error_thumbnail_size": "サムネイルは1MB以下である必要があります",
   "composer.error_thumbnail_type": "サムネイルは .jpg, .jpeg, .png, .gif のいずれかである必要があります",
+  "composer.save_draft": "下書きを保存",
+  "composer.list_drafts": "下書き一覧",
+  "composer.no_drafts": "保存された下書きはありません",
+
   "composer.error_create_failed": "投稿の作成に失敗しました。もう一度お試しください。",
   "composer.reply_placeholder": "返信を書く...",
   "composer.reply_button": "返信",

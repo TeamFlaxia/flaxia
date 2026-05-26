@@ -62,6 +62,12 @@ export class PostComposer {
   private pollActive: boolean = false
   private pollQuestion: string = ''
   private pollOptionsArr: string[] = ['', '']
+  private static readonly AUTOSAVE_KEY = 'flaxia_draft_autosave'
+  private static readonly SAVED_DRAFTS_KEY = 'flaxia_saved_drafts'
+  private draftTimeout: ReturnType<typeof setTimeout> | null = null
+  private savedDrafts: Array<{ id: string; text: string; savedAt: number }> = []
+  private draftsDropdown!: HTMLElement
+  private boundCloseDrafts!: (e: MouseEvent) => void
 
   constructor(props: PostComposerProps) {
     this.props = props
@@ -100,6 +106,8 @@ export class PostComposer {
               📊
             </button>
             <span class="composer-char-count">${t('composer.char_count', { current: 0, max: 200 })}</span>
+            <button class="composer-save-draft" type="button" title="${t('composer.save_draft')}">💾</button>
+            <button class="composer-list-drafts" type="button" title="${t('composer.list_drafts')}">📝</button>
           </div>
           <button class="composer-submit" type="button" disabled>
             ${t('composer.post_button')}
@@ -163,6 +171,29 @@ export class PostComposer {
       body.insertBefore(this.errorDisplay, body.querySelector('.composer-file-preview'))
     }
 
+    // Create drafts dropdown
+    this.draftsDropdown = document.createElement('div')
+    this.draftsDropdown.className = 'composer-drafts-dropdown'
+    this.draftsDropdown.style.cssText = `
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      z-index: 100;
+      max-height: 240px;
+      overflow-y: auto;
+    `
+    const footer = container.querySelector('.composer-footer')
+    if (footer) {
+      footer.style.position = 'relative'
+      footer.appendChild(this.draftsDropdown)
+    }
+
     // Create mention suggestion dropdown
     this.mentionDropdown = document.createElement('div')
     this.mentionDropdown.className = 'mention-dropdown'
@@ -183,6 +214,9 @@ export class PostComposer {
       composerHeader.style.position = 'relative'
       composerHeader.appendChild(this.mentionDropdown)
     }
+
+    // Restore draft if available
+    this.loadDraft()
 
     // Set avatar
     const avatar = container.querySelector('.composer-avatar') as HTMLElement
@@ -228,6 +262,7 @@ export class PostComposer {
       }
       this.updateSubmitButton()
       this.handleMentionInput()
+      this.scheduleDraftSave()
     })
 
     // Textarea keydown for inline hashtag detection - DISABLED for unified approach
@@ -290,12 +325,44 @@ export class PostComposer {
       this.togglePollSection()
     })
 
+    // Save draft button
+    const saveDraftBtn = this.element.querySelector('.composer-save-draft')!
+    saveDraftBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      this.saveExplicitDraft()
+    })
+
+    // List drafts button
+    const listDraftsBtn = this.element.querySelector('.composer-list-drafts')!
+    listDraftsBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      if (this.draftsDropdown.style.display === 'block') {
+        this.closeDraftsDropdown()
+      } else {
+        this.renderDraftsDropdown()
+        this.openDraftsDropdown()
+      }
+    })
+
+    // Close drafts dropdown on outside click
+    this.boundCloseDrafts = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (this.draftsDropdown.style.display === 'block' &&
+          !this.draftsDropdown.contains(target) &&
+          !saveDraftBtn.contains(target) &&
+          !listDraftsBtn.contains(target)) {
+        this.closeDraftsDropdown()
+      }
+    }
+    document.addEventListener('click', this.boundCloseDrafts)
+
     // Poll question input
     const pollQuestion = this.element.querySelector('.poll-question-input') as HTMLInputElement
     if (pollQuestion) {
       pollQuestion.addEventListener('input', () => {
         this.pollQuestion = pollQuestion.value
         this.updateSubmitButton()
+        this.scheduleDraftSave()
       })
     }
 
@@ -690,6 +757,7 @@ export class PostComposer {
       if (questionInput) questionInput.value = ''
     }
     this.updateSubmitButton()
+    this.scheduleDraftSave()
   }
 
   private addPollOption(): void {
@@ -720,6 +788,7 @@ export class PostComposer {
       input.addEventListener('input', () => {
         this.pollOptionsArr[i] = input.value
         this.updateSubmitButton()
+        this.scheduleDraftSave()
       })
       item.appendChild(input)
       if (this.pollOptionsArr.length > 2) {
@@ -768,6 +837,184 @@ export class PostComposer {
     const hasContent = this.textarea.value.trim().length > 0
     this.submitButton.disabled = !hasContent || this.isSubmitting
     this.submitButton.textContent = this.isSubmitting ? t('composer.posting') : t('composer.post_button')
+  }
+
+  private scheduleDraftSave(): void {
+    if (this.draftTimeout) clearTimeout(this.draftTimeout)
+    this.draftTimeout = setTimeout(() => this.saveDraft(), 500)
+  }
+
+  private saveDraft(): void {
+    try {
+      const draft: Record<string, any> = {
+        text: this.textarea.value,
+        savedAt: Date.now()
+      }
+      if (this.pollActive) {
+        const select = this.element.querySelector('.poll-duration-select') as HTMLSelectElement
+        draft.poll = {
+          question: this.pollQuestion,
+          options: [...this.pollOptionsArr],
+          duration: select?.value || '86400000'
+        }
+      }
+      localStorage.setItem(PostComposer.AUTOSAVE_KEY, JSON.stringify(draft))
+    } catch {}
+  }
+
+  private loadDraft(): void {
+    try {
+      const raw = localStorage.getItem(PostComposer.AUTOSAVE_KEY)
+      if (!raw) return
+      const draft = JSON.parse(raw)
+      if (!draft.text) return
+
+      this.textarea.value = draft.text
+      this.charCount.textContent = t('composer.char_count', { current: draft.text.length, max: 200 })
+      this.updateSubmitButton()
+
+      if (draft.poll) {
+        this.pollActive = true
+        this.pollQuestion = draft.poll.question || ''
+        this.pollOptionsArr = draft.poll.options?.length ? [...draft.poll.options] : ['', '']
+        const section = this.element.querySelector('.composer-poll-section') as HTMLElement
+        if (section) section.style.display = 'block'
+        const questionInput = this.element.querySelector('.poll-question-input') as HTMLInputElement
+        if (questionInput) questionInput.value = this.pollQuestion
+        const select = this.element.querySelector('.poll-duration-select') as HTMLSelectElement
+        if (select && draft.poll.duration) select.value = draft.poll.duration
+        this.renderPollOptions()
+      }
+    } catch {}
+  }
+
+  private clearAutoDraft(): void {
+    localStorage.removeItem(PostComposer.AUTOSAVE_KEY)
+    if (this.draftTimeout) {
+      clearTimeout(this.draftTimeout)
+      this.draftTimeout = null
+    }
+  }
+
+  private loadSavedDrafts(): void {
+    try {
+      const raw = localStorage.getItem(PostComposer.SAVED_DRAFTS_KEY)
+      this.savedDrafts = raw ? JSON.parse(raw) : []
+    } catch {
+      this.savedDrafts = []
+    }
+  }
+
+  private saveExplicitDraft(): void {
+    const text = this.textarea.value.trim()
+    if (!text) return
+    this.loadSavedDrafts()
+    const draft = {
+      id: Date.now().toString(36),
+      text,
+      savedAt: Date.now()
+    }
+    this.savedDrafts.unshift(draft)
+    if (this.savedDrafts.length > 20) this.savedDrafts.length = 20
+    try {
+      localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts))
+    } catch {}
+  }
+
+  private deleteExplicitDraft(id: string): void {
+    this.loadSavedDrafts()
+    this.savedDrafts = this.savedDrafts.filter(d => d.id !== id)
+    try {
+      localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts))
+    } catch {}
+    this.renderDraftsDropdown()
+  }
+
+  private loadExplicitDraft(draft: { id: string; text: string }): void {
+    this.textarea.value = draft.text
+    this.charCount.textContent = t('composer.char_count', { current: draft.text.length, max: 200 })
+    this.updateSubmitButton()
+    this.pollActive = false
+    const section = this.element.querySelector('.composer-poll-section') as HTMLElement
+    if (section) section.style.display = 'none'
+    this.scheduleDraftSave()
+    this.closeDraftsDropdown()
+  }
+
+  private renderDraftsDropdown(): void {
+    this.loadSavedDrafts()
+    this.draftsDropdown.innerHTML = ''
+    if (this.savedDrafts.length === 0) {
+      this.draftsDropdown.innerHTML = `<div style="padding: 0.75rem; color: var(--text-muted); font-size: 0.85rem; text-align: center;">${t('composer.no_drafts')}</div>`
+      return
+    }
+    const list = document.createElement('div')
+    list.style.cssText = 'display: flex; flex-direction: column;'
+    for (const draft of this.savedDrafts) {
+      const item = document.createElement('div')
+      item.style.cssText = `
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.5rem 0.75rem;
+        border-bottom: 1px solid var(--border);
+        cursor: pointer;
+        gap: 0.5rem;
+      `
+      item.addEventListener('mouseenter', () => { item.style.background = 'var(--bg-hover)' })
+      item.addEventListener('mouseleave', () => { item.style.background = '' })
+
+      const preview = document.createElement('span')
+      preview.style.cssText = `
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 0.85rem;
+        color: var(--text-primary);
+      `
+      preview.textContent = draft.text.replace(/\n/g, ' ').substring(0, 60)
+      preview.addEventListener('click', () => this.loadExplicitDraft(draft))
+
+      const time = document.createElement('span')
+      time.style.cssText = 'font-size: 0.7rem; color: var(--text-muted); white-space: nowrap;'
+      const minutes = Math.floor((Date.now() - draft.savedAt) / 60000)
+      time.textContent = minutes < 1 ? t('time.just_now') : minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h`
+
+      const delBtn = document.createElement('button')
+      delBtn.type = 'button'
+      delBtn.textContent = '✕'
+      delBtn.style.cssText = `
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        padding: 0.15rem 0.3rem;
+        border-radius: 4px;
+        flex-shrink: 0;
+      `
+      delBtn.addEventListener('mouseenter', () => { delBtn.style.color = 'var(--danger)' })
+      delBtn.addEventListener('mouseleave', () => { delBtn.style.color = 'var(--text-muted)' })
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation()
+        this.deleteExplicitDraft(draft.id)
+      })
+
+      item.appendChild(preview)
+      item.appendChild(time)
+      item.appendChild(delBtn)
+      list.appendChild(item)
+    }
+    this.draftsDropdown.appendChild(list)
+  }
+
+  private openDraftsDropdown(): void {
+    this.draftsDropdown.style.display = 'block'
+  }
+
+  private closeDraftsDropdown(): void {
+    this.draftsDropdown.style.display = 'none'
   }
 
   private async handleSubmit(): Promise<void> {
@@ -859,7 +1106,8 @@ export class PostComposer {
         }
       }
 
-      // Clear form
+      // Clear form and draft
+      this.clearAutoDraft()
       this.textarea.value = ''
       this.charCount.textContent = t('composer.char_count', { current: 0, max: 200 })
       this.clearFileSelection()
@@ -1098,6 +1346,8 @@ export class PostComposer {
   }
 
   public destroy(): void {
+    this.saveDraft()
+    document.removeEventListener('click', this.boundCloseDrafts)
     this.element.remove()
   }
 }

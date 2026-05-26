@@ -267,13 +267,16 @@ function linkifyHashtags(container: HTMLElement): void {
       
       // Create hashtag link
       const hashtag = match[1]
-      const link = document.createElement('a')
-      link.href = `/explore?tag=${encodeURIComponent(hashtag)}`
-      link.className = 'hashtag-link'
-      link.textContent = `#${hashtag}`
-      link.target = '_blank'
-      link.rel = 'noopener noreferrer'
-      fragment.appendChild(link)
+      const span = document.createElement('span')
+      span.className = 'hashtag-link'
+      span.textContent = `#${hashtag}`
+      span.style.cursor = 'pointer'
+      span.addEventListener('click', (e) => {
+        e.stopPropagation()
+        window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(hashtag)}`)
+        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore', tag: hashtag } }))
+      })
+      fragment.appendChild(span)
       
       lastIndex = match.index + match[0].length
     }
@@ -422,13 +425,16 @@ function linkifyMentions(container: HTMLElement, mentions?: string): void {
       const username = match[1]
       const userExists = mentionMap.has(username.toLowerCase())
       if (userExists) {
-        const link = document.createElement('a')
-        link.href = `/profile/${encodeURIComponent(username)}`
-        link.className = 'mention-link'
-        link.textContent = `@${username}`
-        link.target = '_blank'
-        link.rel = 'noopener noreferrer'
-        fragment.appendChild(link)
+        const span = document.createElement('span')
+        span.className = 'mention-link'
+        span.textContent = `@${username}`
+        span.style.cursor = 'pointer'
+        span.addEventListener('click', (e) => {
+          e.stopPropagation()
+          window.history.pushState({}, '', `/profile/${encodeURIComponent(username)}`)
+          window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'profile', username } }))
+        })
+        fragment.appendChild(span)
       } else {
         fragment.appendChild(document.createTextNode(`@${username}`))
       }
