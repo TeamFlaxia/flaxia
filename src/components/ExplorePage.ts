@@ -244,7 +244,6 @@ export class ExplorePage {
     return section
   }
 
-  private suggestDebounceTimer: ReturnType<typeof setTimeout> | null = null
   private suggestAbortController: AbortController | null = null
 
   private setupEventListeners(): void {
@@ -252,69 +251,87 @@ export class ExplorePage {
     const suggestDropdown = this.element.querySelector('.tag-suggest-dropdown') as HTMLElement
 
     if (searchInput && suggestDropdown) {
+      const fetchSuggestions = async (prefix: string, type: 'tag' | 'user') => {
+        if (this.suggestAbortController) this.suggestAbortController.abort()
+        const controller = new AbortController()
+        this.suggestAbortController = controller
+        try {
+          const url = type === 'tag'
+            ? `/api/tags/suggest?q=${encodeURIComponent(prefix)}`
+            : `/api/users/suggest?q=${encodeURIComponent(prefix)}`
+          const res = await fetch(url, { signal: controller.signal })
+          if (!res.ok) return
+          if (type === 'tag') {
+            const data = await res.json() as { tags: { tag: string; count: number }[] }
+            this.renderSuggestions(suggestDropdown, (data.tags || []).map(t => ({ type: 'tag' as const, label: t.tag, count: t.count })))
+          } else {
+            const data = await res.json() as { users: { username: string; display_name: string; avatar_key: string }[] }
+            this.renderSuggestions(suggestDropdown, (data.users || []).map(u => ({ type: 'user' as const, label: u.username, display: u.display_name, avatar: u.avatar_key })))
+          }
+        } catch (err: any) {
+          if (err?.name !== 'AbortError') console.error('Suggest error:', err)
+        }
+      }
+
       searchInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') {
           const query = searchInput.value.trim()
+          this.suggestAbortController?.abort()
           suggestDropdown.style.display = 'none'
+
           if (query.startsWith('#')) {
             const afterHash = query.slice(1).trim()
             const spaceIdx = afterHash.indexOf(' ')
             if (spaceIdx === -1 && afterHash) {
-              // Just #tag → tag view
               window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(afterHash)}`)
               window.location.reload()
               return
             }
-            // #tag word → search with combined query
+          }
+
+          if (query.startsWith('@')) {
             this.performSearch(query)
             return
           }
+
           this.performSearch(query)
         }
       })
 
+      let suggestTimer: ReturnType<typeof setTimeout> | null = null
+
       searchInput.addEventListener('input', () => {
-        const val = searchInput.value.trim()
+        const val = searchInput.value
 
-        if (!val.startsWith('#') || val.length < 2 || val.includes(' ')) {
-          suggestDropdown.style.display = 'none'
-          return
-        }
-
-        const prefix = val.slice(1).trim()
-        if (!prefix) {
-          suggestDropdown.style.display = 'none'
-          return
-        }
-
-        if (this.suggestDebounceTimer) clearTimeout(this.suggestDebounceTimer)
         if (this.suggestAbortController) this.suggestAbortController.abort()
+        if (suggestTimer) clearTimeout(suggestTimer)
 
-        this.suggestDebounceTimer = setTimeout(async () => {
-          const controller = new AbortController()
-          this.suggestAbortController = controller
+        if (val.length < 2 || val.includes(' ')) {
+          suggestDropdown.style.display = 'none'
+          return
+        }
 
-          try {
-            const res = await fetch(`/api/tags/suggest?q=${encodeURIComponent(prefix)}`, {
-              signal: controller.signal
-            })
-            if (!res.ok) return
-            const data = await res.json() as { tags: { tag: string; count: number }[] }
-            this.renderTagSuggestions(suggestDropdown, searchInput, data.tags || [])
-          } catch (err: any) {
-            if (err?.name !== 'AbortError') {
-              console.error('Tag suggest error:', err)
-            }
-          }
-        }, 200)
+        if (val.startsWith('#')) {
+          const prefix = val.slice(1)
+          if (!prefix) { suggestDropdown.style.display = 'none'; return }
+          suggestTimer = setTimeout(() => fetchSuggestions(prefix, 'tag'), 200)
+          return
+        }
+
+        if (val.startsWith('@')) {
+          const prefix = val.slice(1)
+          if (!prefix) { suggestDropdown.style.display = 'none'; return }
+          suggestTimer = setTimeout(() => fetchSuggestions(prefix, 'user'), 200)
+          return
+        }
+
+        suggestDropdown.style.display = 'none'
       })
 
-      // Close on blur (with delay to allow click)
       searchInput.addEventListener('blur', () => {
         setTimeout(() => { suggestDropdown.style.display = 'none' }, 200)
       })
 
-      // Close on Escape
       searchInput.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
           suggestDropdown.style.display = 'none'
@@ -342,17 +359,17 @@ export class ExplorePage {
     this.setupIntersectionObserver()
   }
 
-  private renderTagSuggestions(dropdown: HTMLElement, input: HTMLInputElement, tags: { tag: string; count: number }[]): void {
+  private renderSuggestions(dropdown: HTMLElement, items: { type: 'tag' | 'user'; label: string; count?: number; display?: string; avatar?: string }[]): void {
     dropdown.innerHTML = ''
 
-    if (tags.length === 0) {
+    if (items.length === 0) {
       dropdown.style.display = 'none'
       return
     }
 
     dropdown.style.display = 'block'
 
-    for (const t of tags) {
+    for (const it of items) {
       const item = document.createElement('div')
       item.style.cssText = `
         padding: 0.6rem 0.75rem;
@@ -365,22 +382,57 @@ export class ExplorePage {
       item.addEventListener('mouseenter', () => { item.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))' })
       item.addEventListener('mouseleave', () => { item.style.background = 'none' })
 
-      const tagName = document.createElement('span')
-      tagName.textContent = `# ${t.tag}`
-      tagName.style.cssText = 'font-weight: 600; color: var(--accent); font-size: 0.875rem;'
+      if (it.type === 'tag') {
+        const tagName = document.createElement('span')
+        tagName.textContent = `# ${it.label}`
+        tagName.style.cssText = 'font-weight: 600; color: var(--accent); font-size: 0.875rem;'
 
-      const count = document.createElement('span')
-      count.textContent = `${t.count}`
-      count.style.cssText = 'margin-left: auto; color: var(--text-muted); font-size: 0.75rem;'
+        const count = document.createElement('span')
+        count.textContent = `${it.count || 0}`
+        count.style.cssText = 'margin-left: auto; color: var(--text-muted); font-size: 0.75rem;'
 
-      item.appendChild(tagName)
-      item.appendChild(count)
+        item.appendChild(tagName)
+        item.appendChild(count)
 
-      item.addEventListener('click', () => {
-        dropdown.style.display = 'none'
-        window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(t.tag)}`)
-        window.location.reload()
-      })
+        item.addEventListener('click', () => {
+          dropdown.style.display = 'none'
+          window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(it.label)}`)
+          window.location.reload()
+        })
+      } else {
+        const avatar = document.createElement('div')
+        avatar.style.cssText = `
+          width: 28px; height: 28px; border-radius: 50%;
+          background: var(--accent); color: var(--bg-primary);
+          display: flex; align-items: center; justify-content: center;
+          font-weight: bold; font-size: 0.7rem; flex-shrink: 0;
+        `
+        avatar.textContent = (it.display || it.label)[0].toUpperCase()
+
+        const info = document.createElement('div')
+        info.style.cssText = 'display: flex; flex-direction: column;'
+
+        const name = document.createElement('span')
+        name.textContent = `@${it.label}`
+        name.style.cssText = 'font-weight: 600; color: var(--text-primary); font-size: 0.85rem;'
+
+        const display = document.createElement('span')
+        display.textContent = it.display || ''
+        display.style.cssText = 'font-size: 0.75rem; color: var(--text-muted);'
+
+        info.appendChild(name)
+        info.appendChild(display)
+        item.appendChild(avatar)
+        item.appendChild(info)
+
+        item.addEventListener('click', () => {
+          dropdown.style.display = 'none'
+          window.history.pushState({}, '', `/profile/${encodeURIComponent(it.label)}`)
+          window.dispatchEvent(new CustomEvent('spaNavigate', {
+            detail: { view: 'profile', username: it.label }
+          }))
+        })
+      }
 
       dropdown.appendChild(item)
     }

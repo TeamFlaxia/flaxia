@@ -4650,7 +4650,8 @@ app.get('/api/search', async (c) => {
     const tokens = query.trim().split(/\s+/).filter(Boolean)
 
     if (type === 'users') {
-      const searchTerm = `%${query.trim()}%`
+      const cleanQuery = query.trim().replace(/^@/, '')
+      const searchTerm = `%${cleanQuery}%`
       const users = await c.env.DB.prepare(`
         SELECT id, username, display_name, bio, avatar_key, created_at
         FROM users
@@ -4687,8 +4688,27 @@ app.get('/api/search', async (c) => {
       }
     }
 
+    const cleanQuery = query.trim().replace(/^@/, '')
+    const searchTerm = `%${cleanQuery.toLowerCase()}%`
+
+    let usersResult: any[] = []
+
     if (conditions.length === 0) {
-      return c.json({ type, query, results: [] })
+      // No specific tokens, but still search users by the raw query
+      if (type === 'posts') {
+        const users = await c.env.DB.prepare(`
+          SELECT username, display_name, avatar_key
+          FROM users
+          WHERE LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?
+          ORDER BY created_at DESC LIMIT ?
+        `).bind(searchTerm, searchTerm, limit).all()
+        usersResult = (users.results || []).map((u: any) => ({
+          username: u.username,
+          display_name: u.display_name || '',
+          avatar_key: u.avatar_key || ''
+        }))
+      }
+      return c.json({ type, query, results: [], users: usersResult })
     }
 
     const whereClause = `WHERE p.status = 'published' AND p.hidden = 0 AND (${conditions.join(' AND ')})`
@@ -4703,14 +4723,66 @@ app.get('/api/search', async (c) => {
       `${selectColumns} ${whereClause} ORDER BY p.created_at DESC LIMIT ?`
     ).bind(...params, limit).all()
 
+    // Also fetch matching users for posts search (type=posts)
+    if (type === 'posts') {
+      const users = await c.env.DB.prepare(`
+        SELECT username, display_name, avatar_key
+        FROM users
+        WHERE LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?
+        ORDER BY created_at DESC LIMIT ?
+      `).bind(searchTerm, searchTerm, limit).all()
+      usersResult = (users.results || []).map((u: any) => ({
+        username: u.username,
+        display_name: u.display_name || '',
+        avatar_key: u.avatar_key || ''
+      }))
+    }
+
     return c.json({
       type,
       query,
-      results: posts.results || []
+      results: posts.results || [],
+      users: usersResult
     })
   } catch (error: any) {
     console.error('Search error:', error)
     return c.json({ error: 'Search failed', details: error?.message || 'Unknown error' }, 500)
+  }
+})
+
+// GET /api/users/suggest?q=prefix - suggest usernames matching prefix
+app.get('/api/users/suggest', async (c) => {
+  try {
+    const q = c.req.query('q')
+    if (!q || q.length < 1) {
+      return c.json({ users: [] })
+    }
+
+    const limit = Math.min(parseInt(c.req.query('limit') || '10', 10), 20)
+    const prefix = q.toLowerCase()
+
+    const result = await c.env.DB.prepare(`
+      SELECT username, display_name, avatar_key
+      FROM users
+      WHERE LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?
+      ORDER BY
+        CASE WHEN LOWER(username) LIKE ? THEN 0 ELSE 1 END,
+        created_at DESC
+      LIMIT ?
+    `).bind(prefix + '%', prefix + '%', prefix + '%', limit).all()
+
+    const users = (result.results || []).map((u: any) => ({
+      username: u.username,
+      display_name: u.display_name || '',
+      avatar_key: u.avatar_key || ''
+    }))
+
+    return c.json({ users }, 200, {
+      'Cache-Control': 'public, max-age=15'
+    })
+  } catch (error: any) {
+    console.error('User suggest error:', error)
+    return c.json({ error: 'Internal server error' }, 500)
   }
 })
 

@@ -7,6 +7,8 @@ interface SearchPageProps {
   sandboxOrigin: string
 }
 
+type SuggestionItem = { type: 'tag'; label: string; count: number } | { type: 'user'; label: string; display: string; avatar: string }
+
 export function createSearchPage({ query, type = 'posts', currentUser, sandboxOrigin }: SearchPageProps) {
   const container = document.createElement('div')
   container.className = 'search-page'
@@ -45,36 +47,61 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
     window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore' } }))
   })
 
-  const titleGroup = document.createElement('div')
-  titleGroup.style.cssText = 'display: flex; flex-direction: column; gap: 0.15rem;'
+  const searchBox = document.createElement('div')
+  searchBox.className = 'search-box'
+  searchBox.style.cssText = 'position: relative; flex: 1;'
 
-  const title = document.createElement('span')
-  title.textContent = query.startsWith('#') ? query : `"${query}"`
-  title.style.cssText = `
-    font-size: 1rem;
-    font-weight: 700;
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.className = 'search-input'
+  input.value = query
+  input.placeholder = t('explore.search_placeholder')
+  input.style.cssText = `
+    width: 100%;
+    padding: 0.6rem 0.75rem 0.6rem 2.3rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 9999px;
     color: var(--text-primary);
-    line-height: 1.2;
+    font-family: inherit;
+    font-size: 0.875rem;
+    outline: none;
+    transition: border-color 0.2s ease;
+    box-sizing: border-box;
   `
 
-  const meta = document.createElement('span')
-  const typeLabel = type === 'users' ? t('explore.filter_users') : type === 'arcade' ? t('explore.filter_arcade') : t('explore.filter_posts')
-  meta.textContent = t('search.results_meta', { type: typeLabel })
-  meta.style.cssText = `
-    font-size: 0.75rem;
-    color: var(--text-muted);
-  `
+  const icon = document.createElement('span')
+  icon.className = 'search-icon'
+  icon.style.cssText = 'position: absolute; left: 0.7rem; top: 50%; transform: translateY(-50%); color: var(--text-muted); font-size: 0.8rem; pointer-events: none;'
+  icon.textContent = '🔍'
 
-  titleGroup.appendChild(title)
-  titleGroup.appendChild(meta)
+  searchBox.appendChild(input)
+  searchBox.appendChild(icon)
+
+  const suggestDropdown = document.createElement('div')
+  suggestDropdown.className = 'tag-suggest-dropdown'
+  suggestDropdown.style.cssText = `
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    z-index: 100;
+    max-height: 300px;
+    overflow-y: auto;
+    margin-top: 4px;
+  `
+  searchBox.appendChild(suggestDropdown)
+
   header.appendChild(backBtn)
-  header.appendChild(titleGroup)
+  header.appendChild(searchBox)
 
   const content = document.createElement('div')
   content.className = 'search-page-content'
-  content.style.cssText = `
-    padding: 1rem;
-  `
 
   container.appendChild(header)
   container.appendChild(content)
@@ -89,16 +116,170 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   loadingEl.textContent = t('common.loading')
   content.appendChild(loadingEl)
 
-  // Fetch search results
+  // ── Search input events ──
+  let suggestAbortController: AbortController | null = null
+  let suggestTimer: ReturnType<typeof setTimeout> | null = null
+
+  const fetchSuggestions = async (prefix: string, kind: 'tag' | 'user') => {
+    if (suggestAbortController) suggestAbortController.abort()
+    const controller = new AbortController()
+    suggestAbortController = controller
+    try {
+      const url = kind === 'tag'
+        ? `/api/tags/suggest?q=${encodeURIComponent(prefix)}`
+        : `/api/users/suggest?q=${encodeURIComponent(prefix)}`
+      const res = await fetch(url, { signal: controller.signal })
+      if (!res.ok) return
+      if (kind === 'tag') {
+        const data = await res.json() as { tags: { tag: string; count: number }[] }
+        renderSuggestions((data.tags || []).map(t => ({ type: 'tag' as const, label: t.tag, count: t.count })))
+      } else {
+        const data = await res.json() as { users: { username: string; display_name: string; avatar_key: string }[] }
+        renderSuggestions((data.users || []).map(u => ({ type: 'user' as const, label: u.username, display: u.display_name, avatar: u.avatar_key })))
+      }
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') console.error('Suggest error:', err)
+    }
+  }
+
+  const renderSuggestions = (items: SuggestionItem[]) => {
+    suggestDropdown.innerHTML = ''
+    if (items.length === 0) {
+      suggestDropdown.style.display = 'none'
+      return
+    }
+    suggestDropdown.style.display = 'block'
+    for (const it of items) {
+      const item = document.createElement('div')
+      item.style.cssText = `
+        padding: 0.6rem 0.75rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        transition: background 0.15s;
+      `
+      item.addEventListener('mouseenter', () => { item.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))' })
+      item.addEventListener('mouseleave', () => { item.style.background = 'none' })
+
+      if (it.type === 'tag') {
+        const tagName = document.createElement('span')
+        tagName.textContent = `# ${it.label}`
+        tagName.style.cssText = 'font-weight: 600; color: var(--accent); font-size: 0.875rem;'
+        const count = document.createElement('span')
+        count.textContent = `${it.count}`
+        count.style.cssText = 'margin-left: auto; color: var(--text-muted); font-size: 0.75rem;'
+        item.appendChild(tagName)
+        item.appendChild(count)
+        item.addEventListener('click', () => {
+          suggestDropdown.style.display = 'none'
+          window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(it.label)}`)
+          window.location.reload()
+        })
+      } else {
+        const avatar = document.createElement('div')
+        avatar.style.cssText = `
+          width: 28px; height: 28px; border-radius: 50%;
+          background: var(--accent); color: var(--bg-primary);
+          display: flex; align-items: center; justify-content: center;
+          font-weight: bold; font-size: 0.7rem; flex-shrink: 0;
+        `
+        avatar.textContent = (it.display || it.label)[0].toUpperCase()
+        const info = document.createElement('div')
+        info.style.cssText = 'display: flex; flex-direction: column;'
+        const name = document.createElement('span')
+        name.textContent = `@${it.label}`
+        name.style.cssText = 'font-weight: 600; color: var(--text-primary); font-size: 0.85rem;'
+        const display = document.createElement('span')
+        display.textContent = it.display
+        display.style.cssText = 'font-size: 0.75rem; color: var(--text-muted);'
+        info.appendChild(name)
+        info.appendChild(display)
+        item.appendChild(avatar)
+        item.appendChild(info)
+        item.addEventListener('click', () => {
+          suggestDropdown.style.display = 'none'
+          window.history.pushState({}, '', `/profile/${encodeURIComponent(it.label)}`)
+          window.dispatchEvent(new CustomEvent('spaNavigate', {
+            detail: { view: 'profile', username: it.label }
+          }))
+        })
+      }
+      suggestDropdown.appendChild(item)
+    }
+  }
+
+  input.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+      const q = input.value.trim()
+      suggestAbortController?.abort()
+      suggestDropdown.style.display = 'none'
+      if (q.startsWith('#')) {
+        const afterHash = q.slice(1).trim()
+        const spaceIdx = afterHash.indexOf(' ')
+        if (spaceIdx === -1 && afterHash) {
+          window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(afterHash)}`)
+          window.location.reload()
+          return
+        }
+      }
+      if (q && q !== query) {
+        window.history.pushState({}, '', `/search?q=${encodeURIComponent(q)}&type=${type}`)
+        window.dispatchEvent(new CustomEvent('spaNavigate', {
+          detail: { view: 'search', searchQuery: q, searchType: type }
+        }))
+      }
+    }
+  })
+
+  input.addEventListener('input', () => {
+    const val = input.value
+    if (suggestAbortController) suggestAbortController.abort()
+    if (suggestTimer) clearTimeout(suggestTimer)
+    if (val.length < 2 || val.includes(' ')) {
+      suggestDropdown.style.display = 'none'
+      return
+    }
+    if (val.startsWith('#')) {
+      const prefix = val.slice(1)
+      if (!prefix) { suggestDropdown.style.display = 'none'; return }
+      suggestTimer = setTimeout(() => fetchSuggestions(prefix, 'tag'), 200)
+      return
+    }
+    if (val.startsWith('@')) {
+      const prefix = val.slice(1)
+      if (!prefix) { suggestDropdown.style.display = 'none'; return }
+      suggestTimer = setTimeout(() => fetchSuggestions(prefix, 'user'), 200)
+      return
+    }
+    suggestDropdown.style.display = 'none'
+  })
+
+  input.addEventListener('blur', () => {
+    setTimeout(() => { suggestDropdown.style.display = 'none' }, 200)
+  })
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      suggestDropdown.style.display = 'none'
+      input.blur()
+    }
+  })
+
+  // ── Fetch search results ──
   const loadSearchResults = async () => {
     try {
       const response = await fetch(`/api/search?q=${encodeURIComponent(query)}&type=${type}&limit=20`)
-      const data = await response.json() as { results: any[] }
+      const data = await response.json() as { results: any[]; users?: any[] }
       const results = data.results || []
+      const matchedUsers = (type === 'posts' ? data.users : []) || []
 
       content.removeChild(loadingEl)
 
-      if (results.length === 0) {
+      const hasPosts = results.length > 0
+      const hasUsers = matchedUsers.length > 0
+
+      if (!hasPosts && !hasUsers) {
         const empty = document.createElement('div')
         empty.style.cssText = "text-align: center; padding: 3rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;"
         empty.textContent = t('search.no_results', { query })
@@ -109,7 +290,25 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       if (type === 'users') {
         renderUsers(results)
       } else {
-        renderPosts(results)
+        if (hasUsers) {
+          const sectionTitle = document.createElement('div')
+          sectionTitle.textContent = t('search.users')
+          sectionTitle.style.cssText = 'font-weight: 600; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem; padding: 0 0.25rem;'
+          content.appendChild(sectionTitle)
+          renderUsers(matchedUsers, content)
+        }
+        if (hasPosts) {
+          if (hasUsers) {
+            const divider = document.createElement('div')
+            divider.style.cssText = 'height: 1px; background: var(--border); margin: 1rem 0;'
+            content.appendChild(divider)
+          }
+          const sectionTitle = document.createElement('div')
+          sectionTitle.textContent = t('search.posts')
+          sectionTitle.style.cssText = 'font-weight: 600; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem; padding: 0 0.25rem;'
+          content.appendChild(sectionTitle)
+          renderPosts(results)
+        }
       }
     } catch (error) {
       console.error('Search error:', error)
@@ -121,7 +320,8 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
     }
   }
 
-  const renderUsers = (users: any[]) => {
+  const renderUsers = (users: any[], containerEl?: HTMLElement) => {
+    const parent = containerEl || content
     users.forEach(user => {
       const userItem = document.createElement('div')
       userItem.style.cssText = `
@@ -174,7 +374,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
 
       userItem.appendChild(avatar)
       userItem.appendChild(userInfo)
-      content.appendChild(userItem)
+      parent.appendChild(userItem)
     })
   }
 
