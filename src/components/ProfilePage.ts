@@ -8,6 +8,7 @@ import { showSignInPrompt } from './SignInPrompt.js'
 import { createUserPostList, CurrentUser } from './UserPostList.js'
 import { safeRemoveFromBody } from '../lib/dom-utils.js'
 import { registerModal } from '../lib/modal-state.js'
+import { openPostModal } from '../lib/post-modal.js'
 
 interface ProfilePageProps {
   username: string
@@ -140,7 +141,22 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
   })
   container.appendChild(postList.getElement())
 
-  // State
+  let fabButton: HTMLElement | null = null
+  if (currentUser) {
+    fabButton = document.createElement('button')
+    fabButton.className = 'timeline-fab visible'
+    fabButton.textContent = '+'
+    fabButton.addEventListener('click', () => {
+      openPostModal({
+        currentUser,
+        onPostCreated: (post) => {
+          postList.addPost(post)
+        }
+      })
+    })
+    container.appendChild(fabButton)
+  }
+
   let userData: any = null
   let isEditing = false
   let isFollowing = false

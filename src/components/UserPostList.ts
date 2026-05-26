@@ -13,7 +13,7 @@ export function createUserPostList(props: {
   username: string
   sandboxOrigin: string
   currentUser: CurrentUser | null
-}): { getElement: () => HTMLElement; destroy: () => void } {
+}): { getElement: () => HTMLElement; addPost: (post: Post) => void; destroy: () => void } {
   // State
   let posts: Post[] = []
   let cursor: string | undefined
@@ -215,8 +215,45 @@ export function createUserPostList(props: {
 
   return {
     getElement: () => container,
+    addPost: (post) => {
+      posts = [post, ...posts]
+      postList.innerHTML = ''
+      const card = createPostCard({
+        post,
+        sandboxOrigin: props.sandboxOrigin,
+        currentUser: props.currentUser,
+        depth: post.depth,
+        enablePostRefs: true,
+        onDelete: (postId) => {
+          posts = posts.filter(p => p.id !== postId)
+          postCards.delete(postId)
+          renderPosts()
+        }
+      })
+      postCards.set(post.id, card)
+      postList.appendChild(card.getElement())
+      // Re-append existing cards
+      for (let i = 1; i < posts.length; i++) {
+        let card = postCards.get(posts[i].id)
+        if (!card) {
+          card = createPostCard({
+            post: posts[i],
+            sandboxOrigin: props.sandboxOrigin,
+            currentUser: props.currentUser,
+            depth: posts[i].depth,
+            enablePostRefs: true,
+            onDelete: (postId) => {
+              posts = posts.filter(p => p.id !== postId)
+              postCards.delete(postId)
+              renderPosts()
+            }
+          })
+          postCards.set(posts[i].id, card)
+        }
+        postList.appendChild(card.getElement())
+      }
+    },
     destroy: () => {
-      // Clean up intersection observer
       if (intersectionObserver) {
         intersectionObserver.disconnect()
         intersectionObserver = null

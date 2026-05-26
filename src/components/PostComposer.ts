@@ -1,12 +1,14 @@
 export interface PostComposerProps {
   onPostCreated?: (post: any) => void
   currentUser?: { username: string; display_name?: string; avatar_key?: string } | null
+  onDraftSaved?: () => void
 }
 
 import { t } from '../lib/i18n.js'
 import { getMimeType } from '../lib/file-extensions.js'
 import DOMPurify from 'dompurify'
 import { showToast } from '../lib/toast.js'
+import { registerModal } from '../lib/modal-state.js'
 
 async function detectZipType(file: File): Promise<'html5' | 'dos' | null> {
   try {
@@ -64,8 +66,11 @@ export class PostComposer {
   private pollOptionsArr: string[] = ['', '']
   private static readonly AUTOSAVE_KEY = 'flaxia_draft_autosave'
   private static readonly SAVED_DRAFTS_KEY = 'flaxia_saved_drafts'
+  private static readonly SAVE_COOLDOWN = 1000
   private draftTimeout: ReturnType<typeof setTimeout> | null = null
+  private saveCooldown = false
   private savedDrafts: Array<{ id: string; text: string; savedAt: number }> = []
+  private loadedDraftId: string | null = null
   private draftsDropdown!: HTMLElement
   private boundCloseDrafts!: (e: MouseEvent) => void
 
@@ -859,6 +864,7 @@ export class PostComposer {
         }
       }
       localStorage.setItem(PostComposer.AUTOSAVE_KEY, JSON.stringify(draft))
+      this.props.onDraftSaved?.()
     } catch {}
   }
 
@@ -907,8 +913,44 @@ export class PostComposer {
 
   private saveExplicitDraft(): void {
     const text = this.textarea.value.trim()
-    if (!text) return
+    if (!text) {
+      showToast(t('composer.draft_empty'), true)
+      return
+    }
+    if (this.saveCooldown) return
+    this.saveCooldown = true
+    setTimeout(() => { this.saveCooldown = false }, PostComposer.SAVE_COOLDOWN)
+
     this.loadSavedDrafts()
+
+    if (this.loadedDraftId) {
+      const existing = this.savedDrafts.find(d => d.id === this.loadedDraftId)
+      if (existing) {
+        existing.text = text
+        existing.savedAt = Date.now()
+        try {
+          localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts))
+          this.props.onDraftSaved?.()
+        } catch {}
+        showToast(t('composer.draft_updated'))
+        this.loadedDraftId = null
+        this.renderDraftsDropdown()
+        return
+      }
+    }
+
+    const duplicate = this.savedDrafts.find(d => d.text === text)
+    if (duplicate) {
+      duplicate.savedAt = Date.now()
+      try {
+        localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts))
+        this.props.onDraftSaved?.()
+      } catch {}
+      showToast(t('composer.draft_saved'))
+      this.renderDraftsDropdown()
+      return
+    }
+
     const draft = {
       id: Date.now().toString(36),
       text,
@@ -918,15 +960,106 @@ export class PostComposer {
     if (this.savedDrafts.length > 20) this.savedDrafts.length = 20
     try {
       localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts))
+      this.props.onDraftSaved?.()
     } catch {}
+    showToast(t('composer.draft_saved'))
+    this.loadedDraftId = null
+    this.renderDraftsDropdown()
   }
 
   private deleteExplicitDraft(id: string): void {
     this.loadSavedDrafts()
     this.savedDrafts = this.savedDrafts.filter(d => d.id !== id)
+    if (this.loadedDraftId === id) this.loadedDraftId = null
+    try {
+      localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts))
+      this.props.onDraftSaved?.()
+    } catch {}
+    showToast(t('composer.draft_deleted'))
+    this.renderDraftsDropdown()
+  }
+
+  private showDeleteAllConfirmation(): void {
+    const unregister = registerModal()
+    const overlay = document.createElement('div')
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 3000;
+    `
+
+    const dialog = document.createElement('div')
+    dialog.style.cssText = `
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 24px;
+      max-width: 400px;
+      width: 90%;
+    `
+
+    const title = document.createElement('h3')
+    title.style.cssText = 'margin: 0 0 8px 0; font-size: 18px; color: var(--text-primary);'
+    title.textContent = t('composer.draft_delete_all')
+
+    const message = document.createElement('p')
+    message.style.cssText = 'margin: 0 0 24px 0; color: var(--text-muted); font-size: 14px;'
+    message.textContent = t('composer.draft_delete_all_confirm')
+
+    const buttonRow = document.createElement('div')
+    buttonRow.style.cssText = 'display: flex; gap: 12px; justify-content: flex-end;'
+
+    const cancelBtn = document.createElement('button')
+    cancelBtn.style.cssText = 'padding: 8px 16px; background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); cursor: pointer; font-family: inherit;'
+    cancelBtn.textContent = t('common.cancel')
+
+    const deleteBtn = document.createElement('button')
+    deleteBtn.style.cssText = 'padding: 8px 16px; background: var(--danger, #ef4444); border: none; border-radius: 4px; color: #fff; cursor: pointer; font-family: inherit;'
+    deleteBtn.textContent = t('common.delete')
+
+    buttonRow.appendChild(cancelBtn)
+    buttonRow.appendChild(deleteBtn)
+
+    dialog.appendChild(title)
+    dialog.appendChild(message)
+    dialog.appendChild(buttonRow)
+
+    overlay.appendChild(dialog)
+    document.body.appendChild(overlay)
+
+    const destroy = () => {
+      unregister()
+      overlay.remove()
+    }
+
+    cancelBtn.addEventListener('click', destroy)
+
+    deleteBtn.addEventListener('click', () => {
+      destroy()
+      this.deleteAllDrafts()
+    })
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) destroy()
+    })
+  }
+
+  private deleteAllDrafts(): void {
+    if (this.savedDrafts.length === 0) return
+    this.loadSavedDrafts()
+    this.savedDrafts = []
+    this.loadedDraftId = null
     try {
       localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts))
     } catch {}
+    showToast(t('composer.draft_all_deleted'))
     this.renderDraftsDropdown()
   }
 
@@ -934,79 +1067,152 @@ export class PostComposer {
     this.textarea.value = draft.text
     this.charCount.textContent = t('composer.char_count', { current: draft.text.length, max: 200 })
     this.updateSubmitButton()
+    this.loadedDraftId = draft.id
     this.pollActive = false
     const section = this.element.querySelector('.composer-poll-section') as HTMLElement
     if (section) section.style.display = 'none'
-    this.scheduleDraftSave()
     this.closeDraftsDropdown()
+    this.textarea.focus()
   }
 
   private renderDraftsDropdown(): void {
     this.loadSavedDrafts()
     this.draftsDropdown.innerHTML = ''
     if (this.savedDrafts.length === 0) {
-      this.draftsDropdown.innerHTML = `<div style="padding: 0.75rem; color: var(--text-muted); font-size: 0.85rem; text-align: center;">${t('composer.no_drafts')}</div>`
+      this.draftsDropdown.innerHTML = `<div style="padding: 1rem; color: var(--text-muted); font-size: 0.85rem; text-align: center;">${t('composer.no_drafts')}</div>`
       return
     }
+
+    const header = document.createElement('div')
+    header.style.cssText = `
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      font-weight: 600;
+    `
+    header.innerHTML = `<span>${t('composer.list_drafts')} (${this.savedDrafts.length})</span>`
+
+    if (this.savedDrafts.length > 1) {
+      const deleteAllBtn = document.createElement('button')
+      deleteAllBtn.type = 'button'
+      deleteAllBtn.textContent = t('composer.draft_delete_all')
+      deleteAllBtn.style.cssText = `
+        background: none;
+        border: none;
+        color: var(--danger, #ef4444);
+        cursor: pointer;
+        font-size: 0.75rem;
+        padding: 0.15rem 0.4rem;
+        border-radius: 4px;
+      `
+      deleteAllBtn.addEventListener('mouseenter', () => { deleteAllBtn.style.background = 'var(--bg-hover)' })
+      deleteAllBtn.addEventListener('mouseleave', () => { deleteAllBtn.style.background = '' })
+      deleteAllBtn.addEventListener('click', (e) => {
+        e.stopPropagation()
+        this.showDeleteAllConfirmation()
+      })
+      header.appendChild(deleteAllBtn)
+    }
+
+    this.draftsDropdown.appendChild(header)
+
     const list = document.createElement('div')
     list.style.cssText = 'display: flex; flex-direction: column;'
     for (const draft of this.savedDrafts) {
       const item = document.createElement('div')
+      const isLoaded = draft.id === this.loadedDraftId
       item.style.cssText = `
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 0.5rem 0.75rem;
+        padding: 0.6rem 0.75rem;
         border-bottom: 1px solid var(--border);
         cursor: pointer;
         gap: 0.5rem;
+        background: ${isLoaded ? 'var(--accent-alpha, rgba(34, 197, 94, 0.08))' : ''};
       `
-      item.addEventListener('mouseenter', () => { item.style.background = 'var(--bg-hover)' })
-      item.addEventListener('mouseleave', () => { item.style.background = '' })
+      item.addEventListener('mouseenter', () => {
+        if (!isLoaded) item.style.background = 'var(--bg-hover)'
+      })
+      item.addEventListener('mouseleave', () => {
+        if (!isLoaded) item.style.background = ''
+      })
 
-      const preview = document.createElement('span')
+      const preview = document.createElement('div')
       preview.style.cssText = `
         flex: 1;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
         font-size: 0.85rem;
         color: var(--text-primary);
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.4;
+        max-height: 4.5rem;
+        overflow-y: auto;
       `
-      preview.textContent = draft.text.replace(/\n/g, ' ').substring(0, 60)
+      preview.textContent = draft.text
       preview.addEventListener('click', () => this.loadExplicitDraft(draft))
 
       const time = document.createElement('span')
       time.style.cssText = 'font-size: 0.7rem; color: var(--text-muted); white-space: nowrap;'
-      const minutes = Math.floor((Date.now() - draft.savedAt) / 60000)
-      time.textContent = minutes < 1 ? t('time.just_now') : minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h`
+      const diff = Date.now() - draft.savedAt
+      const minutes = Math.floor(diff / 60000)
+      const hours = Math.floor(minutes / 60)
+      const days = Math.floor(hours / 24)
+      time.textContent = minutes < 1 ? t('time.just_now') : days > 0 ? `${days}d` : hours > 0 ? `${hours}h` : `${minutes}m`
+      if (isLoaded) {
+        time.textContent += ' *'
+      }
+
+      const actionRow = document.createElement('div')
+      actionRow.style.cssText = 'display: flex; align-items: center; gap: 0.25rem;'
 
       const delBtn = document.createElement('button')
       delBtn.type = 'button'
       delBtn.textContent = '✕'
+      delBtn.title = t('common.delete')
       delBtn.style.cssText = `
         background: none;
         border: none;
         cursor: pointer;
         font-size: 0.75rem;
         color: var(--text-muted);
-        padding: 0.15rem 0.3rem;
+        padding: 0.2rem 0.35rem;
         border-radius: 4px;
         flex-shrink: 0;
+        line-height: 1;
       `
-      delBtn.addEventListener('mouseenter', () => { delBtn.style.color = 'var(--danger)' })
+      delBtn.addEventListener('mouseenter', () => { delBtn.style.color = 'var(--danger, #ef4444)' })
       delBtn.addEventListener('mouseleave', () => { delBtn.style.color = 'var(--text-muted)' })
       delBtn.addEventListener('click', (e) => {
         e.stopPropagation()
         this.deleteExplicitDraft(draft.id)
       })
 
+      actionRow.appendChild(time)
+      actionRow.appendChild(delBtn)
+
       item.appendChild(preview)
-      item.appendChild(time)
-      item.appendChild(delBtn)
+      item.appendChild(actionRow)
       list.appendChild(item)
     }
     this.draftsDropdown.appendChild(list)
+
+    if (this.loadedDraftId) {
+      const hint = document.createElement('div')
+      hint.style.cssText = `
+        padding: 0.4rem 0.75rem;
+        font-size: 0.7rem;
+        color: var(--accent);
+        text-align: center;
+        border-top: 1px solid var(--border);
+      `
+      hint.textContent = t('composer.draft_edit_hint')
+      this.draftsDropdown.appendChild(hint)
+    }
   }
 
   private openDraftsDropdown(): void {
@@ -1108,6 +1314,7 @@ export class PostComposer {
 
       // Clear form and draft
       this.clearAutoDraft()
+      this.loadedDraftId = null
       this.textarea.value = ''
       this.charCount.textContent = t('composer.char_count', { current: 0, max: 200 })
       this.clearFileSelection()
@@ -1303,6 +1510,41 @@ export class PostComposer {
       console.error('File upload failed:', error)
       return null
     }
+  }
+
+  public setText(text: string): void {
+    this.textarea.value = text
+    this.charCount.textContent = t('composer.char_count', { current: text.length, max: 200 })
+    this.updateSubmitButton()
+    this.loadedDraftId = null
+    this.pollActive = false
+    const section = this.element.querySelector('.composer-poll-section') as HTMLElement
+    if (section) section.style.display = 'none'
+  }
+
+  public getSavedDrafts(): Array<{ id: string; text: string; savedAt: number }> {
+    this.loadSavedDrafts()
+    return [...this.savedDrafts]
+  }
+
+  public deleteDraft(id: string): void {
+    this.loadSavedDrafts()
+    this.savedDrafts = this.savedDrafts.filter(d => d.id !== id)
+    if (this.loadedDraftId === id) this.loadedDraftId = null
+    try {
+      localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts))
+    } catch {}
+    this.renderDraftsDropdown()
+  }
+
+  public deleteAllDraftsPublic(): void {
+    this.loadSavedDrafts()
+    this.savedDrafts = []
+    this.loadedDraftId = null
+    try {
+      localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts))
+      this.props.onDraftSaved?.()
+    } catch {}
   }
 
   public getElement(): HTMLElement {

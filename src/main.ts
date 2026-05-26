@@ -821,7 +821,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           // Create fresh explore page
           explorePage = createExplorePage({
             tag: currentTag || undefined,
-            sandboxOrigin
+            sandboxOrigin,
+            currentUser
           })
         }
         

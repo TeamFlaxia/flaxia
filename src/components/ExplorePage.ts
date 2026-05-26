@@ -2,10 +2,12 @@ import { createPostCard } from './PostCard.js'
 import { Post } from '../types/post.js'
 import { createSkeletonCard } from './SkeletonCard.js'
 import { t } from '../lib/i18n.js'
+import { openPostModal } from '../lib/post-modal.js'
 
 export interface ExplorePageProps {
   tag?: string
   sandboxOrigin: string
+  currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null
 }
 
 export class ExplorePage {
@@ -21,6 +23,7 @@ export class ExplorePage {
   private maxRetries = 3
   private currentTab: 'recommended' | 'trending' = 'recommended'
   private searchFilter: 'posts' | 'users' | 'arcade' = 'posts'
+  private fabButton: HTMLElement | null = null
 
   constructor(props: ExplorePageProps) {
     this.props = props
@@ -101,7 +104,20 @@ export class ExplorePage {
       margin-top: 1rem;
     `
     container.appendChild(this.loadMoreSentinel)
-    
+
+    if (this.props.currentUser) {
+      this.fabButton = document.createElement('button')
+      this.fabButton.className = 'timeline-fab visible'
+      this.fabButton.textContent = '+'
+      this.fabButton.addEventListener('click', () => {
+        openPostModal({
+          currentUser: this.props.currentUser,
+          onPostCreated: (post) => this.handleNewPost(post)
+        })
+      })
+      container.appendChild(this.fabButton)
+    }
+
     return container
   }
 
@@ -378,6 +394,7 @@ export class ExplorePage {
       const postCard = createPostCard({
         post,
         sandboxOrigin: this.props.sandboxOrigin,
+        currentUser: this.props.currentUser || undefined,
         depth: post.depth
       })
       fragment.appendChild(postCard.getElement())
@@ -516,8 +533,18 @@ export class ExplorePage {
     this.intersectionObserver.observe(this.loadMoreSentinel)
   }
 
+  private handleNewPost(post: Post): void {
+    this.posts = [post, ...this.posts]
+    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement
+    if (postsContainer) {
+      postsContainer.insertBefore(
+        createPostCard({ post, sandboxOrigin: this.props.sandboxOrigin, currentUser: this.props.currentUser || undefined }).getElement(),
+        postsContainer.firstChild
+      )
+    }
+  }
+
   private setupSwipeDetection(): void {
-    // Mobile left nav gestures are disabled. Navigation is opened only by the explicit menu button.
     return
   }
 
@@ -526,13 +553,10 @@ export class ExplorePage {
   }
 
   public destroy(): void {
-    // Cleanup intersection observer
     if (this.intersectionObserver) {
       this.intersectionObserver.disconnect()
       this.intersectionObserver = null
     }
-    
-    // Cleanup scroll event listeners (if any remain)
     window.removeEventListener('scroll', () => {})
   }
 }

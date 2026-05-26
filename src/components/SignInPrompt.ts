@@ -124,16 +124,15 @@ export function createSignInPrompt(props: SignInPromptProps = {}) {
   }
 }
 
-// Preset subtitles for different actions
-export const SignInPromptSubtitles = {
-  fresh: t('auth.sign_in_to_fresh'),
-  reply: t('auth.sign_in_to_reply'),
-  follow: t('auth.sign_in_to_follow'),
-  report: t('auth.sign_in_to_report'),
-  post: t('auth.sign_in_to_post')
-} as const
+export type SignInPromptAction = 'fresh' | 'reply' | 'follow' | 'report' | 'post'
 
-export type SignInPromptAction = keyof typeof SignInPromptSubtitles
+const signInPromptSubtitles: Record<SignInPromptAction, string> = {
+  fresh: 'auth.sign_in_to_fresh',
+  reply: 'auth.sign_in_to_reply',
+  follow: 'auth.sign_in_to_follow',
+  report: 'auth.sign_in_to_report',
+  post: 'auth.sign_in_to_post'
+}
 
 // Convenience function to show sign-in prompt with preset subtitle
 export function showSignInPrompt(
@@ -143,7 +142,7 @@ export function showSignInPrompt(
   onClose?: () => void
 ) {
   return createSignInPrompt({
-    subtitle: SignInPromptSubtitles[action],
+    subtitle: t(signInPromptSubtitles[action]),
     onSignIn,
     onSignUp,
     onClose

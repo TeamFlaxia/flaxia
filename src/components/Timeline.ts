@@ -6,7 +6,9 @@ import { createAdCard } from './AdCard.js'
 import { injectAds } from '../lib/inject-ads.js'
 import { getMe } from '../lib/auth-cache.js'
 import { createSkeletonCard } from './SkeletonCard.js'
+import { registerModal } from '../lib/modal-state.js'
 import { t } from '../lib/i18n.js'
+import { openPostModal } from '../lib/post-modal.js'
 
 export class Timeline {
   private element: HTMLElement
@@ -14,6 +16,8 @@ export class Timeline {
   private state: TimelineState
   private postCards: Map<string, ReturnType<typeof createPostCard>> = new Map()
   private composer!: PostComposer
+  private fabButton?: HTMLElement
+  private composerObserver: IntersectionObserver | null = null
   private intersectionObserver: IntersectionObserver | null = null
   private loadMoreSentinel: HTMLElement | null = null
   private touchStartX = 0
@@ -46,6 +50,7 @@ export class Timeline {
     
     this.element = this.createElement()
     this.setupEventListeners()
+    this.setupComposerObserver()
     
     // Load ads first, then posts
     this.loadAdConfig().then(() => {
@@ -57,7 +62,7 @@ export class Timeline {
     const container = document.createElement('section')
     container.className = 'timeline'
 
-    // Sticky header: feed tabs + post composer
+    // Header: feed tabs + post composer
     const timelineHeader = document.createElement('div')
     timelineHeader.className = 'timeline-header'
 
@@ -86,6 +91,15 @@ export class Timeline {
     // Load more button
     const loadMore = this.createLoadMore()
     container.appendChild(loadMore)
+
+    // FAB button for new post (only for logged-in users)
+    if (this.props.currentUser) {
+      this.fabButton = document.createElement('button')
+      this.fabButton.className = 'timeline-fab'
+      this.fabButton.textContent = '+'
+      this.fabButton.addEventListener('click', () => this.openPostModal())
+      container.appendChild(this.fabButton)
+    }
 
     return container
   }
@@ -614,11 +628,35 @@ export class Timeline {
     return this.element
   }
 
+  private setupComposerObserver(): void {
+    if (!this.composer || !this.fabButton) return
+    this.composerObserver = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0]
+        this.fabButton!.classList.toggle('visible', !entry.isIntersecting)
+      },
+      { threshold: 0 }
+    )
+    this.composerObserver.observe(this.composer.getElement())
+  }
+
+  private openPostModal(): void {
+    openPostModal({
+      currentUser: this.props.currentUser,
+      onPostCreated: (post) => this.handleNewPost(post)
+    })
+  }
+
   public destroy(): void {
     // Clean up intersection observer
     if (this.intersectionObserver) {
       this.intersectionObserver.disconnect()
       this.intersectionObserver = null
+    }
+
+    if (this.composerObserver) {
+      this.composerObserver.disconnect()
+      this.composerObserver = null
     }
     
     // Clean up window event listeners

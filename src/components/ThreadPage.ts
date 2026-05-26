@@ -107,7 +107,7 @@ export class ThreadPage {
       border-right: 1px solid #e2e8f0;
     `
 
-    // Sticky top section: header + root post
+    // Sticky top section: header only
     const topSection = document.createElement('div')
     topSection.className = 'thread-top-section'
     topSection.style.cssText = `
@@ -157,10 +157,9 @@ export class ThreadPage {
     header.appendChild(title)
     topSection.appendChild(header)
 
-    // Root post area inside top section (populated by loadThread)
+    // Root post area (populated by loadThread)
     const rootPostContainer = document.createElement('div')
     rootPostContainer.className = 'thread-root-post-container'
-    topSection.appendChild(rootPostContainer)
 
     // Replies content (scrollable)
     const repliesContent = document.createElement('div')
@@ -181,6 +180,7 @@ export class ThreadPage {
 
     // Assemble main content
     mainContent.appendChild(topSection)
+    mainContent.appendChild(rootPostContainer)
     mainContent.appendChild(repliesContent)
     mainContent.appendChild(loading)
 
