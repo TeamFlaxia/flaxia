@@ -394,6 +394,7 @@
   "search.media_game": "GAME",
   "search.media_dos": "DOS",
   "search.no_results": "「{query}」に一致する結果はありません",
+  "search.filter_all": "すべて",
 
   "register.title": "Flaxia",
   "register.heading": "アカウントを作成",

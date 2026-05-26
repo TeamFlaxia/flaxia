@@ -4672,7 +4672,7 @@ app.get('/api/search', async (c) => {
     const params: any[] = []
 
     if (type === 'arcade') {
-      conditions.push('(p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL)')
+      conditions.push('((p.swf_key IS NOT NULL AND p.swf_key != \'\') OR (p.payload_key IS NOT NULL AND p.payload_key != \'\'))')
     }
 
     for (const token of tokens) {

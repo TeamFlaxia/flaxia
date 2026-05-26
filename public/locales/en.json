@@ -394,6 +394,7 @@
   "search.media_game": "GAME",
   "search.media_dos": "DOS",
   "search.no_results": "No results found for \"{query}\"",
+  "search.filter_all": "All",
 
   "register.title": "Flaxia",
   "register.heading": "Create your account",

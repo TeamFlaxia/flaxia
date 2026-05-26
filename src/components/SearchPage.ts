@@ -7,12 +7,20 @@ interface SearchPageProps {
   sandboxOrigin: string
 }
 
-type SuggestionItem = { type: 'tag'; label: string; count: number } | { type: 'user'; label: string; display: string; avatar: string }
-
 export function createSearchPage({ query, type = 'posts', currentUser, sandboxOrigin }: SearchPageProps) {
+  const initialFilter: 'all' | 'users' | 'posts' | 'arcade' =
+    type === 'users' ? 'users' : type === 'arcade' ? 'arcade' : 'all'
+
+  let activeFilter: 'all' | 'users' | 'posts' | 'arcade' = initialFilter
+
+  let allUsers: any[] = []
+  let allPosts: any[] = []
+  let allArcade: any[] = []
+
   const container = document.createElement('div')
   container.className = 'search-page'
 
+  // ── Header with search input ──
   const header = document.createElement('div')
   header.className = 'search-page-header'
   header.style.cssText = `
@@ -99,11 +107,76 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
 
   header.appendChild(backBtn)
   header.appendChild(searchBox)
+  container.appendChild(header)
 
+  // ── Filter bar ──
+  const filterBar = document.createElement('div')
+  filterBar.className = 'search-filter-bar'
+  filterBar.style.cssText = `
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    position: sticky;
+    top: 56px;
+    background: var(--bg-primary);
+    z-index: 9;
+  `
+
+  const filters: { key: 'all' | 'users' | 'posts' | 'arcade'; label: string }[] = [
+    { key: 'all', label: t('search.filter_all') },
+    { key: 'users', label: t('explore.filter_users') },
+    { key: 'posts', label: t('explore.filter_posts') },
+    { key: 'arcade', label: t('explore.filter_arcade') },
+  ]
+
+  const filterBtns: HTMLElement[] = []
+
+  const updateFilterUI = (activeKey: string) => {
+    filterBtns.forEach(btn => {
+      const isActive = btn.dataset.filter === activeKey
+      btn.style.border = `1px solid ${isActive ? 'var(--accent)' : 'var(--border)'}`
+      btn.style.background = isActive ? 'var(--accent)' : 'transparent'
+      btn.style.color = isActive ? 'white' : 'var(--text-muted)'
+    })
+  }
+
+  for (const f of filters) {
+    const btn = document.createElement('button')
+    btn.className = 'filter-btn'
+    btn.dataset.filter = f.key
+    btn.textContent = f.label
+    btn.style.cssText = `
+      padding: 0.4rem 1rem;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.8rem;
+      white-space: nowrap;
+      transition: all 0.2s ease;
+    `
+    btn.onclick = () => {
+      activeFilter = f.key
+      updateFilterUI(f.key)
+      renderResults()
+    }
+    filterBtns.push(btn)
+    filterBar.appendChild(btn)
+  }
+
+  updateFilterUI(activeFilter)
+  container.appendChild(filterBar)
+
+  // ── Content area ──
   const content = document.createElement('div')
   content.className = 'search-page-content'
+  content.style.cssText = `
+    padding: 1rem;
+    max-width: 600px;
+  `
 
-  container.appendChild(header)
   container.appendChild(content)
 
   // Loading state
@@ -116,7 +189,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   loadingEl.textContent = t('common.loading')
   content.appendChild(loadingEl)
 
-  // ── Search input events ──
+  // ── Suggest helpers ──
   let suggestAbortController: AbortController | null = null
   let suggestTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -142,26 +215,15 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
     }
   }
 
-  const renderSuggestions = (items: SuggestionItem[]) => {
+  const renderSuggestions = (items: ({ type: 'tag'; label: string; count: number } | { type: 'user'; label: string; display: string; avatar: string })[]) => {
     suggestDropdown.innerHTML = ''
-    if (items.length === 0) {
-      suggestDropdown.style.display = 'none'
-      return
-    }
+    if (items.length === 0) { suggestDropdown.style.display = 'none'; return }
     suggestDropdown.style.display = 'block'
     for (const it of items) {
       const item = document.createElement('div')
-      item.style.cssText = `
-        padding: 0.6rem 0.75rem;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        transition: background 0.15s;
-      `
+      item.style.cssText = `padding: 0.6rem 0.75rem; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; transition: background 0.15s;`
       item.addEventListener('mouseenter', () => { item.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))' })
       item.addEventListener('mouseleave', () => { item.style.background = 'none' })
-
       if (it.type === 'tag') {
         const tagName = document.createElement('span')
         tagName.textContent = `# ${it.label}`
@@ -169,8 +231,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         const count = document.createElement('span')
         count.textContent = `${it.count}`
         count.style.cssText = 'margin-left: auto; color: var(--text-muted); font-size: 0.75rem;'
-        item.appendChild(tagName)
-        item.appendChild(count)
+        item.appendChild(tagName); item.appendChild(count)
         item.addEventListener('click', () => {
           suggestDropdown.style.display = 'none'
           window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(it.label)}`)
@@ -178,12 +239,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         })
       } else {
         const avatar = document.createElement('div')
-        avatar.style.cssText = `
-          width: 28px; height: 28px; border-radius: 50%;
-          background: var(--accent); color: var(--bg-primary);
-          display: flex; align-items: center; justify-content: center;
-          font-weight: bold; font-size: 0.7rem; flex-shrink: 0;
-        `
+        avatar.style.cssText = `width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--bg-primary); display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 0.7rem; flex-shrink: 0;`
         avatar.textContent = (it.display || it.label)[0].toUpperCase()
         const info = document.createElement('div')
         info.style.cssText = 'display: flex; flex-direction: column;'
@@ -193,16 +249,12 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         const display = document.createElement('span')
         display.textContent = it.display
         display.style.cssText = 'font-size: 0.75rem; color: var(--text-muted);'
-        info.appendChild(name)
-        info.appendChild(display)
-        item.appendChild(avatar)
-        item.appendChild(info)
+        info.appendChild(name); info.appendChild(display)
+        item.appendChild(avatar); item.appendChild(info)
         item.addEventListener('click', () => {
           suggestDropdown.style.display = 'none'
           window.history.pushState({}, '', `/profile/${encodeURIComponent(it.label)}`)
-          window.dispatchEvent(new CustomEvent('spaNavigate', {
-            detail: { view: 'profile', username: it.label }
-          }))
+          window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'profile', username: it.label } }))
         })
       }
       suggestDropdown.appendChild(item)
@@ -236,10 +288,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
     const val = input.value
     if (suggestAbortController) suggestAbortController.abort()
     if (suggestTimer) clearTimeout(suggestTimer)
-    if (val.length < 2 || val.includes(' ')) {
-      suggestDropdown.style.display = 'none'
-      return
-    }
+    if (val.length < 2 || val.includes(' ')) { suggestDropdown.style.display = 'none'; return }
     if (val.startsWith('#')) {
       const prefix = val.slice(1)
       if (!prefix) { suggestDropdown.style.display = 'none'; return }
@@ -260,59 +309,28 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   })
 
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      suggestDropdown.style.display = 'none'
-      input.blur()
-    }
+    if (e.key === 'Escape') { suggestDropdown.style.display = 'none'; input.blur() }
   })
 
-  // ── Fetch search results ──
+  // ── Data fetching ──
   const loadSearchResults = async () => {
     try {
-      const response = await fetch(`/api/search?q=${encodeURIComponent(query)}&type=${type}&limit=20`)
-      const data = await response.json() as { results: any[]; users?: any[] }
-      const results = data.results || []
-      const matchedUsers = (type === 'posts' ? data.users : []) || []
+      const [postsRes, arcadeRes] = await Promise.all([
+        fetch(`/api/search?q=${encodeURIComponent(query)}&type=posts&limit=20`),
+        fetch(`/api/search?q=${encodeURIComponent(query)}&type=arcade&limit=20`)
+      ])
+      const postsData = await postsRes.json() as { results: any[]; users?: any[] }
+      const arcadeData = await arcadeRes.json() as { results: any[] }
+
+      allUsers = (postsData.users || [])
+      allPosts = (postsData.results || [])
+      allArcade = (arcadeData.results || [])
 
       content.removeChild(loadingEl)
-
-      const hasPosts = results.length > 0
-      const hasUsers = matchedUsers.length > 0
-
-      if (!hasPosts && !hasUsers) {
-        const empty = document.createElement('div')
-        empty.style.cssText = "text-align: center; padding: 3rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;"
-        empty.textContent = t('search.no_results', { query })
-        content.appendChild(empty)
-        return
-      }
-
-      if (type === 'users') {
-        renderUsers(results)
-      } else {
-        if (hasUsers) {
-          const sectionTitle = document.createElement('div')
-          sectionTitle.textContent = t('search.users')
-          sectionTitle.style.cssText = 'font-weight: 600; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem; padding: 0 0.25rem;'
-          content.appendChild(sectionTitle)
-          renderUsers(matchedUsers, content)
-        }
-        if (hasPosts) {
-          if (hasUsers) {
-            const divider = document.createElement('div')
-            divider.style.cssText = 'height: 1px; background: var(--border); margin: 1rem 0;'
-            content.appendChild(divider)
-          }
-          const sectionTitle = document.createElement('div')
-          sectionTitle.textContent = t('search.posts')
-          sectionTitle.style.cssText = 'font-weight: 600; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem; padding: 0 0.25rem;'
-          content.appendChild(sectionTitle)
-          renderPosts(results)
-        }
-      }
+      renderResults()
     } catch (error) {
       console.error('Search error:', error)
-      content.removeChild(loadingEl)
+      if (loadingEl.parentNode === content) content.removeChild(loadingEl)
       const errorEl = document.createElement('div')
       errorEl.style.cssText = 'text-align: center; padding: 3rem; color: var(--danger);'
       errorEl.textContent = t('common.error')
@@ -320,8 +338,68 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
     }
   }
 
-  const renderUsers = (users: any[], containerEl?: HTMLElement) => {
-    const parent = containerEl || content
+  // ── Rendering ──
+  const renderResults = () => {
+    content.innerHTML = ''
+
+    const showAll = activeFilter === 'all'
+    let anyVisible = false
+
+    // Users section
+    if ((showAll || activeFilter === 'users') && allUsers.length > 0) {
+      anyVisible = true
+      if (showAll) {
+        const sectionTitle = document.createElement('div')
+        sectionTitle.textContent = t('search.users')
+        sectionTitle.style.cssText = 'font-weight: 600; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem; padding: 0 0.25rem;'
+        content.appendChild(sectionTitle)
+      }
+      renderUsers(allUsers)
+      if (showAll && allPosts.length > 0) {
+        const divider = document.createElement('div')
+        divider.style.cssText = 'height: 1px; background: var(--border); margin: 1rem 0;'
+        content.appendChild(divider)
+      }
+    }
+
+    // Posts section
+    if ((showAll || activeFilter === 'posts') && allPosts.length > 0) {
+      anyVisible = true
+      if (showAll) {
+        const sectionTitle = document.createElement('div')
+        sectionTitle.textContent = t('search.posts')
+        sectionTitle.style.cssText = 'font-weight: 600; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem; padding: 0 0.25rem;'
+        content.appendChild(sectionTitle)
+      }
+      renderPosts(allPosts)
+      if (showAll && allArcade.length > 0) {
+        const divider = document.createElement('div')
+        divider.style.cssText = 'height: 1px; background: var(--border); margin: 1rem 0;'
+        content.appendChild(divider)
+      }
+    }
+
+    // Arcade section
+    if ((showAll || activeFilter === 'arcade') && allArcade.length > 0) {
+      anyVisible = true
+      if (showAll) {
+        const sectionTitle = document.createElement('div')
+        sectionTitle.textContent = t('explore.filter_arcade')
+        sectionTitle.style.cssText = 'font-weight: 600; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem; padding: 0 0.25rem;'
+        content.appendChild(sectionTitle)
+      }
+      renderArcade(allArcade)
+    }
+
+    if (!anyVisible) {
+      const empty = document.createElement('div')
+      empty.style.cssText = "text-align: center; padding: 3rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;"
+      empty.textContent = t('search.no_results', { query })
+      content.appendChild(empty)
+    }
+  }
+
+  const renderUsers = (users: any[]) => {
     users.forEach(user => {
       const userItem = document.createElement('div')
       userItem.style.cssText = `
@@ -335,46 +413,28 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       `
       userItem.onmouseover = () => userItem.style.background = 'var(--bg-secondary)'
       userItem.onmouseout = () => userItem.style.background = 'transparent'
-
       userItem.onclick = () => {
         window.history.pushState({ username: user.username }, '', `/profile/${user.username}`)
-        window.dispatchEvent(new CustomEvent('spaNavigate', {
-          detail: { view: 'profile', username: user.username }
-        }))
+        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'profile', username: user.username } }))
       }
 
       const avatar = document.createElement('div')
-      avatar.style.cssText = `
-        width: 40px;
-        height: 40px;
-        border-radius: 50%;
-        background: var(--accent);
-        color: var(--bg-primary);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: bold;
-        font-size: 0.875rem;
-        flex-shrink: 0;
-      `
+      avatar.style.cssText = `width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: var(--bg-primary); display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 0.875rem; flex-shrink: 0;`
       avatar.textContent = user.display_name?.[0]?.toUpperCase() || user.username[0].toUpperCase()
 
       const userInfo = document.createElement('div')
-
       const usernameEl = document.createElement('div')
       usernameEl.style.cssText = 'font-weight: 600; color: var(--text-primary);'
       usernameEl.textContent = `@${user.username}`
-
       const displayNameEl = document.createElement('div')
       displayNameEl.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);'
       displayNameEl.textContent = user.display_name || ''
 
       userInfo.appendChild(usernameEl)
       userInfo.appendChild(displayNameEl)
-
       userItem.appendChild(avatar)
       userItem.appendChild(userInfo)
-      parent.appendChild(userItem)
+      content.appendChild(userItem)
     })
   }
 
@@ -391,21 +451,13 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       `
       postItem.onmouseover = () => postItem.style.background = 'var(--bg-secondary)'
       postItem.onmouseout = () => postItem.style.background = 'transparent'
-
       postItem.onclick = () => {
         window.history.pushState({ postId: post.id }, '', `/thread/${post.id}`)
-        window.dispatchEvent(new CustomEvent('spaNavigate', {
-          detail: { view: 'thread', postId: post.id }
-        }))
+        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'thread', postId: post.id } }))
       }
 
       const postHeader = document.createElement('div')
-      postHeader.style.cssText = `
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        margin-bottom: 0.5rem;
-      `
+      postHeader.style.cssText = `display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;`
 
       const postUser = document.createElement('span')
       postUser.style.cssText = 'font-weight: 600; color: var(--text-primary);'
@@ -418,20 +470,8 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       postHeader.appendChild(postUser)
       postHeader.appendChild(postDate)
 
-      if (type === 'arcade' || post.swf_key || post.payload_key) {
-        const badge = document.createElement('span')
-        badge.style.cssText = 'margin-left: 0.5rem; padding: 0.1rem 0.4rem; background: var(--accent); color: white; border-radius: 4px; font-size: 0.7rem; vertical-align: middle;'
-        badge.textContent = post.swf_key ? t('search.media_flash') : post.payload_key?.startsWith('dos/') ? t('search.media_dos') : t('search.media_game')
-        postHeader.appendChild(badge)
-      }
-
       const postText = document.createElement('div')
-      postText.style.cssText = `
-        color: var(--text-primary);
-        line-height: 1.4;
-        font-family: inherit;
-        font-size: 0.875rem;
-      `
+      postText.style.cssText = `color: var(--text-primary); line-height: 1.4; font-family: inherit; font-size: 0.875rem;`
       postText.textContent = post.text
 
       postItem.appendChild(postHeader)
@@ -440,13 +480,108 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
     })
   }
 
-  // Start loading
+  const renderArcade = (posts: any[]) => {
+    const scrollContainer = document.createElement('div')
+    scrollContainer.style.cssText = `
+      display: flex;
+      overflow-x: auto;
+      gap: 0.75rem;
+      padding: 0.5rem 0;
+      scrollbar-width: none;
+    `
+    scrollContainer.addEventListener('wheel', (e) => {
+      if (Math.abs(e.deltaX) < Math.abs(e.deltaY)) {
+        e.preventDefault()
+        scrollContainer.scrollLeft += e.deltaY
+      }
+    })
+
+    for (const post of posts) {
+      const card = document.createElement('div')
+      card.style.cssText = `
+        width: 140px;
+        flex-shrink: 0;
+        cursor: pointer;
+        border-radius: 0.5rem;
+        overflow: hidden;
+        transition: transform 0.15s;
+      `
+      card.onmouseenter = () => { card.style.transform = 'translateY(-2px)' }
+      card.onmouseleave = () => { card.style.transform = 'none' }
+      card.onclick = () => {
+        window.history.pushState({ postId: post.id }, '', `/thread/${post.id}`)
+        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'thread', postId: post.id } }))
+      }
+
+      // Thumbnail
+      const thumb = document.createElement('div')
+      thumb.style.cssText = `
+        width: 100%;
+        aspect-ratio: 9 / 12;
+        border-radius: 0.5rem;
+        overflow: hidden;
+        position: relative;
+        background: var(--bg-input);
+      `
+      if (post.thumbnail_key) {
+        const img = document.createElement('img')
+        img.src = `/api/images/${post.thumbnail_key}`
+        img.style.cssText = 'width: 100%; height: 100%; object-fit: cover; display: block;'
+        thumb.appendChild(img)
+      } else {
+        const icon = document.createElement('span')
+        icon.textContent = '🎮'
+        icon.style.cssText = 'position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 2rem;'
+        thumb.appendChild(icon)
+      }
+
+      // Badge
+      const badge = document.createElement('span')
+      badge.style.cssText = `
+        position: absolute; top: 4px; right: 4px;
+        padding: 0.1rem 0.35rem; border-radius: 4px;
+        background: var(--accent); color: white;
+        font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
+        line-height: 1.2;
+      `
+      badge.textContent = post.swf_key ? 'SWF' : post.payload_key?.startsWith('dos/') ? 'DOS' : 'GAME'
+      thumb.appendChild(badge)
+
+      // Info
+      const info = document.createElement('div')
+      info.style.cssText = 'padding: 0.35rem 0.25rem;'
+
+      const title = document.createElement('div')
+      title.textContent = post.text?.slice(0, 60) || '(no text)'
+      title.style.cssText = `
+        font-weight: 600; color: var(--text-primary);
+        font-size: 0.8rem; line-height: 1.3;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      `
+
+      const meta = document.createElement('div')
+      meta.textContent = `@${post.username}`
+      meta.style.cssText = `
+        font-size: 0.7rem; color: var(--text-muted);
+        margin-top: 0.1rem;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      `
+
+      info.appendChild(title)
+      info.appendChild(meta)
+      card.appendChild(thumb)
+      card.appendChild(info)
+      scrollContainer.appendChild(card)
+    }
+
+    content.appendChild(scrollContainer)
+  }
+
+  // Start
   loadSearchResults()
 
   return {
     getElement: () => container,
-    destroy: () => {
-      container.remove()
-    }
+    destroy: () => { container.remove() }
   }
 }
