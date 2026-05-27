@@ -16,8 +16,6 @@ export class ArcadePage {
   private currentIndex: number = 0
   private isLoading: boolean = false
   private hasMore: boolean = true
-  private cache: Map<string, { games: Game[]; timestamp: number; hasMore: boolean }> = new Map()
-  private readonly CACHE_TTL = 5 * 60 * 1000 // 5 minutes
   private gameContainer: HTMLElement
   private floatingActions: HTMLElement | null = null
   private currentGameHandle: { destroy: () => void } | null = null
@@ -420,49 +418,11 @@ export class ArcadePage {
     loadingIndicator.style.display = 'block'
 
     try {
-      const cacheKey = 'trending:first'
-      const cached = this.cache.get(cacheKey)
-      const now = Date.now()
-      
-      // Check cache first
-      if (cached && (now - cached.timestamp) < this.CACHE_TTL) {
-        console.log('Using cached games data')
-        this.games = cached.games
-        this.hasMore = cached.hasMore
-        
-        if (this.games.length > 0) {
-          // Handle initialGameId if provided
-          if (this.initialGameId) {
-            const gameIndex = this.games.findIndex(game => game.id === this.initialGameId)
-            if (gameIndex !== -1) {
-              this.currentIndex = gameIndex
-              console.log(`Found game ${this.initialGameId} at index ${gameIndex}`)
-            } else {
-              console.warn(`Game ${this.initialGameId} not found, showing first game`)
-            }
-          }
-          this.renderCurrentGame()
-        } else {
-          this.showEmptyState()
-        }
-        
-        this.isLoading = false
-        loadingIndicator.style.display = 'none'
-        return
-      }
-
-      const response = await fetch('/api/games?trending=true', { credentials: 'include' })
+      const response = await fetch('/api/games?shuffle=true', { credentials: 'include' })
       if (response.ok) {
         const data = await response.json() as { games: Game[]; hasMore?: boolean }
         this.games = data.games || []
         this.hasMore = data.hasMore || false
-
-        // Cache the response
-        this.cache.set(cacheKey, {
-          games: [...this.games], // Create a copy
-          timestamp: now,
-          hasMore: this.hasMore
-        })
 
         if (this.games.length > 0) {
           // Handle initialGameId if provided

@@ -681,6 +681,7 @@ app.get('/api/me', requireAuth, async (c) => {
 // GET /api/games - get games (posts with SWF or ZIP payloads) for the arcade
 app.get('/api/games', async (c) => {
   try {
+    const shuffle = c.req.query('shuffle') === 'true'
     const trending = c.req.query('trending') === 'true'
     const limit = Math.min(Number(c.req.query('limit') || '20'), 50)
     const cursor = c.req.query('cursor')
@@ -690,42 +691,39 @@ app.get('/api/games', async (c) => {
     }
 
     // Generate cache key based on query parameters
-    const cacheKey = `games:${trending ? 'trending' : 'recent'}:${limit}:${cursor || 'first'}`
-    
-    // Try to get from cache first (exclude user-specific data)
-    const cachedData = await c.env.CACHE?.get(cacheKey)
-    if (cachedData && !cursor) { // Only use cache for first page, not paginated requests
-      const parsed = JSON.parse(cachedData)
-      
-      // Get current user for is_freshed check
-      const token = getSessionToken(c.req.raw)
-      const sessionData = token ? await getSession(c.env, token) : null
-      const currentUserId = sessionData?.user?.id
-      
-      // If user is authenticated, fetch their fresh status for cached games
-      if (currentUserId && parsed.games.length > 0) {
-        const gameIds = parsed.games.map((g: any) => g.id)
-        const freshResults = await c.env.DB.prepare(`
-          SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${gameIds.map(() => '?').join(',')})
-        `).bind(currentUserId, ...gameIds).all()
-        
-        const freshedPostIds = new Set(freshResults.results?.map((r: any) => r.post_id) || [])
-        
-        // Update isFreshed status for each game
-        parsed.games.forEach((game: any) => {
-          game.isFreshed = freshedPostIds.has(game.id)
-        })
+    const cacheKey = `games:${shuffle ? 'shuffle' : trending ? 'trending' : 'recent'}:${limit}:${cursor || 'first'}`
+
+    // Try cache only for non-shuffle requests
+    if (!shuffle) {
+      const cachedData = await c.env.CACHE?.get(cacheKey)
+      if (cachedData && !cursor) {
+        const parsed = JSON.parse(cachedData)
+
+        const token = getSessionToken(c.req.raw)
+        const sessionData = token ? await getSession(c.env, token) : null
+        const currentUserId = sessionData?.user?.id
+
+        if (currentUserId && parsed.games.length > 0) {
+          const gameIds = parsed.games.map((g: any) => g.id)
+          const freshResults = await c.env.DB.prepare(`
+            SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${gameIds.map(() => '?').join(',')})
+          `).bind(currentUserId, ...gameIds).all()
+
+          const freshedPostIds = new Set(freshResults.results?.map((r: any) => r.post_id) || [])
+
+          parsed.games.forEach((game: any) => {
+            game.isFreshed = freshedPostIds.has(game.id)
+          })
+        }
+
+        return c.json(parsed)
       }
-      
-      return c.json(parsed)
     }
 
-    // Get current user for is_freshed check
     const token = getSessionToken(c.req.raw)
     const sessionData = token ? await getSession(c.env, token) : null
     const currentUserId = sessionData?.user?.id
 
-    // Optimized query without LEFT JOIN for better performance
     let sql = `
       SELECT
         p.id as postId,
@@ -751,20 +749,24 @@ app.get('/api/games', async (c) => {
     
     const params: (string | number)[] = []
     
-    if (cursor) {
-      sql += ' AND p.created_at < ?'
-      params.push(cursor)
-    }
-    
-    // Order by trending (fresh_count + impressions) or recency
-    if (trending) {
-      sql += ' ORDER BY (p.fresh_count + p.impressions) DESC, p.created_at DESC'
-    } else {
+    if (shuffle) {
+      // Shuffle mode: fetch all games, no cursor pagination
       sql += ' ORDER BY p.created_at DESC'
+    } else {
+      if (cursor) {
+        sql += ' AND p.created_at < ?'
+        params.push(cursor)
+      }
+      
+      if (trending) {
+        sql += ' ORDER BY (p.fresh_count + p.impressions) DESC, p.created_at DESC'
+      } else {
+        sql += ' ORDER BY p.created_at DESC'
+      }
+      
+      sql += ' LIMIT ?'
+      params.push(limit + 1)
     }
-    
-    sql += ' LIMIT ?'
-    params.push(limit + 1)
 
     const { results } = await c.env.DB.prepare(sql).bind(...params).all<{
       postId: string
@@ -782,7 +784,6 @@ app.get('/api/games', async (c) => {
       avatar_key: string | null
     }>()
 
-    // Fetch fresh status separately if user is authenticated (more efficient than JOIN)
     let freshedPostIds: Set<string> = new Set()
     if (currentUserId && results.length > 0) {
       const postIds = results.map(row => row.postId)
@@ -793,7 +794,7 @@ app.get('/api/games', async (c) => {
       freshedPostIds = new Set(freshResults.results?.map((r: any) => r.post_id) || [])
     }
 
-    const games = (results || []).map(row => {
+    let games = (results || []).map(row => {
       let type: string
       if (row.swf_key) {
         type = 'flash'
@@ -821,9 +822,17 @@ app.get('/api/games', async (c) => {
       }
     })
 
-    const hasMore = games.length > limit
-    const trimmedGames = hasMore ? games.slice(0, limit) : games
-    const nextCursor = hasMore ? trimmedGames[trimmedGames.length - 1]?.createdAt : null
+    if (shuffle) {
+      // Fisher-Yates shuffle
+      for (let i = games.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [games[i], games[j]] = [games[j], games[i]]
+      }
+    }
+
+    const hasMore = shuffle ? false : games.length > limit
+    const trimmedGames = shuffle ? games.slice(0, limit) : (hasMore ? games.slice(0, limit) : games)
+    const nextCursor = !shuffle && hasMore ? trimmedGames[trimmedGames.length - 1]?.createdAt : null
 
     const responseData = {
       games: trimmedGames,
@@ -831,24 +840,22 @@ app.get('/api/games', async (c) => {
       cursor: nextCursor
     }
 
-    // Cache the response for first page (non-paginated requests)
-    if (!cursor && c.env.CACHE) {
+    // Cache the response for first page (non-paginated, non-shuffle requests)
+    if (!shuffle && !cursor && c.env.CACHE) {
       try {
-        // Cache without user-specific isFreshed data
         const cacheData = {
           games: trimmedGames.map(game => ({
             ...game,
-            isFreshed: false // Reset to false for cache
+            isFreshed: false
           })),
           hasMore,
           cursor: nextCursor
         }
         await c.env.CACHE.put(cacheKey, JSON.stringify(cacheData), {
-          expirationTtl: 300 // 5 minutes cache
+          expirationTtl: 300
         })
       } catch (cacheError) {
         console.warn('Failed to cache games data:', cacheError)
-        // Continue without failing the request
       }
     }
 
