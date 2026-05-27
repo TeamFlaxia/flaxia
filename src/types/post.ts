@@ -111,7 +111,7 @@ export interface TimelineProps {
 }
 
 export interface TimelineState {
-  mode: 'following' | 'foryou'
+  mode: 'following' | 'foryou' | 'global'
   hashtag: string
   posts: TimelineItem[]
   ads: Ad[]

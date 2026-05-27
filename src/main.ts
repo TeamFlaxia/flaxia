@@ -1406,7 +1406,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.log('Thread page created, adding to container')
         mainContainer.appendChild(threadPage.getElement())
         console.log('Thread page added to DOM')
-        
+
         // ThreadPage has its own LeftNav, find it and setup mobile functionality
         const threadLeftNav = threadPage.getElement().querySelector('.left-nav') as HTMLElement
         if (threadLeftNav) {
@@ -1414,6 +1414,17 @@ document.addEventListener('DOMContentLoaded', async () => {
           threadLeftNav.classList.add('thread-page-left-nav')
           setupMobileLeftNav(threadLeftNav)
         }
+
+        // Create Right Panel
+        const threadRightPanel = createRightPanel({
+          onSearch: (query) => {
+            console.log('Search:', query)
+          },
+          onFollowUser: (userId) => {
+            console.log('Follow user:', userId)
+          }
+        })
+        mainContainer.appendChild(threadRightPanel.getElement())
       } else {
         // Timeline view
         currentView = 'timeline'

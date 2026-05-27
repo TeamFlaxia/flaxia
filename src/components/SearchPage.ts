@@ -1,9 +1,10 @@
 import { t } from '../lib/i18n.js'
+import { createPostCard } from './PostCard.js'
 
 interface SearchPageProps {
   query: string
   type?: 'posts' | 'users' | 'arcade'
-  currentUser: { username: string } | null
+  currentUser: { username: string; id: string; display_name?: string; avatar_key?: string } | null
   sandboxOrigin: string
 }
 
@@ -355,6 +356,29 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         content.appendChild(sectionTitle)
       }
       renderUsers(allUsers)
+      if (showAll && allArcade.length > 0) {
+        const divider = document.createElement('div')
+        divider.style.cssText = 'height: 1px; background: var(--border); margin: 1rem 0;'
+        content.appendChild(divider)
+      }
+    }
+
+    // Arcade section
+    if ((showAll || activeFilter === 'arcade') && allArcade.length > 0) {
+      anyVisible = true
+      if (showAll) {
+        const sectionTitle = document.createElement('div')
+        sectionTitle.textContent = t('explore.filter_arcade')
+        sectionTitle.style.cssText = 'font-weight: 600; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem; padding: 0 0.25rem;'
+        content.appendChild(sectionTitle)
+        renderArcade(allArcade, false)
+      } else {
+        const sectionTitle = document.createElement('div')
+        sectionTitle.textContent = t('explore.filter_arcade')
+        sectionTitle.style.cssText = 'font-weight: 600; font-size: 1rem; color: var(--text-primary); margin-bottom: 0.75rem; padding: 0 0.25rem;'
+        content.appendChild(sectionTitle)
+        renderArcade(allArcade, true)
+      }
       if (showAll && allPosts.length > 0) {
         const divider = document.createElement('div')
         divider.style.cssText = 'height: 1px; background: var(--border); margin: 1rem 0;'
@@ -372,23 +396,6 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         content.appendChild(sectionTitle)
       }
       renderPosts(allPosts)
-      if (showAll && allArcade.length > 0) {
-        const divider = document.createElement('div')
-        divider.style.cssText = 'height: 1px; background: var(--border); margin: 1rem 0;'
-        content.appendChild(divider)
-      }
-    }
-
-    // Arcade section
-    if ((showAll || activeFilter === 'arcade') && allArcade.length > 0) {
-      anyVisible = true
-      if (showAll) {
-        const sectionTitle = document.createElement('div')
-        sectionTitle.textContent = t('explore.filter_arcade')
-        sectionTitle.style.cssText = 'font-weight: 600; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem; padding: 0 0.25rem;'
-        content.appendChild(sectionTitle)
-      }
-      renderArcade(allArcade)
     }
 
     if (!anyVisible) {
@@ -419,8 +426,22 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       }
 
       const avatar = document.createElement('div')
-      avatar.style.cssText = `width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: var(--bg-primary); display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 0.875rem; flex-shrink: 0;`
-      avatar.textContent = user.display_name?.[0]?.toUpperCase() || user.username[0].toUpperCase()
+      avatar.style.cssText = `
+        width: 40px; height: 40px; border-radius: 50%;
+        background: ${user.avatar_key ? `url('/api/images/${user.avatar_key}')` : 'var(--accent)'};
+        background-size: cover;
+        background-position: center;
+        color: var(--bg-primary);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        font-size: 0.875rem;
+        flex-shrink: 0;
+      `
+      if (!user.avatar_key) {
+        avatar.textContent = user.display_name?.[0]?.toUpperCase() || user.username[0].toUpperCase()
+      }
 
       const userInfo = document.createElement('div')
       const usernameEl = document.createElement('div')
@@ -440,141 +461,235 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
 
   const renderPosts = (posts: any[]) => {
     posts.forEach(post => {
-      const postItem = document.createElement('div')
-      postItem.style.cssText = `
-        padding: 1rem;
-        border: 1px solid var(--border);
-        border-radius: 0.25rem;
-        margin-bottom: 0.75rem;
-        cursor: pointer;
-        transition: background-color 0.2s ease;
-      `
-      postItem.onmouseover = () => postItem.style.background = 'var(--bg-secondary)'
-      postItem.onmouseout = () => postItem.style.background = 'transparent'
-      postItem.onclick = () => {
-        window.history.pushState({ postId: post.id }, '', `/thread/${post.id}`)
-        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'thread', postId: post.id } }))
-      }
-
-      const postHeader = document.createElement('div')
-      postHeader.style.cssText = `display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;`
-
-      const postUser = document.createElement('span')
-      postUser.style.cssText = 'font-weight: 600; color: var(--text-primary);'
-      postUser.textContent = `@${post.username}`
-
-      const postDate = document.createElement('span')
-      postDate.style.cssText = 'font-size: 0.75rem; color: var(--text-muted);'
-      postDate.textContent = new Date(post.created_at).toLocaleDateString()
-
-      postHeader.appendChild(postUser)
-      postHeader.appendChild(postDate)
-
-      const postText = document.createElement('div')
-      postText.style.cssText = `color: var(--text-primary); line-height: 1.4; font-family: inherit; font-size: 0.875rem;`
-      postText.textContent = post.text
-
-      postItem.appendChild(postHeader)
-      postItem.appendChild(postText)
-      content.appendChild(postItem)
+      const postCard = createPostCard({
+        post,
+        currentUser,
+        sandboxOrigin,
+        initialMode: 'preview' as any,
+        depth: post.depth
+      })
+      content.appendChild(postCard.getElement())
     })
   }
 
-  const renderArcade = (posts: any[]) => {
-    const scrollContainer = document.createElement('div')
-    scrollContainer.style.cssText = `
-      display: flex;
-      overflow-x: auto;
-      gap: 0.75rem;
-      padding: 0.5rem 0;
-      scrollbar-width: none;
-    `
-    scrollContainer.addEventListener('wheel', (e) => {
-      if (Math.abs(e.deltaX) < Math.abs(e.deltaY)) {
-        e.preventDefault()
-        scrollContainer.scrollLeft += e.deltaY
+  const renderArcade = (posts: any[], grid: boolean) => {
+    if (grid) {
+      // YouTube-style horizontal list
+      for (const post of posts) {
+        const row = document.createElement('div')
+        row.style.cssText = `
+          display: flex;
+          gap: 1rem;
+          padding: 0.75rem;
+          border-radius: 0.5rem;
+          cursor: pointer;
+          transition: background 0.2s;
+          margin-bottom: 0.25rem;
+        `
+        row.addEventListener('mouseenter', () => { row.style.background = 'var(--bg-secondary)' })
+        row.addEventListener('mouseleave', () => { row.style.background = 'transparent' })
+        row.onclick = () => {
+          window.history.pushState({ postId: post.id }, '', `/arcade/${post.id}`)
+          window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: post.id } }))
+        }
+
+        // Thumbnail (fixed width, 16:9 aspect ratio)
+        const thumb = document.createElement('div')
+        thumb.style.cssText = `
+          width: 180px;
+          flex-shrink: 0;
+          aspect-ratio: 16 / 9;
+          border-radius: 0.5rem;
+          overflow: hidden;
+          position: relative;
+          background: var(--bg-input);
+        `
+        if (post.thumbnail_key) {
+          const img = document.createElement('img')
+          img.src = `/api/images/${post.thumbnail_key}`
+          img.style.cssText = 'width: 100%; height: 100%; object-fit: cover; display: block;'
+          thumb.appendChild(img)
+        } else {
+          const icon = document.createElement('span')
+          icon.textContent = '🎮'
+          icon.style.cssText = 'position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 1.5rem;'
+          thumb.appendChild(icon)
+        }
+
+        // Badge
+        const badge = document.createElement('span')
+        badge.style.cssText = `
+          position: absolute; top: 4px; right: 4px;
+          padding: 0.1rem 0.4rem; border-radius: 4px;
+          background: var(--accent); color: white;
+          font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
+          line-height: 1.2;
+        `
+        badge.textContent = post.swf_key ? 'SWF' : post.payload_key?.startsWith('dos/') ? 'DOS' : 'GAME'
+        thumb.appendChild(badge)
+
+        // Details
+        const details = document.createElement('div')
+        details.style.cssText = 'display: flex; flex-direction: column; justify-content: center; min-width: 0;'
+
+        const title = document.createElement('div')
+        title.textContent = post.text || '(no title)'
+        title.style.cssText = `
+          font-weight: 600; color: var(--text-primary);
+          font-size: 0.95rem; line-height: 1.4;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        `
+
+        const meta = document.createElement('div')
+        meta.textContent = `@${post.username}`
+        meta.style.cssText = `
+          font-size: 0.8rem; color: var(--text-muted);
+          margin-top: 0.25rem;
+        `
+
+        details.appendChild(title)
+        details.appendChild(meta)
+        row.appendChild(thumb)
+        row.appendChild(details)
+        content.appendChild(row)
       }
-    })
+    } else {
+      // Horizontal scroll cards
+      const wrapper = document.createElement('div')
+      wrapper.style.cssText = 'position: relative;'
 
-    for (const post of posts) {
-      const card = document.createElement('div')
-      card.style.cssText = `
-        width: 140px;
-        flex-shrink: 0;
-        cursor: pointer;
-        border-radius: 0.5rem;
-        overflow: hidden;
-        transition: transform 0.15s;
+      const scrollContainer = document.createElement('div')
+      scrollContainer.style.cssText = `
+        display: flex;
+        overflow-x: auto;
+        gap: 0.75rem;
+        padding: 0.5rem 0 0.75rem;
+        scrollbar-width: thin;
+        scrollbar-color: var(--border) transparent;
+        scroll-snap-type: x mandatory;
+        -webkit-overflow-scrolling: touch;
       `
-      card.onmouseenter = () => { card.style.transform = 'translateY(-2px)' }
-      card.onmouseleave = () => { card.style.transform = 'none' }
-      card.onclick = () => {
-        window.history.pushState({ postId: post.id }, '', `/thread/${post.id}`)
-        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'thread', postId: post.id } }))
+      scrollContainer.addEventListener('wheel', (e) => {
+        if (Math.abs(e.deltaX) < Math.abs(e.deltaY)) {
+          e.preventDefault()
+          scrollContainer.scrollLeft += e.deltaY
+        }
+      })
+
+      // Right-edge fade hint
+      const fadeHint = document.createElement('div')
+      fadeHint.style.cssText = `
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 48px;
+        background: linear-gradient(to right, transparent, var(--bg-primary));
+        pointer-events: none;
+        opacity: 1;
+        transition: opacity 0.3s;
+        z-index: 1;
+      `
+      wrapper.appendChild(fadeHint)
+
+      const updateFade = () => {
+        const atEnd = scrollContainer.scrollLeft >= scrollContainer.scrollWidth - scrollContainer.clientWidth - 4
+        fadeHint.style.opacity = atEnd ? '0' : '1'
+      }
+      scrollContainer.addEventListener('scroll', updateFade)
+
+      for (const post of posts) {
+        const card = document.createElement('div')
+        card.style.cssText = `
+          width: 150px;
+          flex-shrink: 0;
+          cursor: pointer;
+          border-radius: 0.75rem;
+          overflow: hidden;
+          transition: transform 0.2s, box-shadow 0.2s;
+          scroll-snap-align: start;
+          background: var(--bg-secondary);
+          border: 1px solid var(--border);
+        `
+        card.onmouseenter = () => {
+          card.style.transform = 'translateY(-3px)'
+          card.style.boxShadow = '0 6px 16px rgba(0,0,0,0.15)'
+        }
+        card.onmouseleave = () => {
+          card.style.transform = 'none'
+          card.style.boxShadow = 'none'
+        }
+        card.onclick = () => {
+          window.history.pushState({ postId: post.id }, '', `/arcade/${post.id}`)
+          window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: post.id } }))
+        }
+
+        // Thumbnail
+        const thumb = document.createElement('div')
+        thumb.style.cssText = `
+          width: 100%;
+          aspect-ratio: 9 / 12;
+          overflow: hidden;
+          position: relative;
+          background: var(--bg-input);
+        `
+        if (post.thumbnail_key) {
+          const img = document.createElement('img')
+          img.src = `/api/images/${post.thumbnail_key}`
+          img.style.cssText = 'width: 100%; height: 100%; object-fit: cover; display: block;'
+          thumb.appendChild(img)
+        } else {
+          const icon = document.createElement('span')
+          icon.textContent = '🎮'
+          icon.style.cssText = 'position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 2rem;'
+          thumb.appendChild(icon)
+        }
+
+        // Badge
+        const badge = document.createElement('span')
+        badge.style.cssText = `
+          position: absolute; top: 4px; right: 4px;
+          padding: 0.1rem 0.35rem; border-radius: 4px;
+          background: var(--accent); color: white;
+          font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
+          line-height: 1.2;
+        `
+        badge.textContent = post.swf_key ? 'SWF' : post.payload_key?.startsWith('dos/') ? 'DOS' : 'GAME'
+        thumb.appendChild(badge)
+
+        // Info
+        const info = document.createElement('div')
+        info.style.cssText = 'padding: 0.4rem 0.35rem 0.35rem;'
+
+        const title = document.createElement('div')
+        title.textContent = post.text?.slice(0, 60) || '(no text)'
+        title.style.cssText = `
+          font-weight: 600; color: var(--text-primary);
+          font-size: 0.8rem; line-height: 1.3;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        `
+
+        const meta = document.createElement('div')
+        meta.textContent = `@${post.username}`
+        meta.style.cssText = `
+          font-size: 0.7rem; color: var(--text-muted);
+          margin-top: 0.15rem;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        `
+
+        info.appendChild(title)
+        info.appendChild(meta)
+        card.appendChild(thumb)
+        card.appendChild(info)
+        scrollContainer.appendChild(card)
       }
 
-      // Thumbnail
-      const thumb = document.createElement('div')
-      thumb.style.cssText = `
-        width: 100%;
-        aspect-ratio: 9 / 12;
-        border-radius: 0.5rem;
-        overflow: hidden;
-        position: relative;
-        background: var(--bg-input);
-      `
-      if (post.thumbnail_key) {
-        const img = document.createElement('img')
-        img.src = `/api/images/${post.thumbnail_key}`
-        img.style.cssText = 'width: 100%; height: 100%; object-fit: cover; display: block;'
-        thumb.appendChild(img)
-      } else {
-        const icon = document.createElement('span')
-        icon.textContent = '🎮'
-        icon.style.cssText = 'position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 2rem;'
-        thumb.appendChild(icon)
-      }
+      wrapper.appendChild(scrollContainer)
+      content.appendChild(wrapper)
 
-      // Badge
-      const badge = document.createElement('span')
-      badge.style.cssText = `
-        position: absolute; top: 4px; right: 4px;
-        padding: 0.1rem 0.35rem; border-radius: 4px;
-        background: var(--accent); color: white;
-        font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
-        line-height: 1.2;
-      `
-      badge.textContent = post.swf_key ? 'SWF' : post.payload_key?.startsWith('dos/') ? 'DOS' : 'GAME'
-      thumb.appendChild(badge)
-
-      // Info
-      const info = document.createElement('div')
-      info.style.cssText = 'padding: 0.35rem 0.25rem;'
-
-      const title = document.createElement('div')
-      title.textContent = post.text?.slice(0, 60) || '(no text)'
-      title.style.cssText = `
-        font-weight: 600; color: var(--text-primary);
-        font-size: 0.8rem; line-height: 1.3;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      `
-
-      const meta = document.createElement('div')
-      meta.textContent = `@${post.username}`
-      meta.style.cssText = `
-        font-size: 0.7rem; color: var(--text-muted);
-        margin-top: 0.1rem;
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      `
-
-      info.appendChild(title)
-      info.appendChild(meta)
-      card.appendChild(thumb)
-      card.appendChild(info)
-      scrollContainer.appendChild(card)
+      // Initial fade state
+      requestAnimationFrame(updateFade)
     }
-
-    content.appendChild(scrollContainer)
   }
 
   // Start

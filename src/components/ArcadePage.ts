@@ -2,7 +2,12 @@ import { executeFlash } from './FlashPlayer.js'
 import { executeDos } from './DosPlayer.js'
 import { executeWvfsZip } from '../lib/wvfs-zip-client.js'
 import type { Game, ArcadePageProps, GameType } from '../types/game.js'
+import type { Post } from '../types/post.js'
 import { t } from '../lib/i18n.js'
+import { showSignInPrompt } from './SignInPrompt.js'
+import { createReplyComposer } from './ReplyComposer.js'
+import { createPostCard } from './PostCard.js'
+import { registerModal } from '../lib/modal-state.js'
 
 export interface ArcadePageHandle {
   destroy: () => void
@@ -603,29 +608,242 @@ export class ArcadePage {
       z-index: 10;
     `
 
-    // Details button
-    const detailsBtn = this.createActionButton('ℹ️', t('arcade.details'), () => this.handleDetails(game.id))
+    // Fresh button
+    const freshBtn = this.createActionButton('🍃', String(game.freshCount || 0), () => this.handleFresh(), game.isFreshed || false, 'font-size: 0.875rem; font-weight: 700; background: rgba(255,255,255,0.12); padding: 0 6px; border-radius: 8px; line-height: 1.4;')
+
+    // Comments button
+    const commentsBtn = this.createActionButton('💬', String(game.replyCount || 0), () => this.handleComments())
 
     // Fullscreen button
     const fullscreenBtn = this.createActionButton('⛶', t('arcade.fullscreen'), () => this.handleFullscreen())
 
-    container.appendChild(detailsBtn)
+    container.appendChild(freshBtn)
+    container.appendChild(commentsBtn)
     container.appendChild(fullscreenBtn)
 
     return container
   }
 
-  private createActionButton(icon: string, label: string, onClick: () => void): HTMLElement {
+  private commentPanel: HTMLElement | null = null
+  private commentModalUnregister: (() => void) | null = null
+  private commentPanelKeyHandler: ((e: KeyboardEvent) => void) | null = null
+  private commentListEl: HTMLElement | null = null
+
+  private handleComments(): void {
+    const game = this.games[this.currentIndex]
+    if (!game) return
+
+    if (this.commentPanel) {
+      this.closeCommentPanel()
+      return
+    }
+
+    this.commentModalUnregister = registerModal()
+
+    const overlay = document.createElement('div')
+    this.commentPanel = overlay
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    `
+    document.body.appendChild(overlay)
+
+    const dialog = document.createElement('div')
+    dialog.style.cssText = `
+      background: var(--bg-primary);
+      border-radius: 12px;
+      max-width: 500px;
+      width: 90%;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    `
+    overlay.appendChild(dialog)
+
+    // Header
+    const header = document.createElement('div')
+    header.style.cssText = `
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    `
+    const headerTitle = document.createElement('span')
+    headerTitle.style.cssText = 'font-weight: 600; font-size: 0.95rem; color: var(--text-primary);'
+    headerTitle.textContent = `${t('thread_view.title')} (${game.replyCount || 0})`
+    const closeBtn = document.createElement('button')
+    closeBtn.textContent = '✕'
+    closeBtn.style.cssText = 'background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.1rem; padding: 0.25rem;'
+    closeBtn.addEventListener('click', () => this.closeCommentPanel())
+    header.appendChild(headerTitle)
+    header.appendChild(closeBtn)
+    dialog.appendChild(header)
+
+    // Reply composer
+    const composer = createReplyComposer({
+      postId: game.postId,
+      sandboxOrigin: this.props.sandboxOrigin,
+      onReplyCreated: (newReply) => this.handleCommentCreated(newReply, headerTitle, composer),
+      onCancel: () => {}
+    })
+    composer.getElement().style.cssText = 'flex-shrink: 0;'
+    dialog.appendChild(composer.getElement())
+
+    // Replies list
+    const list = document.createElement('div')
+    this.commentListEl = list
+    list.style.cssText = 'flex: 1; overflow-y: auto; padding: 0.5rem 0;'
+    const loading = document.createElement('div')
+    loading.style.cssText = 'text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.85rem;'
+    loading.textContent = t('common.loading')
+    list.appendChild(loading)
+    dialog.appendChild(list)
+
+    // Close on overlay click
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        this.closeCommentPanel()
+      }
+    })
+
+    // Close on Escape
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        this.closeCommentPanel()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    this.commentPanelKeyHandler = onKeyDown
+
+    // Fetch replies
+    this.loadComments(game.postId, list, headerTitle)
+  }
+
+  private async loadComments(postId: string, list: HTMLElement, headerTitle: HTMLElement): Promise<void> {
+    try {
+      const res = await fetch(`/api/posts/${postId}/thread`)
+      if (!res.ok) throw new Error('Failed to load comments')
+      const data = await res.json() as { root: Post; replies: Post[] }
+
+      list.innerHTML = ''
+      if (data.replies.length === 0) {
+        const empty = document.createElement('div')
+        empty.style.cssText = 'text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.85rem;'
+        empty.textContent = 'No comments yet'
+        list.appendChild(empty)
+      } else {
+        for (const reply of data.replies) {
+          const card = createPostCard({
+            post: reply,
+            sandboxOrigin: this.props.sandboxOrigin,
+            currentUser: this.props.currentUser || undefined,
+            depth: reply.depth,
+            onDelete: () => {}
+          })
+          list.appendChild(card.getElement())
+        }
+      }
+    } catch {
+      list.innerHTML = ''
+      const err = document.createElement('div')
+      err.style.cssText = 'text-align: center; padding: 2rem; color: var(--danger); font-size: 0.85rem;'
+      err.textContent = t('common.error')
+      list.appendChild(err)
+    }
+  }
+
+  private handleCommentCreated(newReply: Post, headerTitle: HTMLElement, composer: any): void {
+    const game = this.games[this.currentIndex]
+    if (game) {
+      game.replyCount = (game.replyCount || 0) + 1
+      headerTitle.textContent = `${t('thread_view.title')} (${game.replyCount})`
+      this.updateFloatingActions(game)
+    }
+
+    // Re-fetch comments to show the new reply
+    if (this.commentListEl && game) {
+      this.loadComments(game.postId, this.commentListEl, headerTitle)
+    }
+  }
+
+  private closeCommentPanel(): void {
+    if (this.commentPanel) {
+      if (this.commentPanelKeyHandler) {
+        document.removeEventListener('keydown', this.commentPanelKeyHandler)
+        this.commentPanelKeyHandler = null
+      }
+      this.commentPanel.remove()
+      this.commentPanel = null
+      this.commentListEl = null
+    }
+    if (this.commentModalUnregister) {
+      this.commentModalUnregister()
+      this.commentModalUnregister = null
+    }
+  }
+
+  private async handleFresh(): Promise<void> {
+    const game = this.games[this.currentIndex]
+    if (!game) return
+
+    if (!this.props.currentUser) {
+      showSignInPrompt(
+        'fresh',
+        () => { window.history.pushState({}, '', '/login'); window.dispatchEvent(new PopStateEvent('popstate')) },
+        () => { window.history.pushState({}, '', '/register'); window.dispatchEvent(new PopStateEvent('popstate')) }
+      )
+      return
+    }
+
+    const wasFreshed = game.isFreshed || false
+
+    // Optimistic update
+    game.isFreshed = !wasFreshed
+    game.freshCount = Math.max(0, game.freshCount + (wasFreshed ? -1 : 1))
+    this.updateFloatingActions(game)
+
+    try {
+      const res = await fetch(`/api/posts/${game.postId}/fresh`, { method: 'POST', credentials: 'include' })
+      if (!res.ok) throw new Error('Failed to toggle fresh')
+      const data = await res.json() as { freshed: boolean; fresh_count: number }
+      game.isFreshed = data.freshed
+      game.freshCount = data.fresh_count
+    } catch {
+      // Rollback on error
+      game.isFreshed = wasFreshed
+      game.freshCount = Math.max(0, game.freshCount + (wasFreshed ? 1 : -1))
+    }
+    this.updateFloatingActions(game)
+  }
+
+  private updateFloatingActions(game: Game): void {
+    if (this.floatingActions) {
+      const newActions = this.createFloatingActions(game)
+      this.floatingActions.replaceWith(newActions)
+      this.floatingActions = newActions
+    }
+  }
+
+  private createActionButton(icon: string, label: string, onClick: () => void, isActive: boolean = false, labelStyle?: string): HTMLElement {
     const btn = document.createElement('button')
     btn.className = 'arcade-action-btn'
+    const bgActive = isActive ? 'rgba(255, 255, 255, 0.3)' : 'rgba(255, 255, 255, 0.15)'
     btn.style.cssText = `
       width: 56px;
       height: 56px;
       border-radius: 50%;
-      border: none;
-      background: rgba(255, 255, 255, 0.15);
+      border: ${isActive ? '2px solid #fff' : 'none'};
+      background: ${bgActive};
       backdrop-filter: blur(10px);
-      color: white;
+      color: ${isActive ? '#ffd700' : 'white'};
       font-size: 1.5rem;
       cursor: pointer;
       display: flex;
@@ -642,10 +860,15 @@ export class ArcadePage {
     
     const labelSpan = document.createElement('span')
     labelSpan.textContent = label
-    labelSpan.style.fontSize = '0.625rem'
+    labelSpan.style.cssText = `
+      font-size: ${isActive ? '0.75rem' : '0.625rem'};
+      font-weight: ${isActive ? '700' : '400'};
+      color: ${isActive ? '#ffd700' : 'inherit'};
+      ${labelStyle || ''}
+    `
     
     btn.appendChild(iconSpan)
-    if (label !== 'Share' && label !== 'Details' && label !== 'Fullscreen') {
+    if (label !== 'Details' && label !== 'Fullscreen') {
       btn.appendChild(labelSpan)
     }
 
@@ -655,7 +878,7 @@ export class ArcadePage {
     })
     btn.addEventListener('mouseleave', () => {
       btn.style.transform = 'scale(1)'
-      btn.style.background = 'rgba(255, 255, 255, 0.15)'
+      btn.style.background = bgActive
     })
     btn.addEventListener('click', (e) => {
       e.stopPropagation()
@@ -732,6 +955,7 @@ export class ArcadePage {
     }
 
     this.floatingActions = null
+    this.commentPanel = null
     this.currentViewport = null
   }
 

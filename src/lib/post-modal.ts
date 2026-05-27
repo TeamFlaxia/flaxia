@@ -51,14 +51,95 @@ function createDraftsPanel(composer: PostComposer): { panel: HTMLElement; refres
   const panel = document.createElement('div')
   panel.className = 'post-modal-drafts'
 
+  const titleRow = document.createElement('div')
+  titleRow.style.cssText = 'display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem; padding: 0 0.25rem;'
+
   const title = document.createElement('div')
   title.className = 'post-modal-drafts-title'
+  title.style.cssText = 'margin: 0; padding: 0;'
   const updateTitle = () => {
     const d = composer.getSavedDrafts()
     title.textContent = t('composer.list_drafts') + (d.length > 0 ? ` (${d.length})` : '')
   }
   updateTitle()
-  panel.appendChild(title)
+  titleRow.appendChild(title)
+
+  const deleteAllBtn = document.createElement('button')
+  deleteAllBtn.textContent = t('composer.draft_delete_all')
+  deleteAllBtn.style.cssText = `
+    background: none;
+    border: none;
+    color: var(--danger, #ef4444);
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-family: inherit;
+    padding: 0.2rem 0.4rem;
+    border-radius: 4px;
+    transition: background 0.15s;
+  `
+  deleteAllBtn.addEventListener('mouseenter', () => { deleteAllBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))' })
+  deleteAllBtn.addEventListener('mouseleave', () => { deleteAllBtn.style.background = 'none' })
+  deleteAllBtn.addEventListener('click', () => {
+    const unreg = registerModal()
+    const overlay = document.createElement('div')
+    overlay.style.cssText = `
+      position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 3000;
+    `
+    const dialog = document.createElement('div')
+    dialog.style.cssText = `
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 24px;
+      max-width: 400px;
+      width: 90%;
+    `
+    const title = document.createElement('h3')
+    title.style.cssText = 'margin: 0 0 8px 0; font-size: 18px; color: var(--text-primary);'
+    title.textContent = t('composer.draft_delete_all')
+
+    const message = document.createElement('p')
+    message.style.cssText = 'margin: 0 0 24px 0; color: var(--text-muted); font-size: 14px;'
+    message.textContent = t('composer.draft_delete_all_confirm')
+
+    const buttonRow = document.createElement('div')
+    buttonRow.style.cssText = 'display: flex; gap: 12px; justify-content: flex-end;'
+
+    const cancelBtn = document.createElement('button')
+    cancelBtn.style.cssText = 'padding: 8px 16px; background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); cursor: pointer; font-family: inherit;'
+    cancelBtn.textContent = t('common.cancel')
+
+    const deleteBtn = document.createElement('button')
+    deleteBtn.style.cssText = 'padding: 8px 16px; background: var(--danger, #ef4444); border: none; border-radius: 4px; color: #fff; cursor: pointer; font-family: inherit;'
+    deleteBtn.textContent = t('common.delete')
+
+    buttonRow.appendChild(cancelBtn)
+    buttonRow.appendChild(deleteBtn)
+    dialog.appendChild(title)
+    dialog.appendChild(message)
+    dialog.appendChild(buttonRow)
+    overlay.appendChild(dialog)
+    document.body.appendChild(overlay)
+
+    const destroy = () => {
+      unreg()
+      overlay.remove()
+    }
+
+    cancelBtn.addEventListener('click', destroy)
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) destroy() })
+
+    deleteBtn.addEventListener('click', () => {
+      destroy()
+      composer.deleteAllDraftsPublic()
+      renderItems()
+    })
+  })
+  titleRow.appendChild(deleteAllBtn)
+
+  panel.appendChild(titleRow)
 
   const renderItems = () => {
     const existing = panel.querySelector('.post-modal-drafts-items')

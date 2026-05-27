@@ -40,6 +40,7 @@ export class ThreadPage {
     container.style.cssText = `
       background: #ffffff;
       min-height: 100vh;
+      width: 100%;
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     `
 
@@ -97,14 +98,12 @@ export class ThreadPage {
       border-right: 1px solid #e2e8f0;
     `
 
-    // Create main content area (centered)
+    // Create main content area
     const mainContent = document.createElement('div')
     mainContent.className = 'thread-main-content'
     mainContent.style.cssText = `
       flex: 1;
-      max-width: 600px;
       padding: 1rem;
-      border-right: 1px solid #e2e8f0;
     `
 
     // Sticky top section: header only
@@ -207,9 +206,6 @@ export class ThreadPage {
         .thread-page .main-container {
           max-width: 840px;
         }
-        .thread-page .thread-main-content {
-          border-right: none;
-        }
       }
       
       @media (max-width: 768px) {
@@ -242,7 +238,6 @@ export class ThreadPage {
         }
         .thread-page .thread-main-content {
           padding-bottom: 1rem;
-          border-right: none;
           max-width: 100%;
         }
         /* Show all nav items in slide-out */
