@@ -91,8 +91,33 @@ export class ArcadePage {
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      gap: 1rem;
     `
+
+    if (this.props.onBack) {
+      const backBtn = document.createElement('button')
+      backBtn.className = 'arcade-back-btn'
+      backBtn.textContent = '←'
+      backBtn.title = t('common.back')
+      backBtn.style.cssText = `
+        background: none;
+        border: none;
+        font-size: 1.5rem;
+        cursor: pointer;
+        color: var(--text-primary);
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        line-height: 1;
+        transition: background 0.2s;
+      `
+      backBtn.addEventListener('mouseenter', () => { backBtn.style.background = 'var(--bg-hover, rgba(255,255,255,0.1))' })
+      backBtn.addEventListener('mouseleave', () => { backBtn.style.background = 'none' })
+      backBtn.addEventListener('click', () => this.props.onBack?.())
+      header.appendChild(backBtn)
+    }
+
+    const titleGroup = document.createElement('div')
+    titleGroup.style.cssText = 'display: flex; flex-direction: column;'
 
     const title = document.createElement('h1')
     title.textContent = t('arcade.title')
@@ -110,8 +135,9 @@ export class ArcadePage {
       color: var(--text-muted);
     `
 
-    header.appendChild(title)
-    header.appendChild(subtitle)
+    titleGroup.appendChild(title)
+    titleGroup.appendChild(subtitle)
+    header.appendChild(titleGroup)
 
     // Game container (vertical scroll area)
     const gameContainer = document.createElement('div')

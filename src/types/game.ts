@@ -23,6 +23,7 @@ export interface ArcadePageProps {
   sandboxOrigin: string
   currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null
   initialGameId?: string
+  onBack?: () => void
 }
 
 export interface GamePlayerProps {

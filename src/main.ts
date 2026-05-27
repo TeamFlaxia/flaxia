@@ -535,9 +535,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           return // Auth guard will redirect to login
         }
         
-        // Cache current view when navigating to thread (for back navigation with preserved content)
-        if (view === 'thread' && currentView !== 'thread') {
-          console.log('Caching current view for back navigation:', currentView)
+        // Cache current view when navigating to thread or arcade (for back navigation with preserved content)
+        if ((view === 'thread' || view === 'arcade') && currentView !== view) {
+          console.log(`Caching current view for back navigation to ${view}:`, currentView)
           if (currentView === 'timeline' && timeline) {
             cachedContentComponent = { view: 'timeline', component: timeline, scrollY: window.scrollY }
             timeline = null
@@ -1014,7 +1014,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           arcadePage = createArcadePage({
             sandboxOrigin,
             currentUser,
-            initialGameId: currentPostId || undefined
+            initialGameId: currentPostId || undefined,
+            onBack: () => {
+              console.log('Arcade back button clicked')
+              window.history.back()
+            }
           })
         }
         
