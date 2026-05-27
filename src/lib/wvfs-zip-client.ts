@@ -22,8 +22,8 @@ export async function executeWvfsZip(
 
   try {
     // Create iframe pointing to WVFS worker endpoint
-    const baseUrl = workerUrl || window.location.origin
-    const zipUrl = `${baseUrl}/api/wvfs-zip/${postId}`
+    const contentOrigin = workerUrl || import.meta.env.VITE_CONTENT_ORIGIN || window.location.origin
+    const zipUrl = `${contentOrigin}/api/wvfs-zip/${postId}`
     
     const { iframe, cleanup } = await createWvfsIframe(postId, containerEl, zipUrl, hideFullscreen)
 
@@ -79,7 +79,7 @@ async function createWvfsIframe(
   // Create iframe pointing to WVFS worker endpoint
   const iframe = document.createElement('iframe')
   iframe.src = zipUrl
-  iframe.sandbox = 'allow-scripts allow-pointer-lock allow-fullscreen'
+  iframe.sandbox = 'allow-scripts allow-same-origin allow-pointer-lock allow-fullscreen'
   iframe.setAttribute('allow', 'fullscreen')
   iframe.setAttribute('referrerpolicy', 'no-referrer')
   iframe.style.cssText = `

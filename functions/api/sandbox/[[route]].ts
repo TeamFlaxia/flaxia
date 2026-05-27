@@ -11,7 +11,7 @@ const app = new Hono<{ Bindings: Bindings }>()
 
 // CORS for sandbox
 app.use('/*', cors({
-  origin: ['https://flaxia.app', 'https://*.pages.dev'],
+  origin: ['https://flaxia.app', 'https://*.pages.dev', 'https://sandbox.flaxia.app'],
   allowMethods: ['GET', 'POST', 'OPTIONS'],
   allowHeaders: ['Content-Type'],
 }))

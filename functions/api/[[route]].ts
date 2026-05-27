@@ -8,7 +8,6 @@ import { verifyHttpSignature, verifyDigest, fetchActorPublicKey, signRequest } f
 import { generateKeyPair, exportPublicKey, exportPrivateKey } from '../lib/activitypub/crypto'
 import { buildNoteObject, buildCreateActivity, buildDeleteActivity } from '../lib/activitypub/note'
 import type { ReportCategory } from '../../src/types/post'
-import { extractZipToWvfs, serveFileFromWvfs, cleanupWvfsZip } from '../../src/lib/wvfs-zip-server'
 
 type Bindings = {
   DB: D1Database
@@ -318,113 +317,9 @@ app.get('/api/zip/:postId', async (c) => {
   }
 })
 
-// GET /api/wvfs-zip/:postId - serve ZIP files using WVFS
-// GET /api/wvfs-zip/:postId/* - serve individual files from ZIP using WVFS
-app.get('/api/wvfs-zip/:postId/*', async (c) => {
-  // Add rate limiting for WVFS endpoints with graceful KV handling
-  const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
-  
-  // Handle KV rate limit gracefully - if KV fails, continue with WVFS serving
-  let rl: { allowed: boolean; resetIn: number } | null = null
-  try {
-    rl = await checkRateLimit(c.env.RATE_LIMIT, {
-      key: `wvfs:${ip}`,
-      limit: 100,  // 100 requests per minute
-      windowSeconds: 60
-    })
-  } catch (kvError: any) {
-    // Log KV error but don't fail the request
-    console.warn('KV rate limit check failed for WVFS, proceeding anyway:', kvError.message)
-    // Check if it's specifically a KV put limit exceeded error
-    if (kvError.message && kvError.message.includes('KV put() limit exceeded')) {
-      console.warn('KV put limit exceeded, skipping rate limit check for WVFS')
-    }
-  }
-  
-  // Only apply rate limit if KV check succeeded
-  if (rl && !rl.allowed) {
-    return rateLimitResponse(c, rl.resetIn, 100)
-  }
-
-  try {
-    const postId = c.req.param('postId')
-    
-    // Extract the file path from the request
-    // This handles both /api/wvfs-zip/:postId and /api/wvfs-zip/:postId/some/path
-    const fullPath = c.req.path
-    const basePath = `/api/wvfs-zip/${postId}`
-    let filePath = fullPath.replace(basePath, '').replace(/^\//, '') || 'index.html'
-    
-    console.log(`WVFS API: Request for postId=${postId}, filePath=${filePath}`)
-    
-    if (!postId) {
-      return c.json({ error: 'Missing post ID' }, 400)
-    }
-    
-    if (!c.env.BUCKET) {
-      return c.json({ error: 'Storage not available' }, 500)
-    }
-    
-    // Check if ZIP is already extracted to WVFS
-    const response = await serveFileFromWvfs(postId, filePath)
-    if (response) {
-      return response
-    }
-    
-    // If not found, extract ZIP to WVFS first
-    let zipKey: string
-    let zipObject: R2Object | null = null
-    
-    // Check if it's an ad
-    if (c.env.DB) {
-      const adResult = await c.env.DB.prepare('SELECT payload_key FROM ads WHERE id = ? AND payload_type = \'zip\' AND active = 1')
-        .bind(postId)
-        .first() as { payload_key: string } | null
-      
-      if (adResult && adResult.payload_key) {
-        zipKey = adResult.payload_key
-        zipObject = await c.env.BUCKET.get(zipKey)
-      }
-    }
-    
-    // If not an ad or ad not found, try as a post
-    if (!zipObject) {
-      zipKey = `zip/${postId}.zip`
-      zipObject = await c.env.BUCKET.get(zipKey)
-    }
-    
-    if (!zipObject) {
-      return c.json({ error: 'ZIP not found' }, 404)
-    }
-    
-    console.log(`WVFS API: Extracting ZIP for postId=${postId}`)
-    
-    // Extract ZIP to WVFS
-    const zipData = await (zipObject as any).arrayBuffer()
-    await extractZipToWvfs(zipData, postId)
-    
-    console.log(`WVFS API: ZIP extracted, serving file: ${filePath}`)
-    
-    // Try serving the file again
-    const fileResponse = await serveFileFromWvfs(postId, filePath)
-    if (fileResponse) {
-      return fileResponse
-    }
-    
-    return c.json({ error: 'File not found in ZIP', path: filePath }, 404)
-    
-  } catch (error: any) {
-    // Log detailed error for debugging
-    console.error('WVFS ZIP error:', error)
-    
-    // Don't expose internal error details to prevent information leakage
-    if (error instanceof Error && error.message.includes('Path traversal')) {
-      console.warn('Security violation: Path traversal attempt detected')
-    }
-    
-    // Return generic error message to user
-    return c.json({ error: 'Failed to process ZIP file' }, 500)
-  }
+// GET /api/wvfs-zip/:postId/* - redirect to sandbox.flaxia.app
+app.get('/api/wvfs-zip/:postId/*', (c) => {
+  return c.redirect(`https://sandbox.flaxia.app${c.req.path}`, 301)
 })
 
 // GET /api/ads/:id/payload - serve ad payloads from R2
@@ -646,7 +541,7 @@ const requireAuth = async (c: any, next: any) => {
 }
 
 app.use('/*', cors({
-  origin: ['https://flaxia.app', 'https://*.pages.dev'],
+  origin: ['https://flaxia.app', 'https://*.pages.dev', 'https://sandbox.flaxia.app'],
   allowMethods: ['GET', 'POST', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
   credentials: true

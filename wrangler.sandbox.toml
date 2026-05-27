@@ -1,0 +1,21 @@
+name = "flaxia-sandbox"
+main = "src/sandbox-worker.ts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+routes = [
+  { pattern = "sandbox.flaxia.app/*", zone_name = "flaxia.app" }
+]
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "flaxia-content"
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "96ea8717c5cf419ab93640bbaa2b93c2"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "flaxia"
+database_id = "7c99f35f-69a0-4644-96a1-34c716a3e82d"

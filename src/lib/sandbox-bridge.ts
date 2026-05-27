@@ -31,7 +31,8 @@ export class SandboxBridge {
   private handleMessage(event: MessageEvent): void {
     // Validate origin first
     const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxiausercontent.com'
-    if (event.origin !== sandboxOrigin) return
+    const allowedOrigins = [sandboxOrigin, 'https://sandbox.flaxia.app']
+    if (!allowedOrigins.includes(event.origin)) return
 
     const data = event.data
     if (!isParentMessage(data)) return
