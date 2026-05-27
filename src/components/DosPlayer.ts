@@ -9,7 +9,8 @@ let activeHandle: DosPlayerHandle | null = null
 export async function executeDos(
   postId: string,
   containerEl: HTMLElement,
-  url?: string
+  url?: string,
+  hideFullscreen: boolean = false
 ): Promise<DosPlayerHandle> {
   if (activeHandle) {
     activeHandle.destroy()
@@ -84,7 +85,9 @@ export async function executeDos(
     containerEl.innerHTML = ''
     containerEl.appendChild(iframeContainer)
     iframeContainer.appendChild(iframe)
-    iframeContainer.appendChild(fullscreenBtn)
+    if (!hideFullscreen) {
+      iframeContainer.appendChild(fullscreenBtn)
+    }
 
     const handle: DosPlayerHandle = {
       destroy: () => {

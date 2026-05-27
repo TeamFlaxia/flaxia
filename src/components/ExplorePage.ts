@@ -25,6 +25,8 @@ export class ExplorePage {
   private fabButton: HTMLElement | null = null
   private tagCountEl: HTMLElement | null = null
   private suggestAbortController: AbortController | null = null
+  private static readonly SEARCH_HISTORY_KEY = 'flaxia_search_history'
+  private static readonly MAX_HISTORY = 10
 
   constructor(props: ExplorePageProps) {
     this.props = props
@@ -263,11 +265,6 @@ export class ExplorePage {
         if (this.suggestAbortController) this.suggestAbortController.abort()
         if (suggestTimer) clearTimeout(suggestTimer)
 
-        if (val.length < 2 || val.includes(' ')) {
-          suggestDropdown.style.display = 'none'
-          return
-        }
-
         if (val.startsWith('#')) {
           const prefix = val.slice(1)
           if (!prefix) { suggestDropdown.style.display = 'none'; return }
@@ -282,7 +279,18 @@ export class ExplorePage {
           return
         }
 
+        if (val.length === 0) {
+          this.renderSearchHistory(suggestDropdown)
+          return
+        }
+
         suggestDropdown.style.display = 'none'
+      })
+
+      searchInput.addEventListener('focus', () => {
+        if (!searchInput.value) {
+          this.renderSearchHistory(suggestDropdown)
+        }
       })
 
       searchInput.addEventListener('blur', () => {
@@ -295,8 +303,409 @@ export class ExplorePage {
           searchInput.blur()
         }
       })
+    }
+
+    this.setupIntersectionObserver()
   }
-}
+
+  private renderSuggestions(dropdown: HTMLElement, items: { type: 'tag' | 'user'; label: string; count?: number; display?: string; avatar?: string }[]): void {
+    dropdown.innerHTML = ''
+
+    if (items.length === 0) {
+      dropdown.style.display = 'none'
+      return
+    }
+
+    dropdown.style.display = 'block'
+
+    for (const it of items) {
+      const item = document.createElement('div')
+      item.style.cssText = `
+        padding: 0.6rem 0.75rem;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        transition: background 0.15s;
+      `
+      item.addEventListener('mouseenter', () => { item.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))' })
+      item.addEventListener('mouseleave', () => { item.style.background = 'none' })
+
+      if (it.type === 'tag') {
+        const tagName = document.createElement('span')
+        tagName.textContent = `# ${it.label}`
+        tagName.style.cssText = 'font-weight: 600; color: var(--accent); font-size: 0.875rem;'
+
+        const count = document.createElement('span')
+        count.textContent = `${it.count || 0}`
+        count.style.cssText = 'margin-left: auto; color: var(--text-muted); font-size: 0.75rem;'
+
+        item.appendChild(tagName)
+        item.appendChild(count)
+
+        item.addEventListener('click', () => {
+          dropdown.style.display = 'none'
+          window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(it.label)}`)
+          window.location.reload()
+        })
+      } else {
+        const avatar = document.createElement('div')
+        avatar.style.cssText = `
+          width: 28px; height: 28px; border-radius: 50%;
+          background: var(--accent); color: var(--bg-primary);
+          display: flex; align-items: center; justify-content: center;
+          font-weight: bold; font-size: 0.7rem; flex-shrink: 0;
+        `
+        avatar.textContent = (it.display || it.label)[0].toUpperCase()
+
+        const info = document.createElement('div')
+        info.style.cssText = 'display: flex; flex-direction: column;'
+
+        const name = document.createElement('span')
+        name.textContent = `@${it.label}`
+        name.style.cssText = 'font-weight: 600; color: var(--text-primary); font-size: 0.85rem;'
+
+        const display = document.createElement('span')
+        display.textContent = it.display || ''
+        display.style.cssText = 'font-size: 0.75rem; color: var(--text-muted);'
+
+        info.appendChild(name)
+        info.appendChild(display)
+        item.appendChild(avatar)
+        item.appendChild(info)
+
+        item.addEventListener('click', () => {
+          dropdown.style.display = 'none'
+          window.history.pushState({}, '', `/profile/${encodeURIComponent(it.label)}`)
+          window.dispatchEvent(new CustomEvent('spaNavigate', {
+            detail: { view: 'profile', username: it.label }
+          }))
+        })
+      }
+
+      dropdown.appendChild(item)
+    }
+  }
+
+  private resetAndReload(): void {
+    this.posts = []
+    this.cursor = undefined
+    this.hasMore = true
+    const postsContainer = this.element.querySelector('.explore-posts')
+    if (postsContainer) postsContainer.innerHTML = ''
+    this.loadContent()
+
+    // Re-setup intersection observer
+    this.setupIntersectionObserver()
+  }
+
+  private async loadContent(): Promise<void> {
+    if (this.loading) return
+    this.loading = true
+    this.updateLoadingState(true)
+
+    try {
+      if (this.props.tag) {
+        await this.loadTagPosts()
+      } else {
+        await this.loadTrendingContent()
+      }
+    } catch (error) {
+      console.error('Failed to load explore content:', error)
+    } finally {
+      this.loading = false
+      this.updateLoadingState(false)
+    }
+  }
+
+  private async loadMorePosts(): Promise<void> {
+    if (this.loading || !this.hasMore) return
+
+    this.loading = true
+    this.updateLoadingState(true)
+
+    try {
+      let url = ''
+      if (this.props.tag) {
+        url = `/api/posts?hashtag=${encodeURIComponent(this.props.tag)}&limit=10`
+      } else {
+        url = `/api/posts/trending?limit=10`
+      }
+
+      if (this.cursor) {
+        if (!this.props.tag && !this.cursor.includes(',')) {
+          this.cursor = undefined
+        } else {
+          url += `&cursor=${encodeURIComponent(this.cursor)}`
+        }
+      }
+
+      const response = await fetch(url)
+      if (!response.ok) throw new Error('Failed to load more posts')
+      
+      const data = await response.json() as { posts: Post[] }
+      const newPosts = data.posts || []
+
+      if (newPosts.length > 0) {
+        this.posts.push(...newPosts)
+        if (!this.props.tag) {
+          const lastPost = newPosts[newPosts.length - 1] as any
+          this.cursor = `${lastPost.score},${lastPost.created_at}`
+        } else {
+          this.cursor = newPosts[newPosts.length - 1].created_at
+        }
+        this.hasMore = newPosts.length === 10
+        this.renderPosts()
+      } else {
+        this.hasMore = false
+        this.showEndOfPosts()
+      }
+    } catch (error) {
+      console.error('Failed to load more posts:', error)
+      this.showLoadError()
+    } finally {
+      this.loading = false
+      this.updateLoadingState(false)
+    }
+  }
+
+  private async loadTagPosts(): Promise<void> {
+    let url = `/api/posts?hashtag=${encodeURIComponent(this.props.tag!)}&limit=10`
+    if (this.cursor) {
+      url += `&cursor=${encodeURIComponent(this.cursor)}`
+    }
+    const response = await fetch(url)
+    if (!response.ok) throw new Error('Failed to load tag posts')
+    const data = await response.json() as { posts: Post[] }
+    this.handleNewPosts(data.posts)
+  }
+
+  private async loadTrendingContent(): Promise<void> {
+    // Load both trending tags and trending posts
+    const [tagsRes, postsRes] = await Promise.all([
+      fetch('/api/tags/trending'),
+      fetch('/api/posts/trending?limit=10')
+    ])
+
+    if (tagsRes.ok) {
+      const tagsData = await tagsRes.json()
+      this.renderTrendingTags(tagsData.tags || [])
+    }
+
+    if (postsRes.ok) {
+      const postsData = await postsRes.json()
+      this.handleNewPosts(postsData.posts || [])
+    }
+  }
+
+  private handleNewPosts(newPosts: Post[]): void {
+    if (newPosts.length > 0) {
+      this.posts.push(...newPosts)
+      this.cursor = newPosts[newPosts.length - 1].created_at
+      this.hasMore = newPosts.length === 10
+      this.renderPosts()
+    } else {
+      this.hasMore = false
+      if (this.posts.length > 0) this.showEndOfPosts()
+    }
+    this.updateTagCount()
+  }
+
+  private performSearch(query: string): void {
+    this.saveSearchHistory(query)
+    window.history.pushState({}, '', `/search?q=${encodeURIComponent(query)}&type=${this.searchFilter}`)
+    window.dispatchEvent(new CustomEvent('spaNavigate', {
+      detail: { view: 'search', searchQuery: query, searchType: this.searchFilter }
+    }))
+  }
+
+  private getSearchHistory(): string[] {
+    try {
+      const raw = localStorage.getItem(ExplorePage.SEARCH_HISTORY_KEY)
+      return raw ? JSON.parse(raw) : []
+    } catch {
+      return []
+    }
+  }
+
+  private saveSearchHistory(query: string): void {
+    const history = this.getSearchHistory().filter(h => h !== query)
+    history.unshift(query)
+    if (history.length > ExplorePage.MAX_HISTORY) history.pop()
+    localStorage.setItem(ExplorePage.SEARCH_HISTORY_KEY, JSON.stringify(history))
+  }
+
+  private renderSearchHistory(dropdown: HTMLElement): void {
+    const history = this.getSearchHistory()
+    if (history.length === 0) return
+
+    dropdown.innerHTML = ''
+    dropdown.style.display = 'block'
+
+    const header = document.createElement('div')
+    header.style.cssText = 'padding: 0.5rem 0.75rem; font-size: 0.75rem; color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--border);'
+    header.textContent = t('explore.recent_searches') || 'Recent'
+    dropdown.appendChild(header)
+
+    history.forEach(q => {
+      const item = document.createElement('div')
+      item.style.cssText = `
+        padding: 0.6rem 0.75rem; cursor: pointer; display: flex;
+        align-items: center; gap: 0.5rem; transition: background 0.15s;
+      `
+      item.addEventListener('mouseenter', () => { item.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))' })
+      item.addEventListener('mouseleave', () => { item.style.background = 'none' })
+
+      const icon = document.createElement('span')
+      icon.textContent = '🕐'
+      icon.style.cssText = 'font-size: 0.85rem; flex-shrink: 0;'
+
+      const text = document.createElement('span')
+      text.textContent = q
+      text.style.cssText = 'color: var(--text-primary); font-size: 0.85rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'
+
+      item.appendChild(icon)
+      item.appendChild(text)
+
+      item.addEventListener('click', () => {
+        dropdown.style.display = 'none'
+        const input = this.element.querySelector('.search-input') as HTMLInputElement
+        if (input) {
+          input.value = q
+          this.performSearch(q)
+        }
+      })
+
+      dropdown.appendChild(item)
+    })
+  }
+
+  private renderPosts(): void {
+    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement
+    if (!postsContainer) return
+
+    // If initial load, clear container
+    if (this.posts.length <= 10 && postsContainer.children.length > 0 && !this.cursor) {
+      postsContainer.innerHTML = ''
+    }
+
+    const fragment = document.createDocumentFragment()
+    const startIndex = postsContainer.children.length
+    
+    this.posts.slice(startIndex).forEach(post => {
+      const postCard = createPostCard({
+        post,
+        sandboxOrigin: this.props.sandboxOrigin,
+        currentUser: this.props.currentUser || undefined,
+        depth: post.depth
+      })
+      fragment.appendChild(postCard.getElement())
+    })
+    
+    postsContainer.appendChild(fragment)
+  }
+
+  private renderTrendingTags(tags: any[]): void {
+    const container = this.element.querySelector('.explore-trending-tags') as HTMLElement
+    if (!container) return
+
+    container.innerHTML = `<h2 style="padding: 1rem; font-size: 1.25rem; border-bottom: 1px solid var(--border);">${t('explore.trending_tags')}</h2>`
+    container.style.display = 'block'
+    container.style.background = 'var(--bg-secondary)'
+    container.style.marginBottom = '1rem'
+
+    tags.forEach(({ tag, percentage }) => {
+      const item = document.createElement('div')
+      item.className = 'trending-item'
+      item.style.cssText = `
+        padding: 0.75rem 1rem;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+        border-bottom: 1px solid var(--border);
+      `
+      item.innerHTML = `
+        <div style="color: var(--accent); font-weight: 600;"># ${tag}</div>
+        <div style="font-size: 0.8rem; color: var(--text-muted);">${t('explore.trending_percent', { percentage })}</div>
+      `
+      item.onclick = () => {
+        window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`)
+        window.location.reload()
+      }
+      container.appendChild(item)
+    })
+  }
+
+  private updateLoadingState(isLoading: boolean): void {
+    const loadingElement = this.element.querySelector('.explore-loading') as HTMLElement
+    if (loadingElement) {
+      loadingElement.style.display = isLoading ? 'block' : 'none'
+      if (isLoading) {
+        // Show skeleton cards while loading more posts
+        loadingElement.innerHTML = ''
+        for (let i = 0; i < 2; i++) {
+          loadingElement.appendChild(createSkeletonCard())
+        }
+      }
+    }
+  }
+
+  private showEndOfPosts(): void {
+    const loadingElement = this.element.querySelector('.explore-loading') as HTMLElement
+    if (loadingElement) {
+      loadingElement.style.display = 'block'
+      loadingElement.innerHTML = ''
+      const wrapper = document.createElement('div')
+      wrapper.style.cssText = "text-align: center; padding: 2rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;"
+
+      const icon = document.createElement('div')
+      icon.style.cssText = 'font-size: 1.5rem; margin-bottom: 0.5rem;'
+      icon.textContent = t('explore.end_icon')
+
+      const title = document.createElement('div')
+      title.textContent = t('explore.end_message')
+
+      const subtitle = document.createElement('div')
+      subtitle.style.cssText = 'font-size: 0.875rem; margin-top: 0.5rem;'
+      subtitle.textContent = t('explore.end_subtitle', { tag: this.props.tag ?? '' })
+
+      wrapper.appendChild(icon)
+      wrapper.appendChild(title)
+      wrapper.appendChild(subtitle)
+      loadingElement.appendChild(wrapper)
+    }
+  }
+
+  private showLoadError(): void {
+    const loadingElement = this.element.querySelector('.explore-loading') as HTMLElement
+    if (loadingElement) {
+      loadingElement.style.display = 'block'
+      loadingElement.innerHTML = ''
+
+      const wrapper = document.createElement('div')
+      wrapper.style.cssText = "text-align: center; padding: 2rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;"
+
+      const icon = document.createElement('div')
+      icon.style.cssText = 'font-size: 1.5rem; margin-bottom: 0.5rem;'
+      icon.textContent = '⚠️'
+
+      const title = document.createElement('div')
+      title.textContent = t('explore.load_error')
+
+      const retryBtn = document.createElement('button')
+      retryBtn.textContent = t('common.retry')
+      retryBtn.style.cssText = 'margin-top: 1rem; padding: 0.5rem 1rem; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer; font-family: inherit;'
+      retryBtn.addEventListener('click', () => {
+        loadingElement.style.display = 'none'
+        this.retryCount = 0
+        void this.loadMorePosts()
+      })
+
+      wrapper.appendChild(icon)
+      wrapper.appendChild(title)
+      wrapper.appendChild(retryBtn)
+      loadingElement.appendChild(wrapper)
+    }
+  }
 
   private setupIntersectionObserver(): void {
     if (!this.loadMoreSentinel) return

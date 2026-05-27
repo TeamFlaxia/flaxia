@@ -611,15 +611,15 @@ export class ArcadePage {
     // Fresh button
     const freshBtn = this.createActionButton('🍃', String(game.freshCount || 0), () => this.handleFresh(), game.isFreshed || false, 'font-size: 0.875rem; font-weight: 700; background: rgba(255,255,255,0.12); padding: 0 6px; border-radius: 8px; line-height: 1.4;')
 
-    // Comments button
-    const commentsBtn = this.createActionButton('💬', String(game.replyCount || 0), () => this.handleComments())
-
     // Fullscreen button
     const fullscreenBtn = this.createActionButton('⛶', t('arcade.fullscreen'), () => this.handleFullscreen())
 
+    // Comments button
+    const commentsBtn = this.createActionButton('💬', String(game.replyCount || 0), () => this.handleComments())
+
     container.appendChild(freshBtn)
-    container.appendChild(commentsBtn)
     container.appendChild(fullscreenBtn)
+    container.appendChild(commentsBtn)
 
     return container
   }
@@ -835,50 +835,58 @@ export class ArcadePage {
   private createActionButton(icon: string, label: string, onClick: () => void, isActive: boolean = false, labelStyle?: string): HTMLElement {
     const btn = document.createElement('button')
     btn.className = 'arcade-action-btn'
-    const bgActive = isActive ? 'rgba(255, 255, 255, 0.3)' : 'rgba(255, 255, 255, 0.15)'
+    const bg = isActive ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.15)'
     btn.style.cssText = `
-      width: 56px;
-      height: 56px;
+      width: 52px;
+      height: 52px;
       border-radius: 50%;
-      border: ${isActive ? '2px solid #fff' : 'none'};
-      background: ${bgActive};
-      backdrop-filter: blur(10px);
-      color: ${isActive ? '#ffd700' : 'white'};
-      font-size: 1.5rem;
+      border: 1px solid ${isActive ? 'rgba(255, 255, 255, 0.3)' : 'rgba(255, 255, 255, 0.08)'};
+      background: ${bg};
+      color: ${isActive ? 'var(--accent)' : 'rgba(255, 255, 255, 0.8)'};
+      font-size: 1.25rem;
       cursor: pointer;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 2px;
-      transition: transform 0.2s, background 0.2s;
+      gap: 0;
+      transition: all 0.2s ease;
+      box-shadow: none;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
     `
     
     const iconSpan = document.createElement('span')
     iconSpan.textContent = icon
-    iconSpan.style.fontSize = '1.25rem'
+    iconSpan.style.cssText = `
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    `
     
     const labelSpan = document.createElement('span')
     labelSpan.textContent = label
     labelSpan.style.cssText = `
-      font-size: ${isActive ? '0.75rem' : '0.625rem'};
-      font-weight: ${isActive ? '700' : '400'};
-      color: ${isActive ? '#ffd700' : 'inherit'};
+      font-size: 0.6rem;
+      font-weight: 600;
+      color: inherit;
+      margin-top: -1px;
       ${labelStyle || ''}
     `
     
     btn.appendChild(iconSpan)
-    if (label !== 'Details' && label !== 'Fullscreen') {
-      btn.appendChild(labelSpan)
+    // Only show numeric labels or specific text labels if requested
+    if (/^\d+$/.test(label)) {
+       btn.appendChild(labelSpan)
     }
 
     btn.addEventListener('mouseenter', () => {
-      btn.style.transform = 'scale(1.1)'
-      btn.style.background = 'rgba(255, 255, 255, 0.25)'
+      btn.style.background = 'rgba(255, 255, 255, 0.2)'
+      btn.style.borderColor = 'rgba(255, 255, 255, 0.4)'
     })
     btn.addEventListener('mouseleave', () => {
-      btn.style.transform = 'scale(1)'
-      btn.style.background = bgActive
+      btn.style.background = bg
+      btn.style.borderColor = isActive ? 'rgba(255, 255, 255, 0.3)' : 'rgba(255, 255, 255, 0.08)'
     })
     btn.addEventListener('click', (e) => {
       e.stopPropagation()
@@ -891,14 +899,14 @@ export class ArcadePage {
   private async executeGame(game: Game, container: HTMLElement): Promise<void> {
     try {
       if (game.type === 'flash' && game.swfKey) {
-        const handle = await executeFlash(game.postId, container, `/api/swf/${game.postId}`)
+        const handle = await executeFlash(game.postId, container, `/api/swf/${game.postId}`, true)
         this.currentGameHandle = handle
       } else if (game.type === 'zip' && game.payloadKey) {
         // Use WVFS for ZIP execution
-        const handle = await executeWvfsZip(game.postId, container)
+        const handle = await executeWvfsZip(game.postId, container, undefined, true)
         this.currentGameHandle = handle
       } else if (game.type === 'dos' && game.payloadKey) {
-        const handle = await executeDos(game.postId, container, `/api/zip/${game.postId}`)
+        const handle = await executeDos(game.postId, container, `/api/zip/${game.postId}`, true)
         this.currentGameHandle = handle
       } else if (game.type === 'html5') {
         // HTML5 games would use iframe

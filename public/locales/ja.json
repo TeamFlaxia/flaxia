@@ -464,6 +464,7 @@
   "explore.filter_arcade": "アーケード",
   "explore.trending_tags": "トレンドタグ",
   "explore.trending_percent": "トレンド中 {percentage}%",
+  "explore.recent_searches": "最近の検索",
   "explore.end_icon": "🎉",
   "explore.end_message": "最後まで到達しました！",
   "explore.end_subtitle": "「#{tag}」の投稿はこれ以上ありません",

@@ -464,6 +464,7 @@
   "explore.filter_arcade": "Arcade",
   "explore.trending_tags": "Trending Tags",
   "explore.trending_percent": "{percentage}% trending",
+  "explore.recent_searches": "Recent Searches",
   "explore.end_icon": "🎉",
   "explore.end_message": "You've reached the end!",
   "explore.end_subtitle": "No more posts with #{tag}",
