@@ -453,7 +453,11 @@ export class ArcadePage {
     loadingIndicator.style.display = 'block'
 
     try {
-      const response = await fetch('/api/games?shuffle=true', { credentials: 'include' })
+      let url = '/api/games?shuffle=true'
+      if (this.initialGameId) {
+        url += `&initialId=${encodeURIComponent(this.initialGameId)}`
+      }
+      const response = await fetch(url, { credentials: 'include' })
       if (response.ok) {
         const data = await response.json() as { games: Game[]; hasMore?: boolean; token?: string; offset?: number }
         this.games = data.games || []

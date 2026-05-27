@@ -727,6 +727,7 @@ app.get('/api/games', async (c) => {
     if (shuffle) {
       const shuffleToken = c.req.query('token')
       const offset = Math.max(0, Number(c.req.query('offset') || '0'))
+      const initialId = c.req.query('initialId')
       
       let shuffledIds: string[] = []
       let currentToken = shuffleToken
@@ -755,6 +756,25 @@ app.get('/api/games', async (c) => {
         for (let i = shuffledIds.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
           [shuffledIds[i], shuffledIds[j]] = [shuffledIds[j], shuffledIds[i]]
+        }
+
+        // If initialId is provided, move it to the front
+        if (initialId) {
+          const idx = shuffledIds.indexOf(initialId)
+          if (idx !== -1) {
+            shuffledIds.splice(idx, 1)
+            shuffledIds.unshift(initialId)
+          } else {
+            // Check if the initialId exists and is actually a game post
+            const check = await c.env.DB.prepare(`
+              SELECT id FROM posts 
+              WHERE id = ? AND (swf_key IS NOT NULL OR payload_key IS NOT NULL)
+                AND status = 'published' AND hidden = 0
+            `).bind(initialId).first()
+            if (check) {
+              shuffledIds.unshift(initialId)
+            }
+          }
         }
         
         currentToken = crypto.randomUUID()
@@ -3668,18 +3688,20 @@ app.post('/api/posts', requireAuth, async (c) => {
       // Handle multipart/form-data (for thumbnail uploads)
       const formData = await c.req.formData()
       text = formData.get('text') as string
+      const providedPostId = formData.get('postId') as string | null
       payloadKey = formData.get('payloadKey') as string | null || undefined
       gifKey = formData.get('gifKey') as string | null || undefined
       swfKey = formData.get('swfKey') as string | null || undefined
       thumbnailFile = formData.get('thumbnail') as File | null || undefined
+      
+      const userId = c.get('user')?.id
+      const username = c.get('user')?.username || 'anonymous'
 
-      // Process thumbnail if present and payload is ZIP or SWF
+      // Use provided ID or generate a new one
+      const postId = providedPostId || crypto.randomUUID()
+
+      // Process thumbnail if present
       if (thumbnailFile && thumbnailFile.size > 0) {
-        // Only allow thumbnail for ZIP or SWF posts
-        if (!payloadKey?.startsWith('zip/') && !swfKey?.startsWith('swf/')) {
-          return c.json({ error: 'Thumbnail only allowed for ZIP or SWF posts' }, 400)
-        }
-
         // Validate thumbnail size (1MB max)
         if (thumbnailFile.size > 1024 * 1024) {
           return c.json({ error: 'Thumbnail must be ≤1MB' }, 400)
@@ -3697,7 +3719,6 @@ app.post('/api/posts', requireAuth, async (c) => {
           return c.json({ error: 'Storage not available' }, 500)
         }
 
-        const postId = crypto.randomUUID()
         thumbnailKey = `thumbnail/${postId}.${ext}`
 
         await c.env.BUCKET.put(thumbnailKey, await thumbnailFile.arrayBuffer(), {
@@ -3707,11 +3728,117 @@ app.post('/api/posts', requireAuth, async (c) => {
         })
       }
 
+      if (!text || text.length > 200) {
+        return c.json({ error: 'Invalid text' }, 400)
+      }
+      
+      // Extract hashtags from text
+      const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu
+      const hashtagSet = new Set<string>()
+      let match
+      while ((match = hashtagRegex.exec(text)) !== null) {
+        hashtagSet.add(match[1])
+      }
+      const hashtags = Array.from(hashtagSet)
+
+      // Extract mentions from text
+      const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g
+      const mentionSet = new Set<string>()
+      let mentionMatch
+      while ((mentionMatch = mentionRegex.exec(text)) !== null) {
+        mentionSet.add(mentionMatch[1])
+      }
+      const mentionedUsernames = Array.from(mentionSet)
+
+      // Resolve mentions
+      const mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, username)
+      
+      // Check if database is available
+      if (!c.env.DB) {
+        console.error('Database not available')
+        return c.json({ error: 'Database not available' }, 500)
+      }
+
+      let result
+      if (providedPostId) {
+        // Update existing pending post
+        result = await c.env.DB.prepare(`
+          UPDATE posts 
+          SET text = ?, hashtags = ?, mentions = ?, payload_key = ?, gif_key = ?, swf_key = ?, thumbnail_key = ?, status = 'published', created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          WHERE id = ? AND user_id = ?
+        `).bind(text, JSON.stringify(hashtags), mentionsJson, payloadKey || null, gifKey || null, swfKey || null, thumbnailKey || null, providedPostId, userId).run()
+      } else {
+        // Insert new post
+        result = await c.env.DB.prepare(`
+          INSERT INTO posts (id, user_id, username, text, hashtags, mentions, payload_key, gif_key, swf_key, thumbnail_key, status)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published')
+        `).bind(postId, userId, username, text, JSON.stringify(hashtags), mentionsJson, payloadKey || null, gifKey || null, swfKey || null, thumbnailKey || null).run()
+      }
+      
+      if (!result.success) {
+        console.error('Database operation failed:', result)
+        return c.json({ error: 'Failed to save post', details: result }, 500)
+      }
+
       const formPoll = formData.get('poll')
       if (formPoll) {
         try {
           pollData = JSON.parse(formPoll as string)
         } catch { /* ignore invalid poll data */ }
+      }
+
+      // Return the post (need to fetch it first)
+      const post = await c.env.DB.prepare(`
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at 
+        FROM posts p 
+        LEFT JOIN users u ON p.user_id = u.id 
+        WHERE p.id = ?
+      `).bind(postId).first()
+
+      // Handle poll creation and notifications...
+      // (This part is common for both multipart and JSON, so we should keep it below)
+      
+      // We need to return early for multipart to avoid duplication
+      // but we need to handle notifications and poll first.
+      
+      // Let's refactor to handle poll and notifications after this block if we have a successful 'post'
+      if (post) {
+        // Create mention notifications
+        if (mentionedUsernames.length > 0) {
+          try {
+            const mentionData = JSON.parse(mentionsJson) as Array<{username: string, user_id: string}>
+            for (const mention of mentionData) {
+              if (mention.user_id === userId) continue
+              await c.env.DB.prepare(
+                'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
+              ).bind(nanoid(), mention.user_id, 'mention', postId, userId).run()
+            }
+          } catch (e) {
+            console.error('Failed to create mention notifications:', e)
+          }
+        }
+
+        // Create poll
+        if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
+          try {
+            const pollId = crypto.randomUUID()
+            await c.env.DB.prepare(`
+              INSERT INTO polls (id, post_id, question, multiple_choice, ends_at)
+              VALUES (?, ?, ?, ?, ?)
+            `).bind(pollId, postId, pollData.question, pollData.multipleChoice ? 1 : 0, pollData.endsAt || null).run()
+
+            for (const label of pollData.options) {
+              await c.env.DB.prepare(`
+                INSERT INTO poll_options (id, poll_id, label)
+                VALUES (?, ?, ?)
+              `).bind(crypto.randomUUID(), pollId, label).run()
+            }
+          } catch (e) {
+            console.error('Failed to create poll:', e)
+          }
+        }
+
+        return c.json({ success: true, post })
       }
     } else {
       // Handle JSON request (existing behavior)

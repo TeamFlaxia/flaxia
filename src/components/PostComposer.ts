@@ -1411,10 +1411,11 @@ export class PostComposer {
       // Step 2: Create post using multipart form data if thumbnail is present, otherwise use commit
       let commitResult: any
       const poll = this.getPollData()
-      if (this.selectedThumbnail && (zipKey || swfKey)) {
+      if (this.selectedThumbnail) {
         // Use multipart form data for thumbnail upload
         const formData = new FormData()
         formData.append('text', text)
+        if (postId) formData.append('postId', postId)
         if (gifKey) formData.append('gifKey', gifKey)
         if (zipKey) formData.append('payloadKey', zipKey)
         if (swfKey) formData.append('swfKey', swfKey)
