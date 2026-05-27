@@ -25,6 +25,7 @@ export class ReplyComposer {
   private mentionTimeout: ReturnType<typeof setTimeout> | null = null
   private mentionQuery: string = ''
   private mentionStartPos: number = -1
+  private mentionType: 'user' | 'tag' = 'user'
   private draftTimeout: ReturnType<typeof setTimeout> | null = null
 
   constructor(props: ReplyComposerProps) {
@@ -252,13 +253,23 @@ export class ReplyComposer {
     const pos = this.textarea.selectionStart
     const textBeforeCursor = text.slice(0, pos)
     const atMatch = textBeforeCursor.match(/@([a-zA-Z0-9_]*)$/)
+    const tagMatch = textBeforeCursor.match(/#([^\s]*)$/)
 
-    if (atMatch && atMatch[1] !== undefined) {
+    if (atMatch) {
+      this.mentionType = 'user'
       this.mentionQuery = atMatch[1]
       this.mentionStartPos = pos - atMatch[0].length
       if (this.mentionTimeout) clearTimeout(this.mentionTimeout)
       this.mentionTimeout = setTimeout(() => {
         this.fetchMentionSuggestions(this.mentionQuery || '')
+      }, 200)
+    } else if (tagMatch) {
+      this.mentionType = 'tag'
+      this.mentionQuery = tagMatch[1]
+      this.mentionStartPos = pos - tagMatch[0].length
+      if (this.mentionTimeout) clearTimeout(this.mentionTimeout)
+      this.mentionTimeout = setTimeout(() => {
+        this.fetchTagSuggestions(this.mentionQuery || '')
       }, 200)
     } else {
       this.hideMentionDropdown()
@@ -271,14 +282,143 @@ export class ReplyComposer {
       const response = await fetch(url, { credentials: 'include' })
       if (!response.ok) return
       const data = await response.json() as { results: Array<{ username: string; display_name: string; avatar_key: string | null }> }
-      this.showMentionDropdown(data.results || [])
+      this.showMentionSuggestions(data.results || [])
     } catch {
       this.hideMentionDropdown()
     }
   }
 
+  private async fetchTagSuggestions(query: string): Promise<void> {
+    try {
+      const response = await fetch(`/api/tags/suggest?q=${encodeURIComponent(query)}&limit=5`)
+      if (!response.ok) return
+      const data = await response.json() as { tags: Array<{ tag: string; count: number }> }
+      this.showTagSuggestions(data.tags || [])
+    } catch {
+      this.hideMentionDropdown()
+    }
+  }
+
+  private showMentionSuggestions(users: Array<{ username: string; display_name: string; avatar_key: string | null }>): void {
+    if (users.length === 0) { this.hideMentionDropdown(); return }
+
+    this.mentionDropdown.innerHTML = ''
+    users.forEach((user, index) => {
+      const item = document.createElement('div')
+      item.className = `mention-item ${index === 0 ? 'mention-item--active' : ''}`
+      item.setAttribute('data-value', user.username)
+      item.style.cssText = `padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;`
+      const avatarSpan = document.createElement('span')
+      avatarSpan.style.cssText = `width: 24px; height: 24px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; color: white; font-size: 0.7rem; font-weight: bold; flex-shrink: 0;`
+      avatarSpan.textContent = user.username.charAt(0).toUpperCase()
+      if (user.avatar_key) {
+        avatarSpan.style.backgroundImage = `url(/api/images/${user.avatar_key})`
+        avatarSpan.style.backgroundSize = 'cover'
+        avatarSpan.style.backgroundPosition = 'center'
+        avatarSpan.textContent = ''
+      }
+      const textSpan = document.createElement('span')
+      textSpan.style.cssText = 'display: flex; flex-direction: column;'
+      const nameSpan = document.createElement('span')
+      nameSpan.style.cssText = 'color: var(--text-primary); font-size: 0.875rem; font-weight: 500;'
+      nameSpan.textContent = user.display_name || user.username
+      const handleSpan = document.createElement('span')
+      handleSpan.style.cssText = 'color: var(--text-muted); font-size: 0.75rem;'
+      handleSpan.textContent = `@${user.username}`
+      textSpan.appendChild(nameSpan); textSpan.appendChild(handleSpan)
+      item.appendChild(avatarSpan); item.appendChild(textSpan)
+      item.addEventListener('click', () => this.selectSuggestion(user.username))
+      item.addEventListener('mouseenter', () => {
+        this.mentionDropdown.querySelectorAll('.mention-item--active').forEach(el => el.classList.remove('mention-item--active'))
+        item.classList.add('mention-item--active')
+      })
+      this.mentionDropdown.appendChild(item)
+    })
+    this.mentionDropdown.style.display = 'block'
+    this.positionDropdownAboveCursor()
+  }
+
+  private showTagSuggestions(tags: Array<{ tag: string; count: number }>): void {
+    if (tags.length === 0) { this.hideMentionDropdown(); return }
+
+    this.mentionDropdown.innerHTML = ''
+    tags.forEach((tag, index) => {
+      const item = document.createElement('div')
+      item.className = `mention-item ${index === 0 ? 'mention-item--active' : ''}`
+      item.setAttribute('data-value', tag.tag)
+      item.style.cssText = `padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;`
+      const hash = document.createElement('span')
+      hash.textContent = '#'
+      hash.style.cssText = `width: 24px; height: 24px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; color: white; font-size: 0.8rem; font-weight: bold; flex-shrink: 0;`
+      const textSpan = document.createElement('span')
+      textSpan.style.cssText = 'display: flex; flex-direction: column;'
+      const nameSpan = document.createElement('span')
+      nameSpan.style.cssText = 'color: var(--text-primary); font-size: 0.875rem; font-weight: 500;'
+      nameSpan.textContent = `#${tag.tag}`
+      const countSpan = document.createElement('span')
+      countSpan.style.cssText = 'color: var(--text-muted); font-size: 0.75rem;'
+      countSpan.textContent = `${tag.count} posts`
+      textSpan.appendChild(nameSpan); textSpan.appendChild(countSpan)
+      item.appendChild(hash); item.appendChild(textSpan)
+      item.addEventListener('click', () => this.selectSuggestion(tag.tag))
+      item.addEventListener('mouseenter', () => {
+        this.mentionDropdown.querySelectorAll('.mention-item--active').forEach(el => el.classList.remove('mention-item--active'))
+        item.classList.add('mention-item--active')
+      })
+      this.mentionDropdown.appendChild(item)
+    })
+    this.mentionDropdown.style.display = 'block'
+    this.positionDropdownAboveCursor()
+  }
+
+  private getCursorCoordinates(): { top: number; left: number } | null {
+    const ta = this.textarea
+    const pos = ta.selectionStart
+    const textBefore = ta.value.slice(0, pos)
+    const style = window.getComputedStyle(ta)
+
+    const measure = document.createElement('div')
+    measure.style.cssText = `
+      position: absolute;
+      visibility: hidden;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
+      width: ${ta.clientWidth}px;
+      padding: ${style.padding};
+      margin: 0;
+      border: 0;
+      line-height: ${style.lineHeight};
+      font-family: ${style.fontFamily};
+      font-size: ${style.fontSize};
+      font-weight: ${style.fontWeight};
+      letter-spacing: ${style.letterSpacing};
+    `
+    const escaped = textBefore.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    measure.innerHTML = escaped.replace(/\n/g, '<br>') + '<span id="m">|</span>'
+    document.body.appendChild(measure)
+
+    const marker = measure.querySelector('#m')!
+    const markerRect = marker.getBoundingClientRect()
+    const header = this.mentionDropdown.parentElement!
+    const headerRect = header.getBoundingClientRect()
+
+    const top = markerRect.top - ta.scrollTop - headerRect.top
+    const left = markerRect.left - headerRect.left
+
+    document.body.removeChild(measure)
+    return { top, left }
+  }
+
   private showMentionDropdown(users: Array<{ username: string; display_name: string; avatar_key: string | null }>): void {
     if (users.length === 0) { this.hideMentionDropdown(); return }
+
+    const pos = this.getCursorCoordinates()
+    if (pos) {
+      this.mentionDropdown.style.top = `${pos.top}px`
+      this.mentionDropdown.style.left = `${pos.left}px`
+    }
+
     this.mentionDropdown.innerHTML = ''
     users.forEach((user, index) => {
       const item = document.createElement('div')
@@ -313,6 +453,27 @@ export class ReplyComposer {
     this.mentionDropdown.style.display = 'block'
   }
 
+  private positionDropdownAboveCursor(): void {
+    const ta = this.textarea
+    if (!ta || !ta.parentElement) {
+      this.mentionDropdown.style.left = '0px'
+      this.mentionDropdown.style.top = '40px'
+      return
+    }
+
+    const taRect = ta.getBoundingClientRect()
+    const header = this.mentionDropdown.parentElement
+    if (!header) {
+      this.mentionDropdown.style.left = '0px'
+      this.mentionDropdown.style.top = '40px'
+      return
+    }
+    const headerRect = header.getBoundingClientRect()
+
+    this.mentionDropdown.style.left = `${taRect.left - headerRect.left + 8}px`
+    this.mentionDropdown.style.top = `${taRect.bottom - headerRect.top + 4}px`
+  }
+
   private hideMentionDropdown(): void {
     this.mentionDropdown.style.display = 'none'
     if (this.mentionTimeout) { clearTimeout(this.mentionTimeout); this.mentionTimeout = null }
@@ -331,13 +492,14 @@ export class ReplyComposer {
     items[nextIndex].classList.add('mention-item--active')
   }
 
-  private selectMention(username: string): void {
+  private selectSuggestion(value: string): void {
     if (this.mentionStartPos < 0) return
+    const prefix = this.mentionType === 'tag' ? '#' : '@'
     const text = this.textarea.value
     const before = text.slice(0, this.mentionStartPos)
     const after = text.slice(this.textarea.selectionStart)
-    this.textarea.value = `${before}@${username} ${after}`
-    const newPos = this.mentionStartPos + username.length + 2
+    this.textarea.value = `${before}${prefix}${value} ${after}`
+    const newPos = this.mentionStartPos + value.length + 2
     this.textarea.setSelectionRange(newPos, newPos)
     this.textarea.focus()
     this.hideMentionDropdown()

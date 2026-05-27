@@ -1789,9 +1789,9 @@ app.patch('/api/users/me', requireAuth, async (c) => {
       // Handle avatar upload if present
       if (avatarFile && avatarFile.size > 0) {
         // Validate file type
-        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif']
+        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
         if (!allowedTypes.includes(avatarFile.type)) {
-          return c.json({ error: 'Only JPEG, PNG, and GIF images are allowed' }, 400)
+          return c.json({ error: 'Only JPEG, PNG, GIF, and WebP images are allowed' }, 400)
         }
         
         // Validate file size (1MB)
@@ -2114,9 +2114,9 @@ app.post('/api/users/me/avatar', requireAuth, async (c) => {
     }
     
     // Validate content type
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif']
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']
     if (!contentType || !allowedTypes.includes(contentType as string)) {
-      return c.json({ error: 'Only JPEG, PNG, and GIF images are allowed' }, 400)
+      return c.json({ error: 'Only JPEG, PNG, GIF, and WebP images are allowed' }, 400)
     }
     
     // Check file size limit (1MB = 1024 * 1024 bytes)
@@ -4909,8 +4909,8 @@ app.delete('/api/posts/:id', requireAuth, async (c) => {
     
     // Get the post to verify ownership and get file keys
     const post = await c.env.DB.prepare(
-      'SELECT id, user_id, username, gif_key, payload_key, swf_key, thumbnail_key, status FROM posts WHERE id = ?'
-    ).bind(postId).first() as { id: string; user_id: string; username: string; gif_key?: string; payload_key?: string; swf_key?: string; thumbnail_key?: string; status?: string } | null
+      'SELECT id, user_id, username, parent_id, gif_key, payload_key, swf_key, thumbnail_key, status FROM posts WHERE id = ?'
+    ).bind(postId).first() as { id: string; user_id: string; username: string; parent_id?: string; gif_key?: string; payload_key?: string; swf_key?: string; thumbnail_key?: string; status?: string } | null
     
     if (!post) {
       return c.json({ error: 'Post not found' }, 404)
@@ -4958,6 +4958,8 @@ app.delete('/api/posts/:id', requireAuth, async (c) => {
       const replies = await c.env.DB.prepare('SELECT id FROM posts WHERE parent_id = ?').bind(id).all() as { results: { id: string }[] }
       for (const reply of replies.results) {
         await deleteReplies(reply.id)
+        // Decrement parent's reply count before deleting the reply
+        await c.env.DB.prepare('UPDATE posts SET reply_count = COALESCE(reply_count, 0) - 1 WHERE id = ?').bind(id).run()
         await c.env.DB.prepare('DELETE FROM posts WHERE id = ?').bind(reply.id).run()
       }
     }
@@ -4968,6 +4970,11 @@ app.delete('/api/posts/:id', requireAuth, async (c) => {
     
     if (!result.success) {
       return c.json({ error: 'Failed to delete post' }, 500)
+    }
+    
+    // Decrement parent's reply count if this post was a reply
+    if (post.parent_id) {
+      await c.env.DB.prepare('UPDATE posts SET reply_count = COALESCE(reply_count, 0) - 1 WHERE id = ?').bind(post.parent_id).run()
     }
     
     // Queue ActivityPub delete delivery for public posts

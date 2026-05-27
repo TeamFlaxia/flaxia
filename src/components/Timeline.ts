@@ -31,7 +31,7 @@ export class Timeline {
   constructor(props: TimelineProps) {
     this.props = props
     this.state = {
-      mode: 'foryou',
+      mode: 'global',
       hashtag: '',
       posts: [],
       ads: [],
@@ -129,12 +129,21 @@ export class Timeline {
 
     const forYouBtn = document.createElement('button')
     forYouBtn.className = 'feed-toggle-btn'
-    forYouBtn.textContent = t('timeline.global')
+    forYouBtn.textContent = t('timeline.for_you')
     forYouBtn.dataset.mode = 'foryou'
     if (this.state.mode === 'foryou') {
       forYouBtn.classList.add('active')
     }
     container.appendChild(forYouBtn)
+
+    const globalBtn = document.createElement('button')
+    globalBtn.className = 'feed-toggle-btn'
+    globalBtn.textContent = t('timeline.global')
+    globalBtn.dataset.mode = 'global'
+    if (this.state.mode === 'global') {
+      globalBtn.classList.add('active')
+    }
+    container.appendChild(globalBtn)
 
     const reloadBtn = document.createElement('button')
     reloadBtn.className = 'feed-toggle-btn feed-reload-btn'
@@ -241,7 +250,7 @@ export class Timeline {
             bubbles: true
           }))
         } else {
-          const mode = (target as HTMLElement).dataset.mode as 'following' | 'foryou'
+          const mode = (target as HTMLElement).dataset.mode as 'following' | 'foryou' | 'global'
           this.switchMode(mode)
         }
       }
@@ -327,18 +336,17 @@ export class Timeline {
   private async handleProfileUpdate(): Promise<void> {
     // Refresh current user data from cache
     const updatedUser = await getMe()
-    if (updatedUser && this.composer) {
-      // Update the composer with the new user data
+    if (updatedUser?.user && this.composer) {
       this.composer.updateCurrentUser({
-        username: updatedUser.username,
-        display_name: updatedUser.display_name,
-        avatar_key: updatedUser.avatar_key
+        username: updatedUser.user.username,
+        display_name: updatedUser.user.display_name,
+        avatar_key: updatedUser.user.avatar_key
       })
     }
   }
 
   
-  private switchMode(mode: 'following' | 'foryou'): void {
+  private switchMode(mode: 'following' | 'foryou' | 'global'): void {
     if (mode === this.state.mode) return
 
     this.state.mode = mode
@@ -508,7 +516,7 @@ export class Timeline {
       params.set('following', 'true')
       return `/api/posts?${params.toString()}`
     } else {
-      // Global mode - same API endpoint, no following filter
+      // For You / Global - same API endpoint, no following filter
       return `/api/posts?${params.toString()}`
     }
   }

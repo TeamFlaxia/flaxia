@@ -28,7 +28,8 @@ async function loadRuffle(): Promise<any> {
 export async function executeFlash(
   postId: string,
   containerEl: HTMLElement,
-  url?: string  // if provided, fetch from this URL instead of /api/swf/${postId}
+  url?: string,  // if provided, fetch from this URL instead of /api/swf/${postId}
+  hideFullscreen: boolean = false
 ): Promise<FlashPlayerHandle> {
   // Clean up any existing execution
   if (activeHandle) {
@@ -184,7 +185,9 @@ export async function executeFlash(
     containerEl.innerHTML = ''
     containerEl.appendChild(iframeContainer)
     iframeContainer.appendChild(iframe)
-    iframeContainer.appendChild(fullscreenBtn)
+    if (!hideFullscreen) {
+      iframeContainer.appendChild(fullscreenBtn)
+    }
 
     // Step 7: Create handle with cleanup
     const handle: FlashPlayerHandle = {

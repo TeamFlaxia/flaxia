@@ -11,7 +11,8 @@ let activeHandle: WvfsZipExecutorHandle | null = null
 export async function executeWvfsZip(
   postId: string,
   containerEl: HTMLElement,
-  workerUrl?: string  // custom worker URL for testing
+  workerUrl?: string,  // custom worker URL for testing
+  hideFullscreen: boolean = false
 ): Promise<WvfsZipExecutorHandle> {
   // Clean up any existing execution
   if (activeHandle) {
@@ -24,7 +25,7 @@ export async function executeWvfsZip(
     const baseUrl = workerUrl || window.location.origin
     const zipUrl = `${baseUrl}/api/wvfs-zip/${postId}`
     
-    const { iframe, cleanup } = await createWvfsIframe(postId, containerEl, zipUrl)
+    const { iframe, cleanup } = await createWvfsIframe(postId, containerEl, zipUrl, hideFullscreen)
 
     // Create handle with cleanup
     const handle: WvfsZipExecutorHandle = {
@@ -60,7 +61,8 @@ export async function executeWvfsZip(
 async function createWvfsIframe(
   postId: string, 
   containerEl: HTMLElement, 
-  zipUrl: string
+  zipUrl: string,
+  hideFullscreen: boolean = false
 ): Promise<{ iframe: HTMLIFrameElement, cleanup: () => void }> {
   // Create iframe container
   const iframeContainer = document.createElement('div')
@@ -130,7 +132,9 @@ async function createWvfsIframe(
   containerEl.innerHTML = ''
   containerEl.appendChild(iframeContainer)
   iframeContainer.appendChild(iframe)
-  iframeContainer.appendChild(fullscreenBtn)
+  if (!hideFullscreen) {
+    iframeContainer.appendChild(fullscreenBtn)
+  }
   
   const cleanup = () => {
     if (iframe.parentNode) {

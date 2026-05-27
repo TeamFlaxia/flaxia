@@ -24,6 +24,9 @@ export class ExplorePage {
   private searchFilter: 'posts' | 'users' | 'arcade' = 'posts'
   private fabButton: HTMLElement | null = null
   private tagCountEl: HTMLElement | null = null
+  private suggestAbortController: AbortController | null = null
+  private static readonly SEARCH_HISTORY_KEY = 'flaxia_search_history'
+  private static readonly MAX_HISTORY = 10
 
   constructor(props: ExplorePageProps) {
     this.props = props
@@ -199,52 +202,8 @@ export class ExplorePage {
 
     section.appendChild(searchBox)
 
-    const filters = document.createElement('div')
-    filters.className = 'search-filters'
-    filters.style.cssText = 'display: flex; gap: 0.5rem; overflow-x: auto; padding-bottom: 0.25rem;'
-
-    const filterPosts = document.createElement('button')
-    filterPosts.className = 'filter-btn active'
-    filterPosts.dataset.filter = 'posts'
-    filterPosts.textContent = t('explore.filter_posts')
-
-    const filterUsers = document.createElement('button')
-    filterUsers.className = 'filter-btn'
-    filterUsers.dataset.filter = 'users'
-    filterUsers.textContent = t('explore.filter_users')
-
-    const filterArcade = document.createElement('button')
-    filterArcade.className = 'filter-btn'
-    filterArcade.dataset.filter = 'arcade'
-    filterArcade.textContent = t('explore.filter_arcade')
-
-    filters.appendChild(filterPosts)
-    filters.appendChild(filterUsers)
-    filters.appendChild(filterArcade)
-    section.appendChild(filters)
-
-    // Initial filter button styling
-    const filterBtns = section.querySelectorAll('.filter-btn')
-    filterBtns.forEach(btn => {
-      const b = btn as HTMLElement
-      const isActive = b.dataset.filter === this.searchFilter
-      b.style.cssText = `
-        padding: 0.4rem 1rem;
-        border-radius: 999px;
-        border: 1px solid ${isActive ? 'var(--accent)' : 'var(--border)'};
-        background: ${isActive ? 'var(--accent)' : 'transparent'};
-        color: ${isActive ? 'white' : 'var(--text-muted)'};
-        font-size: 0.8rem;
-        cursor: pointer;
-        white-space: nowrap;
-        transition: all 0.2s ease;
-      `
-    })
-
     return section
   }
-
-  private suggestAbortController: AbortController | null = null
 
   private setupEventListeners(): void {
     const searchInput = this.element.querySelector('.search-input') as HTMLInputElement
@@ -306,11 +265,6 @@ export class ExplorePage {
         if (this.suggestAbortController) this.suggestAbortController.abort()
         if (suggestTimer) clearTimeout(suggestTimer)
 
-        if (val.length < 2 || val.includes(' ')) {
-          suggestDropdown.style.display = 'none'
-          return
-        }
-
         if (val.startsWith('#')) {
           const prefix = val.slice(1)
           if (!prefix) { suggestDropdown.style.display = 'none'; return }
@@ -325,7 +279,18 @@ export class ExplorePage {
           return
         }
 
+        if (val.length === 0) {
+          this.renderSearchHistory(suggestDropdown)
+          return
+        }
+
         suggestDropdown.style.display = 'none'
+      })
+
+      searchInput.addEventListener('focus', () => {
+        if (!searchInput.value) {
+          this.renderSearchHistory(suggestDropdown)
+        }
       })
 
       searchInput.addEventListener('blur', () => {
@@ -339,22 +304,6 @@ export class ExplorePage {
         }
       })
     }
-
-    // Style filter buttons
-    const filterBtns = this.element.querySelectorAll('.filter-btn')
-    filterBtns.forEach(btn => {
-      const b = btn as HTMLElement
-      b.onclick = () => {
-        this.searchFilter = b.dataset.filter as any
-        filterBtns.forEach(other => {
-          const o = other as HTMLElement
-          const isNowActive = o.dataset.filter === this.searchFilter
-          o.style.border = `1px solid ${isNowActive ? 'var(--accent)' : 'var(--border)'}`
-          o.style.background = isNowActive ? 'var(--accent)' : 'transparent'
-          o.style.color = isNowActive ? 'white' : 'var(--text-muted)'
-        })
-      }
-    })
 
     this.setupIntersectionObserver()
   }
@@ -563,10 +512,72 @@ export class ExplorePage {
   }
 
   private performSearch(query: string): void {
+    this.saveSearchHistory(query)
     window.history.pushState({}, '', `/search?q=${encodeURIComponent(query)}&type=${this.searchFilter}`)
     window.dispatchEvent(new CustomEvent('spaNavigate', {
       detail: { view: 'search', searchQuery: query, searchType: this.searchFilter }
     }))
+  }
+
+  private getSearchHistory(): string[] {
+    try {
+      const raw = localStorage.getItem(ExplorePage.SEARCH_HISTORY_KEY)
+      return raw ? JSON.parse(raw) : []
+    } catch {
+      return []
+    }
+  }
+
+  private saveSearchHistory(query: string): void {
+    const history = this.getSearchHistory().filter(h => h !== query)
+    history.unshift(query)
+    if (history.length > ExplorePage.MAX_HISTORY) history.pop()
+    localStorage.setItem(ExplorePage.SEARCH_HISTORY_KEY, JSON.stringify(history))
+  }
+
+  private renderSearchHistory(dropdown: HTMLElement): void {
+    const history = this.getSearchHistory()
+    if (history.length === 0) return
+
+    dropdown.innerHTML = ''
+    dropdown.style.display = 'block'
+
+    const header = document.createElement('div')
+    header.style.cssText = 'padding: 0.5rem 0.75rem; font-size: 0.75rem; color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--border);'
+    header.textContent = t('explore.recent_searches') || 'Recent'
+    dropdown.appendChild(header)
+
+    history.forEach(q => {
+      const item = document.createElement('div')
+      item.style.cssText = `
+        padding: 0.6rem 0.75rem; cursor: pointer; display: flex;
+        align-items: center; gap: 0.5rem; transition: background 0.15s;
+      `
+      item.addEventListener('mouseenter', () => { item.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))' })
+      item.addEventListener('mouseleave', () => { item.style.background = 'none' })
+
+      const icon = document.createElement('span')
+      icon.textContent = '🕐'
+      icon.style.cssText = 'font-size: 0.85rem; flex-shrink: 0;'
+
+      const text = document.createElement('span')
+      text.textContent = q
+      text.style.cssText = 'color: var(--text-primary); font-size: 0.85rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;'
+
+      item.appendChild(icon)
+      item.appendChild(text)
+
+      item.addEventListener('click', () => {
+        dropdown.style.display = 'none'
+        const input = this.element.querySelector('.search-input') as HTMLInputElement
+        if (input) {
+          input.value = q
+          this.performSearch(q)
+        }
+      })
+
+      dropdown.appendChild(item)
+    })
   }
 
   private renderPosts(): void {

@@ -356,7 +356,6 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
       return
     }
 
-    avatarError.textContent = ''
     selectedFile = file
     hasAvatarChange = true
     avatarPreviewUrl = URL.createObjectURL(file)
