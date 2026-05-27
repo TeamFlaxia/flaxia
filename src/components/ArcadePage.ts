@@ -16,6 +16,10 @@ export class ArcadePage {
   private currentIndex: number = 0
   private isLoading: boolean = false
   private hasMore: boolean = true
+  private shuffleToken: string | null = null
+  private shuffleOffset: number = 0
+  private hasMoreShuffle: boolean = true
+  private isLoadingMore: boolean = false
   private gameContainer: HTMLElement
   private floatingActions: HTMLElement | null = null
   private currentGameHandle: { destroy: () => void } | null = null
@@ -420,17 +424,18 @@ export class ArcadePage {
     try {
       const response = await fetch('/api/games?shuffle=true', { credentials: 'include' })
       if (response.ok) {
-        const data = await response.json() as { games: Game[]; hasMore?: boolean }
+        const data = await response.json() as { games: Game[]; hasMore?: boolean; token?: string; offset?: number }
         this.games = data.games || []
         this.hasMore = data.hasMore || false
+        this.shuffleToken = data.token || null
+        this.shuffleOffset = data.offset || 0
+        this.hasMoreShuffle = data.hasMore || false
 
         if (this.games.length > 0) {
-          // Handle initialGameId if provided
           if (this.initialGameId) {
             const gameIndex = this.games.findIndex(game => game.id === this.initialGameId)
             if (gameIndex !== -1) {
               this.currentIndex = gameIndex
-              console.log(`Found game ${this.initialGameId} at index ${gameIndex}`)
             } else {
               console.warn(`Game ${this.initialGameId} not found, showing first game`)
             }
@@ -448,6 +453,31 @@ export class ArcadePage {
     } finally {
       this.isLoading = false
       loadingIndicator.style.display = 'none'
+    }
+  }
+
+  private async loadMoreGames(): Promise<void> {
+    if (this.isLoadingMore || !this.hasMoreShuffle) return
+    this.isLoadingMore = true
+
+    try {
+      const response = await fetch(
+        `/api/games?shuffle=true&token=${this.shuffleToken}&offset=${this.shuffleOffset}`,
+        { credentials: 'include' }
+      )
+      if (response.ok) {
+        const data = await response.json() as { games: Game[]; hasMore?: boolean; token?: string; offset?: number }
+        if (data.games && data.games.length > 0) {
+          this.games.push(...data.games)
+        }
+        this.shuffleToken = data.token || null
+        this.shuffleOffset = data.offset || 0
+        this.hasMoreShuffle = data.hasMore || false
+      }
+    } catch (error) {
+      console.error('Failed to load more games:', error)
+    } finally {
+      this.isLoadingMore = false
     }
   }
 
@@ -723,7 +753,9 @@ export class ArcadePage {
 
   private animateToNext(): void {
     if (this.currentIndex >= this.games.length - 1) {
-      // Don't reset - just show boundary feedback
+      if (this.hasMoreShuffle && !this.isLoadingMore) {
+        this.loadMoreGames()
+      }
       if (this.currentViewport) {
         this.currentViewport.style.transition = 'transform 0.2s ease, opacity 0.2s ease'
         this.currentViewport.style.transform = 'translateY(-20px)'
@@ -745,6 +777,9 @@ export class ArcadePage {
     
     setTimeout(() => {
       this.currentIndex++
+      if (this.currentIndex >= this.games.length - 5 && this.hasMoreShuffle && !this.isLoadingMore) {
+        this.loadMoreGames()
+      }
       this.renderCurrentGame()
       this.isTransitioning = false
       this.currentTranslateY = 0
@@ -791,11 +826,22 @@ export class ArcadePage {
   }
 
   private navigateToNext(): void {
-    if (this.isTransitioning || this.currentIndex >= this.games.length - 1) return
+    if (this.isTransitioning) return
+    
+    if (this.currentIndex >= this.games.length - 1) {
+      if (this.hasMoreShuffle && !this.isLoadingMore) {
+        this.loadMoreGames()
+      }
+      return
+    }
     
     this.isTransitioning = true
     this.currentIndex++
     this.renderCurrentGame()
+    
+    if (this.currentIndex >= this.games.length - 5 && this.hasMoreShuffle && !this.isLoadingMore) {
+      this.loadMoreGames()
+    }
     
     setTimeout(() => {
       this.isTransitioning = false

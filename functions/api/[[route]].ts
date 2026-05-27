@@ -724,6 +724,124 @@ app.get('/api/games', async (c) => {
     const sessionData = token ? await getSession(c.env, token) : null
     const currentUserId = sessionData?.user?.id
 
+    if (shuffle) {
+      const shuffleToken = c.req.query('token')
+      const offset = Math.max(0, Number(c.req.query('offset') || '0'))
+      
+      let shuffledIds: string[] = []
+      let currentToken = shuffleToken
+      
+      if (currentToken) {
+        const cached = await c.env.CACHE?.get(`games:shuffle:${currentToken}`)
+        if (cached) {
+          shuffledIds = JSON.parse(cached)
+        } else {
+          currentToken = undefined
+        }
+      }
+      
+      if (!currentToken) {
+        const idResults = await c.env.DB.prepare(`
+          SELECT p.id FROM posts p
+          WHERE (p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL)
+            AND p.status = 'published'
+            AND p.hidden = 0
+            AND p.parent_id IS NULL
+          ORDER BY p.created_at DESC
+        `).all()
+        
+        shuffledIds = (idResults.results || []).map((r: any) => r.id)
+        
+        for (let i = shuffledIds.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffledIds[i], shuffledIds[j]] = [shuffledIds[j], shuffledIds[i]]
+        }
+        
+        currentToken = crypto.randomUUID()
+        
+        await c.env.CACHE?.put(`games:shuffle:${currentToken}`, JSON.stringify(shuffledIds), {
+          expirationTtl: 300
+        })
+      }
+      
+      const pageIds = shuffledIds.slice(offset, offset + limit)
+      const newOffset = offset + pageIds.length
+      const hasMore = newOffset < shuffledIds.length
+      
+      let shuffledGames: any[] = []
+      
+      if (pageIds.length > 0) {
+        const placeholders = pageIds.map(() => '?').join(',')
+        const { results: sliceData } = await c.env.DB.prepare(`
+          SELECT
+            p.id as postId, p.user_id, p.text, p.swf_key, p.payload_key,
+            p.thumbnail_key, p.fresh_count, p.reply_count, p.impressions, p.created_at,
+            u.username, u.display_name, u.avatar_key
+          FROM posts p
+          JOIN users u ON p.user_id = u.id
+          WHERE p.id IN (${placeholders})
+        `).bind(...pageIds).all<{
+          postId: string
+          user_id: string
+          text: string
+          swf_key: string | null
+          payload_key: string | null
+          thumbnail_key: string | null
+          fresh_count: number
+          reply_count: number
+          impressions: number
+          created_at: string
+          username: string
+          display_name: string | null
+          avatar_key: string | null
+        }>()
+        
+        const gameMap = new Map((sliceData || []).map(r => [r.postId, r]))
+        
+        let sliceFreshedPostIds: Set<string> = new Set()
+        if (currentUserId && sliceData && sliceData.length > 0) {
+          const slicePostIds = sliceData.map(r => r.postId)
+          const freshResults = await c.env.DB.prepare(`
+            SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${slicePostIds.map(() => '?').join(',')})
+          `).bind(currentUserId, ...slicePostIds).all()
+          sliceFreshedPostIds = new Set(freshResults.results?.map((r: any) => r.post_id) || [])
+        }
+        
+        shuffledGames = pageIds.map(id => {
+          const row = gameMap.get(id)
+          if (!row) return null
+          let type: string
+          if (row.swf_key) type = 'flash'
+          else if (row.payload_key && row.payload_key.startsWith('dos/')) type = 'dos'
+          else type = 'zip'
+          return {
+            id: row.postId,
+            postId: row.postId,
+            title: row.text?.substring(0, 100) || `Game by @${row.username}`,
+            username: row.username,
+            displayName: row.display_name || undefined,
+            avatarKey: row.avatar_key || undefined,
+            type,
+            swfKey: row.swf_key || undefined,
+            payloadKey: row.payload_key || undefined,
+            thumbnailKey: row.thumbnail_key || undefined,
+            freshCount: row.fresh_count,
+            replyCount: row.reply_count,
+            impressions: row.impressions,
+            isFreshed: sliceFreshedPostIds.has(row.postId),
+            createdAt: row.created_at
+          }
+        }).filter(Boolean)
+      }
+      
+      return c.json({
+        games: shuffledGames,
+        hasMore,
+        token: currentToken,
+        offset: newOffset
+      })
+    }
+
     let sql = `
       SELECT
         p.id as postId,
@@ -749,24 +867,19 @@ app.get('/api/games', async (c) => {
     
     const params: (string | number)[] = []
     
-    if (shuffle) {
-      // Shuffle mode: fetch all games, no cursor pagination
-      sql += ' ORDER BY p.created_at DESC'
-    } else {
-      if (cursor) {
-        sql += ' AND p.created_at < ?'
-        params.push(cursor)
-      }
-      
-      if (trending) {
-        sql += ' ORDER BY (p.fresh_count + p.impressions) DESC, p.created_at DESC'
-      } else {
-        sql += ' ORDER BY p.created_at DESC'
-      }
-      
-      sql += ' LIMIT ?'
-      params.push(limit + 1)
+    if (cursor) {
+      sql += ' AND p.created_at < ?'
+      params.push(cursor)
     }
+    
+    if (trending) {
+      sql += ' ORDER BY (p.fresh_count + p.impressions) DESC, p.created_at DESC'
+    } else {
+      sql += ' ORDER BY p.created_at DESC'
+    }
+    
+    sql += ' LIMIT ?'
+    params.push(limit + 1)
 
     const { results } = await c.env.DB.prepare(sql).bind(...params).all<{
       postId: string
@@ -794,7 +907,7 @@ app.get('/api/games', async (c) => {
       freshedPostIds = new Set(freshResults.results?.map((r: any) => r.post_id) || [])
     }
 
-    let games = (results || []).map(row => {
+    const games = (results || []).map(row => {
       let type: string
       if (row.swf_key) {
         type = 'flash'
@@ -822,17 +935,9 @@ app.get('/api/games', async (c) => {
       }
     })
 
-    if (shuffle) {
-      // Fisher-Yates shuffle
-      for (let i = games.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [games[i], games[j]] = [games[j], games[i]]
-      }
-    }
-
-    const hasMore = shuffle ? false : games.length > limit
-    const trimmedGames = shuffle ? games.slice(0, limit) : (hasMore ? games.slice(0, limit) : games)
-    const nextCursor = !shuffle && hasMore ? trimmedGames[trimmedGames.length - 1]?.createdAt : null
+    const hasMore = games.length > limit
+    const trimmedGames = hasMore ? games.slice(0, limit) : games
+    const nextCursor = hasMore ? trimmedGames[trimmedGames.length - 1]?.createdAt : null
 
     const responseData = {
       games: trimmedGames,
@@ -840,8 +945,7 @@ app.get('/api/games', async (c) => {
       cursor: nextCursor
     }
 
-    // Cache the response for first page (non-paginated, non-shuffle requests)
-    if (!shuffle && !cursor && c.env.CACHE) {
+    if (!cursor && c.env.CACHE) {
       try {
         const cacheData = {
           games: trimmedGames.map(game => ({
