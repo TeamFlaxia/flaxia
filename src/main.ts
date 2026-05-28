@@ -128,7 +128,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (wasLoggedIn) {
         console.log('User session expired - redirecting to login')
         stopNotificationPolling()
-        window.history.pushState({}, '', '/login')
+        window.history.replaceState({}, '', '/login')
         navigateTo('login')
         return false
       }
@@ -325,7 +325,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       // For /notifications, redirect to arcade if not authenticated
       if (cleanPath === '/notifications') {
         if (!isAuthenticated) {
-          window.history.pushState({}, '', '/arcade')
+          // Use replaceState so the browser back button doesn't return to the
+          // protected route (which would just redirect again, causing an infinite loop)
+          window.history.replaceState({}, '', '/arcade')
           navigateTo('arcade')
           return false
         }
@@ -334,7 +336,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       
       // For all other protected routes, redirect to login if not authenticated
       if (!isAuthenticated) {
-        window.history.pushState({}, '', '/login')
+        // Use replaceState so the browser back button doesn't return to the
+        // protected route (which would just redirect again, causing an infinite loop)
+        window.history.replaceState({}, '', '/login')
         navigateTo('login')
         return false
       }
