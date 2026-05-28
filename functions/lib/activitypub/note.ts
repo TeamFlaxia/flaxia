@@ -65,6 +65,7 @@ export function buildNoteObject(post: PostWithExtras, user: User, baseUrl: strin
   }
 
   const note: any = {
+    '@context': 'https://www.w3.org/ns/activitystreams',
     id: noteId,
     type: 'Note',
     attributedTo: actorUrl,
@@ -97,6 +98,7 @@ export function buildCreateActivity(note: object, user: User, baseUrl: string): 
   const cc = (note as any).cc || []
 
   return {
+    '@context': 'https://www.w3.org/ns/activitystreams',
     id: activityId,
     type: 'Create',
     actor: actorUrl,
@@ -115,6 +117,7 @@ export function buildDeleteActivity(noteId: string, user: User, baseUrl: string)
   const activityId = `${baseUrl}/activities/delete-${noteId}`
 
   return {
+    '@context': 'https://www.w3.org/ns/activitystreams',
     id: activityId,
     type: 'Delete',
     actor: actorUrl,

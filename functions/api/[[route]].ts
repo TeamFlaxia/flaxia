@@ -1327,6 +1327,95 @@ app.post('/api/remote-follow', requireAuth, async (c) => {
   }
 })
 
+// DELETE /api/remote-follow - unfollow a remote ActivityPub user (protected)
+app.delete('/api/remote-follow', requireAuth, async (c) => {
+  try {
+    const { target } = await c.req.json() as { target?: string }
+    if (!target || !target.includes('@')) {
+      return c.json({ error: 'Invalid target format. Expected user@domain' }, 400)
+    }
+
+    const [remoteUsername, domain] = target.split('@')
+    if (!remoteUsername || !domain) {
+      return c.json({ error: 'Invalid target format. Expected user@domain' }, 400)
+    }
+
+    const token = getSessionToken(c.req.raw)
+    const sessionData = token ? await getSession(c.env, token) : null
+    if (!sessionData) {
+      return c.json({ error: 'Unauthorized' }, 401)
+    }
+
+    const localUser = sessionData.user
+
+    // Resolve remote user via WebFinger
+    const webfingerUrl = `https://${domain}/.well-known/webfinger?resource=acct:${remoteUsername}@${domain}`
+    const wfResponse = await fetch(webfingerUrl, {
+      headers: { 'Accept': 'application/jrd+json, application/json' }
+    })
+
+    if (!wfResponse.ok) {
+      return c.json({ error: 'Could not resolve remote user' }, 404)
+    }
+
+    const wfData = await wfResponse.json() as any
+    const selfLink = wfData.links?.find((l: any) => l.rel === 'self')
+    if (!selfLink?.href) {
+      return c.json({ error: 'Remote user has no ActivityPub actor link' }, 400)
+    }
+
+    const actorUrl = selfLink.href
+
+    // Find the existing following record
+    const following = await c.env.DB.prepare(
+      'SELECT id, target_inbox_url FROM ap_following WHERE local_user_id = ? AND target_actor_url = ?'
+    ).bind(localUser.id, actorUrl).first() as { id: string; target_inbox_url: string } | null
+
+    if (!following) {
+      return c.json({ error: 'Not following this user' }, 404)
+    }
+
+    // Delete from database
+    await c.env.DB.prepare('DELETE FROM ap_following WHERE id = ?')
+      .bind(following.id).run()
+
+    // Build Undo Follow activity
+    const followActivityId = `${c.env.BASE_URL}/activities/follow-${following.id}`
+    const undoActivity = {
+      '@context': 'https://www.w3.org/ns/activitystreams',
+      id: `${c.env.BASE_URL}/activities/undo-${following.id}`,
+      type: 'Undo',
+      actor: `${c.env.BASE_URL}/actors/${localUser.username}`,
+      object: {
+        id: followActivityId,
+        type: 'Follow',
+        actor: `${c.env.BASE_URL}/actors/${localUser.username}`,
+        object: actorUrl
+      },
+      to: [actorUrl]
+    }
+
+    // Queue delivery of Undo activity
+    if (c.env.AP_DELIVERY_QUEUE && following.target_inbox_url) {
+      await c.env.AP_DELIVERY_QUEUE.send({
+        type: 'delivery',
+        inboxUrl: following.target_inbox_url,
+        activity: undoActivity,
+        senderUsername: localUser.username
+      })
+    }
+
+    return c.json({
+      following: false,
+      target: target,
+      message: 'Unfollow request sent to remote user'
+    })
+  } catch (error: any) {
+    console.error('Remote unfollow error:', error)
+    return c.json({ error: 'Failed to unfollow remote user', details: error?.message || 'Unknown error' }, 500)
+  }
+})
+
 // GET /api/.well-known/webfinger - WebFinger endpoint for ActivityPub
 app.get('/api/.well-known/webfinger', async (c) => {
   try {
@@ -1407,23 +1496,38 @@ app.get('/api/actors/:username', async (c) => {
       ).bind(user.id, publicKeyPem, await exportPrivateKey(keyPair.privateKey)).run()
     }
 
-    return c.json({
+    const actorUrl = `${c.env.BASE_URL}/api/actors/${username}`
+
+    const actor: any = {
       "@context": ["https://www.w3.org/ns/activitystreams", "https://w3id.org/security/v1"],
       "type": "Person",
-      "id": `${c.env.BASE_URL}/api/actors/${username}`,
+      "id": actorUrl,
       "preferredUsername": user.username,
       "name": user.display_name,
       "summary": user.bio || "",
+      "url": `${c.env.BASE_URL}/users/${username}`,
       "inbox": `${c.env.BASE_URL}/api/actors/${username}/inbox`,
       "outbox": `${c.env.BASE_URL}/api/actors/${username}/outbox`,
       "followers": `${c.env.BASE_URL}/api/actors/${username}/followers`,
       "following": `${c.env.BASE_URL}/api/actors/${username}/following`,
       "publicKey": {
-        "id": `${c.env.BASE_URL}/api/actors/${username}#main-key`,
-        "owner": `${c.env.BASE_URL}/api/actors/${username}`,
+        "id": `${actorUrl}#main-key`,
+        "owner": actorUrl,
         "publicKeyPem": publicKeyPem
+      },
+      "endpoints": {
+        "sharedInbox": `${c.env.BASE_URL}/api/inbox`
       }
-    }, 200, { 'Content-Type': 'application/activity+json' })
+    }
+
+    if (user.avatar_key) {
+      actor.icon = {
+        type: "Image",
+        url: `${c.env.BASE_URL}/api/images/${user.avatar_key}`
+      }
+    }
+
+    return c.json(actor, 200, { 'Content-Type': 'application/activity+json' })
   } catch (error: any) {
     console.error('Actor endpoint error:', error)
     return c.json({ error: 'Actor endpoint failed' }, 500)
@@ -1460,23 +1564,40 @@ app.post('/api/actors/:username/inbox', async (c) => {
     if (!actorId || typeof actorId !== 'string') {
       return c.json({ error: 'Invalid actor' }, 400)
     }
-    
-    // Verify HTTP Signature
-    const publicKeyPem = await fetchActorPublicKey(actorId)
+
+    // Try to get local user's keys for signed fetch (authorized fetch support)
+    let signKeyPem: string | undefined
+    let signKeyId: string | undefined
+    try {
+      const keyRecord = await c.env.DB.prepare(
+        `SELECT ak.private_key_pem FROM actor_keys ak
+         JOIN users u ON u.id = ak.user_id
+         WHERE u.username = ? COLLATE NOCASE`
+      ).bind(username).first() as { private_key_pem: string } | null
+      if (keyRecord?.private_key_pem) {
+        signKeyPem = keyRecord.private_key_pem
+        signKeyId = `${c.env.BASE_URL}/actors/${username}#main-key`
+      }
+    } catch {
+      // Proceed without signing
+    }
+
+    // Verify HTTP Signature (with signed fetch if keys available)
+    const publicKeyPem = await fetchActorPublicKey(actorId, signKeyPem, signKeyId)
     if (!publicKeyPem) {
       return c.json({ error: 'Could not fetch actor public key' }, 401)
     }
-    
+
     const sigValid = await verifyHttpSignature(c.req.raw, publicKeyPem)
     if (!sigValid) {
       return c.json({ error: 'Invalid HTTP Signature' }, 401)
     }
-    
+
     const digestValid = await verifyDigest(c.req.raw, body)
     if (!digestValid) {
       return c.json({ error: 'Invalid Digest' }, 401)
     }
-    
+
     // Queue for async processing
     if (c.env.AP_DELIVERY_QUEUE) {
       await c.env.AP_DELIVERY_QUEUE.send({
@@ -1486,11 +1607,116 @@ app.post('/api/actors/:username/inbox', async (c) => {
         actorId
       })
     }
-    
+
     return c.json({ ok: true }, 202)
   } catch (error: any) {
     console.error('Inbox error:', error)
     return c.json({ error: 'Inbox processing failed', details: error?.message }, 500)
+  }
+})
+
+// POST /api/inbox - ActivityPub sharedInbox endpoint
+app.post('/api/inbox', async (c) => {
+  try {
+    const contentType = c.req.header('content-type') || ''
+
+    if (!contentType.includes('application/activity+json')) {
+      return c.json({ error: 'Invalid content type' }, 400)
+    }
+
+    const body = await c.req.text()
+    let activity: any
+    try {
+      activity = JSON.parse(body)
+    } catch {
+      return c.json({ error: 'Invalid JSON' }, 400)
+    }
+
+    const actorId = activity.actor
+    if (!actorId || typeof actorId !== 'string') {
+      return c.json({ error: 'Invalid actor' }, 400)
+    }
+
+    // Determine target username(s) from the activity
+    const baseUrl = c.env.BASE_URL
+
+    // Try to get any local user's keys for signed fetch
+    let signKeyPem: string | undefined
+    let signKeyId: string | undefined
+    try {
+      const anyKey = await c.env.DB.prepare(
+        `SELECT ak.private_key_pem, u.username FROM actor_keys ak
+         JOIN users u ON u.id = ak.user_id LIMIT 1`
+      ).first() as { private_key_pem: string; username: string } | null
+      if (anyKey?.private_key_pem) {
+        signKeyPem = anyKey.private_key_pem
+        signKeyId = `${c.env.BASE_URL}/actors/${anyKey.username}#main-key`
+      }
+    } catch {
+      // Proceed without signing
+    }
+
+    // Verify HTTP Signature (with signed fetch if keys available)
+    const publicKeyPem = await fetchActorPublicKey(actorId, signKeyPem, signKeyId)
+    if (!publicKeyPem) {
+      return c.json({ error: 'Could not fetch actor public key' }, 401)
+    }
+
+    const sigValid = await verifyHttpSignature(c.req.raw, publicKeyPem)
+    if (!sigValid) {
+      return c.json({ error: 'Invalid HTTP Signature' }, 401)
+    }
+
+    const digestValid = await verifyDigest(c.req.raw, body)
+    if (!digestValid) {
+      return c.json({ error: 'Invalid Digest' }, 401)
+    }
+    const targetAudience = [activity.to, activity.cc].flat().filter(Boolean) as string[]
+    const localActorUrls = targetAudience.filter((url: string) =>
+      typeof url === 'string' && url.startsWith(baseUrl) && url.includes('/actors/')
+    )
+
+    // Extract usernames from local actor URLs
+    const targetUsernames = new Set<string>()
+    for (const url of localActorUrls) {
+      const match = (url as string).match(/\/actors\/([^/]+)/)
+      if (match) targetUsernames.add(match[1])
+    }
+
+    // If no local target found via to/cc, try the object field (for Follow activities)
+    if (targetUsernames.size === 0 && activity.object && typeof activity.object === 'string') {
+      const match = activity.object.match(/\/actors\/([^/]+)/)
+      if (match) targetUsernames.add(match[1])
+    }
+
+    // Fallback: if still no target, try all local users by checking the activity object
+    if (targetUsernames.size === 0 && activity.object && typeof activity.object === 'object') {
+      const objId = activity.object.id || ''
+      const match = objId.match(/\/actors\/([^/]+)/)
+      if (match) targetUsernames.add(match[1])
+    }
+
+    if (targetUsernames.size === 0) {
+      console.error('sharedInbox: Could not determine target user for activity', activity.type)
+      return c.json({ ok: true }, 202)
+    }
+
+    // Queue for async processing for each target
+    if (c.env.AP_DELIVERY_QUEUE) {
+      for (const username of targetUsernames) {
+        await c.env.AP_DELIVERY_QUEUE.send({
+          type: 'inbox' as const,
+          username,
+          activity,
+          actorId
+        })
+      }
+    }
+
+    return c.json({ ok: true }, 202)
+  } catch (error: any) {
+    console.error('sharedInbox error:', error)
+    return c.json({ error: 'sharedInbox processing failed', details: error?.message }, 500)
   }
 })
 
@@ -1507,6 +1733,9 @@ app.get('/api/actors/:username/followers', async (c) => {
       return c.json({ error: 'User not found' }, 404)
     }
 
+    const pageSize = 20
+    const pageParam = c.req.query('page')
+
     // Count local followers
     const localCount = (await c.env.DB.prepare(
       'SELECT COUNT(*) as count FROM follows WHERE followee_id = ?'
@@ -1518,6 +1747,49 @@ app.get('/api/actors/:username/followers', async (c) => {
     ).bind(user.id).first() as any).count || 0
 
     const totalItems = localCount + remoteCount
+
+    // If page parameter is present, return OrderedCollectionPage
+    if (pageParam) {
+      const pageNum = parseInt(pageParam, 10) || 1
+      const offset = (pageNum - 1) * pageSize
+
+      // Fetch local followers (users table via follows)
+      const localFollowers = await c.env.DB.prepare(`
+        SELECT u.username FROM follows f
+        JOIN users u ON u.id = f.follower_id
+        WHERE f.followee_id = ?
+        ORDER BY u.username ASC LIMIT ? OFFSET ?
+      `).bind(user.id, pageSize, offset).all() as { results: Array<{ username: string }> }
+
+      // If we still have room and it's the first page, also fetch remote followers
+      const remoteFetched: Array<{ actor_url: string }> = []
+      if (localFollowers.results.length < pageSize) {
+        const remoteOffset = Math.max(0, offset - localCount)
+        const remaining = pageSize - localFollowers.results.length
+        const remoteFollowers = await c.env.DB.prepare(`
+          SELECT actor_url FROM ap_followers WHERE local_user_id = ?
+          ORDER BY actor_url ASC LIMIT ? OFFSET ?
+        `).bind(user.id, remaining, remoteOffset).all() as { results: Array<{ actor_url: string }> }
+        remoteFetched.push(...remoteFollowers.results)
+      }
+
+      const orderedItems = [
+        ...localFollowers.results.map(f => `${c.env.BASE_URL}/api/actors/${f.username}`),
+        ...remoteFetched.map(f => f.actor_url)
+      ]
+
+      const hasNext = (offset + pageSize) < totalItems
+
+      return c.json({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "type": "OrderedCollectionPage",
+        "id": `${c.env.BASE_URL}/api/actors/${username}/followers?page=${pageNum}`,
+        "partOf": `${c.env.BASE_URL}/api/actors/${username}/followers`,
+        "totalItems": totalItems,
+        "orderedItems": orderedItems,
+        ...(hasNext && { "next": `${c.env.BASE_URL}/api/actors/${username}/followers?page=${pageNum + 1}` })
+      }, 200, { 'Content-Type': 'application/activity+json' })
+    }
 
     return c.json({
       "@context": "https://www.w3.org/ns/activitystreams",
@@ -1545,15 +1817,45 @@ app.get('/api/actors/:username/following', async (c) => {
       return c.json({ error: 'User not found' }, 404)
     }
 
-    const totalItems = (await c.env.DB.prepare(
+    const pageSize = 20
+    const pageParam = c.req.query('page')
+
+    // Count local following (remote following not counted here for simplicity)
+    const totalCount = (await c.env.DB.prepare(
       'SELECT COUNT(*) as count FROM follows WHERE follower_id = ?'
     ).bind(user.id).first() as any).count || 0
+
+    // If page parameter is present, return OrderedCollectionPage
+    if (pageParam) {
+      const pageNum = parseInt(pageParam, 10) || 1
+      const offset = (pageNum - 1) * pageSize
+
+      const following = await c.env.DB.prepare(`
+        SELECT u.username FROM follows f
+        JOIN users u ON u.id = f.followee_id
+        WHERE f.follower_id = ?
+        ORDER BY u.username ASC LIMIT ? OFFSET ?
+      `).bind(user.id, pageSize, offset).all() as { results: Array<{ username: string }> }
+
+      const orderedItems = following.results.map(f => `${c.env.BASE_URL}/api/actors/${f.username}`)
+      const hasNext = (offset + pageSize) < totalCount
+
+      return c.json({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "type": "OrderedCollectionPage",
+        "id": `${c.env.BASE_URL}/api/actors/${username}/following?page=${pageNum}`,
+        "partOf": `${c.env.BASE_URL}/api/actors/${username}/following`,
+        "totalItems": totalCount,
+        "orderedItems": orderedItems,
+        ...(hasNext && { "next": `${c.env.BASE_URL}/api/actors/${username}/following?page=${pageNum + 1}` })
+      }, 200, { 'Content-Type': 'application/activity+json' })
+    }
 
     return c.json({
       "@context": "https://www.w3.org/ns/activitystreams",
       "type": "OrderedCollection",
       "id": `${c.env.BASE_URL}/api/actors/${username}/following`,
-      "totalItems": totalItems,
+      "totalItems": totalCount,
       "first": `${c.env.BASE_URL}/api/actors/${username}/following?page=1`
     }, 200, { 'Content-Type': 'application/activity+json' })
   } catch (error: any) {
@@ -1648,9 +1950,15 @@ app.get('/api/actors/:username/outbox', async (c) => {
     const totalItems = countResult?.total || 0
 
     // If page parameter is present, return OrderedCollectionPage
-    if (page === 'true') {
-      const offset = c.req.query('offset')
-      const offsetNum = offset ? parseInt(offset, 10) : 0
+    // Supports both ?page=true (legacy) and ?page=N (Mastodon-style)
+    if (page !== null && page !== undefined) {
+      let offsetNum = 0
+      if (page === 'true') {
+        offsetNum = parseInt(c.req.query('offset') || '0', 10)
+      } else {
+        const pageNum = parseInt(page, 10) || 1
+        offsetNum = (pageNum - 1) * pageSize
+      }
 
       // Get posts for this page
       const posts = await c.env.DB.prepare(`
@@ -1674,11 +1982,11 @@ app.get('/api/actors/:username/outbox', async (c) => {
       return c.json({
         "@context": "https://www.w3.org/ns/activitystreams",
         "type": "OrderedCollectionPage",
-        "id": `${c.env.BASE_URL}/api/actors/${username}/outbox?page=true&offset=${offsetNum}`,
+        "id": `${c.env.BASE_URL}/api/actors/${username}/outbox?page=${page}&offset=${offsetNum}`,
         "partOf": `${c.env.BASE_URL}/api/actors/${username}/outbox`,
         "totalItems": totalItems,
         "orderedItems": activities,
-        ...(hasNext && { "next": `${c.env.BASE_URL}/api/actors/${username}/outbox?page=true&offset=${nextOffset}` })
+        ...(hasNext && { "next": `${c.env.BASE_URL}/api/actors/${username}/outbox?page=${page}&offset=${nextOffset}` })
       }, 200, { 'Content-Type': 'application/activity+json' })
     }
 
@@ -1688,7 +1996,7 @@ app.get('/api/actors/:username/outbox', async (c) => {
       "type": "OrderedCollection",
       "id": `${c.env.BASE_URL}/api/actors/${username}/outbox`,
       "totalItems": totalItems,
-      "first": `${c.env.BASE_URL}/api/actors/${username}/outbox?page=true&offset=0`
+      "first": `${c.env.BASE_URL}/api/actors/${username}/outbox?page=1`
     }, 200, { 'Content-Type': 'application/activity+json' })
   } catch (error: any) {
     console.error('Outbox endpoint error:', error)
