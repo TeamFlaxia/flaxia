@@ -981,6 +981,18 @@ p {
   padding-bottom: 56.25%; /* 16:9 aspect ratio */
 }
 
+.post-stage--image {
+  padding-bottom: 56.25%; /* 16:9 aspect ratio */
+}
+
+.post-stage--image-thumb {
+  padding-bottom: 75%; /* 4:3 aspect ratio */
+}
+
+.post-stage--audio {
+  height: 200px;
+}
+
 .audio-player,
 .audio-preview,
 .image-preview,

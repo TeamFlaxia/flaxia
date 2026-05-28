@@ -450,17 +450,20 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
         container.classList.add('post-stage--flash')
       }
     } else if (props.post.gif_key && props.post.gif_key.startsWith('audio/')) {
+      container.classList.add('post-stage--audio')
       mediaElement = createAudioPlayer({
         gifKey: props.post.gif_key,
         postId: props.post.id
       })
     } else if (props.post.gif_key) {
+      container.classList.add('post-stage--image')
       mediaElement = createImagePreview({
         gifKey: props.post.gif_key,
         postId: props.post.id
       })
     } else if (props.post.thumbnail_key) {
       // Post has only thumbnail
+      container.classList.add('post-stage--image-thumb')
       mediaElement = createImagePreview({
         gifKey: props.post.thumbnail_key, // createImagePreview handles both gif and thumbnail keys
         postId: props.post.id,
