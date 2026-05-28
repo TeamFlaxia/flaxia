@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { ALLOWED_EXTENSIONS } from '../../../src/lib/file-extensions'
 
 interface Env {
   BUCKET: R2Bucket
@@ -18,6 +19,7 @@ app.use('/*', cors({
 
 // Service Worker script
 app.get('/sw.js', async (c) => {
+  const extConfigJson = JSON.stringify(ALLOWED_EXTENSIONS)
   const swContent = `console.log('Service Worker script loading...')
 
 importScripts('https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js')
@@ -27,13 +29,9 @@ console.log('fflate loaded:', typeof fflate !== 'undefined')
 // --- セキュリティ設定 & リソース制限 ---
 const MAX_TOTAL_SIZE = 100 * 1024 * 1024; // 100MB
 const MAX_FILE_COUNT = 1000;
-// Import unified extensions from main codebase
-const ALLOWED_EXTENSIONS = new Set([
-  'html', 'css', 'js', 'mjs', 'json', 'svg',
-  'png', 'jpg', 'jpeg', 'gif', 'ico', 'webp',
-  'woff', 'woff2', 'ttf', 'mp4', 'webm', 'mp3', 'wav', 'wasm', 
-  'txt', 'glsl', 'wgsl', 'data', 'unityweb', 'wasm.code', 'wasm.framework', 'rsp'
-]);
+// Extension config from shared file-extensions.ts
+const EXT_CONFIG = ${extConfigJson};
+const ALLOWED_EXTENSIONS = new Set(Object.keys(EXT_CONFIG).map(k => k.replace('.', '')));
 
 // 仮想ファイルシステム: path → Uint8Array
 const virtualFS = new Map()
@@ -224,18 +222,8 @@ async function serveFromFS(filePath) {
 }
 
 function getMime(path) {
-  const ext = path.split('.').pop().toLowerCase()
-  const map = {
-    html:'text/html', css:'text/css',
-    js:'text/javascript', mjs:'text/javascript',
-    json:'application/json', svg:'image/svg+xml',
-    png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg',
-    gif:'image/gif', ico:'image/x-icon',
-    woff:'font/woff', woff2:'font/woff2', ttf:'font/ttf',
-    webp:'image/webp', mp4:'video/mp4', webm:'video/webm',
-    mp3:'audio/mpeg', wav:'audio/wav',wasm:'application/wasm', rsp:'text/plain'
-  }
-  return map[ext] ?? 'application/octet-stream'
+  const ext = '.' + path.split('.').pop().toLowerCase()
+  return EXT_CONFIG[ext] || 'application/octet-stream'
 }`
   
   return new Response(swContent, {

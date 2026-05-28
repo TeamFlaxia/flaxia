@@ -79,7 +79,7 @@ async function createWvfsIframe(
   // Create iframe pointing to WVFS worker endpoint
   const iframe = document.createElement('iframe')
   iframe.src = zipUrl
-  iframe.sandbox = 'allow-scripts allow-same-origin allow-pointer-lock allow-fullscreen'
+  iframe.sandbox = 'allow-scripts allow-pointer-lock allow-fullscreen'
   iframe.setAttribute('allow', 'fullscreen')
   iframe.setAttribute('referrerpolicy', 'no-referrer')
   iframe.style.cssText = `

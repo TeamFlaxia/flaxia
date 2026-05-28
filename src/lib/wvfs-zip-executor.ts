@@ -19,12 +19,12 @@ export async function extractZipToWvfs(zipData: ArrayBuffer, postId: string): Pr
     // Create directory
     fs.mkdirSync(extractDir, { recursive: true })
     
-    // Extract ZIP using fflate (server-compatible)
+    // Validate ZIP structure first, before extracting
+    await validateZipLegacy(zipData)
+
+    // Then extract using fflate (server-compatible)
     const fflate = await import('fflate')
     const zip = fflate.unzipSync(new Uint8Array(zipData))
-    
-    // Validate ZIP structure
-    await validateZipLegacy(zipData)
     
     // Write files to WVFS
     for (const [filename, fileData] of Object.entries(zip)) {

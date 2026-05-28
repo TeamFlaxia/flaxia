@@ -1,8 +1,24 @@
 import { validateZipLegacy } from './zip-executor'
 import { getMimeType } from './file-extensions'
 
+const WVFS_TTL = 5 * 60 * 1000 // 5 minutes
+
+interface WvfsEntry {
+  data: Map<string, Uint8Array>
+  createdAt: number
+}
+
 // In-memory WVFS storage for Cloudflare Workers
-const wvfsStorage = new Map<string, Map<string, Uint8Array>>()
+const wvfsStorage = new Map<string, WvfsEntry>()
+
+function cleanupExpiredEntries(): void {
+  const now = Date.now()
+  for (const [postId, entry] of wvfsStorage) {
+    if (now - entry.createdAt > WVFS_TTL) {
+      wvfsStorage.delete(postId)
+    }
+  }
+}
 
 // Path normalization utility for handling relative paths
 function normalizePath(path: string): string {
@@ -81,12 +97,14 @@ function findFileInMap(fileMap: Map<string, Uint8Array>, filePath: string): Uint
 // Server-side WVFS functions (to be used in Workers)
 export async function extractZipToWvfs(zipData: ArrayBuffer, postId: string): Promise<void> {
   try {
-    // Extract ZIP using fflate (server-compatible)
+    cleanupExpiredEntries()
+
+    // Validate ZIP structure first, before extracting
+    await validateZipLegacy(zipData)
+
+    // Then extract using fflate
     const fflate = await import('fflate')
     const zip = fflate.unzipSync(new Uint8Array(zipData))
-    
-    // Validate ZIP structure
-    await validateZipLegacy(zipData)
     
     // Store files in memory
     const fileMap = new Map<string, Uint8Array>()
@@ -95,8 +113,8 @@ export async function extractZipToWvfs(zipData: ArrayBuffer, postId: string): Pr
       fileMap.set(filename, fileData)
     }
     
-    // Store in global WVFS storage
-    wvfsStorage.set(postId, fileMap)
+    // Store in global WVFS storage with timestamp
+    wvfsStorage.set(postId, { data: fileMap, createdAt: Date.now() })
     
   } catch (error) {
     // Clean up on error
@@ -106,13 +124,17 @@ export async function extractZipToWvfs(zipData: ArrayBuffer, postId: string): Pr
 }
 
 export async function serveFileFromWvfs(postId: string, filePath: string): Promise<Response | null> {
+  cleanupExpiredEntries()
+
   // This function runs in the Worker to serve files from memory
-  const fileMap = wvfsStorage.get(postId)
-  
-  if (!fileMap) {
+  const entry = wvfsStorage.get(postId)
+
+  if (!entry) {
     console.log(`WVFS: No file map found for postId: ${postId}`)
     return null
   }
+
+  const fileMap = entry.data
   
   try {
     // Normalize the file path to handle relative paths
@@ -185,6 +207,7 @@ function injectBaseTag(htmlContent: string, postId: string): string {
 
 export async function cleanupWvfsZip(postId: string): Promise<void> {
   // Clean up WVFS memory storage for this post
+  cleanupExpiredEntries()
   try {
     wvfsStorage.delete(postId)
   } catch (error) {

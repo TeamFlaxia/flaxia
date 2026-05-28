@@ -81,8 +81,9 @@ app.get('/:postId', async (c) => {
   function isOriginAllowed(origin) {
     return ALLOWED_ORIGINS.some(allowed => {
       if (allowed.includes('*')) {
-        const pattern = allowed.replace('*', '.*')
-        return new RegExp('^' + pattern + '$').test(origin)
+        const escaped = allowed.replace(/[.+?^\x24{}()|[\]\\]/g, '\\$&')
+        const pattern = '^' + escaped.replace(/\*/g, '[^.]+') + '$'
+        return new RegExp(pattern).test(origin)
       }
       return origin === allowed
     })
