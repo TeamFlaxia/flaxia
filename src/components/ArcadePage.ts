@@ -80,6 +80,7 @@ export class ArcadePage {
       display: flex;
       flex-direction: column;
       height: 100vh;
+      height: 100dvh;
       overflow: hidden;
       background: var(--bg-primary);
       position: relative;
@@ -93,7 +94,7 @@ export class ArcadePage {
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
-      gap: 1rem;
+      gap: 0.5rem;
     `
 
     if (this.props.onBack) {
@@ -128,12 +129,14 @@ export class ArcadePage {
       font-size: 1.25rem;
       font-weight: 600;
       color: var(--text-primary);
+      white-space: nowrap;
     `
 
     const subtitle = document.createElement('span')
     subtitle.textContent = t('arcade.subtitle')
     subtitle.style.cssText = `
       font-size: 0.875rem;
+      white-space: nowrap;
       color: var(--text-muted);
     `
 
