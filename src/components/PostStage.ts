@@ -229,13 +229,15 @@ function createThumbnailWithOverlay(props: {
   const container = document.createElement('div')
   container.className = 'thumbnail-overlay-container'
   
-  // Determine aspect ratio (default to 16:9)
-  const aspectRatio = props.aspectRatio || '56.25' // 16:9 = 56.25%
-  
+  // The parent .post-stage--flash/--zip/--dos already establishes the aspect ratio
+  // via padding-bottom, so we use absolute positioning to fill it instead of
+  // adding another padding-bottom (which would double the height).
   container.style.cssText = `
-    position: relative;
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 100%;
-    padding-bottom: ${aspectRatio}%;
+    height: 100%;
     background: var(--bg-input);
     border-radius: 8px;
     overflow: hidden;

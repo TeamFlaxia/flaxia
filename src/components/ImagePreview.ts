@@ -19,15 +19,31 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   // Add aspect ratio container to prevent CLS
   const aspectRatioContainer = document.createElement('div')
   aspectRatioContainer.className = 'image-preview-aspect-ratio'
-  const ratio = props.isThumbnail ? '75' : '56.25'
-  aspectRatioContainer.style.cssText = `
-    position: relative;
-    width: 100%;
-    padding-bottom: ${ratio}%;
-    background: var(--bg-input);
-    border-radius: 8px;
-    overflow: hidden;
-  `
+  // When isThumbnail is true, the parent .post-stage--image-thumb already establishes the
+  // aspect ratio via padding-bottom, so we use absolute positioning to fill it instead of
+  // adding another padding-bottom (which would double the height).
+  if (props.isThumbnail) {
+    aspectRatioContainer.style.cssText = `
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: var(--bg-input);
+      border-radius: 8px;
+      overflow: hidden;
+    `
+  } else {
+    const ratio = '56.25'
+    aspectRatioContainer.style.cssText = `
+      position: relative;
+      width: 100%;
+      padding-bottom: ${ratio}%;
+      background: var(--bg-input);
+      border-radius: 8px;
+      overflow: hidden;
+    `
+  }
   
   // Add loading indicator
   const loading = document.createElement('div')
