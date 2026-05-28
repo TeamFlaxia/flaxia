@@ -377,8 +377,8 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
   // Clear existing content
   container.innerHTML = ''
   
-  // Only show content if there are attachments
-  if (!props.post.gif_key && !props.post.payload_key && !props.post.swf_key) {
+  // Only show content if there are attachments or a thumbnail
+  if (!props.post.gif_key && !props.post.payload_key && !props.post.swf_key && !props.post.thumbnail_key) {
     return
   }
   
@@ -387,6 +387,7 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
     
     // Check if it's a DOS ZIP file (payload_key starting with 'dos/')
     if (props.post.payload_key && props.post.payload_key.startsWith('dos/')) {
+      // ... (existing DOS logic)
       if (props.post.thumbnail_key) {
         mediaElement = createThumbnailWithOverlay({
           postId: props.post.id,
@@ -406,6 +407,7 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
         container.classList.add('post-stage--dos')
       }
     } else if (props.post.payload_key && props.post.payload_key.startsWith('zip/')) {
+      container.classList.add('post-stage--zip') // Add zip class for 16:9
       if (props.post.thumbnail_key) {
         // Show thumbnail with overlay button
         mediaElement = createThumbnailWithOverlay({
@@ -452,10 +454,17 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
         gifKey: props.post.gif_key,
         postId: props.post.id
       })
-    } else {
+    } else if (props.post.gif_key) {
       mediaElement = createImagePreview({
         gifKey: props.post.gif_key,
         postId: props.post.id
+      })
+    } else if (props.post.thumbnail_key) {
+      // Post has only thumbnail
+      mediaElement = createImagePreview({
+        gifKey: props.post.thumbnail_key, // createImagePreview handles both gif and thumbnail keys
+        postId: props.post.id,
+        isThumbnail: true
       })
     }
     

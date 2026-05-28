@@ -86,6 +86,7 @@ export interface PostStageProps {
 export interface GifPreviewProps {
   gifKey?: string
   postId: string
+  isThumbnail?: boolean
 }
 
 export interface SandboxFrameProps {

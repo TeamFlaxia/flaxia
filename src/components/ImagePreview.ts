@@ -19,10 +19,11 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   // Add aspect ratio container to prevent CLS
   const aspectRatioContainer = document.createElement('div')
   aspectRatioContainer.className = 'image-preview-aspect-ratio'
+  const ratio = props.isThumbnail ? '75' : '56.25'
   aspectRatioContainer.style.cssText = `
     position: relative;
     width: 100%;
-    padding-bottom: 56.25%; /* 16:9 aspect ratio */
+    padding-bottom: ${ratio}%;
     background: var(--bg-input);
     border-radius: 8px;
     overflow: hidden;
@@ -81,7 +82,9 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   `
   
   // Use the API proxy endpoint for images
-  const imageUrl = `/api/images/${props.gifKey}`
+  const imageUrl = props.isThumbnail 
+    ? `/api/thumbnail/${props.postId}`
+    : `/api/images/${props.gifKey}`
   img.src = imageUrl
   
   // Handle image load success

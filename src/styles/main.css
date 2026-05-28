@@ -965,7 +965,6 @@ p {
 .post-stage {
   position: relative;
   width: 100%;
-  padding-bottom: 56.25%; /* 16:9 aspect ratio */
   background: var(--bg-input);
   border: 1px solid var(--border);
   margin-bottom: 1rem;
@@ -973,8 +972,13 @@ p {
   overflow: hidden;
 }
 
-.post-stage--flash {
+.post-stage--flash,
+.post-stage--dos {
   padding-bottom: 75%; /* 4:3 aspect ratio */
+}
+
+.post-stage--zip {
+  padding-bottom: 56.25%; /* 16:9 aspect ratio */
 }
 
 .audio-player,
@@ -2834,6 +2838,27 @@ html {
   max-height: 90vh;
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+
+.post-modal-close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  background: none;
+  border: none;
+  font-size: 1.3rem;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 0.25rem 0.5rem;
+  line-height: 1;
+  z-index: 1;
+  border-radius: 4px;
+}
+
+.post-modal-close:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover, rgba(0,0,0,0.04));
 }
 
 .post-modal-dialog .post-composer {

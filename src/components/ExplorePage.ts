@@ -71,8 +71,7 @@ export class ExplorePage {
       backBtn.addEventListener('mouseenter', () => { backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))' })
       backBtn.addEventListener('mouseleave', () => { backBtn.style.background = 'none' })
       backBtn.addEventListener('click', () => {
-        window.history.pushState({}, '', '/explore')
-        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore' } }))
+        window.history.back()
       })
 
       const tagInfo = document.createElement('div')

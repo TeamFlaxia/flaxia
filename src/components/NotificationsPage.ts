@@ -49,14 +49,31 @@ export class NotificationsPage {
     const header = document.createElement('div')
     header.style.cssText = `
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      flex-wrap: wrap;
       gap: 8px;
+      flex-wrap: wrap;
       margin-bottom: 24px;
       padding-bottom: 16px;
       border-bottom: 1px solid var(--border);
     `
+
+    const backBtn = document.createElement('button')
+    backBtn.textContent = '←'
+    backBtn.style.cssText = `
+      background: none;
+      border: none;
+      font-size: 1.25rem;
+      cursor: pointer;
+      color: var(--text-primary);
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      transition: background 0.2s;
+    `
+    backBtn.addEventListener('mouseenter', () => { backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))' })
+    backBtn.addEventListener('mouseleave', () => { backBtn.style.background = 'none' })
+    backBtn.addEventListener('click', () => {
+      window.history.back()
+    })
 
     const title = document.createElement('h1')
     title.textContent = t('notifications.title')
@@ -66,6 +83,7 @@ export class NotificationsPage {
       color: var(--text-primary);
     `
 
+    header.appendChild(backBtn)
     header.appendChild(title)
 
     // Mark all read button (only show if there are unread)
@@ -74,6 +92,7 @@ export class NotificationsPage {
       markAllBtn.textContent = t('notifications.mark_all_read')
       markAllBtn.style.cssText = `
         padding: 8px 16px;
+        margin-left: auto;
         background: var(--bg-secondary);
         border: 1px solid var(--border);
         border-radius: 4px;

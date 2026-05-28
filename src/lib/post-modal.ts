@@ -13,6 +13,15 @@ export function openPostModal(opts: {
   const dialog = document.createElement('div')
   dialog.className = 'post-modal-dialog'
 
+  const closeBtn = document.createElement('button')
+  closeBtn.className = 'post-modal-close'
+  closeBtn.textContent = '✕'
+  closeBtn.addEventListener('click', () => {
+    unregister()
+    destroy()
+  })
+  dialog.appendChild(closeBtn)
+
   let refreshDrafts: () => void
 
   const modalComposer = createPostComposer({
@@ -45,6 +54,15 @@ export function openPostModal(opts: {
       destroy()
     }
   })
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      unregister()
+      destroy()
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }
+  document.addEventListener('keydown', handleKeyDown)
 }
 
 function createDraftsPanel(composer: PostComposer): { panel: HTMLElement; refresh: () => void } {

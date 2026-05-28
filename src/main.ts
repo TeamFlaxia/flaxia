@@ -31,6 +31,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const app = document.getElementById('app')
   if (app) {
     console.log('App mounted')
+
+    history.scrollRestoration = 'manual'
     
     await initI18n()
     
@@ -191,9 +193,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       return button
     }
 
+    let leftNavWasOpen = false
+
     const openLeftNav = (leftNavElement: HTMLElement): void => {
       if (window.innerWidth > 768) return
 
+      leftNavWasOpen = true
       leftNavElement.classList.add('left-nav--open')
 
       if (!leftNavOverlay) {
@@ -206,6 +211,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const closeLeftNav = (): void => {
+      if (!leftNavWasOpen) return
+      leftNavWasOpen = false
+
       const leftNavElement = document.querySelector('.left-nav') as HTMLElement
       if (leftNavElement) {
         leftNavElement.classList.remove('left-nav--open')
@@ -239,7 +247,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Handle escape key to close
       document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
+        if (e.key === 'Escape' && window.innerWidth <= 768) {
           closeLeftNav()
         }
       })
@@ -263,6 +271,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Close mobile nav when modal opens
       const handleModalChange = (e: Event) => {
+        if (window.innerWidth > 768) return
         const { open } = (e as CustomEvent<{ open: boolean }>).detail
         closeLeftNav()
         if (leftNavOpenButton) {
@@ -824,6 +833,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             sandboxOrigin,
             currentUser
           })
+          window.scrollTo(0, 0)
         }
         
         // Create Right Panel

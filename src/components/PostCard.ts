@@ -147,8 +147,8 @@ export class PostCard {
       container.appendChild(pollEl)
     }
 
-    // Post stage (16:9 container for GIF/iframe) - only show if has attachments
-    if (this.props.post.gif_key || this.props.post.payload_key || this.props.post.swf_key) {
+    // Post stage (16:9 container for GIF/iframe/thumbnail) - only show if has attachments
+    if (this.props.post.gif_key || this.props.post.payload_key || this.props.post.swf_key || this.props.post.thumbnail_key) {
       this.postStageElement = createPostStage({
         post: this.props.post,
         mode: this.mode,

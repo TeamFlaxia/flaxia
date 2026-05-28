@@ -335,6 +335,7 @@ export class LeftNav {
   }
 
   private updateModalVisibility(): void {
+    if (window.innerWidth > 768) return
     this.element.style.display = isModalOpen() ? 'none' : ''
   }
 
