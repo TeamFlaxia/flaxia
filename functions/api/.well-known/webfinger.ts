@@ -24,6 +24,9 @@ app.get('/', async (c) => {
     }
     
     const [, username, domain] = match
+    if (!username) {
+      return c.json({ error: 'User not found' }, 404)
+    }
     
     // Verify domain matches our BASE_URL
     const baseUrl = new URL(c.env.BASE_URL)

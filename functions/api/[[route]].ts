@@ -1204,6 +1204,9 @@ app.get('/api/.well-known/webfinger', async (c) => {
     }
     
     const [, username, domain] = match
+    if (!username) {
+      return c.json({ error: 'User not found' }, 404)
+    }
     
     // Verify domain matches our BASE_URL
     const baseUrl = new URL(c.env.BASE_URL)
@@ -1241,6 +1244,50 @@ app.get('/api/.well-known/webfinger', async (c) => {
   } catch (error: any) {
     console.error('WebFinger error:', error)
     return c.json({ error: 'WebFinger failed' }, 500)
+  }
+})
+
+// GET /api/actors/:username - ActivityPub Actor (Person) endpoint
+app.get('/api/actors/:username', async (c) => {
+  try {
+    const username = c.req.param('username')
+    const user = await c.env.DB.prepare(
+      `SELECT id, username, display_name, bio, avatar_key FROM users WHERE username = ? COLLATE NOCASE`
+    ).bind(username).first() as any
+    if (!user) return c.json({ error: 'User not found' }, 404)
+
+    const keyRecord = await c.env.DB.prepare(
+      `SELECT public_key_pem FROM actor_keys WHERE user_id = ?`
+    ).bind(user.id).first() as any
+    let publicKeyPem = keyRecord?.public_key_pem
+    if (!publicKeyPem) {
+      const keyPair = await generateKeyPair()
+      publicKeyPem = await exportPublicKey(keyPair.publicKey)
+      await c.env.DB.prepare(
+        `INSERT INTO actor_keys (user_id, public_key_pem, private_key_pem, created_at) VALUES (?, ?, ?, datetime('now'))`
+      ).bind(user.id, publicKeyPem, await exportPrivateKey(keyPair.privateKey)).run()
+    }
+
+    return c.json({
+      "@context": ["https://www.w3.org/ns/activitystreams", "https://w3id.org/security/v1"],
+      "type": "Person",
+      "id": `${c.env.BASE_URL}/api/actors/${username}`,
+      "preferredUsername": user.username,
+      "name": user.display_name,
+      "summary": user.bio || "",
+      "inbox": `${c.env.BASE_URL}/api/actors/${username}/inbox`,
+      "outbox": `${c.env.BASE_URL}/api/actors/${username}/outbox`,
+      "followers": `${c.env.BASE_URL}/api/actors/${username}/followers`,
+      "following": `${c.env.BASE_URL}/api/actors/${username}/following`,
+      "publicKey": {
+        "id": `${c.env.BASE_URL}/api/actors/${username}#main-key`,
+        "owner": `${c.env.BASE_URL}/api/actors/${username}`,
+        "publicKeyPem": publicKeyPem
+      }
+    }, 200, { 'Content-Type': 'application/activity+json' })
+  } catch (error: any) {
+    console.error('Actor endpoint error:', error)
+    return c.json({ error: 'Actor endpoint failed' }, 500)
   }
 })
 
@@ -1429,8 +1476,8 @@ app.get('/api/notes/:noteId', async (c) => {
   }
 })
 
-// GET /actors/:username/outbox - ActivityPub Outbox endpoint (paginated, no /api prefix)
-app.get('/actors/:username/outbox', async (c) => {
+// GET /api/actors/:username/outbox - ActivityPub Outbox endpoint (paginated)
+app.get('/api/actors/:username/outbox', async (c) => {
   try {
     const username = c.req.param('username')
     const page = c.req.query('page')
@@ -1578,6 +1625,9 @@ app.get('/.well-known/webfinger', async (c) => {
     }
 
     const username = match[1]
+    if (!username) {
+      return c.json({ error: 'User not found' }, 404)
+    }
     
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500)

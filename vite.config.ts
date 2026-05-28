@@ -38,42 +38,26 @@ export default defineConfig({
   ssr: {
     noExternal: ['hono']
   },
-  // Custom plugin to copy functions directory
   plugins: [
     {
-      name: 'copy-functions',
+      name: 'copy-jsdos',
       writeBundle() {
-        const functionsDir = 'functions'
-        const distFunctionsDir = 'dist/functions'
-        
-        if (existsSync(functionsDir)) {
-          console.log('Copying functions directory to dist...')
-          
-          // Simple recursive copy function
-          function copyDirectory(src: string, dest: string) {
-            if (!existsSync(dest)) {
-              mkdirSync(dest, { recursive: true })
-            }
-            
-            const entries = readdirSync(src, { withFileTypes: true })
-            
-            for (const entry of entries) {
-              const srcPath = join(src, entry.name)
-              const destPath = join(dest, entry.name)
-              
-              if (entry.isDirectory()) {
-                copyDirectory(srcPath, destPath)
-              } else {
-                copyFileSync(srcPath, destPath)
-              }
+        function copyDirectory(src: string, dest: string) {
+          if (!existsSync(dest)) {
+            mkdirSync(dest, { recursive: true })
+          }
+          const entries = readdirSync(src, { withFileTypes: true })
+          for (const entry of entries) {
+            const srcPath = join(src, entry.name)
+            const destPath = join(dest, entry.name)
+            if (entry.isDirectory()) {
+              copyDirectory(srcPath, destPath)
+            } else {
+              copyFileSync(srcPath, destPath)
             }
           }
-          
-          copyDirectory(functionsDir, distFunctionsDir)
-          console.log('Functions directory copied successfully!')
         }
 
-        // Copy js-dos dist files for self-hosted DOS player
         const jsdosSrc = 'node_modules/js-dos/dist'
         const jsdosDest = 'dist/js-dos'
         if (existsSync(jsdosSrc)) {
