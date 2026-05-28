@@ -175,6 +175,9 @@ async function handleInboxActivity(msg: InboxMessage, env: Env, message: any): P
       case 'Undo':
         await handleUndoActivity(activity, username, actorId, env)
         break
+      case 'Update':
+        await handleUpdateActivity(activity, username, actorId, env)
+        break
       default:
         console.warn('Unknown activity type:', activityType)
     }
@@ -246,9 +249,9 @@ async function handleCreateActivity(activity: any, username: string, actorId: st
   }
 
   await env.DB.prepare(`
-    INSERT INTO posts (id, user_id, username, text, hashtags, status, parent_id, root_id, depth, created_at)
-    VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, datetime('now'))
-  `).bind(postId, userId, username, content, JSON.stringify(hashtags), parentId, rootId, depth).run()
+    INSERT INTO posts (id, user_id, username, text, hashtags, status, parent_id, root_id, depth, actor_id, created_at)
+    VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, datetime('now'))
+  `).bind(postId, userId, username, content, JSON.stringify(hashtags), parentId, rootId, depth, actorId).run()
 
   // Create mention notifications for mentioned users
   if (mentionedUsernames.length > 0) {
@@ -616,6 +619,33 @@ async function handleUndoActivity(activity: any, username: string, actorId: stri
       break
     default:
       console.log('Unknown undo object type:', objectType)
+  }
+}
+
+async function handleUpdateActivity(activity: any, username: string, actorId: string, env: Env): Promise<void> {
+  const object = activity.object
+  if (!object) {
+    console.error('Update activity missing object')
+    return
+  }
+
+  if (object.type === 'Person') {
+    // Remote user updated their profile - fetch latest info
+    try {
+      const actorResponse = await fetch(actorId, {
+        headers: { 'Accept': 'application/activity+json, application/ld+json' }
+      })
+      if (actorResponse.ok) {
+        console.log('Profile update received from:', actorId)
+        // In the future, store remote actor info in a remote_actors table
+      }
+    } catch (e) {
+      console.error('Failed to fetch updated actor:', e)
+    }
+  } else if (object.type === 'Note') {
+    console.log('Note update received:', object.id)
+  } else {
+    console.log('Update activity for unknown type:', object.type)
   }
 }
 

@@ -23,7 +23,7 @@ app.get('/', async (c) => {
   }
 
   return c.json({
-    "@context": "https://www.w3.org/ns/activitystreams",
+    "@context": ["https://www.w3.org/ns/activitystreams", "https://w3id.org/security/v1"],
     "type": "Person",
     "id": `${c.env.BASE_URL}/api/actors/${username}`,
     "preferredUsername": user.username,
@@ -31,6 +31,8 @@ app.get('/', async (c) => {
     "summary": user.bio || "",
     "inbox": `${c.env.BASE_URL}/api/actors/${username}/inbox`,
     "outbox": `${c.env.BASE_URL}/api/actors/${username}/outbox`,
+    "followers": `${c.env.BASE_URL}/api/actors/${username}/followers`,
+    "following": `${c.env.BASE_URL}/api/actors/${username}/following`,
     "publicKey": {
       "id": `${c.env.BASE_URL}/api/actors/${username}#main-key`,
       "owner": `${c.env.BASE_URL}/api/actors/${username}`,
