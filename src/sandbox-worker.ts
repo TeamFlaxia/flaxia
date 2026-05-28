@@ -13,20 +13,7 @@ const app = new Hono<{ Bindings: Bindings }>()
 
 app.use('/*', cors())
 
-app.use('/*', async (c, next) => {
-  await next()
-  if (c.res) {
-    const headers = new Headers(c.res.headers)
-    headers.set('Cross-Origin-Opener-Policy', 'same-origin')
-    headers.set('Cross-Origin-Embedder-Policy', 'require-corp')
-    headers.set('X-Content-Type-Options', 'nosniff')
-    c.res = new Response(c.res.body, {
-      status: c.res.status,
-      statusText: c.res.statusText,
-      headers
-    })
-  }
-})
+
 
 app.get('/api/wvfs-zip/:postId/*', async (c) => {
   const ip = c.req.header('CF-Connecting-IP') ?? 'unknown'
