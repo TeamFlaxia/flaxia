@@ -92,8 +92,25 @@ app.post('/inbox', async (c) => {
       return c.json({ error: 'Invalid actor' }, 400)
     }
 
-    // Verify HTTP Signature
-    const publicKeyPem = await fetchActorPublicKey(actorId)
+    // Try to get local user's keys for signed fetch (authorized fetch support)
+    let signKeyPem: string | undefined
+    let signKeyId: string | undefined
+    try {
+      const keyRecord = await c.env.DB.prepare(
+        `SELECT ak.private_key_pem FROM actor_keys ak
+         JOIN users u ON u.id = ak.user_id
+         WHERE u.username = ? COLLATE NOCASE`
+      ).bind(username).first() as { private_key_pem: string } | null
+      if (keyRecord?.private_key_pem) {
+        signKeyPem = keyRecord.private_key_pem
+        signKeyId = `${c.env.BASE_URL}/actors/${username}#main-key`
+      }
+    } catch {
+      // Proceed without signing
+    }
+
+    // Verify HTTP Signature (with signed fetch if keys available)
+    const publicKeyPem = await fetchActorPublicKey(actorId, signKeyPem, signKeyId)
     if (!publicKeyPem) {
       return c.json({ error: 'Could not fetch actor public key' }, 401)
     }

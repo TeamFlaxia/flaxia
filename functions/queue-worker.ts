@@ -476,7 +476,19 @@ async function handleAcceptActivity(activity: any, username: string, actorId: st
     return
   }
 
-  console.log('Follow accepted from:', followActor)
+  // Update ap_following status to accepted
+  const userResult = await env.DB.prepare(
+    `SELECT id FROM users WHERE username = ? COLLATE NOCASE`
+  ).bind(username).first() as { id: string } | null
+
+  if (userResult) {
+    const result = await env.DB.prepare(
+      `UPDATE ap_following SET status = ? WHERE local_user_id = ? AND target_actor_url = ? AND status = 'sent'`
+    ).bind('accepted', userResult.id, followActor).run()
+    console.log('Follow accepted from:', followActor, 'updated:', result.meta?.changes || 0, 'rows')
+  } else {
+    console.log('Follow accepted from:', followActor)
+  }
 }
 
 async function handleLikeActivity(activity: any, username: string, actorId: string, env: Env): Promise<void> {

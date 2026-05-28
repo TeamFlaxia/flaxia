@@ -165,14 +165,29 @@ export async function verifyDigest(request: Request, body: string): Promise<bool
 
 /**
  * Fetch actor's public key from their URL
+ * Optionally signs the request if privateKeyPem and keyId are provided (for authorized fetch)
  */
-export async function fetchActorPublicKey(actorUrl: string): Promise<string | null> {
+export async function fetchActorPublicKey(
+  actorUrl: string,
+  privateKeyPem?: string,
+  keyId?: string
+): Promise<string | null> {
   try {
-    const response = await fetch(actorUrl, {
-      headers: {
-        'Accept': 'application/activity+json, application/ld+json'
-      }
-    })
+    let response: Response | null = null
+
+    // If signing keys provided, use signed fetch
+    if (privateKeyPem && keyId) {
+      response = await signedFetch(actorUrl, privateKeyPem, keyId)
+    }
+
+    // Fall back to unsigned fetch if signed fetch failed or no keys provided
+    if (!response || !response.ok) {
+      response = await fetch(actorUrl, {
+        headers: {
+          'Accept': 'application/activity+json, application/ld+json'
+        }
+      })
+    }
 
     if (!response.ok) {
       console.error(`Failed to fetch actor: ${response.status}`)
@@ -307,4 +322,52 @@ export async function signRequest(
   headers.set('Signature', `keyId="${keyId}",algorithm="rsa-sha256",headers="(request-target) host date digest",signature="${signature}"`)
 
   return headers
+}
+
+/**
+ * Perform a signed GET request for ActivityPub (authorized fetch / secure mode).
+ * Uses the same signing approach as signRequest but for GET requests (no body/digest).
+ */
+export async function signedFetch(
+  url: string,
+  privateKeyPem: string,
+  keyId: string
+): Promise<Response | null> {
+  try {
+    const headers = new Headers()
+    headers.set('Accept', 'application/activity+json, application/ld+json')
+    headers.set('Date', new Date().toUTCString())
+
+    const parsedUrl = new URL(url)
+    const path = parsedUrl.pathname + parsedUrl.search
+    const signingString = [
+      `(request-target): get ${path}`,
+      `host: ${parsedUrl.host}`,
+      `date: ${headers.get('Date')}`
+    ].join('\n')
+
+    const encoder = new TextEncoder()
+    const signingArray = encoder.encode(signingString)
+    const privateKey = await importPrivateKey(privateKeyPem)
+    const signatureBuffer = await crypto.subtle.sign(
+      'RSASSA-PKCS1-v1_5',
+      privateKey,
+      signingArray
+    )
+    const signatureArray = new Uint8Array(signatureBuffer)
+    const signature = btoa(String.fromCharCode(...signatureArray))
+
+    headers.set('Signature', `keyId="${keyId}",algorithm="rsa-sha256",headers="(request-target) host date",signature="${signature}"`)
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(15000)
+    })
+
+    return response
+  } catch (error) {
+    console.error('Signed GET error:', error)
+    return null
+  }
 }
