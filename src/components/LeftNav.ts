@@ -426,6 +426,12 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
   if (existingAuthButtons) {
     existingAuthButtons.remove()
   }
+
+  // Remove existing legal links if present
+  const existingLegalLinks = leftNav.getElement().querySelector('.nav-legal-links')
+  if (existingLegalLinks) {
+    existingLegalLinks.remove()
+  }
   
   // Rebuild navigation items
   const navItems = leftNav.getElement().querySelector('.nav-items')
