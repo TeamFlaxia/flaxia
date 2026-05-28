@@ -152,6 +152,12 @@ export class PostCard {
       container.appendChild(pollEl)
     }
 
+    // Link Preview section (under text/poll/tags, above PostStage/Actions)
+    const previewContainer = document.createElement('div')
+    previewContainer.className = 'post-link-preview-container'
+    container.appendChild(previewContainer)
+    this.loadLinkPreview(previewContainer)
+
     // Post stage (16:9 container for GIF/iframe/thumbnail) - only show if has attachments
     if (this.props.post.gif_key || this.props.post.payload_key || this.props.post.swf_key || this.props.post.thumbnail_key) {
       this.postStageElement = createPostStage({
@@ -1256,6 +1262,311 @@ export class PostCard {
     if (hours > 0) return t('poll.remaining_hours', { count: hours })
     if (minutes > 0) return t('poll.remaining_minutes', { count: minutes })
     return t('poll.remaining_less_minute')
+  }
+
+  private getYouTubeId(url: string): string | null {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/i
+    const match = url.match(regExp)
+    return (match && match[2].length === 11) ? match[2] : null
+  }
+
+  private loadLinkPreview(container: HTMLElement): void {
+    const text = this.props.post.text
+    if (!text) return
+
+    // Extract first URL starting with https?:// or www.
+    const urlRegex = /(https?:\/\/[^\s<>()]+|www\.[^\s<>()]+)/i
+    const match = text.match(urlRegex)
+    if (!match) return
+
+    let url = match[1]
+    if (url.toLowerCase().startsWith('www.')) {
+      url = 'https://' + url
+    }
+
+    // Ignore internal API endpoints or files to avoid fetching previews for attachments
+    if (url.includes('/api/images/') || 
+        url.includes('/api/audio/') || 
+        url.includes('/api/zip/') || 
+        url.includes('/api/swf/') || 
+        url.includes('/api/thumbnail/') || 
+        url.includes('/api/wvfs-zip/')) {
+      return
+    }
+
+    fetch(`/api/link-preview?url=${encodeURIComponent(url)}`)
+      .then(res => {
+        if (!res.ok) throw new Error('Preview fetch failed')
+        return res.json()
+      })
+      .then((data: any) => {
+        if (data && (data.title || data.description || data.image)) {
+          const card = this.createLinkPreviewCard(data)
+          container.appendChild(card)
+        }
+      })
+      .catch(err => {
+        console.warn('Failed to load link preview:', err)
+      })
+  }
+
+  private createLinkPreviewCard(data: {
+    title: string
+    description: string
+    image: string
+    siteName: string
+    url: string
+  }): HTMLElement {
+    const card = document.createElement('a')
+    card.href = data.url
+    card.target = '_blank'
+    card.rel = 'noopener noreferrer'
+    card.className = 'link-preview-card'
+    
+    card.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-top: 0.75rem;
+      margin-bottom: 1rem;
+      text-decoration: none;
+      color: inherit;
+      background: var(--bg-secondary);
+      transition: background 0.2s, border-color 0.2s;
+    `
+    
+    card.addEventListener('mouseenter', () => {
+      card.style.background = 'var(--bg-input)'
+      card.style.borderColor = 'var(--accent)'
+    })
+    card.addEventListener('mouseleave', () => {
+      card.style.background = 'var(--bg-secondary)'
+      card.style.borderColor = 'var(--border)'
+    })
+    
+    card.addEventListener('click', (e) => {
+      e.stopPropagation()
+    })
+
+    const youtubeId = this.getYouTubeId(data.url)
+    const isDirectVideo = /\.(mp4|webm|ogg)$/i.test(data.url)
+
+    if (isDirectVideo) {
+      const videoContainer = document.createElement('div')
+      videoContainer.className = 'link-preview-video-container'
+      videoContainer.style.cssText = `
+        width: 100%;
+        background: #000;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      `
+      const video = document.createElement('video')
+      video.src = data.url
+      video.controls = true
+      video.preload = 'metadata'
+      video.style.cssText = `
+        width: 100%;
+        max-height: 360px;
+        display: block;
+      `
+      video.addEventListener('click', (e) => {
+        e.stopPropagation()
+      })
+      videoContainer.appendChild(video)
+      card.appendChild(videoContainer)
+    } else if (youtubeId) {
+      const imgContainer = document.createElement('div')
+      imgContainer.className = 'link-preview-image-container'
+      imgContainer.style.cssText = `
+        position: relative;
+        width: 100%;
+        padding-bottom: 56.25%; /* 16:9 for YouTube */
+        background: #000;
+        overflow: hidden;
+        border-bottom: 1px solid var(--border);
+        cursor: pointer;
+      `
+      
+      const img = document.createElement('img')
+      img.src = data.image || `https://img.youtube.com/vi/${youtubeId}/mqdefault.jpg`
+      img.loading = 'lazy'
+      img.style.cssText = `
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transition: opacity 0.2s;
+      `
+      
+      const playButton = document.createElement('div')
+      playButton.className = 'link-preview-play-button'
+      playButton.style.cssText = `
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        background: rgba(239, 68, 68, 0.9);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 1.5rem;
+        box-shadow: 0 0 20px rgba(239, 68, 68, 0.6);
+        transition: transform 0.2s, background 0.2s;
+      `
+      playButton.innerHTML = '<span style="margin-left: 4px; display: flex; align-items: center; justify-content: center;">▶</span>'
+      
+      imgContainer.appendChild(img)
+      imgContainer.appendChild(playButton)
+      card.appendChild(imgContainer)
+      
+      imgContainer.addEventListener('mouseenter', () => {
+        playButton.style.transform = 'translate(-50%, -50%) scale(1.1)'
+        playButton.style.background = 'rgba(220, 38, 38, 1)'
+      })
+      imgContainer.addEventListener('mouseleave', () => {
+        playButton.style.transform = 'translate(-50%, -50%) scale(1)'
+        playButton.style.background = 'rgba(239, 68, 68, 0.9)'
+      })
+      
+      imgContainer.addEventListener('click', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        
+        const iframe = document.createElement('iframe')
+        iframe.src = `https://www.youtube.com/embed/${youtubeId}?autoplay=1`
+        iframe.title = data.title || 'YouTube video'
+        iframe.frameBorder = '0'
+        iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share'
+        iframe.allowFullscreen = true
+        iframe.style.cssText = `
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          border: none;
+        `
+        
+        imgContainer.innerHTML = ''
+        imgContainer.appendChild(iframe)
+      })
+    } else {
+      const imgContainer = document.createElement('div')
+      imgContainer.className = 'link-preview-image-container'
+      
+      if (data.image) {
+        imgContainer.style.cssText = `
+          position: relative;
+          width: 100%;
+          padding-bottom: 52.25%;
+          background: var(--bg-input);
+          overflow: hidden;
+          border-bottom: 1px solid var(--border);
+        `
+        
+        const img = document.createElement('img')
+        img.src = data.image
+        img.loading = 'lazy'
+        img.style.cssText = `
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        `
+        imgContainer.appendChild(img)
+      } else {
+        imgContainer.style.cssText = `
+          position: relative;
+          width: 100%;
+          padding-bottom: 25%;
+          background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 50%, rgba(236, 72, 153, 0.15) 100%), var(--bg-input);
+          overflow: hidden;
+          border-bottom: 1px solid var(--border);
+        `
+        
+        const placeholderSymbol = document.createElement('div')
+        placeholderSymbol.style.cssText = `
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          font-size: 2rem;
+          opacity: 0.65;
+          filter: drop-shadow(0 0 12px rgba(168, 85, 247, 0.4));
+          user-select: none;
+        `
+        placeholderSymbol.textContent = '🌐'
+        imgContainer.appendChild(placeholderSymbol)
+      }
+      card.appendChild(imgContainer)
+    }
+    
+    const textContainer = document.createElement('div')
+    textContainer.className = 'link-preview-text'
+    textContainer.style.cssText = `
+      padding: 0.75rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    `
+    
+    const siteName = document.createElement('div')
+    siteName.className = 'link-preview-site-name'
+    siteName.style.cssText = `
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      font-family: monospace;
+      text-transform: lowercase;
+    `
+    siteName.textContent = data.siteName
+    textContainer.appendChild(siteName)
+    
+    if (data.title) {
+      const title = document.createElement('div')
+      title.className = 'link-preview-title'
+      title.style.cssText = `
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      `
+      title.textContent = data.title
+      textContainer.appendChild(title)
+    }
+    
+    if (data.description) {
+      const desc = document.createElement('div')
+      desc.className = 'link-preview-description'
+      desc.style.cssText = `
+        font-size: 0.825rem;
+        color: var(--text-muted);
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        line-height: 1.4;
+      `
+      desc.textContent = data.description
+      textContainer.appendChild(desc)
+    }
+    
+    card.appendChild(textContainer)
+    return card
   }
 }
 

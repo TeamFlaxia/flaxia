@@ -508,6 +508,144 @@ app.get('/api/swf/:postId', async (c) => {
   }
 })
 
+// Helper functions for link preview
+function decodeHtmlEntities(str: string): string {
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x2F;/g, '/')
+}
+
+function parseMetaTags(html: string, baseUrl: string) {
+  const result = {
+    title: '',
+    description: '',
+    image: '',
+    siteName: '',
+    url: baseUrl
+  }
+
+  // 1. Title
+  const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) ||
+                  html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i) ||
+                  html.match(/<meta[^>]+name=["']twitter:title["'][^>]+content=["']([^"']+)["']/i) ||
+                  html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:title["']/i)
+  if (ogTitle) {
+    result.title = decodeHtmlEntities(ogTitle[1])
+  } else {
+    const titleTag = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
+    if (titleTag) {
+      result.title = decodeHtmlEntities(titleTag[1].trim())
+    }
+  }
+
+  // 2. Description
+  const ogDesc = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i) ||
+                 html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:description["']/i) ||
+                 html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i) ||
+                 html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i) ||
+                 html.match(/<meta[^>]+name=["']twitter:description["'][^>]+content=["']([^"']+)["']/i) ||
+                 html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:description["']/i)
+  if (ogDesc) {
+    result.description = decodeHtmlEntities(ogDesc[1])
+  }
+
+  // 3. Image
+  const ogImage = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
+                  html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i) ||
+                  html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i) ||
+                  html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i)
+  if (ogImage) {
+    let imgUrl = ogImage[1]
+    if (imgUrl.startsWith('/') || imgUrl.startsWith('.')) {
+      try {
+        imgUrl = new URL(imgUrl, baseUrl).toString()
+      } catch {}
+    }
+    result.image = imgUrl
+  }
+
+  // 4. Site Name
+  const ogSiteName = html.match(/<meta[^>]+property=["']og:site_name["'][^>]+content=["']([^"']+)["']/i) ||
+                     html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:site_name["']/i)
+  if (ogSiteName) {
+    result.siteName = decodeHtmlEntities(ogSiteName[1])
+  } else {
+    try {
+      result.siteName = new URL(baseUrl).hostname
+    } catch {}
+  }
+
+  return result
+}
+
+// GET /api/link-preview - Scrape OpenGraph meta tags of a URL
+app.get('/api/link-preview', async (c) => {
+  const urlString = c.req.query('url')
+  if (!urlString) {
+    return c.json({ error: 'Missing url parameter' }, 400)
+  }
+
+  try {
+    const targetUrl = new URL(urlString)
+    if (targetUrl.protocol !== 'http:' && targetUrl.protocol !== 'https:') {
+      return c.json({ error: 'Invalid protocol' }, 400)
+    }
+
+    const response = await fetch(targetUrl.toString(), {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 FlaxiaPreviewBot/1.0',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+      },
+      redirect: 'follow'
+    })
+
+    if (!response.ok) {
+      return c.json({ error: `Failed to fetch URL: ${response.statusText}` }, 400)
+    }
+
+    const contentType = response.headers.get('content-type') || ''
+    if (!contentType.includes('text/html')) {
+      return c.json({
+        title: targetUrl.pathname.split('/').pop() || targetUrl.hostname,
+        description: '',
+        image: contentType.startsWith('image/') ? targetUrl.toString() : '',
+        siteName: targetUrl.hostname,
+        url: targetUrl.toString()
+      })
+    }
+
+    const reader = response.body?.getReader()
+    let html = ''
+    if (reader) {
+      const decoder = new TextDecoder('utf-8')
+      let bytesRead = 0
+      const maxBytes = 256 * 1024 // 256KB
+      
+      while (bytesRead < maxBytes) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (value) {
+          bytesRead += value.length
+          html += decoder.decode(value, { stream: true })
+        }
+      }
+      html += decoder.decode()
+    } else {
+      html = await response.text()
+    }
+
+    const previewData = parseMetaTags(html, targetUrl.toString())
+    return c.json(previewData)
+  } catch (error: any) {
+    console.error('Link preview error:', error)
+    return c.json({ error: 'Failed to fetch link preview', details: error?.message || 'Unknown error' }, 500)
+  }
+})
+
 // Auth middleware - sets user context (null if not authenticated)
 app.use('/api/*', async (c, next) => {
   // Skip auth for specific public routes that don't need user context at all
@@ -516,6 +654,7 @@ app.use('/api/*', async (c, next) => {
       (c.req.method === 'GET' && c.req.path.startsWith('/api/audio/')) ||
       (c.req.method === 'GET' && c.req.path.startsWith('/api/zip/')) ||
       (c.req.method === 'GET' && c.req.path.startsWith('/api/swf/')) ||
+      (c.req.method === 'GET' && c.req.path === '/api/link-preview') ||
       (c.req.method === 'GET' && c.req.path === '/api/games') ||
       (c.req.method === 'GET' && c.req.path.startsWith('/api/ads/') && c.req.path.endsWith('/payload')) ||
       (c.req.method === 'GET' && c.req.path.startsWith('/api/wvfs-zip/'))) {
