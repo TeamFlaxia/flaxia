@@ -631,8 +631,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Clear app content
       app.innerHTML = ''
       
-      // Handle auth pages (full screen)
+      // Handle auth pages (full screen, no nav)
       if (view === 'login') {
+        if (leftNavOpenButton) {
+          leftNavOpenButton.remove()
+          leftNavOpenButton = null
+        }
+        if (leftNavOverlay) {
+          leftNavOverlay.remove()
+          leftNavOverlay = null
+        }
         currentView = 'login'
         currentPostId = null
         currentUsername = null
@@ -649,6 +657,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
       
       if (view === 'register') {
+        if (leftNavOpenButton) {
+          leftNavOpenButton.remove()
+          leftNavOpenButton = null
+        }
+        if (leftNavOverlay) {
+          leftNavOverlay.remove()
+          leftNavOverlay = null
+        }
         currentView = 'register'
         currentPostId = null
         currentUsername = null
@@ -666,6 +682,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Handle legal pages (public, no auth required, no layout)
       if (view === 'terms' || view === 'privacy' || view === 'about' || view === 'whitepaper') {
+        if (leftNavOpenButton) {
+          leftNavOpenButton.remove()
+          leftNavOpenButton = null
+        }
+        if (leftNavOverlay) {
+          leftNavOverlay.remove()
+          leftNavOverlay = null
+        }
         currentView = view
         currentPostId = null
         currentUsername = null

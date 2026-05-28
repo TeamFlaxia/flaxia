@@ -51,7 +51,7 @@ export class PostCard {
     if (this.props.postIndex !== undefined) {
       container.setAttribute('data-post-index', String(this.props.postIndex))
     }
-    container.style.cursor = 'pointer'
+    container.style.cssText = 'max-width: 100%; overflow-x: hidden; box-sizing: border-box; word-break: break-word; cursor: pointer;'
 
     // Header container with ... menu
     const headerContainer = document.createElement('div')
@@ -155,6 +155,7 @@ export class PostCard {
     // Link Preview section (under text/poll/tags, above PostStage/Actions)
     const previewContainer = document.createElement('div')
     previewContainer.className = 'post-link-preview-container'
+    previewContainer.style.cssText = 'overflow: hidden;'
     container.appendChild(previewContainer)
     this.loadLinkPreview(previewContainer)
 
@@ -1265,9 +1266,43 @@ export class PostCard {
   }
 
   private getYouTubeId(url: string): string | null {
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/i
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|\&v=)([^#\&\?]*).*/i
     const match = url.match(regExp)
-    return (match && match[2].length === 11) ? match[2] : null
+    return (match && match[2].length >= 11) ? match[2] : null
+  }
+
+  private getVimeoId(url: string): string | null {
+    const regExp = /vimeo\.com\/(?:.*\/)?(\d+)/i
+    const match = url.match(regExp)
+    return match ? match[1] : null
+  }
+
+  private getDailymotionId(url: string): string | null {
+    const regExp = /(?:dailymotion\.com\/video\/|dai\.ly\/)([a-zA-Z0-9]+)/i
+    const match = url.match(regExp)
+    return match ? match[1] : null
+  }
+
+  private getTwitchId(url: string): { type: 'video' | 'clip' | 'channel'; id: string } | null {
+    const videoMatch = url.match(/twitch\.tv\/videos\/(\d+)/i)
+    if (videoMatch) return { type: 'video', id: videoMatch[1] }
+    const clipMatch = url.match(/twitch\.tv\/(?:\w+\/)?clip\/([a-zA-Z0-9_-]+)/i)
+    if (clipMatch) return { type: 'clip', id: clipMatch[1] }
+    const channelMatch = url.match(/twitch\.tv\/([a-zA-Z0-9_]+)\/?$/i)
+    if (channelMatch) return { type: 'channel', id: channelMatch[1] }
+    return null
+  }
+
+  private getNiconicoId(url: string): string | null {
+    const regExp = /nicovideo\.jp\/watch\/((?:sm|so|nm|lv|ca)\d+)/i
+    const match = url.match(regExp)
+    return match ? match[1] : null
+  }
+
+  private getBilibiliId(url: string): string | null {
+    const regExp = /bilibili\.com\/video\/(BV[a-zA-Z0-9]+)/i
+    const match = url.match(regExp)
+    return match ? match[1] : null
   }
 
   private loadLinkPreview(container: HTMLElement): void {
@@ -1300,7 +1335,7 @@ export class PostCard {
         return res.json()
       })
       .then((data: any) => {
-        if (data && (data.title || data.description || data.image)) {
+        if (data && data.url) {
           const card = this.createLinkPreviewCard(data)
           container.appendChild(card)
         }
@@ -1310,12 +1345,113 @@ export class PostCard {
       })
   }
 
+  private createEmbedSection(config: {
+    embedUrl: string
+    thumbnailUrl: string
+    title: string
+    aspectRatio?: string
+  }): HTMLElement {
+    const container = document.createElement('div')
+    container.className = 'link-preview-image-container'
+    const aspectRatio = config.aspectRatio || '56.25%'
+    container.style.cssText = `
+      position: relative;
+      width: 100%;
+      padding-bottom: ${aspectRatio};
+      background: #000;
+      overflow: hidden;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+    `
+
+    if (config.thumbnailUrl) {
+      const img = document.createElement('img')
+      img.src = config.thumbnailUrl
+      img.loading = 'lazy'
+      img.style.cssText = `
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transition: opacity 0.2s;
+      `
+      container.appendChild(img)
+    } else {
+      container.style.background = 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 50%, rgba(236, 72, 153, 0.15) 100%), var(--bg-input)'
+    }
+
+    const playButton = document.createElement('div')
+    playButton.className = 'link-preview-play-button'
+    playButton.style.cssText = `
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: rgba(239, 68, 68, 0.9);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 1.5rem;
+      box-shadow: 0 0 20px rgba(239, 68, 68, 0.6);
+      transition: transform 0.2s, background 0.2s;
+    `
+    playButton.innerHTML = '<span style="margin-left: 4px; display: flex; align-items: center; justify-content: center;">▶</span>'
+
+    container.appendChild(playButton)
+
+    container.addEventListener('mouseenter', () => {
+      playButton.style.transform = 'translate(-50%, -50%) scale(1.1)'
+      playButton.style.background = 'rgba(220, 38, 38, 1)'
+    })
+    container.addEventListener('mouseleave', () => {
+      playButton.style.transform = 'translate(-50%, -50%) scale(1)'
+      playButton.style.background = 'rgba(239, 68, 68, 0.9)'
+    })
+
+    container.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const iframe = document.createElement('iframe')
+      iframe.src = config.embedUrl
+      iframe.title = config.title
+      iframe.frameBorder = '0'
+      iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share'
+      iframe.allowFullscreen = true
+      iframe.style.cssText = `
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        border: none;
+      `
+      container.innerHTML = ''
+      container.appendChild(iframe)
+    })
+
+    return container
+  }
+
   private createLinkPreviewCard(data: {
     title: string
     description: string
     image: string
     siteName: string
     url: string
+    type?: string
+    video?: {
+      url?: string
+      secureUrl?: string
+      type?: string
+      width?: number
+      height?: number
+    }
   }): HTMLElement {
     const card = document.createElement('a')
     card.href = data.url
@@ -1326,6 +1462,7 @@ export class PostCard {
     card.style.cssText = `
       display: flex;
       flex-direction: column;
+      min-width: 0;
       border: 1px solid var(--border);
       border-radius: 12px;
       overflow: hidden;
@@ -1351,123 +1488,18 @@ export class PostCard {
     })
 
     const youtubeId = this.getYouTubeId(data.url)
-    const isDirectVideo = /\.(mp4|webm|ogg)$/i.test(data.url)
+    const thumbnailSrc = youtubeId && !data.image
+      ? `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg`
+      : data.image
 
-    if (isDirectVideo) {
-      const videoContainer = document.createElement('div')
-      videoContainer.className = 'link-preview-video-container'
-      videoContainer.style.cssText = `
-        width: 100%;
-        background: #000;
-        border-bottom: 1px solid var(--border);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-      `
-      const video = document.createElement('video')
-      video.src = data.url
-      video.controls = true
-      video.preload = 'metadata'
-      video.style.cssText = `
-        width: 100%;
-        max-height: 360px;
-        display: block;
-      `
-      video.addEventListener('click', (e) => {
-        e.stopPropagation()
-      })
-      videoContainer.appendChild(video)
-      card.appendChild(videoContainer)
-    } else if (youtubeId) {
-      const imgContainer = document.createElement('div')
-      imgContainer.className = 'link-preview-image-container'
-      imgContainer.style.cssText = `
-        position: relative;
-        width: 100%;
-        padding-bottom: 56.25%; /* 16:9 for YouTube */
-        background: #000;
-        overflow: hidden;
-        border-bottom: 1px solid var(--border);
-        cursor: pointer;
-      `
-      
-      const img = document.createElement('img')
-      img.src = data.image || `https://img.youtube.com/vi/${youtubeId}/mqdefault.jpg`
-      img.loading = 'lazy'
-      img.style.cssText = `
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        transition: opacity 0.2s;
-      `
-      
-      const playButton = document.createElement('div')
-      playButton.className = 'link-preview-play-button'
-      playButton.style.cssText = `
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        width: 60px;
-        height: 60px;
-        border-radius: 50%;
-        background: rgba(239, 68, 68, 0.9);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: white;
-        font-size: 1.5rem;
-        box-shadow: 0 0 20px rgba(239, 68, 68, 0.6);
-        transition: transform 0.2s, background 0.2s;
-      `
-      playButton.innerHTML = '<span style="margin-left: 4px; display: flex; align-items: center; justify-content: center;">▶</span>'
-      
-      imgContainer.appendChild(img)
-      imgContainer.appendChild(playButton)
-      card.appendChild(imgContainer)
-      
-      imgContainer.addEventListener('mouseenter', () => {
-        playButton.style.transform = 'translate(-50%, -50%) scale(1.1)'
-        playButton.style.background = 'rgba(220, 38, 38, 1)'
-      })
-      imgContainer.addEventListener('mouseleave', () => {
-        playButton.style.transform = 'translate(-50%, -50%) scale(1)'
-        playButton.style.background = 'rgba(239, 68, 68, 0.9)'
-      })
-      
-      imgContainer.addEventListener('click', (e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        
-        const iframe = document.createElement('iframe')
-        iframe.src = `https://www.youtube.com/embed/${youtubeId}?autoplay=1`
-        iframe.title = data.title || 'YouTube video'
-        iframe.frameBorder = '0'
-        iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share'
-        iframe.allowFullscreen = true
-        iframe.style.cssText = `
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          border: none;
-        `
-        
-        imgContainer.innerHTML = ''
-        imgContainer.appendChild(iframe)
-      })
-    } else {
+    {
       const imgContainer = document.createElement('div')
       imgContainer.className = 'link-preview-image-container'
       
-      if (data.image) {
+      if (thumbnailSrc) {
         imgContainer.style.cssText = `
           position: relative;
-          width: 100%;
+          min-width: 0;
           padding-bottom: 52.25%;
           background: var(--bg-input);
           overflow: hidden;
@@ -1475,7 +1507,7 @@ export class PostCard {
         `
         
         const img = document.createElement('img')
-        img.src = data.image
+        img.src = thumbnailSrc
         img.loading = 'lazy'
         img.style.cssText = `
           position: absolute;
@@ -1485,11 +1517,89 @@ export class PostCard {
           height: 100%;
           object-fit: cover;
         `
+        img.onerror = () => {
+          imgContainer.innerHTML = ''
+          imgContainer.style.cssText = `
+            position: relative;
+            min-width: 0;
+            padding-bottom: 25%;
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 50%, rgba(236, 72, 153, 0.15) 100%), var(--bg-input);
+            overflow: hidden;
+            border-bottom: 1px solid var(--border);
+          `
+          const fallbackIcon = document.createElement('div')
+          fallbackIcon.style.cssText = `
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 2rem;
+            opacity: 0.65;
+            filter: drop-shadow(0 0 12px rgba(168, 85, 247, 0.4));
+            user-select: none;
+          `
+          fallbackIcon.textContent = '🌐'
+          imgContainer.appendChild(fallbackIcon)
+        }
         imgContainer.appendChild(img)
+
+        if (youtubeId) {
+          const playBadge = document.createElement('div')
+          playBadge.style.cssText = `
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: rgba(239, 68, 68, 0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.4rem;
+            box-shadow: 0 0 16px rgba(239, 68, 68, 0.5);
+            pointer-events: none;
+            transition: transform 0.2s, background 0.2s;
+          `
+          playBadge.innerHTML = '<span style="margin-left: 3px;">▶</span>'
+          imgContainer.appendChild(playBadge)
+
+          imgContainer.addEventListener('mouseenter', () => {
+            playBadge.style.transform = 'translate(-50%, -50%) scale(1.1)'
+            playBadge.style.background = 'rgba(220, 38, 38, 1)'
+          })
+          imgContainer.addEventListener('mouseleave', () => {
+            playBadge.style.transform = 'translate(-50%, -50%) scale(1)'
+            playBadge.style.background = 'rgba(239, 68, 68, 0.9)'
+          })
+
+          imgContainer.addEventListener('click', (e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            const iframe = document.createElement('iframe')
+            iframe.src = `https://www.youtube.com/embed/${youtubeId}?autoplay=1&mute=1`
+            iframe.title = data.title || 'YouTube video'
+            iframe.frameBorder = '0'
+            iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share'
+            iframe.allowFullscreen = true
+            iframe.style.cssText = `
+              position: absolute;
+              top: 0;
+              left: 0;
+              width: 100%;
+              height: 100%;
+              border: none;
+            `
+            imgContainer.innerHTML = ''
+            imgContainer.appendChild(iframe)
+          })
+        }
       } else {
         imgContainer.style.cssText = `
           position: relative;
-          width: 100%;
+          min-width: 0;
           padding-bottom: 25%;
           background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 50%, rgba(236, 72, 153, 0.15) 100%), var(--bg-input);
           overflow: hidden;
@@ -1520,6 +1630,8 @@ export class PostCard {
       display: flex;
       flex-direction: column;
       gap: 0.25rem;
+      min-width: 0;
+      word-break: break-word;
     `
     
     const siteName = document.createElement('div')

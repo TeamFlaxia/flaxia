@@ -525,16 +525,54 @@ function parseMetaTags(html: string, baseUrl: string) {
     description: '',
     image: '',
     siteName: '',
-    url: baseUrl
+    url: baseUrl,
+    type: '',
+    video: {
+      url: '',
+      secureUrl: '',
+      type: '',
+      width: 0,
+      height: 0
+    }
+  }
+
+  const matchMeta = (property: string): string | null => {
+    const patterns = [
+      new RegExp(`<meta[^>]+property=["']${property}["'][^>]+content=["']([^"']+)["']`, 'i'),
+      new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+property=["']${property}["']`, 'i')
+    ]
+    for (const p of patterns) {
+      const m = html.match(p)
+      if (m) return m[1]
+    }
+    return null
+  }
+
+  const matchMetaName = (name: string): string | null => {
+    const patterns = [
+      new RegExp(`<meta[^>]+name=["']${name}["'][^>]+content=["']([^"']+)["']`, 'i'),
+      new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+name=["']${name}["']`, 'i')
+    ]
+    for (const p of patterns) {
+      const m = html.match(p)
+      if (m) return m[1]
+    }
+    return null
+  }
+
+  const resolveUrl = (url: string): string => {
+    if (url.startsWith('//')) {
+      try { return new URL(url, baseUrl).toString() } catch {}
+    } else if (url.startsWith('/') || url.startsWith('.')) {
+      try { return new URL(url, baseUrl).toString() } catch {}
+    }
+    return url
   }
 
   // 1. Title
-  const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i) ||
-                  html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:title["']/i) ||
-                  html.match(/<meta[^>]+name=["']twitter:title["'][^>]+content=["']([^"']+)["']/i) ||
-                  html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:title["']/i)
+  const ogTitle = matchMeta('og:title') || matchMetaName('twitter:title')
   if (ogTitle) {
-    result.title = decodeHtmlEntities(ogTitle[1])
+    result.title = decodeHtmlEntities(ogTitle)
   } else {
     const titleTag = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
     if (titleTag) {
@@ -543,40 +581,54 @@ function parseMetaTags(html: string, baseUrl: string) {
   }
 
   // 2. Description
-  const ogDesc = html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i) ||
-                 html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:description["']/i) ||
-                 html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i) ||
-                 html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i) ||
-                 html.match(/<meta[^>]+name=["']twitter:description["'][^>]+content=["']([^"']+)["']/i) ||
-                 html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:description["']/i)
+  const ogDesc = matchMeta('og:description') || matchMetaName('description') || matchMetaName('twitter:description')
   if (ogDesc) {
-    result.description = decodeHtmlEntities(ogDesc[1])
+    result.description = decodeHtmlEntities(ogDesc)
   }
 
   // 3. Image
-  const ogImage = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
-                  html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i) ||
-                  html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i) ||
-                  html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i)
+  const ogImage = matchMeta('og:image') || matchMetaName('twitter:image')
   if (ogImage) {
-    let imgUrl = ogImage[1]
-    if (imgUrl.startsWith('/') || imgUrl.startsWith('.')) {
-      try {
-        imgUrl = new URL(imgUrl, baseUrl).toString()
-      } catch {}
-    }
-    result.image = imgUrl
+    result.image = resolveUrl(ogImage)
   }
 
   // 4. Site Name
-  const ogSiteName = html.match(/<meta[^>]+property=["']og:site_name["'][^>]+content=["']([^"']+)["']/i) ||
-                     html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:site_name["']/i)
+  const ogSiteName = matchMeta('og:site_name')
   if (ogSiteName) {
-    result.siteName = decodeHtmlEntities(ogSiteName[1])
+    result.siteName = decodeHtmlEntities(ogSiteName)
   } else {
     try {
       result.siteName = new URL(baseUrl).hostname
     } catch {}
+  }
+
+  // 5. og:type
+  const ogType = matchMeta('og:type')
+  if (ogType) {
+    result.type = ogType
+  }
+
+  // 6. Video embed info
+  const ogVideoUrl = matchMeta('og:video:url') || matchMeta('og:video')
+  const ogVideoSecureUrl = matchMeta('og:video:secure_url')
+  const ogVideoType = matchMeta('og:video:type')
+  const ogVideoWidth = matchMeta('og:video:width')
+  const ogVideoHeight = matchMeta('og:video:height')
+
+  if (ogVideoUrl) {
+    result.video.url = resolveUrl(ogVideoUrl)
+  }
+  if (ogVideoSecureUrl) {
+    result.video.secureUrl = ogVideoSecureUrl
+  }
+  if (ogVideoType) {
+    result.video.type = ogVideoType
+  }
+  if (ogVideoWidth) {
+    result.video.width = parseInt(ogVideoWidth, 10) || 0
+  }
+  if (ogVideoHeight) {
+    result.video.height = parseInt(ogVideoHeight, 10) || 0
   }
 
   return result
