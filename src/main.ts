@@ -17,6 +17,7 @@ import { createAdminUsersTab } from './components/AdminUsersTab.js'
 import { createAdminAdsTab } from './components/AdminAdsTab.js'
 import { createSettingsPage } from './components/SettingsPage.js'
 import { createSearchPage } from './components/SearchPage.js'
+import { createBookmarksPage } from './components/BookmarksPage.js'
 import { initPerformanceMonitoring } from './lib/performance.js'
 import { initI18n } from './lib/i18n.js'
 import { safeRemoveFromBody } from './lib/dom-utils.js'
@@ -37,7 +38,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await initI18n()
     
     // Routing state
-    let currentView: 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'search' | 'notifications' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings' | 'arcade' = 'timeline'
+    let currentView: 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'search' | 'notifications' | 'bookmarks' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings' | 'arcade' = 'timeline'
     let currentPostId: string | null = null
     let currentUsername: string | null = null
     let currentTag: string | null = null
@@ -54,6 +55,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let settingsPage: any = null
     let arcadePage: any = null
     let searchPage: any = null
+    let bookmarksPage: any = null
     let adminLayout: any = null
     let adminAlertsTab: any = null
     let adminHiddenTab: any = null
@@ -440,6 +442,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         return { view: 'notifications' as const, postId: null, username: null, tag: null }
       }
 
+      // Bookmarks route - requires auth
+      if (cleanPath === '/bookmarks') {
+        console.log('Bookmarks route detected')
+        return { view: 'bookmarks' as const, postId: null, username: null, tag: null }
+      }
+
       // Settings route - requires auth
       if (cleanPath === '/settings') {
         console.log('Settings route detected')
@@ -481,7 +489,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     
     // Navigate to view
-    const navigateTo = async (view: 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'search' | 'notifications' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings' | 'arcade', postId?: string, username?: string, tag?: string, adminTab?: 'alerts' | 'hidden' | 'users', searchQuery?: string, searchType?: 'posts' | 'users' | 'arcade') => {
+    const navigateTo = async (view: 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'search' | 'notifications' | 'bookmarks' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings' | 'arcade', postId?: string, username?: string, tag?: string, adminTab?: 'alerts' | 'hidden' | 'users', searchQuery?: string, searchType?: 'posts' | 'users' | 'arcade') => {
       console.log('Navigate to:', view, postId, username, tag, 'Current view:', currentView, 'adminTab:', adminTab)
 
       // Close mobile nav if open
@@ -529,13 +537,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           settingsPage.destroy()
           settingsPage = null
         }
-        if (arcadePage) {
-          arcadePage.destroy()
-          arcadePage = null
-        }
-        if (searchPage) {
-          searchPage.destroy()
-          searchPage = null
+        if (bookmarksPage) {
+          bookmarksPage.destroy()
+          bookmarksPage = null
         }
       } else {
         // Auth guard for protected routes
@@ -562,6 +566,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           } else if (currentView === 'arcade' && arcadePage) {
             cachedContentComponent = { view: 'arcade', component: arcadePage, scrollY: window.scrollY }
             arcadePage = null
+          } else if (currentView === 'bookmarks' && bookmarksPage) {
+            cachedContentComponent = { view: 'bookmarks', component: bookmarksPage, scrollY: window.scrollY }
+            bookmarksPage = null
           }
         }
 
@@ -602,6 +609,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (settingsPage) {
           settingsPage.destroy()
           settingsPage = null
+        }
+        if (bookmarksPage) {
+          bookmarksPage.destroy()
+          bookmarksPage = null
         }
         if (arcadePage) {
           arcadePage.destroy()
@@ -790,6 +801,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')
+            } else if (item === 'bookmarks') {
+              window.history.pushState({}, '', '/bookmarks')
+              navigateTo('bookmarks')
             } else if (item === 'settings') {
               window.history.pushState({}, '', '/settings')
               navigateTo('settings')
@@ -888,6 +902,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')
+            } else if (item === 'bookmarks') {
+              window.history.pushState({}, '', '/bookmarks')
+              navigateTo('bookmarks')
             } else if (item === 'settings') {
               window.history.pushState({}, '', '/settings')
               navigateTo('settings')
@@ -983,6 +1000,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')
+            } else if (item === 'bookmarks') {
+              window.history.pushState({}, '', '/bookmarks')
+              navigateTo('bookmarks')
             } else if (item === 'settings') {
               window.history.pushState({}, '', '/settings')
               navigateTo('settings')
@@ -1087,6 +1107,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')
+            } else if (item === 'bookmarks') {
+              window.history.pushState({}, '', '/bookmarks')
+              navigateTo('bookmarks')
             } else if (item === 'settings') {
               window.history.pushState({}, '', '/settings')
               navigateTo('settings')
@@ -1157,6 +1180,71 @@ document.addEventListener('DOMContentLoaded', async () => {
         return
       }
       
+      // Handle bookmarks page (within 3-column layout)
+      if (view === 'bookmarks') {
+        currentView = 'bookmarks'
+        currentPostId = null
+        currentUsername = null
+        currentTag = null
+
+        if (!currentUser) {
+          window.history.pushState({}, '', '/explore')
+          navigateTo('explore')
+          return
+        }
+
+        const mainContainer = document.createElement('div')
+        mainContainer.className = 'main-container'
+
+        const leftNav = createLeftNav({
+          activeItem: 'bookmarks',
+          unreadCount: unreadNotificationCount,
+          currentUser: currentUser || undefined,
+          onNavigate: async (item) => {
+            if (item === 'home') { window.history.pushState({}, '', '/home'); navigateTo('timeline') }
+            else if (item === 'explore') { window.history.pushState({}, '', '/explore'); navigateTo('explore') }
+            else if (item === 'arcade') { window.history.pushState({}, '', '/arcade'); navigateTo('arcade') }
+            else if (item === 'notifications') { window.history.pushState({}, '', '/notifications'); navigateTo('notifications') }
+            else if (item === 'bookmarks') { window.history.pushState({}, '', '/bookmarks'); navigateTo('bookmarks') }
+            else if (item === 'settings') { window.history.pushState({}, '', '/settings'); navigateTo('settings') }
+            else if (item === 'profile') {
+              if (!currentUser) { window.history.pushState({}, '', '/arcade'); navigateTo('arcade'); return }
+              window.history.pushState({}, '', `/profile/${currentUser.username}`)
+              navigateTo('profile', undefined, currentUser.username)
+            }
+          },
+          onSignIn: () => { window.history.pushState({}, '', '/login'); navigateTo('login') },
+          onSignUp: () => { window.history.pushState({}, '', '/register'); navigateTo('register') }
+        })
+        leftNavInstances.add(leftNav)
+
+        if (cachedContentComponent?.view === 'bookmarks') {
+          bookmarksPage = cachedContentComponent.component
+          const scrollY = cachedContentComponent.scrollY
+          cachedContentComponent = null
+          requestAnimationFrame(() => { window.scrollTo(0, scrollY) })
+        } else {
+          const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app'
+          bookmarksPage = createBookmarksPage({
+            sandboxOrigin,
+            currentUser
+          })
+          window.scrollTo(0, 0)
+        }
+
+        const rightPanel = createRightPanel({
+          onSearch: (query) => {},
+          onFollowUser: (userId) => {}
+        })
+
+        mainContainer.appendChild(leftNav.getElement())
+        mainContainer.appendChild(bookmarksPage.getElement())
+        mainContainer.appendChild(rightPanel.getElement())
+        app.appendChild(mainContainer)
+        setupMobileLeftNav(leftNav.getElement())
+        return
+      }
+
       // Handle notifications page (within 3-column layout)
       if (view === 'notifications') {
         currentView = 'notifications'
@@ -1202,6 +1290,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')
+            } else if (item === 'bookmarks') {
+              window.history.pushState({}, '', '/bookmarks')
+              navigateTo('bookmarks')
             } else if (item === 'settings') {
               window.history.pushState({}, '', '/settings')
               navigateTo('settings')
@@ -1305,6 +1396,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')
+            } else if (item === 'bookmarks') {
+              window.history.pushState({}, '', '/bookmarks')
+              navigateTo('bookmarks')
             } else if (item === 'settings') {
               window.history.pushState({}, '', '/settings')
               navigateTo('settings')
@@ -1463,6 +1557,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (item === 'notifications') {
               window.history.pushState({}, '', '/notifications')
               navigateTo('notifications')
+            } else if (item === 'bookmarks') {
+              window.history.pushState({}, '', '/bookmarks')
+              navigateTo('bookmarks')
             } else if (item === 'settings') {
               window.history.pushState({}, '', '/settings')
               navigateTo('settings')

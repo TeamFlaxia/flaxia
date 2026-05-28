@@ -1,5 +1,6 @@
 import { clearMeCache } from '../lib/auth-cache'
 import { t, setLocale, getLocale, initI18n } from '../lib/i18n.js'
+import { createConfirmDialog } from '../lib/confirm-dialog.js'
 
 interface SettingsPageProps {
   currentUser?: {
@@ -102,23 +103,23 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     })
 
     logoutButton.addEventListener('click', async () => {
-      if (confirm(t('auth.logout_confirm', { username: currentUser.username }))) {
-        try {
-          const response = await fetch('/api/auth/logout', {
-            method: 'POST',
-            credentials: 'include'
-          })
-          
-          if (response.ok) {
-            clearMeCache()
-            window.location.href = '/'
-          } else {
-            alert(t('auth.logout_failed'))
-          }
-        } catch (error) {
-          console.error('Logout error:', error)
-          alert(t('auth.logout_error'))
+      const confirmed = await createConfirmDialog(t('auth.logout_confirm', { username: currentUser.username }))
+      if (!confirmed) return
+      try {
+        const response = await fetch('/api/auth/logout', {
+          method: 'POST',
+          credentials: 'include'
+        })
+        
+        if (response.ok) {
+          clearMeCache()
+          window.location.href = '/'
+        } else {
+          alert(t('auth.logout_failed'))
         }
+      } catch (error) {
+        console.error('Logout error:', error)
+        alert(t('auth.logout_error'))
       }
     })
 

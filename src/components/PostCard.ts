@@ -16,7 +16,9 @@ export class PostCard {
   private props: PostCardProps
   private mode: PostCardMode
   private isFreshed: boolean
+  private isBookmarked: boolean
   private freshCount: number
+  private bookmarkCount: number
   private replyCount: number
   private impressions: number
   private impressionTracked: boolean = false
@@ -26,13 +28,16 @@ export class PostCard {
   private isReplyComposerOpen: boolean = false
   private menuDropdown?: HTMLElement
   private freshLoading: boolean = false
+  private bookmarkLoading: boolean = false
 
   constructor(props: PostCardProps) {
     this.props = props
     this.mode = props.initialMode || PostCardMode.PREVIEW
     // Use is_freshed from API response if available, otherwise default to false
     this.isFreshed = props.post.is_freshed || false
+    this.isBookmarked = props.post.is_bookmarked || false
     this.freshCount = props.post.fresh_count
+    this.bookmarkCount = props.post.bookmark_count
     this.replyCount = props.post.reply_count || 0
     this.impressions = props.post.impressions || 0
     this.element = this.createElement()
@@ -163,11 +168,14 @@ export class PostCard {
       const actions = createPostActions({
         postId: this.props.post.id,
         freshCount: this.freshCount,
+        bookmarkCount: this.bookmarkCount,
         replyCount: this.replyCount,
         impressions: this.impressions,
         isFreshed: this.isFreshed,
+        isBookmarked: this.isBookmarked,
         depth: this.props.depth ?? this.props.post.depth,
         onFreshToggle: () => this.handleFreshToggle(),
+        onBookmarkToggle: () => this.handleBookmarkToggle(),
         onReplyToggle: () => this.handleReplyToggle(),
         onShare: () => this.handleShare()
       })
@@ -350,6 +358,53 @@ export class PostCard {
     this.updateActions()
   }
 
+  private async handleBookmarkToggle(): Promise<void> {
+    if (this.bookmarkLoading) return
+
+    if (!this.props.currentUser) {
+      showSignInPrompt(
+        'bookmark',
+        () => { window.history.pushState({}, '', '/login'); window.dispatchEvent(new PopStateEvent('popstate')) },
+        () => { window.history.pushState({}, '', '/register'); window.dispatchEvent(new PopStateEvent('popstate')) }
+      )
+      return
+    }
+
+    const previousBookmarked = this.isBookmarked
+    const previousCount = this.bookmarkCount
+
+    this.isBookmarked = !previousBookmarked
+    this.bookmarkCount = previousBookmarked ? previousCount - 1 : previousCount + 1
+
+    this.updateActions()
+
+    this.bookmarkLoading = true
+
+    try {
+      const response = await fetch(`/api/posts/${this.props.post.id}/bookmark`, {
+        method: 'POST',
+        credentials: 'include'
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to toggle bookmark')
+      }
+
+      const result = await response.json() as { bookmarked: boolean; bookmark_count: number }
+
+      this.isBookmarked = result.bookmarked
+      this.bookmarkCount = result.bookmark_count
+
+    } catch (error) {
+      this.isBookmarked = previousBookmarked
+      this.bookmarkCount = previousCount
+      console.error('Failed to toggle bookmark:', error)
+    } finally {
+      this.bookmarkLoading = false
+    }
+
+    this.updateActions()
+  }
 
   private handleReplyToggle(): void {
     // Check if user is logged in
@@ -455,11 +510,14 @@ export class PostCard {
       const newActions = createPostActions({
         postId: this.props.post.id,
         freshCount: this.freshCount,
+        bookmarkCount: this.bookmarkCount,
         replyCount: this.replyCount,
         impressions: this.impressions,
         isFreshed: this.isFreshed,
+        isBookmarked: this.isBookmarked,
         depth: this.props.depth ?? this.props.post.depth,
         onFreshToggle: () => this.handleFreshToggle(),
+        onBookmarkToggle: () => this.handleBookmarkToggle(),
         onReplyToggle: () => this.handleReplyToggle(),
         onShare: () => this.handleShare()
       })
@@ -478,8 +536,14 @@ export class PostCard {
     if (post.fresh_count !== undefined) {
       this.freshCount = post.fresh_count
     }
+    if (post.bookmark_count !== undefined) {
+      this.bookmarkCount = post.bookmark_count
+    }
     if (post.is_freshed !== undefined) {
       this.isFreshed = post.is_freshed
+    }
+    if (post.is_bookmarked !== undefined) {
+      this.isBookmarked = post.is_bookmarked
     }
     this.props.post = { ...this.props.post, ...post }
     this.updateActions()

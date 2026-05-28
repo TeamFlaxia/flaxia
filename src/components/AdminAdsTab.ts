@@ -2,6 +2,7 @@ import { t } from '../lib/i18n.js'
 import { formatCount } from '../lib/format.js'
 import { registerModal } from '../lib/modal-state.js'
 import { showToast } from '../lib/toast.js'
+import { createConfirmDialog } from '../lib/confirm-dialog.js'
 
 export interface AdminAd {
   id: string
@@ -458,12 +459,12 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         transition: background 0.2s;
       `
       deleteBtn.addEventListener('click', async () => {
-        if (confirm(t('admin_ads.delete_confirm', { title: ad.title }))) {
-          const success = await deleteAd(ad.id)
-          if (success) {
-            ads = ads.filter(a => a.id !== ad.id)
-            render()
-          }
+        const confirmed = await createConfirmDialog(t('admin_ads.delete_confirm', { title: ad.title }))
+        if (!confirmed) return
+        const success = await deleteAd(ad.id)
+        if (success) {
+          ads = ads.filter(a => a.id !== ad.id)
+          render()
         }
       })
       actions.appendChild(deleteBtn)

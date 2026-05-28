@@ -74,6 +74,7 @@ export class LeftNav {
         { id: 'explore', label: t('nav.explore'), icon: '🔍' },
         { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
         { id: 'notifications', label: t('nav.notifications'), icon: '🔔' },
+        { id: 'bookmarks', label: t('nav.bookmarks'), icon: '🔖' },
         { id: 'profile', label: t('nav.profile'), icon: '👤' },
         { id: 'settings', label: t('nav.settings'), icon: '⚙️' }
       ]
@@ -438,6 +439,7 @@ export function updateLeftNavUser(leftNav: LeftNav, currentUser: {
         { id: 'explore', label: t('nav.explore'), icon: '🔍' },
         { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
         { id: 'notifications', label: t('nav.notifications'), icon: '🔔' },
+        { id: 'bookmarks', label: t('nav.bookmarks'), icon: '🔖' },
         { id: 'profile', label: t('nav.profile'), icon: '👤' },
         { id: 'settings', label: t('nav.settings'), icon: '⚙️' }
       ]

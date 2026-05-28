@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js'
+import { createConfirmDialog } from '../lib/confirm-dialog.js'
 
 export interface HiddenPost {
   id: string
@@ -155,12 +156,12 @@ export function createAdminHiddenTab({ onNavigateToTab }: AdminHiddenTabProps) {
       transition: background 0.2s;
     `
     unhideBtn.addEventListener('click', async () => {
-      if (confirm(t('admin_hidden.restore_confirm'))) {
-        const success = await unhidePost(post.id)
-        if (success) {
-          posts = posts.filter(p => p.id !== post.id)
-          render()
-        }
+      const confirmed = await createConfirmDialog(t('admin_hidden.restore_confirm'))
+      if (!confirmed) return
+      const success = await unhidePost(post.id)
+      if (success) {
+        posts = posts.filter(p => p.id !== post.id)
+        render()
       }
     })
     actions.appendChild(unhideBtn)

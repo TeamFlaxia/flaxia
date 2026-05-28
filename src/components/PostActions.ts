@@ -10,6 +10,10 @@ export function createPostActions(props: PostActionsProps): HTMLElement {
   const freshButton = createActionButton('fresh', formatCount(props.freshCount), props.isFreshed)
   freshButton.addEventListener('click', props.onFreshToggle)
 
+  // Bookmark button
+  const bookmarkButton = createActionButton('bookmark', formatCount(props.bookmarkCount), props.isBookmarked)
+  bookmarkButton.addEventListener('click', props.onBookmarkToggle)
+
   // Reply button
   const replyButton = createActionButton('reply', formatCount(props.replyCount), false)
   replyButton.addEventListener('click', props.onReplyToggle)
@@ -27,6 +31,7 @@ export function createPostActions(props: PostActionsProps): HTMLElement {
   })
 
   container.appendChild(freshButton)
+  container.appendChild(bookmarkButton)
   if (replyButton) {
     container.appendChild(replyButton)
   }
@@ -36,7 +41,7 @@ export function createPostActions(props: PostActionsProps): HTMLElement {
   return container
 }
 
-function createActionButton(type: 'fresh' | 'reply' | 'share' | 'impressions', count: string, isActive: boolean): HTMLElement {
+function createActionButton(type: 'fresh' | 'bookmark' | 'reply' | 'share' | 'impressions', count: string, isActive: boolean): HTMLElement {
   const button = document.createElement('button')
   button.className = `action-button action-button--${type}`
   button.setAttribute('aria-label', t('post_actions.aria_label', { type }))
@@ -73,10 +78,12 @@ function createActionButton(type: 'fresh' | 'reply' | 'share' | 'impressions', c
   return button
 }
 
-function getIconForType(type: 'fresh' | 'reply' | 'share' | 'impressions'): string {
+function getIconForType(type: 'fresh' | 'bookmark' | 'reply' | 'share' | 'impressions'): string {
   switch (type) {
     case 'fresh':
       return '🍃' // Leaf emoji for Fresh!
+    case 'bookmark':
+      return '🔖' // Bookmark emoji
     case 'reply':
       return '💬' // Message emoji for Reply
     case 'share':

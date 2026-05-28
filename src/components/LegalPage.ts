@@ -13,9 +13,28 @@ export function createLegalPage({ type }: LegalPageProps) {
   const contentWrapper = document.createElement('div')
   contentWrapper.className = 'legal-content-wrapper'
 
-  // Header with wordmark only
+  // Header with back button and wordmark
   const header = document.createElement('header')
   header.className = 'legal-header'
+  header.style.cssText = 'display: flex; align-items: center; gap: 0.5rem;'
+
+  const backBtn = document.createElement('button')
+  backBtn.textContent = '←'
+  backBtn.style.cssText = `
+    background: none;
+    border: none;
+    font-size: 1.25rem;
+    cursor: pointer;
+    color: var(--text-primary);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    transition: background 0.2s;
+  `
+  backBtn.addEventListener('mouseenter', () => { backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))' })
+  backBtn.addEventListener('mouseleave', () => { backBtn.style.background = 'none' })
+  backBtn.addEventListener('click', () => {
+    window.history.back()
+  })
 
   const wordmark = document.createElement('a')
   wordmark.href = '/'
@@ -27,6 +46,7 @@ export function createLegalPage({ type }: LegalPageProps) {
     window.dispatchEvent(new PopStateEvent('popstate'))
   })
 
+  header.appendChild(backBtn)
   header.appendChild(wordmark)
 
   // Content container

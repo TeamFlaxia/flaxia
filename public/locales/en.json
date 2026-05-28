@@ -7,7 +7,9 @@
   "nav.notifications": "Notifications",
   "nav.profile": "Profile",
   "nav.settings": "Settings",
+  "nav.bookmarks": "Bookmarks",
   "nav.logo": "Flaxia",
+  "bookmarks.empty": "No bookmarks yet",
 
   "common.cancel": "Cancel",
   "common.save": "Save",
@@ -27,6 +29,7 @@
   "auth.sign_in_to_follow": "Sign in to follow people",
   "auth.sign_in_to_report": "Sign in to report posts",
   "auth.sign_in_to_post": "Sign in to post",
+  "auth.sign_in_to_bookmark": "Sign in to bookmark",
   "auth.sign_up_title": "Sign up to Flaxia",
   "auth.sign_up_subtitle": "Sign up to Flaxia, follow people, and join the conversation.",
   "auth.logout_confirm": "Log out of @{username}?",
@@ -522,5 +525,8 @@
   "poll.remaining_less_minute": "<1m",
   "poll.vote_error": "Failed to vote",
   "poll.already_voted": "Already voted",
-  "poll.click_to_change": "Click to change"
+  "poll.click_to_change": "Click to change",
+
+  "common.cancel": "Cancel",
+  "common.confirm": "OK"
 }

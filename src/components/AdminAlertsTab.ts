@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js'
+import { createConfirmDialog } from '../lib/confirm-dialog.js'
 
 export interface AdminAlert {
   id: string
@@ -214,13 +215,13 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
       transition: background 0.2s;
     `
     hideBtn.addEventListener('click', async () => {
-      if (confirm(t('admin_alerts.hide_confirm'))) {
-        const success = await hidePost(alert.post_id, alert.id)
-        if (success) {
-          await resolveAlert(alert.id)
-          alerts = alerts.filter(a => a.id !== alert.id)
-          render()
-        }
+      const confirmed = await createConfirmDialog(t('admin_alerts.hide_confirm'))
+      if (!confirmed) return
+      const success = await hidePost(alert.post_id, alert.id)
+      if (success) {
+        await resolveAlert(alert.id)
+        alerts = alerts.filter(a => a.id !== alert.id)
+        render()
       }
     })
     actions.appendChild(hideBtn)

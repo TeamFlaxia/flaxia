@@ -2,6 +2,7 @@ import { updateMeCache } from '../lib/auth-cache'
 import { registerModal } from '../lib/modal-state.js'
 import { t } from '../lib/i18n.js'
 import { showToast } from '../lib/toast.js'
+import { createConfirmDialog } from '../lib/confirm-dialog.js'
 
 interface EditProfileModalProps {
   currentUser: { username: string; display_name?: string; bio?: string; avatar_key?: string }
@@ -432,21 +433,19 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
     }
   })
 
-  closeButton.addEventListener('click', () => {
+  closeButton.addEventListener('click', async () => {
     if (hasChanges) {
-      if (confirm(t('edit_profile.unsaved_changes'))) {
-        destroy()
-      }
+      const confirmed = await createConfirmDialog(t('edit_profile.unsaved_changes'))
+      if (confirmed) destroy()
     } else {
       destroy()
     }
   })
 
-  container.addEventListener('click', (e) => {
+  container.addEventListener('click', async (e) => {
     if (e.target === container && hasChanges) {
-      if (confirm(t('edit_profile.unsaved_changes'))) {
-        destroy()
-      }
+      const confirmed = await createConfirmDialog(t('edit_profile.unsaved_changes'))
+      if (confirmed) destroy()
     } else if (e.target === container) {
       destroy()
     }

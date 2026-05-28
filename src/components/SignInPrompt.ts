@@ -124,14 +124,15 @@ export function createSignInPrompt(props: SignInPromptProps = {}) {
   }
 }
 
-export type SignInPromptAction = 'fresh' | 'reply' | 'follow' | 'report' | 'post'
+export type SignInPromptAction = 'fresh' | 'reply' | 'follow' | 'report' | 'post' | 'bookmark'
 
 const signInPromptSubtitles: Record<SignInPromptAction, string> = {
   fresh: 'auth.sign_in_to_fresh',
   reply: 'auth.sign_in_to_reply',
   follow: 'auth.sign_in_to_follow',
   report: 'auth.sign_in_to_report',
-  post: 'auth.sign_in_to_post'
+  post: 'auth.sign_in_to_post',
+  bookmark: 'auth.sign_in_to_bookmark'
 }
 
 // Convenience function to show sign-in prompt with preset subtitle

@@ -1,5 +1,6 @@
 import { t } from '../lib/i18n.js'
 import { formatCount } from '../lib/format.js'
+import { createConfirmDialog } from '../lib/confirm-dialog.js'
 
 export interface AdminUser {
   id: string
@@ -122,13 +123,13 @@ export function createAdminUsersTab({ onNavigateToTab, adminUsernames = [] }: Ad
         transition: background 0.2s;
       `
       deleteBtn.addEventListener('click', async () => {
-        if (confirm(t('admin_users.delete_confirm', { username: user.username }))) {
-          const success = await deleteUser(user.id)
-          if (success) {
-            users = users.filter(u => u.id !== user.id)
-            filterUsers()
-            render()
-          }
+        const confirmed = await createConfirmDialog(t('admin_users.delete_confirm', { username: user.username }))
+        if (!confirmed) return
+        const success = await deleteUser(user.id)
+        if (success) {
+          users = users.filter(u => u.id !== user.id)
+          filterUsers()
+          render()
         }
       })
       row.appendChild(deleteBtn)

@@ -7,7 +7,9 @@
   "nav.notifications": "通知",
   "nav.profile": "プロフィール",
   "nav.settings": "設定",
+  "nav.bookmarks": "ブックマーク",
   "nav.logo": "Flaxia",
+  "bookmarks.empty": "ブックマークはまだありません",
 
   "common.cancel": "キャンセル",
   "common.save": "保存",
@@ -27,6 +29,7 @@
   "auth.sign_in_to_follow": "フォローするにはログインしてください",
   "auth.sign_in_to_report": "報告するにはログインしてください",
   "auth.sign_in_to_post": "投稿するにはログインしてください",
+  "auth.sign_in_to_bookmark": "ブックマークするにはログインしてください",
   "auth.sign_up_title": "Flaxiaに登録",
   "auth.sign_up_subtitle": "Flaxiaに登録して、人をフォローし、会話に参加しましょう。",
   "auth.logout_confirm": "@{username} からログアウトしますか？",
@@ -522,5 +525,8 @@
   "poll.remaining_less_minute": "1分未満",
   "poll.vote_error": "投票に失敗しました",
   "poll.already_voted": "既に投票済みです",
-  "poll.click_to_change": "クリックして変更"
+  "poll.click_to_change": "クリックして変更",
+
+  "common.cancel": "キャンセル",
+  "common.confirm": "OK"
 }

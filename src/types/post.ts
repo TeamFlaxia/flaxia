@@ -26,6 +26,7 @@ export interface Post {
   swf_key?: string  // Stores SWF files for Flash execution
   thumbnail_key?: string  // Stores thumbnail image for ZIP/SWF posts
   fresh_count: number
+  bookmark_count: number
   reply_count: number
   impressions: number
   parent_id?: string
@@ -35,6 +36,7 @@ export interface Post {
   hidden: number
   created_at: string
   is_freshed?: boolean  // Whether current user has freshed this post
+  is_bookmarked?: boolean  // Whether current user has bookmarked this post
   poll?: {
     id: string
     question: string
@@ -97,11 +99,14 @@ export interface SandboxFrameProps {
 export interface PostActionsProps {
   postId: string
   freshCount: number
+  bookmarkCount: number
   replyCount: number
   impressions: number
   isFreshed: boolean
+  isBookmarked: boolean
   depth: number
   onFreshToggle: () => void
+  onBookmarkToggle: () => void
   onReplyToggle: () => void
   onShare?: () => void
 }
