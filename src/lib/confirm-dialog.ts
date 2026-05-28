@@ -81,6 +81,13 @@ export function createConfirmDialog(message: string): Promise<boolean> {
       resolve(result)
     }
 
+    cancelBtn.addEventListener('click', () => destroy(false))
+    confirmBtn.addEventListener('click', () => destroy(true))
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) destroy(false)
+    })
+
     buttonRow.appendChild(cancelBtn)
     buttonRow.appendChild(confirmBtn)
     dialog.appendChild(buttonRow)

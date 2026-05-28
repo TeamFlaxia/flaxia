@@ -302,6 +302,7 @@ export class ArcadePage {
   }
 
   private handleTouchStart(e: TouchEvent): void {
+    if (this.commentPanel) return
     this.touchStartY = e.touches[0].clientY
     this.touchStartX = e.touches[0].clientX
     this.touchStartTime = Date.now()
@@ -316,6 +317,7 @@ export class ArcadePage {
   }
 
   private handleTouchMove(e: TouchEvent): void {
+    if (this.commentPanel) return
     if (!this.isDragging || this.isTransitioning) return
     
     e.preventDefault()
@@ -337,6 +339,7 @@ export class ArcadePage {
   }
 
   private handleTouchEnd(e: TouchEvent): void {
+    if (this.commentPanel) return
     if (!this.isDragging) return
     
     this.touchEndY = e.changedTouches[0].clientY
@@ -380,6 +383,7 @@ export class ArcadePage {
   }
 
   private handleMouseDown(e: MouseEvent): void {
+    if (this.commentPanel) return
     this.touchStartY = e.clientY
     this.touchStartX = e.clientX
     this.touchStartTime = Date.now()
@@ -394,6 +398,7 @@ export class ArcadePage {
   }
 
   private handleMouseMove(e: MouseEvent): void {
+    if (this.commentPanel) return
     if (!this.isDragging || this.isTransitioning) return
     
     e.preventDefault()
@@ -413,6 +418,7 @@ export class ArcadePage {
   }
 
   private handleMouseUp(e: MouseEvent): void {
+    if (this.commentPanel) return
     if (!this.isDragging) return
     
     this.touchEndY = e.clientY
