@@ -18,9 +18,15 @@ export function createPostActions(props: PostActionsProps): HTMLElement {
   const replyButton = createActionButton('reply', formatCount(props.replyCount), false)
   replyButton.addEventListener('click', props.onReplyToggle)
 
-  // Impressions button (display only, not clickable)
+  // Impressions button (display only, not clickable) — pushed to right end
   const impressionsButton = createActionButton('impressions', formatCount(props.impressions), false)
   impressionsButton.style.cursor = 'default'
+  impressionsButton.style.marginLeft = 'auto'
+  const impressionsIcon = impressionsButton.querySelector('.action-icon') as HTMLElement
+  if (impressionsIcon) {
+    impressionsIcon.style.fontSize = '0.75rem'
+    impressionsIcon.style.opacity = '0.5'
+  }
 
   // Share button
   const shareButton = createActionButton('share', '0', false)
@@ -35,8 +41,8 @@ export function createPostActions(props: PostActionsProps): HTMLElement {
   if (replyButton) {
     container.appendChild(replyButton)
   }
-  container.appendChild(impressionsButton)
   container.appendChild(shareButton)
+  container.appendChild(impressionsButton)
 
   return container
 }

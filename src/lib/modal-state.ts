@@ -1,29 +1,23 @@
 let modalCount = 0
+let scrollY = 0
 
 export function isModalOpen(): boolean {
   return modalCount > 0
 }
 
-function preventScroll(e: Event): void {
-  e.preventDefault()
-}
-
-function preventScrollKey(e: KeyboardEvent): void {
-  if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(e.key)) {
-    e.preventDefault()
-  }
-}
-
 function lockScroll(): void {
-  window.addEventListener('wheel', preventScroll, { passive: false })
-  window.addEventListener('touchmove', preventScroll, { passive: false })
-  window.addEventListener('keydown', preventScrollKey)
+  document.body.style.overflow = 'hidden'
+  document.body.style.position = 'fixed'
+  document.body.style.top = `-${scrollY}px`
+  document.body.style.width = '100%'
 }
 
 function unlockScroll(): void {
-  window.removeEventListener('wheel', preventScroll)
-  window.removeEventListener('touchmove', preventScroll)
-  window.removeEventListener('keydown', preventScrollKey)
+  document.body.style.overflow = ''
+  document.body.style.position = ''
+  document.body.style.top = ''
+  document.body.style.width = ''
+  window.scrollTo(0, scrollY)
 }
 
 function dispatchChange(): void {
@@ -32,6 +26,9 @@ function dispatchChange(): void {
 
 export function registerModal(): () => void {
   const wasClosed = modalCount === 0
+  if (wasClosed) {
+    scrollY = window.scrollY
+  }
   modalCount++
   if (wasClosed) {
     lockScroll()
