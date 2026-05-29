@@ -21,6 +21,7 @@ build/
 .vscode/
 .gemini/
 .windsurf/
+.antigravitycli
 .idea/
 *.swp
 *.swo

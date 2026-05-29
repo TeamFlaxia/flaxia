@@ -26,16 +26,11 @@ export class ReplyComposer {
   private mentionQuery: string = ''
   private mentionStartPos: number = -1
   private mentionType: 'user' | 'tag' = 'user'
-  private draftTimeout: ReturnType<typeof setTimeout> | null = null
 
   constructor(props: ReplyComposerProps) {
     this.props = props
     this.element = this.createElement()
     this.setupEventListeners()
-  }
-
-  private get draftKey(): string {
-    return `flaxia_draft_reply_${this.props.postId}`
   }
 
   private createElement(): HTMLElement {
@@ -158,9 +153,6 @@ export class ReplyComposer {
       composerHeader.appendChild(this.mentionDropdown)
     }
 
-    // Restore draft if available
-    this.loadDraft()
-
     return container
   }
 
@@ -176,7 +168,6 @@ export class ReplyComposer {
       }
       this.updateSubmitButton()
       this.handleMentionInput()
-      this.scheduleDraftSave()
     })
 
     // Keyboard shortcuts
@@ -186,6 +177,11 @@ export class ReplyComposer {
           this.hideMentionDropdown()
           return
         }
+        this.clearFileSelection()
+        this.textarea.value = ''
+        this.charCount.textContent = '0/200'
+        this.charCount.style.color = '#94a3b8'
+        this.updateSubmitButton()
         this.props.onCancel()
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !this.submitButton.disabled) {
         e.preventDefault()
@@ -231,6 +227,11 @@ export class ReplyComposer {
 
     // Cancel button
     this.cancelButton.addEventListener('click', () => {
+      this.clearFileSelection()
+      this.textarea.value = ''
+      this.charCount.textContent = '0/200'
+      this.charCount.style.color = '#94a3b8'
+      this.updateSubmitButton()
       this.props.onCancel()
     })
 
@@ -589,44 +590,6 @@ export class ReplyComposer {
     }
   }
 
-  private scheduleDraftSave(): void {
-    if (this.draftTimeout) clearTimeout(this.draftTimeout)
-    this.draftTimeout = setTimeout(() => this.saveDraft(), 500)
-  }
-
-  private saveDraft(): void {
-    try {
-      const draft = { text: this.textarea.value, savedAt: Date.now() }
-      localStorage.setItem(this.draftKey, JSON.stringify(draft))
-    } catch {}
-  }
-
-  private loadDraft(): void {
-    try {
-      const raw = localStorage.getItem(this.draftKey)
-      if (!raw) return
-      const draft = JSON.parse(raw)
-      if (!draft.text) return
-
-      // If prefillText was provided, merge: keep prefill as prefix if draft doesn't start with it
-      if (this.props.prefillText && !draft.text.startsWith(this.props.prefillText)) {
-        this.textarea.value = this.props.prefillText + draft.text
-      } else {
-        this.textarea.value = draft.text
-      }
-      this.charCount.textContent = `${this.textarea.value.length}/200`
-      this.updateSubmitButton()
-    } catch {}
-  }
-
-  private clearDraft(): void {
-    localStorage.removeItem(this.draftKey)
-    if (this.draftTimeout) {
-      clearTimeout(this.draftTimeout)
-      this.draftTimeout = null
-    }
-  }
-
   private async handleSubmit(): Promise<void> {
     if (this.isSubmitting) return
 
@@ -664,8 +627,7 @@ export class ReplyComposer {
         throw new Error('Failed to commit reply')
       }
 
-      // Clear form and draft
-      this.clearDraft()
+      // Clear form
       this.textarea.value = ''
       this.charCount.textContent = '0/200'
       this.clearFileSelection()
@@ -797,7 +759,6 @@ export class ReplyComposer {
   }
 
   public destroy(): void {
-    this.saveDraft()
     this.element.remove()
   }
 }

@@ -5470,13 +5470,14 @@ app.post('/api/posts/:id/replies/prepare', requireAuth, async (c) => {
     // Store pending reply in D1
     const result = await c.env.DB.prepare(`
       INSERT INTO posts (id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, status, parent_id, root_id, depth, reply_count)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 'pending', ?, ?, ?, 0)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'pending', ?, ?, ?, 0)
     `).bind(
       replyId, 
       c.get('user')?.id || '', 
       c.get('user')?.username || 'anonymous', 
       '', 
       '[]', 
+      '[]',
       gifKey,
       '',
       '',
