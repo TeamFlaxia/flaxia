@@ -26,6 +26,7 @@ body {
 #app {
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
   margin: 0;
   padding: 0;
 }
@@ -609,6 +610,11 @@ p {
   
   .main-container {
     flex-direction: column;
+  }
+
+  .arcade-page {
+    flex: none !important;
+    height: 100dvh !important;
   }
 
   .arcade-header {
