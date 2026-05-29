@@ -3063,6 +3063,14 @@ app.get('/api/posts', async (c) => {
     // Batch fetch poll data for posts with polls
     await enrichPostsWithPolls(posts as any[], c.env.DB, currentUserId)
     
+    // Return total count when filtering by hashtag
+    if (hashtag) {
+      const countResult = await c.env.DB.prepare(`
+        SELECT COUNT(*) as count FROM posts WHERE status = 'published' AND hidden = 0 AND parent_id IS NULL AND id IN (SELECT id FROM posts, json_each(posts.hashtags) WHERE value = ?)
+      `).bind(hashtag).first<{ count: number }>()
+      return c.json({ posts, count: countResult?.count || 0 })
+    }
+    
     return c.json({ posts })
   } catch (error: any) {
     console.error('Posts fetch error:', error)
@@ -5834,7 +5842,7 @@ app.get('/api/search', async (c) => {
     const whereClause = `WHERE p.status = 'published' AND p.hidden = 0 AND (${conditions.join(' AND ')})`
 
     const selectColumns = `
-      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
+      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
       FROM posts p
       LEFT JOIN users u ON p.user_id = u.id
     `

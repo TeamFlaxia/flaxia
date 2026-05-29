@@ -24,6 +24,7 @@ export class ExplorePage {
   private searchFilter: 'posts' | 'users' | 'arcade' = 'posts'
   private fabButton: HTMLElement | null = null
   private tagCountEl: HTMLElement | null = null
+  private totalTagCount: number = 0
   private suggestAbortController: AbortController | null = null
   private static readonly SEARCH_HISTORY_KEY = 'flaxia_search_history'
   private static readonly MAX_HISTORY = 10
@@ -475,7 +476,10 @@ export class ExplorePage {
     }
     const response = await fetch(url)
     if (!response.ok) throw new Error('Failed to load tag posts')
-    const data = await response.json() as { posts: Post[] }
+    const data = await response.json() as { posts: Post[]; count?: number }
+    if (data.count !== undefined) {
+      this.totalTagCount = data.count
+    }
     this.handleNewPosts(data.posts)
   }
 
@@ -748,7 +752,8 @@ export class ExplorePage {
 
   private updateTagCount(): void {
     if (this.tagCountEl && this.props.tag) {
-      this.tagCountEl.textContent = t('explore.tag_count', { count: this.posts.length })
+      const count = this.totalTagCount || this.posts.length
+      this.tagCountEl.textContent = t('explore.tag_count', { count })
     }
   }
 
