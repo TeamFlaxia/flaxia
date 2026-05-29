@@ -42,6 +42,9 @@ export class ArcadePage {
   private swipeVelocity: number = 0
   private currentViewport: HTMLElement | null = null
   private initialGameId: string | undefined
+  private tutorialEl: HTMLElement | null = null
+
+  private static TUTORIAL_SEEN_KEY = 'flaxia_tutorial_seen'
   
   // Store bound event handlers for proper cleanup
   private boundHandleTouchStart: (e: TouchEvent) => void
@@ -70,6 +73,10 @@ export class ArcadePage {
     this.setupEventListeners()
     this.setupLeftNavSwipeDetection()
     this.loadGames()
+
+    if (!localStorage.getItem(ArcadePage.TUTORIAL_SEEN_KEY)) {
+      this.showTutorial()
+    }
   }
 
   private createElement(): HTMLElement {
@@ -143,6 +150,38 @@ export class ArcadePage {
     titleGroup.appendChild(title)
     titleGroup.appendChild(subtitle)
     header.appendChild(titleGroup)
+
+    // Spacer to push tutorial button to the right
+    const headerSpacer = document.createElement('div')
+    headerSpacer.style.cssText = 'flex: 1;'
+
+    // Tutorial button
+    const tutorialBtn = document.createElement('button')
+    tutorialBtn.textContent = t('arcade.tutorial_btn')
+    tutorialBtn.title = 'Tutorial'
+    tutorialBtn.style.cssText = `
+      background: none;
+      border: none;
+      font-size: 1.2rem;
+      cursor: pointer;
+      color: var(--text-muted);
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      line-height: 1;
+      transition: color 0.2s, background 0.2s;
+    `
+    tutorialBtn.addEventListener('mouseenter', () => {
+      tutorialBtn.style.color = 'var(--text-primary)'
+      tutorialBtn.style.background = 'var(--bg-hover, rgba(255,255,255,0.1))'
+    })
+    tutorialBtn.addEventListener('mouseleave', () => {
+      tutorialBtn.style.color = 'var(--text-muted)'
+      tutorialBtn.style.background = 'none'
+    })
+    tutorialBtn.addEventListener('click', () => this.showTutorial())
+
+    header.appendChild(headerSpacer)
+    header.appendChild(tutorialBtn)
 
     // Game container (vertical scroll area)
     const gameContainer = document.createElement('div')
@@ -1154,7 +1193,193 @@ export class ArcadePage {
     return this.element
   }
 
+  private showTutorial(): void {
+    if (this.tutorialEl) return
+
+    const steps = [
+      { title: t('arcade.tutorial_welcome_title'), desc: t('arcade.tutorial_welcome_desc') },
+      { title: t('arcade.tutorial_step1_title'), desc: t('arcade.tutorial_step1_desc') },
+      { title: t('arcade.tutorial_step2_title'), desc: t('arcade.tutorial_step2_desc') },
+      { title: t('arcade.tutorial_step3_title'), desc: t('arcade.tutorial_step3_desc') },
+      { title: t('arcade.tutorial_step4_title'), desc: t('arcade.tutorial_step4_desc') },
+      { title: t('arcade.tutorial_step5_title'), desc: t('arcade.tutorial_step5_desc') },
+      { title: t('arcade.tutorial_step6_title'), desc: t('arcade.tutorial_step6_desc') },
+    ]
+
+    let currentStep = 0
+
+    const overlay = document.createElement('div')
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+      padding: 1.5rem;
+    `
+    this.tutorialEl = overlay
+
+    const card = document.createElement('div')
+    card.style.cssText = `
+      background: var(--bg-primary, #fff);
+      border-radius: 16px;
+      max-width: 420px;
+      width: 100%;
+      padding: 2rem 1.5rem;
+      box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3);
+      position: relative;
+      text-align: center;
+    `
+
+    const stepIndicator = document.createElement('div')
+    stepIndicator.style.cssText = `
+      font-size: 0.75rem;
+      color: var(--text-muted, #888);
+      margin-bottom: 0.75rem;
+    `
+
+    const stepIcon = document.createElement('div')
+    stepIcon.style.cssText = `
+      font-size: 3rem;
+      margin-bottom: 1rem;
+    `
+
+    const titleEl = document.createElement('h2')
+    titleEl.style.cssText = `
+      font-size: 1.2rem;
+      font-weight: 700;
+      margin: 0 0 1rem 0;
+      color: var(--text-primary);
+      line-height: 1.4;
+    `
+
+    const descEl = document.createElement('p')
+    descEl.style.cssText = `
+      font-size: 0.95rem;
+      color: var(--text-secondary, #555);
+      margin: 0 0 1.5rem 0;
+      line-height: 1.6;
+    `
+
+    const btnRow = document.createElement('div')
+    btnRow.style.cssText = `
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    `
+
+    const closeBtn = document.createElement('button')
+    closeBtn.textContent = '✕'
+    closeBtn.style.cssText = `
+      position: absolute;
+      top: 0.75rem;
+      right: 0.75rem;
+      background: none;
+      border: none;
+      font-size: 1.1rem;
+      cursor: pointer;
+      color: var(--text-muted, #888);
+      padding: 0.25rem;
+      line-height: 1;
+      border-radius: 4px;
+    `
+    closeBtn.addEventListener('click', () => this.closeTutorial())
+
+    card.appendChild(closeBtn)
+    card.appendChild(stepIndicator)
+    card.appendChild(stepIcon)
+    card.appendChild(titleEl)
+    card.appendChild(descEl)
+    card.appendChild(btnRow)
+    overlay.appendChild(card)
+    document.body.appendChild(overlay)
+
+    const render = () => {
+      const step = steps[currentStep]
+      const isWelcome = currentStep === 0
+      const isLast = currentStep === steps.length - 1
+
+      stepIndicator.textContent = isWelcome ? '' : `${currentStep}/${steps.length - 1}`
+      stepIcon.textContent = step.title.match(/^(\S+)/)?.[0] || ''
+      titleEl.textContent = isWelcome ? step.title : step.title.replace(/^\S+\s*/, '')
+      descEl.textContent = step.desc
+      btnRow.innerHTML = ''
+
+      if (isWelcome) {
+        const startBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_start'), 'var(--accent, #22c55e)', '#fff')
+        startBtn.addEventListener('click', () => {
+          currentStep = 1
+          render()
+        })
+        btnRow.appendChild(startBtn)
+
+        const skipBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_skip'), 'transparent', 'var(--text-muted, #888)')
+        skipBtn.style.border = '1px solid var(--border, #ddd)'
+        skipBtn.addEventListener('click', () => this.closeTutorial())
+        btnRow.appendChild(skipBtn)
+      } else {
+        if (currentStep > 1) {
+          const prevBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_prev'), 'transparent', 'var(--text-primary)')
+          prevBtn.style.border = '1px solid var(--border, #ddd)'
+          prevBtn.addEventListener('click', () => {
+            currentStep--
+            render()
+          })
+          btnRow.appendChild(prevBtn)
+        }
+
+        if (isLast) {
+          const doneBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_done'), 'var(--accent, #22c55e)', '#fff')
+          doneBtn.addEventListener('click', () => this.closeTutorial())
+          btnRow.appendChild(doneBtn)
+        } else {
+          const nextBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_next'), 'var(--accent, #22c55e)', '#fff')
+          nextBtn.addEventListener('click', () => {
+            currentStep++
+            render()
+          })
+          btnRow.appendChild(nextBtn)
+        }
+      }
+    }
+
+    render()
+  }
+
+  private closeTutorial(): void {
+    if (this.tutorialEl) {
+      this.tutorialEl.remove()
+      this.tutorialEl = null
+    }
+    localStorage.setItem(ArcadePage.TUTORIAL_SEEN_KEY, '1')
+  }
+
+  private static createTutorialButton(text: string, bg: string, color: string): HTMLButtonElement {
+    const btn = document.createElement('button')
+    btn.textContent = text
+    btn.style.cssText = `
+      background: ${bg};
+      border: none;
+      color: ${color};
+      cursor: pointer;
+      padding: 0.6rem 1.4rem;
+      font-size: 0.9rem;
+      font-weight: 600;
+      border-radius: 8px;
+      transition: opacity 0.2s;
+      line-height: 1.2;
+    `
+    btn.addEventListener('mouseenter', () => { btn.style.opacity = '0.85' })
+    btn.addEventListener('mouseleave', () => { btn.style.opacity = '1' })
+    return btn
+  }
+
   public destroy(): void {
+    this.closeTutorial()
     // Clean up document event listeners using stored bound functions
     document.removeEventListener('touchstart', this.boundHandleTouchStart)
     document.removeEventListener('touchmove', this.boundHandleTouchMove)
