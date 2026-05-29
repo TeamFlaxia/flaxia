@@ -21,7 +21,19 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
   const container = document.createElement('div')
   container.className = 'profile-page'
 
-  // Back button
+  // Top bar with back button
+  const topBar = document.createElement('div')
+  topBar.style.cssText = `
+    display: flex;
+    align-items: center;
+    padding: 0.5rem;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg-primary);
+    z-index: 10;
+  `
+
   const backBtn = document.createElement('button')
   backBtn.textContent = '←'
   backBtn.style.cssText = `
@@ -32,16 +44,14 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
     padding: 0.5rem 0.75rem;
     font-size: 1.2rem;
     border-radius: 0.5rem;
-    margin-right: 0.5rem;
     transition: background 0.2s;
   `
   backBtn.addEventListener('mouseenter', () => { backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))' })
   backBtn.addEventListener('mouseleave', () => { backBtn.style.background = 'none' })
   backBtn.addEventListener('click', () => window.history.back())
+  topBar.appendChild(backBtn)
 
-  // Header wrapper for back button + content
-  const headerTop = document.createElement('div')
-  headerTop.style.cssText = 'display: flex; align-items: center;'
+  container.appendChild(topBar)
 
   // Profile header
   const header = document.createElement('div')
@@ -148,11 +158,8 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
   }
   actionsRow.appendChild(followButton)
 
-  headerTop.appendChild(backBtn)
-  headerTop.appendChild(header)
-
   // Assemble page
-  container.appendChild(headerTop)
+  container.appendChild(header)
   container.appendChild(statsRow)
   container.appendChild(document.createElement('hr'))
   container.appendChild(actionsRow)

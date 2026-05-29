@@ -3066,7 +3066,7 @@ app.get('/api/posts', async (c) => {
     // Return total count when filtering by hashtag
     if (hashtag) {
       const countResult = await c.env.DB.prepare(`
-        SELECT COUNT(*) as count FROM posts WHERE status = 'published' AND hidden = 0 AND parent_id IS NULL AND id IN (SELECT id FROM posts, json_each(posts.hashtags) WHERE value = ?)
+        SELECT COUNT(*) as count FROM posts WHERE status = 'published' AND hidden = 0 AND parent_id IS NULL AND id IN (SELECT posts.id FROM posts, json_each(posts.hashtags) WHERE value = ?)
       `).bind(hashtag).first<{ count: number }>()
       return c.json({ posts, count: countResult?.count || 0 })
     }
