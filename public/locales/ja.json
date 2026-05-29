@@ -296,6 +296,7 @@
   "arcade.tutorial_prev": "← 戻る",
   "arcade.tutorial_next": "次へ →",
   "arcade.tutorial_done": "完了！",
+  "arcade.tutorial_demo_play_again": "タップしてもう一度！",
 
   "legal.brand": "🌿 Flaxia",
   "legal.effective_date": "発効日: {date}",

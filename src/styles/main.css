@@ -2991,3 +2991,8 @@ html {
   color: var(--danger, #ef4444);
   background: var(--bg-hover, rgba(0,0,0,0.04));
 }
+
+@keyframes spotlight-pulse {
+  0%, 100% { box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65), 0 0 20px rgba(34, 197, 94, 0.3); }
+  50% { box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65), 0 0 40px rgba(34, 197, 94, 0.5); }
+}

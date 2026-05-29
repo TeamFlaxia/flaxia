@@ -678,12 +678,15 @@ export class ArcadePage {
 
     // Fresh button
     const freshBtn = this.createActionButton('🍃', String(game.freshCount || 0), () => this.handleFresh(), game.isFreshed || false, 'font-size: 0.875rem; font-weight: 700; background: rgba(255,255,255,0.12); padding: 0 6px; border-radius: 8px; line-height: 1.4;')
+    freshBtn.dataset.tutorial = 'fresh'
 
     // Fullscreen button
     const fullscreenBtn = this.createActionButton('⛶', t('arcade.fullscreen'), () => this.handleFullscreen())
+    fullscreenBtn.dataset.tutorial = 'fullscreen'
 
     // Comments button
     const commentsBtn = this.createActionButton('💬', String(game.replyCount || 0), () => this.handleComments())
+    commentsBtn.dataset.tutorial = 'comments'
 
     container.appendChild(freshBtn)
     container.appendChild(fullscreenBtn)
@@ -1197,165 +1200,495 @@ export class ArcadePage {
     if (this.tutorialEl) return
 
     const steps = [
-      { title: t('arcade.tutorial_welcome_title'), desc: t('arcade.tutorial_welcome_desc') },
-      { title: t('arcade.tutorial_step1_title'), desc: t('arcade.tutorial_step1_desc') },
-      { title: t('arcade.tutorial_step2_title'), desc: t('arcade.tutorial_step2_desc') },
-      { title: t('arcade.tutorial_step3_title'), desc: t('arcade.tutorial_step3_desc') },
-      { title: t('arcade.tutorial_step4_title'), desc: t('arcade.tutorial_step4_desc') },
-      { title: t('arcade.tutorial_step5_title'), desc: t('arcade.tutorial_step5_desc') },
-      { title: t('arcade.tutorial_step6_title'), desc: t('arcade.tutorial_step6_desc') },
-    ]
+      { type: 'card', title: t('arcade.tutorial_welcome_title'), desc: t('arcade.tutorial_welcome_desc') },
+      { type: 'demo', title: t('arcade.tutorial_step1_title'), desc: t('arcade.tutorial_step1_desc') },
+      { type: 'spotlight', target: '.arcade-game-container', title: t('arcade.tutorial_step2_title'), desc: t('arcade.tutorial_step2_desc') },
+      { type: 'spotlight', target: '[data-tutorial="fullscreen"]', title: t('arcade.tutorial_step3_title'), desc: t('arcade.tutorial_step3_desc') },
+      { type: 'spotlight', target: '[data-tutorial="fresh"]', title: t('arcade.tutorial_step4_title'), desc: t('arcade.tutorial_step4_desc') },
+      { type: 'spotlight', target: '[data-tutorial="comments"]', title: t('arcade.tutorial_step5_title'), desc: t('arcade.tutorial_step5_desc') },
+      { type: 'spotlight', target: '[data-nav-id="home"]', title: t('arcade.tutorial_step6_title'), desc: t('arcade.tutorial_step6_desc') },
+    ] as const
 
     let currentStep = 0
+    let cardEl: HTMLElement | null = null
+    let spotlightEl: HTMLElement | null = null
+    let tooltipEl: HTMLElement | null = null
+    let demoCanvas: HTMLCanvasElement | null = null
+    let demoAnimId: number | null = null
 
     const overlay = document.createElement('div')
     overlay.style.cssText = `
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.65);
-      display: flex;
-      align-items: center;
-      justify-content: center;
       z-index: 2000;
-      padding: 1.5rem;
+      pointer-events: none;
     `
     this.tutorialEl = overlay
-
-    const card = document.createElement('div')
-    card.style.cssText = `
-      background: var(--bg-primary, #fff);
-      border-radius: 16px;
-      max-width: 420px;
-      width: 100%;
-      padding: 2rem 1.5rem;
-      box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3);
-      position: relative;
-      text-align: center;
-    `
-
-    const stepIndicator = document.createElement('div')
-    stepIndicator.style.cssText = `
-      font-size: 0.75rem;
-      color: var(--text-muted, #888);
-      margin-bottom: 0.75rem;
-    `
-
-    const stepIcon = document.createElement('div')
-    stepIcon.style.cssText = `
-      font-size: 3rem;
-      margin-bottom: 1rem;
-    `
-
-    const titleEl = document.createElement('h2')
-    titleEl.style.cssText = `
-      font-size: 1.2rem;
-      font-weight: 700;
-      margin: 0 0 1rem 0;
-      color: var(--text-primary);
-      line-height: 1.4;
-    `
-
-    const descEl = document.createElement('p')
-    descEl.style.cssText = `
-      font-size: 0.95rem;
-      color: var(--text-secondary, #555);
-      margin: 0 0 1.5rem 0;
-      line-height: 1.6;
-    `
-
-    const btnRow = document.createElement('div')
-    btnRow.style.cssText = `
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.75rem;
-      flex-wrap: wrap;
-    `
-
-    const closeBtn = document.createElement('button')
-    closeBtn.textContent = '✕'
-    closeBtn.style.cssText = `
-      position: absolute;
-      top: 0.75rem;
-      right: 0.75rem;
-      background: none;
-      border: none;
-      font-size: 1.1rem;
-      cursor: pointer;
-      color: var(--text-muted, #888);
-      padding: 0.25rem;
-      line-height: 1;
-      border-radius: 4px;
-    `
-    closeBtn.addEventListener('click', () => this.closeTutorial())
-
-    card.appendChild(closeBtn)
-    card.appendChild(stepIndicator)
-    card.appendChild(stepIcon)
-    card.appendChild(titleEl)
-    card.appendChild(descEl)
-    card.appendChild(btnRow)
-    overlay.appendChild(card)
     document.body.appendChild(overlay)
 
-    const render = () => {
+    const clearTutorial = () => {
+      if (demoAnimId) cancelAnimationFrame(demoAnimId)
+      cardEl?.remove()
+      spotlightEl?.remove()
+      tooltipEl?.remove()
+      cardEl = null
+      spotlightEl = null
+      tooltipEl = null
+      demoCanvas = null
+    }
+
+    const closeTutorial = () => {
+      clearTutorial()
+      overlay.remove()
+      this.tutorialEl = null
+      localStorage.setItem(ArcadePage.TUTORIAL_SEEN_KEY, '1')
+    }
+
+    const buildCard = (title: string, desc: string, contentFn?: (c: HTMLElement) => void): HTMLElement => {
+      const c = document.createElement('div')
+      c.style.cssText = `
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: var(--bg-primary, #fff);
+        border-radius: 16px;
+        max-width: 420px;
+        width: calc(100% - 3rem);
+        padding: 2rem 1.5rem;
+        box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3);
+        text-align: center;
+        z-index: 2001;
+        pointer-events: auto;
+      `
+
+      const closeBtn = document.createElement('button')
+      closeBtn.textContent = '✕'
+      closeBtn.style.cssText = `
+        position: absolute;
+        top: 0.75rem;
+        right: 0.75rem;
+        background: none;
+        border: none;
+        font-size: 1.1rem;
+        cursor: pointer;
+        color: var(--text-muted, #888);
+        padding: 0.25rem;
+        line-height: 1;
+        border-radius: 4px;
+      `
+      closeBtn.addEventListener('click', closeTutorial)
+      c.appendChild(closeBtn)
+
+      if (contentFn) contentFn(c)
+
+      const titleEl = document.createElement('h2')
+      titleEl.textContent = title
+      titleEl.style.cssText = `
+        font-size: 1.2rem;
+        font-weight: 700;
+        margin: 0 0 0.75rem 0;
+        color: var(--text-primary);
+        line-height: 1.4;
+      `
+
+      const descEl = document.createElement('p')
+      descEl.textContent = desc
+      descEl.style.cssText = `
+        font-size: 0.95rem;
+        color: var(--text-secondary, #555);
+        margin: 0 0 1.25rem 0;
+        line-height: 1.6;
+      `
+
+      c.appendChild(titleEl)
+      c.appendChild(descEl)
+      return c
+    }
+
+    const startDemoGame = (canvas: HTMLCanvasElement): void => {
+      const ctx = canvas.getContext('2d')!
+      const w = canvas.width
+      const h = canvas.height
+
+      let score = 0
+      let timeLeft = 10
+      let gameOver = false
+      let bx = 50, by = 50, br = 22
+      let bvx = 2, bvy = 1.5
+      let particles: { x: number; y: number; vx: number; vy: number; life: number; r: number }[] = []
+
+      const draw = () => {
+        ctx.clearRect(0, 0, w, h)
+
+        ctx.fillStyle = '#1a1a2e'
+        ctx.fillRect(0, 0, w, h)
+
+        ctx.fillStyle = '#fff'
+        ctx.font = 'bold 14px sans-serif'
+        ctx.textAlign = 'left'
+        ctx.fillText(`🍃 ${score}`, 10, 22)
+
+        ctx.textAlign = 'right'
+        ctx.fillText(`⏱ ${timeLeft}s`, w - 10, 22)
+
+        if (gameOver) {
+          ctx.textAlign = 'center'
+          ctx.fillStyle = '#22c55e'
+          ctx.font = 'bold 20px sans-serif'
+          ctx.fillText(`✨ Score: ${score}!`, w / 2, h / 2 - 10)
+          ctx.fillStyle = '#aaa'
+          ctx.font = '13px sans-serif'
+          ctx.fillText(t('arcade.tutorial_demo_play_again'), w / 2, h / 2 + 20)
+          return
+        }
+
+        for (const p of particles) {
+          ctx.globalAlpha = p.life
+          ctx.beginPath()
+          ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2)
+          ctx.fillStyle = '#22c55e'
+          ctx.fill()
+        }
+        ctx.globalAlpha = 1
+
+        ctx.beginPath()
+        ctx.arc(bx, by, br, 0, Math.PI * 2)
+        const grad = ctx.createRadialGradient(bx - 5, by - 5, 2, bx, by, br)
+        grad.addColorStop(0, '#4ade80')
+        grad.addColorStop(1, '#16a34a')
+        ctx.fillStyle = grad
+        ctx.fill()
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)'
+        ctx.lineWidth = 2
+        ctx.stroke()
+
+        ctx.beginPath()
+        ctx.arc(bx - 8, by - 8, 6, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(255,255,255,0.15)'
+        ctx.fill()
+      }
+
+      const update = () => {
+        if (gameOver) return
+
+        bx += bvx
+        by += bvy
+        if (bx - br < 0 || bx + br > w) bvx *= -1
+        if (by - br < 0 || by + br > h) bvy *= -1
+        bx = Math.max(br, Math.min(w - br, bx))
+        by = Math.max(br, Math.min(h - br, by))
+
+        for (const p of particles) {
+          p.x += p.vx
+          p.y += p.vy
+          p.life -= 0.02
+          p.r *= 0.98
+        }
+        particles = particles.filter(p => p.life > 0)
+
+        draw()
+        demoAnimId = requestAnimationFrame(update)
+      }
+
+      const popParticles = (x: number, y: number) => {
+        for (let i = 0; i < 12; i++) {
+          const angle = (Math.PI * 2 / 12) * i
+          particles.push({
+            x, y,
+            vx: Math.cos(angle) * (2 + Math.random() * 3),
+            vy: Math.sin(angle) * (2 + Math.random() * 3),
+            life: 1,
+            r: 3 + Math.random() * 3,
+          })
+        }
+      }
+
+      const handleClick = (e: MouseEvent | TouchEvent) => {
+        if (gameOver) {
+          score = 0
+          timeLeft = 10
+          gameOver = false
+          particles = []
+          bx = 50 + Math.random() * (w - 100)
+          by = 50 + Math.random() * (h - 100)
+          update()
+          return
+        }
+
+        const rect = canvas.getBoundingClientRect()
+        const scaleX = w / rect.width
+        const scaleY = h / rect.height
+        let cx: number, cy: number
+        if ('touches' in e) {
+          cx = (e.touches[0].clientX - rect.left) * scaleX
+          cy = (e.touches[0].clientY - rect.top) * scaleY
+        } else {
+          cx = (e.clientX - rect.left) * scaleX
+          cy = (e.clientY - rect.top) * scaleY
+        }
+
+        const dist = Math.sqrt((cx - bx) ** 2 + (cy - by) ** 2)
+        if (dist < br) {
+          score++
+          popParticles(bx, by)
+          bx = 30 + Math.random() * (w - 60)
+          by = 30 + Math.random() * (h - 60)
+        }
+      }
+
+      canvas.addEventListener('click', handleClick)
+      canvas.addEventListener('touchstart', handleClick, { passive: true })
+
+      update()
+
+      const timer = setInterval(() => {
+        if (timeLeft > 0) {
+          timeLeft--
+        } else {
+          gameOver = true
+          clearInterval(timer)
+          draw()
+        }
+      }, 1000)
+
+      // Cleanup on card removal
+      const observer = new MutationObserver(() => {
+        if (!document.contains(canvas)) {
+          clearInterval(timer)
+          observer.disconnect()
+        }
+      })
+      observer.observe(document.body, { childList: true, subtree: true })
+    }
+
+    const renderStep = () => {
+      clearTutorial()
       const step = steps[currentStep]
-      const isWelcome = currentStep === 0
       const isLast = currentStep === steps.length - 1
+      const isWelcome = currentStep === 0
 
-      stepIndicator.textContent = isWelcome ? '' : `${currentStep}/${steps.length - 1}`
-      stepIcon.textContent = step.title.match(/^(\S+)/)?.[0] || ''
-      titleEl.textContent = isWelcome ? step.title : step.title.replace(/^\S+\s*/, '')
-      descEl.textContent = step.desc
-      btnRow.innerHTML = ''
+      if (step.type === 'card') {
+        cardEl = buildCard(step.title, step.desc)
+        const btnRow = document.createElement('div')
+        btnRow.style.cssText = `
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.75rem;
+          flex-wrap: wrap;
+        `
 
-      if (isWelcome) {
-        const startBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_start'), 'var(--accent, #22c55e)', '#fff')
-        startBtn.addEventListener('click', () => {
-          currentStep = 1
-          render()
+        if (isWelcome) {
+          const startBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_start'), 'var(--accent, #22c55e)', '#fff')
+          startBtn.addEventListener('click', () => { currentStep = 1; renderStep() })
+          btnRow.appendChild(startBtn)
+
+          const skipBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_skip'), 'transparent', 'var(--text-muted, #888)')
+          skipBtn.style.border = '1px solid var(--border, #ddd)'
+          skipBtn.addEventListener('click', closeTutorial)
+          btnRow.appendChild(skipBtn)
+        } else {
+          if (currentStep > 1) {
+            const prevBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_prev'), 'transparent', 'var(--text-primary)')
+            prevBtn.style.border = '1px solid var(--border, #ddd)'
+            prevBtn.addEventListener('click', () => { currentStep--; renderStep() })
+            btnRow.appendChild(prevBtn)
+          }
+          if (isLast) {
+            const doneBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_done'), 'var(--accent, #22c55e)', '#fff')
+            doneBtn.addEventListener('click', closeTutorial)
+            btnRow.appendChild(doneBtn)
+          } else {
+            const nextBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_next'), 'var(--accent, #22c55e)', '#fff')
+            nextBtn.addEventListener('click', () => { currentStep++; renderStep() })
+            btnRow.appendChild(nextBtn)
+          }
+        }
+
+        cardEl.appendChild(btnRow)
+        overlay.appendChild(cardEl)
+      } else if (step.type === 'demo') {
+        cardEl = buildCard(step.title, step.desc, (c) => {
+          const canvas = document.createElement('canvas')
+          canvas.width = 320
+          canvas.height = 200
+          demoCanvas = canvas
+          canvas.style.cssText = `
+            display: block;
+            margin: 0 auto 1rem auto;
+            border-radius: 10px;
+            width: 100%;
+            max-width: 320px;
+            aspect-ratio: 320 / 200;
+            cursor: pointer;
+            touch-action: manipulation;
+          `
+          c.insertBefore(canvas, c.firstChild?.nextSibling || c.firstChild)
+          startDemoGame(canvas)
         })
-        btnRow.appendChild(startBtn)
 
-        const skipBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_skip'), 'transparent', 'var(--text-muted, #888)')
-        skipBtn.style.border = '1px solid var(--border, #ddd)'
-        skipBtn.addEventListener('click', () => this.closeTutorial())
-        btnRow.appendChild(skipBtn)
-      } else {
+        const btnRow = document.createElement('div')
+        btnRow.style.cssText = `
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.75rem;
+          flex-wrap: wrap;
+        `
         if (currentStep > 1) {
           const prevBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_prev'), 'transparent', 'var(--text-primary)')
           prevBtn.style.border = '1px solid var(--border, #ddd)'
-          prevBtn.addEventListener('click', () => {
-            currentStep--
-            render()
-          })
+          prevBtn.addEventListener('click', () => { currentStep--; renderStep() })
+          btnRow.appendChild(prevBtn)
+        }
+        const nextBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_next'), 'var(--accent, #22c55e)', '#fff')
+        nextBtn.addEventListener('click', () => { currentStep++; renderStep() })
+        btnRow.appendChild(nextBtn)
+        cardEl.appendChild(btnRow)
+        overlay.appendChild(cardEl)
+      } else if (step.type === 'spotlight' && 'target' in step) {
+        const target = document.querySelector(step.target as string) as HTMLElement | null
+        if (!target) {
+          cardEl = buildCard(step.title, step.desc)
+          const btnRow = document.createElement('div')
+          btnRow.style.cssText = `
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+          `
+          if (currentStep > 1) {
+            const prevBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_prev'), 'transparent', 'var(--text-primary)')
+            prevBtn.style.border = '1px solid var(--border, #ddd)'
+            prevBtn.addEventListener('click', () => { currentStep--; renderStep() })
+            btnRow.appendChild(prevBtn)
+          }
+          if (isLast) {
+            const doneBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_done'), 'var(--accent, #22c55e)', '#fff')
+            doneBtn.addEventListener('click', closeTutorial)
+            btnRow.appendChild(doneBtn)
+          } else {
+            const nextBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_next'), 'var(--accent, #22c55e)', '#fff')
+            nextBtn.addEventListener('click', () => { currentStep++; renderStep() })
+            btnRow.appendChild(nextBtn)
+          }
+          cardEl.appendChild(btnRow)
+          overlay.appendChild(cardEl)
+          return
+        }
+
+        const rect = target.getBoundingClientRect()
+
+        spotlightEl = document.createElement('div')
+        spotlightEl.style.cssText = `
+          position: fixed;
+          top: ${rect.top}px;
+          left: ${rect.left}px;
+          width: ${rect.width}px;
+          height: ${rect.height}px;
+          z-index: 2000;
+          pointer-events: none;
+          box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65), 0 0 20px rgba(34, 197, 94, 0.3);
+          border-radius: 12px;
+          animation: spotlight-pulse 2s ease-in-out infinite;
+        `
+        overlay.appendChild(spotlightEl)
+
+        tooltipEl = document.createElement('div')
+        tooltipEl.style.cssText = `
+          position: fixed;
+          z-index: 2001;
+          pointer-events: auto;
+          background: var(--bg-primary, #fff);
+          border-radius: 12px;
+          padding: 1rem 1.25rem;
+          max-width: 280px;
+          box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+          text-align: center;
+        `
+
+        const icon = step.title.match(/^(\S+)/)?.[0] || ''
+        const cleanTitle = step.title.replace(/^\S+\s*/, '')
+
+        const stepLabel = document.createElement('div')
+        stepLabel.textContent = `${currentStep}/${steps.length - 1}`
+        stepLabel.style.cssText = 'font-size: 0.7rem; color: var(--text-muted, #888); margin-bottom: 0.5rem;'
+
+        const titleEl = document.createElement('div')
+        titleEl.style.cssText = 'font-weight: 700; font-size: 1rem; margin-bottom: 0.4rem; color: var(--text-primary);'
+        titleEl.textContent = `${icon} ${cleanTitle}`
+
+        const descEl = document.createElement('div')
+        descEl.textContent = step.desc
+        descEl.style.cssText = 'font-size: 0.85rem; color: var(--text-secondary, #555); margin-bottom: 0.75rem; line-height: 1.5;'
+
+        const btnRow = document.createElement('div')
+        btnRow.style.cssText = 'display: flex; align-items: center; justify-content: center; gap: 0.5rem;'
+
+        if (currentStep > 1) {
+          const prevBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_prev'), 'transparent', 'var(--text-primary)')
+          prevBtn.style.border = '1px solid var(--border, #ddd)'
+          prevBtn.style.padding = '0.4rem 0.8rem'
+          prevBtn.style.fontSize = '0.8rem'
+          prevBtn.addEventListener('click', () => { currentStep--; renderStep() })
           btnRow.appendChild(prevBtn)
         }
 
         if (isLast) {
           const doneBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_done'), 'var(--accent, #22c55e)', '#fff')
-          doneBtn.addEventListener('click', () => this.closeTutorial())
+          doneBtn.style.padding = '0.4rem 0.8rem'
+          doneBtn.style.fontSize = '0.8rem'
+          doneBtn.addEventListener('click', closeTutorial)
           btnRow.appendChild(doneBtn)
         } else {
           const nextBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_next'), 'var(--accent, #22c55e)', '#fff')
-          nextBtn.addEventListener('click', () => {
-            currentStep++
-            render()
-          })
+          nextBtn.style.padding = '0.4rem 0.8rem'
+          nextBtn.style.fontSize = '0.8rem'
+          nextBtn.addEventListener('click', () => { currentStep++; renderStep() })
           btnRow.appendChild(nextBtn)
         }
+
+        tooltipEl.appendChild(stepLabel)
+        tooltipEl.appendChild(titleEl)
+        tooltipEl.appendChild(descEl)
+        tooltipEl.appendChild(btnRow)
+        overlay.appendChild(tooltipEl)
+
+        // Position tooltip relative to spotlight
+        const vw = window.innerWidth
+        const vh = window.innerHeight
+        const tooltipW = 280
+        const tooltipH = tooltipEl.offsetHeight || 160
+        const margin = 12
+        let tx: number, ty: number
+
+        const centerX = rect.left + rect.width / 2
+        const centerY = rect.top + rect.height / 2
+
+        if (centerX < vw * 0.4) {
+          tx = rect.right + margin
+          ty = Math.min(centerY - tooltipH / 2, vh - tooltipH - margin)
+        } else if (centerX > vw * 0.6) {
+          tx = rect.left - tooltipW - margin
+          ty = Math.min(centerY - tooltipH / 2, vh - tooltipH - margin)
+        } else if (centerY < vh * 0.4) {
+          tx = Math.max(margin, centerX - tooltipW / 2)
+          ty = rect.bottom + margin
+        } else {
+          tx = Math.max(margin, centerX - tooltipW / 2)
+          ty = rect.top - tooltipH - margin
+        }
+
+        tx = Math.max(margin, Math.min(vw - tooltipW - margin, tx))
+        ty = Math.max(margin, Math.min(vh - tooltipH - margin, ty))
+        tooltipEl.style.left = `${tx}px`
+        tooltipEl.style.top = `${ty}px`
       }
     }
 
-    render()
-  }
-
-  private closeTutorial(): void {
-    if (this.tutorialEl) {
-      this.tutorialEl.remove()
-      this.tutorialEl = null
-    }
-    localStorage.setItem(ArcadePage.TUTORIAL_SEEN_KEY, '1')
+    renderStep()
   }
 
   private static createTutorialButton(text: string, bg: string, color: string): HTMLButtonElement {
@@ -1379,7 +1712,10 @@ export class ArcadePage {
   }
 
   public destroy(): void {
-    this.closeTutorial()
+    if (this.tutorialEl) {
+      this.tutorialEl.remove()
+      this.tutorialEl = null
+    }
     // Clean up document event listeners using stored bound functions
     document.removeEventListener('touchstart', this.boundHandleTouchStart)
     document.removeEventListener('touchmove', this.boundHandleTouchMove)

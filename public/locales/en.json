@@ -296,6 +296,7 @@
   "arcade.tutorial_prev": "← Back",
   "arcade.tutorial_next": "Next →",
   "arcade.tutorial_done": "Done!",
+  "arcade.tutorial_demo_play_again": "Tap to play again!",
 
   "legal.brand": "🌿 Flaxia",
   "legal.effective_date": "Effective Date: {date}",
