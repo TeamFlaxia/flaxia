@@ -6,6 +6,16 @@ export interface DosPlayerHandle {
 
 let activeHandle: DosPlayerHandle | null = null
 
+function isTauri(): boolean {
+  try {
+    return typeof window !== 'undefined' && ('__TAURI__' in window || '__TAURI_INTERNALS__' in window)
+  } catch {
+    return false
+  }
+}
+
+const FLAXIA_ORIGIN = 'https://flaxia.app'
+
 export async function executeDos(
   postId: string,
   containerEl: HTMLElement,
@@ -30,7 +40,7 @@ export async function executeDos(
       background: #000;
     `
 
-    const apiOrigin = import.meta.env.VITE_CONTENT_ORIGIN || window.location.origin
+    const apiOrigin = import.meta.env.VITE_CONTENT_ORIGIN || (isTauri() ? FLAXIA_ORIGIN : window.location.origin)
     const zipUrl = url || `${apiOrigin}/api/zip/${postId}`
     const dosPlayerUrl = `${apiOrigin}/api/dos-player/${postId}?zip_url=${encodeURIComponent(zipUrl)}&load_failed=${encodeURIComponent(t('dos_player.load_failed'))}`
 

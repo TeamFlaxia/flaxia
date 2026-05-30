@@ -1,0 +1,26 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "Flaxia",
+        "url": "https://flaxia.app",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 240,
+        "minHeight": 200,
+        "maxWidth": 7680,
+        "maxHeight": 4320,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  },
+  "bundle": {
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    }
+  }
+}

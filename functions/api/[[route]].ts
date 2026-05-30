@@ -243,7 +243,7 @@ app.get('/api/dos-player/:postId', async (c) => {
 <head>
   <meta charset="utf-8">
   <title>DOS Game</title>
-  <link rel="stylesheet" href="${origin}/js-dos/js-dos.css">
+  <link rel="stylesheet" href="${origin}/js-dos/js-dos.css?v=1">
   <style>
     html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
     #dos-container { width: 100%; height: 100%; }
@@ -267,7 +267,7 @@ app.get('/api/dos-player/:postId', async (c) => {
       return new Promise(function (resolve, reject) {
         var script = document.createElement('script');
         if (loadAttempts === 0) {
-          script.src = '${origin}/js-dos/js-dos.js';
+          script.src = '${origin}/js-dos/js-dos.js?v=1';
         } else if (loadAttempts === 1) {
           script.src = 'https://v8.js-dos.com/latest/js-dos.js';
         } else {
@@ -275,7 +275,7 @@ app.get('/api/dos-player/:postId', async (c) => {
           return;
         }
         loadAttempts++;
-        script.onload = resolve;
+        script.onload = function () { resolve(); };
         script.onerror = function () {
           document.head.removeChild(script);
           loadJsdos().then(resolve).catch(reject);
@@ -294,7 +294,7 @@ app.get('/api/dos-player/:postId', async (c) => {
       } catch (err) {
         console.error('DOS Player error:', err);
         errorOverlay.style.display = 'flex';
-        errorOverlay.textContent = loadFailedMsg;
+        errorOverlay.textContent = loadFailedMsg + ' (' + (err instanceof Error ? err.message : String(err)) + ')';
       }
     }
 
@@ -310,7 +310,8 @@ app.get('/api/dos-player/:postId', async (c) => {
     return new Response(html, {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'no-cache'
+        'Cache-Control': 'no-cache',
+        'Cross-Origin-Embedder-Policy': 'credentialless'
       }
     })
   } catch (error: any) {
@@ -345,12 +346,14 @@ app.get('/api/zip/:postId', async (c) => {
       return c.json({ error: 'ZIP not found' }, 404)
     }
     
-    // Return the ZIP with proper headers
+    // Return the ZIP with proper headers (echo origin for sandboxed iframe null-origin support)
     return new Response(object.body, {
       headers: {
         'Content-Type': 'application/zip',
         'Cache-Control': 'public, max-age=31536000', // Cache for 1 year
-        'Access-Control-Allow-Origin': '*'
+        'Access-Control-Allow-Origin': c.req.header('Origin') || '*',
+        'Access-Control-Allow-Credentials': 'true',
+        'Cross-Origin-Resource-Policy': 'cross-origin'
       }
     })
   } catch (error: any) {
@@ -536,12 +539,14 @@ app.get('/api/swf/:postId', async (c) => {
       return c.json({ error: 'SWF not found' }, 404)
     }
     
-    // Return the SWF with proper headers
+    // Return the SWF with proper headers (echo origin for sandboxed iframe null-origin support)
     return new Response(object.body, {
       headers: {
         'Content-Type': 'application/x-shockwave-flash',
         'Cache-Control': 'public, max-age=31536000', // Cache for 1 year
-        'Access-Control-Allow-Origin': '*'
+        'Access-Control-Allow-Origin': c.req.header('Origin') || '*',
+        'Access-Control-Allow-Credentials': 'true',
+        'Cross-Origin-Resource-Policy': 'cross-origin'
       }
     })
   } catch (error: any) {

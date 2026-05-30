@@ -1,0 +1,19 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "Flaxia",
+        "url": "https://flaxia.app",
+        "width": 412,
+        "height": 915,
+        "resizable": false,
+        "fullscreen": true
+      }
+    ]
+  },
+  "bundle": {
+    "android": {
+      "minSdkVersion": 26
+    }
+  }
+}
