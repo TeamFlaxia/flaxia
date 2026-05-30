@@ -21,10 +21,13 @@
     "test:notifications": "node --test --experimental-strip-types tests/notifications.test.ts",
     "test:tags": "node --test --experimental-strip-types tests/tags.test.ts",
     "test:rate-limit": "node --test --experimental-strip-types tests/rate-limit.test.ts",
-    "dev:test": "wrangler pages dev dist --d1=DB_TEST --kv=RATE_LIMIT_TEST --port 8788 --var BASE_URL:http://localhost:8788"
+    "dev:test": "wrangler pages dev dist --d1=DB_TEST --kv=RATE_LIMIT_TEST --port 8788 --var BASE_URL:http://localhost:8788",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@cloudflare/kv-asset-handler": "^0.4.2",
+    "@tauri-apps/api": "^2.11.0",
     "better-auth": "^1.5.4",
     "dompurify": "^3.0.0",
     "fflate": "^0.8.2",
@@ -39,6 +42,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.0.0",
+    "@tauri-apps/cli": "^2.11.2",
     "@types/dompurify": "^3.0.5",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^20.0.0",

@@ -121,10 +121,14 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
     border-bottom: 1px solid var(--border);
     overflow-x: auto;
     position: sticky;
-    top: 56px;
+    top: 0;
     background: var(--bg-primary);
     z-index: 9;
   `
+  // Calculate filter bar top based on actual header height
+  requestAnimationFrame(() => {
+    filterBar.style.top = `${header.offsetHeight}px`
+  })
 
   const filters: { key: 'all' | 'users' | 'posts' | 'arcade'; label: string }[] = [
     { key: 'all', label: t('search.filter_all') },

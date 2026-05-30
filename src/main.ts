@@ -229,18 +229,31 @@ document.addEventListener('DOMContentLoaded', async () => {
       document.body.style.overflow = ''
     }
 
+    let currentResizeHandler: (() => void) | null = null
+    let currentKeydownHandler: ((e: KeyboardEvent) => void) | null = null
+    let currentModalChangeHandler: ((e: Event) => void) | null = null
+
     const setupMobileLeftNav = (leftNavElement: HTMLElement): void => {
-      // Clean up existing button if it exists
+      // Clean up existing button and event listeners
       if (leftNavOpenButton) {
         leftNavOpenButton.remove()
         leftNavOpenButton = null
       }
-
-      // Create the left-edge mobile nav button
-      if (window.innerWidth <= 768) {
-        leftNavOpenButton = createLeftNavOpenButton(leftNavElement)
-        leftNavOpenButton.style.display = 'block'
+      if (currentResizeHandler) {
+        window.removeEventListener('resize', currentResizeHandler)
+        currentResizeHandler = null
       }
+      if (currentKeydownHandler) {
+        document.removeEventListener('keydown', currentKeydownHandler)
+        currentKeydownHandler = null
+      }
+      if (currentModalChangeHandler) {
+        window.removeEventListener('modalchange', currentModalChangeHandler)
+        currentModalChangeHandler = null
+      }
+
+      // Always create the button (CSS shows/hides via media query)
+      leftNavOpenButton = createLeftNavOpenButton(leftNavElement)
 
       // Listen for openLeftNav events from timeline
       document.addEventListener('openLeftNav', () => {
@@ -248,39 +261,31 @@ document.addEventListener('DOMContentLoaded', async () => {
       })
 
       // Handle escape key to close
-      document.addEventListener('keydown', (e) => {
+      currentKeydownHandler = (e: KeyboardEvent) => {
         if (e.key === 'Escape' && window.innerWidth <= 768) {
           closeLeftNav()
         }
-      })
+      }
+      document.addEventListener('keydown', currentKeydownHandler)
 
       // Handle window resize
-      window.addEventListener('resize', () => {
+      currentResizeHandler = () => {
         if (window.innerWidth > 768) {
-          // Close mobile nav when resizing to desktop
           closeLeftNav()
-          if (leftNavOpenButton) {
-            leftNavOpenButton.remove()
-            leftNavOpenButton = null
-          }
-        } else {
-          if (!leftNavOpenButton) {
-            leftNavOpenButton = createLeftNavOpenButton(leftNavElement)
-          }
-          leftNavOpenButton.style.display = 'block'
         }
-      })
+      }
+      window.addEventListener('resize', currentResizeHandler)
 
       // Close mobile nav when modal opens
-      const handleModalChange = (e: Event) => {
+      currentModalChangeHandler = (e: Event) => {
         if (window.innerWidth > 768) return
         const { open } = (e as CustomEvent<{ open: boolean }>).detail
         closeLeftNav()
         if (leftNavOpenButton) {
-          leftNavOpenButton.style.display = open ? 'none' : 'block'
+          leftNavOpenButton.style.display = open ? 'none' : ''
         }
       }
-      window.addEventListener('modalchange', handleModalChange)
+      window.addEventListener('modalchange', currentModalChangeHandler)
     }
 
     // Auth guard - redirect to login if not authenticated (only for protected routes)

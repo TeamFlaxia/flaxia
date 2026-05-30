@@ -13,6 +13,15 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   const card = document.createElement('div')
   card.className = 'auth-card'
 
+  // Back button
+  const backButton = document.createElement('button')
+  backButton.className = 'auth-back'
+  backButton.innerHTML = '← ' + t('auth.back')
+  backButton.addEventListener('click', () => {
+    window.history.pushState({}, '', '/')
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  })
+
   // Logo
   const logo = document.createElement('div')
   logo.className = 'auth-logo'
@@ -138,6 +147,7 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   form.appendChild(submitButton)
 
   // Assemble card
+  card.appendChild(backButton)
   card.appendChild(logo)
   card.appendChild(heading)
   card.appendChild(form)

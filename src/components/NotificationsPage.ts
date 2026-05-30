@@ -53,9 +53,12 @@ export class NotificationsPage {
       align-items: center;
       gap: 8px;
       flex-wrap: wrap;
-      margin-bottom: 24px;
-      padding-bottom: 16px;
+      padding: 1rem;
       border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--bg-primary);
     `
 
     const backBtn = document.createElement('button')

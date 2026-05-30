@@ -21,6 +21,7 @@
   "common.back": "← 戻る",
   "common.retry": "再試行",
 
+  "auth.back": "戻る",
   "auth.sign_in": "ログイン",
   "auth.sign_up": "登録",
   "auth.sign_out": "ログアウト",

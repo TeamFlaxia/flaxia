@@ -162,6 +162,10 @@ export class ExplorePage {
     section.style.cssText = `
       padding: 1rem;
       border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--bg-primary);
     `
 
     const searchBox = document.createElement('div')

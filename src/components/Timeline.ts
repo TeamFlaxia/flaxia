@@ -62,23 +62,23 @@ export class Timeline {
     const container = document.createElement('section')
     container.className = 'timeline'
 
-    // Header: feed tabs + post composer
+    // Header: feed tabs
     const timelineHeader = document.createElement('div')
     timelineHeader.className = 'timeline-header'
 
     const feedToggle = this.createFeedToggle()
     timelineHeader.appendChild(feedToggle)
 
-    // Post composer pinned directly below tabs (only for logged-in users)
+    container.appendChild(timelineHeader)
+
+    // Post composer directly below the header (only for logged-in users)
     if (this.props.currentUser) {
       this.composer = createPostComposer({
         onPostCreated: (post) => this.handleNewPost(post),
         currentUser: this.props.currentUser
       })
-      timelineHeader.appendChild(this.composer.getElement())
+      container.appendChild(this.composer.getElement())
     }
-
-    container.appendChild(timelineHeader)
 
     // Hashtag input (hidden by default)
     const hashtagInput = this.createHashtagInput()

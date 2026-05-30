@@ -37,6 +37,10 @@ export class BookmarksPage {
       gap: 8px;
       padding: 1rem;
       border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--bg-primary);
     `
 
     const backBtn = document.createElement('button')
@@ -70,6 +74,7 @@ export class BookmarksPage {
 
     const postsContainer = document.createElement('div')
     postsContainer.className = 'bookmarks-posts'
+    postsContainer.style.width = '100%'
     container.appendChild(postsContainer)
 
     const loadingContainer = document.createElement('div')
@@ -155,17 +160,14 @@ export class BookmarksPage {
   }
 
   private showEmpty(): void {
-    const postsContainer = this.element.querySelector('.bookmarks-posts') as HTMLElement
-    if (!postsContainer) return
-
     const empty = document.createElement('div')
     empty.style.cssText = `
       text-align: center;
-      padding: 3rem 1rem;
+      padding: 48px 24px;
       color: var(--text-muted);
     `
     empty.textContent = t('bookmarks.empty') || 'No bookmarks yet'
-    postsContainer.appendChild(empty)
+    this.element.appendChild(empty)
   }
 
   private updateLoadingState(isLoading: boolean): void {

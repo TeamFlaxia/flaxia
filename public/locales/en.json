@@ -21,6 +21,7 @@
   "common.back": "← Back",
   "common.retry": "Retry",
 
+  "auth.back": "Back",
   "auth.sign_in": "Sign in",
   "auth.sign_up": "Sign up",
   "auth.sign_out": "Log out",
