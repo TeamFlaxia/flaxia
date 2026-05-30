@@ -11,6 +11,8 @@ database_id = "7c99f35f-69a0-4644-96a1-34c716a3e82d"
 [vars]
 SANDBOX_ORIGIN = "https://flaxia.app"
 BASE_URL = "https://flaxia.app"
+CROWD_ORCHESTRATOR_URL = "https://flaxia-worker.remydre8.workers.dev"
+CROWD_API_KEY = "fc_live_flaxia_dev_key"
 
 # To set ADMIN_USERNAMES secret for admin features:
 # npx wrangler secret put ADMIN_USERNAMES
@@ -29,3 +31,7 @@ id = "96ea8717c5cf419ab93640bbaa2b93c2"
 [[queues.producers]]
 queue = "activitypub-delivery"
 binding = "AP_DELIVERY_QUEUE"
+
+# Flaxia Crowd 分散コンピューティング
+# CROWD_API_KEY は本番環境では secret 推奨:
+#   npx wrangler secret put CROWD_API_KEY

@@ -8,6 +8,7 @@ import { verifyHttpSignature, verifyDigest, fetchActorPublicKey, signRequest } f
 import { generateKeyPair, exportPublicKey, exportPrivateKey } from '../lib/activitypub/crypto'
 import { buildNoteObject, buildCreateActivity, buildDeleteActivity } from '../lib/activitypub/note'
 import type { ReportCategory } from '../../src/types/post'
+import { FlaxiaClient } from '@flaxia/sdk'
 
 type Bindings = {
   DB: D1Database
@@ -19,6 +20,8 @@ type Bindings = {
   BASE_URL: string
   ADMIN_USERNAMES: string
   AP_DELIVERY_QUEUE: Queue
+  CROWD_ORCHESTRATOR_URL: string
+  CROWD_API_KEY: string
 }
 
 type Variables = {
@@ -59,6 +62,13 @@ app.use('/*', cors({
   allowHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 }))
+
+function getCrowdClient(c: any): FlaxiaClient | null {
+  const orchestratorUrl = c.env.CROWD_ORCHESTRATOR_URL
+  const apiKey = c.env.CROWD_API_KEY
+  if (!orchestratorUrl || !apiKey) return null
+  return new FlaxiaClient({ baseUrl: orchestratorUrl, apiKey })
+}
 
 // PUT /api/upload/:key — direct file upload endpoint (requires auth + ownership of pending post)
 app.put('/api/upload/*', requireAuth, async (c) => {
