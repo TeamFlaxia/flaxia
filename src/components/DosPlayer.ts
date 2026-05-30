@@ -14,6 +14,15 @@ function isTauri(): boolean {
   }
 }
 
+function isLocalOrigin(origin: string): boolean {
+  try {
+    const url = new URL(origin)
+    return url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === 'lvh.me'
+  } catch {
+    return false
+  }
+}
+
 const FLAXIA_ORIGIN = 'https://flaxia.app'
 
 export async function executeDos(
@@ -40,13 +49,15 @@ export async function executeDos(
       background: #000;
     `
 
-    const apiOrigin = import.meta.env.VITE_CONTENT_ORIGIN || (isTauri() ? FLAXIA_ORIGIN : window.location.origin)
+    const currentOrigin = window.location.origin
+    const isLocalDev = isLocalOrigin(currentOrigin)
+    const apiOrigin = import.meta.env.VITE_CONTENT_ORIGIN || (isTauri() && !isLocalDev ? FLAXIA_ORIGIN : currentOrigin)
     const zipUrl = url || `${apiOrigin}/api/zip/${postId}`
     const dosPlayerUrl = `${apiOrigin}/api/dos-player/${postId}?zip_url=${encodeURIComponent(zipUrl)}&load_failed=${encodeURIComponent(t('dos_player.load_failed'))}`
 
     const iframe = document.createElement('iframe')
+    iframe.sandbox = 'allow-scripts allow-pointer-lock allow-fullscreen'
     iframe.src = dosPlayerUrl
-    iframe.sandbox = 'allow-scripts allow-same-origin allow-pointer-lock allow-fullscreen'
     iframe.setAttribute('allow', 'fullscreen')
     iframe.setAttribute('referrerpolicy', 'no-referrer')
     iframe.style.cssText = `

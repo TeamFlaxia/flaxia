@@ -5,6 +5,9 @@
   Content-Type: application/javascript
   X-Content-Type-Options: nosniff
 
+/js-dos/*
+  Access-Control-Allow-Origin: *
+
 # Ad network MIME type fixes
 /AdServer/js/*.js
   Content-Type: application/javascript

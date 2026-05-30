@@ -263,34 +263,96 @@ app.get('/api/dos-player/:postId', async (c) => {
     var loadFailedMsg = ${JSON.stringify(loadFailed)};
     var loadAttempts = 0;
 
+    function showError(msg) {
+      var overlay = document.getElementById('error-overlay');
+      if (overlay) {
+        overlay.style.display = 'flex';
+        overlay.textContent = msg;
+      }
+    }
+
+    function checkSupport() {
+      var issues = [];
+      if (typeof WebAssembly === 'undefined') {
+        issues.push('WebAssembly not available');
+      }
+      try {
+        var canvas = document.createElement('canvas');
+        var gl = canvas.getContext('webgl') || canvas.getContext('webgl2');
+        if (!gl) {
+          issues.push('WebGL not available');
+        }
+      } catch (e) {
+        issues.push('WebGL check failed: ' + e.message);
+      }
+      if (issues.length) {
+        showError(loadFailedMsg + ' (' + issues.join('; ') + ')');
+        console.error('DOS support check failed:', issues);
+        return false;
+      }
+      return true;
+    }
+
     function loadJsdos() {
       return new Promise(function (resolve, reject) {
-        var script = document.createElement('script');
+        var src;
         if (loadAttempts === 0) {
-          script.src = '${origin}/js-dos/js-dos.js?v=1';
+          src = '${origin}/js-dos/js-dos.js?v=' + Date.now();
         } else if (loadAttempts === 1) {
-          script.src = 'https://v8.js-dos.com/latest/js-dos.js';
+          src = 'https://v8.js-dos.com/latest/js-dos.js';
         } else {
           reject(new Error('All js-dos sources failed'));
           return;
         }
         loadAttempts++;
-        script.onload = function () { resolve(); };
-        script.onerror = function () {
-          document.head.removeChild(script);
+        console.log('DOS: fetching', src);
+        fetch(src).then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.text();
+        }).then(function (code) {
+          try {
+            (new Function(code))();
+            if (typeof window.Dos !== 'undefined') {
+              console.log('DOS: loaded from', src);
+              resolve();
+            } else {
+              console.warn('DOS: loaded but Dos undefined from', src);
+              loadJsdos().then(resolve).catch(reject);
+            }
+          } catch (e) {
+            console.warn('DOS: eval error from', src, e);
+            loadJsdos().then(resolve).catch(reject);
+          }
+        }).catch(function (e) {
+          console.error('DOS: fetch failed from', src, e);
           loadJsdos().then(resolve).catch(reject);
-        };
-        document.head.appendChild(script);
+        });
       });
     }
 
     async function init() {
       var container = document.getElementById('dos-container');
       var errorOverlay = document.getElementById('error-overlay');
+      var diagnostics = [];
+
+      if (!checkSupport()) return;
+
+      diagnostics.push('SAB=' + (typeof SharedArrayBuffer !== 'undefined'));
+      diagnostics.push('isolated=' + window.crossOriginIsolated);
+      diagnostics.push('ua=' + navigator.userAgent.substring(0, 80));
+      console.log('DOS: init ' + diagnostics.join(' | '));
 
       try {
+        console.log('DOS: loading js-dos...');
         await loadJsdos();
-        await Dos(container, { url: zipUrl, autolock: true });
+        console.log('DOS: js-dos loaded, initializing Dos()...');
+        await Dos(container, {
+          url: zipUrl,
+          autolock: true,
+          workerThread: false,
+          pathPrefix: '${origin}/js-dos/emulators/'
+        });
+        console.log('DOS: Dos() initialized successfully');
       } catch (err) {
         console.error('DOS Player error:', err);
         errorOverlay.style.display = 'flex';
