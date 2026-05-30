@@ -1,6 +1,7 @@
 import { Post } from '../types/post.js'
 import DOMPurify from 'dompurify'
 import { t } from '../lib/i18n.js'
+import { formatCount } from '../lib/format.js'
 import { showToast } from '../lib/toast.js'
 
 export interface ReplyComposerProps {
@@ -358,7 +359,7 @@ export class ReplyComposer {
       nameSpan.textContent = `#${tag.tag}`
       const countSpan = document.createElement('span')
       countSpan.style.cssText = 'color: var(--text-muted); font-size: 0.75rem;'
-      countSpan.textContent = `${tag.count} posts`
+      countSpan.textContent = `${formatCount(tag.count)} posts`
       textSpan.appendChild(nameSpan); textSpan.appendChild(countSpan)
       item.appendChild(hash); item.appendChild(textSpan)
       item.addEventListener('click', () => this.selectSuggestion(tag.tag))

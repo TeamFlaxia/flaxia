@@ -2,6 +2,7 @@ import { createPostCard } from './PostCard.js'
 import { Post } from '../types/post.js'
 import { createSkeletonCard } from './SkeletonCard.js'
 import { t } from '../lib/i18n.js'
+import { formatCount } from '../lib/format.js'
 import { openPostModal } from '../lib/post-modal.js'
 
 export interface ExplorePageProps {
@@ -90,7 +91,7 @@ export class ExplorePage {
 
       this.tagCountEl = document.createElement('span')
       this.tagCountEl.className = 'explore-tag-count'
-      this.tagCountEl.textContent = t('explore.tag_count', { count: 0 })
+      this.tagCountEl.textContent = t('explore.tag_count', { count: formatCount(0) })
       this.tagCountEl.style.cssText = `
         font-size: 0.8rem;
         color: var(--text-muted);
@@ -337,7 +338,7 @@ export class ExplorePage {
         tagName.style.cssText = 'font-weight: 600; color: var(--accent); font-size: 0.875rem;'
 
         const count = document.createElement('span')
-        count.textContent = `${it.count || 0}`
+        count.textContent = formatCount(it.count || 0)
         count.style.cssText = 'margin-left: auto; color: var(--text-muted); font-size: 0.75rem;'
 
         item.appendChild(tagName)
@@ -753,7 +754,7 @@ export class ExplorePage {
   private updateTagCount(): void {
     if (this.tagCountEl && this.props.tag) {
       const count = this.totalTagCount || this.posts.length
-      this.tagCountEl.textContent = t('explore.tag_count', { count })
+      this.tagCountEl.textContent = t('explore.tag_count', { count: formatCount(count) })
     }
   }
 

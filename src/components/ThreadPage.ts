@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js'
+import { formatCount } from '../lib/format.js'
 import { Post } from '../types/post.js'
 import { buildTree, PostNode } from '../lib/thread.js'
 import { createPostCard } from './PostCard.js'
@@ -353,7 +354,7 @@ export class ThreadPage {
 
       // Add replies header
       const repliesHeader = document.createElement('h2')
-      repliesHeader.textContent = t('thread.replies_header', { count: data.replies.length })
+      repliesHeader.textContent = t('thread.replies_header', { count: formatCount(data.replies.length) })
       repliesHeader.style.cssText = `
         color: #64748b;
         font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;

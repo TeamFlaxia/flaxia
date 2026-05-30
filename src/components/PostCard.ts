@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js'
+import { formatCount } from '../lib/format.js'
 import { PostCardProps, PostCardMode } from '../types/post.js'
 import { createPostHeader } from './PostHeader.js'
 import { createPostText } from './PostText.js'
@@ -1238,7 +1239,7 @@ export class PostCard {
     const footer = document.createElement('div')
     footer.style.cssText = `font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;`
 
-    const voteText = totalVotes === 1 ? t('poll.votes', { count: totalVotes }) : t('poll.votes_plural', { count: totalVotes })
+    const voteText = totalVotes === 1 ? t('poll.votes', { count: formatCount(totalVotes) }) : t('poll.votes_plural', { count: formatCount(totalVotes) })
     const votedText = hasVoted ? ` · ${t('poll.voted')}` : ''
     const changeHint = canChangeVote ? ` · ${t('poll.click_to_change')}` : ''
     let timeText = ''

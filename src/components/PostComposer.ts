@@ -5,6 +5,7 @@ export interface PostComposerProps {
 }
 
 import { t } from '../lib/i18n.js'
+import { formatCount } from '../lib/format.js'
 import { getMimeType } from '../lib/file-extensions.js'
 import DOMPurify from 'dompurify'
 import { showToast } from '../lib/toast.js'
@@ -558,7 +559,7 @@ export class PostComposer {
       nameSpan.textContent = `#${tag.tag}`
       const countSpan = document.createElement('span')
       countSpan.style.cssText = 'color: var(--text-muted); font-size: 0.75rem;'
-      countSpan.textContent = `${tag.count} posts`
+      countSpan.textContent = `${formatCount(tag.count)} posts`
 
       textSpan.appendChild(nameSpan)
       textSpan.appendChild(countSpan)
@@ -1231,7 +1232,7 @@ export class PostComposer {
       color: var(--text-muted);
       font-weight: 600;
     `
-    header.innerHTML = `<span>${t('composer.list_drafts')} (${this.savedDrafts.length})</span>`
+    header.innerHTML = `<span>${t('composer.list_drafts')} (${formatCount(this.savedDrafts.length)})</span>`
 
     if (this.savedDrafts.length > 1) {
       const deleteAllBtn = document.createElement('button')

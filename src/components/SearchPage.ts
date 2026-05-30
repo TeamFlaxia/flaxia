@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js'
+import { formatCount } from '../lib/format.js'
 import { createPostCard } from './PostCard.js'
 
 interface SearchPageProps {
@@ -230,7 +231,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         tagName.textContent = `# ${it.label}`
         tagName.style.cssText = 'font-weight: 600; color: var(--accent); font-size: 0.875rem;'
         const count = document.createElement('span')
-        count.textContent = `${it.count}`
+        count.textContent = formatCount(it.count)
         count.style.cssText = 'margin-left: auto; color: var(--text-muted); font-size: 0.75rem;'
         item.appendChild(tagName); item.appendChild(count)
         item.addEventListener('click', () => {

@@ -4,6 +4,7 @@ import { executeWvfsZip } from '../lib/wvfs-zip-client.js'
 import type { Game, ArcadePageProps, GameType } from '../types/game.js'
 import type { Post } from '../types/post.js'
 import { t } from '../lib/i18n.js'
+import { formatCount } from '../lib/format.js'
 import { showSignInPrompt } from './SignInPrompt.js'
 import { createReplyComposer } from './ReplyComposer.js'
 import { createPostCard } from './PostCard.js'
@@ -696,7 +697,7 @@ export class ArcadePage {
     `
 
     // Fresh button
-    const freshBtn = this.createActionButton('🍃', String(game.freshCount || 0), () => this.handleFresh(), game.isFreshed || false, 'font-size: 0.875rem; font-weight: 700; background: rgba(255,255,255,0.12); padding: 0 6px; border-radius: 8px; line-height: 1.4;')
+    const freshBtn = this.createActionButton('🍃', formatCount(game.freshCount || 0), () => this.handleFresh(), game.isFreshed || false, 'font-size: 0.875rem; font-weight: 700; background: rgba(255,255,255,0.12); padding: 0 6px; border-radius: 8px; line-height: 1.4;')
     freshBtn.dataset.tutorial = 'fresh'
 
     // Fullscreen button
@@ -704,7 +705,7 @@ export class ArcadePage {
     fullscreenBtn.dataset.tutorial = 'fullscreen'
 
     // Comments button
-    const commentsBtn = this.createActionButton('💬', String(game.replyCount || 0), () => this.handleComments())
+    const commentsBtn = this.createActionButton('💬', formatCount(game.replyCount || 0), () => this.handleComments())
     commentsBtn.dataset.tutorial = 'comments'
 
     container.appendChild(freshBtn)
@@ -768,7 +769,7 @@ export class ArcadePage {
     `
     const headerTitle = document.createElement('span')
     headerTitle.style.cssText = 'font-weight: 600; font-size: 0.95rem; color: var(--text-primary);'
-    headerTitle.textContent = `${t('thread_view.title')} (${game.replyCount || 0})`
+    headerTitle.textContent = `${t('thread_view.title')} (${formatCount(game.replyCount || 0)})`
     const closeBtn = document.createElement('button')
     closeBtn.textContent = '✕'
     closeBtn.style.cssText = 'background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.1rem; padding: 0.25rem;'
@@ -854,7 +855,7 @@ export class ArcadePage {
     const game = this.games[this.currentIndex]
     if (game) {
       game.replyCount = (game.replyCount || 0) + 1
-      headerTitle.textContent = `${t('thread_view.title')} (${game.replyCount})`
+      headerTitle.textContent = `${t('thread_view.title')} (${formatCount(game.replyCount)})`
       this.updateFloatingActions(game)
     }
 

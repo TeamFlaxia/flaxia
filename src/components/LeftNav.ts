@@ -1,6 +1,7 @@
 import { clearMeCache } from '../lib/auth-cache'
 import { isModalOpen } from '../lib/modal-state'
 import { t } from '../lib/i18n.js'
+import { formatCount } from '../lib/format.js'
 
 export interface LeftNavProps {
   activeItem?: string
@@ -366,7 +367,7 @@ export class LeftNav {
     const existingBadge = navItem.querySelector('.nav-badge')
     if (count > 0) {
       if (existingBadge) {
-        existingBadge.textContent = count >= 99 ? '99+' : String(count)
+        existingBadge.textContent = count >= 99 ? '99+' : formatCount(count)
       } else {
         const badge = document.createElement('span')
         badge.className = 'nav-badge'
@@ -380,7 +381,7 @@ export class LeftNav {
           min-width: 20px;
           text-align: center;
         `
-        badge.textContent = count >= 99 ? '99+' : String(count)
+        badge.textContent = count >= 99 ? '99+' : formatCount(count)
         navItem.appendChild(badge)
       }
     } else if (existingBadge) {

@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js'
+import { formatCount } from '../lib/format.js'
 
 export interface Notification {
   id: string
@@ -262,7 +263,7 @@ export class NotificationsPage {
               const othersCount = validActors.length - 1
               mainText.appendChild(document.createTextNode(' '))
               appendMuted(`(${validActors[0].display_name})`)
-              mainText.appendChild(document.createTextNode(t('notifications.freshed_and_others', { n: othersCount })))
+              mainText.appendChild(document.createTextNode(t('notifications.freshed_and_others', { n: formatCount(othersCount) })))
             }
             mainText.appendChild(document.createTextNode(t('notifications.freshed_your_post', { actor: '' })))
           }
@@ -290,7 +291,7 @@ export class NotificationsPage {
               const othersCount = validActors.length - 1
               mainText.appendChild(document.createTextNode(' '))
               appendMuted(`(${validActors[0].display_name})`)
-              mainText.appendChild(document.createTextNode(t('notifications.freshed_and_others', { n: othersCount })))
+              mainText.appendChild(document.createTextNode(t('notifications.freshed_and_others', { n: formatCount(othersCount) })))
             }
             mainText.appendChild(document.createTextNode(t('notifications.replied_to_you', { actor: '' })))
           }
