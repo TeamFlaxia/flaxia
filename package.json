@@ -22,8 +22,18 @@
     "test:tags": "node --test --experimental-strip-types tests/tags.test.ts",
     "test:rate-limit": "node --test --experimental-strip-types tests/rate-limit.test.ts",
     "dev:test": "wrangler pages dev dist --d1=DB_TEST --kv=RATE_LIMIT_TEST --port 8788 --var BASE_URL:http://localhost:8788",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:dev": "node scripts/merge-tauri-config.mjs && tauri dev",
+    "tauri:build": "node scripts/merge-tauri-config.mjs && tauri build",
+    "tauri:dev:windows": "TAURI_TARGET_PLATFORM=windows node scripts/merge-tauri-config.mjs && tauri dev",
+    "tauri:build:windows": "TAURI_TARGET_PLATFORM=windows node scripts/merge-tauri-config.mjs && tauri build",
+    "tauri:dev:macos": "TAURI_TARGET_PLATFORM=macos node scripts/merge-tauri-config.mjs && tauri dev",
+    "tauri:build:macos": "TAURI_TARGET_PLATFORM=macos node scripts/merge-tauri-config.mjs && tauri build",
+    "tauri:dev:linux": "TAURI_TARGET_PLATFORM=linux node scripts/merge-tauri-config.mjs && tauri dev",
+    "tauri:build:linux": "TAURI_TARGET_PLATFORM=linux node scripts/merge-tauri-config.mjs && tauri build",
+    "tauri:dev:android": "TAURI_TARGET_PLATFORM=android node scripts/merge-tauri-config.mjs && tauri android dev",
+    "tauri:build:android": "TAURI_TARGET_PLATFORM=android node scripts/merge-tauri-config.mjs && tauri android build",
+    "tauri:dev:ios": "TAURI_TARGET_PLATFORM=ios node scripts/merge-tauri-config.mjs && tauri ios dev",
+    "tauri:build:ios": "TAURI_TARGET_PLATFORM=ios node scripts/merge-tauri-config.mjs && tauri ios build"
   },
   "dependencies": {
     "@cloudflare/kv-asset-handler": "^0.4.2",

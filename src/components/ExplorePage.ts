@@ -55,6 +55,10 @@ export class ExplorePage {
         gap: 1rem;
         padding: 1rem;
         border-bottom: 1px solid var(--border);
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: var(--bg-primary);
       `
 
       const backBtn = document.createElement('button')

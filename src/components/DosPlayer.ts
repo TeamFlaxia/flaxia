@@ -30,7 +30,9 @@ export async function executeDos(
       background: #000;
     `
 
-    const dosPlayerUrl = `/api/dos-player/${postId}?load_failed=${encodeURIComponent(t('dos_player.load_failed'))}`
+    const apiOrigin = import.meta.env.VITE_CONTENT_ORIGIN || window.location.origin
+    const zipUrl = url || `${apiOrigin}/api/zip/${postId}`
+    const dosPlayerUrl = `${apiOrigin}/api/dos-player/${postId}?zip_url=${encodeURIComponent(zipUrl)}&load_failed=${encodeURIComponent(t('dos_player.load_failed'))}`
 
     const iframe = document.createElement('iframe')
     iframe.src = dosPlayerUrl

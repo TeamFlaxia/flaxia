@@ -27,16 +27,43 @@ type Variables = {
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 
-app.use('/*', cors())
+// Auth middleware — sets user context (null if not authenticated); must precede all routes
+app.use('/api/*', async (c, next) => {
+  if ((c.req.method === 'GET' && c.req.path.startsWith('/api/images/')) ||
+      (c.req.method === 'GET' && c.req.path.startsWith('/api/audio/')) ||
+      (c.req.method === 'GET' && c.req.path.startsWith('/api/zip/')) ||
+      (c.req.method === 'GET' && c.req.path.startsWith('/api/swf/')) ||
+      (c.req.method === 'GET' && c.req.path === '/api/link-preview') ||
+      (c.req.method === 'GET' && c.req.path === '/api/games') ||
+      (c.req.method === 'GET' && c.req.path.startsWith('/api/ads/') && c.req.path.endsWith('/payload')) ||
+      (c.req.method === 'GET' && c.req.path.startsWith('/api/wvfs-zip/'))) {
+    await next()
+    return
+  }
+  const token = getSessionToken(c.req.raw)
+  const sessionData = token ? await getSession(c.env, token) : null
+  c.set('user', sessionData?.user || null)
+  await next()
+})
 
-// PUT /api/upload/:key - direct file upload endpoint (requires auth + ownership of pending post)
-app.put('/api/upload/*', async (c) => {
+const requireAuth = async (c: any, next: any) => {
+  if (!c.get('user')) {
+    return c.json({ error: 'Unauthorized' }, 401)
+  }
+  await next()
+}
+
+app.use('/*', cors({
+  origin: (origin) => origin,
+  allowMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}))
+
+// PUT /api/upload/:key — direct file upload endpoint (requires auth + ownership of pending post)
+app.put('/api/upload/*', requireAuth, async (c) => {
   try {
-    const user = c.get('user')
-    if (!user) {
-      return c.json({ error: 'Unauthorized' }, 401)
-    }
-
+    const user = c.get('user')!
     const key = c.req.path.replace('/api/upload/', '')
     const contentType = c.req.header('content-type')
     const contentLength = c.req.header('content-length')
@@ -208,13 +235,15 @@ app.get('/api/dos-player/:postId', async (c) => {
   try {
     const postId = c.req.param('postId')
     const loadFailed = c.req.query('load_failed') || 'Failed to load game'
+    const origin = new URL(c.req.url).origin
+    const zipUrl = c.req.query('zip_url') || `${origin}/api/zip/${postId}`
 
     const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <title>DOS Game</title>
-  <link rel="stylesheet" href="/js-dos/js-dos.css">
+  <link rel="stylesheet" href="${origin}/js-dos/js-dos.css">
   <style>
     html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
     #dos-container { width: 100%; height: 100%; }
@@ -230,7 +259,7 @@ app.get('/api/dos-player/:postId', async (c) => {
   <div id="dos-container"></div>
   <div id="error-overlay" class="error-overlay" style="display:none;"></div>
   <script>
-    var zipUrl = window.location.origin + '/api/zip/' + '${postId}';
+    var zipUrl = '${zipUrl}';
     var loadFailedMsg = ${JSON.stringify(loadFailed)};
     var loadAttempts = 0;
 
@@ -238,7 +267,7 @@ app.get('/api/dos-player/:postId', async (c) => {
       return new Promise(function (resolve, reject) {
         var script = document.createElement('script');
         if (loadAttempts === 0) {
-          script.src = '/js-dos/js-dos.js';
+          script.src = '${origin}/js-dos/js-dos.js';
         } else if (loadAttempts === 1) {
           script.src = 'https://v8.js-dos.com/latest/js-dos.js';
         } else {
@@ -281,8 +310,7 @@ app.get('/api/dos-player/:postId', async (c) => {
     return new Response(html, {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
-        'Cache-Control': 'no-cache',
-        'X-Frame-Options': 'SAMEORIGIN'
+        'Cache-Control': 'no-cache'
       }
     })
   } catch (error: any) {
@@ -711,45 +739,6 @@ app.get('/api/link-preview', async (c) => {
     return c.json({ error: 'Failed to fetch link preview', details: error?.message || 'Unknown error' }, 500)
   }
 })
-
-// Auth middleware - sets user context (null if not authenticated)
-app.use('/api/*', async (c, next) => {
-  // Skip auth for specific public routes that don't need user context at all
-  if ((c.req.method === 'GET' && c.req.path.startsWith('/api/images/')) ||
-      (c.req.method === 'GET' && c.req.path.startsWith('/api/audio/')) ||
-      (c.req.method === 'GET' && c.req.path.startsWith('/api/zip/')) ||
-      (c.req.method === 'GET' && c.req.path.startsWith('/api/swf/')) ||
-      (c.req.method === 'GET' && c.req.path === '/api/link-preview') ||
-      (c.req.method === 'GET' && c.req.path === '/api/games') ||
-      (c.req.method === 'GET' && c.req.path.startsWith('/api/ads/') && c.req.path.endsWith('/payload')) ||
-      (c.req.method === 'GET' && c.req.path.startsWith('/api/wvfs-zip/'))) {
-    await next()
-    return
-  }
-  
-  // Get session if available, otherwise set user to null
-  const token = getSessionToken(c.req.raw)
-  const sessionData = token ? await getSession(c.env, token) : null
-  
-  // Set user in context (null if not authenticated)
-  c.set('user', sessionData?.user || null)
-  await next()
-})
-
-// Helper middleware to require authentication for protected routes
-const requireAuth = async (c: any, next: any) => {
-  if (!c.get('user')) {
-    return c.json({ error: 'Unauthorized' }, 401)
-  }
-  await next()
-}
-
-app.use('/*', cors({
-  origin: ['https://flaxia.app', 'https://sandbox.flaxia.app'],
-  allowMethods: ['GET', 'POST', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
-}))
 
 // GET /api/me - check auth state
 app.get('/api/me', requireAuth, async (c) => {
@@ -3978,68 +3967,57 @@ app.delete('/api/admin/ads/:id', requireAuth, async (c) => {
 // Step 1 — POST /api/posts/prepare (protected)
 app.post('/api/posts/prepare', requireAuth, async (c) => {
   try {
-    const { filename, contentType: initialContentType, payloadType } = await c.req.json()
+    const { filename, contentType, payloadType } = await c.req.json()
     
-    if (!filename || !initialContentType) {
-      return c.json({ error: 'Missing filename or contentType' }, 400)
+    if (!filename) {
+      return c.json({ error: 'Missing filename' }, 400)
     }
     
-    const allowedTypes = ['image/gif', 'image/png', 'image/jpeg', 'image/jpg', 'audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4', 'audio/webm', 'application/zip', 'application/x-shockwave-flash']
-    
-    // Also check file extension for SWF and JSDOS files (browsers may not report correct MIME type)
-    const isSwfByExtension = filename.toLowerCase().endsWith('.swf')
-    const isJsdosByExtension = filename.toLowerCase().endsWith('.jsdos')
-    let contentType = initialContentType
-    
-    // Always set correct content type for SWF and JSDOS files by extension
-    if (isSwfByExtension) {
-      contentType = 'application/x-shockwave-flash'
-    } else if (isJsdosByExtension) {
-      contentType = 'application/zip'
-    }
-    
-    const isValidType = allowedTypes.includes(contentType)
-    
-    if (!isValidType) {
-      return c.json({ error: 'Only image files (GIF, PNG, JPG), audio files (MP3, WAV, OGG, M4A, WebM), ZIP files, and SWF files are supported' }, 400)
-    }
-    
+    const name = filename.toLowerCase()
+    const ext = name.match(/\.(\w+)$/)?.[1]
     const postId = crypto.randomUUID()
-    let fileExtension: string
-    let storageKey: string
     
-    if (contentType.startsWith('image/')) {
-      fileExtension = contentType === 'image/png' ? '.png' : contentType === 'image/jpeg' || contentType === 'image/jpg' ? '.jpg' : '.gif'
-      storageKey = `gif/${postId}${fileExtension}`
-    } else if (contentType.startsWith('audio/')) {
-      fileExtension = contentType === 'audio/mpeg' ? '.mp3' : 
-                     contentType === 'audio/wav' ? '.wav' : 
-                     contentType === 'audio/ogg' ? '.ogg' : 
-                     contentType === 'audio/mp4' ? '.m4a' : '.webm'
-      storageKey = `audio/${postId}${fileExtension}`
-    } else if (contentType === 'application/zip') {
-      // Auto-detect DOS for .jsdos files, even if payloadType is not set
-      const isJsdos = filename.toLowerCase().endsWith('.jsdos')
-      storageKey = (payloadType === 'dos' || isJsdos) ? `dos/${postId}.zip` : `zip/${postId}.zip`
-    } else if (contentType === 'application/x-shockwave-flash') {
+    let storageKey: string
+    let keyColumn: string
+    let responseType: 'gif' | 'zip' | 'swf'
+    
+    // SWF files
+    if (name.endsWith('.swf') || ext === 'swf') {
       storageKey = `swf/${postId}.swf`
-    } else {
-      return c.json({ error: 'Unsupported file type' }, 400)
+      keyColumn = 'swf_key'
+      responseType = 'swf'
+    }
+    // ZIP/JSDOS/DOS files
+    else if (name.endsWith('.zip') || name.endsWith('.jsdos') || name.endsWith('.dosz')) {
+      const isDos = payloadType === 'dos' || name.endsWith('.jsdos')
+      storageKey = isDos ? `dos/${postId}.zip` : `zip/${postId}.zip`
+      keyColumn = 'payload_key'
+      responseType = 'zip'
+    }
+    // Audio files by extension
+    else if (ext && ['mp3', 'wav', 'ogg', 'm4a', 'webm'].includes(ext)) {
+      const extMap: Record<string, string> = { mp3: '.mp3', wav: '.wav', ogg: '.ogg', m4a: '.m4a', webm: '.webm' }
+      storageKey = `audio/${postId}${extMap[ext]}`
+      keyColumn = 'gif_key'
+      responseType = 'gif'
+    }
+    // Image files by extension
+    else if (ext && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) {
+      const extMap: Record<string, string> = { png: '.png', jpg: '.jpg', jpeg: '.jpg', gif: '.gif', webp: '.webp', svg: '.svg', bmp: '.bmp', ico: '.ico' }
+      storageKey = `gif/${postId}${extMap[ext]}`
+      keyColumn = 'gif_key'
+      responseType = 'gif'
+    }
+    // Fallback: store as generic payload with original extension
+    else {
+      const safeExt = ext ? `.${ext}` : ''
+      storageKey = `payload/${postId}${safeExt}`
+      keyColumn = 'payload_key'
+      responseType = 'zip'
     }
     
-    const gifKey = storageKey
-    
-    // Store pending record in D1
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500)
-    }
-    
-    // Determine which key column to use
-    let keyColumn = 'gif_key'
-    if (contentType === 'application/zip') {
-      keyColumn = 'payload_key'
-    } else if (contentType === 'application/x-shockwave-flash') {
-      keyColumn = 'swf_key'
     }
     
     const result = await c.env.DB.prepare(`
@@ -4051,29 +4029,22 @@ app.post('/api/posts/prepare', requireAuth, async (c) => {
       return c.json({ error: 'Failed to create pending post' }, 500)
     }
     
-    // Return upload endpoint URL (our own API)
-    if (contentType === 'application/zip') {
-      const zipUploadUrl = `${new URL(c.req.url).origin}/api/upload/${storageKey}`
-      return c.json({
-        postId,
-        zipUploadUrl,
-        zipKey: storageKey
-      })
-    } else if (contentType === 'application/x-shockwave-flash') {
-      const swfUploadUrl = `${new URL(c.req.url).origin}/api/upload/${storageKey}`
-      return c.json({
-        postId,
-        swfUploadUrl,
-        swfKey: storageKey
-      })
+    const origin = new URL(c.req.url).origin
+    const uploadUrl = `${origin}/api/upload/${storageKey}`
+    const resp: any = { postId }
+    
+    if (responseType === 'zip') {
+      resp.zipUploadUrl = uploadUrl
+      resp.zipKey = storageKey
+    } else if (responseType === 'swf') {
+      resp.swfUploadUrl = uploadUrl
+      resp.swfKey = storageKey
     } else {
-      const gifUploadUrl = `${new URL(c.req.url).origin}/api/upload/${storageKey}`
-      return c.json({
-        postId,
-        gifUploadUrl,
-        gifKey: storageKey
-      })
+      resp.gifUploadUrl = uploadUrl
+      resp.gifKey = storageKey
     }
+    
+    return c.json(resp)
   } catch (error: any) {
     console.error('Prepare post error:', error)
     return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500)

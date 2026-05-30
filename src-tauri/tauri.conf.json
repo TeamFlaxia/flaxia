@@ -10,22 +10,24 @@
     "beforeBuildCommand": ""
   },
   "app": {
+    "security": {
+      "csp": null
+    },
     "windows": [
       {
         "title": "Flaxia",
         "url": "https://flaxia.app",
         "width": 1200,
         "height": 800,
-        "minWidth": 180,
+        "minWidth": 240,
         "minHeight": 200,
+        "maxWidth": 3840,
+        "maxHeight": 2160,
         "center": true,
         "resizable": true,
         "fullscreen": false
       }
-    ],
-    "security": {
-      "csp": null
-    }
+    ]
   },
   "bundle": {
     "active": true,
@@ -39,14 +41,6 @@
     ],
     "windows": {
       "wix": null
-    },
-    "macOS": {
-      "minimumSystemVersion": "11.0"
-    },
-    "linux": {
-      "deb": {
-        "depends": []
-      }
     }
   }
 }

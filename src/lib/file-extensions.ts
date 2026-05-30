@@ -26,6 +26,7 @@ export const ALLOWED_EXTENSIONS: Record<string, string> = {
   '.mp3': 'audio/mpeg',
   '.wav': 'audio/wav',
   '.ogg': 'audio/ogg',
+  '.m4a': 'audio/mp4',
   
   // Video
   '.mp4': 'video/mp4',
@@ -52,6 +53,7 @@ export const ALLOWED_EXTENSIONS: Record<string, string> = {
   '.img': 'application/octet-stream',
   '.iso': 'application/x-iso9660',
   '.dosz': 'application/octet-stream',
+  '.zip': 'application/zip',
   '.jsdos': 'application/zip',
   '.ovl': 'application/octet-stream',
   '.cfg': 'text/plain'
