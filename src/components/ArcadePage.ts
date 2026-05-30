@@ -44,6 +44,7 @@ export class ArcadePage {
   private currentViewport: HTMLElement | null = null
   private initialGameId: string | undefined
   private tutorialEl: HTMLElement | null = null
+  private isFullscreen: boolean = false
 
   private static TUTORIAL_SEEN_KEY = 'flaxia_tutorial_seen'
   
@@ -55,6 +56,7 @@ export class ArcadePage {
   private boundHandleMouseMove: (e: MouseEvent) => void
   private boundHandleMouseUp: (e: MouseEvent) => void
   private boundHandleMouseLeave: (e: MouseEvent) => void
+  private boundHandleFullscreenChange: () => void
 
   constructor(props: ArcadePageProps) {
     this.props = props
@@ -70,6 +72,7 @@ export class ArcadePage {
     this.boundHandleMouseMove = this.handleMouseMove.bind(this)
     this.boundHandleMouseUp = this.handleMouseUp.bind(this)
     this.boundHandleMouseLeave = this.handleMouseUp.bind(this)
+    this.boundHandleFullscreenChange = this.handleFullscreenChange.bind(this)
     
     this.setupEventListeners()
     this.setupLeftNavSwipeDetection()
@@ -308,9 +311,13 @@ export class ArcadePage {
 
     document.addEventListener('mouseleave', this.boundHandleMouseLeave, { passive: true })
 
+    // Fullscreen change detection
+    document.addEventListener('fullscreenchange', this.boundHandleFullscreenChange)
+
     // Keyboard navigation
     document.addEventListener('keydown', (e) => {
       if (this.tutorialEl) return
+      if (this.isFullscreen) return
       if (e.key === 'ArrowUp') {
         e.preventDefault()
         this.navigateToPrevious()
@@ -324,6 +331,7 @@ export class ArcadePage {
     let wheelTimeout: number | null = null
     this.gameContainer.addEventListener('wheel', (e) => {
       if (this.tutorialEl) return
+      if (this.isFullscreen) return
       if (this.isTransitioning) return
       
       e.preventDefault()
@@ -355,6 +363,7 @@ export class ArcadePage {
     if (this.commentPanel) return
     if (this.isLeftNavOpen()) return
     if (this.tutorialEl) return
+    if (this.isFullscreen) return
     this.touchStartY = e.touches[0].clientY
     this.touchStartX = e.touches[0].clientX
     this.touchStartTime = Date.now()
@@ -372,6 +381,7 @@ export class ArcadePage {
     if (this.commentPanel) return
     if (this.isLeftNavOpen()) return
     if (this.tutorialEl) return
+    if (this.isFullscreen) return
     if (!this.isDragging || this.isTransitioning) return
     
     e.preventDefault()
@@ -396,6 +406,7 @@ export class ArcadePage {
     if (this.commentPanel) return
     if (this.isLeftNavOpen()) return
     if (this.tutorialEl) return
+    if (this.isFullscreen) return
     if (!this.isDragging) return
     
     this.touchEndY = e.changedTouches[0].clientY
@@ -442,6 +453,7 @@ export class ArcadePage {
     if (this.commentPanel) return
     if (this.isLeftNavOpen()) return
     if (this.tutorialEl) return
+    if (this.isFullscreen) return
     this.touchStartY = e.clientY
     this.touchStartX = e.clientX
     this.touchStartTime = Date.now()
@@ -459,6 +471,7 @@ export class ArcadePage {
     if (this.commentPanel) return
     if (this.isLeftNavOpen()) return
     if (this.tutorialEl) return
+    if (this.isFullscreen) return
     if (!this.isDragging || this.isTransitioning) return
     
     e.preventDefault()
@@ -481,6 +494,7 @@ export class ArcadePage {
     if (this.commentPanel) return
     if (this.isLeftNavOpen()) return
     if (this.tutorialEl) return
+    if (this.isFullscreen) return
     if (!this.isDragging) return
     
     this.touchEndY = e.clientY
@@ -1212,6 +1226,20 @@ export class ArcadePage {
     }
   }
 
+  private handleFullscreenChange(): void {
+    const isFullscreen = !!document.fullscreenElement
+    if (isFullscreen === this.isFullscreen) return
+    this.isFullscreen = isFullscreen
+
+    const viewport = this.gameContainer.querySelector('.arcade-viewport') as HTMLElement
+    if (!viewport) return
+
+    const infoOverlay = viewport.querySelector('.arcade-game-info') as HTMLElement
+    if (infoOverlay) {
+      infoOverlay.style.display = isFullscreen ? 'none' : ''
+    }
+  }
+
   public getElement(): HTMLElement {
     return this.element
   }
@@ -1762,6 +1790,7 @@ export class ArcadePage {
     document.removeEventListener('mousemove', this.boundHandleMouseMove)
     document.removeEventListener('mouseup', this.boundHandleMouseUp)
     document.removeEventListener('mouseleave', this.boundHandleMouseLeave)
+    document.removeEventListener('fullscreenchange', this.boundHandleFullscreenChange)
     
     this.clearCurrentGame()
     this.element.remove()
