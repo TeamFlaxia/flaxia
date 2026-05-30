@@ -21,19 +21,11 @@ import { createBookmarksPage } from './components/BookmarksPage.js'
 import { initPerformanceMonitoring } from './lib/performance.js'
 import { initI18n } from './lib/i18n.js'
 import { safeRemoveFromBody } from './lib/dom-utils.js'
-import { initExternalLinkHandler } from './lib/open-external.js'
-import { initTauriNotifications, processNewNotifications } from './lib/tauri-notifications.js'
 
 console.log('Flaxia initialized')
 
 // Initialize performance monitoring
 initPerformanceMonitoring()
-
-// Initialize Tauri external link handler (no-op in browser)
-initExternalLinkHandler()
-
-// Initialize Tauri desktop notifications (no-op in browser)
-initTauriNotifications()
 
 // Basic app initialization
 document.addEventListener('DOMContentLoaded', async () => {
@@ -168,7 +160,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (response.ok) {
           const data = await response.json() as NotificationData
           unreadNotificationCount = data.unread_count || 0
-          processNewNotifications(data.notifications)
           return data
         }
       } catch (error) {

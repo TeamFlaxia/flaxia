@@ -5,7 +5,6 @@
     "main"
   ],
   "permissions": [
-    "core:default",
-    "notification:default"
+    "core:default"
   ]
 }
