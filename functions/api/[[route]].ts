@@ -57,7 +57,19 @@ const requireAuth = async (c: any, next: any) => {
 }
 
 app.use('/*', cors({
-  origin: (origin) => origin,
+  origin: (origin, c) => {
+    if (!origin) return ''
+    const env = c.env as { BASE_URL?: string; SANDBOX_ORIGIN?: string }
+    const allowed = new Set([
+      env.BASE_URL,
+      env.SANDBOX_ORIGIN,
+      'http://localhost:8787',
+      'http://localhost:5173',
+      'https://flaxia.app',
+      'https://sandbox.flaxia.app',
+    ].filter(Boolean))
+    return allowed.has(origin) ? origin : ''
+  },
   allowMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
   credentials: true
@@ -70,12 +82,42 @@ function getCrowdClient(c: any): FlaxiaClient | null {
   return new FlaxiaClient({ baseUrl: orchestratorUrl, apiKey })
 }
 
+// Magic byte detection to prevent MIME type spoofing
+const MAGIC_TYPES: { offset: number; bytes: number[]; mime: string }[] = [
+  { offset: 0, bytes: [0xFF, 0xD8, 0xFF], mime: 'image/jpeg' },
+  { offset: 0, bytes: [0x89, 0x50, 0x4E, 0x47], mime: 'image/png' },
+  { offset: 0, bytes: [0x47, 0x49, 0x46, 0x38], mime: 'image/gif' },
+  { offset: 0, bytes: [0x50, 0x4B, 0x03, 0x04], mime: 'application/zip' },
+  { offset: 0, bytes: [0x50, 0x4B, 0x05, 0x06], mime: 'application/zip' },
+  { offset: 0, bytes: [0x43, 0x57, 0x53], mime: 'application/x-shockwave-flash' },
+  { offset: 0, bytes: [0x46, 0x57, 0x53], mime: 'application/x-shockwave-flash' },
+]
+
+function detectMimeType(data: ArrayBuffer): string | null {
+  const header = new Uint8Array(data, 0, 12)
+  // WebP: RIFF(4)....WEBP(4)
+  if (header[0] === 0x52 && header[1] === 0x49 && header[2] === 0x46 && header[3] === 0x46 &&
+      header[8] === 0x57 && header[9] === 0x45 && header[10] === 0x42 && header[11] === 0x50) {
+    return 'image/webp'
+  }
+  for (const t of MAGIC_TYPES) {
+    if (t.bytes.every((b, i) => header[t.offset + i] === b)) {
+      return t.mime
+    }
+  }
+  return null
+}
+
+function isAllowedImageMime(mime: string | null): mime is string {
+  return !!mime && ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(mime)
+}
+
 // PUT /api/upload/:key — direct file upload endpoint (requires auth + ownership of pending post)
 app.put('/api/upload/*', requireAuth, async (c) => {
   try {
     const user = c.get('user')!
     const key = c.req.path.replace('/api/upload/', '')
-    const contentType = c.req.header('content-type')
+    const declaredContentType = c.req.header('content-type')
     const contentLength = c.req.header('content-length')
     
     if (!key) {
@@ -109,10 +151,24 @@ app.put('/api/upload/*', requireAuth, async (c) => {
       return c.json({ error: 'Storage not available' }, 500)
     }
     
-    // Upload to R2 with proper content type
+    // Validate magic bytes against declared content type
+    const detectedMime = detectMimeType(fileData)
+    if (!detectedMime) {
+      return c.json({ error: 'Unrecognized file format. Magic bytes do not match any allowed type.' }, 400)
+    }
+    // Disallow SVG disguised as other types (SVG has no unique magic bytes, would fail detection above)
+    if (!isAllowedImageMime(detectedMime) && detectedMime !== 'application/zip' && detectedMime !== 'application/x-shockwave-flash') {
+      return c.json({ error: 'File type not allowed' }, 400)
+    }
+    // Sanity check: declared content-type should be consistent (relaxed for zip/swf which may use generic types)
+    if (declaredContentType && detectedMime.startsWith('image/') && !declaredContentType.startsWith('image/')) {
+      return c.json({ error: 'Declared Content-Type does not match actual file content' }, 400)
+    }
+    
+    // Upload to R2 with detected content type
     await c.env.BUCKET.put(key, fileData, {
       httpMetadata: {
-        contentType: contentType || 'application/octet-stream'
+        contentType: detectedMime
       }
     })
     
@@ -753,6 +809,61 @@ function parseMetaTags(html: string, baseUrl: string) {
   return result
 }
 
+function isPrivateIP(hostname: string): boolean {
+  // IPv4
+  const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (ipv4Match) {
+    const octets = [ipv4Match[1], ipv4Match[2], ipv4Match[3], ipv4Match[4]].map(Number)
+    if (octets.some(o => o > 255)) return true
+    const [a, b] = octets
+    // 0.0.0.0/8, 10.0.0.0/8, 127.0.0.0/8, 169.254.0.0/16
+    if (a === 0 || a === 10 || a === 127 || (a === 169 && b === 254)) return true
+    // 172.16.0.0/12
+    if (a === 172 && b >= 16 && b <= 31) return true
+    // 192.168.0.0/16
+    if (a === 192 && b === 168) return true
+    // 100.64.0.0/10 (CGNAT)
+    if (a === 100 && b >= 64 && b <= 127) return true
+    // 198.18.0.0/15
+    if (a === 198 && (b === 18 || b === 19)) return true
+    return false
+  }
+  // IPv6
+  if (hostname.includes(':') && hostname.startsWith('[') && hostname.endsWith(']')) {
+    hostname = hostname.slice(1, -1)
+  }
+  if (hostname.includes(':')) {
+    const normalized = hostname.toLowerCase()
+    if (normalized === '::1' || normalized === '0:0:0:0:0:0:0:1') return true
+    if (normalized.startsWith('fe80:') || normalized.startsWith('fc') || normalized.startsWith('fd')) return true
+  }
+  return false
+}
+
+function isInternalHostname(hostname: string): string | null {
+  const lower = hostname.toLowerCase()
+  // Strip trailing dot for FQDN
+  const name = lower.endsWith('.') ? lower.slice(0, -1) : lower
+  const internalNames = new Set([
+    'localhost', 'localhost.localdomain', 'local', 'broadcasthost',
+    'metadata.google.internal', 'metadata', '169.254.169.254',
+  ])
+  if (internalNames.has(name)) return name
+  // Block any hostname ending in .internal, .local, .localhost
+  if (name.endsWith('.internal') || name.endsWith('.local') || name.endsWith('.localhost')) return name
+  return null
+}
+
+function checkSSRF(url: URL): string | null {
+  const hostname = url.hostname
+  // Strip brackets from IPv6
+  const cleanHost = hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
+  if (isPrivateIP(cleanHost)) return 'Requests to private IP addresses are not allowed'
+  const internal = isInternalHostname(hostname)
+  if (internal) return `Requests to ${internal} are not allowed`
+  return null
+}
+
 // GET /api/link-preview - Scrape OpenGraph meta tags of a URL
 app.get('/api/link-preview', async (c) => {
   const urlString = c.req.query('url')
@@ -764,6 +875,11 @@ app.get('/api/link-preview', async (c) => {
     const targetUrl = new URL(urlString)
     if (targetUrl.protocol !== 'http:' && targetUrl.protocol !== 'https:') {
       return c.json({ error: 'Invalid protocol' }, 400)
+    }
+
+    const blockedHost = checkSSRF(targetUrl)
+    if (blockedHost) {
+      return c.json({ error: blockedHost }, 400)
     }
 
     const response = await fetch(targetUrl.toString(), {
@@ -1828,7 +1944,13 @@ app.post('/api/inbox', async (c) => {
     }
 
     if (targetUsernames.size === 0) {
-      console.error('sharedInbox: Could not determine target user for activity', activity.type)
+      console.error(JSON.stringify({
+        event: 'sharedInbox:no_target_user',
+        activityType: activity.type,
+        actorId,
+        activityId: activity.id || null,
+        timestamp: new Date().toISOString()
+      }))
       return c.json({ ok: true }, 202)
     }
 
@@ -2518,6 +2640,12 @@ app.patch('/api/users/me', requireAuth, async (c) => {
         
         // Calculate file hash
         const fileBuffer = await avatarFile.arrayBuffer()
+        
+        // Validate magic bytes to prevent MIME spoofing
+        const detected = detectMimeType(fileBuffer)
+        if (!isAllowedImageMime(detected)) {
+          return c.json({ error: 'File content does not match allowed image types' }, 400)
+        }
         const hashBuffer = await crypto.subtle.digest('SHA-256', fileBuffer)
         const hashArray = Array.from(new Uint8Array(hashBuffer))
         const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
@@ -2850,6 +2978,12 @@ app.post('/api/users/me/avatar', requireAuth, async (c) => {
     // Double-check file size after reading
     if (fileData.byteLength > maxSize) {
       return c.json({ error: 'Avatar must be ≤1MB' }, 413)
+    }
+    
+    // Validate magic bytes to prevent MIME spoofing
+    const detected = detectMimeType(fileData)
+    if (!isAllowedImageMime(detected)) {
+      return c.json({ error: 'File content does not match allowed image types' }, 400)
     }
     
     // Calculate file hash

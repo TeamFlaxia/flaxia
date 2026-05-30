@@ -57,7 +57,12 @@ export async function verifyHttpSignature(request: Request, publicKeyPem: string
       return false
     }
 
-    const requestTime = new Date(dateHeader).getTime()
+    const dateParsed = new Date(dateHeader)
+    const requestTime = dateParsed.getTime()
+    if (isNaN(requestTime)) {
+      return false
+    }
+
     const now = Date.now()
     const thirtyMinutes = 30 * 60 * 1000
 

@@ -18,6 +18,23 @@ export interface Session {
   expires_at: string
 }
 
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
+}
+
+function base64ToUint8Array(base64: string): Uint8Array {
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return bytes
+}
+
 export async function hashPassword(password: string): Promise<string> {
   const enc = new TextEncoder()
   const salt = crypto.getRandomValues(new Uint8Array(16))
@@ -26,36 +43,48 @@ export async function hashPassword(password: string): Promise<string> {
     'raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']
   )
   const hash = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations: 600000, hash: 'SHA-256' },
     key, 256
   )
   
-  // salt + hash をまとめてbase64で保存
-  const combined = new Uint8Array(salt.byteLength + hash.byteLength)
-  combined.set(salt)
-  combined.set(new Uint8Array(hash), salt.byteLength)
-  return btoa(String.fromCharCode(...combined))
+  // バージョンプリフィックス(1byte) + salt(16) + hash(32) → base64
+  const combined = new Uint8Array(1 + salt.byteLength + hash.byteLength)
+  combined[0] = 2 // version: 600000 iterations
+  combined.set(salt, 1)
+  combined.set(new Uint8Array(hash), 1 + salt.byteLength)
+  return uint8ArrayToBase64(combined)
 }
 
 
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const enc = new TextEncoder()
-  const combined = Uint8Array.from(atob(stored), c => c.charCodeAt(0))
-  const salt = combined.slice(0, 16)
-  const originalHash = combined.slice(16)
+  const combined = base64ToUint8Array(stored)
   
+  let salt: Uint8Array
+  let originalHash: Uint8Array
+  let iterations: number
+  
+  if (combined[0] === 2) {
+    salt = combined.slice(1, 17)
+    originalHash = combined.slice(17)
+    iterations = 600000
+  } else {
+    // Legacy format (100000 iterations, no version prefix)
+    salt = combined.slice(0, 16)
+    originalHash = combined.slice(16)
+    iterations = 100000
+  }
+  
+  const enc = new TextEncoder()
   const key = await crypto.subtle.importKey(
     'raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']
   )
   const hash = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
     key, 256
   )
   
-  // タイミング攻撃対策
-  return crypto.subtle.timingSafeEqual
-    ? (crypto.subtle as any).timingSafeEqual(originalHash, new Uint8Array(hash))
-    : originalHash.every((b, i) => b === new Uint8Array(hash)[i])
+  const hashBytes = new Uint8Array(hash)
+  return hashBytes.every((b, i) => b === originalHash[i])
 }
 
 // Generate session token
