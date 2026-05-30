@@ -309,6 +309,7 @@ export class ArcadePage {
 
     // Keyboard navigation
     document.addEventListener('keydown', (e) => {
+      if (this.tutorialEl) return
       if (e.key === 'ArrowUp') {
         e.preventDefault()
         this.navigateToPrevious()
@@ -321,6 +322,7 @@ export class ArcadePage {
     // Wheel/trackpad support with debouncing
     let wheelTimeout: number | null = null
     this.gameContainer.addEventListener('wheel', (e) => {
+      if (this.tutorialEl) return
       if (this.isTransitioning) return
       
       e.preventDefault()
@@ -343,8 +345,15 @@ export class ArcadePage {
     // This method is no longer needed as left nav detection is integrated into existing touch handlers
   }
 
+  private isLeftNavOpen(): boolean {
+    const leftNav = document.querySelector('.left-nav')
+    return leftNav?.classList.contains('left-nav--open') ?? false
+  }
+
   private handleTouchStart(e: TouchEvent): void {
     if (this.commentPanel) return
+    if (this.isLeftNavOpen()) return
+    if (this.tutorialEl) return
     this.touchStartY = e.touches[0].clientY
     this.touchStartX = e.touches[0].clientX
     this.touchStartTime = Date.now()
@@ -360,6 +369,8 @@ export class ArcadePage {
 
   private handleTouchMove(e: TouchEvent): void {
     if (this.commentPanel) return
+    if (this.isLeftNavOpen()) return
+    if (this.tutorialEl) return
     if (!this.isDragging || this.isTransitioning) return
     
     e.preventDefault()
@@ -382,6 +393,8 @@ export class ArcadePage {
 
   private handleTouchEnd(e: TouchEvent): void {
     if (this.commentPanel) return
+    if (this.isLeftNavOpen()) return
+    if (this.tutorialEl) return
     if (!this.isDragging) return
     
     this.touchEndY = e.changedTouches[0].clientY
@@ -426,6 +439,8 @@ export class ArcadePage {
 
   private handleMouseDown(e: MouseEvent): void {
     if (this.commentPanel) return
+    if (this.isLeftNavOpen()) return
+    if (this.tutorialEl) return
     this.touchStartY = e.clientY
     this.touchStartX = e.clientX
     this.touchStartTime = Date.now()
@@ -441,6 +456,8 @@ export class ArcadePage {
 
   private handleMouseMove(e: MouseEvent): void {
     if (this.commentPanel) return
+    if (this.isLeftNavOpen()) return
+    if (this.tutorialEl) return
     if (!this.isDragging || this.isTransitioning) return
     
     e.preventDefault()
@@ -461,6 +478,8 @@ export class ArcadePage {
 
   private handleMouseUp(e: MouseEvent): void {
     if (this.commentPanel) return
+    if (this.isLeftNavOpen()) return
+    if (this.tutorialEl) return
     if (!this.isDragging) return
     
     this.touchEndY = e.clientY
@@ -1216,6 +1235,12 @@ export class ArcadePage {
     let demoCanvas: HTMLCanvasElement | null = null
     let demoAnimId: number | null = null
 
+    const boundBlockOutside = (e: Event) => {
+      if (overlay.contains(e.target as Node)) return
+      e.stopPropagation()
+      e.preventDefault()
+    }
+
     const overlay = document.createElement('div')
     overlay.style.cssText = `
       position: fixed;
@@ -1225,6 +1250,9 @@ export class ArcadePage {
     `
     this.tutorialEl = overlay
     document.body.appendChild(overlay)
+
+    document.addEventListener('click', boundBlockOutside, true)
+    document.addEventListener('touchstart', boundBlockOutside, true)
 
     const clearTutorial = () => {
       if (demoAnimId) cancelAnimationFrame(demoAnimId)
@@ -1239,6 +1267,8 @@ export class ArcadePage {
 
     const closeTutorial = () => {
       clearTutorial()
+      document.removeEventListener('click', boundBlockOutside, true)
+      document.removeEventListener('touchstart', boundBlockOutside, true)
       overlay.remove()
       this.tutorialEl = null
       localStorage.setItem(ArcadePage.TUTORIAL_SEEN_KEY, '1')
@@ -1548,6 +1578,9 @@ export class ArcadePage {
         cardEl.appendChild(btnRow)
         overlay.appendChild(cardEl)
       } else if (step.type === 'spotlight' && 'target' in step) {
+        if (isLast && step.target === '[data-nav-id="home"]' && window.innerWidth <= 768) {
+          document.dispatchEvent(new CustomEvent('openLeftNav'))
+        }
         const target = document.querySelector(step.target as string) as HTMLElement | null
         if (!target) {
           cardEl = buildCard(step.title, step.desc)
@@ -1659,15 +1692,19 @@ export class ArcadePage {
         // Position tooltip relative to spotlight
         const vw = window.innerWidth
         const vh = window.innerHeight
-        const tooltipW = 280
-        const tooltipH = tooltipEl.offsetHeight || 160
         const margin = 12
+        const tooltipW = Math.min(280, vw - margin * 2)
+        const tooltipH = tooltipEl.offsetHeight || 160
         let tx: number, ty: number
 
         const centerX = rect.left + rect.width / 2
         const centerY = rect.top + rect.height / 2
 
-        if (centerX < vw * 0.4) {
+        const targetInLeftNav = target.closest('.left-nav') !== null
+        if (targetInLeftNav && window.innerWidth <= 768) {
+          tx = Math.max(margin, centerX - tooltipW / 2)
+          ty = rect.bottom + margin
+        } else if (centerX < vw * 0.4) {
           tx = rect.right + margin
           ty = Math.min(centerY - tooltipH / 2, vh - tooltipH - margin)
         } else if (centerX > vw * 0.6) {

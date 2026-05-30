@@ -51,6 +51,16 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
   backBtn.addEventListener('click', () => window.history.back())
   topBar.appendChild(backBtn)
 
+  const topTitle = document.createElement('span')
+  topTitle.textContent = `@${username}`
+  topTitle.style.cssText = `
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-left: 0.25rem;
+  `
+  topBar.appendChild(topTitle)
+
   container.appendChild(topBar)
 
   // Profile header

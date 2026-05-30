@@ -1150,6 +1150,7 @@ p {
 
 .action-count {
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .action-button--fresh.action-button--active .action-count {

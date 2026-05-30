@@ -19,19 +19,51 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   container.style.cssText = `
     max-width: 600px;
     margin: 0 auto;
-    padding: 2rem 1rem;
+    padding: 0 1rem 2rem;
   `
 
-  const header = document.createElement('h1')
-  header.textContent = t('settings.title')
-  header.style.cssText = `
-    font-size: 1.5rem;
-    font-weight: 600;
+  const topBar = document.createElement('div')
+  topBar.style.cssText = `
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg-primary);
+    z-index: 10;
     margin-bottom: 2rem;
-    color: var(--text-primary);
   `
 
-  container.appendChild(header)
+  const backBtn = document.createElement('button')
+  backBtn.textContent = '←'
+  backBtn.style.cssText = `
+    background: none;
+    border: none;
+    font-size: 1.25rem;
+    cursor: pointer;
+    color: var(--text-primary);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    transition: background 0.2s;
+  `
+  backBtn.addEventListener('mouseenter', () => { backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))' })
+  backBtn.addEventListener('mouseleave', () => { backBtn.style.background = 'none' })
+  backBtn.addEventListener('click', () => window.history.back())
+
+  const title = document.createElement('h1')
+  title.textContent = t('settings.title')
+  title.style.cssText = `
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+  `
+
+  topBar.appendChild(backBtn)
+  topBar.appendChild(title)
+  container.appendChild(topBar)
 
   // Account Section
   if (currentUser) {
@@ -579,7 +611,6 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     })
   })
 
-  container.appendChild(header)
   container.appendChild(languageSection)
   container.appendChild(emailSection)
   container.appendChild(passwordSection)
