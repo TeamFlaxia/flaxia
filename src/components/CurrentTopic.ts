@@ -189,11 +189,15 @@ export function createCurrentTopic(props: CurrentTopicProps): {
         
         const typeIcon = state.topic.type === 'flash' ? '⚡' : state.topic.type === 'dos' ? '💾' : '🚀'
         const displayName = state.topic.display_name || state.topic.username
-        topicMeta.innerHTML = `
-          <span>${typeIcon} ${displayName}</span>
-          <span>•</span>
-          <span>${new Date(state.topic.created_at).toLocaleDateString('ja-JP')}</span>
-        `
+        const nameSpan = document.createElement('span')
+        nameSpan.textContent = `${typeIcon} ${displayName}`
+        topicMeta.appendChild(nameSpan)
+        const sepSpan = document.createElement('span')
+        sepSpan.textContent = '•'
+        topicMeta.appendChild(sepSpan)
+        const dateSpan = document.createElement('span')
+        dateSpan.textContent = new Date(state.topic.created_at).toLocaleDateString('ja-JP')
+        topicMeta.appendChild(dateSpan)
       }
     }
   }

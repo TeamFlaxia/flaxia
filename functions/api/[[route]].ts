@@ -29,9 +29,14 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 
 app.use('/*', cors())
 
-// PUT /api/upload/:key - direct file upload endpoint (no auth required - validated in prepare step)
+// PUT /api/upload/:key - direct file upload endpoint (requires auth + ownership of pending post)
 app.put('/api/upload/*', async (c) => {
   try {
+    const user = c.get('user')
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401)
+    }
+
     const key = c.req.path.replace('/api/upload/', '')
     const contentType = c.req.header('content-type')
     const contentLength = c.req.header('content-length')
@@ -46,6 +51,15 @@ app.put('/api/upload/*', async (c) => {
       return c.json({ error: 'File too large. Maximum size is 25MB' }, 413)
     }
     
+    // Verify the user owns a pending post with this storage key
+    const pending = await c.env.DB.prepare(
+      'SELECT id FROM posts WHERE user_id = ? AND (gif_key = ? OR payload_key = ? OR swf_key = ?) AND status = ?'
+    ).bind(user.id, key, key, key, 'pending').first() as { id: string } | null
+
+    if (!pending) {
+      return c.json({ error: 'No pending post found for this key' }, 403)
+    }
+
     // Get the file data from request body
     const fileData = await c.req.arrayBuffer()
     
@@ -217,7 +231,7 @@ app.get('/api/dos-player/:postId', async (c) => {
   <div id="error-overlay" class="error-overlay" style="display:none;"></div>
   <script>
     var zipUrl = window.location.origin + '/api/zip/' + '${postId}';
-    var loadFailedMsg = '${loadFailed}';
+    var loadFailedMsg = ${JSON.stringify(loadFailed)};
     var loadAttempts = 0;
 
     function loadJsdos() {
@@ -701,8 +715,7 @@ app.get('/api/link-preview', async (c) => {
 // Auth middleware - sets user context (null if not authenticated)
 app.use('/api/*', async (c, next) => {
   // Skip auth for specific public routes that don't need user context at all
-  if ((c.req.method === 'PUT' && c.req.path.startsWith('/api/upload/')) ||
-      (c.req.method === 'GET' && c.req.path.startsWith('/api/images/')) ||
+  if ((c.req.method === 'GET' && c.req.path.startsWith('/api/images/')) ||
       (c.req.method === 'GET' && c.req.path.startsWith('/api/audio/')) ||
       (c.req.method === 'GET' && c.req.path.startsWith('/api/zip/')) ||
       (c.req.method === 'GET' && c.req.path.startsWith('/api/swf/')) ||
@@ -732,7 +745,7 @@ const requireAuth = async (c: any, next: any) => {
 }
 
 app.use('/*', cors({
-  origin: ['https://flaxia.app', 'https://*.pages.dev', 'https://sandbox.flaxia.app'],
+  origin: ['https://flaxia.app', 'https://sandbox.flaxia.app'],
   allowMethods: ['GET', 'POST', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
   credentials: true
@@ -5025,10 +5038,10 @@ app.post('/api/posts/fresh/batch', requireAuth, async (c) => {
       
       if (toFresh.length > 0) {
         // Batch insert freshs
-        const freshValues = toFresh.map(id => `('${id}', '${userId}')`).join(',')
-        await c.env.DB.prepare(`
-          INSERT INTO freshs (post_id, user_id) VALUES ${freshValues}
-        `).run()
+        const stmts = toFresh.map(id => c.env.DB.prepare(
+          'INSERT INTO freshs (post_id, user_id) VALUES (?, ?)'
+        ).bind(id, userId))
+        await c.env.DB.batch(stmts)
         
         // Batch update fresh counts
         await c.env.DB.prepare(`
@@ -5052,7 +5065,7 @@ app.post('/api/posts/fresh/batch', requireAuth, async (c) => {
               existingMap.set(`${row.user_id}:${row.post_id}`, row)
             }
             
-            const inserts: string[] = []
+            const inserts: Array<[string, string, string, string, string]> = []
             
             for (const p of nonSelfPosts) {
               const key = `${p.user_id}:${p.id}`
@@ -5071,14 +5084,15 @@ app.post('/api/posts/fresh/batch', requireAuth, async (c) => {
                   'UPDATE notifications SET actor_id = ?, actor_data = ?, created_at = strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\'), read = 0 WHERE id = ?'
                 ).bind(actorData[0], JSON.stringify(actorData), existing.id).run()
               } else {
-                inserts.push(`('${nanoid()}', '${p.user_id}', 'fresh', '${p.id}', '${userId}')`)
+                inserts.push([nanoid(), String(p.user_id), 'fresh', String(p.id), userId])
               }
             }
             
             if (inserts.length > 0) {
-              await c.env.DB.prepare(`
-                INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES ${inserts.join(',')}
-              `).run()
+              const stmts = inserts.map(row => c.env.DB.prepare(
+                'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
+              ).bind(...row))
+              await c.env.DB.batch(stmts)
             }
           } catch (e) {
             console.error('Failed to create batch fresh notifications:', e)

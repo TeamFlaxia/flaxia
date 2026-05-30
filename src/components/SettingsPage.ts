@@ -99,19 +99,26 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     const avatarUrl = currentUser.avatar_key ? `/api/images/${currentUser.avatar_key}` : '/api/images/default-avatar'
     const displayName = currentUser.display_name || currentUser.username
 
-    userChip.innerHTML = `
-      <img src="${avatarUrl}" alt="${displayName}" style="
-        width: 60px;
-        height: 60px;
-        border-radius: 50%;
-        object-fit: cover;
-        border: 1px solid var(--border);
-      " onerror="this.src='/api/images/default-avatar'">
-      <div style="flex: 1; min-width: 0;">
-        <div style="font-size: 1.125rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>
-        <div style="color: var(--text-muted); font-family: monospace; font-size: 0.875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">@${currentUser.username}</div>
-      </div>
-    `
+    const avatarEl = document.createElement('img')
+    avatarEl.src = avatarUrl
+    avatarEl.alt = ''
+    avatarEl.style.cssText = 'width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border);'
+    avatarEl.onerror = () => { avatarEl.src = '/api/images/default-avatar' }
+    userChip.appendChild(avatarEl)
+
+    const infoDiv = document.createElement('div')
+    infoDiv.style.cssText = 'flex: 1; min-width: 0;'
+    userChip.appendChild(infoDiv)
+
+    const displayNameEl = document.createElement('div')
+    displayNameEl.style.cssText = 'font-size: 1.125rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'
+    displayNameEl.textContent = displayName
+    infoDiv.appendChild(displayNameEl)
+
+    const usernameEl = document.createElement('div')
+    usernameEl.style.cssText = 'color: var(--text-muted); font-family: monospace; font-size: 0.875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'
+    usernameEl.textContent = `@${currentUser.username}`
+    infoDiv.appendChild(usernameEl)
 
     const logoutButton = document.createElement('button')
     logoutButton.textContent = t('auth.sign_out')

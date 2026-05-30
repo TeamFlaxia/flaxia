@@ -85,7 +85,7 @@ export class SandboxBridge {
 
     overlay.innerHTML = `
       <div class="fullscreen-modal">
-        <p class="fullscreen-message">${t('sandbox.fullscreen_request', { postText })}</p>
+        <p class="fullscreen-message">${t('sandbox.fullscreen_request', { postText: this.escapeHtml(postText) })}</p>
         <div class="fullscreen-buttons">
           <button class="fullscreen-allow">${t('sandbox.allow')}</button>
           <button class="fullscreen-deny">${t('sandbox.deny')}</button>

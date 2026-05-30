@@ -154,11 +154,16 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
         font-size: 13px;
         color: #94a3b8;
       `
-      dmcaInfo.innerHTML = `
-        <div>${t('admin_alerts.dmca_work')}${alert.dmca_work_description}"</div>
-        <div>${t('admin_alerts.dmca_email')}${alert.dmca_reporter_email}"</div>
-        <div style="margin-top: 4px;">${t('admin_alerts.dmca_sworn')}${alert.dmca_sworn ? '✓' : '✗'}</div>
-      `
+      const workLine = document.createElement('div')
+      workLine.textContent = `${t('admin_alerts.dmca_work')}${alert.dmca_work_description}"`
+      dmcaInfo.appendChild(workLine)
+      const emailLine = document.createElement('div')
+      emailLine.textContent = `${t('admin_alerts.dmca_email')}${alert.dmca_reporter_email}"`
+      dmcaInfo.appendChild(emailLine)
+      const swornLine = document.createElement('div')
+      swornLine.style.marginTop = '4px'
+      swornLine.textContent = `${t('admin_alerts.dmca_sworn')}${alert.dmca_sworn ? '✓' : '✗'}`
+      dmcaInfo.appendChild(swornLine)
       row.appendChild(dmcaInfo)
     }
 
@@ -173,10 +178,14 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
         font-size: 13px;
         color: #f1f5f9;
       `
-      warning.innerHTML = `
-        <div style="margin-bottom: 8px;">${t('admin_alerts.warning_csam')}</div>
-        <code style="background: #0f172a; padding: 8px; border-radius: 4px; display: block; overflow-x: auto;">wrangler r2 object delete flaxia-content --key "${alert.payload_key || ''}"</code>
-      `
+      const warningLine = document.createElement('div')
+      warningLine.style.marginBottom = '8px'
+      warningLine.textContent = t('admin_alerts.warning_csam')
+      warning.appendChild(warningLine)
+      const codeEl = document.createElement('code')
+      codeEl.style.cssText = 'background: #0f172a; padding: 8px; border-radius: 4px; display: block; overflow-x: auto;'
+      codeEl.textContent = `wrangler r2 object delete flaxia-content --key "${alert.payload_key || ''}"`
+      warning.appendChild(codeEl)
       row.appendChild(warning)
     }
 
