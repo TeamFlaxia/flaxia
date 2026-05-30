@@ -3,7 +3,7 @@
     "windows": [
       {
         "title": "Flaxia",
-        "url": "http://127.0.0.1:8787",
+        "url": "https://flaxia.app",
         "width": 1200,
         "height": 800,
         "minWidth": 240,
