@@ -82,6 +82,50 @@ function getCrowdClient(c: any): FlaxiaClient | null {
   return new FlaxiaClient({ baseUrl: orchestratorUrl, apiKey })
 }
 
+const processingPosts = new Set<string>()
+
+async function analyzeSentiment(c: any, postId: string, text: string): Promise<void> {
+  if (processingPosts.has(postId)) return
+  processingPosts.add(postId)
+  try {
+    const client = getCrowdClient(c)
+    if (!client) return
+
+    const task = await client.submit({
+      workload: 'ai-inference',
+      payload: {
+        task: 'text-classification',
+        model: 'Xenova/bert-base-multilingual-uncased-sentiment',
+        input: text,
+      },
+    })
+
+    const taskId = (task as any).taskId
+    if (!taskId) return
+    const result = await client.waitForTask(taskId, 2000, 30000)
+    if (result.status === 'done' && result.result) {
+      const output = ((result.result as any).output || []) as Array<{ label: string; score: number }>
+      if (output.length > 0) {
+        const labelScoreMap: Record<string, number> = {
+          very_negative: 0.0,
+          negative: 0.25,
+          neutral: 0.5,
+          positive: 0.75,
+          very_positive: 1.0,
+        }
+        const score = labelScoreMap[output[0].label] ?? output[0].score
+        await c.env.DB.prepare(
+          'UPDATE posts SET sentiment_score = ? WHERE id = ?'
+        ).bind(score, postId).run()
+      }
+    }
+  } catch (err) {
+    console.error(`Sentiment analysis failed for post ${postId}:`, err)
+  } finally {
+    processingPosts.delete(postId)
+  }
+}
+
 // Magic byte detection to prevent MIME type spoofing
 const MAGIC_TYPES: { offset: number; bytes: number[]; mime: string }[] = [
   { offset: 0, bytes: [0xFF, 0xD8, 0xFF], mime: 'image/jpeg' },
@@ -3275,7 +3319,14 @@ app.get('/api/posts', async (c) => {
 
     // Batch fetch poll data for posts with polls
     await enrichPostsWithPolls(posts as any[], c.env.DB, currentUserId)
-    
+
+    // Trigger sentiment analysis for unprocessed posts in background
+    for (const p of posts as any[]) {
+      if (p.sentiment_score == null && p.text) {
+        c.executionCtx.waitUntil(analyzeSentiment(c, p.id, p.text))
+      }
+    }
+
     // Return total count when filtering by hashtag
     if (hashtag) {
       const countResult = await c.env.DB.prepare(`
@@ -4504,6 +4555,8 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
       }
     }
 
+    c.executionCtx.waitUntil(analyzeSentiment(c, post.id, post.text))
+
     return c.json({ post })
   } catch (error: any) {
     console.error('Commit post error:', error)
@@ -4691,6 +4744,8 @@ app.post('/api/posts', requireAuth, async (c) => {
           }
         }
 
+        c.executionCtx.waitUntil(analyzeSentiment(c, (post as any).id, (post as any).text))
+
         return c.json({ success: true, post })
       }
     } else {
@@ -4847,6 +4902,8 @@ app.post('/api/posts', requireAuth, async (c) => {
         console.error('Failed to enrich post with poll:', e)
       }
     }
+
+    c.executionCtx.waitUntil(analyzeSentiment(c, fullPost.id, fullPost.text))
 
     return c.json({ post: fullPost })
   } catch (error: any) {
@@ -5612,6 +5669,16 @@ app.get('/api/posts/:id/thread', async (c) => {
     // Add poll data
     await enrichPostsWithPolls([rootPost as any], c.env.DB, currentUserId)
     await enrichPostsWithPolls(replies as any[], c.env.DB, currentUserId)
+
+    // Trigger sentiment analysis for unprocessed posts in background
+    if ((rootPost as any).sentiment_score == null && (rootPost as any).text) {
+      c.executionCtx.waitUntil(analyzeSentiment(c, (rootPost as any).id, (rootPost as any).text))
+    }
+    for (const r of replies as any[]) {
+      if (r.sentiment_score == null && r.text) {
+        c.executionCtx.waitUntil(analyzeSentiment(c, r.id, r.text))
+      }
+    }
 
     return c.json({ root: rootPost, replies })
   } catch (error: any) {
