@@ -197,16 +197,27 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     cursor: pointer;
   `
 
-  const englishOption = document.createElement('option')
-  englishOption.value = 'en'
-  englishOption.textContent = 'English'
-
-  const japaneseOption = document.createElement('option')
-  japaneseOption.value = 'ja'
-  japaneseOption.textContent = '日本語'
-
-  languageSelect.appendChild(englishOption)
-  languageSelect.appendChild(japaneseOption)
+  fetch('/locales/index.json').then(r => r.json()).then(locales => {
+    languageSelect.innerHTML = ''
+    ;(locales as { code: string; nativeName: string }[]).forEach(l => {
+      const opt = document.createElement('option')
+      opt.value = l.code
+      opt.textContent = l.nativeName
+      languageSelect.appendChild(opt)
+    })
+    if (currentUser?.language) {
+      languageSelect.value = currentUser.language
+    } else {
+      languageSelect.value = getLocale()
+    }
+  }).catch(() => {
+    ;['en', 'ja'].forEach(code => {
+      const opt = document.createElement('option')
+      opt.value = code
+      opt.textContent = code
+      languageSelect.appendChild(opt)
+    })
+  })
 
   // Set current language
   if (currentUser?.language) {
