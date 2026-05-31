@@ -48,7 +48,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Top bar: Tauri Android (production) or localhost dev (browser testing)
     const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
-    const isTauriMobile = typeof window !== 'undefined' && (window as any).__TAURI__ && /Android/i.test(navigator.userAgent)
+    const isTauri = typeof window !== 'undefined' && ((window as any).__TAURI__ || (window as any).__TAURI_INTERNALS__)
+    const isTauriMobile = isTauri && /Android/i.test(navigator.userAgent)
     if (isTauriMobile || isLocalhost) {
       document.documentElement.classList.add('tauri-android')
       const topbar = document.getElementById('flaxia-topbar')
@@ -163,7 +164,7 @@ const registerPushToken = async () => {
 }
 
 const initializeWebPush = async () => {
-  if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+  if (typeof window !== 'undefined' && ((window as any).__TAURI__ || (window as any).__TAURI_INTERNALS__)) {
     return // Tauri desktop/mobile — no Service Worker push needed
   }
   await registerPushToken()
@@ -188,7 +189,7 @@ const refreshNotificationBadges = async () => {
   }
 
   // Show Tauri notification when new unread notifications arrive (skip on Android — KeepAliveService handles it)
-  const isRealTauriAndroid = typeof window !== 'undefined' && (window as any).__TAURI__ && /Android/i.test(navigator.userAgent)
+  const isRealTauriAndroid = typeof window !== 'undefined' && ((window as any).__TAURI__ || (window as any).__TAURI_INTERNALS__) && /Android/i.test(navigator.userAgent)
   if (tauriNotify && !isRealTauriAndroid && unreadNotificationCount > previousUnreadCount && data?.notifications?.length) {
     const latest = data.notifications[0]
     let body = ''

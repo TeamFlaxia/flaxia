@@ -20,7 +20,10 @@ pub fn run() {
       {
         use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState};
 
+        let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))
+          .expect("Failed to load tray icon");
         let tray = TrayIconBuilder::new()
+          .icon(icon)
           .tooltip("Flaxia")
           .on_menu_event(|app, event| {
             match event.id.as_ref() {
