@@ -269,12 +269,22 @@ if (isTauriDesktop) {
       unread_count: number
     }
 
+    let cachedNotifications: NotificationData | null = null
+    let lastNotificationFetch = 0
+    const NOTIFICATION_FETCH_TTL = 10000 // 10秒以内の連続fetchはキャッシュ
+
     const fetchNotifications = async (): Promise<NotificationData> => {
+      const now = Date.now()
+      if (cachedNotifications && (now - lastNotificationFetch) < NOTIFICATION_FETCH_TTL) {
+        return cachedNotifications
+      }
       try {
         const response = await fetch('/api/notifications', { credentials: 'include' })
         if (response.ok) {
           const data = await response.json() as NotificationData
           unreadNotificationCount = data.unread_count || 0
+          cachedNotifications = data
+          lastNotificationFetch = now
           return data
         }
       } catch (error) {
@@ -1838,12 +1848,6 @@ if (isTauriDesktop) {
     
     // Initial navigation
     console.log('DOM Content Loaded, starting initial routing...')
-    
-    // Fetch notifications and check auth in parallel on app init
-    await Promise.all([
-      fetchNotifications(),
-      checkAuth()
-    ])
     
     const initialRoute = parseCurrentRoute()
     console.log('Initial route:', initialRoute)
