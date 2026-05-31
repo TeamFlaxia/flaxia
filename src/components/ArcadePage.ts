@@ -847,6 +847,27 @@ export class ArcadePage {
       data.replies.forEach((p, i) => postIdToIndex.set(p.id, i + 1))
 
       list.innerHTML = ''
+
+      // Sync reply count from API data
+      const game = this.games[this.currentIndex]
+      if (game) {
+        game.replyCount = data.replies.length
+        headerTitle.textContent = `${t('thread_view.title')} (${formatCount(game.replyCount)})`
+        this.updateFloatingActions(game)
+      }
+
+      // Replies header (matching ThreadPage spec)
+      const repliesHeader = document.createElement('div')
+      repliesHeader.textContent = `${t('thread.replies_header', { count: formatCount(data.replies.length) })}`
+      repliesHeader.style.cssText = `
+        color: #64748b;
+        font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-size: 0.9rem;
+        margin: 0 1rem 0.5rem 1rem;
+        font-weight: normal;
+      `
+      list.appendChild(repliesHeader)
+
       if (data.replies.length === 0) {
         const empty = document.createElement('div')
         empty.style.cssText = 'text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.85rem;'
@@ -872,9 +893,12 @@ export class ArcadePage {
       // Click handler for >>N post references (scroll to referenced reply)
       list.addEventListener('click', (e) => {
         const target = e.target as HTMLElement
-        if (target.classList.contains('post-ref-link')) {
+        const refLink = target.classList.contains('post-ref-link')
+          ? target
+          : target.closest('.post-ref-link') as HTMLElement | null
+        if (refLink) {
           e.preventDefault()
-          const index = target.dataset.postIndex
+          const index = refLink.dataset.postIndex
           if (index) {
             const targetPost = list.querySelector(`[data-post-index="${index}"]`)
             if (targetPost) {

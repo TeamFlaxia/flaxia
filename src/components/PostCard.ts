@@ -193,11 +193,13 @@ export class PostCard {
 
     // Reply composer (hidden by default, only if reply composer is not disabled)
     if (!this.props.disableReply && !this.props.disableReplyComposer) {
+      const prefill = this.props.postIndex !== undefined ? `>>${this.props.postIndex} ` : undefined
       this.replyComposer = createReplyComposer({
         postId: this.props.post.id,
         sandboxOrigin: this.props.sandboxOrigin,
         onReplyCreated: (newReply) => this.handleReplyCreated(newReply),
-        onCancel: () => this.hideReplyComposer()
+        onCancel: () => this.hideReplyComposer(),
+        prefillText: prefill
       })
       this.replyComposer.getElement().style.display = 'none'
       container.appendChild(this.replyComposer.getElement())
