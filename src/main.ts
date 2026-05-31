@@ -49,9 +49,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     history.scrollRestoration = 'manual'
     
     await initI18n()
-
-    // Initialize Tauri native notifications (no-op in browser)
-    initTauriNotifications()
     
     // Routing state
     let currentView: 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'search' | 'notifications' | 'bookmarks' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings' | 'arcade' = 'timeline'
@@ -118,6 +115,9 @@ const initTauriNotifications = async () => {
     // Not running in Tauri
   }
 }
+
+// Initialize Tauri native notifications (no-op in browser)
+initTauriNotifications()
 
 /** Register the device's push notification token with the Flaxia server. */
 const registerPushToken = async (retries = 3, delay = 5000) => {
