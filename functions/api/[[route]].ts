@@ -76,10 +76,12 @@ app.use('/*', cors({
 }))
 
 function getCrowdClient(c: any): FlaxiaClient | null {
-  const orchestratorUrl = c.env.CROWD_ORCHESTRATOR_URL
+  const orchestratorUrl = (c.env.CROWD_ORCHESTRATOR_URL ?? '').replace(/\/+$/,'' )
   const apiKey = c.env.CROWD_API_KEY
   if (!orchestratorUrl || !apiKey) return null
-  return new FlaxiaClient({ baseUrl: orchestratorUrl, apiKey })
+  // Ensure the orchestrator base URL includes the /crowd prefix
+  const baseUrl = `${orchestratorUrl}/crowd`
+  return new FlaxiaClient({ baseUrl, apiKey })
 }
 
 const processingPosts = new Set<string>()
@@ -117,6 +119,7 @@ async function analyzeSentiment(c: any, postId: string, text: string): Promise<v
         await c.env.DB.prepare(
           'UPDATE posts SET sentiment_score = ? WHERE id = ?'
         ).bind(score, postId).run()
+        console.log(`Sentiment analysis succeeded for post ${postId}: label=${output[0].label}, score=${score}, taskId=${taskId}`)
       }
     }
   } catch (err) {
