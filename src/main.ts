@@ -21,11 +21,24 @@ import { createBookmarksPage } from './components/BookmarksPage.js'
 import { initPerformanceMonitoring } from './lib/performance.js'
 import { initI18n } from './lib/i18n.js'
 import { safeRemoveFromBody } from './lib/dom-utils.js'
+import { initFlaxiaNode } from '@flaxia/node'
 
 console.log('Flaxia initialized')
 
 // Initialize performance monitoring
 initPerformanceMonitoring()
+
+// Initialize Flaxia Crowd browser compute node
+initFlaxiaNode({
+  orchestratorUrl: 'https://flaxia-worker.remydre8.workers.dev',
+  siteId: 'flaxia',
+  consent: {
+    brandName: 'Flaxia',
+    position: 'bottom-right',
+  },
+  capabilities: ['ai-inference'],
+  maxCpuLoad: 0.15,
+})
 
 // Basic app initialization
 document.addEventListener('DOMContentLoaded', async () => {

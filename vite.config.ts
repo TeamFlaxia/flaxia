@@ -65,6 +65,14 @@ export default defineConfig({
           copyDirectory(jsdosSrc, jsdosDest)
           console.log('js-dos files copied successfully!')
         }
+
+        const crowdWorkerSrc = 'node_modules/@flaxia/node/dist/worker.js'
+        const crowdWorkerDest = 'dist/worker.js'
+        if (existsSync(crowdWorkerSrc)) {
+          console.log('Copying @flaxia/node worker.js to dist...')
+          copyFileSync(crowdWorkerSrc, crowdWorkerDest)
+          console.log('@flaxia/node worker.js copied successfully!')
+        }
       }
     }
   ]
