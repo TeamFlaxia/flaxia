@@ -10,18 +10,6 @@ console.log('Flaxia initialized')
 // Initialize performance monitoring
 initPerformanceMonitoring()
 
-// Initialize Flaxia Crowd browser compute node
-initFlaxiaNode({
-  orchestratorUrl: 'https://flaxia-worker.remydre8.workers.dev',
-  siteId: 'flaxia',
-  consent: {
-    brandName: 'Flaxia',
-    position: 'bottom-right',
-  },
-  capabilities: ['ai-inference'],
-  maxCpuLoad: 0.15,
-})
-
 // Basic app initialization
 document.addEventListener('DOMContentLoaded', async () => {
   const app = document.getElementById('app')
@@ -1862,5 +1850,27 @@ if (isTauriDesktop) {
     if (initialRoute) {
       await navigateTo(initialRoute.view, initialRoute.postId || undefined, initialRoute.username || undefined, initialRoute.tag || undefined, initialRoute.adminTab || undefined, initialRoute.searchQuery || undefined, initialRoute.searchType || undefined)
     }
+
+    // Defer non-critical initialization to after the first paint
+    const deferInit = (fn: () => void) => {
+      if ('requestIdleCallback' in window) {
+        (window as any).requestIdleCallback(fn, { timeout: 3000 })
+      } else {
+        setTimeout(fn, 3000)
+      }
+    }
+
+    deferInit(() => {
+      initFlaxiaNode({
+        orchestratorUrl: 'https://flaxia-worker.remydre8.workers.dev',
+        siteId: 'flaxia',
+        consent: {
+          brandName: 'Flaxia',
+          position: 'bottom-right',
+        },
+        capabilities: ['ai-inference'],
+        maxCpuLoad: 0.15,
+      })
+    })
   }
 })
