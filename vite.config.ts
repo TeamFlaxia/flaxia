@@ -23,7 +23,17 @@ export default defineConfig({
     emptyOutDir: true
   },
   server: {
-    port: 3000
+    port: 3000,
+    proxy: {
+      '/api': {
+        target: 'https://flaxia.app',
+        changeOrigin: true,
+      },
+      '/sw.js': {
+        target: 'https://flaxia.app',
+        changeOrigin: true,
+      },
+    },
   },
   define: {
     'import.meta.env.VITE_SANDBOX_ORIGIN': JSON.stringify(process.env.SANDBOX_ORIGIN || 'https://flaxia.app'),

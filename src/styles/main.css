@@ -31,6 +31,38 @@ body {
   padding: 0;
 }
 
+/* ── Tauri Android top bar ── */
+.tauri-android #flaxia-topbar {
+  display: flex;
+  align-items: center;
+  height: 48px;
+  padding: 0 16px;
+  background: var(--accent, #22c55e);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.tauri-android #flaxia-topbar .flaxia-topbar-logo {
+  letter-spacing: 0.02em;
+}
+.tauri-android #app {
+  min-height: calc(100vh - 48px);
+  min-height: calc(100dvh - 48px);
+}
+.tauri-android .auth-page {
+  min-height: calc(100vh - 48px);
+  min-height: calc(100dvh - 48px);
+}
+.tauri-android .left-nav {
+  top: 48px;
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
+}
+
 /* Auth Pages */
 .auth-page {
   display: flex;

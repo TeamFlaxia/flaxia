@@ -7,6 +7,7 @@
     "dev": "npm run migrate:local && vite build && wrangler pages dev dist --port 8787",
     "dev:hot": "npm run migrate:local && vite build --watch & wrangler pages dev dist --port 8787",
     "dev:api": "npm run migrate:local && wrangler pages dev dist --port 8787",
+    "dev:local": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
     "deploy": "CONTENT_ORIGIN=https://sandbox.flaxia.app wrangler pages deploy dist",
@@ -52,7 +53,8 @@
     "katex": "^0.16.0",
     "lucide": "^0.300.0",
     "markdown-it": "^14.0.0",
-    "nanoid": "^5.1.6"
+    "nanoid": "^5.1.6",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.0.0",

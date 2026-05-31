@@ -9,7 +9,7 @@ import { generateKeyPair, exportPublicKey, exportPrivateKey } from '../lib/activ
 import { buildNoteObject, buildCreateActivity, buildDeleteActivity } from '../lib/activitypub/note'
 import type { ReportCategory } from '../../src/types/post'
 import { FlaxiaClient } from '@flaxia/sdk'
-import { sendPushToUser, getPushPayload } from '../lib/push'
+import { sendPushToUser, getPushPayload, getVapidPublicKey } from '../lib/push'
 
 type Bindings = {
   DB: D1Database
@@ -23,7 +23,8 @@ type Bindings = {
   AP_DELIVERY_QUEUE: Queue
   CROWD_ORCHESTRATOR_URL: string
   CROWD_API_KEY: string
-  FCM_SERVER_KEY?: string
+  VAPID_PUBLIC_KEY?: string
+  VAPID_PRIVATE_KEY?: string
 }
 
 type Variables = {
@@ -5100,11 +5101,11 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
             .prepare('INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)')
             .bind(nanoid(), post.user_id, 'fresh', postId, userId)
             .run()
-          if (c.env.FCM_SERVER_KEY) {
+          {
             const actor = c.get('user')
             const actorName = actor?.display_name || actor?.username || 'Someone'
             const textPreview = post.text || ''
-            sendPushToUser(c.env.DB, post.user_id, getPushPayload('fresh', actorName, textPreview), c.env.FCM_SERVER_KEY)
+            sendPushToUser(c.env.DB, post.user_id, getPushPayload('fresh', actorName, textPreview, postId))
           }
         }
       } catch (e) {
@@ -5955,10 +5956,10 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
             'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
           ).bind(nanoid(), parentPost.user_id, 'reply', postId, replyUserId).run()
           // Send push notification to parent post author
-          if (c.env.FCM_SERVER_KEY) {
+          {
             const actor = c.get('user')
             const actorName = actor?.display_name || actor?.username || 'Someone'
-            sendPushToUser(c.env.DB, parentPost.user_id, getPushPayload('reply', actorName, text), c.env.FCM_SERVER_KEY)
+            sendPushToUser(c.env.DB, parentPost.user_id, getPushPayload('reply', actorName, text, postId))
           }
         }
         notifiedUserIds.add(parentPost.user_id)
@@ -5977,10 +5978,10 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
           await c.env.DB.prepare(
             'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
           ).bind(nanoid(), mention.user_id, 'mention', replyId, replyUserId).run()
-          if (c.env.FCM_SERVER_KEY) {
+          {
             const actor = c.get('user')
             const actorName = actor?.display_name || actor?.username || 'Someone'
-            sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, text), c.env.FCM_SERVER_KEY)
+            sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, text, postId))
           }
         }
       } catch (e) {
@@ -7055,44 +7056,51 @@ app.get('/api/current-topic', async (c) => {
   }
 })
 
-// POST /api/push/register - Register device push token (protected)
+// GET /api/push/vapid-key - Expose VAPID public key for clients
+app.get('/api/push/vapid-key', async (c) => {
+  return c.json({ publicKey: getVapidPublicKey() })
+})
+
+// POST /api/push/register - Register a Web Push subscription (protected)
 app.post('/api/push/register', requireAuth, async (c) => {
   try {
     const user = c.get('user')
-    const { token, platform } = await c.req.json() as { token: string; platform: string }
-    if (!token || !['android', 'ios', 'web'].includes(platform)) {
-      return c.json({ error: 'Invalid token or platform' }, 400)
+    const body = await c.req.json() as {
+      endpoint: string
+      keys: { p256dh: string; auth: string }
+    }
+    if (!body.endpoint || !body.keys?.p256dh || !body.keys?.auth) {
+      return c.json({ error: 'Invalid subscription' }, 400)
     }
     const existing = await c.env.DB.prepare(
-      'SELECT id FROM device_tokens WHERE token = ?'
-    ).bind(token).first()
+      'SELECT id FROM push_subscriptions WHERE endpoint = ?'
+    ).bind(body.endpoint).first()
     if (existing) {
-      // Update user_id and timestamp for existing token (user re-logged in)
       await c.env.DB.prepare(
-        'UPDATE device_tokens SET user_id = ?, platform = ?, updated_at = strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\') WHERE token = ?'
-      ).bind(user.user_id, platform, token).run()
+        'UPDATE push_subscriptions SET user_id = ?, auth_key = ?, p256dh_key = ?, updated_at = strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\') WHERE endpoint = ?'
+      ).bind(user.user_id, body.keys.auth, body.keys.p256dh, body.endpoint).run()
     } else {
       await c.env.DB.prepare(
-        'INSERT INTO device_tokens (id, user_id, platform, token) VALUES (?, ?, ?, ?)'
-      ).bind(nanoid(), user.user_id, platform, token).run()
+        'INSERT INTO push_subscriptions (id, user_id, endpoint, auth_key, p256dh_key) VALUES (?, ?, ?, ?, ?)'
+      ).bind(nanoid(), user.user_id, body.endpoint, body.keys.auth, body.keys.p256dh).run()
     }
     return c.json({ ok: true })
   } catch (e) {
-    console.error('Failed to register push token:', e)
-    return c.json({ error: 'Failed to register push token' }, 500)
+    console.error('Failed to register push subscription:', e)
+    return c.json({ error: 'Failed to register push subscription' }, 500)
   }
 })
 
-// POST /api/push/unregister - Remove device push token (protected)
+// POST /api/push/unregister - Remove a Web Push subscription (protected)
 app.post('/api/push/unregister', requireAuth, async (c) => {
   try {
-    const { token } = await c.req.json() as { token: string }
-    if (!token) return c.json({ error: 'Missing token' }, 400)
-    await c.env.DB.prepare('DELETE FROM device_tokens WHERE token = ?').bind(token).run()
+    const { endpoint } = await c.req.json() as { endpoint: string }
+    if (!endpoint) return c.json({ error: 'Missing endpoint' }, 400)
+    await c.env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(endpoint).run()
     return c.json({ ok: true })
   } catch (e) {
-    console.error('Failed to unregister push token:', e)
-    return c.json({ error: 'Failed to unregister push token' }, 500)
+    console.error('Failed to unregister push subscription:', e)
+    return c.json({ error: 'Failed to unregister push subscription' }, 500)
   }
 })
 

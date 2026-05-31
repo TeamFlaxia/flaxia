@@ -17,15 +17,10 @@
       {
         "title": "Flaxia",
         "url": "https://flaxia.app",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 240,
-        "minHeight": 200,
-        "maxWidth": 7680,
-        "maxHeight": 4320,
-        "center": true,
-        "resizable": true,
-        "fullscreen": false
+        "width": 412,
+        "height": 915,
+        "resizable": false,
+        "fullscreen": true
       }
     ]
   },
@@ -39,10 +34,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "linux": {
-      "deb": {
-        "depends": []
-      }
+    "android": {
+      "minSdkVersion": 26
     }
   }
 }

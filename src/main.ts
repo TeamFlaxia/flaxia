@@ -46,6 +46,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (app) {
     console.log('App mounted')
 
+    // Top bar: Tauri Android (production) or localhost dev (browser testing)
+    const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+    const isTauriMobile = typeof window !== 'undefined' && (window as any).__TAURI__ && /Android/i.test(navigator.userAgent)
+    if (isTauriMobile || isLocalhost) {
+      document.documentElement.classList.add('tauri-android')
+      const topbar = document.getElementById('flaxia-topbar')
+      if (topbar) topbar.hidden = false
+    }
+
     history.scrollRestoration = 'manual'
     
     await initI18n()
@@ -106,59 +115,64 @@ const initTauriNotifications = async () => {
         // badge not supported on this platform
       }
     }
-
-    // Register push notification token with the server
-    // On Tauri mobile (Android/iOS), the push token is obtained from native code.
-    // See the Firebase/APNs setup guide for how to surface it.
-    registerPushToken()
   } catch {
     // Not running in Tauri
   }
 }
 
-// Initialize Tauri native notifications (no-op in browser)
-initTauriNotifications()
+/** Register Web Push in browser (Service Worker), or skip in Tauri. */
+/** Convert VAPID base64 key to Uint8Array for PushManager.subscribe(). */
+function urlBase64ToUint8Array(base64: string): Uint8Array {
+  const padding = '='.repeat((4 - base64.length % 4) % 4)
+  const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const raw = atob(b64)
+  return Uint8Array.from(raw, c => c.charCodeAt(0))
+}
 
-/** Register the device's push notification token with the Flaxia server. */
-const registerPushToken = async (retries = 3, delay = 5000) => {
-  for (let attempt = 0; attempt < retries; attempt++) {
-    try {
-      let pushToken: string | null = null
-      let platform: string | null = null
+/** Register for Web Push via Service Worker (browser only). */
+const registerPushToken = async () => {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    return // not supported (Tauri or old browser)
+  }
 
-      try {
-        const { invoke } = await import('@tauri-apps/api/core')
-        pushToken = (await invoke<string>('get_push_token')) || null
-        platform = navigator.userAgent.includes('Android') ? 'android'
-          : /iPad|iPhone|iPod/.test(navigator.userAgent) ? 'ios'
-          : 'web'
-      } catch {
-        // Running in browser or Tauri desktop without native push
-      }
+  try {
+    const reg = await navigator.serviceWorker.register('/sw.js')
+    await navigator.serviceWorker.ready
 
-      if (!pushToken || !platform) {
-        // Token not ready yet — wait and retry
-        await new Promise(r => setTimeout(r, delay))
-        continue
-      }
+    // Get VAPID public key from server
+    const keyRes = await fetch('/api/push/vapid-key')
+    if (!keyRes.ok) return
+    const { publicKey } = await keyRes.json()
 
-      await fetch('/api/push/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ token: pushToken, platform }),
-      })
-      console.log('Push token registered:', platform, pushToken.slice(0, 20))
-      return
-    } catch (err) {
-      if (attempt === retries - 1) {
-        console.log('Push registration failed after retries:', err)
-      } else {
-        await new Promise(r => setTimeout(r, delay))
-      }
-    }
+    // Subscribe
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey),
+    })
+
+    await fetch('/api/push/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify(sub.toJSON()),
+    })
+    console.log('Web Push subscription registered')
+  } catch (err) {
+    console.log('Web Push registration not available:', err)
   }
 }
+
+const initializeWebPush = async () => {
+  if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+    return // Tauri desktop/mobile — no Service Worker push needed
+  }
+  await registerPushToken()
+}
+
+// Initialize Tauri native notifications (badge / local notif, no-op in browser)
+initTauriNotifications()
+// Register Service Worker for Web Push (browser only, no-op in Tauri)
+initializeWebPush()
 
 const refreshNotificationBadges = async () => {
   const data = await fetchNotifications()
@@ -173,8 +187,9 @@ const refreshNotificationBadges = async () => {
     tauriBadge(unreadNotificationCount)
   }
 
-  // Show Tauri notification when new unread notifications arrive
-  if (tauriNotify && unreadNotificationCount > previousUnreadCount && data?.notifications?.length) {
+  // Show Tauri notification when new unread notifications arrive (skip on Android — KeepAliveService handles it)
+  const isRealTauriAndroid = typeof window !== 'undefined' && (window as any).__TAURI__ && /Android/i.test(navigator.userAgent)
+  if (tauriNotify && !isRealTauriAndroid && unreadNotificationCount > previousUnreadCount && data?.notifications?.length) {
     const latest = data.notifications[0]
     let body = ''
     if (latest.actor) {
@@ -188,7 +203,7 @@ const refreshNotificationBadges = async () => {
 
     const startNotificationPolling = () => {
       if (notificationPollInterval) return
-      notificationPollInterval = setInterval(refreshNotificationBadges, 60000)
+      notificationPollInterval = setInterval(refreshNotificationBadges, 30000)
     }
 
     const stopNotificationPolling = () => {

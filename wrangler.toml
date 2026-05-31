@@ -36,6 +36,8 @@ binding = "AP_DELIVERY_QUEUE"
 # CROWD_API_KEY は本番環境では secret 推奨:
 #   npx wrangler secret put CROWD_API_KEY
 
-# Push通知 (FCM)
-# Firebase Console → Project Settings → Cloud Messaging → サーバーキー
-# npx wrangler secret put FCM_SERVER_KEY
+# Web Push (VAPID)
+# 本番環境では下記の secret を設定:
+#   npx wrangler secret put VAPID_PUBLIC_KEY
+#   npx wrangler secret put VAPID_PRIVATE_KEY
+# 開発環境では自動生成される（毎回変わるので通知が切れる可能性あり）
