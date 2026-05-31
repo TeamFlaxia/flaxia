@@ -1,23 +1,52 @@
 use std::sync::Mutex;
 use tauri::Manager;
-use tauri::tray::TrayIconId;
 
-struct TrayState(Mutex<TrayIconId>);
+struct TrayState(Mutex<Option<tauri::tray::TrayIcon<tauri::Wry>>>);
 
+/// JSの refreshNotificationBadges から呼ばれる: トレイアイコン即時更新
 #[tauri::command]
-fn set_tray_badge(app: tauri::AppHandle, has_unread: bool) -> Result<(), String> {
-  let state = app.state::<TrayState>();
-  let tray_id = state.0.lock().map_err(|e| e.to_string())?.clone();
+fn set_notification_count(app: tauri::AppHandle, count: u32) -> Result<(), String> {
+  eprintln!("set_notification_count({})", count);
+  if let Some(tray_state) = app.try_state::<TrayState>() {
+    let guard = tray_state.0.lock().map_err(|e| e.to_string())?;
+    if let Some(tray) = guard.as_ref() {
+      let tip = if count > 0 {
+        format!("Flaxia ({} unread)", count)
+      } else {
+        "Flaxia".into()
+      };
+      let _ = tray.set_tooltip(Some(&tip));
 
-  let icon_data: &[u8] = if has_unread {
-    &include_bytes!("../icons/32x32-badge.png")[..]
-  } else {
-    &include_bytes!("../icons/32x32.png")[..]
-  };
-  let icon = tauri::image::Image::from_bytes(icon_data).map_err(|e| e.to_string())?;
+      // Decode base icon, draw red dot in top-right if unread > 0
+      let base = include_bytes!("../icons/32x32.png");
+      let base_img = tauri::image::Image::from_bytes(base).map_err(|e| e.to_string())?;
+      let (w, h) = (base_img.width(), base_img.height());
+      let mut rgba = base_img.rgba().to_vec();
 
-  if let Some(tray) = app.tray_by_id(&tray_id) {
-    tray.set_icon(Some(icon)).map_err(|e| e.to_string())?;
+      if count > 0 {
+        let cx = w as i32 - 8;
+        let cy = 8i32;
+        let r = 6i32;
+        for py in (cy - r)..=cy + r {
+          for px in (cx - r)..=cx + r {
+            let dx = px - cx;
+            let dy = py - cy;
+            if dx * dx + dy * dy <= r * r {
+              let idx = (py as u32 * w + px as u32) as usize * 4;
+              if idx + 3 < rgba.len() {
+                rgba[idx] = 255;
+                rgba[idx + 1] = 0;
+                rgba[idx + 2] = 0;
+                rgba[idx + 3] = 255;
+              }
+            }
+          }
+        }
+      }
+
+      let icon = tauri::image::Image::new_owned(rgba, w, h);
+      tray.set_icon(Some(icon)).map_err(|e| e.to_string())?;
+    }
   }
   Ok(())
 }
@@ -27,7 +56,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_notification::init())
     .plugin(tauri_plugin_process::init())
-    .invoke_handler(tauri::generate_handler![set_tray_badge])
+    .invoke_handler(tauri::generate_handler![set_notification_count])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -37,32 +66,14 @@ pub fn run() {
         )?;
       }
 
-      // Desktop background notification polling
-      // Keeps the webview alive and checking notifications even when minimized to tray
-      #[cfg(desktop)]
-      {
-        let handle = app.handle().clone();
-        std::thread::spawn(move || {
-          loop {
-            std::thread::sleep(std::time::Duration::from_secs(30));
-            if let Some(window) = handle.get_webview_window("main") {
-              let _ = window.eval("window.__tauriDesktopPoll?.()");
-            }
-          }
-        });
-      }
-
-      // Build system tray (desktop only)
+      // Desktop: tray + background polling
       #[cfg(desktop)]
       {
         use tauri::tray::{TrayIconBuilder, MouseButton, MouseButtonState};
 
         let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))
           .expect("Failed to load tray icon");
-        let tray_id: TrayIconId = "main-tray".into();
-
         let tray = TrayIconBuilder::new()
-          .id(tray_id.clone())
           .icon(icon)
           .tooltip("Flaxia")
           .on_menu_event(|app, event| {
@@ -92,22 +103,30 @@ pub fn run() {
             }
           });
 
-        // Build context menu
         let menu = tauri::menu::MenuBuilder::new(app)
           .item(&tauri::menu::MenuItemBuilder::with_id("show", "Show Flaxia").build(app)?)
           .item(&tauri::menu::MenuItemBuilder::with_id("quit", "Quit").build(app)?)
           .build()?;
-        tray.menu(&menu).build(app)?;
+        let tray = tray.menu(&menu).build(app)?;
 
-        // Store tray ID for badge updates
-        app.manage(TrayState(Mutex::new(tray_id)));
+        app.manage(TrayState(Mutex::new(Some(tray))));
+
+        // Background thread: triggers JS poll (tray update is done inside the command)
+        let handle = app.handle().clone();
+        std::thread::spawn(move || {
+          loop {
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            if let Some(window) = handle.get_webview_window("main") {
+              let _ = window.eval("window.__tauriDesktopPoll?.()");
+            }
+          }
+        });
       }
 
       Ok(())
     })
     .on_window_event(|window, event| {
       if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-        // On desktop, minimize to tray instead of closing
         #[cfg(desktop)]
         {
           let _ = window.hide();
