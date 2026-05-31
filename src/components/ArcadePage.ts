@@ -1779,6 +1779,7 @@ export class ArcadePage {
   }
 
   public destroy(): void {
+    this.closeCommentPanel()
     if (this.tutorialEl) {
       this.tutorialEl.remove()
       this.tutorialEl = null

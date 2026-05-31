@@ -9,6 +9,7 @@ import { generateKeyPair, exportPublicKey, exportPrivateKey } from '../lib/activ
 import { buildNoteObject, buildCreateActivity, buildDeleteActivity } from '../lib/activitypub/note'
 import type { ReportCategory } from '../../src/types/post'
 import { FlaxiaClient } from '@flaxia/sdk'
+import { sendPushToUser, getPushPayload } from '../lib/push'
 
 type Bindings = {
   DB: D1Database
@@ -22,6 +23,7 @@ type Bindings = {
   AP_DELIVERY_QUEUE: Queue
   CROWD_ORCHESTRATOR_URL: string
   CROWD_API_KEY: string
+  FCM_SERVER_KEY?: string
 }
 
 type Variables = {
@@ -5098,6 +5100,12 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
             .prepare('INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)')
             .bind(nanoid(), post.user_id, 'fresh', postId, userId)
             .run()
+          if (c.env.FCM_SERVER_KEY) {
+            const actor = c.get('user')
+            const actorName = actor?.display_name || actor?.username || 'Someone'
+            const textPreview = post.text || ''
+            sendPushToUser(c.env.DB, post.user_id, getPushPayload('fresh', actorName, textPreview), c.env.FCM_SERVER_KEY)
+          }
         }
       } catch (e) {
         console.error('Failed to create fresh notification:', e)
@@ -5946,6 +5954,12 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
           await c.env.DB.prepare(
             'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
           ).bind(nanoid(), parentPost.user_id, 'reply', postId, replyUserId).run()
+          // Send push notification to parent post author
+          if (c.env.FCM_SERVER_KEY) {
+            const actor = c.get('user')
+            const actorName = actor?.display_name || actor?.username || 'Someone'
+            sendPushToUser(c.env.DB, parentPost.user_id, getPushPayload('reply', actorName, text), c.env.FCM_SERVER_KEY)
+          }
         }
         notifiedUserIds.add(parentPost.user_id)
       } catch (e) {
@@ -5963,6 +5977,11 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
           await c.env.DB.prepare(
             'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
           ).bind(nanoid(), mention.user_id, 'mention', replyId, replyUserId).run()
+          if (c.env.FCM_SERVER_KEY) {
+            const actor = c.get('user')
+            const actorName = actor?.display_name || actor?.username || 'Someone'
+            sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, text), c.env.FCM_SERVER_KEY)
+          }
         }
       } catch (e) {
         // Don't fail the reply creation if mention notifications fail
@@ -7033,6 +7052,47 @@ app.get('/api/current-topic', async (c) => {
   } catch (error: any) {
     console.error('Current topic fetch error:', error)
     return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500)
+  }
+})
+
+// POST /api/push/register - Register device push token (protected)
+app.post('/api/push/register', requireAuth, async (c) => {
+  try {
+    const user = c.get('user')
+    const { token, platform } = await c.req.json() as { token: string; platform: string }
+    if (!token || !['android', 'ios', 'web'].includes(platform)) {
+      return c.json({ error: 'Invalid token or platform' }, 400)
+    }
+    const existing = await c.env.DB.prepare(
+      'SELECT id FROM device_tokens WHERE token = ?'
+    ).bind(token).first()
+    if (existing) {
+      // Update user_id and timestamp for existing token (user re-logged in)
+      await c.env.DB.prepare(
+        'UPDATE device_tokens SET user_id = ?, platform = ?, updated_at = strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\') WHERE token = ?'
+      ).bind(user.user_id, platform, token).run()
+    } else {
+      await c.env.DB.prepare(
+        'INSERT INTO device_tokens (id, user_id, platform, token) VALUES (?, ?, ?, ?)'
+      ).bind(nanoid(), user.user_id, platform, token).run()
+    }
+    return c.json({ ok: true })
+  } catch (e) {
+    console.error('Failed to register push token:', e)
+    return c.json({ error: 'Failed to register push token' }, 500)
+  }
+})
+
+// POST /api/push/unregister - Remove device push token (protected)
+app.post('/api/push/unregister', requireAuth, async (c) => {
+  try {
+    const { token } = await c.req.json() as { token: string }
+    if (!token) return c.json({ error: 'Missing token' }, 400)
+    await c.env.DB.prepare('DELETE FROM device_tokens WHERE token = ?').bind(token).run()
+    return c.json({ ok: true })
+  } catch (e) {
+    console.error('Failed to unregister push token:', e)
+    return c.json({ error: 'Failed to unregister push token' }, 500)
   }
 })
 

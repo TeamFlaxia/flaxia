@@ -76,19 +76,115 @@ document.addEventListener('DOMContentLoaded', async () => {
     let adminAdsTab: any = null
     let leftNavInstances: Set<any> = new Set()
     let currentUser: { username: string; id: string; display_name?: string; avatar_key?: string } | null = null
-    let unreadNotificationCount = 0
-    let adminUsernames: string[] = []
-    let notificationPollInterval: ReturnType<typeof setInterval> | null = null
-    let cachedContentComponent: { view: string; component: any; scrollY: number } | null = null
+let unreadNotificationCount = 0
+let previousUnreadCount = 0
+let notificationPollInterval: ReturnType<typeof setInterval> | null = null
+let cachedContentComponent: { view: string; component: any; scrollY: number } | null = null
 
-    const refreshNotificationBadges = async () => {
-      await fetchNotifications()
-      leftNavInstances.forEach((leftNav: any) => {
-        if (typeof leftNav.setUnreadCount === 'function') {
-          leftNav.setUnreadCount(unreadNotificationCount)
-        }
-      })
+let tauriNotify: ((title: string, body: string) => Promise<void>) | null = null
+let tauriBadge: ((count: number) => Promise<void>) | null = null
+
+const initTauriNotifications = async () => {
+  try {
+    const { isPermissionGranted, requestPermission, sendNotification } = await import('@tauri-apps/plugin-notification')
+    let granted = await isPermissionGranted()
+    if (!granted) {
+      const permission = await requestPermission()
+      granted = permission === 'granted'
     }
+    if (granted) {
+      tauriNotify = async (title: string, body: string) => {
+        sendNotification({ title, body })
+      }
+    }
+    // Badge always works even without notification permission
+    tauriBadge = async (count: number) => {
+      try {
+        const { getCurrentWindow } = await import('@tauri-apps/api/window')
+        await getCurrentWindow().setBadgeCount(count)
+      } catch {
+        // badge not supported on this platform
+      }
+    }
+
+    // Register push notification token with the server
+    // On Tauri mobile (Android/iOS), the push token is obtained from native code.
+    // See the Firebase/APNs setup guide for how to surface it.
+    registerPushToken()
+  } catch {
+    // Not running in Tauri
+  }
+}
+
+// Initialize Tauri native notifications (no-op in browser)
+initTauriNotifications()
+
+/** Register the device's push notification token with the Flaxia server. */
+const registerPushToken = async (retries = 3, delay = 5000) => {
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      let pushToken: string | null = null
+      let platform: string | null = null
+
+      try {
+        const { invoke } = await import('@tauri-apps/api/core')
+        pushToken = (await invoke<string>('get_push_token')) || null
+        platform = navigator.userAgent.includes('Android') ? 'android'
+          : /iPad|iPhone|iPod/.test(navigator.userAgent) ? 'ios'
+          : 'web'
+      } catch {
+        // Running in browser or Tauri desktop without native push
+      }
+
+      if (!pushToken || !platform) {
+        // Token not ready yet — wait and retry
+        await new Promise(r => setTimeout(r, delay))
+        continue
+      }
+
+      await fetch('/api/push/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ token: pushToken, platform }),
+      })
+      console.log('Push token registered:', platform, pushToken.slice(0, 20))
+      return
+    } catch (err) {
+      if (attempt === retries - 1) {
+        console.log('Push registration failed after retries:', err)
+      } else {
+        await new Promise(r => setTimeout(r, delay))
+      }
+    }
+  }
+}
+
+const refreshNotificationBadges = async () => {
+  const data = await fetchNotifications()
+  leftNavInstances.forEach((leftNav: any) => {
+    if (typeof leftNav.setUnreadCount === 'function') {
+      leftNav.setUnreadCount(unreadNotificationCount)
+    }
+  })
+
+  // Update Tauri badge count
+  if (tauriBadge) {
+    tauriBadge(unreadNotificationCount)
+  }
+
+  // Show Tauri notification when new unread notifications arrive
+  if (tauriNotify && unreadNotificationCount > previousUnreadCount && data?.notifications?.length) {
+    const latest = data.notifications[0]
+    let body = ''
+    if (latest.actor) {
+      body = `${latest.actor.display_name || latest.actor.username}: `
+    }
+    body += latest.post_text_preview || 'New notification'
+    tauriNotify('Flaxia', body)
+  }
+  previousUnreadCount = unreadNotificationCount
+}
 
     const startNotificationPolling = () => {
       if (notificationPollInterval) return

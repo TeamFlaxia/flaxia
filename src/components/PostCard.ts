@@ -357,6 +357,11 @@ export class PostCard {
       this.isFreshed = result.freshed
       this.freshCount = result.fresh_count
 
+      // Notify other components (e.g. cached timeline) about the fresh state change
+      window.dispatchEvent(new CustomEvent('postUpdated', {
+        detail: { postId: this.props.post.id, isFreshed: result.freshed, freshCount: result.fresh_count }
+      }))
+
     } catch (error) {
       // Rollback on error
       this.isFreshed = previousFreshed
@@ -405,6 +410,10 @@ export class PostCard {
 
       this.isBookmarked = result.bookmarked
       this.bookmarkCount = result.bookmark_count
+
+      window.dispatchEvent(new CustomEvent('postUpdated', {
+        detail: { postId: this.props.post.id, isBookmarked: result.bookmarked, bookmarkCount: result.bookmark_count }
+      }))
 
     } catch (error) {
       this.isBookmarked = previousBookmarked
@@ -469,6 +478,10 @@ export class PostCard {
     this.replyCount++
     this.updatePost({ reply_count: this.replyCount })
     this.updateActions()
+
+    window.dispatchEvent(new CustomEvent('postUpdated', {
+      detail: { postId: this.props.post.id, replyCount: this.replyCount }
+    }))
   }
 
   public handleReplyTogglePublic(): void {
