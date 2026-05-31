@@ -87,6 +87,8 @@ function getCrowdClient(c: any): FlaxiaClient | null {
 }
 
 const processingPosts = new Set<string>()
+// Timestamp of the last sentiment analysis task submitted (ms since epoch)
+let lastSentimentTaskAt = 0
 
 async function analyzeSentiment(c: any, postId: string, text: string): Promise<void> {
   if (processingPosts.has(postId)) return
@@ -3338,10 +3340,19 @@ app.get('/api/posts', async (c) => {
     // Batch fetch poll data for posts with polls
     await enrichPostsWithPolls(posts as any[], c.env.DB, currentUserId)
 
-    // Trigger sentiment analysis for unprocessed posts in background
+    // Trigger sentiment analysis for at most one unprocessed post in background per request
     for (const p of posts as any[]) {
       if (p.sentiment_score == null && p.text) {
+        const now = Date.now()
+        // Ensure at least 2 minutes have passed since the previous task submission
+        if (now - lastSentimentTaskAt < 2 * 60 * 1000) {
+          // Skip this post; will be retried on a later request
+          continue
+        }
         c.executionCtx.waitUntil(analyzeSentiment(c, p.id, p.text))
+        lastSentimentTaskAt = now
+        // Only one task per request to avoid flooding the crowd worker
+        break
       }
     }
 
