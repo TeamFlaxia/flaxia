@@ -95,6 +95,15 @@ async function analyzeSentiment(c: any, postId: string, text: string): Promise<v
     const client = getCrowdClient(c)
     if (!client) return
 
+    // Log request payload before submitting
+    console.log('Submitting sentiment analysis task', {
+      workload: 'ai-inference',
+      payload: {
+        task: 'text-classification',
+        model: 'Xenova/bert-base-multilingual-uncased-sentiment',
+        input: text,
+      },
+    })
     const task = await client.submit({
       workload: 'ai-inference',
       payload: {
@@ -103,10 +112,14 @@ async function analyzeSentiment(c: any, postId: string, text: string): Promise<v
         input: text,
       },
     })
+    // Log the submitted task response
+    console.log('Task submission response', task)
 
     const taskId = (task as any).taskId
     if (!taskId) return
     const result = await client.waitForTask(taskId, 2000, 30000)
+    // Log the result from the crowd worker
+    console.log('Task result response', result)
     if (result.status === 'done' && result.result) {
       const output = ((result.result as any).output || []) as Array<{ label: string; score: number }>
       if (output.length > 0) {
