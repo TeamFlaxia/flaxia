@@ -27,6 +27,7 @@ export class Timeline {
   // Store bound event handlers for proper cleanup
   private boundHandleProfileUpdate: () => void
   private boundHandleResize: () => void
+  private boundHandlePostUpdated: (e: Event) => void
 
   constructor(props: TimelineProps) {
     this.props = props
@@ -47,6 +48,7 @@ export class Timeline {
     // Initialize bound event handlers for proper cleanup
     this.boundHandleProfileUpdate = this.handleProfileUpdate.bind(this)
     this.boundHandleResize = this.updateSwipeHint.bind(this)
+    this.boundHandlePostUpdated = this.handlePostUpdated.bind(this)
     
     this.element = this.createElement()
     this.setupEventListeners()
@@ -298,6 +300,9 @@ export class Timeline {
     // Listen for profile updates to refresh composer avatar
     window.addEventListener('profileUpdated', this.boundHandleProfileUpdate)
 
+    // Listen for post updates (e.g. fresh/like toggles from other views)
+    window.addEventListener('postUpdated', this.boundHandlePostUpdated)
+
     // Setup swipe detection for mobile left nav
     this.setupSwipeDetection()
   }
@@ -342,6 +347,20 @@ export class Timeline {
         display_name: updatedUser.user.display_name,
         avatar_key: updatedUser.user.avatar_key
       })
+    }
+  }
+
+  private handlePostUpdated(e: Event): void {
+    const detail = (e as CustomEvent).detail
+    const postCard = this.postCards.get(detail.postId)
+    if (postCard) {
+      const update: Record<string, any> = {}
+      if (detail.isFreshed !== undefined) update.is_freshed = detail.isFreshed
+      if (detail.freshCount !== undefined) update.fresh_count = detail.freshCount
+      if (detail.isBookmarked !== undefined) update.is_bookmarked = detail.isBookmarked
+      if (detail.bookmarkCount !== undefined) update.bookmark_count = detail.bookmarkCount
+      if (detail.replyCount !== undefined) update.reply_count = detail.replyCount
+      postCard.updatePost(update as any)
     }
   }
 
@@ -572,6 +591,8 @@ export class Timeline {
           depth: item.depth
         })
         
+        this.postCards.set(item.id, postCard)
+        
         // Insert post and check if we need to add an ad placeholder after it
         fragment.appendChild(postCard.getElement())
         
@@ -669,6 +690,7 @@ export class Timeline {
     
     // Clean up window event listeners
     window.removeEventListener('profileUpdated', this.boundHandleProfileUpdate)
+    window.removeEventListener('postUpdated', this.boundHandlePostUpdated)
     window.removeEventListener('resize', this.boundHandleResize)
     
     if (this.composer) {

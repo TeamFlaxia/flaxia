@@ -314,6 +314,11 @@ export class ThreadPage {
 
       const data = await response.json() as { root: Post; replies: Post[] }
 
+      // Notify cached PostCards (e.g. in Timeline) about updated reply count
+      window.dispatchEvent(new CustomEvent('postUpdated', {
+        detail: { postId: this.props.postId, replyCount: data.replies.length }
+      }))
+
       // Assign sequential indices only to replies (root excluded)
       const postIdToIndex = new Map<string, number>()
       data.replies.forEach((p, i) => postIdToIndex.set(p.id, i + 1))

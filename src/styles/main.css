@@ -1147,8 +1147,9 @@ p {
 
 .post-actions {
   display: flex;
-  gap: 1rem;
+  gap: 0.25rem 1rem;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .action-button {

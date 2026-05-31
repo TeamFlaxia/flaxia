@@ -18,10 +18,9 @@ export function createPostActions(props: PostActionsProps): HTMLElement {
   const replyButton = createActionButton('reply', formatCount(props.replyCount), false)
   replyButton.addEventListener('click', props.onReplyToggle)
 
-  // Impressions button (display only, not clickable) — pushed to right end
+  // Impressions button (display only, not clickable)
   const impressionsButton = createActionButton('impressions', formatCount(props.impressions), false)
   impressionsButton.style.cursor = 'default'
-  impressionsButton.style.marginLeft = 'auto'
   const impressionsIcon = impressionsButton.querySelector('.action-icon') as HTMLElement
   if (impressionsIcon) {
     impressionsIcon.style.fontSize = '0.75rem'

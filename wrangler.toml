@@ -35,3 +35,7 @@ binding = "AP_DELIVERY_QUEUE"
 # Flaxia Crowd 分散コンピューティング
 # CROWD_API_KEY は本番環境では secret 推奨:
 #   npx wrangler secret put CROWD_API_KEY
+
+# Push通知 (FCM)
+# Firebase Console → Project Settings → Cloud Messaging → サーバーキー
+# npx wrangler secret put FCM_SERVER_KEY
