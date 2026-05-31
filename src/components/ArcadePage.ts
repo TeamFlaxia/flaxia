@@ -837,7 +837,8 @@ export class ArcadePage {
             sandboxOrigin: this.props.sandboxOrigin,
             currentUser: this.props.currentUser || undefined,
             depth: reply.depth,
-            onDelete: () => {}
+            onDelete: () => {},
+            disableNavigation: true
           })
           list.appendChild(card.getElement())
         }

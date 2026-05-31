@@ -52,7 +52,8 @@ export class PostCard {
     if (this.props.postIndex !== undefined) {
       container.setAttribute('data-post-index', String(this.props.postIndex))
     }
-    container.style.cssText = 'max-width: 100%; overflow-x: hidden; box-sizing: border-box; word-break: break-word; cursor: pointer;'
+    const cursorStyle = this.props.disableNavigation ? 'default' : 'pointer'
+    container.style.cssText = `max-width: 100%; overflow-x: hidden; box-sizing: border-box; word-break: break-word; cursor: ${cursorStyle};`
 
     // Header container with ... menu
     const headerContainer = document.createElement('div')
@@ -213,6 +214,7 @@ export class PostCard {
     this.setupImpressionTracking()
     
     // Add click handler for post navigation (but not for buttons/inputs or during text selection)
+    if (!this.props.disableNavigation) {
     this.element.addEventListener('click', (e) => {
       console.log('PostCard clicked, target:', e.target)
       
@@ -247,6 +249,7 @@ export class PostCard {
       // Navigate to thread page
       this.handlePostClick()
     })
+    }
   }
 
   private setupSandboxBridge(): void {

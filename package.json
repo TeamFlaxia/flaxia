@@ -22,6 +22,7 @@
     "test:tags": "node --test --experimental-strip-types tests/tags.test.ts",
     "test:rate-limit": "node --test --experimental-strip-types tests/rate-limit.test.ts",
     "dev:test": "wrangler pages dev dist --d1=DB_TEST --kv=RATE_LIMIT_TEST --port 8788 --var BASE_URL:http://localhost:8788",
+    "tauri": "tauri",
     "tauri:dev": "node scripts/merge-tauri-config.mjs && tauri dev",
     "tauri:build": "node scripts/merge-tauri-config.mjs && tauri build",
     "tauri:dev:windows": "TAURI_TARGET_PLATFORM=windows node scripts/merge-tauri-config.mjs && tauri dev",

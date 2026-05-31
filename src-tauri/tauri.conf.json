@@ -16,16 +16,11 @@
     "windows": [
       {
         "title": "Flaxia",
-        "url": "http://127.0.0.1:8787",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 240,
-        "minHeight": 200,
-        "maxWidth": 3840,
-        "maxHeight": 2160,
-        "center": true,
-        "resizable": true,
-        "fullscreen": false
+        "url": "https://flaxia.app",
+        "width": 412,
+        "height": 915,
+        "resizable": false,
+        "fullscreen": true
       }
     ]
   },
@@ -39,8 +34,8 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "windows": {
-      "wix": null
+    "android": {
+      "minSdkVersion": 26
     }
   }
 }

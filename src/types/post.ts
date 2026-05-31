@@ -63,6 +63,7 @@ export interface PostCardProps {
   depth?: number
   postIndex?: number
   enablePostRefs?: boolean
+  disableNavigation?: boolean
 }
 
 export interface PostHeaderProps {
