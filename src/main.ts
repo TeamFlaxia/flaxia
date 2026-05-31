@@ -428,6 +428,7 @@ const refreshNotificationBadges = async () => {
       // - /explore (with or without tag parameter)
       // - /arcade (game arcade)
       // - /users/:username (profile pages)
+      // - /profile/:username (profile pages - alias for /users/)
       // - /thread/:id (thread pages)
       // - /terms, /privacy, /about, /whitepaper (legal pages)
       // - /login, /register (auth pages)
@@ -445,6 +446,7 @@ const refreshNotificationBadges = async () => {
         cleanPath === '/about' ||
         cleanPath === '/whitepaper' ||
         cleanPath.startsWith('/users/') ||
+        cleanPath.startsWith('/profile/') ||
         cleanPath.startsWith('/thread/')
       
       // Allow public routes for everyone

@@ -759,6 +759,20 @@ export class ReplyComposer {
     this.textarea.focus()
   }
 
+  public insertText(text: string): void {
+    const start = this.textarea.selectionStart
+    const end = this.textarea.selectionEnd
+    const before = this.textarea.value.slice(0, start)
+    const after = this.textarea.value.slice(end)
+    this.textarea.value = before + text + after
+    const newPos = start + text.length
+    this.textarea.selectionStart = newPos
+    this.textarea.selectionEnd = newPos
+    this.charCount.textContent = `${this.textarea.value.length}/200`
+    this.updateSubmitButton()
+    this.textarea.focus()
+  }
+
   public destroy(): void {
     this.element.remove()
   }

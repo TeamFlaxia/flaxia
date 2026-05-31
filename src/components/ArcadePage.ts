@@ -57,6 +57,7 @@ export class ArcadePage {
   private boundHandleMouseUp: (e: MouseEvent) => void
   private boundHandleMouseLeave: (e: MouseEvent) => void
   private boundHandleFullscreenChange: () => void
+  private boundHandleSpaNavigate: (e: Event) => void
 
   constructor(props: ArcadePageProps) {
     this.props = props
@@ -73,9 +74,11 @@ export class ArcadePage {
     this.boundHandleMouseUp = this.handleMouseUp.bind(this)
     this.boundHandleMouseLeave = this.handleMouseUp.bind(this)
     this.boundHandleFullscreenChange = this.handleFullscreenChange.bind(this)
+    this.boundHandleSpaNavigate = this.handleSpaNavigate.bind(this)
     
     this.setupEventListeners()
     this.setupLeftNavSwipeDetection()
+    window.addEventListener('spaNavigate', this.boundHandleSpaNavigate)
     this.loadGames()
 
     if (!localStorage.getItem(ArcadePage.TUTORIAL_SEEN_KEY)) {
@@ -311,8 +314,9 @@ export class ArcadePage {
 
     document.addEventListener('mouseleave', this.boundHandleMouseLeave, { passive: true })
 
-    // Fullscreen change detection
+    // Fullscreen change detection (standard + vendor prefix for iOS Safari)
     document.addEventListener('fullscreenchange', this.boundHandleFullscreenChange)
+    document.addEventListener('webkitfullscreenchange', this.boundHandleFullscreenChange)
 
     // Keyboard navigation
     document.addEventListener('keydown', (e) => {
@@ -829,14 +833,18 @@ export class ArcadePage {
     this.commentPanelKeyHandler = onKeyDown
 
     // Fetch replies
-    this.loadComments(game.postId, list, headerTitle)
+    this.loadComments(game.postId, list, headerTitle, composer)
   }
 
-  private async loadComments(postId: string, list: HTMLElement, headerTitle: HTMLElement): Promise<void> {
+  private async loadComments(postId: string, list: HTMLElement, headerTitle: HTMLElement, composer: any): Promise<void> {
     try {
       const res = await fetch(`/api/posts/${postId}/thread`)
       if (!res.ok) throw new Error('Failed to load comments')
       const data = await res.json() as { root: Post; replies: Post[] }
+
+      // Assign sequential indices to replies (1-based)
+      const postIdToIndex = new Map<string, number>()
+      data.replies.forEach((p, i) => postIdToIndex.set(p.id, i + 1))
 
       list.innerHTML = ''
       if (data.replies.length === 0) {
@@ -846,17 +854,35 @@ export class ArcadePage {
         list.appendChild(empty)
       } else {
         for (const reply of data.replies) {
+          const nodeIndex = postIdToIndex.get(reply.id)
           const card = createPostCard({
             post: reply,
             sandboxOrigin: this.props.sandboxOrigin,
             currentUser: this.props.currentUser || undefined,
             depth: reply.depth,
             onDelete: () => {},
-            disableNavigation: true
+            disableNavigation: true,
+            postIndex: nodeIndex,
+            enablePostRefs: true
           })
           list.appendChild(card.getElement())
         }
       }
+
+      // Click handler for >>N post references (scroll to referenced reply)
+      list.addEventListener('click', (e) => {
+        const target = e.target as HTMLElement
+        if (target.classList.contains('post-ref-link')) {
+          e.preventDefault()
+          const index = target.dataset.postIndex
+          if (index) {
+            const targetPost = list.querySelector(`[data-post-index="${index}"]`)
+            if (targetPost) {
+              targetPost.scrollIntoView({ behavior: 'smooth', block: 'center' })
+            }
+          }
+        }
+      })
     } catch {
       list.innerHTML = ''
       const err = document.createElement('div')
@@ -878,6 +904,10 @@ export class ArcadePage {
     if (this.commentListEl && game) {
       this.loadComments(game.postId, this.commentListEl, headerTitle)
     }
+  }
+
+  private handleSpaNavigate(): void {
+    this.closeCommentPanel()
   }
 
   private closeCommentPanel(): void {
@@ -1218,17 +1248,19 @@ export class ArcadePage {
 
   private handleFullscreen(): void {
     const viewport = this.gameContainer.querySelector('.arcade-viewport') as HTMLElement
-    if (viewport) {
-      if (document.fullscreenElement) {
-        document.exitFullscreen()
-      } else {
-        viewport.requestFullscreen()
-      }
+    if (!viewport) return
+
+    if (document.fullscreenElement) {
+      document.exitFullscreen()
+    } else if (viewport.requestFullscreen) {
+      viewport.requestFullscreen().catch(() => {
+        // Fullscreen not supported (e.g. iOS Safari)
+      })
     }
   }
 
   private handleFullscreenChange(): void {
-    const isFullscreen = !!document.fullscreenElement
+    const isFullscreen = !!(document.fullscreenElement || (document as any).webkitFullscreenElement)
     if (isFullscreen === this.isFullscreen) return
     this.isFullscreen = isFullscreen
 
@@ -1793,6 +1825,8 @@ export class ArcadePage {
     document.removeEventListener('mouseup', this.boundHandleMouseUp)
     document.removeEventListener('mouseleave', this.boundHandleMouseLeave)
     document.removeEventListener('fullscreenchange', this.boundHandleFullscreenChange)
+    document.removeEventListener('webkitfullscreenchange', this.boundHandleFullscreenChange)
+    window.removeEventListener('spaNavigate', this.boundHandleSpaNavigate)
     
     this.clearCurrentGame()
     this.element.remove()
