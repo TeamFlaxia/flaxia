@@ -6066,9 +6066,29 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
             }
           }
         }
+      }
+    } catch (e) {
+      console.error('Failed to create >>N reference notifications:', e)
+    }
 
-        // Send Web Push for >>N reply
-        try {
+    return c.json({ reply })
+  } catch (error: any) {
+    console.error('Commit reply error:', error)
+    console.error('Full error details:', {
+      message: error?.message,
+      stack: error?.stack,
+      cause: error?.cause,
+      name: error?.name,
+      postId: postId || 'unknown',
+      replyId: error?.replyId || 'unknown'
+    })
+    return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500)
+  }
+})
+
+// GET /api/search - search posts and users
+app.get('/api/search', async (c) => {
+  try {
     const query = c.req.query('q')
     const type = c.req.query('type') || 'posts'
     const limit = Math.min(Number(c.req.query('limit') || '20'), 50)
