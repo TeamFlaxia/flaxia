@@ -63,7 +63,7 @@ let cachedContentComponent: { view: string; component: any; scrollY: number } | 
 
 let tauriNotify: ((title: string, body: string) => Promise<void>) | null = null
 let tauriBadge: ((count: number) => Promise<void>) | null = null
-let tauriSetTrayBadge: ((hasUnread: boolean) => Promise<void>) | null = null
+let tauriSetNotificationCount: ((count: number) => Promise<void>) | null = null
 
 const initTauriNotifications = async () => {
   try {
@@ -87,15 +87,20 @@ const initTauriNotifications = async () => {
         // badge not supported on this platform
       }
     }
-      tauriSetTrayBadge = async (hasUnread: boolean) => {
+    // Desktop tray icon badge: store count so Rust bg thread updates the icon
+    if (!/Android/i.test(navigator.userAgent)) {
+      tauriSetNotificationCount = async (count: number) => {
         try {
           const { invoke } = await import('@tauri-apps/api/core')
-          await invoke('set_tray_badge', { hasUnread })
-        } catch {
-          // tray badge not available
+          console.log('[notif] invoking set_notification_count with', count)
+          await invoke('set_notification_count', { count })
+          console.log('[notif] invoke succeeded')
+        } catch (err) {
+          console.log('[notif] invoke error:', err)
         }
       }
-    } catch {
+    }
+  } catch {
       // Not running in Tauri
     }
   }
@@ -150,7 +155,7 @@ const initializeWebPush = async () => {
 }
 
 // Initialize Tauri native notifications (badge / local notif, no-op in browser)
-initTauriNotifications()
+await initTauriNotifications()
 // Register Service Worker for Web Push (browser only, no-op in Tauri)
 initializeWebPush()
 
@@ -167,9 +172,14 @@ const refreshNotificationBadges = async () => {
     tauriBadge(unreadNotificationCount)
   }
 
-  // Update desktop tray icon badge (red dot when unread)
-  if (tauriSetTrayBadge) {
-    tauriSetTrayBadge(unreadNotificationCount > 0)
+    // Update notification count for desktop tray icon badge (Rust bg thread checks this)
+  if (tauriSetNotificationCount) {
+    console.log('[notif] calling set_notification_count with', unreadNotificationCount)
+    tauriSetNotificationCount(unreadNotificationCount).catch(err => {
+      console.log('[notif] set_notification_count failed:', err)
+    })
+  } else {
+    console.log('[notif] tauriSetNotificationCount is null (not in Tauri desktop)')
   }
 
   // Show Tauri notification when new unread notifications arrive (skip on Android — KeepAliveService handles it)
