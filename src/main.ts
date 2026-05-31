@@ -1,44 +1,14 @@
-import { createTimeline } from './components/Timeline.js'
 import { createLeftNav, updateLeftNavUser } from './components/LeftNav.js'
 import { createRightPanel } from './components/RightPanel.js'
-import { createThreadPage } from './components/ThreadPage.js'
-import { getMe, clearMeCache, updateMeCache } from './lib/auth-cache.js'
-import { createLoginPage } from './components/LoginPage.js'
-import { createRegisterPage } from './components/RegisterPage.js'
-import { createProfilePage } from './components/ProfilePage.js'
-import { createExplorePage } from './components/ExplorePage.js'
-import { createArcadePage } from './components/ArcadePage.js'
-import { createLegalPage } from './components/LegalPage.js'
-import { createNotificationsPage } from './components/NotificationsPage.js'
-import { createAdminLayout } from './components/AdminLayout.js'
-import { createAdminAlertsTab } from './components/AdminAlertsTab.js'
-import { createAdminHiddenTab } from './components/AdminHiddenTab.js'
-import { createAdminUsersTab } from './components/AdminUsersTab.js'
-import { createAdminAdsTab } from './components/AdminAdsTab.js'
-import { createSettingsPage } from './components/SettingsPage.js'
-import { createSearchPage } from './components/SearchPage.js'
-import { createBookmarksPage } from './components/BookmarksPage.js'
+import { getMe } from './lib/auth-cache.js'
 import { initPerformanceMonitoring } from './lib/performance.js'
 import { initI18n } from './lib/i18n.js'
-import { safeRemoveFromBody } from './lib/dom-utils.js'
 import { initFlaxiaNode } from '@flaxia/node'
 
 console.log('Flaxia initialized')
 
 // Initialize performance monitoring
 initPerformanceMonitoring()
-
-// Initialize Flaxia Crowd browser compute node
-initFlaxiaNode({
-  orchestratorUrl: 'https://flaxia-worker.remydre8.workers.dev',
-  siteId: 'flaxia',
-  consent: {
-    brandName: 'Flaxia',
-    position: 'bottom-right',
-  },
-  capabilities: ['ai-inference'],
-  maxCpuLoad: 0.15,
-})
 
 // Basic app initialization
 document.addEventListener('DOMContentLoaded', async () => {
@@ -309,12 +279,22 @@ if (isTauriDesktop) {
       unread_count: number
     }
 
+    let cachedNotifications: NotificationData | null = null
+    let lastNotificationFetch = 0
+    const NOTIFICATION_FETCH_TTL = 10000 // 10秒以内の連続fetchはキャッシュ
+
     const fetchNotifications = async (): Promise<NotificationData> => {
+      const now = Date.now()
+      if (cachedNotifications && (now - lastNotificationFetch) < NOTIFICATION_FETCH_TTL) {
+        return cachedNotifications
+      }
       try {
         const response = await fetch('/api/notifications', { credentials: 'include' })
         if (response.ok) {
           const data = await response.json() as NotificationData
           unreadNotificationCount = data.unread_count || 0
+          cachedNotifications = data
+          lastNotificationFetch = now
           return data
         }
       } catch (error) {
@@ -807,6 +787,7 @@ if (isTauriDesktop) {
         currentPostId = null
         currentUsername = null
         
+        const { createLoginPage } = await import('./components/LoginPage.js')
         loginPage = createLoginPage({
           onSuccess: () => {
             window.history.pushState({}, '', '/arcade')
@@ -831,6 +812,7 @@ if (isTauriDesktop) {
         currentPostId = null
         currentUsername = null
         
+        const { createRegisterPage } = await import('./components/RegisterPage.js')
         registerPage = createRegisterPage({
           onSuccess: () => {
             window.history.pushState({}, '', '/arcade')
@@ -856,6 +838,7 @@ if (isTauriDesktop) {
         currentPostId = null
         currentUsername = null
         
+        const { createLegalPage } = await import('./components/LegalPage.js')
         legalPage = createLegalPage({
           type: view
         })
@@ -895,13 +878,21 @@ if (isTauriDesktop) {
           settingsPage = null
         }
 
+        const adminModule = await import('./components/AdminLayout.js')
+        const adminTabsModule = await Promise.all([
+          import('./components/AdminAlertsTab.js'),
+          import('./components/AdminHiddenTab.js'),
+          import('./components/AdminUsersTab.js'),
+          import('./components/AdminAdsTab.js'),
+        ])
+
         const onTabChange = async (tab: 'alerts' | 'hidden' | 'users' | 'ads') => {
           currentAdminTab = tab
           window.history.pushState({}, '', `/admin/${tab}`)
           renderAdminTab(tab)
         }
 
-        adminLayout = createAdminLayout({
+        adminLayout = adminModule.createAdminLayout({
           activeTab: currentAdminTab,
           onTabChange
         })
@@ -912,7 +903,7 @@ if (isTauriDesktop) {
           if (!adminLayout) return
 
           if (tab === 'alerts') {
-            adminAlertsTab = createAdminAlertsTab({
+            adminAlertsTab = adminTabsModule[0].createAdminAlertsTab({
               onNavigateToTab: onTabChange
             })
             const alertsElement = adminAlertsTab.getElement()
@@ -930,7 +921,7 @@ if (isTauriDesktop) {
               console.error('Failed to check admin access:', e)
             }
           } else if (tab === 'hidden') {
-            adminHiddenTab = createAdminHiddenTab({
+            adminHiddenTab = adminTabsModule[1].createAdminHiddenTab({
               onNavigateToTab: onTabChange
             })
             const hiddenElement = adminHiddenTab.getElement()
@@ -938,7 +929,7 @@ if (isTauriDesktop) {
               adminLayout.updateMainContent(hiddenElement)
             }
           } else if (tab === 'users') {
-            adminUsersTab = createAdminUsersTab({
+            adminUsersTab = adminTabsModule[2].createAdminUsersTab({
               onNavigateToTab: onTabChange
             })
             const usersElement = adminUsersTab.getElement()
@@ -946,7 +937,7 @@ if (isTauriDesktop) {
               adminLayout.updateMainContent(usersElement)
             }
           } else if (tab === 'ads') {
-            adminAdsTab = createAdminAdsTab({
+            adminAdsTab = adminTabsModule[3].createAdminAdsTab({
               onNavigateToTab: onTabChange
             })
             const adsElement = adminAdsTab.getElement()
@@ -1032,6 +1023,7 @@ if (isTauriDesktop) {
           })
         } else {
           // Create fresh explore page
+          const { createExplorePage } = await import('./components/ExplorePage.js')
           explorePage = createExplorePage({
             tag: currentTag || undefined,
             sandboxOrigin,
@@ -1132,6 +1124,7 @@ if (isTauriDesktop) {
             window.scrollTo(0, scrollY)
           })
         } else {
+          const { createSearchPage } = await import('./components/SearchPage.js')
           searchPage = createSearchPage({
             query: searchQuery || '',
             type: searchType || 'posts',
@@ -1231,6 +1224,7 @@ if (isTauriDesktop) {
           })
         } else {
           // Create fresh arcade page
+          const { createArcadePage } = await import('./components/ArcadePage.js')
           arcadePage = createArcadePage({
             sandboxOrigin,
             currentUser,
@@ -1338,6 +1332,7 @@ if (isTauriDesktop) {
           })
         } else {
           // Create fresh profile page
+          const { createProfilePage } = await import('./components/ProfilePage.js')
           profilePage = createProfilePage({
             username,
             currentUser,
@@ -1415,6 +1410,7 @@ if (isTauriDesktop) {
           requestAnimationFrame(() => { window.scrollTo(0, scrollY) })
         } else {
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app'
+          const { createBookmarksPage } = await import('./components/BookmarksPage.js')
           bookmarksPage = createBookmarksPage({
             sandboxOrigin,
             currentUser
@@ -1509,6 +1505,7 @@ if (isTauriDesktop) {
         leftNavInstances.add(leftNav)
         
         // Create Notifications Page
+        const { createNotificationsPage } = await import('./components/NotificationsPage.js')
         notificationsPage = createNotificationsPage({
           notifications: notificationsData.notifications,
           unreadCount: notificationsData.unread_count,
@@ -1615,7 +1612,8 @@ if (isTauriDesktop) {
         leftNavInstances.add(leftNav)
         
         // Create Settings Page (as main content)
-        settingsPage = createSettingsPage({
+        const settingsModule = await import('./components/SettingsPage.js')
+        settingsPage = settingsModule.createSettingsPage({
           currentUser: currentUser || undefined
         })
         
@@ -1627,7 +1625,7 @@ if (isTauriDesktop) {
               // Recreate settings page with full user data
               const oldElement = settingsPage.getElement()
               settingsPage.destroy()
-              settingsPage = createSettingsPage({
+              settingsPage = settingsModule.createSettingsPage({
                 currentUser: userData.user
               })
               
@@ -1685,6 +1683,7 @@ if (isTauriDesktop) {
         currentPostId = postId
         
         const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app'
+        const { createThreadPage } = await import('./components/ThreadPage.js')
         threadPage = createThreadPage({
           postId,
           sandboxOrigin,
@@ -1788,6 +1787,7 @@ if (isTauriDesktop) {
           })
         } else {
           // Create fresh timeline
+          const { createTimeline } = await import('./components/Timeline.js')
           timeline = createTimeline({
             sandboxOrigin,
             currentUser
@@ -1859,16 +1859,32 @@ if (isTauriDesktop) {
     // Initial navigation
     console.log('DOM Content Loaded, starting initial routing...')
     
-    // Fetch notifications and check auth in parallel on app init
-    await Promise.all([
-      fetchNotifications(),
-      checkAuth()
-    ])
-    
     const initialRoute = parseCurrentRoute()
     console.log('Initial route:', initialRoute)
     if (initialRoute) {
       await navigateTo(initialRoute.view, initialRoute.postId || undefined, initialRoute.username || undefined, initialRoute.tag || undefined, initialRoute.adminTab || undefined, initialRoute.searchQuery || undefined, initialRoute.searchType || undefined)
     }
+
+    // Defer non-critical initialization to after the first paint
+    const deferInit = (fn: () => void) => {
+      if ('requestIdleCallback' in window) {
+        (window as any).requestIdleCallback(fn, { timeout: 3000 })
+      } else {
+        setTimeout(fn, 3000)
+      }
+    }
+
+    deferInit(() => {
+      initFlaxiaNode({
+        orchestratorUrl: 'https://flaxia-worker.remydre8.workers.dev',
+        siteId: 'flaxia',
+        consent: {
+          brandName: 'Flaxia',
+          position: 'bottom-right',
+        },
+        capabilities: ['ai-inference'],
+        maxCpuLoad: 0.15,
+      })
+    })
   }
 })
