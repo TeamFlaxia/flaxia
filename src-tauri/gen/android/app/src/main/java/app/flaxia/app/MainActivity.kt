@@ -16,7 +16,9 @@ class MainActivity : TauriActivity() {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       // Android 13+ POST_NOTIFICATIONS permission required - handled by JS
     }
-    val intent = Intent(this, KeepAliveService::class.java)
+    val intent = Intent(this, KeepAliveService::class.java).apply {
+      putExtra("API_BASE", "https://flaxia.app")
+    }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       startForegroundService(intent)
     } else {

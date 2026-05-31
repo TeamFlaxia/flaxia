@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Intent
 import android.os.IBinder
 import android.webkit.CookieManager
+import me.leolin.shortcutbadger.ShortcutBadger
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -19,12 +20,12 @@ class KeepAliveService : Service() {
         const val CHANNEL_KEEPALIVE = "flaxia_keepalive"
         const val CHANNEL_NOTIFICATIONS = "flaxia_notifications"
         const val NOTIF_ID_KEEPALIVE = 1
-        const val API_BASE = "https://flaxia.app"
         private var lastUnreadCount = 0
     }
 
     private var pollingThread: Thread? = null
     @Volatile private var running = false
+    private var apiBase: String = "https://flaxia.app"
 
     override fun onCreate() {
         super.onCreate()
@@ -33,6 +34,7 @@ class KeepAliveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        apiBase = intent?.getStringExtra("API_BASE") ?: "https://flaxia.app"
         startForeground(NOTIF_ID_KEEPALIVE, keepAliveNotification(0))
         if (!running) {
             running = true
@@ -62,13 +64,13 @@ class KeepAliveService : Service() {
     }
 
     private fun checkNotifications() {
-        val cookies = CookieManager.getInstance().getCookie(API_BASE)
+        val cookies = CookieManager.getInstance().getCookie(apiBase)
         if (cookies.isNullOrBlank()) {
             updateKeepAlive(0)
             return
         }
 
-        val url = URL("$API_BASE/api/notifications")
+        val url = URL("$apiBase/api/notifications")
         val conn = url.openConnection() as HttpURLConnection
         conn.requestMethod = "GET"
         conn.setRequestProperty("Cookie", cookies)
@@ -160,6 +162,9 @@ class KeepAliveService : Service() {
     private fun updateKeepAlive(count: Int) {
         getSystemService(NotificationManager::class.java)
             .notify(NOTIF_ID_KEEPALIVE, keepAliveNotification(count))
+        try {
+            ShortcutBadger.applyCount(this, count)
+        } catch (_: Exception) { }
     }
 
     private fun createNotificationChannels() {

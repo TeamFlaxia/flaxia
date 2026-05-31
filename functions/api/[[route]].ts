@@ -4420,6 +4420,9 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
             await c.env.DB.prepare(
               'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
             ).bind(nanoid(), mention.user_id, 'mention', postId, userId).run()
+            const actor = c.get('user')
+            const actorName = actor?.display_name || actor?.username || 'Someone'
+            sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, post?.text || '', postId))
           }
         } catch (e) {
           // Don't fail the post creation if mention notifications fail
@@ -4510,6 +4513,9 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
             await c.env.DB.prepare(
               'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
             ).bind(nanoid(), mention.user_id, 'mention', postId, userId).run()
+            const actor = c.get('user')
+            const actorName = actor?.display_name || actor?.username || 'Someone'
+            sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, post?.text || '', postId))
           }
         } catch (e) {
           // Don't fail the post creation if mention notifications fail
@@ -4748,6 +4754,9 @@ app.post('/api/posts', requireAuth, async (c) => {
               await c.env.DB.prepare(
                 'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
               ).bind(nanoid(), mention.user_id, 'mention', postId, userId).run()
+              const actor = c.get('user')
+              const actorName = actor?.display_name || actor?.username || 'Someone'
+              sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, text || post?.text || '', postId))
             }
           } catch (e) {
             console.error('Failed to create mention notifications:', e)
@@ -4866,6 +4875,9 @@ app.post('/api/posts', requireAuth, async (c) => {
           await c.env.DB.prepare(
             'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
           ).bind(nanoid(), mention.user_id, 'mention', postId, userId).run()
+          const actor = c.get('user')
+          const actorName = actor?.display_name || actor?.username || 'Someone'
+          sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, text || '', postId))
         }
       } catch (e) {
         // Don't fail the post creation if mention notifications fail
@@ -4981,6 +4993,7 @@ app.get('/api/polls/:postId', async (c) => {
           await c.env.DB.prepare(
             'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
           ).bind(crypto.randomUUID(), post.user_id, 'poll_ended', postId, '').run()
+          sendPushToUser(c.env.DB, post.user_id, getPushPayload('poll_ended', '', '', postId))
           await c.env.DB.prepare(
             'UPDATE polls SET ended_notified = 1 WHERE id = ?'
           ).bind(poll.id).run()
@@ -6047,32 +6060,15 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
               await c.env.DB.prepare(
                 'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
               ).bind(nanoid(), referencedPost.user_id, 'reply', replyId, replyUserId).run()
+              const actor = c.get('user')
+              const actorName = actor?.display_name || actor?.username || 'Someone'
+              sendPushToUser(c.env.DB, referencedPost.user_id, getPushPayload('reply', actorName, text || '', replyId))
             }
           }
         }
-      }
-    } catch (e) {
-      console.error('Failed to create >>N reference notifications:', e)
-    }
 
-    return c.json({ reply })
-  } catch (error: any) {
-    console.error('Commit reply error:', error)
-    console.error('Full error details:', {
-      message: error?.message,
-      stack: error?.stack,
-      cause: error?.cause,
-      name: error?.name,
-      postId: postId || 'unknown',
-      replyId: error?.replyId || 'unknown'
-    })
-    return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500)
-  }
-})
-
-// GET /api/search - search posts and users
-app.get('/api/search', async (c) => {
-  try {
+        // Send Web Push for >>N reply
+        try {
     const query = c.req.query('q')
     const type = c.req.query('type') || 'posts'
     const limit = Math.min(Number(c.req.query('limit') || '20'), 50)
@@ -6549,6 +6545,7 @@ async function enrichPostsWithPolls(posts: any[], db: D1Database, currentUserId?
           await db.prepare(
             'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
           ).bind(nanoid(), post.user_id, 'poll_ended', post.id, '').run()
+          sendPushToUser(db, post.user_id, getPushPayload('poll_ended', '', '', post.id))
           await db.prepare(
             'UPDATE polls SET ended_notified = 1 WHERE id = ?'
           ).bind(poll.id).run()

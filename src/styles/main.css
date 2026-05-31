@@ -62,6 +62,9 @@ body {
   max-height: calc(100vh - 48px);
   max-height: calc(100dvh - 48px);
 }
+.tauri-android .arcade-page {
+  height: 100% !important;
+}
 
 /* Auth Pages */
 .auth-page {

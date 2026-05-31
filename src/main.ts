@@ -93,6 +93,7 @@ let cachedContentComponent: { view: string; component: any; scrollY: number } | 
 
 let tauriNotify: ((title: string, body: string) => Promise<void>) | null = null
 let tauriBadge: ((count: number) => Promise<void>) | null = null
+let tauriSetTrayBadge: ((hasUnread: boolean) => Promise<void>) | null = null
 
 const initTauriNotifications = async () => {
   try {
@@ -116,10 +117,18 @@ const initTauriNotifications = async () => {
         // badge not supported on this platform
       }
     }
-  } catch {
-    // Not running in Tauri
+      tauriSetTrayBadge = async (hasUnread: boolean) => {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core')
+          await invoke('set_tray_badge', { hasUnread })
+        } catch {
+          // tray badge not available
+        }
+      }
+    } catch {
+      // Not running in Tauri
+    }
   }
-}
 
 /** Register Web Push in browser (Service Worker), or skip in Tauri. */
 /** Convert VAPID base64 key to Uint8Array for PushManager.subscribe(). */
@@ -188,6 +197,11 @@ const refreshNotificationBadges = async () => {
     tauriBadge(unreadNotificationCount)
   }
 
+  // Update desktop tray icon badge (red dot when unread)
+  if (tauriSetTrayBadge) {
+    tauriSetTrayBadge(unreadNotificationCount > 0)
+  }
+
   // Show Tauri notification when new unread notifications arrive (skip on Android — KeepAliveService handles it)
   const isRealTauriAndroid = typeof window !== 'undefined' && ((window as any).__TAURI__ || (window as any).__TAURI_INTERNALS__) && /Android/i.test(navigator.userAgent)
   if (tauriNotify && !isRealTauriAndroid && unreadNotificationCount > previousUnreadCount && data?.notifications?.length) {
@@ -200,6 +214,12 @@ const refreshNotificationBadges = async () => {
     tauriNotify('Flaxia', body)
   }
   previousUnreadCount = unreadNotificationCount
+}
+
+// Expose for Rust desktop background polling (lib.rs background thread)
+const isTauriDesktop = typeof window !== 'undefined' && ((window as any).__TAURI__ || (window as any).__TAURI_INTERNALS__) && !/Android/i.test(navigator.userAgent)
+if (isTauriDesktop) {
+  ;(window as any).__tauriDesktopPoll = refreshNotificationBadges
 }
 
     const startNotificationPolling = () => {
