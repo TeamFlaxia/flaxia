@@ -16,6 +16,7 @@ export class BookmarksPage {
   private cursor?: string
   private loading = false
   private hasMore = true
+  private error: string | null = null
   private intersectionObserver: IntersectionObserver | null = null
   private loadMoreSentinel: HTMLElement | null = null
   private fabButton: HTMLElement | null = null
@@ -106,6 +107,8 @@ export class BookmarksPage {
   private async loadContent(): Promise<void> {
     if (this.loading) return
     this.loading = true
+    this.error = null
+    this.hideError()
     this.updateLoadingState(true)
 
     try {
@@ -115,7 +118,7 @@ export class BookmarksPage {
       const response = await fetch(url, { credentials: 'include' })
       if (!response.ok) throw new Error('Failed to load bookmarks')
 
-      const data = await response.json() as { posts: Post[] }
+      const data = await response.json() as { posts: Post[]; nextCursor?: string }
       const newPosts = data.posts || []
 
       if (newPosts.length > 0) {
@@ -123,12 +126,15 @@ export class BookmarksPage {
         this.cursor = newPosts[newPosts.length - 1].created_at
         this.hasMore = newPosts.length === 10
         this.renderPosts()
+        if (!this.intersectionObserver) this.setupIntersectionObserver()
       } else {
         this.hasMore = false
         if (this.posts.length === 0) this.showEmpty()
       }
     } catch (error) {
       console.error('Failed to load bookmarks:', error)
+      this.error = t('bookmarks.error') || 'Failed to load bookmarks. Please try again.'
+      this.showError()
     } finally {
       this.loading = false
       this.updateLoadingState(false)
@@ -139,27 +145,28 @@ export class BookmarksPage {
     const postsContainer = this.element.querySelector('.bookmarks-posts') as HTMLElement
     if (!postsContainer) return
 
-    if (this.posts.length <= 10 && this.cursor) {
-      postsContainer.innerHTML = ''
-    }
-
     const fragment = document.createDocumentFragment()
     const startIndex = postsContainer.children.length
 
-    this.posts.slice(startIndex).forEach(post => {
-      const postCard = createPostCard({
-        post,
-        sandboxOrigin: this.props.sandboxOrigin,
-        currentUser: this.props.currentUser || undefined,
-        depth: post.depth
-      })
-      fragment.appendChild(postCard.getElement())
-    })
+    for (let i = startIndex; i < this.posts.length; i++) {
+      try {
+        const postCard = createPostCard({
+          post: this.posts[i],
+          sandboxOrigin: this.props.sandboxOrigin,
+          currentUser: this.props.currentUser || undefined,
+          depth: this.posts[i].depth
+        })
+        fragment.appendChild(postCard.getElement())
+      } catch (err) {
+        console.error('Failed to render bookmark post:', err)
+      }
+    }
 
     postsContainer.appendChild(fragment)
   }
 
   private showEmpty(): void {
+    const postsContainer = this.element.querySelector('.bookmarks-posts') as HTMLElement
     const empty = document.createElement('div')
     empty.style.cssText = `
       text-align: center;
@@ -167,7 +174,59 @@ export class BookmarksPage {
       color: var(--text-muted);
     `
     empty.textContent = t('bookmarks.empty') || 'No bookmarks yet'
-    this.element.appendChild(empty)
+    if (postsContainer) {
+      postsContainer.appendChild(empty)
+    } else {
+      this.element.appendChild(empty)
+    }
+  }
+
+  private showError(): void {
+    const existing = this.element.querySelector('.bookmarks-error')
+    if (existing) return
+
+    const errorEl = document.createElement('div')
+    errorEl.className = 'bookmarks-error'
+    errorEl.style.cssText = `
+      text-align: center;
+      padding: 48px 24px;
+      color: var(--text-muted);
+    `
+    const msg = document.createElement('p')
+    msg.textContent = this.error
+    msg.style.marginBottom = '16px'
+
+    const retryBtn = document.createElement('button')
+    retryBtn.textContent = t('bookmarks.retry') || 'Retry'
+    retryBtn.style.cssText = `
+      padding: 8px 20px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      cursor: pointer;
+      font-size: 0.875rem;
+      transition: background 0.2s;
+    `
+    retryBtn.addEventListener('mouseenter', () => { retryBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))' })
+    retryBtn.addEventListener('mouseleave', () => { retryBtn.style.background = 'var(--bg-primary)' })
+    retryBtn.addEventListener('click', () => {
+      this.posts = []
+      this.cursor = undefined
+      this.hasMore = true
+      const postsContainer = this.element.querySelector('.bookmarks-posts')
+      if (postsContainer) postsContainer.innerHTML = ''
+      this.loadContent()
+    })
+
+    errorEl.appendChild(msg)
+    errorEl.appendChild(retryBtn)
+    this.element.appendChild(errorEl)
+  }
+
+  private hideError(): void {
+    const el = this.element.querySelector('.bookmarks-error')
+    if (el) el.remove()
   }
 
   private updateLoadingState(isLoading: boolean): void {

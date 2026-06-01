@@ -10,6 +10,8 @@
   "nav.bookmarks": "ブックマーク",
   "nav.logo": "Flaxia",
   "bookmarks.empty": "ブックマークはまだありません",
+  "bookmarks.error": "ブックマークの読み込みに失敗しました。もう一度お試しください。",
+  "bookmarks.retry": "再試行",
 
   "common.cancel": "キャンセル",
   "common.save": "保存",
