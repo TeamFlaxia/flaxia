@@ -3,7 +3,6 @@ import { createRightPanel } from './components/RightPanel.js'
 import { getMe } from './lib/auth-cache.js'
 import { initPerformanceMonitoring } from './lib/performance.js'
 import { initI18n } from './lib/i18n.js'
-import { initFlaxiaNode } from '@flaxia/node'
 
 console.log('Flaxia initialized')
 
@@ -1874,7 +1873,8 @@ if (isTauriDesktop) {
       }
     }
 
-    deferInit(() => {
+    deferInit(async () => {
+      const { initFlaxiaNode } = await import('https://cdn.jsdelivr.net/npm/@flaxia/node@0.1.0/dist/index.js')
       initFlaxiaNode({
         orchestratorUrl: 'https://flaxia-worker.remydre8.workers.dev',
         siteId: 'flaxia',
