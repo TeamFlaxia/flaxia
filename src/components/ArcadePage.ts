@@ -5,9 +5,12 @@ import type { Game, ArcadePageProps, GameType } from '../types/game.js'
 import type { Post } from '../types/post.js'
 import { t } from '../lib/i18n.js'
 import { formatCount } from '../lib/format.js'
+import { buildTree } from '../lib/thread.js'
+import { getReplyStyle } from '../lib/settings.js'
 import { showSignInPrompt } from './SignInPrompt.js'
 import { createReplyComposer } from './ReplyComposer.js'
 import { createPostCard } from './PostCard.js'
+import { createReplyNode } from './ReplyNode.js'
 import { registerModal } from '../lib/modal-state.js'
 
 export interface ArcadePageHandle {
@@ -864,7 +867,7 @@ export class ArcadePage {
     this.loadComments(game.postId, list, headerTitle, composer)
   }
 
-  private async loadComments(postId: string, list: HTMLElement, headerTitle: HTMLElement, composer: any): Promise<void> {
+  private async loadComments(postId: string, list: HTMLElement, headerTitle: HTMLElement, composer?: any): Promise<void> {
     try {
       const res = await fetch(`/api/posts/${postId}/thread`)
       if (!res.ok) throw new Error('Failed to load comments')
@@ -896,25 +899,58 @@ export class ArcadePage {
       `
       list.appendChild(repliesHeader)
 
+      const replyStyle = getReplyStyle()
+
       if (data.replies.length === 0) {
         const empty = document.createElement('div')
         empty.style.cssText = 'text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.85rem;'
         empty.textContent = 'No comments yet'
         list.appendChild(empty)
       } else {
-        for (const reply of data.replies) {
-          const nodeIndex = postIdToIndex.get(reply.id)
-          const card = createPostCard({
-            post: reply,
-            sandboxOrigin: this.props.sandboxOrigin,
-            currentUser: this.props.currentUser || undefined,
-            depth: reply.depth,
-            onDelete: () => {},
-            disableNavigation: true,
-            postIndex: nodeIndex,
-            enablePostRefs: true
+        if (replyStyle === 'twitter') {
+          // Twitter-style: tree view with ReplyNode
+          const replyTree = buildTree(data.replies)
+          const container = document.createElement('div')
+          container.className = 'replies-container'
+
+          replyTree.forEach(node => {
+            const replyNode = createReplyNode({
+              node,
+              sandboxOrigin: this.props.sandboxOrigin,
+              currentUser: this.props.currentUser,
+              onReplyCreated: (newReply) => {
+                const game = this.games[this.currentIndex]
+                if (game) {
+                  game.replyCount = (game.replyCount || 0) + 1
+                  headerTitle.textContent = `${t('thread_view.title')} (${formatCount(game.replyCount)})`
+                  this.updateFloatingActions(game)
+                }
+                if (this.commentListEl && game) {
+                  this.loadComments(game.postId, this.commentListEl, headerTitle)
+                }
+              },
+              postIndexMap: postIdToIndex
+            })
+            container.appendChild(replyNode.getElement())
           })
-          list.appendChild(card.getElement())
+
+          list.appendChild(container)
+        } else {
+          // 2ch-style: flat list with sequential indices
+          for (const reply of data.replies) {
+            const nodeIndex = postIdToIndex.get(reply.id)
+            const card = createPostCard({
+              post: reply,
+              sandboxOrigin: this.props.sandboxOrigin,
+              currentUser: this.props.currentUser || undefined,
+              depth: reply.depth,
+              onDelete: () => {},
+              disableNavigation: true,
+              postIndex: nodeIndex,
+              enablePostRefs: true
+            })
+            list.appendChild(card.getElement())
+          }
         }
       }
 

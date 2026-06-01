@@ -147,6 +147,8 @@
 
   "settings.title": "Settings",
   "settings.account": "Account",
+  "settings.display": "Display",
+  "settings.display_saved": "✓ Saved",
   "settings.language": "Language",
   "settings.language_saved": "✓ Saved",
   "settings.language_save_failed": "Failed to save",

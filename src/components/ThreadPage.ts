@@ -2,6 +2,7 @@ import { t } from '../lib/i18n.js'
 import { formatCount } from '../lib/format.js'
 import { Post } from '../types/post.js'
 import { buildTree, PostNode } from '../lib/thread.js'
+import { getReplyStyle } from '../lib/settings.js'
 import { createPostCard } from './PostCard.js'
 import { createReplyNode, ReplyNode } from './ReplyNode.js'
 import { createReplyComposer, ReplyComposer } from './ReplyComposer.js'
@@ -370,23 +371,44 @@ export class ThreadPage {
       `
       repliesContent.appendChild(repliesHeader)
 
-      // Build reply tree and render
+      const replyStyle = getReplyStyle()
+
       if (data.replies.length > 0) {
-        const replyTree = buildTree(data.replies)
         const repliesContainer = document.createElement('div')
         repliesContainer.className = 'replies-container'
 
-        replyTree.forEach(node => {
-          const replyNode = createReplyNode({
-            node,
-            sandboxOrigin: this.props.sandboxOrigin,
-            currentUser: this.props.currentUser,
-            onReplyCreated: (newReply) => this.handleReplyCreated(newReply),
-            postIndexMap: postIdToIndex
+        if (replyStyle === 'twitter') {
+          // Twitter-style: tree view with ReplyNode
+          const replyTree = buildTree(data.replies)
+
+          replyTree.forEach(node => {
+            const replyNode = createReplyNode({
+              node,
+              sandboxOrigin: this.props.sandboxOrigin,
+              currentUser: this.props.currentUser,
+              onReplyCreated: (newReply) => this.handleReplyCreated(newReply),
+              postIndexMap: postIdToIndex
+            })
+            this.replyNodes.push(replyNode)
+            repliesContainer.appendChild(replyNode.getElement())
           })
-          this.replyNodes.push(replyNode)
-          repliesContainer.appendChild(replyNode.getElement())
-        })
+        } else {
+          // 2ch-style: flat list with sequential indices
+          for (const reply of data.replies) {
+            const nodeIndex = postIdToIndex.get(reply.id)
+            const card = createPostCard({
+              post: reply,
+              sandboxOrigin: this.props.sandboxOrigin,
+              currentUser: this.props.currentUser || undefined,
+              depth: reply.depth,
+              onDelete: () => {},
+              disableNavigation: true,
+              postIndex: nodeIndex,
+              enablePostRefs: true
+            })
+            repliesContainer.appendChild(card.getElement())
+          }
+        }
 
         repliesContent.appendChild(repliesContainer)
       } else {
@@ -402,12 +424,15 @@ export class ThreadPage {
         repliesContent.appendChild(noReplies)
       }
 
-      // Add click handler for >>N post references
+      // Click handler for >>N post references (scroll to referenced reply)
       repliesContent.addEventListener('click', (e) => {
         const target = e.target as HTMLElement
-        if (target.classList.contains('post-ref-link')) {
+        const refLink = target.classList.contains('post-ref-link')
+          ? target
+          : target.closest('.post-ref-link') as HTMLElement | null
+        if (refLink) {
           e.preventDefault()
-          const index = target.dataset.postIndex
+          const index = refLink.dataset.postIndex
           if (index) {
             const targetPost = repliesContent.querySelector(`[data-post-index="${index}"]`)
             if (targetPost) {

@@ -1,6 +1,7 @@
 import { clearMeCache } from '../lib/auth-cache'
 import { t, setLocale, getLocale, initI18n } from '../lib/i18n.js'
 import { createConfirmDialog } from '../lib/confirm-dialog.js'
+import { getReplyStyle, setReplyStyle, ReplyStyle } from '../lib/settings.js'
 
 interface SettingsPageProps {
   currentUser?: {
@@ -168,6 +169,106 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     container.appendChild(accountSection)
   }
 
+  // Display Section
+  const displaySection = document.createElement('div')
+  displaySection.className = 'settings-section'
+  displaySection.style.cssText = `
+    margin-bottom: 2rem;
+    padding: 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-primary);
+  `
+
+  const displayTitle = document.createElement('h2')
+  displayTitle.textContent = t('settings.display')
+  displayTitle.style.cssText = `
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.5rem;
+  `
+
+  const currentStyle = getReplyStyle()
+
+  const radioGroup = document.createElement('div')
+  radioGroup.style.cssText = `
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  `
+
+  const styles: { value: ReplyStyle; label: string; desc: string }[] = [
+    { value: 'twitter', label: 'Twitter風', desc: 'ツリー表示で返信をネスト' },
+    { value: '2ch', label: '2ch風', desc: 'フラット表示＋連番＋>>参照' },
+  ]
+
+  styles.forEach(s => {
+    const label = document.createElement('label')
+    label.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: border-color 0.2s;
+      ${currentStyle === s.value ? 'border-color: var(--accent); background: var(--bg-secondary);' : ''}
+    `
+
+    const radio = document.createElement('input')
+    radio.type = 'radio'
+    radio.name = 'reply-style'
+    radio.value = s.value
+    radio.checked = currentStyle === s.value
+    radio.style.cssText = 'accent-color: var(--accent);'
+
+    const textDiv = document.createElement('div')
+    textDiv.style.cssText = 'display: flex; flex-direction: column;'
+
+    const nameSpan = document.createElement('span')
+    nameSpan.style.cssText = 'font-weight: 600; color: var(--text-primary); font-size: 0.9375rem;'
+    nameSpan.textContent = s.label
+
+    const descSpan = document.createElement('span')
+    descSpan.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem;'
+    descSpan.textContent = s.desc
+
+    textDiv.appendChild(nameSpan)
+    textDiv.appendChild(descSpan)
+    label.appendChild(radio)
+    label.appendChild(textDiv)
+    radioGroup.appendChild(label)
+
+    radio.addEventListener('change', () => {
+      setReplyStyle(s.value)
+      radioGroup.querySelectorAll('label').forEach(l => {
+        l.style.borderColor = 'var(--border)'
+        l.style.background = 'none'
+      })
+      label.style.borderColor = 'var(--accent)'
+      label.style.background = 'var(--bg-secondary)'
+      displayMessage.textContent = t('settings.display_saved')
+      displayMessage.style.color = 'var(--success, #10b981)'
+    })
+  })
+
+  const displayMessage = document.createElement('div')
+  displayMessage.style.cssText = `
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    min-height: 1.25rem;
+  `
+
+  displaySection.appendChild(displayTitle)
+  displaySection.appendChild(radioGroup)
+  displaySection.appendChild(displayMessage)
+
+  container.appendChild(displaySection)
 
   // Language Section
   const languageSection = document.createElement('div')

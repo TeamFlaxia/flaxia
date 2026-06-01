@@ -45,11 +45,12 @@ export class ReplyNode {
       post: this.props.node.post,
       sandboxOrigin: this.props.sandboxOrigin,
       currentUser: this.props.currentUser || undefined,
-      onDelete: () => {}, // Add empty onDelete handler to prevent errors
-      disableReplyComposer: true, // Disable only PostCard's reply composer, ReplyNode handles replies
+      onDelete: () => {},
+      disableReplyComposer: true,
       depth: this.props.node.post.depth,
       postIndex: nodeIndex,
-      enablePostRefs: true
+      enablePostRefs: true,
+      stripLeadingPostRef: true
     })
     
     // Create wrapper for post card and expand button

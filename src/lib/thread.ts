@@ -6,8 +6,34 @@ export interface PostNode {
 }
 
 export function buildTree(posts: Post[]): PostNode[] {
-  // Return all posts as flat root nodes (no nesting)
-  return posts.map(post => ({ post, children: [] }))
+  const nodeMap = new Map<string, PostNode>()
+  const roots: PostNode[] = []
+
+  for (const post of posts) {
+    nodeMap.set(post.id, { post, children: [] })
+  }
+
+  for (const post of posts) {
+    const node = nodeMap.get(post.id)!
+    if (post.parent_id) {
+      const parentNode = nodeMap.get(post.parent_id)
+      if (parentNode) {
+        parentNode.children.push(node)
+        continue
+      }
+    }
+    roots.push(node)
+  }
+
+  const sortByDate = (a: PostNode, b: PostNode) =>
+    new Date(a.post.created_at).getTime() - new Date(b.post.created_at).getTime()
+
+  for (const node of nodeMap.values()) {
+    node.children.sort(sortByDate)
+  }
+  roots.sort(sortByDate)
+
+  return roots
 }
 
 export function findNode(tree: PostNode[], postId: string): PostNode | null {

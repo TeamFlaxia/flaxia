@@ -105,16 +105,17 @@ export class PostCard {
       white-space: pre-wrap;
       word-break: break-word;
     `
-    // まずプレーンテキストで即時表示
-    textElement.textContent = this.props.post.text
+    const displayText = this.props.stripLeadingPostRef
+      ? this.props.post.text.replace(/^\s*>>\d+\s*/g, '').trimStart()
+      : this.props.post.text
+    textElement.textContent = displayText
     container.appendChild(textElement)
     
-    // 非同期でMarkdown処理（リッチな表示は後から）
     if ('requestIdleCallback' in window) {
       (window as any).requestIdleCallback(async () => {
         try {
           const richText = await createPostText({
-            text: this.props.post.text,
+            text: displayText,
             mentions: this.props.post.mentions,
             enablePostRefs: this.props.enablePostRefs
           })
@@ -126,11 +127,10 @@ export class PostCard {
         }
       }, { timeout: 2000 })
     } else {
-      // フォールバック
       setTimeout(async () => {
         try {
           const richText = await createPostText({
-            text: this.props.post.text,
+            text: displayText,
             mentions: this.props.post.mentions,
             enablePostRefs: this.props.enablePostRefs
           })

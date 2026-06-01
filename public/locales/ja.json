@@ -147,6 +147,8 @@
 
   "settings.title": "設定",
   "settings.account": "アカウント",
+  "settings.display": "表示設定",
+  "settings.display_saved": "✓ 保存しました",
   "settings.language": "言語",
   "settings.language_saved": "✓ 保存しました",
   "settings.language_save_failed": "保存に失敗しました",
