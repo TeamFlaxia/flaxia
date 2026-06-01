@@ -21,10 +21,10 @@ let vapidKeys: { publicKey: string; privateKey: string } | null = null
  * In production, pass VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY via env vars.
  * Falls back to auto-generated keys for development.
  */
-function ensureVapid(subject?: string) {
+function ensureVapid(vapidPublicKey?: string, vapidPrivateKey?: string, subject?: string) {
   if (vapidKeys) return
-  const pub = (globalThis as any).VAPID_PUBLIC_KEY
-  const priv = (globalThis as any).VAPID_PRIVATE_KEY
+  const pub = vapidPublicKey || (globalThis as any).VAPID_PUBLIC_KEY
+  const priv = vapidPrivateKey || (globalThis as any).VAPID_PRIVATE_KEY
   if (pub && priv) {
     vapidKeys = { publicKey: pub, privateKey: priv }
   } else {
@@ -45,9 +45,11 @@ function ensureVapid(subject?: string) {
 export async function sendPushToSubscription(
   subscription: PushSubscription,
   payload: PushPayload,
+  vapidPublicKey?: string,
+  vapidPrivateKey?: string,
 ): Promise<boolean> {
   try {
-    ensureVapid()
+    ensureVapid(vapidPublicKey, vapidPrivateKey)
     // Generate the request details but send via Workers' fetch()
     const details = webpush.generateRequestDetails(
       subscription as any,
@@ -84,6 +86,8 @@ export async function sendPushToUser(
   db: D1Database,
   userId: string,
   payload: PushPayload,
+  vapidPublicKey?: string,
+  vapidPrivateKey?: string,
 ): Promise<void> {
   const { results } = await db.prepare(
     'SELECT endpoint, auth_key, p256dh_key FROM push_subscriptions WHERE user_id = ?'
@@ -94,7 +98,7 @@ export async function sendPushToUser(
       endpoint: row.endpoint,
       keys: { p256dh: row.p256dh_key, auth: row.auth_key },
     }
-    const ok = await sendPushToSubscription(subscription, payload)
+    const ok = await sendPushToSubscription(subscription, payload, vapidPublicKey, vapidPrivateKey)
     // Remove expired subscriptions
     if (!ok) {
       await db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?')
@@ -136,7 +140,7 @@ export function getPushPayload(
 }
 
 /** VAPID public key for use by the client (Push API subscribe call). */
-export function getVapidPublicKey(): string {
-  ensureVapid()
+export function getVapidPublicKey(vapidPublicKey?: string, vapidPrivateKey?: string): string {
+  ensureVapid(vapidPublicKey, vapidPrivateKey)
   return vapidKeys!.publicKey
 }

@@ -10,6 +10,8 @@
   "nav.bookmarks": "Bookmarks",
   "nav.logo": "Flaxia",
   "bookmarks.empty": "No bookmarks yet",
+  "bookmarks.error": "Failed to load bookmarks. Please try again.",
+  "bookmarks.retry": "Retry",
 
   "common.cancel": "Cancel",
   "common.save": "Save",

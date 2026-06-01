@@ -3326,7 +3326,7 @@ app.get('/api/posts', async (c) => {
     }
 
     // Batch fetch poll data for posts with polls
-    await enrichPostsWithPolls(posts as any[], c.env.DB, currentUserId)
+    await enrichPostsWithPolls(posts as any[], c.env.DB, currentUserId, c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
 
     // Trigger sentiment analysis for at most one unprocessed post in background per request
     for (const p of posts as any[]) {
@@ -3421,7 +3421,7 @@ app.get('/api/posts/trending', async (c) => {
       })
     }
 
-    await enrichPostsWithPolls(posts as any[], c.env.DB, currentUserId)
+    await enrichPostsWithPolls(posts as any[], c.env.DB, currentUserId, c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
 
     return c.json({ posts })
   } catch (error: any) {
@@ -3508,7 +3508,7 @@ app.get('/api/posts/recommended', async (c) => {
       })
     }
 
-    await enrichPostsWithPolls(posts as any[], c.env.DB, currentUserId)
+    await enrichPostsWithPolls(posts as any[], c.env.DB, currentUserId, c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
 
     return c.json({ posts })
   } catch (error: any) {
@@ -4409,7 +4409,7 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
             ).bind(nanoid(), mention.user_id, 'mention', postId, userId).run()
             const actor = c.get('user')
             const actorName = actor?.display_name || actor?.username || 'Someone'
-            sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, post?.text || '', postId))
+            sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, post?.text || '', postId), c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
           }
         } catch (e) {
           // Don't fail the post creation if mention notifications fail
@@ -4502,7 +4502,7 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
             ).bind(nanoid(), mention.user_id, 'mention', postId, userId).run()
             const actor = c.get('user')
             const actorName = actor?.display_name || actor?.username || 'Someone'
-            sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, post?.text || '', postId))
+            sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, post?.text || '', postId), c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
           }
         } catch (e) {
           // Don't fail the post creation if mention notifications fail
@@ -4572,7 +4572,7 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
 
     if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
       try {
-        await enrichPostsWithPolls([post], c.env.DB, c.get('user')?.id)
+        await enrichPostsWithPolls([post], c.env.DB, c.get('user')?.id, c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
       } catch (e) {
         console.error('Failed to enrich post with poll:', e)
       }
@@ -4743,7 +4743,7 @@ app.post('/api/posts', requireAuth, async (c) => {
               ).bind(nanoid(), mention.user_id, 'mention', postId, userId).run()
               const actor = c.get('user')
               const actorName = actor?.display_name || actor?.username || 'Someone'
-              sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, text || post?.text || '', postId))
+              sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, text || post?.text || '', postId), c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
             }
           } catch (e) {
             console.error('Failed to create mention notifications:', e)
@@ -4864,7 +4864,7 @@ app.post('/api/posts', requireAuth, async (c) => {
           ).bind(nanoid(), mention.user_id, 'mention', postId, userId).run()
           const actor = c.get('user')
           const actorName = actor?.display_name || actor?.username || 'Someone'
-          sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, text || '', postId))
+          sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, text || '', postId), c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
         }
       } catch (e) {
         // Don't fail the post creation if mention notifications fail
@@ -4926,7 +4926,7 @@ app.post('/api/posts', requireAuth, async (c) => {
 
     if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
       try {
-        await enrichPostsWithPolls([fullPost], c.env.DB, c.get('user')?.id)
+        await enrichPostsWithPolls([fullPost], c.env.DB, c.get('user')?.id, c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
       } catch (e) {
         console.error('Failed to enrich post with poll:', e)
       }
@@ -4980,7 +4980,7 @@ app.get('/api/polls/:postId', async (c) => {
           await c.env.DB.prepare(
             'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
           ).bind(crypto.randomUUID(), post.user_id, 'poll_ended', postId, '').run()
-          sendPushToUser(c.env.DB, post.user_id, getPushPayload('poll_ended', '', '', postId))
+          sendPushToUser(c.env.DB, post.user_id, getPushPayload('poll_ended', '', '', postId), c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
           await c.env.DB.prepare(
             'UPDATE polls SET ended_notified = 1 WHERE id = ?'
           ).bind(poll.id).run()
@@ -5129,7 +5129,7 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
             const actor = c.get('user')
             const actorName = actor?.display_name || actor?.username || 'Someone'
             const textPreview = post.text || ''
-            sendPushToUser(c.env.DB, post.user_id, getPushPayload('fresh', actorName, textPreview, postId))
+            sendPushToUser(c.env.DB, post.user_id, getPushPayload('fresh', actorName, textPreview, postId), c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
           }
         }
       } catch (e) {
@@ -5529,7 +5529,7 @@ app.get('/api/posts/:id/replies', async (c) => {
     const replies = result.results || []
     const nextCursor = replies.length === limit ? replies[replies.length - 1].created_at : null
 
-    await enrichPostsWithPolls(replies as any[], c.env.DB, currentUserId)
+    await enrichPostsWithPolls(replies as any[], c.env.DB, currentUserId, c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
     
     return c.json({ replies, nextCursor })
   } catch (error: any) {
@@ -5703,8 +5703,8 @@ app.get('/api/posts/:id/thread', async (c) => {
     }
     
     // Add poll data
-    await enrichPostsWithPolls([rootPost as any], c.env.DB, currentUserId)
-    await enrichPostsWithPolls(replies as any[], c.env.DB, currentUserId)
+    await enrichPostsWithPolls([rootPost as any], c.env.DB, currentUserId, c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
+    await enrichPostsWithPolls(replies as any[], c.env.DB, currentUserId, c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
 
     // Trigger sentiment analysis for unprocessed posts in background
     if ((rootPost as any).sentiment_score == null && (rootPost as any).text) {
@@ -5983,7 +5983,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
           {
             const actor = c.get('user')
             const actorName = actor?.display_name || actor?.username || 'Someone'
-            sendPushToUser(c.env.DB, parentPost.user_id, getPushPayload('reply', actorName, text, postId))
+            sendPushToUser(c.env.DB, parentPost.user_id, getPushPayload('reply', actorName, text, postId), c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
           }
         }
         notifiedUserIds.add(parentPost.user_id)
@@ -6005,7 +6005,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
           {
             const actor = c.get('user')
             const actorName = actor?.display_name || actor?.username || 'Someone'
-            sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, text, postId))
+            sendPushToUser(c.env.DB, mention.user_id, getPushPayload('mention', actorName, text, postId), c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
           }
         }
       } catch (e) {
@@ -6049,7 +6049,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
               ).bind(nanoid(), referencedPost.user_id, 'reply', replyId, replyUserId).run()
               const actor = c.get('user')
               const actorName = actor?.display_name || actor?.username || 'Someone'
-              sendPushToUser(c.env.DB, referencedPost.user_id, getPushPayload('reply', actorName, text || '', replyId))
+              sendPushToUser(c.env.DB, referencedPost.user_id, getPushPayload('reply', actorName, text || '', replyId), c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY)
             }
           }
         }
@@ -6489,7 +6489,7 @@ async function insertAdminAlert(db: D1Database, postId: string, category: Report
   }
 }
 
-async function enrichPostsWithPolls(posts: any[], db: D1Database, currentUserId?: string | null): Promise<void> {
+async function enrichPostsWithPolls(posts: any[], db: D1Database, currentUserId?: string | null, vapidPublicKey?: string, vapidPrivateKey?: string): Promise<void> {
   if (posts.length === 0) return
   const postIds = posts.map(p => p.id)
   const placeholders = postIds.map(() => '?').join(',')
@@ -6552,7 +6552,7 @@ async function enrichPostsWithPolls(posts: any[], db: D1Database, currentUserId?
           await db.prepare(
             'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)'
           ).bind(nanoid(), post.user_id, 'poll_ended', post.id, '').run()
-          sendPushToUser(db, post.user_id, getPushPayload('poll_ended', '', '', post.id))
+          sendPushToUser(db, post.user_id, getPushPayload('poll_ended', '', '', post.id), vapidPublicKey, vapidPrivateKey)
           await db.prepare(
             'UPDATE polls SET ended_notified = 1 WHERE id = ?'
           ).bind(poll.id).run()
@@ -7086,7 +7086,7 @@ app.get('/api/current-topic', async (c) => {
 
 // GET /api/push/vapid-key - Expose VAPID public key for clients
 app.get('/api/push/vapid-key', async (c) => {
-  return c.json({ publicKey: getVapidPublicKey() })
+  return c.json({ publicKey: getVapidPublicKey(c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY) })
 })
 
 // POST /api/push/register - Register a Web Push subscription (protected)
