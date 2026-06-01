@@ -7,6 +7,7 @@ import { createPostCard } from './PostCard.js'
 import { createReplyNode, ReplyNode } from './ReplyNode.js'
 import { createReplyComposer, ReplyComposer } from './ReplyComposer.js'
 import { createLeftNav } from './LeftNav.js'
+import { showSignInPrompt } from './SignInPrompt.js'
 
 export interface ThreadPageProps {
   postId: string
@@ -346,7 +347,8 @@ export class ThreadPage {
         postId: data.root.id,
         sandboxOrigin: this.props.sandboxOrigin,
         onReplyCreated: (newReply) => this.handleRootReplyCreated(newReply),
-        onCancel: () => this.hideRootReplyComposer()
+        onCancel: () => this.hideRootReplyComposer(),
+        currentUser: this.props.currentUser
       })
       this.rootReplyComposer.getElement().style.display = 'none'
       rootContainer.appendChild(this.rootReplyComposer.getElement())
@@ -468,6 +470,14 @@ export class ThreadPage {
   }
 
   private showRootReplyComposer(): void {
+    if (!this.props.currentUser) {
+      showSignInPrompt(
+        'reply',
+        () => { window.history.pushState({}, '', '/login'); window.dispatchEvent(new PopStateEvent('popstate')) },
+        () => { window.history.pushState({}, '', '/register'); window.dispatchEvent(new PopStateEvent('popstate')) }
+      )
+      return
+    }
     if (this.rootReplyComposer) {
       // Dispatch global event to close other reply composers
       document.dispatchEvent(new CustomEvent('replyComposerOpen', {

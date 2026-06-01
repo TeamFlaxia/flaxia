@@ -2,6 +2,7 @@ import { Post, PostCardProps } from '../types/post.js'
 import { PostNode } from '../lib/thread.js'
 import { createPostCard, PostCard as PostCardClass } from './PostCard.js'
 import { createReplyComposer, ReplyComposer } from './ReplyComposer.js'
+import { showSignInPrompt } from './SignInPrompt.js'
 
 export interface ReplyNodeProps {
   node: PostNode
@@ -102,7 +103,8 @@ export class ReplyNode {
       sandboxOrigin: this.props.sandboxOrigin,
       onReplyCreated: (newReply) => this.handleReplyCreated(newReply),
       onCancel: () => this.hideReplyComposer(),
-      prefillText: prefill
+      prefillText: prefill,
+      currentUser: this.props.currentUser
     })
     this.replyComposer.getElement().style.display = 'none'
     container.appendChild(this.replyComposer.getElement())
@@ -164,6 +166,14 @@ export class ReplyNode {
   }
 
   private showReplyComposer(): void {
+    if (!this.props.currentUser) {
+      showSignInPrompt(
+        'reply',
+        () => { window.history.pushState({}, '', '/login'); window.dispatchEvent(new PopStateEvent('popstate')) },
+        () => { window.history.pushState({}, '', '/register'); window.dispatchEvent(new PopStateEvent('popstate')) }
+      )
+      return
+    }
     if (this.replyComposer) {
       // Dispatch global event to close other reply composers
       document.dispatchEvent(new CustomEvent('replyComposerOpen', {

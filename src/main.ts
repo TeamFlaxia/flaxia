@@ -1845,7 +1845,7 @@ if (isTauriDesktop) {
     window.addEventListener('popstate', async (e) => {
       const route = parseCurrentRoute()
       if (route) {
-        await navigateTo(route.view, route.postId || undefined, route.username || undefined, route.tag || undefined, route.adminTab || undefined)
+        await navigateTo(route.view, route.postId || undefined, route.username || undefined, route.tag || undefined, route.adminTab || undefined, route.searchQuery || undefined, route.searchType || undefined)
       }
     })
     

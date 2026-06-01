@@ -3,6 +3,7 @@ import DOMPurify from 'dompurify'
 import { t } from '../lib/i18n.js'
 import { formatCount } from '../lib/format.js'
 import { showToast } from '../lib/toast.js'
+import { showSignInPrompt } from './SignInPrompt.js'
 
 export interface ReplyComposerProps {
   postId: string
@@ -10,6 +11,7 @@ export interface ReplyComposerProps {
   onReplyCreated: (newReply: Post) => void
   onCancel: () => void
   prefillText?: string
+  currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null
 }
 
 export class ReplyComposer {
@@ -133,6 +135,9 @@ export class ReplyComposer {
       this.charCount.textContent = `${this.props.prefillText.length}/200`
     }
 
+    // Set user avatar
+    this.initAvatar()
+
     // Create mention suggestion dropdown
     this.mentionDropdown = document.createElement('div')
     this.mentionDropdown.className = 'mention-dropdown'
@@ -148,7 +153,7 @@ export class ReplyComposer {
       display: none;
       min-width: 200px;
     `
-    const composerHeader = container.querySelector('.reply-composer-header')
+    const composerHeader = container.querySelector('.reply-composer-header') as HTMLElement | null
     if (composerHeader) {
       composerHeader.style.position = 'relative'
       composerHeader.appendChild(this.mentionDropdown)
@@ -445,7 +450,7 @@ export class ReplyComposer {
       handleSpan.textContent = `@${user.username}`
       textSpan.appendChild(nameSpan); textSpan.appendChild(handleSpan)
       item.appendChild(avatarSpan); item.appendChild(textSpan)
-      item.addEventListener('click', () => this.selectMention(user.username))
+      item.addEventListener('click', () => this.selectSuggestion(user.username))
       item.addEventListener('mouseenter', () => {
         this.mentionDropdown.querySelectorAll('.mention-item--active').forEach(el => el.classList.remove('mention-item--active'))
         item.classList.add('mention-item--active')
@@ -591,6 +596,45 @@ export class ReplyComposer {
     }
   }
 
+  private initAvatar(): void {
+    const avatarEl = this.element.querySelector('.reply-composer-avatar') as HTMLElement
+    if (!avatarEl) return
+    const user = this.props.currentUser
+    if (!user) return
+
+    avatarEl.textContent = user.username.charAt(0).toUpperCase()
+
+    if (user.avatar_key) {
+      const loadAvatar = () => {
+        const img = new Image()
+        img.onload = () => {
+          avatarEl.style.backgroundImage = `url(/api/images/${user.avatar_key})`
+          avatarEl.style.backgroundSize = 'cover'
+          avatarEl.style.backgroundPosition = 'center'
+          avatarEl.textContent = ''
+        }
+        img.onerror = () => {
+          console.warn(`Failed to load avatar: ${user.avatar_key}`)
+        }
+        img.src = `/api/images/${user.avatar_key}`
+      }
+      if ('requestIdleCallback' in window) {
+        ;(window as any).requestIdleCallback(loadAvatar, { timeout: 1000 })
+      } else {
+        setTimeout(loadAvatar, 100)
+      }
+    }
+
+    avatarEl.addEventListener('click', (e) => {
+      e.stopPropagation()
+      window.history.pushState({}, '', `/profile/${user.username}`)
+      window.dispatchEvent(new CustomEvent('spaNavigate', {
+        detail: { view: 'profile', username: user.username }
+      }))
+    })
+    avatarEl.style.cursor = 'pointer'
+  }
+
   private async handleSubmit(): Promise<void> {
     if (this.isSubmitting) return
 
@@ -640,8 +684,18 @@ export class ReplyComposer {
 
     } catch (error: any) {
       console.error('Failed to create reply:', error)
-      const errorMessage = error?.message || t('composer.error_create_failed')
-      showToast(`${errorMessage}${error?.details ? ` (${error.details})` : ''}`, true)
+      const isAuthError = error?.message === t('reply_composer.error_auth_required')
+      const errorMessage = isAuthError
+        ? t('reply_composer.error_auth_required')
+        : (error?.message || t('composer.error_create_failed'))
+      showToast(errorMessage, true)
+      if (isAuthError) {
+        showSignInPrompt(
+          'reply',
+          () => { window.history.pushState({}, '', '/login'); window.dispatchEvent(new PopStateEvent('popstate')) },
+          () => { window.history.pushState({}, '', '/register'); window.dispatchEvent(new PopStateEvent('popstate')) }
+        )
+      }
     } finally {
       this.isSubmitting = false
       this.updateSubmitButton()
@@ -649,28 +703,27 @@ export class ReplyComposer {
   }
 
   private async prepareReply(file: File): Promise<{ replyId: string; gifUploadUrl: string; gifKey: string } | null> {
-    try {
-      const response = await fetch(`/api/posts/${this.props.postId}/replies/prepare`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          filename: file.name,
-          contentType: file.type
-        })
+    const response = await fetch(`/api/posts/${this.props.postId}/replies/prepare`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({
+        filename: file.name,
+        contentType: file.type
       })
+    })
 
-      if (!response.ok) {
-        throw new Error('Failed to prepare reply')
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error(t('reply_composer.error_auth_required'))
       }
-
-      return await response.json() as { replyId: string; gifUploadUrl: string; gifKey: string }
-    } catch (error) {
-      console.error('Prepare reply failed:', error)
+      console.error('Prepare reply failed:', response.status, response.statusText)
       return null
     }
+
+    return await response.json() as { replyId: string; gifUploadUrl: string; gifKey: string }
   }
 
   private async uploadFileDirect(file: File, uploadUrl: string): Promise<boolean> {
@@ -715,40 +768,39 @@ export class ReplyComposer {
   }
 
   private async commitReply(replyId: string | undefined, gifKey: string | undefined, text: string): Promise<{ reply: Post } | null> {
-    try {
-      // Extract hashtags from text
-      const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu
-      const hashtagSet = new Set<string>()
-      let match
-      while ((match = hashtagRegex.exec(text)) !== null) {
-        hashtagSet.add(match[1])
-      }
-      const hashtags = Array.from(hashtagSet)
+    // Extract hashtags from text
+    const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu
+    const hashtagSet = new Set<string>()
+    let match
+    while ((match = hashtagRegex.exec(text)) !== null) {
+      hashtagSet.add(match[1])
+    }
+    const hashtags = Array.from(hashtagSet)
 
-      const response = await fetch(`/api/posts/${this.props.postId}/replies/commit`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-        body: JSON.stringify({
-          replyId: replyId || crypto.randomUUID(), // Generate ID for text-only replies
-          gifKey: gifKey,
-          text,
-          hashtags
-        })
+    const response = await fetch(`/api/posts/${this.props.postId}/replies/commit`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      body: JSON.stringify({
+        replyId: replyId || crypto.randomUUID(),
+        gifKey: gifKey,
+        text,
+        hashtags
       })
+    })
 
-      if (!response.ok) {
-        const error = await response.json() as any
-        throw new Error(error?.error || 'Failed to commit reply')
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error(t('reply_composer.error_auth_required'))
       }
-
-      return await response.json() as { reply: Post }
-    } catch (error) {
+      const error = await response.json() as any
       console.error('Commit reply failed:', error)
       return null
     }
+
+    return await response.json() as { reply: Post }
   }
 
   public getElement(): HTMLElement {

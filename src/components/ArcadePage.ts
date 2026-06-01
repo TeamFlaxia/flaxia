@@ -832,7 +832,8 @@ export class ArcadePage {
       postId: game.postId,
       sandboxOrigin: this.props.sandboxOrigin,
       onReplyCreated: (newReply) => this.handleCommentCreated(newReply, headerTitle, composer),
-      onCancel: () => {}
+      onCancel: () => {},
+      currentUser: this.props.currentUser
     })
     composer.getElement().style.cssText = 'flex-shrink: 0;'
     dialog.appendChild(composer.getElement())

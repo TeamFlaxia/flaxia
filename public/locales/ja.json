@@ -31,6 +31,8 @@
   "auth.sign_in_to_report": "報告するにはログインしてください",
   "auth.sign_in_to_post": "投稿するにはログインしてください",
   "auth.sign_in_to_bookmark": "ブックマークするにはログインしてください",
+  "auth.error_required": "ログインが必要です",
+  "auth.error_session_expired": "セッションの有効期限が切れました。もう一度ログインしてください",
   "auth.sign_up_title": "Flaxiaに登録",
   "auth.sign_up_subtitle": "Flaxiaに登録して、人をフォローし、会話に参加しましょう。",
   "auth.logout_confirm": "@{username} からログアウトしますか？",
@@ -473,6 +475,8 @@
   "reply_composer.replying": "送信中...",
   "reply_composer.error_file_size": "ファイルサイズは25MB未満である必要があります",
   "reply_composer.error_file_type": "画像ファイル（GIF, PNG, JPG）と音声ファイル（MP3, WAV, OGG, M4A, WebM）のみサポートされています",
+  "reply_composer.error_auth_required": "返信するにはログインしてください",
+  "reply_composer.error_session_expired": "セッションの有効期限が切れました。再読み込みしてログインし直してください",
   "reply_composer.error_general": "{error}",
 
   "timeline.menu": "⋯",
