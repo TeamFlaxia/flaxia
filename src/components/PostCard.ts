@@ -199,7 +199,8 @@ export class PostCard {
         sandboxOrigin: this.props.sandboxOrigin,
         onReplyCreated: (newReply) => this.handleReplyCreated(newReply),
         onCancel: () => this.hideReplyComposer(),
-        prefillText: prefill
+        prefillText: prefill,
+        currentUser: this.props.currentUser || undefined
       })
       this.replyComposer.getElement().style.display = 'none'
       container.appendChild(this.replyComposer.getElement())

@@ -31,6 +31,8 @@
   "auth.sign_in_to_report": "Sign in to report posts",
   "auth.sign_in_to_post": "Sign in to post",
   "auth.sign_in_to_bookmark": "Sign in to bookmark",
+  "auth.error_required": "Sign in required",
+  "auth.error_session_expired": "Session expired. Please sign in again",
   "auth.sign_up_title": "Sign up to Flaxia",
   "auth.sign_up_subtitle": "Sign up to Flaxia, follow people, and join the conversation.",
   "auth.logout_confirm": "Log out of @{username}?",
@@ -473,6 +475,8 @@
   "reply_composer.replying": "Replying...",
   "reply_composer.error_file_size": "File size must be less than 25MB",
   "reply_composer.error_file_type": "Only image files (GIF, PNG, JPG) and audio files (MP3, WAV, OGG, M4A, WebM) are supported",
+  "reply_composer.error_auth_required": "Please sign in to reply",
+  "reply_composer.error_session_expired": "Session expired. Please reload and sign in again",
   "reply_composer.error_general": "{error}",
 
   "timeline.menu": "⋯",
