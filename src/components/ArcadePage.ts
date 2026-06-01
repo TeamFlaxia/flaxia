@@ -85,6 +85,12 @@ export class ArcadePage {
     if (!localStorage.getItem(ArcadePage.TUTORIAL_SEEN_KEY)) {
       this.showTutorial()
     }
+
+    // Preload Ruffle CDN — browser resolves DNS + caches early
+    const preconnect = document.createElement('link')
+    preconnect.rel = 'preconnect'
+    preconnect.href = 'https://unpkg.com'
+    document.head.appendChild(preconnect)
   }
 
   private createElement(): HTMLElement {

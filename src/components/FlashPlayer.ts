@@ -4,41 +4,28 @@ export interface FlashPlayerHandle {
   destroy: () => void
 }
 
-// Global execution manager
 let activeHandle: FlashPlayerHandle | null = null
-
-// Load Ruffle dynamically from CDN
-declare const RufflePlayer: any
-
-async function loadRuffle(): Promise<any> {
-  if (typeof window !== 'undefined' && (window as any).RufflePlayer) {
-    return (window as any).RufflePlayer
-  }
-
-  // Load Ruffle from CDN if not available
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script')
-    script.src = 'https://unpkg.com/@ruffle-rs/ruffle@0.1.0-nightly.2025.3.8/ruffle.js'
-    script.onload = () => resolve((window as any).RufflePlayer)
-    script.onerror = () => reject(new Error('Failed to load Ruffle'))
-    document.head.appendChild(script)
-  })
-}
 
 export async function executeFlash(
   postId: string,
   containerEl: HTMLElement,
-  url?: string,  // if provided, fetch from this URL instead of /api/swf/${postId}
-  hideFullscreen: boolean = false
+  url?: string,
+  hideFullscreen: boolean = false,
 ): Promise<FlashPlayerHandle> {
-  // Clean up any existing execution
   if (activeHandle) {
     activeHandle.destroy()
     activeHandle = null
   }
 
   try {
-    // Step 1: Create iframe container
+    const swfUrl = url || `/api/swf/${postId}`
+
+    // Start SWF fetch immediately — parallel with iframe creation
+    const swfPromise = fetch(swfUrl).then(r => {
+      if (!r.ok) throw new Error('Failed to fetch SWF')
+      return r.arrayBuffer()
+    })
+
     const iframeContainer = document.createElement('div')
     iframeContainer.style.cssText = `
       position: absolute;
@@ -51,15 +38,13 @@ export async function executeFlash(
       background: #ffffff;
     `
 
-    // Step 2: Create HTML content with Ruffle
-    const swfUrl = url || `/api/swf/${postId}`
+    const loadFailedText = t('flash_player.load_failed')
     const htmlContent = `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <title>${t('flash_player.title')}</title>
-  <script src="https://unpkg.com/@ruffle-rs/ruffle@0.1.0-nightly.2025.3.8/ruffle.js"></script>
   <style>
     body, html {
       margin: 0;
@@ -82,8 +67,8 @@ export async function executeFlash(
       width: 100% !important;
       height: 100% !important;
       position: relative;
-      max-width: 133.33vh; /* 4:3 aspect ratio (4/3 = 1.3333) */
-      max-height: 75vw; /* 4:3 aspect ratio (3/4 = 0.75) */
+      max-width: 133.33vh;
+      max-height: 75vw;
       object-fit: contain;
     }
   </style>
@@ -91,10 +76,36 @@ export async function executeFlash(
 <body>
   <div id="player"></div>
   <script>
-    window.RufflePlayer = window.RufflePlayer || {};
-    window.addEventListener('load', (event) => {
-      const ruffle = window.RufflePlayer.newest();
-      const player = ruffle.createPlayer();
+    var swfData = null;
+    var ruffleLoaded = false;
+
+    window.addEventListener('message', function(e) {
+      if (e.data && e.data.type === 'SWF_DATA') {
+        swfData = e.data.data;
+        tryStart();
+      }
+    });
+
+    window.parent.postMessage('FLASH_IFRAME_READY', '*');
+
+    var script = document.createElement('script');
+    script.src = 'https://unpkg.com/@ruffle-rs/ruffle@0.1.0-nightly.2025.3.8/ruffle.js';
+    script.onload = function() {
+      ruffleLoaded = true;
+      tryStart();
+    };
+    script.onerror = function() {
+      document.getElementById('player').innerHTML =
+        '<div style="color:white;text-align:center;padding:20px;">Failed to load Ruffle runtime.</div>';
+    };
+    document.head.appendChild(script);
+
+    function tryStart() {
+      if (!ruffleLoaded || !swfData) return;
+
+      window.RufflePlayer = window.RufflePlayer || {};
+      var ruffle = window.RufflePlayer.newest();
+      var player = ruffle.createPlayer();
       player.id = 'flash-player';
       player.config = {
         autoplay: 'on',
@@ -109,27 +120,23 @@ export async function executeFlash(
         quality: 'high',
         scale: 'showAll'
       };
-      
-      const container = document.getElementById('player');
+
+      var container = document.getElementById('player');
       container.appendChild(player);
-      
-      // Load the SWF file
-      const swfUrlFinal = window.location.origin + "${swfUrl}";
-      player.load(swfUrlFinal).catch(error => {
+
+      player.load({ data: new Uint8Array(swfData) }).catch(function(error) {
         console.error('Failed to load SWF:', error);
-        container.innerHTML = '<div style="color: white; text-align: center; padding: 20px;">' + t('flash_player.load_failed') + '</div>';
+        container.innerHTML = '<div style="color:white;text-align:center;padding:20px;">${loadFailedText}</div>';
       });
-    });
+    }
   </script>
 </body>
 </html>
     `
 
-    // Step 3: Create blob URL for HTML
     const htmlBlob = new Blob([htmlContent], { type: 'text/html' })
     const htmlBlobUrl = URL.createObjectURL(htmlBlob)
 
-    // Step 4: Create iframe
     const iframe = document.createElement('iframe')
     iframe.src = htmlBlobUrl
     iframe.sandbox = 'allow-scripts allow-pointer-lock allow-fullscreen'
@@ -143,7 +150,6 @@ export async function executeFlash(
       background: #ffffff;
     `
 
-    // Step 5: Add fullscreen button
     const fullscreenBtn = document.createElement('button')
     fullscreenBtn.textContent = t('flash_player.fullscreen')
     fullscreenBtn.className = 'flash-fullscreen-btn'
@@ -181,7 +187,15 @@ export async function executeFlash(
       }
     }
 
-    // Step 6: Clear container and add elements
+    // Set up iframe-ready listener BEFORE adding iframe to DOM (avoid race)
+    let iframeReady = false
+    const readyHandler = (e: MessageEvent) => {
+      if (e.data === 'FLASH_IFRAME_READY') {
+        iframeReady = true
+      }
+    }
+    window.addEventListener('message', readyHandler)
+
     containerEl.innerHTML = ''
     containerEl.appendChild(iframeContainer)
     iframeContainer.appendChild(iframe)
@@ -189,36 +203,51 @@ export async function executeFlash(
       iframeContainer.appendChild(fullscreenBtn)
     }
 
-    // Step 7: Create handle with cleanup
+    // Wait for SWF data (fetched in parallel with iframe setup)
+    const swfData = await swfPromise
+
+    // Wait for iframe to signal readiness
+    if (!iframeReady) {
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (iframeReady) return resolve()
+          setTimeout(check, 10)
+        }
+        check()
+      })
+    }
+    window.removeEventListener('message', readyHandler)
+
+    iframe.contentWindow?.postMessage(
+      { type: 'SWF_DATA', data: swfData },
+      '*',
+      [swfData],
+    )
+
     const handle: FlashPlayerHandle = {
       destroy: () => {
-        // Remove iframe container from DOM
         if (iframeContainer.parentNode) {
           iframeContainer.parentNode.removeChild(iframeContainer)
         }
 
-        // Remove fullscreen button if it exists
-        const fullscreenBtn = containerEl.querySelector('.flash-fullscreen-btn')
-        if (fullscreenBtn) {
-          fullscreenBtn.parentNode?.removeChild(fullscreenBtn)
+        const btn = containerEl.querySelector('.flash-fullscreen-btn')
+        if (btn) {
+          btn.parentNode?.removeChild(btn)
         }
 
-        // Revoke blob URL
         URL.revokeObjectURL(htmlBlobUrl)
-      }
+      },
     }
 
     activeHandle = handle
     return handle
 
   } catch (error) {
-    // Clean up on error
     if (activeHandle) {
       activeHandle.destroy()
       activeHandle = null
     }
 
-    // Show error message in container
     containerEl.innerHTML = `
       <div style="
         display: flex;
@@ -240,37 +269,23 @@ export async function executeFlash(
   }
 }
 
-// Utility function to check if a file is a valid SWF
 export function isValidSwfFile(file: File): boolean {
-  // Check file extension
   const ext = file.name.toLowerCase().split('.').pop()
-  if (ext !== 'swf') {
-    return false
-  }
+  if (ext !== 'swf') return false
 
-  // Check MIME type (some browsers may not report this correctly for SWF)
   const validTypes = ['application/x-shockwave-flash', 'application/vnd.adobe.flash.movie']
   if (file.type && !validTypes.includes(file.type)) {
-    // Allow if extension is correct but MIME type is generic
-    if (file.type !== '' && file.type !== 'application/octet-stream') {
-      return false
-    }
+    if (file.type !== '' && file.type !== 'application/octet-stream') return false
   }
 
-  // Check file size (max 50MB)
   const maxSize = 50 * 1024 * 1024
-  if (file.size > maxSize) {
-    return false
-  }
+  if (file.size > maxSize) return false
 
   return true
 }
 
-// Validate SWF file by checking magic bytes
 export async function validateSwfFile(file: File): Promise<boolean> {
-  // SWF files start with "FWS" (uncompressed), "CWS" (zlib compressed), or "ZWS" (LZMA compressed)
   const header = await file.slice(0, 3).arrayBuffer()
   const headerStr = new TextDecoder().decode(header)
-
   return headerStr === 'FWS' || headerStr === 'CWS' || headerStr === 'ZWS'
 }
