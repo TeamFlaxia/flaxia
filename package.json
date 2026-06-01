@@ -40,7 +40,7 @@
   },
   "dependencies": {
     "@cloudflare/kv-asset-handler": "^0.4.2",
-    "@flaxia/node": "^0.1.0",
+    "@flaxia/node": "^0.1.2",
     "@flaxia/sdk": "^0.1.0",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-notification": "^2.3.3",
