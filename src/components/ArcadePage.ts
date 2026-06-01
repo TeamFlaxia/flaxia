@@ -45,6 +45,7 @@ export class ArcadePage {
   private initialGameId: string | undefined
   private tutorialEl: HTMLElement | null = null
   private isFullscreen: boolean = false
+  private loadingEl: HTMLElement | null = null
 
   private static TUTORIAL_SEEN_KEY = 'flaxia_tutorial_seen'
   
@@ -262,11 +263,32 @@ export class ArcadePage {
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      font-size: 1.5rem;
-      color: var(--text-muted);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
       display: none;
     `
-    loadingIndicator.textContent = t('arcade.loading')
+
+    const loaderSpinner = document.createElement('div')
+    loaderSpinner.style.cssText = `
+      width: 40px;
+      height: 40px;
+      border: 3px solid var(--border);
+      border-top-color: var(--text-muted);
+      border-radius: 50%;
+      animation: arcade-spin 0.8s linear infinite;
+    `
+
+    const loaderText = document.createElement('div')
+    loaderText.style.cssText = `
+      font-size: 1.5rem;
+      color: var(--text-muted);
+    `
+    loaderText.textContent = t('arcade.loading')
+
+    loadingIndicator.appendChild(loaderSpinner)
+    loadingIndicator.appendChild(loaderText)
 
     gameContainer.appendChild(navUp)
     gameContainer.appendChild(navDown)
@@ -536,7 +558,7 @@ export class ArcadePage {
     this.isLoading = true
 
     const loadingIndicator = this.element.querySelector('.arcade-loading') as HTMLElement
-    loadingIndicator.style.display = 'block'
+    loadingIndicator.style.display = 'flex'
 
     try {
       let url = '/api/games?shuffle=true'
@@ -1056,7 +1078,66 @@ export class ArcadePage {
     return btn
   }
 
+  private getLoadingText(type: GameType): string {
+    switch (type) {
+      case 'flash': return t('arcade.loading_flash')
+      case 'zip': return t('arcade.loading_zip')
+      case 'dos': return t('arcade.loading_dos')
+      case 'html5': return t('arcade.loading_html5')
+    }
+  }
+
+  private showLoading(container: HTMLElement, type: GameType): void {
+    this.hideLoading()
+
+    const el = document.createElement('div')
+    el.className = 'arcade-game-loading'
+    el.style.cssText = `
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+      z-index: 20;
+      pointer-events: none;
+    `
+
+    const spinner = document.createElement('div')
+    spinner.style.cssText = `
+      width: 40px;
+      height: 40px;
+      border: 3px solid rgba(255,255,255,0.15);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: arcade-spin 0.8s linear infinite;
+    `
+
+    const text = document.createElement('div')
+    text.style.cssText = `
+      color: rgba(255,255,255,0.7);
+      font-size: 0.9rem;
+      font-weight: 500;
+    `
+    text.textContent = this.getLoadingText(type)
+
+    el.appendChild(spinner)
+    el.appendChild(text)
+    container.appendChild(el)
+    this.loadingEl = el
+  }
+
+  private hideLoading(): void {
+    if (this.loadingEl) {
+      this.loadingEl.remove()
+      this.loadingEl = null
+    }
+  }
+
   private async executeGame(game: Game, container: HTMLElement): Promise<void> {
+    this.showLoading(container, game.type)
     try {
       if (game.type === 'flash' && game.swfKey) {
         const handle = await executeFlash(game.postId, container, `/api/swf/${game.postId}`, true)
@@ -1084,8 +1165,10 @@ export class ArcadePage {
           }
         }
       }
+      this.hideLoading()
     } catch (error) {
       console.error('Failed to execute game:', error)
+      this.hideLoading()
       container.replaceChildren()
       const wrapper = document.createElement('div')
       wrapper.style.cssText = 'color: white; text-align: center; padding: 2rem;'
@@ -1104,6 +1187,7 @@ export class ArcadePage {
   }
 
   private clearCurrentGame(): void {
+    this.hideLoading()
     // Remove current game viewport
     const viewport = this.gameContainer.querySelector('.arcade-viewport') as HTMLElement
     if (viewport) {
@@ -1852,6 +1936,7 @@ export class ArcadePage {
     document.removeEventListener('webkitfullscreenchange', this.boundHandleFullscreenChange)
     window.removeEventListener('spaNavigate', this.boundHandleSpaNavigate)
     
+    this.hideLoading()
     this.clearCurrentGame()
     this.element.remove()
   }

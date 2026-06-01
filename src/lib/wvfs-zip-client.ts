@@ -21,9 +21,9 @@ export async function executeWvfsZip(
   }
 
   try {
-    // Create iframe pointing to WVFS worker endpoint
-    const contentOrigin = workerUrl || import.meta.env.VITE_CONTENT_ORIGIN || window.location.origin
-    const zipUrl = `${contentOrigin}/api/wvfs-zip/${postId}`
+    // Create iframe pointing directly to WVFS sandbox worker (bypass 301 redirect)
+    const sandboxOrigin = workerUrl || import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app'
+    const zipUrl = `${sandboxOrigin}/api/wvfs-zip/${postId}`
     
     const { iframe, cleanup } = await createWvfsIframe(postId, containerEl, zipUrl, hideFullscreen)
 

@@ -3069,3 +3069,7 @@ html {
   0%, 100% { box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65), 0 0 20px rgba(34, 197, 94, 0.3); }
   50% { box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65), 0 0 40px rgba(34, 197, 94, 0.5); }
 }
+
+@keyframes arcade-spin {
+  to { transform: rotate(360deg); }
+}

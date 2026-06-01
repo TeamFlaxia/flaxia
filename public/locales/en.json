@@ -276,6 +276,10 @@
   "arcade.details": "Details",
   "arcade.fullscreen": "Fullscreen",
   "arcade.load_failed": "Failed to load game",
+  "arcade.loading_flash": "⏳ Loading Flash...",
+  "arcade.loading_zip": "⏳ Loading ZIP...",
+  "arcade.loading_dos": "⏳ Starting DOS...",
+  "arcade.loading_html5": "⏳ Loading...",
 
   "arcade.tutorial_btn": "❓",
   "arcade.tutorial_welcome_title": "🌿 Welcome to Flaxia!",

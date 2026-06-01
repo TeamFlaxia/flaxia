@@ -543,7 +543,8 @@ app.get('/api/zip/:postId', async (c) => {
     return new Response(object.body, {
       headers: {
         'Content-Type': 'application/zip',
-        'Cache-Control': 'public, max-age=31536000', // Cache for 1 year
+        'Content-Length': String(object.size),
+        'Cache-Control': 'public, max-age=31536000, s-maxage=31536000, immutable',
         'Access-Control-Allow-Origin': c.req.header('Origin') || '*',
         'Access-Control-Allow-Credentials': 'true',
         'Cross-Origin-Resource-Policy': 'cross-origin'
@@ -736,7 +737,8 @@ app.get('/api/swf/:postId', async (c) => {
     return new Response(object.body, {
       headers: {
         'Content-Type': 'application/x-shockwave-flash',
-        'Cache-Control': 'public, max-age=31536000', // Cache for 1 year
+        'Content-Length': String(object.size),
+        'Cache-Control': 'public, max-age=31536000, s-maxage=31536000, immutable',
         'Access-Control-Allow-Origin': c.req.header('Origin') || '*',
         'Access-Control-Allow-Credentials': 'true',
         'Cross-Origin-Resource-Policy': 'cross-origin'

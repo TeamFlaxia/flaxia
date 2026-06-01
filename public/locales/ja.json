@@ -276,6 +276,10 @@
   "arcade.details": "詳細",
   "arcade.fullscreen": "フルスクリーン",
   "arcade.load_failed": "ゲームの読み込みに失敗しました",
+  "arcade.loading_flash": "⏳ Flashを読み込み中...",
+  "arcade.loading_zip": "⏳ ZIPを読み込み中...",
+  "arcade.loading_dos": "⏳ DOSを起動中...",
+  "arcade.loading_html5": "⏳ 読み込み中...",
 
   "arcade.tutorial_btn": "❓",
   "arcade.tutorial_welcome_title": "🌿 Flaxiaへようこそ！",
