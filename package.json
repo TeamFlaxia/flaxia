@@ -33,12 +33,20 @@
     "tauri:build:macos": "TAURI_TARGET_PLATFORM=macos node scripts/merge-tauri-config.mjs && tauri build",
     "tauri:dev:linux": "TAURI_TARGET_PLATFORM=linux node scripts/merge-tauri-config.mjs && tauri dev",
     "tauri:build:linux": "TAURI_TARGET_PLATFORM=linux node scripts/merge-tauri-config.mjs && tauri build",
-    "tauri:dev:android": "TAURI_TARGET_PLATFORM=android node scripts/merge-tauri-config.mjs && tauri android dev",
-    "tauri:build:android": "TAURI_TARGET_PLATFORM=android node scripts/merge-tauri-config.mjs && tauri android build",
-    "tauri:dev:ios": "TAURI_TARGET_PLATFORM=ios node scripts/merge-tauri-config.mjs && tauri ios dev",
-    "tauri:build:ios": "TAURI_TARGET_PLATFORM=ios node scripts/merge-tauri-config.mjs && tauri ios build"
+    "cap:init": "npx cap init Flaxia app.flaxia.app",
+    "cap:sync": "npx cap sync",
+    "cap:copy": "npx cap copy",
+    "cap:open:android": "npx cap open android",
+    "cap:open:ios": "npx cap open ios",
+    "cap:build:android": "npx cap sync && npx cap copy && cd android && ./gradlew assembleDebug",
+    "cap:build:ios": "npx cap sync && npx cap copy"
   },
   "dependencies": {
+    "@capacitor/android": "^8.3.4",
+    "@capacitor/core": "^8.3.4",
+    "@capacitor/ios": "^8.3.4",
+    "@capacitor/local-notifications": "^8.2.0",
+    "@capawesome/capacitor-badge": "^8.0.2",
     "@cloudflare/kv-asset-handler": "^0.4.2",
     "@flaxia/node": "^0.1.2",
     "@flaxia/sdk": "^0.1.0",
@@ -58,6 +66,7 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.3.4",
     "@cloudflare/workers-types": "^4.0.0",
     "@tauri-apps/cli": "^2.11.2",
     "@types/dompurify": "^3.0.5",

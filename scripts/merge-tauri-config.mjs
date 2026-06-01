@@ -34,8 +34,6 @@ const VALID_TARGETS = {
   windows: "windows",
   macos: "macos",
   linux: "linux",
-  android: "android",
-  ios: "ios",
 };
 
 function resolveTarget() {
@@ -46,7 +44,7 @@ function resolveTarget() {
   if (platform) return platform;
 
   console.error(
-    `Unsupported platform: ${process.platform}. Set TAURI_TARGET_PLATFORM env var (windows|macos|linux|android|ios).`
+    `Unsupported platform: ${process.platform}. Set TAURI_TARGET_PLATFORM env var (windows|macos|linux).`
   );
   process.exit(1);
 }

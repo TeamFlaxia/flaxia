@@ -51,7 +51,6 @@ fn set_notification_count(app: tauri::AppHandle, count: u32) -> Result<(), Strin
   Ok(())
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_notification::init())

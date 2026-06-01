@@ -15,11 +15,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (app) {
     console.log('App mounted')
 
-    // Top bar: Tauri Android (production) or localhost dev (browser testing)
+    // Top bar: Capacitor/Tauri mobile (production) or localhost dev (browser testing)
     const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
     const isTauri = typeof window !== 'undefined' && ((window as any).__TAURI__ || (window as any).__TAURI_INTERNALS__)
+    const isCapacitor = typeof window !== 'undefined' && typeof (window as any).Capacitor !== 'undefined' && typeof (window as any).Capacitor.isNativePlatform === 'function' && (window as any).Capacitor.isNativePlatform()
     const isTauriMobile = isTauri && /Android/i.test(navigator.userAgent)
-    if (isTauriMobile || isLocalhost) {
+    const isCapacitorMobile = isCapacitor && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+    const isMobile = isTauriMobile || isCapacitorMobile
+    if (isMobile || isLocalhost) {
       document.documentElement.classList.add('tauri-android')
       const topbar = document.getElementById('flaxia-topbar')
       if (topbar) topbar.hidden = false
@@ -63,6 +66,8 @@ let cachedContentComponent: { view: string; component: any; scrollY: number } | 
 let tauriNotify: ((title: string, body: string) => Promise<void>) | null = null
 let tauriBadge: ((count: number) => Promise<void>) | null = null
 let tauriSetNotificationCount: ((count: number) => Promise<void>) | null = null
+let capacitorNotify: ((title: string, body: string) => Promise<void>) | null = null
+let capacitorBadge: ((count: number) => Promise<void>) | null = null
 
 const initTauriNotifications = async () => {
   try {
@@ -114,7 +119,39 @@ const initTauriNotifications = async () => {
     }
   }
 
-/** Register Web Push in browser (Service Worker), or skip in Tauri. */
+const initCapacitorNotifications = async () => {
+  try {
+    const isNative = typeof window !== 'undefined' && typeof (window as any).Capacitor !== 'undefined' && typeof (window as any).Capacitor.isNativePlatform === 'function' && (window as any).Capacitor.isNativePlatform()
+    if (!isNative) return
+
+    const { LocalNotifications } = await import('@capacitor/local-notifications')
+    const { Badge } = await import('@capawesome/capacitor-badge')
+
+    await LocalNotifications.requestPermissions()
+
+    capacitorNotify = async (title: string, body: string) => {
+      try {
+        await LocalNotifications.schedule({
+          notifications: [{ title, body, id: Date.now() }],
+        })
+      } catch (err) {
+        console.error('[notif] Capacitor sendNotification failed:', err)
+      }
+    }
+
+    capacitorBadge = async (count: number) => {
+      try {
+        await Badge.set({ count })
+      } catch {
+        // badge not supported
+      }
+    }
+  } catch {
+    // Not running in Capacitor
+  }
+}
+
+/** Register Web Push in browser (Service Worker), or skip in Tauri/Capacitor. */
 /** Convert VAPID base64 key to Uint8Array for PushManager.subscribe(). */
 function urlBase64ToUint8Array(base64: string): Uint8Array {
   const padding = '='.repeat((4 - base64.length % 4) % 4)
@@ -160,12 +197,17 @@ const initializeWebPush = async () => {
   if (typeof window !== 'undefined' && ((window as any).__TAURI__ || (window as any).__TAURI_INTERNALS__)) {
     return // Tauri desktop/mobile — no Service Worker push needed
   }
+  if (typeof window !== 'undefined' && typeof (window as any).Capacitor !== 'undefined' && typeof (window as any).Capacitor.isNativePlatform === 'function' && (window as any).Capacitor.isNativePlatform()) {
+    return // Capacitor mobile — no Service Worker push needed
+  }
   await registerPushToken()
 }
 
 // Initialize Tauri native notifications (badge / local notif, no-op in browser)
 await initTauriNotifications()
-// Register Service Worker for Web Push (browser only, no-op in Tauri)
+// Initialize Capacitor native notifications (mobile only)
+await initCapacitorNotifications()
+// Register Service Worker for Web Push (browser only, no-op in Tauri/Capacitor)
 initializeWebPush()
 
 const refreshNotificationBadges = async () => {
@@ -176,8 +218,10 @@ const refreshNotificationBadges = async () => {
     }
   })
 
-  // Update Tauri badge count
-  if (tauriBadge) {
+  // Update badge count (Tauri desktop or Capacitor mobile)
+  if (capacitorBadge) {
+    capacitorBadge(unreadNotificationCount)
+  } else if (tauriBadge) {
     tauriBadge(unreadNotificationCount)
   }
 
@@ -191,9 +235,10 @@ const refreshNotificationBadges = async () => {
     console.log('[notif] tauriSetNotificationCount is null (not in Tauri desktop)')
   }
 
-  // Show Tauri notification when new unread notifications arrive (skip on Android — KeepAliveService handles it)
+  // Show notification when new unread notifications arrive
   const isRealTauriAndroid = typeof window !== 'undefined' && ((window as any).__TAURI__ || (window as any).__TAURI_INTERNALS__) && /Android/i.test(navigator.userAgent)
-  if (tauriNotify && !isRealTauriAndroid && unreadNotificationCount > previousUnreadCount && data?.notifications?.length) {
+  const isCapacitorMobile = typeof window !== 'undefined' && typeof (window as any).Capacitor !== 'undefined' && typeof (window as any).Capacitor.isNativePlatform === 'function' && (window as any).Capacitor.isNativePlatform()
+  if (tauriNotify && !isRealTauriAndroid && !isCapacitorMobile && unreadNotificationCount > previousUnreadCount && data?.notifications?.length) {
     const latest = data.notifications[0]
     let body = ''
     if (latest.actor) {
@@ -203,12 +248,23 @@ const refreshNotificationBadges = async () => {
     tauriNotify('Flaxia', body).catch(err => {
       console.error('[notif] tauriNotify failed:', err)
     })
+  } else if (capacitorNotify && isCapacitorMobile && unreadNotificationCount > previousUnreadCount && data?.notifications?.length) {
+    const latest = data.notifications[0]
+    let body = ''
+    if (latest.actor) {
+      body = `${latest.actor.display_name || latest.actor.username}: `
+    }
+    body += latest.post_text_preview || 'New notification'
+    capacitorNotify('Flaxia', body).catch(err => {
+      console.error('[notif] capacitorNotify failed:', err)
+    })
   }
   previousUnreadCount = unreadNotificationCount
 }
 
-// Expose for Rust desktop background polling (lib.rs background thread)
-const isTauriDesktop = typeof window !== 'undefined' && ((window as any).__TAURI__ || (window as any).__TAURI_INTERNALS__) && !/Android/i.test(navigator.userAgent)
+// Expose for Rust desktop background polling (lib.rs background thread, Tauri desktop only)
+const isCapacitorPlatform = typeof window !== 'undefined' && typeof (window as any).Capacitor !== 'undefined' && typeof (window as any).Capacitor.isNativePlatform === 'function' && (window as any).Capacitor.isNativePlatform()
+const isTauriDesktop = typeof window !== 'undefined' && ((window as any).__TAURI__ || (window as any).__TAURI_INTERNALS__) && !/Android/i.test(navigator.userAgent) && !isCapacitorPlatform
 if (isTauriDesktop) {
   ;(window as any).__tauriDesktopPoll = refreshNotificationBadges
 }
