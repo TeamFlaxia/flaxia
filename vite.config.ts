@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite'
-import { copyFileSync, mkdirSync, existsSync, readdirSync } from 'fs'
+import { copyFileSync, mkdirSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
 export default defineConfig({
@@ -74,6 +74,29 @@ export default defineConfig({
           console.log('Copying js-dos files to dist...')
           copyDirectory(jsdosSrc, jsdosDest)
           console.log('js-dos files copied successfully!')
+        }
+
+        const crowdSrc = 'node_modules/@flaxia/node/dist/assets'
+        const crowdDest = 'dist/assets'
+        if (existsSync(crowdSrc)) {
+          const entries = readdirSync(crowdSrc, { withFileTypes: true })
+          for (const entry of entries) {
+            if (entry.name.startsWith('transformers.web')) continue
+            copyFileSync(join(crowdSrc, entry.name), join(crowdDest, entry.name))
+          }
+          console.log('Copied @flaxia/node assets (excluding transformers.web)')
+
+          const aiFile = entries.find(e => e.name.startsWith('ai-inference'))
+          if (aiFile) {
+            const aiPath = join(crowdDest, aiFile.name)
+            const src = readFileSync(aiPath, 'utf-8')
+            const patched = src.replace(
+              /"\.\/transformers\.web-[^"]+\.js"/,
+              '"https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/dist/transformers.web.js"'
+            )
+            writeFileSync(aiPath, patched)
+            console.log('Patched ai-inference import to use CDN')
+          }
         }
       }
     }

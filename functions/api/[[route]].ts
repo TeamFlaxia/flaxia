@@ -98,50 +98,29 @@ async function analyzeSentiment(c: any, postId: string, text: string): Promise<v
     const client = getCrowdClient(c)
     if (!client) return
 
-    // Log request payload before submitting
-    console.log('Submitting sentiment analysis task', {
-      workload: 'ai-inference',
-      payload: {
-        task: 'text-classification',
-        model: 'Xenova/bert-base-multilingual-uncased-sentiment',
-        input: text,
-      },
-    })
+    const callbackUrl = `${c.env.BASE_URL || 'https://flaxia.app'}/api/crowd/webhook`
     const task = await client.submit({
       workload: 'ai-inference',
       payload: {
         task: 'text-classification',
         model: 'Xenova/bert-base-multilingual-uncased-sentiment',
         input: text,
+        options: {
+          dtype: 'uint8',
+        },
       },
+      callbackUrl,
+      timeoutMs: 600000,
     })
-    // Log the submitted task response
-    console.log('Task submission response', task)
 
     const taskId = (task as any).taskId
     if (!taskId) return
-    const result = await client.waitForTask(taskId, 2000, 30000)
-    // Log the result from the crowd worker
-    console.log('Task result response', result)
-    if (result.status === 'done' && result.result) {
-      const output = ((result.result as any).output || []) as Array<{ label: string; score: number }>
-      if (output.length > 0) {
-        const labelScoreMap: Record<string, number> = {
-          very_negative: 0.0,
-          negative: 0.25,
-          neutral: 0.5,
-          positive: 0.75,
-          very_positive: 1.0,
-        }
-        const score = labelScoreMap[output[0].label] ?? output[0].score
-        await c.env.DB.prepare(
-          'UPDATE posts SET sentiment_score = ? WHERE id = ?'
-        ).bind(score, postId).run()
-        console.log(`Sentiment analysis succeeded for post ${postId}: label=${output[0].label}, score=${score}, taskId=${taskId}`)
-      }
-    }
+    await c.env.DB.prepare(
+      'UPDATE posts SET sentiment_task_id = ? WHERE id = ?'
+    ).bind(taskId, postId).run()
+    console.log(`Sentiment task submitted for post ${postId}: taskId=${taskId}`)
   } catch (err) {
-    console.error(`Sentiment analysis failed for post ${postId}:`, err)
+    console.error(`Sentiment analysis submission failed for post ${postId}:`, err)
   } finally {
     processingPosts.delete(postId)
   }
@@ -7144,6 +7123,44 @@ app.post('/api/push/unregister', requireAuth, async (c) => {
   } catch (e) {
     console.error('Failed to unregister push subscription:', e)
     return c.json({ error: 'Failed to unregister push subscription' }, 500)
+  }
+})
+
+// POST /api/crowd/webhook - Receive sentiment analysis result from crowd orchestrator
+app.post('/api/crowd/webhook', async (c) => {
+  try {
+    const body = await c.req.json() as Record<string, unknown>
+    const { taskId, status, result, error } = body
+    if (!taskId) return c.text('Bad Request', 400)
+
+    if (status === 'done' && (result as any)?.output?.[0]) {
+      const output = (result as any).output[0] as { label: string; score: number }
+      const labelScoreMap: Record<string, number> = {
+        very_negative: 0.0,
+        negative: 0.25,
+        neutral: 0.5,
+        positive: 0.75,
+        very_positive: 1.0,
+      }
+      const score = labelScoreMap[output.label] ?? output.score
+      const row = await c.env.DB.prepare(
+        'SELECT id FROM posts WHERE sentiment_task_id = ?'
+      ).bind(taskId).first() as { id: string } | null
+      const postId = row?.id
+      if (postId) {
+        await c.env.DB.prepare(
+          'UPDATE posts SET sentiment_score = ? WHERE id = ?'
+        ).bind(score, postId).run()
+        console.log(`Sentiment webhook done for post ${postId}: label=${output.label}, score=${score}`)
+      }
+    } else if (status === 'failed') {
+      console.log(`Sentiment task failed: taskId=${taskId}, error=${error || 'unknown'}`)
+    }
+
+    return c.json({ received: true })
+  } catch (e) {
+    console.error('Webhook error:', e)
+    return c.json({ received: true })
   }
 })
 

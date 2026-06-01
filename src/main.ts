@@ -1874,7 +1874,7 @@ if (isTauriDesktop) {
     }
 
     deferInit(async () => {
-      const { initFlaxiaNode } = await import('https://cdn.jsdelivr.net/npm/@flaxia/node@0.1.0/dist/index.js')
+      const { initFlaxiaNode } = await import('https://cdn.jsdelivr.net/npm/@flaxia/node@0.1.2/dist/index.js')
       initFlaxiaNode({
         orchestratorUrl: 'https://flaxia-worker.remydre8.workers.dev',
         siteId: 'flaxia',
