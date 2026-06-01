@@ -24,13 +24,16 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    watch: {
+      ignored: ['**/src-tauri/target/**'],
+    },
     proxy: {
       '/api': {
-        target: 'https://flaxia.app',
+        target: process.env.VITE_API_TARGET || 'http://localhost:8787',
         changeOrigin: true,
       },
       '/sw.js': {
-        target: 'https://flaxia.app',
+        target: process.env.VITE_API_TARGET || 'http://localhost:8787',
         changeOrigin: true,
       },
     },

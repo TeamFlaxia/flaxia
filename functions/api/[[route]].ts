@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import { User, getSession, getMeWithSession, getSessionToken, setSessionCookie, clearSessionCookie, registerUser, loginUser, deleteSession, extendSession, hashPassword, verifyPassword } from '../lib/auth'
+import { User, getSession, getMeWithSession, getSessionToken, setSessionCookie, clearSessionCookie, registerUser, loginUser, deleteSession, extendSession, createSession, hashPassword, verifyPassword } from '../lib/auth'
 import { nanoid } from 'nanoid'
 import { checkRateLimit, rateLimitResponse } from '../../src/lib/rate-limit'
 import { isAdmin } from '../../src/lib/admin'
@@ -1391,7 +1391,13 @@ app.post('/api/auth/register', async (c) => {
       display_name
     })
     
-    return c.json({ user })
+    // Create session and set cookie so user is logged in after registration
+    const session = await createSession(c.env, user.id)
+    const isSecure = c.req.url.startsWith('https')
+    const response = c.json({ user })
+    setSessionCookie(response, session.id, isSecure)
+    
+    return response
   } catch (error: any) {
     console.error('Registration error:', error)
     return c.json({ error: 'Registration failed', details: error?.message || 'Unknown error' }, 500)
@@ -7121,11 +7127,11 @@ app.post('/api/push/register', requireAuth, async (c) => {
     if (existing) {
       await c.env.DB.prepare(
         'UPDATE push_subscriptions SET user_id = ?, auth_key = ?, p256dh_key = ?, updated_at = strftime(\'%Y-%m-%dT%H:%M:%fZ\',\'now\') WHERE endpoint = ?'
-      ).bind(user.user_id, body.keys.auth, body.keys.p256dh, body.endpoint).run()
+      ).bind(user.id, body.keys.auth, body.keys.p256dh, body.endpoint).run()
     } else {
       await c.env.DB.prepare(
         'INSERT INTO push_subscriptions (id, user_id, endpoint, auth_key, p256dh_key) VALUES (?, ?, ?, ?, ?)'
-      ).bind(nanoid(), user.user_id, body.endpoint, body.keys.auth, body.keys.p256dh).run()
+      ).bind(nanoid(), user.id, body.endpoint, body.keys.auth, body.keys.p256dh).run()
     }
     return c.json({ ok: true })
   } catch (e) {

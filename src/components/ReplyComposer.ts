@@ -135,9 +135,6 @@ export class ReplyComposer {
       this.charCount.textContent = `${this.props.prefillText.length}/200`
     }
 
-    // Set user avatar
-    this.initAvatar()
-
     // Create mention suggestion dropdown
     this.mentionDropdown = document.createElement('div')
     this.mentionDropdown.className = 'mention-dropdown'
@@ -253,6 +250,9 @@ export class ReplyComposer {
     this.element.addEventListener('drop', (e) => {
       console.log('Drop event:', e)
     })
+
+    // Set user avatar
+    this.initAvatar()
   }
 
   private handleMentionInput(): void {

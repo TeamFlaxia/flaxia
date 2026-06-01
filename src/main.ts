@@ -67,14 +67,24 @@ let tauriSetNotificationCount: ((count: number) => Promise<void>) | null = null
 const initTauriNotifications = async () => {
   try {
     const { isPermissionGranted, requestPermission, sendNotification } = await import('@tauri-apps/plugin-notification')
-    let granted = await isPermissionGranted()
-    if (!granted) {
-      const permission = await requestPermission()
-      granted = permission === 'granted'
+
+    // Try to grant permission, but don't gate on it — on Windows/Linux the
+    // permission model doesn't apply (notifications always work), and on macOS
+    // the OS will prompt or silently drop the notification if denied.
+    try {
+      const granted = await isPermissionGranted()
+      if (!granted) {
+        await requestPermission()
+      }
+    } catch {
+      // permission API not supported on this platform — proceed anyway
     }
-    if (granted) {
-      tauriNotify = async (title: string, body: string) => {
-        sendNotification({ title, body })
+
+    tauriNotify = async (title: string, body: string) => {
+      try {
+        await sendNotification({ title, body: body || title })
+      } catch (err) {
+        console.error('[notif] sendNotification failed:', err)
       }
     }
     // Badge always works even without notification permission
@@ -190,7 +200,9 @@ const refreshNotificationBadges = async () => {
       body = `${latest.actor.display_name || latest.actor.username}: `
     }
     body += latest.post_text_preview || 'New notification'
-    tauriNotify('Flaxia', body)
+    tauriNotify('Flaxia', body).catch(err => {
+      console.error('[notif] tauriNotify failed:', err)
+    })
   }
   previousUnreadCount = unreadNotificationCount
 }
