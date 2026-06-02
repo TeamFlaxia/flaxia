@@ -777,6 +777,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Page loading overlay
     let pageLoader: HTMLDivElement | null = null;
+    let pageLoaderTimer: ReturnType<typeof setTimeout> | null = null;
 
     function showPageLoader() {
       if (!pageLoader) {
@@ -785,12 +786,32 @@ document.addEventListener('DOMContentLoaded', async () => {
         pageLoader.id = 'page-loader';
         pageLoader.innerHTML = '<div class="page-loader-content"><div class="page-loader-spinner"></div><div>Loading...</div></div>';
         document.body.appendChild(pageLoader);
+      } else {
+        const content = pageLoader.querySelector('.page-loader-content')!;
+        content.innerHTML = '<div class="page-loader-spinner"></div><div>Loading...</div>';
+        content.className = 'page-loader-content';
       }
       requestAnimationFrame(() => pageLoader!.classList.add('active'));
+
+      if (pageLoaderTimer) clearTimeout(pageLoaderTimer);
+      pageLoaderTimer = setTimeout(() => {
+        if (!pageLoader || !pageLoader.classList.contains('active')) return;
+        const content = pageLoader.querySelector('.page-loader-content')!;
+        content.innerHTML = '<div style="font-size:2rem;margin-bottom:1rem;">⚠</div><div>Failed to load page</div><button class="page-loader-reload-btn" style="margin-top:1rem;padding:0.6rem 1.5rem;border:1px solid var(--border);border-radius:8px;background:var(--accent);color:#000;font-family:inherit;font-size:0.9rem;font-weight:600;cursor:pointer;transition:background .2s">Reload</button>';
+        content.className = 'page-loader-content';
+        const btn = content.querySelector('.page-loader-reload-btn') as HTMLButtonElement;
+        btn.onclick = () => { window.location.reload(); };
+        btn.onmouseenter = () => { btn.style.background = 'var(--accent-dark)'; };
+        btn.onmouseleave = () => { btn.style.background = 'var(--accent)'; };
+      }, 15000);
     }
 
     function hidePageLoader() {
       if (pageLoader) pageLoader.classList.remove('active');
+      if (pageLoaderTimer) {
+        clearTimeout(pageLoaderTimer);
+        pageLoaderTimer = null;
+      }
     }
 
     // Navigate to view
@@ -956,6 +977,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Clear app content
       showPageLoader();
       app.innerHTML = '';
+
+      // Wrap rendering in try-catch so errors don't leave the loader stuck
+      try {
 
       // Handle auth pages (full screen, no nav)
       if (view === 'login') {
@@ -2062,13 +2086,57 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       app.appendChild(mainContainer);
       hidePageLoader();
+      } catch (e) {
+        console.error('Navigation error:', e);
+        if (pageLoader) {
+          const c = pageLoader.querySelector('.page-loader-content')!;
+          c.innerHTML = '<div style="font-size:2rem;margin-bottom:1rem;">⚠</div><div>Failed to load page</div><button class="page-loader-reload-btn" style="margin-top:1rem;padding:0.6rem 1.5rem;border:1px solid var(--border);border-radius:8px;background:var(--accent);color:#000;font-family:inherit;font-size:0.9rem;font-weight:600;cursor:pointer">Reload</button>';
+          c.className = 'page-loader-content';
+          const btn = c.querySelector('.page-loader-reload-btn') as HTMLButtonElement;
+          btn.onclick = () => { window.location.reload(); };
+        }
+      }
     };
+    
+    async function safeNavigate(
+      view: string,
+      postId?: string,
+      username?: string,
+      tag?: string,
+      adminTab?: string,
+      searchQuery?: string,
+      searchType?: string,
+    ) {
+      try {
+        await navigateTo(
+          view as any,
+          postId,
+          username,
+          tag,
+          adminTab as any,
+          searchQuery,
+          searchType as any,
+        );
+      } catch (e) {
+        console.error('Navigation failed:', e);
+        // Show error on the loading overlay if it's visible, otherwise reload
+        if (pageLoader && pageLoader.classList.contains('active')) {
+          const c = pageLoader.querySelector('.page-loader-content')!;
+          c.innerHTML = '<div style="font-size:2rem;margin-bottom:1rem;">⚠</div><div>Failed to load page</div><button class="page-loader-reload-btn" style="margin-top:1rem;padding:0.6rem 1.5rem;border:1px solid var(--border);border-radius:8px;background:var(--accent);color:#000;font-family:inherit;font-size:0.9rem;font-weight:600;cursor:pointer">Reload</button>';
+          c.className = 'page-loader-content';
+          const btn = c.querySelector('.page-loader-reload-btn') as HTMLButtonElement;
+          btn.onclick = () => { window.location.reload(); };
+        } else {
+          window.location.reload();
+        }
+      }
+    }
 
     // Handle browser back/forward
     window.addEventListener('popstate', async (e) => {
       const route = parseCurrentRoute();
       if (route) {
-        await navigateTo(
+        await safeNavigate(
           route.view,
           route.postId || undefined,
           route.username || undefined,
@@ -2083,7 +2151,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Handle SPA navigation events
     window.addEventListener('spaNavigate', async (e: any) => {
       const detail = e.detail;
-      await navigateTo(
+      await safeNavigate(
         detail.view,
         detail.postId,
         detail.username,
@@ -2100,7 +2168,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const initialRoute = parseCurrentRoute();
     console.log('Initial route:', initialRoute);
     if (initialRoute) {
-      await navigateTo(
+      await safeNavigate(
         initialRoute.view,
         initialRoute.postId || undefined,
         initialRoute.username || undefined,
