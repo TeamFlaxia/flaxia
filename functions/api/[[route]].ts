@@ -3844,6 +3844,87 @@ app.get('/api/posts/trending', async (c) => {
   }
 });
 
+// GET /api/tags/trending - get top 5 trending hashtags (based on recent N posts percentage)
+app.get('/api/tags/trending', async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const recentCountParam = c.req.query('recent_count');
+    const recentCount = recentCountParam ? parseInt(recentCountParam, 10) : 100;
+    const validRecentCount = Number.isNaN(recentCount) || recentCount < 10 || recentCount > 1000 ? 100 : recentCount;
+
+    const result = await c.env.DB.prepare(`
+WITH recent_posts AS (
+  SELECT id, hashtags
+  FROM posts
+  WHERE hidden = 0 AND status = 'published'
+  ORDER BY created_at DESC
+  LIMIT ?
+)
+SELECT
+  value AS tag,
+  COUNT(*) AS count,
+  ROUND(COUNT(*) * 100.0 / ?, 1) AS percentage
+FROM recent_posts, json_each(recent_posts.hashtags)
+GROUP BY value
+ORDER BY count DESC
+LIMIT 5
+    `)
+      .bind(validRecentCount, validRecentCount)
+      .all();
+
+    if (!result.success) {
+      return c.json({ error: 'Failed to fetch trending tags' }, 500);
+    }
+
+    const tags = result.results || [];
+
+    return c.json({ tags }, 200, {
+      'Cache-Control': 'public, max-age=60',
+    });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Trending tags error:', error);
+    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// GET /api/tags/suggest?q=prefix - suggest hashtags matching prefix
+app.get('/api/tags/suggest', async (c) => {
+  try {
+    const q = c.req.query('q');
+    if (!q || q.length < 1) {
+      return c.json({ tags: [] });
+    }
+
+    const limit = Math.min(parseInt(c.req.query('limit') || '10', 10), 20);
+    const prefix = q.toLowerCase();
+
+    const result = await c.env.DB.prepare(`
+      SELECT DISTINCT value AS tag, COUNT(*) AS count
+      FROM posts, json_each(posts.hashtags)
+      WHERE posts.hidden = 0 AND posts.status = 'published'
+        AND LOWER(value) LIKE ?
+      GROUP BY value
+      ORDER BY count DESC
+      LIMIT ?
+    `)
+      .bind(prefix + '%', limit)
+      .all();
+
+    const tags = result.results || [];
+    return c.json({ tags }, 200, {
+      'Cache-Control': 'public, max-age=30',
+    });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Tag suggest error:', error);
+    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
 // GET /api/posts/recommended - get recommended posts for the user
 app.get('/api/posts/recommended', async (c) => {
   try {
@@ -5026,19 +5107,17 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
 
       if (user && c.env.AP_DELIVERY_QUEUE) {
         // Get post details including mentions
-        const post = (await c.env.DB.prepare(
-          'SELECT id, text, created_at, visibility, mentions FROM posts WHERE id = ?',
-        )
+        const post = (await c.env.DB.prepare('SELECT id, text, created_at, status, mentions FROM posts WHERE id = ?')
           .bind(postId)
           .first()) as {
           id: string;
           text: string;
           created_at: string;
-          visibility: string;
+          status: string;
           mentions: string | null;
         } | null;
 
-        if (post && post.visibility === 'public') {
+        if (post && post.status === 'published') {
           // Build mention actor URLs for CC
           const mentionActorUrls: string[] = [];
           try {
@@ -5779,6 +5858,144 @@ app.get('/api/posts/:id/replies', async (c) => {
     }
 
     return c.json({ root: parentPost, replies });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Thread fetch error:', error);
+    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// GET /api/posts/:id/thread - get full thread
+app.get('/api/posts/:id/thread', async (c) => {
+  try {
+    const postId = c.req.param('id');
+
+    const token = getSessionToken(c.req.raw);
+    const sessionData = token ? await getSession(c.env, token) : null;
+    const currentUserId = sessionData?.user?.id || null;
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const post = await c.env.DB.prepare(
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published'",
+    )
+      .bind(postId)
+      .first();
+
+    if (!post) {
+      return c.json({ error: 'Post not found' }, 404);
+    }
+
+    const rootId = (post as Record<string, unknown>).root_id || (post as Record<string, unknown>).id;
+
+    const rootPost = await c.env.DB.prepare(
+      `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+       u.display_name, u.avatar_key
+       FROM posts p
+       LEFT JOIN users u ON p.user_id = u.id
+       WHERE p.id = ? AND p.status = 'published'`,
+    )
+      .bind(rootId)
+      .first();
+
+    if (!rootPost) {
+      return c.json({ error: 'Thread not found' }, 404);
+    }
+
+    const repliesResult = await c.env.DB.prepare(
+      `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+       u.display_name, u.avatar_key
+       FROM posts p
+       LEFT JOIN users u ON p.user_id = u.id
+       WHERE p.root_id = ? AND p.status = 'published' AND p.id != ?
+       ORDER BY p.created_at ASC LIMIT 200`,
+    )
+      .bind(rootId, rootId)
+      .all();
+
+    if (!repliesResult.success) {
+      return c.json({ error: 'Failed to fetch thread' }, 500);
+    }
+
+    const replies = repliesResult.results || [];
+
+    if (currentUserId) {
+      const allPosts: Array<Record<string, unknown>> = [
+        rootPost as Record<string, unknown>,
+        ...(replies as Array<Record<string, unknown>>),
+      ];
+      const postIds = allPosts.map((p: Record<string, unknown>) => p.id as string);
+      const placeholders = postIds.map(() => '?').join(',');
+
+      const freshResult = await c.env.DB.prepare(
+        `SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${placeholders})`,
+      )
+        .bind(currentUserId, ...postIds)
+        .all();
+
+      if (freshResult.success) {
+        const freshedPostIds = new Set(
+          (freshResult.results || []).map((f: Record<string, unknown>) => f.post_id as string),
+        );
+        (rootPost as Record<string, unknown>).is_freshed = freshedPostIds.has(
+          (rootPost as Record<string, unknown>).id as string,
+        );
+        (replies as Array<Record<string, unknown>>).forEach((post: Record<string, unknown>) => {
+          post.is_freshed = freshedPostIds.has(post.id as string);
+        });
+      }
+
+      const bookmarkResult = await c.env.DB.prepare(
+        `SELECT post_id FROM bookmarks WHERE user_id = ? AND post_id IN (${placeholders})`,
+      )
+        .bind(currentUserId, ...postIds)
+        .all();
+      if (bookmarkResult.success) {
+        const bookmarkedPostIds = new Set(
+          (bookmarkResult.results || []).map((b: Record<string, unknown>) => b.post_id as string),
+        );
+        (rootPost as Record<string, unknown>).is_bookmarked = bookmarkedPostIds.has(
+          (rootPost as Record<string, unknown>).id as string,
+        );
+        (replies as Array<Record<string, unknown>>).forEach((post: Record<string, unknown>) => {
+          post.is_bookmarked = bookmarkedPostIds.has(post.id as string);
+        });
+      }
+    }
+
+    await enrichPostsWithPolls(
+      [rootPost as PostRow],
+      c.env.DB,
+      currentUserId,
+      c.env.VAPID_PUBLIC_KEY,
+      c.env.VAPID_PRIVATE_KEY,
+    );
+    await enrichPostsWithPolls(
+      replies as PostRow[],
+      c.env.DB,
+      currentUserId,
+      c.env.VAPID_PUBLIC_KEY,
+      c.env.VAPID_PRIVATE_KEY,
+    );
+
+    if ((rootPost as Record<string, unknown>).sentiment_score == null && (rootPost as Record<string, unknown>).text) {
+      c.executionCtx.waitUntil(
+        analyzeSentiment(
+          c,
+          (rootPost as Record<string, unknown>).id as string,
+          (rootPost as Record<string, unknown>).text as string,
+        ),
+      );
+    }
+    for (const r of replies as Array<Record<string, unknown>>) {
+      if (r.sentiment_score == null && r.text) {
+        c.executionCtx.waitUntil(analyzeSentiment(c, r.id as string, r.text as string));
+      }
+    }
+
+    return c.json({ root: rootPost, replies });
   } catch (error: unknown) {
     const err = error as { message?: string };
     console.error('Thread fetch error:', error);
