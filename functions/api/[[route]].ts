@@ -4577,7 +4577,19 @@ app.post('/api/posts/prepare', requireAuth, async (c) => {
 // Step 3 — POST /api/posts/commit (protected)
 app.post('/api/posts/commit', requireAuth, async (c) => {
   try {
-    const { postId, gifKey, swfKey, text, hashtags: requestHashtags, poll: pollData } = await c.req.json();
+    const {
+      postId,
+      gifKey,
+      swfKey,
+      text,
+      hashtags: requestHashtags,
+      poll: pollData,
+      zipKey,
+      thumbnailKey,
+    } = await c.req.json();
+    const payloadKey = zipKey;
+    const userId = c.get('user')?.id || '';
+    const username = c.get('user')?.username || 'anonymous';
 
     // Validate text
     if (!text || text.length < 1 || text.length > 200) {
@@ -4627,8 +4639,17 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
     }
 
     const result = await c.env.DB.prepare(`
-      INSERT INTO posts (id, user_id, username, text, hashtags, mentions, payload_key, gif_key, swf_key, thumbnail_key)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO posts (id, user_id, username, text, hashtags, mentions, payload_key, gif_key, swf_key, thumbnail_key, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published')
+      ON CONFLICT(id) DO UPDATE SET
+        text = excluded.text,
+        hashtags = excluded.hashtags,
+        mentions = excluded.mentions,
+        payload_key = COALESCE(excluded.payload_key, posts.payload_key),
+        gif_key = COALESCE(excluded.gif_key, posts.gif_key),
+        swf_key = COALESCE(excluded.swf_key, posts.swf_key),
+        thumbnail_key = COALESCE(excluded.thumbnail_key, posts.thumbnail_key),
+        status = 'published'
     `)
       .bind(
         postId,
