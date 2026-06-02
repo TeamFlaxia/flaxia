@@ -82,7 +82,7 @@
     "lint-staged": "^16.4.0",
     "typescript": "^5.0.0",
     "vite": "^5.0.0",
-    "vite-plugin-static-copy": "^3.3.0",
+    "vite-plugin-static-copy": "^4.1.0",
     "wrangler": "^4.73.0"
   },
   "packageManager": "pnpm@8.0.0",
