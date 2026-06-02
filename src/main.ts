@@ -2177,7 +2177,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     deferInit(async () => {
-      // @ts-ignore - dynamic import of local path
+      // @ts-expect-error - dynamic import of local path
       const { initFlaxiaNode } = await import('/api/crowd/index.js');
       initFlaxiaNode({
         orchestratorUrl: 'https://flaxia-worker.remydre8.workers.dev',
