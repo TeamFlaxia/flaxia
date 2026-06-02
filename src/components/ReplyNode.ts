@@ -56,7 +56,7 @@ export class ReplyNode {
     
     // Create wrapper for post card and expand button
     const postWrapper = document.createElement('div')
-    postWrapper.style.cssText = 'position: relative;'
+    postWrapper.style.cssText = 'display: flex; align-items: flex-start; gap: 0.25rem;'
     postWrapper.appendChild(this.postCard.getElement())
     
     // Add expand button if this reply has children and depth > 0
@@ -65,9 +65,6 @@ export class ReplyNode {
       this.expandButton.className = 'expand-button'
       this.expandButton.innerHTML = '▶'
       this.expandButton.style.cssText = `
-        position: absolute;
-        left: -1.5rem;
-        top: 0.5rem;
         background: none;
         border: none;
         color: #64748b;
@@ -81,6 +78,7 @@ export class ReplyNode {
         display: flex;
         align-items: center;
         justify-content: center;
+        flex-shrink: 0;
       `
       this.expandButton.addEventListener('click', () => this.toggleExpanded())
       this.expandButton.addEventListener('mouseenter', () => {
@@ -91,7 +89,7 @@ export class ReplyNode {
         this.expandButton!.style.backgroundColor = 'none'
         this.expandButton!.style.color = '#64748b'
       })
-      postWrapper.appendChild(this.expandButton)
+      postWrapper.insertBefore(this.expandButton, postWrapper.firstChild)
     }
     
     container.appendChild(postWrapper)

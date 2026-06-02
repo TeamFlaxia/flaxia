@@ -201,9 +201,9 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     margin-bottom: 1rem;
   `
 
-  const styles: { value: ReplyStyle; label: string; desc: string }[] = [
-    { value: 'twitter', label: 'Twitter風', desc: 'ツリー表示で返信をネスト' },
-    { value: '2ch', label: '2ch風', desc: 'フラット表示＋連番＋>>参照' },
+  const styles: { value: ReplyStyle; labelKey: string; descKey: string }[] = [
+    { value: 'twitter', labelKey: 'settings.reply_style_twitter', descKey: 'settings.reply_style_twitter_desc' },
+    { value: '2ch', labelKey: 'settings.reply_style_2ch', descKey: 'settings.reply_style_2ch_desc' },
   ]
 
   styles.forEach(s => {
@@ -232,11 +232,11 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
     const nameSpan = document.createElement('span')
     nameSpan.style.cssText = 'font-weight: 600; color: var(--text-primary); font-size: 0.9375rem;'
-    nameSpan.textContent = s.label
+    nameSpan.textContent = t(s.labelKey)
 
     const descSpan = document.createElement('span')
     descSpan.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem;'
-    descSpan.textContent = s.desc
+    descSpan.textContent = t(s.descKey)
 
     textDiv.appendChild(nameSpan)
     textDiv.appendChild(descSpan)
