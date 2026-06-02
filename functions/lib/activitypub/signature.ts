@@ -12,7 +12,7 @@ interface SignatureHeader {
 }
 
 function parseSignatureHeader(signatureHeader: string): SignatureHeader {
-  const result: any = {};
+  const result: Record<string, unknown> = {};
   const regex = /(\w+)=("(?:\\.|[^"])*"|[^,]+)/g;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(signatureHeader)) !== null) {
@@ -32,7 +32,7 @@ function parseSignatureHeader(signatureHeader: string): SignatureHeader {
     throw new Error('Invalid signature header format: missing required fields');
   }
 
-  return result as SignatureHeader;
+  return result as unknown as SignatureHeader;
 }
 
 /**
@@ -192,7 +192,7 @@ export async function fetchActorPublicKey(
       return null;
     }
 
-    const actor = await response.json() as { publicKey?: { publicKeyPem?: string } };
+    const actor = (await response.json()) as { publicKey?: { publicKeyPem?: string } };
 
     if (!actor.publicKey || !actor.publicKey.publicKeyPem) {
       console.error('Actor missing publicKey.publicKeyPem');

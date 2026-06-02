@@ -139,19 +139,21 @@ export class ReplyNode {
   private setupEventListeners(): void {
     if (this.postCard) {
       // Listen for reply toggle events on the post card
-      this.postCard.getElement().addEventListener('replyToggle', (e: any) => {
-        if (e.detail.postId === this.props.node.post.id) {
+      this.postCard.getElement().addEventListener('replyToggle', ((e: Event) => {
+        const ce = e as CustomEvent;
+        if (ce.detail.postId === this.props.node.post.id) {
           this.toggleReplyComposer();
         }
-      });
+      }) as EventListener);
     }
 
     // Listen for global reply composer open events to close other composers
-    this.globalReplyListener = (e: any) => {
-      if (e.detail.postId !== this.props.node.post.id && this.isReplyComposerOpen) {
+    this.globalReplyListener = ((e: Event) => {
+      const ce = e as CustomEvent;
+      if (ce.detail.postId !== this.props.node.post.id && this.isReplyComposerOpen) {
         this.hideReplyComposer();
       }
-    };
+    }) as EventListener;
     document.addEventListener('replyComposerOpen', this.globalReplyListener);
   }
 

@@ -11,6 +11,6 @@ declare module 'web-push' {
   }
   export function generateVAPIDKeys(): VapidKeys;
   export function setVapidDetails(subject: string, publicKey: string, privateKey: string): void;
-  export function generateRequestDetails(subscription: any, payload: string): RequestDetails;
-  export function sendNotification(subscription: any, payload: string): Promise<any>;
+  export function generateRequestDetails(subscription: PushSubscriptionJSON, payload: string): RequestDetails;
+  export function sendNotification(subscription: PushSubscriptionJSON, payload: string): Promise<unknown>;
 }

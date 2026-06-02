@@ -34,7 +34,7 @@ export function createAdminUsersTab({ onNavigateToTab, adminUsernames = [] }: Ad
       if (!response.ok) {
         throw new Error('Failed to fetch users');
       }
-      const data = await response.json() as { users: AdminUser[] };
+      const data = (await response.json()) as { users: AdminUser[] };
       return data.users;
     } catch (error) {
       console.error('Fetch users error:', error);
@@ -49,7 +49,7 @@ export function createAdminUsersTab({ onNavigateToTab, adminUsernames = [] }: Ad
         credentials: 'include',
       });
       if (!response.ok) {
-        const error = await response.json() as { error?: string };
+        const error = (await response.json()) as { error?: string };
         throw new Error(error.error || 'Failed to delete user');
       }
       return true;

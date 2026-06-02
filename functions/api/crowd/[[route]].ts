@@ -20,8 +20,14 @@ export async function onRequest(context: {
       const { taskId, status, result, error } = body;
       if (!taskId) return new Response('Bad Request', { status: 400 });
 
-      if (status === 'done' && (result as any)?.output?.[0]) {
-        const output = (result as any).output[0] as { label: string; score: number };
+      if (
+        status === 'done' &&
+        ((result as Record<string, unknown>).output as Array<{ label: string; score: number }>)?.[0]
+      ) {
+        const output = ((result as Record<string, unknown>).output as Array<{ label: string; score: number }>)[0] as {
+          label: string;
+          score: number;
+        };
         const labelScoreMap: Record<string, number> = {
           very_negative: 0.0,
           negative: 0.25,
@@ -30,7 +36,7 @@ export async function onRequest(context: {
           very_positive: 1.0,
         };
         const score = labelScoreMap[output.label] ?? output.score;
-        const db = (context.env as any).DB;
+        const db = (context.env as { DB: D1Database }).DB;
         const row = (await db.prepare('SELECT id FROM posts WHERE sentiment_task_id = ?').bind(taskId).first()) as {
           id: string;
         } | null;

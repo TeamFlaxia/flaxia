@@ -4,6 +4,7 @@ import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
 import { openPostModal } from '../lib/post-modal.js';
+import { Post } from '../types/post.js';
 import { createEditProfileModal } from './EditProfileModal.js';
 import { createFollowerListModal } from './FollowerListModal.js';
 import { linkifyHashtags, linkifyUrls, processText, renderMathElements } from './PostText.js';
@@ -14,6 +15,18 @@ interface ProfilePageProps {
   username: string;
   currentUser: CurrentUser | null;
   sandboxOrigin: string;
+}
+
+interface ProfileUserData {
+  username: string;
+  display_name?: string;
+  bio?: string;
+  avatar_key?: string | null;
+  created_at?: string;
+  posts_count?: number;
+  followers_count?: number;
+  following_count?: number;
+  is_following?: boolean;
 }
 
 export function createProfilePage({ username, currentUser, sandboxOrigin }: ProfilePageProps) {
@@ -196,14 +209,14 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
       openPostModal({
         currentUser,
         onPostCreated: (post) => {
-          postList.addPost(post);
+          postList.addPost(post as unknown as Post);
         },
       });
     });
     container.appendChild(fabButton);
   }
 
-  let userData: any = null;
+  let userData: ProfileUserData | null = null;
   const _isEditing = false;
   let isFollowing = false;
 
@@ -212,11 +225,11 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
     try {
       const response = await fetch(`/api/users/${username}`);
       if (response.ok) {
-        const data = (await response.json()) as { user: any };
+        const data = (await response.json()) as { user: ProfileUserData };
         userData = data.user;
 
         // Update UI
-        displayName.textContent = userData.display_name;
+        displayName.textContent = userData.display_name ?? null;
 
         // Process bio with Markdown and links
         if (userData.bio) {
@@ -234,7 +247,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
             })
             .catch((error) => {
               console.error('Failed to process bio:', error);
-              bio.textContent = userData.bio;
+              bio.textContent = userData?.bio ?? null;
             });
         } else {
           bio.textContent = '';
@@ -285,7 +298,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
     if (!userData) return;
 
     const modal = createEditProfileModal({
-      currentUser: userData,
+      currentUser: userData as { username: string; display_name?: string; bio?: string; avatar_key?: string },
       onSave: async () => {
         // Reload user data after save
         await loadUserData();

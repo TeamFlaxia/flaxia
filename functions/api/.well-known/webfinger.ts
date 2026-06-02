@@ -60,7 +60,7 @@ app.get('/', async (c) => {
     return c.json(webfingerResponse, 200, {
       'Content-Type': 'application/jrd+json',
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('WebFinger error:', error);
     return c.json({ error: 'WebFinger failed', details: error?.message || 'Unknown error' }, 500);
   }

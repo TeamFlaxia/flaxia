@@ -52,7 +52,7 @@ export async function onRequest(context: {
       JOIN users ON posts.user_id = users.id
       WHERE posts.id = ?
     `);
-    const result: any = await stmt.bind(id).first();
+    const result: Record<string, unknown> | null = (await stmt.bind(id).first()) as Record<string, unknown> | null;
 
     if (!result) {
       return new Response(

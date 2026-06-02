@@ -62,7 +62,8 @@ export class PerformanceMonitor {
       if (PerformanceObserver.supportedEntryTypes.includes('first-input')) {
         const fidObserver = new PerformanceObserver((list) => {
           for (const entry of list.getEntries()) {
-            this.metrics.fid = (entry as PerformanceEntry & { processingStart: number }).processingStart - entry.startTime;
+            this.metrics.fid =
+              (entry as PerformanceEntry & { processingStart: number }).processingStart - entry.startTime;
           }
         });
         fidObserver.observe({ entryTypes: ['first-input'] });
@@ -195,7 +196,7 @@ export const LayoutStability = {
 // Performance optimization utilities
 export const PerformanceOptimizer = {
   // Debounce function for performance
-  debounce<T extends (...args: any[]) => any>(func: T, wait: number): (...args: Parameters<T>) => void {
+  debounce<T extends (...args: unknown[]) => unknown>(func: T, wait: number): (...args: Parameters<T>) => void {
     let timeout: NodeJS.Timeout;
     return (...args: Parameters<T>) => {
       clearTimeout(timeout);
@@ -204,7 +205,7 @@ export const PerformanceOptimizer = {
   },
 
   // Throttle function for performance
-  throttle<T extends (...args: any[]) => any>(func: T, limit: number): (...args: Parameters<T>) => void {
+  throttle<T extends (...args: unknown[]) => unknown>(func: T, limit: number): (...args: Parameters<T>) => void {
     let inThrottle: boolean;
     return (...args: Parameters<T>) => {
       if (!inThrottle) {

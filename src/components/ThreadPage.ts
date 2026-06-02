@@ -359,11 +359,12 @@ export class ThreadPage {
       rootContainer.appendChild(this.rootReplyComposer.getElement());
 
       // Setup event listener for root post reply toggle
-      this.rootPostCard.getElement().addEventListener('replyToggle', (e: any) => {
-        if (e.detail.postId === data.root.id) {
+      this.rootPostCard.getElement().addEventListener('replyToggle', ((e: Event) => {
+        const customEvent = e as CustomEvent;
+        if (customEvent.detail.postId === data.root.id) {
           this.toggleRootReplyComposer();
         }
-      });
+      }) as EventListener);
 
       // Add replies header
       const repliesHeader = document.createElement('h2');

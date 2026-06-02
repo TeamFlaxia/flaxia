@@ -405,7 +405,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
       if (response.ok) {
         // Update cache with new user data
         const updatedUser = await response.json();
-        updateMeCache(updatedUser);
+        updateMeCache(updatedUser as Record<string, unknown>);
 
         // Dispatch event to notify components of profile update
         window.dispatchEvent(

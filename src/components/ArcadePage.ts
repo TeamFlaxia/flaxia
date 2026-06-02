@@ -9,7 +9,7 @@ import type { Post } from '../types/post.js';
 import { executeDos } from './DosPlayer.js';
 import { executeFlash } from './FlashPlayer.js';
 import { createPostCard } from './PostCard.js';
-import { createReplyComposer } from './ReplyComposer.js';
+import { createReplyComposer, ReplyComposer } from './ReplyComposer.js';
 import { createReplyNode } from './ReplyNode.js';
 import { showSignInPrompt } from './SignInPrompt.js';
 
@@ -886,7 +886,7 @@ export class ArcadePage {
     postId: string,
     list: HTMLElement,
     headerTitle: HTMLElement,
-    composer?: any,
+    composer?: ReplyComposer,
   ): Promise<void> {
     try {
       const res = await fetch(`/api/posts/${postId}/thread`);
@@ -1000,7 +1000,7 @@ export class ArcadePage {
     }
   }
 
-  private handleCommentCreated(newReply: Post, headerTitle: HTMLElement, composer: any): void {
+  private handleCommentCreated(newReply: Post, headerTitle: HTMLElement, composer: ReplyComposer | undefined): void {
     const game = this.games[this.currentIndex];
     if (game) {
       game.replyCount = (game.replyCount || 0) + 1;
@@ -1438,7 +1438,10 @@ export class ArcadePage {
   }
 
   private handleFullscreenChange(): void {
-    const isFullscreen = !!(document.fullscreenElement || (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement);
+    const isFullscreen = !!(
+      document.fullscreenElement ||
+      (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement
+    );
     if (isFullscreen === this.isFullscreen) return;
     this.isFullscreen = isFullscreen;
 

@@ -16,6 +16,13 @@ interface InboxMessage {
 
 type QueueMessage = DeliveryMessage | InboxMessage;
 
+interface Activity {
+  type: string;
+  actor?: string;
+  object?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 interface Env {
   DB: D1Database;
   BASE_URL: string;
@@ -37,10 +44,10 @@ export default {
           console.error('Unknown message type:', (message.body as QueueMessage).type);
           message.ack();
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error('Error processing message:', {
-          error: error.message,
-          stack: error.stack,
+          error: (error as Error).message,
+          stack: (error as Error).stack,
           messageType: message.body.type,
           messageId: message.id,
         });
@@ -52,9 +59,9 @@ export default {
   },
 };
 
-async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: any): Promise<void> {
+async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: Message<QueueMessage>): Promise<void> {
   const { inboxUrl, activity, senderUsername } = msg;
-  const retryCount = message.retryCount || 0;
+  const retryCount = (message as { retryCount?: number }).retryCount || 0;
   const maxRetries = 3;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -124,21 +131,21 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: a
         message.ack();
       }
     }
-  } catch (e: any) {
+  } catch (e: unknown) {
     if (timeoutId) {
       clearTimeout(timeoutId);
     }
 
     console.error('ActivityPub delivery error:', {
       inboxUrl,
-      error: e.message,
-      name: e.name,
+      error: (e as Error).message,
+      name: (e as Error).name,
       retryCount,
       activityType: (activity as { type: string }).type,
     });
 
     // Retry on network errors or timeouts
-    if (retryCount < maxRetries && (e.name === 'AbortError' || e.name === 'TypeError')) {
+    if (retryCount < maxRetries && ((e as Error).name === 'AbortError' || (e as Error).name === 'TypeError')) {
       console.log(`Retrying delivery to ${inboxUrl} after error, attempt ${retryCount + 1}/${maxRetries}`);
       message.retry({ delaySeconds: 2 ** retryCount * 30 });
     } else {
@@ -148,7 +155,7 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: a
   }
 }
 
-async function handleInboxActivity(msg: InboxMessage, env: Env, message: any): Promise<void> {
+async function handleInboxActivity(msg: InboxMessage, env: Env, message: Message<QueueMessage>): Promise<void> {
   const { username, activity, actorId } = msg;
 
   try {
@@ -156,28 +163,28 @@ async function handleInboxActivity(msg: InboxMessage, env: Env, message: any): P
 
     switch (activityType) {
       case 'Create':
-        await handleCreateActivity(activity, username, actorId, env);
+        await handleCreateActivity(activity as Record<string, unknown>, username, actorId, env);
         break;
       case 'Follow':
-        await handleFollowActivity(activity, username, actorId, env);
+        await handleFollowActivity(activity as Record<string, unknown>, username, actorId, env);
         break;
       case 'Accept':
-        await handleAcceptActivity(activity, username, actorId, env);
+        await handleAcceptActivity(activity as Record<string, unknown>, username, actorId, env);
         break;
       case 'Like':
-        await handleLikeActivity(activity, username, actorId, env);
+        await handleLikeActivity(activity as Record<string, unknown>, username, actorId, env);
         break;
       case 'Announce':
-        await handleAnnounceActivity(activity, username, actorId, env);
+        await handleAnnounceActivity(activity as Record<string, unknown>, username, actorId, env);
         break;
       case 'Delete':
-        await handleDeleteActivity(activity, username, actorId, env);
+        await handleDeleteActivity(activity as Record<string, unknown>, username, actorId, env);
         break;
       case 'Undo':
-        await handleUndoActivity(activity, username, actorId, env);
+        await handleUndoActivity(activity as Record<string, unknown>, username, actorId, env);
         break;
       case 'Update':
-        await handleUpdateActivity(activity, username, actorId, env);
+        await handleUpdateActivity(activity as Record<string, unknown>, username, actorId, env);
         break;
       default:
         console.warn('Unknown activity type:', activityType);
@@ -190,8 +197,13 @@ async function handleInboxActivity(msg: InboxMessage, env: Env, message: any): P
   }
 }
 
-async function handleCreateActivity(activity: any, username: string, actorId: string, env: Env): Promise<void> {
-  const object = activity.object;
+async function handleCreateActivity(
+  activity: Record<string, unknown>,
+  username: string,
+  actorId: string,
+  env: Env,
+): Promise<void> {
+  const object = activity.object as Record<string, unknown>;
   if (!object || object.type !== 'Note') {
     console.log('Ignoring Create activity with non-Note object');
     return;
@@ -220,7 +232,7 @@ async function handleCreateActivity(activity: any, username: string, actorId: st
   }
 
   const userId = userResult.id;
-  const postId = activity.id ? activity.id.split('/create-')[1] : generatePostId();
+  const postId = activity.id ? (activity.id as string).split('/create-')[1] : generatePostId();
 
   const hashtagSet = new Set<string>();
   const hashtagRegex = /#(\w+)/g;
@@ -244,7 +256,7 @@ async function handleCreateActivity(activity: any, username: string, actorId: st
   const depth = 0;
 
   if (object.inReplyTo) {
-    const replyTo = object.inReplyTo;
+    const replyTo = object.inReplyTo as string;
     const postIdMatch = replyTo.match(/\/notes\/([a-zA-Z0-9]+)/);
     if (postIdMatch) {
       parentId = postIdMatch[1];
@@ -298,7 +310,12 @@ async function handleCreateActivity(activity: any, username: string, actorId: st
   console.log('Note received and stored:', postId);
 }
 
-async function handleFollowActivity(activity: any, username: string, actorId: string, env: Env): Promise<void> {
+async function handleFollowActivity(
+  activity: Record<string, unknown>,
+  username: string,
+  actorId: string,
+  env: Env,
+): Promise<void> {
   const userResult = (await env.DB.prepare(`
     SELECT id FROM users WHERE username = ? COLLATE NOCASE
   `)
@@ -324,8 +341,8 @@ async function handleFollowActivity(activity: any, username: string, actorId: st
   }
 
   // Fetch actor's inbox URL and profile information
-  let inboxUrl = activity.actor;
-  let actorData: any = null;
+  let inboxUrl = activity.actor as string;
+  let actorData: Record<string, unknown> | null = null;
   try {
     const actorResponse = await fetch(actorId, {
       headers: {
@@ -335,7 +352,7 @@ async function handleFollowActivity(activity: any, username: string, actorId: st
 
     if (actorResponse.ok) {
       actorData = (await actorResponse.json()) as Record<string, unknown>;
-      inboxUrl = actorData.inbox as string || activity.actor;
+      inboxUrl = (actorData.inbox as string) || (activity.actor as string);
     }
   } catch (e) {
     console.error('Failed to fetch actor inbox:', e);
@@ -361,8 +378,8 @@ async function handleFollowActivity(activity: any, username: string, actorId: st
     let domain = 'unknown';
 
     if (actorData) {
-      actorDisplayName = actorData.name || actorData.preferredUsername || 'Unknown User';
-      actorUsername = actorData.preferredUsername || 'unknown';
+      actorDisplayName = (actorData.name as string) || (actorData.preferredUsername as string) || 'Unknown User';
+      actorUsername = (actorData.preferredUsername as string) || 'unknown';
 
       // Extract domain from actor URL for "MastodonのXXXさん" format
       try {
@@ -474,10 +491,10 @@ async function handleFollowActivity(activity: any, username: string, actorId: st
         responseText: responseText.substring(0, 500),
       });
     }
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error('Error sending Accept activity:', {
-      error: e.message,
-      stack: e.stack,
+      error: (e as Error).message,
+      stack: (e as Error).stack,
       actorId,
       username,
       inboxUrl,
@@ -485,14 +502,19 @@ async function handleFollowActivity(activity: any, username: string, actorId: st
   }
 }
 
-async function handleAcceptActivity(activity: any, username: string, actorId: string, env: Env): Promise<void> {
-  const object = activity.object;
+async function handleAcceptActivity(
+  activity: Record<string, unknown>,
+  username: string,
+  actorId: string,
+  env: Env,
+): Promise<void> {
+  const object = activity.object as Record<string, unknown>;
   if (!object || object.type !== 'Follow') {
     console.log('Ignoring Accept for non-Follow activity');
     return;
   }
 
-  const followActor = object.actor;
+  const followActor = object.actor as string;
   if (!followActor) {
     console.error('Accept activity missing object actor');
     return;
@@ -515,9 +537,14 @@ async function handleAcceptActivity(activity: any, username: string, actorId: st
   }
 }
 
-async function handleLikeActivity(activity: any, username: string, actorId: string, env: Env): Promise<void> {
-  const object = activity.object;
-  const objectUrl = object?.id || object;
+async function handleLikeActivity(
+  activity: Record<string, unknown>,
+  username: string,
+  actorId: string,
+  env: Env,
+): Promise<void> {
+  const object = activity.object as Record<string, unknown>;
+  const objectUrl = (object?.id || object) as string;
   if (!objectUrl) {
     console.error('Like activity missing object');
     return;
@@ -564,9 +591,14 @@ async function handleLikeActivity(activity: any, username: string, actorId: stri
   console.log('Like recorded:', postId, actorId);
 }
 
-async function handleAnnounceActivity(activity: any, username: string, actorId: string, env: Env): Promise<void> {
-  const object = activity.object;
-  const objectUrl = object?.id || object;
+async function handleAnnounceActivity(
+  activity: Record<string, unknown>,
+  username: string,
+  actorId: string,
+  env: Env,
+): Promise<void> {
+  const object = activity.object as Record<string, unknown>;
+  const objectUrl = (object?.id || object) as string;
   if (!objectUrl) {
     console.error('Announce activity missing object');
     return;
@@ -613,9 +645,14 @@ async function handleAnnounceActivity(activity: any, username: string, actorId: 
   console.log('Share recorded:', postId, actorId);
 }
 
-async function handleDeleteActivity(activity: any, username: string, actorId: string, env: Env): Promise<void> {
-  const object = activity.object;
-  const objectUrl = object?.id || object;
+async function handleDeleteActivity(
+  activity: Record<string, unknown>,
+  username: string,
+  actorId: string,
+  env: Env,
+): Promise<void> {
+  const object = activity.object as Record<string, unknown>;
+  const objectUrl = (object?.id || object) as string;
   if (!objectUrl) {
     console.error('Delete activity missing object');
     return;
@@ -624,8 +661,13 @@ async function handleDeleteActivity(activity: any, username: string, actorId: st
   console.log('Delete activity received for:', objectUrl);
 }
 
-async function handleUndoActivity(activity: any, username: string, actorId: string, env: Env): Promise<void> {
-  const object = activity.object;
+async function handleUndoActivity(
+  activity: Record<string, unknown>,
+  username: string,
+  actorId: string,
+  env: Env,
+): Promise<void> {
+  const object = activity.object as Record<string, unknown>;
   if (!object) {
     console.error('Undo activity missing object');
     return;
@@ -634,7 +676,7 @@ async function handleUndoActivity(activity: any, username: string, actorId: stri
   const objectType = object.type;
   switch (objectType) {
     case 'Like':
-      const objectUrl = object.id || object;
+      const objectUrl = (object.id || object) as string;
       const postIdMatch = objectUrl?.match(/\/notes\/([a-zA-Z0-9]+)/);
       if (postIdMatch) {
         await env.DB.prepare(`
@@ -646,7 +688,7 @@ async function handleUndoActivity(activity: any, username: string, actorId: stri
       }
       break;
     case 'Announce':
-      const announceUrl = object.id || object;
+      const announceUrl = (object.id || object) as string;
       const sharePostIdMatch = announceUrl?.match(/\/notes\/([a-zA-Z0-9]+)/);
       if (sharePostIdMatch) {
         await env.DB.prepare(`
@@ -668,7 +710,7 @@ async function handleUndoActivity(activity: any, username: string, actorId: stri
         await env.DB.prepare(`
           DELETE FROM ap_followers WHERE local_user_id = ? AND actor_url = ?
         `)
-          .bind(userResult.id, object.actor)
+          .bind(userResult.id, object.actor as string)
           .run();
         console.log('Follow removed:', object.actor);
       }
@@ -678,8 +720,13 @@ async function handleUndoActivity(activity: any, username: string, actorId: stri
   }
 }
 
-async function handleUpdateActivity(activity: any, username: string, actorId: string, env: Env): Promise<void> {
-  const object = activity.object;
+async function handleUpdateActivity(
+  activity: Record<string, unknown>,
+  username: string,
+  actorId: string,
+  env: Env,
+): Promise<void> {
+  const object = activity.object as Record<string, unknown>;
   if (!object) {
     console.error('Update activity missing object');
     return;

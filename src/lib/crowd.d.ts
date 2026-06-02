@@ -13,4 +13,3 @@ export interface CrowdConfig {
 declare module '/api/crowd/*' {
   export function initFlaxiaNode(config: CrowdConfig): void;
 }
-

@@ -117,13 +117,17 @@ app.get('/sitemap.xml', async (c) => {
         'Access-Control-Allow-Origin': '*',
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Sitemap generation error:', error);
     return c.text('Internal Server Error', 500);
   }
 });
 
 // Export for Cloudflare Pages Functions
-export async function onRequest(context: any) {
-  return app.fetch(context.request, context.env, context);
+export async function onRequest(context: {
+  request: Request;
+  env: { DB: D1Database; BUCKET?: R2Bucket; [key: string]: unknown };
+  waitUntil: (p: Promise<unknown>) => void;
+}) {
+  return app.fetch(context.request, context.env, context as unknown as ExecutionContext);
 }

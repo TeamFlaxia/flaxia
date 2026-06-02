@@ -1,8 +1,19 @@
-import { createLeftNav, updateLeftNavUser } from './components/LeftNav.js';
+import type { ArcadePageHandle } from './components/ArcadePage.js';
+import { BookmarksPage } from './components/BookmarksPage.js';
+import { ExplorePage } from './components/ExplorePage.js';
+import { createLeftNav, LeftNav, updateLeftNavUser } from './components/LeftNav.js';
+import { NotificationsPage } from './components/NotificationsPage.js';
 import { createRightPanel } from './components/RightPanel.js';
+import { ThreadPage } from './components/ThreadPage.js';
+import { Timeline } from './components/Timeline.js';
 import { getMe } from './lib/auth-cache.js';
 import { initI18n } from './lib/i18n.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
+
+interface PageComponent {
+  getElement(): HTMLElement;
+  destroy(): void;
+}
 
 console.log('Flaxia initialized');
 
@@ -41,30 +52,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     let _currentUsername: string | null = null;
     let currentTag: string | null = null;
     let currentAdminTab: 'alerts' | 'hidden' | 'users' | 'ads' = 'alerts';
-    let timeline: any = null;
-    let threadPage: any = null;
+    let timeline: Timeline | null = null;
+    let threadPage: ThreadPage | null = null;
     let savedScrollY = 0;
-    let loginPage: any = null;
-    let registerPage: any = null;
-    let profilePage: any = null;
-    let explorePage: any = null;
-    let legalPage: any = null;
-    let notificationsPage: any = null;
-    let settingsPage: any = null;
-    let arcadePage: any = null;
-    let searchPage: any = null;
-    let bookmarksPage: any = null;
-    let adminLayout: any = null;
-    let adminAlertsTab: any = null;
-    let adminHiddenTab: any = null;
-    let adminUsersTab: any = null;
-    let adminAdsTab: any = null;
-    const leftNavInstances: Set<any> = new Set();
+    let loginPage: PageComponent | null = null;
+    let registerPage: PageComponent | null = null;
+    let profilePage: PageComponent | null = null;
+    let explorePage: ExplorePage | null = null;
+    let legalPage: PageComponent | null = null;
+    let notificationsPage: NotificationsPage | null = null;
+    let settingsPage: PageComponent | null = null;
+    let arcadePage: ArcadePageHandle | null = null;
+    let searchPage: PageComponent | null = null;
+    let bookmarksPage: BookmarksPage | null = null;
+    let adminLayout:
+      | (PageComponent & { updateMainContent: (el: HTMLElement) => void; setAccessDenied: () => void })
+      | null = null;
+    let adminAlertsTab: PageComponent | null = null;
+    let adminHiddenTab: PageComponent | null = null;
+    let adminUsersTab: PageComponent | null = null;
+    let adminAdsTab: PageComponent | null = null;
+    const leftNavInstances: Set<LeftNav> = new Set();
     let currentUser: { username: string; id: string; display_name?: string; avatar_key?: string } | null = null;
     let unreadNotificationCount = 0;
     let previousUnreadCount = 0;
     let notificationPollInterval: ReturnType<typeof setInterval> | null = null;
-    let cachedContentComponent: { view: string; component: any; scrollY: number } | null = null;
+    let cachedContentComponent: {
+      view: string;
+      component: PageComponent | ExplorePage | ArcadePageHandle | BookmarksPage | null;
+      scrollY: number;
+    } | null = null;
 
     let tauriNotify: ((title: string, body: string) => Promise<void>) | null = null;
     let tauriBadge: ((count: number) => Promise<void>) | null = null;
@@ -182,7 +199,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Get VAPID public key from server
         const keyRes = await fetch('/api/push/vapid-key');
         if (!keyRes.ok) return;
-        const { publicKey } = await keyRes.json() as { publicKey: string };
+        const { publicKey } = (await keyRes.json()) as { publicKey: string };
 
         // Subscribe
         const sub = await reg.pushManager.subscribe({
@@ -226,7 +243,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const refreshNotificationBadges = async () => {
       const data = await fetchNotifications();
-      leftNavInstances.forEach((leftNav: any) => {
+      leftNavInstances.forEach((leftNav) => {
         if (typeof leftNav.setUnreadCount === 'function') {
           leftNav.setUnreadCount(unreadNotificationCount);
         }
@@ -326,11 +343,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       try {
         const data = await getMe();
         if (data) {
+          const userData = data.user as { id: string; username: string; display_name?: string; avatar_key?: string };
           currentUser = {
-            id: data.user.id,
-            username: data.user.username,
-            display_name: data.user.display_name,
-            avatar_key: data.user.avatar_key,
+            id: userData.id,
+            username: userData.username,
+            display_name: userData.display_name,
+            avatar_key: userData.avatar_key,
           };
 
           // Update all existing LeftNav instances with new user data
@@ -1054,30 +1072,18 @@ document.addEventListener('DOMContentLoaded', async () => {
           currentAdminTab = adminTab || 'alerts';
 
           // Cleanup regular views
-          if (timeline) {
-            timeline.destroy();
-            timeline = null;
-          }
-          if (threadPage) {
-            threadPage.destroy();
-            threadPage = null;
-          }
-          if (profilePage) {
-            profilePage.destroy();
-            profilePage = null;
-          }
-          if (explorePage) {
-            explorePage.destroy();
-            explorePage = null;
-          }
-          if (notificationsPage) {
-            notificationsPage.destroy();
-            notificationsPage = null;
-          }
-          if (settingsPage) {
-            settingsPage.destroy();
-            settingsPage = null;
-          }
+          if (timeline) (timeline as Timeline).destroy();
+          timeline = null;
+          if (threadPage) (threadPage as ThreadPage).destroy();
+          threadPage = null;
+          if (profilePage) (profilePage as PageComponent).destroy();
+          profilePage = null;
+          if (explorePage) (explorePage as ExplorePage).destroy();
+          explorePage = null;
+          if (notificationsPage) (notificationsPage as NotificationsPage).destroy();
+          notificationsPage = null;
+          if (settingsPage) (settingsPage as PageComponent).destroy();
+          settingsPage = null;
 
           const adminModule = await import('./components/AdminLayout.js');
           const adminTabsModule = await Promise.all([
@@ -1216,7 +1222,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           if (cachedContentComponent?.view === 'explore') {
             console.log('Restoring cached explore page');
-            explorePage = cachedContentComponent.component;
+            explorePage = cachedContentComponent.component as ExplorePage;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
 
@@ -1319,7 +1325,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           if (cachedContentComponent?.view === 'search') {
             console.log('Restoring cached search page');
-            searchPage = cachedContentComponent.component;
+            searchPage = cachedContentComponent.component as PageComponent;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
 
@@ -1419,7 +1425,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           if (cachedContentComponent?.view === 'arcade') {
             console.log('Restoring cached arcade page');
-            arcadePage = cachedContentComponent.component;
+            arcadePage = cachedContentComponent.component as ArcadePageHandle;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
 
@@ -1528,7 +1534,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           if (cachedContentComponent?.view === 'profile') {
             console.log('Restoring cached profile');
-            profilePage = cachedContentComponent.component;
+            profilePage = cachedContentComponent.component as PageComponent;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
 
@@ -1632,7 +1638,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           leftNavInstances.add(leftNav);
 
           if (cachedContentComponent?.view === 'bookmarks') {
-            bookmarksPage = cachedContentComponent.component;
+            bookmarksPage = cachedContentComponent.component as BookmarksPage;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
             requestAnimationFrame(() => {
@@ -1745,7 +1751,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               });
               unreadNotificationCount = 0;
               leftNav.setUnreadCount(0);
-              leftNavInstances.forEach((ln: any) => {
+              leftNavInstances.forEach((ln) => {
                 if (typeof ln.setUnreadCount === 'function') {
                   ln.setUnreadCount(0);
                 }
@@ -1851,23 +1857,29 @@ document.addEventListener('DOMContentLoaded', async () => {
           const loadUserData = async () => {
             try {
               const userData = await getMe();
-              if (userData) {
+              if (userData && settingsPage) {
+                const currentSettingsPage = settingsPage;
                 // Recreate settings page with full user data
-                const oldElement = settingsPage.getElement();
-                settingsPage.destroy();
+                const oldElement = currentSettingsPage.getElement();
+                currentSettingsPage.destroy();
                 settingsPage = settingsModule.createSettingsPage({
-                  currentUser: userData.user,
+                  currentUser: userData.user as {
+                    id: string;
+                    username: string;
+                    display_name?: string;
+                    avatar_key?: string;
+                  },
                 });
 
+                const newSettingsPage = settingsPage;
                 // Wait for the next tick to ensure the element is in the DOM
                 setTimeout(() => {
                   if (oldElement.parentNode) {
-                    oldElement.parentNode.replaceChild(settingsPage.getElement(), oldElement);
+                    oldElement.parentNode.replaceChild(newSettingsPage.getElement(), oldElement);
                   } else {
-                    // If still not in DOM, add it to the main container in the correct position
                     const leftNavElement = mainContainer.children[0];
                     if (leftNavElement && mainContainer.children[1]) {
-                      mainContainer.insertBefore(settingsPage.getElement(), mainContainer.children[1]);
+                      mainContainer.insertBefore(newSettingsPage.getElement(), mainContainer.children[1]);
                     }
                   }
                 }, 0);
@@ -2009,7 +2021,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           if (cachedContentComponent?.view === 'timeline') {
             console.log('Restoring cached timeline');
-            timeline = cachedContentComponent.component;
+            timeline = cachedContentComponent.component as Timeline;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
 
@@ -2101,7 +2113,31 @@ document.addEventListener('DOMContentLoaded', async () => {
       searchType?: string,
     ) {
       try {
-        await navigateTo(view as 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'search' | 'notifications' | 'bookmarks' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings' | 'arcade', postId, username, tag, adminTab as 'alerts' | 'hidden' | 'users', searchQuery, searchType as 'posts' | 'users' | 'arcade');
+        await navigateTo(
+          view as
+            | 'timeline'
+            | 'thread'
+            | 'login'
+            | 'register'
+            | 'profile'
+            | 'explore'
+            | 'search'
+            | 'notifications'
+            | 'bookmarks'
+            | 'terms'
+            | 'privacy'
+            | 'about'
+            | 'whitepaper'
+            | 'admin'
+            | 'settings'
+            | 'arcade',
+          postId,
+          username,
+          tag,
+          adminTab as 'alerts' | 'hidden' | 'users',
+          searchQuery,
+          searchType as 'posts' | 'users' | 'arcade',
+        );
       } catch (e) {
         console.error('Navigation failed:', e);
         // Show error on the loading overlay if it's visible, otherwise reload
@@ -2138,7 +2174,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Handle SPA navigation events
     window.addEventListener('spaNavigate', async (e: Event) => {
-      const detail = (e as CustomEvent<{ view: string; postId?: string; username?: string; tag?: string; adminTab?: string; searchQuery?: string; searchType?: string }>).detail;
+      const detail = (
+        e as CustomEvent<{
+          view: string;
+          postId?: string;
+          username?: string;
+          tag?: string;
+          adminTab?: string;
+          searchQuery?: string;
+          searchType?: string;
+        }>
+      ).detail;
       await safeNavigate(
         detail.view,
         detail.postId,

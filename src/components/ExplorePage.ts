@@ -153,7 +153,7 @@ export class ExplorePage {
       this.fabButton.addEventListener('click', () => {
         openPostModal({
           currentUser: this.props.currentUser,
-          onPostCreated: (post) => this.handleNewPost(post),
+          onPostCreated: (post) => this.handleNewPost(post as unknown as Post),
         });
       });
       container.appendChild(this.fabButton);
@@ -254,8 +254,8 @@ export class ExplorePage {
               })),
             );
           }
-        } catch (err: any) {
-          if (err?.name !== 'AbortError') console.error('Suggest error:', err);
+        } catch (err: unknown) {
+          if ((err as { name?: string })?.name !== 'AbortError') console.error('Suggest error:', err);
         }
       };
 
@@ -520,12 +520,12 @@ export class ExplorePage {
     const [tagsRes, postsRes] = await Promise.all([fetch('/api/tags/trending'), fetch('/api/posts/trending?limit=10')]);
 
     if (tagsRes.ok) {
-      const tagsData = await tagsRes.json() as { tags: Array<{ tag: string; percentage: string }> };
+      const tagsData = (await tagsRes.json()) as { tags: Array<{ tag: string; percentage: string }> };
       this.renderTrendingTags(tagsData.tags || []);
     }
 
     if (postsRes.ok) {
-      const postsData = await postsRes.json() as { posts: Post[] };
+      const postsData = (await postsRes.json()) as { posts: Post[] };
       this.handleNewPosts(postsData.posts || []);
     }
   }

@@ -40,7 +40,11 @@ export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16)) as Uint8Array<ArrayBuffer>;
 
   const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
-  const hash = (await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: 600000, hash: 'SHA-256' }, key, 256)) as ArrayBuffer;
+  const hash = (await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: 600000, hash: 'SHA-256' },
+    key,
+    256,
+  )) as ArrayBuffer;
 
   // バージョンプリフィックス(1byte) + salt(16) + hash(32) → base64
   const combined = new Uint8Array(1 + salt.byteLength + hash.byteLength);
@@ -70,7 +74,11 @@ export async function verifyPassword(password: string, stored: string): Promise<
 
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
-  const hash = (await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, key, 256)) as ArrayBuffer;
+  const hash = (await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
+    key,
+    256,
+  )) as ArrayBuffer;
 
   const hashBytes = new Uint8Array(hash as ArrayBuffer);
   return hashBytes.every((b, i) => b === originalHash[i]);
@@ -82,7 +90,7 @@ function generateSessionToken(): string {
 }
 
 // Create session
-export async function createSession(env: any, userId: string): Promise<Session> {
+export async function createSession(env: Env, userId: string): Promise<Session> {
   const sessionId = generateSessionToken();
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
 
@@ -105,7 +113,7 @@ export async function createSession(env: any, userId: string): Promise<Session> 
 }
 
 // Get session by token
-export async function getSession(env: any, token: string): Promise<{ user: User; session: Session } | null> {
+export async function getSession(env: Env, token: string): Promise<{ user: User; session: Session } | null> {
   if (!token) return null;
 
   // Get session from database
@@ -131,7 +139,7 @@ export async function getSession(env: any, token: string): Promise<{ user: User;
 }
 
 // Get user with session using single JOIN query for /api/me optimization
-export async function getMeWithSession(env: any, token: string): Promise<{ user: User } | null> {
+export async function getMeWithSession(env: Env, token: string): Promise<{ user: User } | null> {
   if (!token) return null;
 
   // Get user and session with single JOIN query
@@ -151,7 +159,7 @@ export async function getMeWithSession(env: any, token: string): Promise<{ user:
 }
 
 // Extend session (sliding window)
-export async function extendSession(env: any, token: string): Promise<boolean> {
+export async function extendSession(env: Env, token: string): Promise<boolean> {
   if (!token) return false;
 
   // Update session expiration to 7 days from now
@@ -165,18 +173,21 @@ export async function extendSession(env: any, token: string): Promise<boolean> {
     .bind(newExpiresAt, token)
     .run();
 
-  return result.success && result.changes > 0;
+  return (
+    (result as { success: boolean; changes?: number }).success &&
+    ((result as { success: boolean; changes?: number }).changes ?? 0) > 0
+  );
 }
 
 // Delete session
-export async function deleteSession(env: any, token: string): Promise<boolean> {
+export async function deleteSession(env: Env, token: string): Promise<boolean> {
   const result = await env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(token).run();
   return result.success;
 }
 
 // Register user
 export async function registerUser(
-  env: any,
+  env: Env,
   userData: {
     email: string;
     password: string;
@@ -230,7 +241,7 @@ export async function registerUser(
 }
 
 // Login user
-export async function loginUser(env: any, email: string, password: string): Promise<{ user: User; session: Session }> {
+export async function loginUser(env: Env, email: string, password: string): Promise<{ user: User; session: Session }> {
   // Get user with password hash
   const userWithPassword = (await env.DB.prepare(`
     SELECT id, email, password_hash, username, display_name, bio, avatar_key, created_at

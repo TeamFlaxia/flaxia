@@ -1482,10 +1482,11 @@ export class PostComposer {
       if (this.props.onPostCreated && commitResult?.post) {
         this.props.onPostCreated(commitResult.post);
       }
-    } catch (error: any) {
-      console.error('Failed to create post:', error);
-      const errorMessage = error?.message || t('composer.error_create_failed');
-      showToast(`${errorMessage}${error?.details ? ` (${error.details})` : ''}`, true);
+    } catch (error: unknown) {
+      const err = error as { message?: string; details?: string };
+      console.error('Failed to create post:', err);
+      const errorMessage = err?.message || t('composer.error_create_failed');
+      showToast(`${errorMessage}${err?.details ? ` (${err.details})` : ''}`, true);
     } finally {
       this.isSubmitting = false;
       this.updateSubmitButton();
@@ -1518,7 +1519,7 @@ export class PostComposer {
       if (!response.ok) {
         let errMsg = 'Failed to prepare post';
         try {
-          const errBody = (await response.json()) as any;
+          const errBody = (await response.json()) as Record<string, unknown>;
           if (errBody?.error) errMsg += `: ${errBody.error}`;
         } catch {}
         throw new Error(errMsg);
@@ -1580,9 +1581,9 @@ export class PostComposer {
         console.error('Upload failed response:', responseText);
 
         // Try to parse as JSON, fallback to text if it fails
-        let error: any;
+        let error: Record<string, unknown>;
         try {
-          error = JSON.parse(responseText);
+          error = JSON.parse(responseText) as Record<string, unknown>;
         } catch {
           error = { error: responseText };
         }
@@ -1639,7 +1640,7 @@ export class PostComposer {
       if (!response.ok) {
         let errMsg = 'Failed to commit post';
         try {
-          const errBody = (await response.json()) as any;
+          const errBody = (await response.json()) as Record<string, unknown>;
           if (errBody?.error) errMsg += `: ${errBody.error}`;
         } catch {
           const errText = await response.text().catch(() => '');

@@ -33,7 +33,7 @@ export function createAdminHiddenTab({ onNavigateToTab }: AdminHiddenTabProps) {
       if (!response.ok) {
         throw new Error('Failed to fetch hidden posts');
       }
-      const data = await response.json() as { posts: HiddenPost[] };
+      const data = (await response.json()) as { posts: HiddenPost[] };
       return data.posts;
     } catch (error) {
       console.error('Fetch hidden posts error:', error);

@@ -33,7 +33,11 @@ export async function checkRateLimit(kv: KVNamespace, config: RateLimitConfig): 
   };
 }
 
-export function rateLimitResponse(c: any, resetIn: number, limit: number) {
+export function rateLimitResponse(
+  c: { json: (body: unknown, status: number, headers?: Record<string, string>) => Response },
+  resetIn: number,
+  limit: number,
+) {
   return c.json({ error: 'Too many requests', retryAfter: resetIn }, 429, {
     'Retry-After': String(resetIn),
     'X-RateLimit-Limit': String(limit),

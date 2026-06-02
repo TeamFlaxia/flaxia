@@ -54,9 +54,12 @@ app.get('/', async (c) => {
 
     // Browser request - redirect to web profile page
     return c.redirect(`/users/${username}`);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Get user error:', error);
-    return c.json({ error: 'Failed to get user', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to get user', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -88,9 +91,9 @@ app.post('/inbox', async (c) => {
     }
 
     const body = await c.req.text();
-    let activity: any;
+    let activity: Record<string, unknown>;
     try {
-      activity = JSON.parse(body);
+      activity = JSON.parse(body) as Record<string, unknown>;
     } catch {
       return c.json({ error: 'Invalid JSON' }, 400);
     }
@@ -146,9 +149,12 @@ app.post('/inbox', async (c) => {
     }
 
     return c.json({ ok: true }, 202);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Inbox error:', error);
-    return c.json({ error: 'Inbox processing failed', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Inbox processing failed', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 

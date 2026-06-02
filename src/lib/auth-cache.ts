@@ -1,9 +1,9 @@
-let cachedMe: any = null;
-let cachePromise: Promise<any> | null = null;
+let cachedMe: Record<string, unknown> | null = null;
+let cachePromise: Promise<Record<string, unknown> | null> | null = null;
 let cacheTimestamp: number = 0;
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes in milliseconds
 
-export async function getMe(): Promise<any> {
+export async function getMe(): Promise<Record<string, unknown> | null> {
   const now = Date.now();
 
   // キャッシュが有効期限内ならキャッシュを返す
@@ -16,16 +16,15 @@ export async function getMe(): Promise<any> {
 
   cachePromise = fetch('/api/me', { credentials: 'include' })
     .then((r) => {
-      if (r.ok) return r.json();
+      if (r.ok) return r.json() as Promise<Record<string, unknown>>;
       if (r.status === 401) {
-        // 認証失敗時はキャッシュをクリア
         clearMeCache();
         return null;
       }
       return null;
     })
-    .then((data) => {
-      cachedMe = data;
+    .then((data: unknown) => {
+      cachedMe = data as Record<string, unknown> | null;
       cacheTimestamp = now;
       cachePromise = null;
       return data;
@@ -33,7 +32,7 @@ export async function getMe(): Promise<any> {
     .catch(() => {
       cachePromise = null;
       return null;
-    });
+    }) as Promise<Record<string, unknown> | null>;
 
   return cachePromise;
 }
@@ -44,7 +43,7 @@ export function clearMeCache() {
   cacheTimestamp = 0;
 }
 
-export function updateMeCache(data: any) {
+export function updateMeCache(data: Record<string, unknown>) {
   cachedMe = data;
   cacheTimestamp = Date.now();
 }

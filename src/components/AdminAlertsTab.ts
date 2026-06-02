@@ -36,7 +36,7 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
       if (!response.ok) {
         throw new Error('Failed to fetch alerts');
       }
-      const data = await response.json() as { alerts: AdminAlert[] };
+      const data = (await response.json()) as { alerts: AdminAlert[] };
       return data.alerts;
     } catch (error) {
       console.error('Fetch alerts error:', error);

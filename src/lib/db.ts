@@ -88,12 +88,18 @@ export class Database {
   }
 
   async getFollowers(userId: string): Promise<string[]> {
-    const result = await this.db.prepare('SELECT follower_id FROM follows WHERE followee_id = ?').bind(userId).all<{ follower_id: string }>();
+    const result = await this.db
+      .prepare('SELECT follower_id FROM follows WHERE followee_id = ?')
+      .bind(userId)
+      .all<{ follower_id: string }>();
     return result.results.map((r) => r.follower_id);
   }
 
   async getFollowing(userId: string): Promise<string[]> {
-    const result = await this.db.prepare('SELECT followee_id FROM follows WHERE follower_id = ?').bind(userId).all<{ followee_id: string }>();
+    const result = await this.db
+      .prepare('SELECT followee_id FROM follows WHERE follower_id = ?')
+      .bind(userId)
+      .all<{ followee_id: string }>();
     return result.results.map((r) => r.followee_id);
   }
 }

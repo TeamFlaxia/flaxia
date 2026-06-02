@@ -898,16 +898,17 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         editingAd = null;
         await refreshAds();
         render();
-      } catch (error: any) {
-        console.error('Submit ad error:', error);
+      } catch (error: unknown) {
+        const err = error as { error?: string; message?: string; limit?: number; actualSize?: number };
+        console.error('Submit ad error:', err);
 
         // Show detailed error message for file size issues
-        if (error.error && error.limit && error.actualSize) {
-          const actualMB = (error.actualSize / 1024 / 1024).toFixed(1);
-          const _limitMB = (error.limit / 1024 / 1024).toFixed(1);
+        if (err.error && err.limit && err.actualSize) {
+          const actualMB = (err.actualSize / 1024 / 1024).toFixed(1);
+          const _limitMB = (err.limit / 1024 / 1024).toFixed(1);
           showToast(t('admin_ads.validation_file_size', { size: actualMB }), true);
         } else {
-          showToast(t('admin_ads.save_error', { error: error?.error || error?.message || t('common.error') }), true);
+          showToast(t('admin_ads.save_error', { error: err?.error || err?.message || t('common.error') }), true);
         }
       }
     });

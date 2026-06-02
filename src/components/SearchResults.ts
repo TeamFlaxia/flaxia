@@ -1,10 +1,11 @@
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { Post } from '../types/post.js';
 
 export interface SearchResultsProps {
   query: string;
-  posts: any[];
-  users: any[];
+  posts: Post[];
+  users: Array<Record<string, unknown>>;
   type?: 'posts' | 'users' | 'arcade';
   onClose: () => void;
 }
@@ -92,6 +93,7 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
     usersSection.appendChild(usersTitle);
 
     props.users.forEach((user) => {
+      const u = user as { display_name?: string; username: string; [key: string]: unknown };
       const userItem = document.createElement('div');
       userItem.className = 'search-result-user';
       userItem.style.cssText = `
@@ -109,11 +111,11 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
       // Navigate to user profile on click
       userItem.onclick = () => {
         // Use SPA navigation instead of full page reload
-        window.history.pushState({ username: user.username }, '', `/profile/${user.username}`);
+        window.history.pushState({ username: u.username }, '', `/profile/${u.username}`);
         // Dispatch custom event to trigger SPA navigation
         window.dispatchEvent(
           new CustomEvent('spaNavigate', {
-            detail: { view: 'profile', username: user.username },
+            detail: { view: 'profile', username: u.username },
           }),
         );
         props.onClose();
@@ -133,17 +135,17 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
         font-weight: bold;
         font-size: 0.875rem;
       `;
-      avatar.textContent = user.display_name?.[0]?.toUpperCase() || user.username[0].toUpperCase();
+      avatar.textContent = u.display_name?.[0]?.toUpperCase() || u.username[0].toUpperCase();
 
       const userInfo = document.createElement('div');
 
       const usernameEl = document.createElement('div');
       usernameEl.style.cssText = 'font-weight: 600; color: var(--text-primary);';
-      usernameEl.textContent = `@${user.username}`;
+      usernameEl.textContent = `@${u.username}`;
 
       const displayNameEl = document.createElement('div');
       displayNameEl.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);';
-      displayNameEl.textContent = user.display_name || '';
+      displayNameEl.textContent = u.display_name || '';
 
       userInfo.appendChild(usernameEl);
       userInfo.appendChild(displayNameEl);

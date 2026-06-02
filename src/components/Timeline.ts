@@ -71,7 +71,7 @@ export class Timeline {
     // Post composer directly below the header (only for logged-in users)
     if (this.props.currentUser) {
       this.composer = createPostComposer({
-        onPostCreated: (post) => this.handleNewPost(post),
+        onPostCreated: (post) => this.handleNewPost(post as unknown as Post),
         currentUser: this.props.currentUser,
       });
       container.appendChild(this.composer.getElement());
@@ -256,18 +256,18 @@ export class Timeline {
     });
 
     // Reply toggle events - listen for replyToggle events from post cards
-    this.element.addEventListener('replyToggle', (e: any) => {
-      const postId = e.detail.postId;
+    this.element.addEventListener('replyToggle', ((e: Event) => {
+      const postId = (e as CustomEvent).detail.postId;
       this.handleReplyToggle(postId);
-    });
+    }) as EventListener);
 
     // Thread navigation events - listen for navigateToThread events from post cards
-    this.element.addEventListener('navigateToThread', (e: any) => {
-      const postId = e.detail.postId;
+    this.element.addEventListener('navigateToThread', ((e: Event) => {
+      const postId = (e as CustomEvent).detail.postId;
       console.log('Timeline received navigateToThread event for postId:', postId);
       // Let the main app handle this navigation
       console.log('Navigate to thread:', postId);
-    });
+    }) as EventListener);
 
     // Hashtag search
     const hashtagInput = this.element.querySelector('.hashtag-search-btn') as HTMLButtonElement;
@@ -320,7 +320,7 @@ export class Timeline {
     }
   }
 
-  private handleNewPost(post: any): void {
+  private handleNewPost(post: Post): void {
     // Add the new post to the beginning of the timeline
     this.state.posts = [post, ...this.state.posts];
     this.renderPostList();
@@ -339,10 +339,11 @@ export class Timeline {
     // Refresh current user data from cache
     const updatedUser = await getMe();
     if (updatedUser?.user && this.composer) {
+      const u = updatedUser.user as { username: string; display_name?: string; avatar_key?: string };
       this.composer.updateCurrentUser({
-        username: updatedUser.user.username,
-        display_name: updatedUser.user.display_name,
-        avatar_key: updatedUser.user.avatar_key,
+        username: u.username,
+        display_name: u.display_name,
+        avatar_key: u.avatar_key,
       });
     }
   }

@@ -474,8 +474,7 @@ export function updateLeftNavUser(
             text-align: center;
           `;
           const count = leftNav.props.unreadCount ?? 0;
-          badge.textContent =
-            count >= 99 ? '99+' : String(count);
+          badge.textContent = count >= 99 ? '99+' : String(count);
           navItem.appendChild(badge);
         }
 
