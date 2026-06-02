@@ -18,12 +18,12 @@ const crawlerUserAgents = [
   'dotbot',
   'crawler',
   'spider',
-  'bot'
-]
+  'bot',
+];
 
 export function isCrawler(userAgent: string): boolean {
-  if (!userAgent) return false
-  
-  const lowerCaseUserAgent = userAgent.toLowerCase()
-  return crawlerUserAgents.some(bot => lowerCaseUserAgent.includes(bot))
+  if (!userAgent) return false;
+
+  const lowerCaseUserAgent = userAgent.toLowerCase();
+  return crawlerUserAgents.some((bot) => lowerCaseUserAgent.includes(bot));
 }

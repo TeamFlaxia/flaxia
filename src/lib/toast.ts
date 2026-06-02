@@ -1,9 +1,9 @@
-let styleInjected = false
+let styleInjected = false;
 
 function injectToastStyles(): void {
-  if (styleInjected) return
-  styleInjected = true
-  const style = document.createElement('style')
+  if (styleInjected) return;
+  styleInjected = true;
+  const style = document.createElement('style');
   style.textContent = `
     @keyframes toast-fade-in-up {
       from {
@@ -25,13 +25,13 @@ function injectToastStyles(): void {
         transform: translateX(-50%) translateY(20px);
       }
     }
-  `
-  document.head.appendChild(style)
+  `;
+  document.head.appendChild(style);
 }
 
 export function showToast(message: string, isError: boolean = false): void {
-  injectToastStyles()
-  const toast = document.createElement('div')
+  injectToastStyles();
+  const toast = document.createElement('div');
   toast.style.cssText = `
     position: fixed;
     bottom: 24px;
@@ -48,12 +48,12 @@ export function showToast(message: string, isError: boolean = false): void {
     max-width: 90vw;
     text-align: center;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-  `
-  toast.textContent = message
-  document.body.appendChild(toast)
+  `;
+  toast.textContent = message;
+  document.body.appendChild(toast);
 
   setTimeout(() => {
-    toast.style.animation = 'toast-fade-out 0.3s ease'
-    setTimeout(() => toast.remove(), 300)
-  }, 3000)
+    toast.style.animation = 'toast-fade-out 0.3s ease';
+    setTimeout(() => toast.remove(), 300);
+  }, 3000);
 }

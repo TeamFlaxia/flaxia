@@ -23,13 +23,6 @@
     "noEmit": true,
     "types": ["@cloudflare/workers-types"]
   },
-  "include": [
-    "src/**/*",
-    "functions/**/*"
-  ],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "sandbox"
-  ]
+  "include": ["src/**/*", "functions/**/*"],
+  "exclude": ["node_modules", "dist", "sandbox"]
 }

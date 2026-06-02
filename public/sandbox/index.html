@@ -46,7 +46,7 @@
           }, '*');
           
           window.zipCleanup = () => {
-            result.blobUrlMap.forEach(url => URL.revokeObjectURL(url));
+            result.blobUrlMap.forEach(url => void URL.revokeObjectURL(url));
             URL.revokeObjectURL(result.htmlBlobUrl);
           };
         } catch (err) {
@@ -298,7 +298,7 @@
           }, event.data.origin || '*');
 
           window.zipCleanup = () => {
-            result.blobUrlMap.forEach(url => URL.revokeObjectURL(url));
+            result.blobUrlMap.forEach(url => void URL.revokeObjectURL(url));
             URL.revokeObjectURL(result.htmlBlobUrl);
           };
         } catch (err) {

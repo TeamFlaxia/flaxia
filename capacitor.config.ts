@@ -1,4 +1,4 @@
-import { CapacitorConfig } from '@capacitor/cli'
+import { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'app.flaxia.app',
@@ -20,6 +20,6 @@ const config: CapacitorConfig = {
       persist: true,
     },
   },
-}
+};
 
-export default config
+export default config;

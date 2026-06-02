@@ -1,45 +1,45 @@
-import { Post, PostCardProps } from '../types/post.js'
-import { PostNode } from '../lib/thread.js'
-import { createPostCard, PostCard as PostCardClass } from './PostCard.js'
-import { createReplyComposer, ReplyComposer } from './ReplyComposer.js'
-import { showSignInPrompt } from './SignInPrompt.js'
+import { PostNode } from '../lib/thread.js';
+import { Post } from '../types/post.js';
+import { createPostCard, PostCard as PostCardClass } from './PostCard.js';
+import { createReplyComposer, ReplyComposer } from './ReplyComposer.js';
+import { showSignInPrompt } from './SignInPrompt.js';
 
 export interface ReplyNodeProps {
-  node: PostNode
-  sandboxOrigin: string
-  onReplyCreated: (newReply: Post) => void
-  currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null
-  postIndexMap?: Map<string, number>
+  node: PostNode;
+  sandboxOrigin: string;
+  onReplyCreated: (newReply: Post) => void;
+  currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null;
+  postIndexMap?: Map<string, number>;
 }
 
 export class ReplyNode {
-  private element: HTMLElement
-  private props: ReplyNodeProps
-  private postCard?: PostCardClass
-  private replyComposer?: ReplyComposer
-  private childReplyNodes: ReplyNode[] = []
-  private isReplyComposerOpen: boolean = false
-  private globalReplyListener?: (e: Event) => void
-  private isExpanded: boolean = false
-  private expandButton?: HTMLButtonElement
-  private childrenContainer?: HTMLElement
+  private element: HTMLElement;
+  private props: ReplyNodeProps;
+  private postCard?: PostCardClass;
+  private replyComposer?: ReplyComposer;
+  private childReplyNodes: ReplyNode[] = [];
+  private isReplyComposerOpen: boolean = false;
+  private globalReplyListener?: (e: Event) => void;
+  private isExpanded: boolean = false;
+  private expandButton?: HTMLButtonElement;
+  private childrenContainer?: HTMLElement;
 
   constructor(props: ReplyNodeProps) {
-    this.props = props
-    this.element = this.createElement()
-    this.setupEventListeners()
+    this.props = props;
+    this.element = this.createElement();
+    this.setupEventListeners();
   }
 
   private createElement(): HTMLElement {
-    const container = document.createElement('div')
-    container.className = 'reply-node'
+    const container = document.createElement('div');
+    container.className = 'reply-node';
     container.style.cssText = `
       margin-bottom: 0.75rem;
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       ${this.props.node.post.depth > 0 ? 'padding-left: 1rem;' : ''}
-    `
+    `;
 
-    const nodeIndex = this.props.postIndexMap?.get(this.props.node.post.id)
+    const nodeIndex = this.props.postIndexMap?.get(this.props.node.post.id);
 
     // Post card for this reply
     this.postCard = createPostCard({
@@ -51,19 +51,19 @@ export class ReplyNode {
       depth: this.props.node.post.depth,
       postIndex: nodeIndex,
       enablePostRefs: true,
-      stripLeadingPostRef: true
-    })
-    
+      stripLeadingPostRef: true,
+    });
+
     // Create wrapper for post card and expand button
-    const postWrapper = document.createElement('div')
-    postWrapper.style.cssText = 'display: flex; align-items: flex-start; gap: 0.25rem;'
-    postWrapper.appendChild(this.postCard.getElement())
-    
+    const postWrapper = document.createElement('div');
+    postWrapper.style.cssText = 'display: flex; align-items: flex-start; gap: 0.25rem;';
+    postWrapper.appendChild(this.postCard.getElement());
+
     // Add expand button if this reply has children and depth > 0
     if (this.props.node.children.length > 0 && this.props.node.post.depth > 0) {
-      this.expandButton = document.createElement('button')
-      this.expandButton.className = 'expand-button'
-      this.expandButton.innerHTML = '▶'
+      this.expandButton = document.createElement('button');
+      this.expandButton.className = 'expand-button';
+      this.expandButton.innerHTML = '▶';
       this.expandButton.style.cssText = `
         background: none;
         border: none;
@@ -79,61 +79,61 @@ export class ReplyNode {
         align-items: center;
         justify-content: center;
         flex-shrink: 0;
-      `
-      this.expandButton.addEventListener('click', () => this.toggleExpanded())
+      `;
+      this.expandButton.addEventListener('click', () => this.toggleExpanded());
       this.expandButton.addEventListener('mouseenter', () => {
-        this.expandButton!.style.backgroundColor = '#f1f5f9'
-        this.expandButton!.style.color = '#334155'
-      })
+        this.expandButton!.style.backgroundColor = '#f1f5f9';
+        this.expandButton!.style.color = '#334155';
+      });
       this.expandButton.addEventListener('mouseleave', () => {
-        this.expandButton!.style.backgroundColor = 'none'
-        this.expandButton!.style.color = '#64748b'
-      })
-      postWrapper.insertBefore(this.expandButton, postWrapper.firstChild)
+        this.expandButton!.style.backgroundColor = 'none';
+        this.expandButton!.style.color = '#64748b';
+      });
+      postWrapper.insertBefore(this.expandButton, postWrapper.firstChild);
     }
-    
-    container.appendChild(postWrapper)
+
+    container.appendChild(postWrapper);
 
     // Reply composer (hidden by default)
-    const prefill = nodeIndex !== undefined ? `>>${nodeIndex} ` : undefined
+    const prefill = nodeIndex !== undefined ? `>>${nodeIndex} ` : undefined;
     this.replyComposer = createReplyComposer({
       postId: this.props.node.post.id,
       sandboxOrigin: this.props.sandboxOrigin,
       onReplyCreated: (newReply) => this.handleReplyCreated(newReply),
       onCancel: () => this.hideReplyComposer(),
       prefillText: prefill,
-      currentUser: this.props.currentUser
-    })
-    this.replyComposer.getElement().style.display = 'none'
-    container.appendChild(this.replyComposer.getElement())
+      currentUser: this.props.currentUser,
+    });
+    this.replyComposer.getElement().style.display = 'none';
+    container.appendChild(this.replyComposer.getElement());
 
     // Children replies (hidden by default for depth >= 1)
     if (this.props.node.children.length > 0) {
-      this.childrenContainer = document.createElement('div')
-      this.childrenContainer.className = 'reply-children'
+      this.childrenContainer = document.createElement('div');
+      this.childrenContainer.className = 'reply-children';
       this.childrenContainer.style.cssText = `
         margin-top: 0.75rem;
         padding-left: 1rem;
         border-left: 2px solid #e2e8f0;
         display: ${this.props.node.post.depth > 0 ? 'none' : 'block'};
-      `
+      `;
 
-      this.props.node.children.forEach(childNode => {
+      this.props.node.children.forEach((childNode) => {
         const childReplyNode = new ReplyNode({
           node: childNode,
           sandboxOrigin: this.props.sandboxOrigin,
           currentUser: this.props.currentUser,
           onReplyCreated: (newReply) => this.props.onReplyCreated(newReply),
-          postIndexMap: this.props.postIndexMap
-        })
-        this.childReplyNodes.push(childReplyNode)
-        this.childrenContainer!.appendChild(childReplyNode.getElement())
-      })
+          postIndexMap: this.props.postIndexMap,
+        });
+        this.childReplyNodes.push(childReplyNode);
+        this.childrenContainer!.appendChild(childReplyNode.getElement());
+      });
 
-      container.appendChild(this.childrenContainer)
+      container.appendChild(this.childrenContainer);
     }
 
-    return container
+    return container;
   }
 
   private setupEventListeners(): void {
@@ -141,25 +141,25 @@ export class ReplyNode {
       // Listen for reply toggle events on the post card
       this.postCard.getElement().addEventListener('replyToggle', (e: any) => {
         if (e.detail.postId === this.props.node.post.id) {
-          this.toggleReplyComposer()
+          this.toggleReplyComposer();
         }
-      })
+      });
     }
 
     // Listen for global reply composer open events to close other composers
     this.globalReplyListener = (e: any) => {
       if (e.detail.postId !== this.props.node.post.id && this.isReplyComposerOpen) {
-        this.hideReplyComposer()
+        this.hideReplyComposer();
       }
-    }
-    document.addEventListener('replyComposerOpen', this.globalReplyListener)
+    };
+    document.addEventListener('replyComposerOpen', this.globalReplyListener);
   }
 
   private toggleReplyComposer(): void {
     if (this.isReplyComposerOpen) {
-      this.hideReplyComposer()
+      this.hideReplyComposer();
     } else {
-      this.showReplyComposer()
+      this.showReplyComposer();
     }
   }
 
@@ -167,86 +167,94 @@ export class ReplyNode {
     if (!this.props.currentUser) {
       showSignInPrompt(
         'reply',
-        () => { window.history.pushState({}, '', '/login'); window.dispatchEvent(new PopStateEvent('popstate')) },
-        () => { window.history.pushState({}, '', '/register'); window.dispatchEvent(new PopStateEvent('popstate')) }
-      )
-      return
+        () => {
+          window.history.pushState({}, '', '/login');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        },
+        () => {
+          window.history.pushState({}, '', '/register');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        },
+      );
+      return;
     }
     if (this.replyComposer) {
       // Dispatch global event to close other reply composers
-      document.dispatchEvent(new CustomEvent('replyComposerOpen', {
-        detail: { postId: this.props.node.post.id }
-      }))
-      
-      this.replyComposer.getElement().style.display = 'block'
-      this.isReplyComposerOpen = true
+      document.dispatchEvent(
+        new CustomEvent('replyComposerOpen', {
+          detail: { postId: this.props.node.post.id },
+        }),
+      );
+
+      this.replyComposer.getElement().style.display = 'block';
+      this.isReplyComposerOpen = true;
     }
   }
 
   private hideReplyComposer(): void {
     if (this.replyComposer) {
-      this.replyComposer.getElement().style.display = 'none'
-      this.isReplyComposerOpen = false
+      this.replyComposer.getElement().style.display = 'none';
+      this.isReplyComposerOpen = false;
     }
   }
 
   private toggleExpanded(): void {
-    this.isExpanded = !this.isExpanded
+    this.isExpanded = !this.isExpanded;
     if (this.expandButton) {
-      this.expandButton.innerHTML = this.isExpanded ? '▼' : '▶'
+      this.expandButton.innerHTML = this.isExpanded ? '▼' : '▶';
     }
     if (this.childrenContainer) {
-      this.childrenContainer.style.display = this.isExpanded ? 'block' : 'none'
+      this.childrenContainer.style.display = this.isExpanded ? 'block' : 'none';
     }
   }
 
   private handleReplyCreated(newReply: Post): void {
     // Hide reply composer after successful reply
-    this.hideReplyComposer()
-    
+    this.hideReplyComposer();
+
     // Notify parent
-    this.props.onReplyCreated(newReply)
+    this.props.onReplyCreated(newReply);
 
     // Update this post's reply count
     if (this.postCard) {
       this.postCard.updatePost({
-        reply_count: (this.props.node.post.reply_count || 0) + 1
-      })
+        reply_count: (this.props.node.post.reply_count || 0) + 1,
+      });
     }
   }
 
   public getElement(): HTMLElement {
-    return this.element
+    return this.element;
   }
 
   public destroy(): void {
     // Cleanup global event listener
     if (this.globalReplyListener) {
-      document.removeEventListener('replyComposerOpen', this.globalReplyListener)
-      this.globalReplyListener = undefined
+      document.removeEventListener('replyComposerOpen', this.globalReplyListener);
+      this.globalReplyListener = undefined;
     }
 
     // Cleanup child reply nodes
-    this.childReplyNodes.forEach(node => node.destroy())
-    this.childReplyNodes = []
+    this.childReplyNodes.forEach((node) => void node.destroy());
+    this.childReplyNodes = [];
 
     // Cleanup post card
     if (this.postCard) {
-      this.postCard.destroy()
-      this.postCard = undefined
+      this.postCard.destroy();
+      this.postCard = undefined;
     }
 
     // Cleanup reply composer
     if (this.replyComposer) {
-      this.replyComposer.destroy()
-      this.replyComposer = undefined
+      this.replyComposer.destroy();
+      this.replyComposer = undefined;
     }
 
-    this.element.remove()
+    this.element.remove();
   }
 }
 
 // Factory function for easier usage
 export function createReplyNode(props: ReplyNodeProps): ReplyNode {
-  return new ReplyNode(props)
+  return new ReplyNode(props);
 }

@@ -1,12 +1,12 @@
 /// <reference types="@cloudflare/workers-types" />
-import { Hono } from 'hono'
+import { Hono } from 'hono';
 
 type Bindings = {
-  DB: D1Database
-  BASE_URL: string
-}
+  DB: D1Database;
+  BASE_URL: string;
+};
 
-const app = new Hono<{ Bindings: Bindings }>()
+const app = new Hono<{ Bindings: Bindings }>();
 
 // GET /.well-known/nodeinfo - NodeInfo discovery
 app.get('/', async (c) => {
@@ -14,14 +14,14 @@ app.get('/', async (c) => {
     links: [
       {
         rel: 'http://nodeinfo.diaspora.software/ns/schema/2.1',
-        href: `${c.env.BASE_URL}/nodeinfo/2.1`
-      }
-    ]
-  }
-  
-  return c.json(nodeInfo, 200, {
-    'Content-Type': 'application/json'
-  })
-})
+        href: `${c.env.BASE_URL}/nodeinfo/2.1`,
+      },
+    ],
+  };
 
-export default app
+  return c.json(nodeInfo, 200, {
+    'Content-Type': 'application/json',
+  });
+});
+
+export default app;

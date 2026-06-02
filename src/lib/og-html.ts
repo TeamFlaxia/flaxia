@@ -1,21 +1,14 @@
 export interface OgHtmlOptions {
-  title: string
-  description: string
-  image: string
-  url: string
-  type: string
-  twitterCard?: string
+  title: string;
+  description: string;
+  image: string;
+  url: string;
+  type: string;
+  twitterCard?: string;
 }
 
 export function renderOgHtml(options: OgHtmlOptions, baseUrl: string): string {
-  const {
-    title,
-    description,
-    image,
-    url,
-    type,
-    twitterCard = 'summary_large_image'
-  } = options
+  const { title, description, image, url, type, twitterCard = 'summary_large_image' } = options;
 
   return `<!DOCTYPE html>
 <html lang="ja">
@@ -111,7 +104,7 @@ export function renderOgHtml(options: OgHtmlOptions, baseUrl: string): string {
     </div>
   </div>
 </body>
-</html>`
+</html>`;
 }
 
 function escapeHtml(text: string): string {
@@ -120,5 +113,5 @@ function escapeHtml(text: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
+    .replace(/'/g, '&#39;');
 }

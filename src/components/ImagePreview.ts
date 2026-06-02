@@ -1,24 +1,24 @@
-import { GifPreviewProps } from '../types/post.js'
-import { safeRemoveFromBody } from '../lib/dom-utils.js'
-import { registerModal } from '../lib/modal-state.js'
-import { t } from '../lib/i18n.js'
+import { safeRemoveFromBody } from '../lib/dom-utils.js';
+import { t } from '../lib/i18n.js';
+import { registerModal } from '../lib/modal-state.js';
+import { GifPreviewProps } from '../types/post.js';
 
 export function createImagePreview(props: GifPreviewProps): HTMLElement {
-  const container = document.createElement('div')
-  container.className = 'image-preview'
-  
+  const container = document.createElement('div');
+  container.className = 'image-preview';
+
   if (!props.gifKey) {
     // Fallback for posts without image
-    const fallback = document.createElement('div')
-    fallback.className = 'image-preview-error'
-    fallback.textContent = t('image_preview.no_preview')
-    container.appendChild(fallback)
-    return container
+    const fallback = document.createElement('div');
+    fallback.className = 'image-preview-error';
+    fallback.textContent = t('image_preview.no_preview');
+    container.appendChild(fallback);
+    return container;
   }
-  
+
   // Add aspect ratio container to prevent CLS
-  const aspectRatioContainer = document.createElement('div')
-  aspectRatioContainer.className = 'image-preview-aspect-ratio'
+  const aspectRatioContainer = document.createElement('div');
+  aspectRatioContainer.className = 'image-preview-aspect-ratio';
   // When isThumbnail is true, the parent .post-stage--image-thumb already establishes the
   // aspect ratio via padding-bottom, so we use absolute positioning to fill it instead of
   // adding another padding-bottom (which would double the height).
@@ -32,9 +32,9 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
       background: var(--bg-input);
       border-radius: 8px;
       overflow: hidden;
-    `
+    `;
   } else {
-    const ratio = '56.25'
+    const ratio = '56.25';
     aspectRatioContainer.style.cssText = `
       position: relative;
       width: 100%;
@@ -42,12 +42,12 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
       background: var(--bg-input);
       border-radius: 8px;
       overflow: hidden;
-    `
+    `;
   }
-  
+
   // Add loading indicator
-  const loading = document.createElement('div')
-  loading.className = 'image-preview-loading'
+  const loading = document.createElement('div');
+  loading.className = 'image-preview-loading';
   loading.style.cssText = `
     position: absolute;
     top: 0;
@@ -61,11 +61,11 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     color: var(--text-muted);
     font-family: monospace;
     font-size: 0.875rem;
-  `
-  loading.textContent = t('common.loading')
-  
+  `;
+  loading.textContent = t('common.loading');
+
   // Create image container with proper sizing
-  const imageContainer = document.createElement('div')
+  const imageContainer = document.createElement('div');
   imageContainer.style.cssText = `
     position: absolute;
     top: 0;
@@ -75,12 +75,12 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     display: flex;
     align-items: center;
     justify-content: center;
-  `
-  
-  const img = document.createElement('img')
-  img.className = 'image-preview-img'
-  img.alt = t('image_preview.post_preview', { id: props.postId })
-  img.loading = 'lazy'
+  `;
+
+  const img = document.createElement('img');
+  img.className = 'image-preview-img';
+  img.alt = t('image_preview.post_preview', { id: props.postId });
+  img.loading = 'lazy';
   img.style.cssText = `
     width: 100%;
     height: 100%;
@@ -95,26 +95,24 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     backface-visibility: hidden;
     transform: translateZ(0);
     filter: contrast(1.1) brightness(1.05);
-  `
-  
+  `;
+
   // Use the API proxy endpoint for images
-  const imageUrl = props.isThumbnail 
-    ? `/api/thumbnail/${props.postId}`
-    : `/api/images/${props.gifKey}`
-  img.src = imageUrl
-  
+  const imageUrl = props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`;
+  img.src = imageUrl;
+
   // Handle image load success
   img.onload = () => {
-    loading.style.display = 'none'
-    img.style.opacity = '1'
-  }
-  
+    loading.style.display = 'none';
+    img.style.opacity = '1';
+  };
+
   // Handle image loading errors
   img.onerror = () => {
-    loading.style.display = 'none'
-    img.style.display = 'none'
-    const fallback = document.createElement('div')
-    fallback.className = 'image-preview-error'
+    loading.style.display = 'none';
+    img.style.display = 'none';
+    const fallback = document.createElement('div');
+    fallback.className = 'image-preview-error';
     fallback.style.cssText = `
       position: absolute;
       top: 0;
@@ -130,31 +128,31 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
       font-size: 0.875rem;
       text-align: center;
       padding: 2rem;
-    `
-    fallback.textContent = t('image_preview.load_failed')
-    imageContainer.appendChild(fallback)
-  }
-  
+    `;
+    fallback.textContent = t('image_preview.load_failed');
+    imageContainer.appendChild(fallback);
+  };
+
   // Set initial opacity for smooth loading
-  img.style.opacity = '0'
-  
+  img.style.opacity = '0';
+
   // Add click handler for overlay display
   img.onclick = (e) => {
-    e.stopPropagation() // Prevent post card click
-    createImageOverlay(imageUrl, props.postId)
-  }
-  
-  imageContainer.appendChild(img)
-  aspectRatioContainer.appendChild(loading)
-  aspectRatioContainer.appendChild(imageContainer)
-  container.appendChild(aspectRatioContainer)
-  return container
+    e.stopPropagation(); // Prevent post card click
+    createImageOverlay(imageUrl, props.postId);
+  };
+
+  imageContainer.appendChild(img);
+  aspectRatioContainer.appendChild(loading);
+  aspectRatioContainer.appendChild(imageContainer);
+  container.appendChild(aspectRatioContainer);
+  return container;
 }
 
 // Create image overlay modal
 function createImageOverlay(imageUrl: string, postId: string): void {
   // Create overlay container
-  const overlay = document.createElement('div')
+  const overlay = document.createElement('div');
   overlay.style.cssText = `
     position: fixed;
     top: 0;
@@ -167,10 +165,10 @@ function createImageOverlay(imageUrl: string, postId: string): void {
     justify-content: center;
     z-index: 1000;
     cursor: pointer;
-  `
-  
+  `;
+
   // Create image container
-  const imageContainer = document.createElement('div')
+  const imageContainer = document.createElement('div');
   imageContainer.style.cssText = `
     width: 90vw;
     height: 90vh;
@@ -178,12 +176,12 @@ function createImageOverlay(imageUrl: string, postId: string): void {
     display: flex;
     align-items: center;
     justify-content: center;
-  `
-  
+  `;
+
   // Create full-size image
-  const fullImage = document.createElement('img')
-  fullImage.src = imageUrl
-  fullImage.alt = t('image_preview.post_full_size', { id: postId })
+  const fullImage = document.createElement('img');
+  fullImage.src = imageUrl;
+  fullImage.alt = t('image_preview.post_full_size', { id: postId });
   fullImage.style.cssText = `
     max-width: 100%;
     max-height: 100%;
@@ -192,11 +190,11 @@ function createImageOverlay(imageUrl: string, postId: string): void {
     object-fit: contain;
     border-radius: 8px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-  `
-  
+  `;
+
   // Create close button
-  const closeButton = document.createElement('button')
-  closeButton.textContent = t('image_preview.close')
+  const closeButton = document.createElement('button');
+  closeButton.textContent = t('image_preview.close');
   closeButton.style.cssText = `
     position: absolute;
     top: 8px;
@@ -213,48 +211,48 @@ function createImageOverlay(imageUrl: string, postId: string): void {
     align-items: center;
     justify-content: center;
     transition: background 0.2s ease;
-  `
-  
-  closeButton.onmouseover = () => closeButton.style.background = 'rgba(255, 255, 255, 0.3)'
-  closeButton.onmouseout = () => closeButton.style.background = 'rgba(255, 255, 255, 0.2)'
-  
+  `;
+
+  closeButton.onmouseover = () => (closeButton.style.background = 'rgba(255, 255, 255, 0.3)');
+  closeButton.onmouseout = () => (closeButton.style.background = 'rgba(255, 255, 255, 0.2)');
+
   // Close handlers
-  const unregister = registerModal()
+  const unregister = registerModal();
   const closeOverlay = () => {
-    unregister()
-    safeRemoveFromBody(overlay)
-  }
-  
+    unregister();
+    safeRemoveFromBody(overlay);
+  };
+
   closeButton.onclick = (e) => {
-    e.stopPropagation()
-    closeOverlay()
-  }
-  
+    e.stopPropagation();
+    closeOverlay();
+  };
+
   overlay.onclick = (e) => {
     if (e.target === overlay) {
-      closeOverlay()
+      closeOverlay();
     }
-  }
-  
+  };
+
   // Handle ESC key
   const handleEsc = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
-      closeOverlay()
-      document.removeEventListener('keydown', handleEsc)
+      closeOverlay();
+      document.removeEventListener('keydown', handleEsc);
     }
-  }
-  document.addEventListener('keydown', handleEsc)
-  
+  };
+  document.addEventListener('keydown', handleEsc);
+
   // Assemble overlay
-  imageContainer.appendChild(fullImage)
-  imageContainer.appendChild(closeButton)
-  overlay.appendChild(imageContainer)
-  
+  imageContainer.appendChild(fullImage);
+  imageContainer.appendChild(closeButton);
+  overlay.appendChild(imageContainer);
+
   // Add to body
-  document.body.appendChild(overlay)
+  document.body.appendChild(overlay);
 }
 
 // Legacy export for backward compatibility
 export function createGifPreview(props: GifPreviewProps): HTMLElement {
-  return createImagePreview(props)
+  return createImagePreview(props);
 }

@@ -1,37 +1,32 @@
 // Main PostCard component
-export { PostCard, createPostCard } from './components/PostCard.js'
 
-// Timeline component
-export { Timeline, createTimeline } from './components/Timeline.js'
-
-// Sandbox bridge
-export { SandboxBridge, useSandboxBridge } from './lib/sandbox-bridge.js'
-export type { SandboxBridgeOptions } from './lib/sandbox-bridge.js'
-
+export { createImagePreview } from './components/ImagePreview.js';
+export { createPostActions } from './components/PostActions.js';
+export { createPostCard, PostCard } from './components/PostCard.js';
 // Sub-components (for advanced usage)
-export { createPostHeader } from './components/PostHeader.js'
-export { createPostText } from './components/PostText.js'
-export { createPostStage, updatePostStage } from './components/PostStage.js'
-export { createImagePreview } from './components/ImagePreview.js'
-export { createSandboxFrame } from './components/SandboxFrame.js'
-export { createPostActions } from './components/PostActions.js'
-
+export { createPostHeader } from './components/PostHeader.js';
+export { createPostStage, updatePostStage } from './components/PostStage.js';
+export { createPostText } from './components/PostText.js';
+export { createSandboxFrame } from './components/SandboxFrame.js';
+// Timeline component
+export { createTimeline, Timeline } from './components/Timeline.js';
+// Bridge types for postMessage communication
+export type { ParentMessage, SandboxMessage } from './lib/bridge.js';
+export { isParentMessage, isSandboxMessage } from './lib/bridge.js';
+export type { SandboxBridgeOptions } from './lib/sandbox-bridge.js';
+// Sandbox bridge
+export { SandboxBridge, useSandboxBridge } from './lib/sandbox-bridge.js';
 // Types
-export type { 
-  Post, 
-  PostCardProps, 
+export type {
+  GifPreviewProps,
+  Post,
+  PostActionsProps,
+  PostCardProps,
+  PostHeaderProps,
+  PostStageProps,
+  PostTextProps,
+  SandboxFrameProps,
   TimelineProps,
   TimelineState,
-  PostHeaderProps, 
-  PostTextProps, 
-  PostStageProps, 
-  GifPreviewProps, 
-  SandboxFrameProps, 
-  PostActionsProps 
-} from './types/post.js'
-
-export { PostCardMode } from './types/post.js'
-
-// Bridge types for postMessage communication
-export type { ParentMessage, SandboxMessage } from './lib/bridge.js'
-export { isParentMessage, isSandboxMessage } from './lib/bridge.js'
+} from './types/post.js';
+export { PostCardMode } from './types/post.js';

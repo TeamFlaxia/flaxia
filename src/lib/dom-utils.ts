@@ -9,26 +9,26 @@
  */
 export function safeRemoveElement(element: HTMLElement | null | undefined): boolean {
   if (!element) {
-    return false
+    return false;
   }
 
   try {
     // Check if element has a parent and is in the DOM
     if (element.parentNode) {
-      element.parentNode.removeChild(element)
-      return true
+      element.parentNode.removeChild(element);
+      return true;
     }
-    
+
     // If no parent but element has remove method (modern browsers)
     if ('remove' in element) {
-      element.remove()
-      return true
+      element.remove();
+      return true;
     }
-    
-    return false
+
+    return false;
   } catch (error) {
-    console.warn('Failed to remove element:', error)
-    return false
+    console.warn('Failed to remove element:', error);
+    return false;
   }
 }
 
@@ -39,32 +39,32 @@ export function safeRemoveElement(element: HTMLElement | null | undefined): bool
  */
 export function safeRemoveFromBody(element: HTMLElement | null | undefined): boolean {
   if (!element) {
-    return false
+    return false;
   }
 
   try {
     // Check if element is actually a child of document.body
     if (element.parentNode === document.body) {
-      document.body.removeChild(element)
-      return true
+      document.body.removeChild(element);
+      return true;
     }
-    
+
     // Fallback: try to remove using parent if it exists
     if (element.parentNode) {
-      element.parentNode.removeChild(element)
-      return true
+      element.parentNode.removeChild(element);
+      return true;
     }
-    
+
     // Final fallback: use modern remove method
     if ('remove' in element) {
-      element.remove()
-      return true
+      element.remove();
+      return true;
     }
-    
-    return false
+
+    return false;
   } catch (error) {
-    console.warn('Failed to remove element from body:', error)
-    return false
+    console.warn('Failed to remove element from body:', error);
+    return false;
   }
 }
 
@@ -75,10 +75,10 @@ export function safeRemoveFromBody(element: HTMLElement | null | undefined): boo
  */
 export function isElementInDOM(element: HTMLElement | null | undefined): boolean {
   if (!element) {
-    return false
+    return false;
   }
-  
-  return document.contains(element)
+
+  return document.contains(element);
 }
 
 /**
@@ -87,25 +87,25 @@ export function isElementInDOM(element: HTMLElement | null | undefined): boolean
  */
 export function safeClearChildren(parent: HTMLElement | null | undefined): void {
   if (!parent) {
-    return
+    return;
   }
 
   try {
     // Use modern approach if available
     if ('replaceChildren' in parent) {
-      parent.replaceChildren()
-      return
+      parent.replaceChildren();
+      return;
     }
-    
+
     // Fallback: remove children one by one
-    const parentNode = parent as Node
-    let child = parentNode.firstChild
+    const parentNode = parent as Node;
+    let child = parentNode.firstChild;
     while (child) {
-      parentNode.removeChild(child)
-      child = parentNode.firstChild
+      parentNode.removeChild(child);
+      child = parentNode.firstChild;
     }
   } catch (error) {
-    console.warn('Failed to clear children:', error)
+    console.warn('Failed to clear children:', error);
   }
 }
 
@@ -116,17 +116,17 @@ export function safeClearChildren(parent: HTMLElement | null | undefined): void 
  */
 export function safeCleanupModal(
   modalElement: HTMLElement | null | undefined,
-  cleanupFunctions: (() => void)[] = []
+  cleanupFunctions: (() => void)[] = [],
 ): void {
   // Run cleanup functions first
-  cleanupFunctions.forEach(cleanup => {
+  cleanupFunctions.forEach((cleanup) => {
     try {
-      cleanup()
+      cleanup();
     } catch (error) {
-      console.warn('Cleanup function failed:', error)
+      console.warn('Cleanup function failed:', error);
     }
-  })
+  });
 
   // Remove modal element
-  safeRemoveFromBody(modalElement)
+  safeRemoveFromBody(modalElement);
 }

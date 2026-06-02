@@ -1,41 +1,41 @@
-import { Hono } from 'hono'
+import { Hono } from 'hono';
 
 interface Env {
-  BUCKET: R2Bucket
+  BUCKET: R2Bucket;
 }
 
-type Bindings = Env
+type Bindings = Env;
 
-const app = new Hono<{ Bindings: Bindings }>()
+const app = new Hono<{ Bindings: Bindings }>();
 
 app.get('/:postId', async (c) => {
-  console.log('Sandbox POST function called for:', c.req.url)
-  const postId = c.req.param('postId')
-  
-  console.log('Extracted postId:', postId)
-  
+  console.log('Sandbox POST function called for:', c.req.url);
+  const postId = c.req.param('postId');
+
+  console.log('Extracted postId:', postId);
+
   if (!postId) {
-    return c.json({ error: 'postId is required' }, 400)
+    return c.json({ error: 'postId is required' }, 400);
   }
 
   try {
-    console.log('POST endpoint called for postId:', postId)
-    
-    if (!c.env.BUCKET) {
-      console.log('R2 bucket not available')
-      return c.json({ error: 'Storage not available' }, 500)
-    }
-    
-    // R2 から ZIP を取得確認
-    const zipKey = `zip/${postId}.zip`
-    const object = await c.env.BUCKET.get(zipKey)
+    console.log('POST endpoint called for postId:', postId);
 
-    console.log('R2 result for POST:', object ? 'found' : 'not found')
+    if (!c.env.BUCKET) {
+      console.log('R2 bucket not available');
+      return c.json({ error: 'Storage not available' }, 500);
+    }
+
+    // R2 から ZIP を取得確認
+    const zipKey = `zip/${postId}.zip`;
+    const object = await c.env.BUCKET.get(zipKey);
+
+    console.log('R2 result for POST:', object ? 'found' : 'not found');
 
     if (!object) {
-      return c.json({ error: 'ZIP not found' }, 404)
+      return c.json({ error: 'ZIP not found' }, 404);
     }
-    
+
     // Service Worker を使用した sandbox HTML
     const htmlContent = `
 <!DOCTYPE html>
@@ -81,8 +81,8 @@ app.get('/:postId', async (c) => {
   function isOriginAllowed(origin) {
     return ALLOWED_ORIGINS.some(allowed => {
       if (allowed.includes('*')) {
-        const escaped = allowed.replace(/[.+?^\x24{}()|[\]\\]/g, '\\$&')
-        const pattern = '^' + escaped.replace(/\*/g, '[^.]+') + '$'
+        const escaped = allowed.replace(/[.+?^\x24{}()|[]\\]/g, '\\$&')
+        const pattern = '^' + escaped.replace(/*/g, '[^.]+') + '$'
         return new RegExp(pattern).test(origin)
       }
       return origin === allowed
@@ -206,24 +206,24 @@ app.get('/:postId', async (c) => {
 </script>
 </body>
 </html>
-    `
-    
+    `;
+
     return new Response(htmlContent, {
       headers: {
         'Content-Type': 'text/html',
         'Cache-Control': 'no-cache',
         'X-Content-Type-Options': 'nosniff',
-        'X-Frame-Options': 'SAMEORIGIN'
-      }
-    })
+        'X-Frame-Options': 'SAMEORIGIN',
+      },
+    });
   } catch (error) {
-    console.error('Error in POST endpoint:', error)
-    return c.json({ error: 'Internal server error' }, 500)
+    console.error('Error in POST endpoint:', error);
+    return c.json({ error: 'Internal server error' }, 500);
   }
-})
+});
 
 export default {
   fetch: (request: Request, env: Env, ctx: ExecutionContext) => {
-    return app.fetch(request, env, ctx)
-  }
-}
+    return app.fetch(request, env, ctx);
+  },
+};

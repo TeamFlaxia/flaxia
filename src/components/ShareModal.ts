@@ -1,21 +1,21 @@
-import { t } from '../lib/i18n.js'
-import { sharePlatforms, createShareData, copyToClipboard, canUseWebShare, shareViaWebShare } from '../lib/share'
-import { registerModal } from '../lib/modal-state.js'
+import { t } from '../lib/i18n.js';
+import { registerModal } from '../lib/modal-state.js';
+import { canUseWebShare, copyToClipboard, createShareData, sharePlatforms, shareViaWebShare } from '../lib/share';
 
 export interface ShareModalProps {
   post: {
-    id: string
-    text: string
-    username: string
-    display_name?: string
-  }
-  onClose: () => void
+    id: string;
+    text: string;
+    username: string;
+    display_name?: string;
+  };
+  onClose: () => void;
 }
 
 export function createShareModal({ post, onClose }: ShareModalProps): HTMLElement {
-  const unregister = registerModal()
-  const overlay = document.createElement('div')
-  overlay.className = 'share-modal-overlay'
+  const unregister = registerModal();
+  const overlay = document.createElement('div');
+  overlay.className = 'share-modal-overlay';
   overlay.style.cssText = `
     position: fixed;
     top: 0;
@@ -28,10 +28,10 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
     justify-content: center;
     z-index: 1000;
     padding: 1rem;
-  `
+  `;
 
-  const modal = document.createElement('div')
-  modal.className = 'share-modal'
+  const modal = document.createElement('div');
+  modal.className = 'share-modal';
   modal.style.cssText = `
     background: var(--bg-primary);
     border-radius: 0.75rem;
@@ -40,7 +40,7 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
     max-height: 85vh;
     overflow-y: auto;
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
-  `
+  `;
 
   const platformNameKey: Record<string, string> = {
     X: 'share.platform_x',
@@ -49,12 +49,12 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
     Reddit: 'share.platform_reddit',
     Bluesky: 'share.platform_bluesky',
     Threads: 'share.platform_threads',
-  }
-  const getPlatformName = (name: string) => t(platformNameKey[name] || name)
+  };
+  const getPlatformName = (name: string) => t(platformNameKey[name] || name);
 
-  const shareData = createShareData(post)
-  const shareUrl = shareData.url
-  const shareText = shareData.text
+  const shareData = createShareData(post);
+  const shareUrl = shareData.url;
+  const _shareText = shareData.text;
 
   modal.innerHTML = `
     <div class="share-modal-header" style="
@@ -85,7 +85,9 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
     <div class="share-modal-content" style="
       padding: 1.25rem;
     ">
-      ${canUseWebShare() ? `
+      ${
+        canUseWebShare()
+          ? `
         <button class="share-button share-button--native" style="
           width: 100%;
           display: flex;
@@ -106,7 +108,9 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
           <span style="font-size: 1.25rem;">📤</span>
           <span>${t('share.native')}</span>
         </button>
-      ` : ''}
+      `
+          : ''
+      }
       <button class="share-button share-button--clipboard" style="
         width: 100%;
         display: flex;
@@ -154,7 +158,9 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
         grid-template-columns: repeat(3, 1fr);
         gap: 0.75rem;
       ">
-        ${sharePlatforms.map(platform => `
+        ${sharePlatforms
+          .map(
+            (platform) => `
           <a class="share-icon" href="${platform.getUrl(shareData)}" target="_blank" rel="noopener noreferrer" style="
             display: flex;
             flex-direction: column;
@@ -182,73 +188,75 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
             ">${platform.icon}</span>
             <span style="font-size: 0.75rem; font-weight: 500;">${getPlatformName(platform.name)}</span>
           </a>
-        `).join('')}
+        `,
+          )
+          .join('')}
       </div>
     </div>
-  `
+  `;
 
-  overlay.appendChild(modal)
-  document.body.appendChild(overlay)
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
 
-  const closeButton = modal.querySelector('.share-modal-close') as HTMLButtonElement
-  const nativeShareButton = modal.querySelector('.share-button--native') as HTMLButtonElement
-  const clipboardButton = modal.querySelector('.share-button--clipboard') as HTMLButtonElement
-  const toast = modal.querySelector('.share-toast') as HTMLElement
+  const closeButton = modal.querySelector('.share-modal-close') as HTMLButtonElement;
+  const nativeShareButton = modal.querySelector('.share-button--native') as HTMLButtonElement;
+  const clipboardButton = modal.querySelector('.share-button--clipboard') as HTMLButtonElement;
+  const toast = modal.querySelector('.share-toast') as HTMLElement;
 
   const showToast = (message: string) => {
-    toast.textContent = message
-    toast.style.display = 'block'
+    toast.textContent = message;
+    toast.style.display = 'block';
     setTimeout(() => {
-      toast.style.display = 'none'
-    }, 2000)
-  }
+      toast.style.display = 'none';
+    }, 2000);
+  };
 
   const close = () => {
-    unregister()
-    overlay.remove()
-    onClose()
-  }
+    unregister();
+    overlay.remove();
+    onClose();
+  };
 
-  closeButton.addEventListener('click', close)
+  closeButton.addEventListener('click', close);
 
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) {
-      close()
+      close();
     }
-  })
+  });
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      close()
+      close();
     }
-  })
+  });
 
   if (nativeShareButton) {
     nativeShareButton.addEventListener('click', async () => {
-      const success = await shareViaWebShare(shareData)
+      const success = await shareViaWebShare(shareData);
       if (success) {
-        close()
+        close();
       } else {
-        showToast(t('share.native_failed'))
+        showToast(t('share.native_failed'));
       }
-    })
+    });
   }
 
   clipboardButton.addEventListener('click', async () => {
-    const success = await copyToClipboard(shareUrl)
+    const success = await copyToClipboard(shareUrl);
     if (success) {
-      showToast(t('share.copy_success'))
+      showToast(t('share.copy_success'));
     } else {
-      showToast(t('share.copy_failed'))
+      showToast(t('share.copy_failed'));
     }
-  })
+  });
 
-  const shareLinks = modal.querySelectorAll('.share-icon')
-  shareLinks.forEach(link => {
+  const shareLinks = modal.querySelectorAll('.share-icon');
+  shareLinks.forEach((link) => {
     link.addEventListener('click', () => {
-      close()
-    })
-  })
+      close();
+    });
+  });
 
-  return overlay
+  return overlay;
 }

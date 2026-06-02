@@ -1,13 +1,13 @@
 :root {
-  --bg-primary:    #ffffff;
-  --bg-secondary:  #f0fdf4;
-  --bg-input:      #f1f5f9;
-  --border:        #e2e8f0;
-  --text-primary:  #0f172a;
-  --text-muted:    #64748b;
-  --accent:        #22c55e;
-  --accent-dark:   #16a34a;
-  --danger:        #ef4444;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f0fdf4;
+  --bg-input: #f1f5f9;
+  --border: #e2e8f0;
+  --text-primary: #0f172a;
+  --text-muted: #64748b;
+  --accent: #22c55e;
+  --accent-dark: #16a34a;
+  --danger: #ef4444;
 }
 
 * {
@@ -17,7 +17,7 @@
 }
 
 body {
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg-primary);
   color: var(--text-primary);
   line-height: 1.6;
@@ -53,19 +53,6 @@ body {
   min-height: calc(100vh - 48px);
   min-height: calc(100dvh - 48px);
 }
-.tauri-android .auth-page {
-  min-height: calc(100vh - 48px);
-  min-height: calc(100dvh - 48px);
-}
-.tauri-android .left-nav {
-  top: 48px;
-  max-height: calc(100vh - 48px);
-  max-height: calc(100dvh - 48px);
-}
-.tauri-android .arcade-page {
-  height: 100% !important;
-}
-
 /* Auth Pages */
 .auth-page {
   display: flex;
@@ -74,6 +61,33 @@ body {
   min-height: 100vh;
   background: var(--bg-secondary);
   width: 100%;
+}
+.tauri-android .auth-page {
+  min-height: calc(100vh - 48px);
+  min-height: calc(100dvh - 48px);
+}
+.left-nav {
+  width: 240px;
+  flex-shrink: 0;
+  padding: 1rem;
+  border-right: 1px solid var(--border);
+  background: white;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.tauri-android .left-nav {
+  top: 48px;
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
+}
+.arcade-page {
+  flex: none;
+  height: 100dvh;
+}
+.tauri-android .arcade-page {
+  height: 100%;
 }
 
 .auth-card {
@@ -89,7 +103,7 @@ body {
   background: none;
   border: none;
   color: var(--text-muted);
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   cursor: pointer;
   padding: 0.25rem 0;
@@ -105,7 +119,7 @@ body {
 }
 
 .auth-logo {
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   color: var(--accent);
   font-weight: bold;
   font-size: 1.5rem;
@@ -138,7 +152,7 @@ body {
   border: none;
   border-bottom: 2px solid var(--border);
   padding: 0.75rem 0.25rem;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   width: 100%;
   font-size: 1rem;
   color: var(--text-primary);
@@ -157,7 +171,7 @@ body {
 .field-hint {
   font-size: 0.75rem;
   color: var(--text-muted);
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 .field-error {
@@ -178,7 +192,7 @@ body {
 .auth-button {
   background: var(--accent);
   color: #000;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-weight: bold;
   border: none;
   border-radius: 9999px;
@@ -277,6 +291,10 @@ body {
   margin-bottom: 0.5rem;
 }
 
+p {
+  color: var(--text-muted);
+}
+
 /* Profile bio Markdown elements */
 .profile-bio p {
   margin: 0 0 0.5rem 0;
@@ -298,7 +316,7 @@ body {
   background: var(--bg-secondary);
   padding: 0.125rem 0.25rem;
   border-radius: 0.25rem;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.8em;
   color: var(--accent-dark);
 }
@@ -318,7 +336,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 0.25rem;
   padding: 0.5rem;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   color: var(--text-primary);
   outline: none;
@@ -352,7 +370,7 @@ body {
   font-size: 1.25rem;
   font-weight: 600;
   color: var(--text-primary);
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 .profile-stat:not(:last-child)::after {
@@ -370,7 +388,7 @@ body {
 .profile-button {
   padding: 0.5rem 1rem;
   border-radius: 0.25rem;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
@@ -449,7 +467,7 @@ body {
 .empty-text {
   text-align: center;
   padding: 2rem;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
 }
 
@@ -467,7 +485,7 @@ body {
 
 .post-content {
   color: var(--text-primary);
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   line-height: 1.4;
   margin-bottom: 0.5rem;
 }
@@ -475,17 +493,13 @@ body {
 .post-timestamp {
   color: var(--text-muted);
   font-size: 0.75rem;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 h1 {
   color: var(--accent);
   font-size: 2rem;
   margin-bottom: 0.5rem;
-}
-
-p {
-  color: var(--text-muted);
 }
 
 /* Notifications Page */
@@ -506,7 +520,7 @@ p {
   }
 
   .notification-row {
-    padding: 12px 10px !important;
+    padding: 12px 10px;
   }
 }
 
@@ -529,18 +543,6 @@ p {
   width: 100%;
   max-width: 1200px;
   margin: 0 auto;
-}
-
-.left-nav {
-  width: 240px;
-  flex-shrink: 0;
-  padding: 1rem;
-  border-right: 1px solid var(--border);
-  background: white;
-  position: sticky;
-  top: 0;
-  height: 100vh;
-  overflow-y: auto;
 }
 
 .main-content {
@@ -576,7 +578,9 @@ p {
   border-radius: 0 14px 14px 0;
   z-index: 1080;
   cursor: pointer;
-  transition: background 0.2s ease, transform 0.2s ease;
+  transition:
+    background 0.2s ease,
+    transform 0.2s ease;
   display: none;
 }
 
@@ -599,7 +603,7 @@ p {
   .right-panel {
     display: none;
   }
-  
+
   .main-container {
     max-width: 840px;
   }
@@ -622,12 +626,12 @@ p {
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
-  
+
   .left-nav--open {
     transform: translateX(0);
     box-shadow: 4px 0 12px rgba(0, 0, 0, 0.15);
   }
-  
+
   /* Swipe hint indicator */
   .left-nav-swipe-hint {
     position: fixed;
@@ -639,14 +643,16 @@ p {
     background: rgba(34, 197, 94, 0.3);
     border-radius: 0 6px 6px 0;
     z-index: 1099;
-    transition: opacity 0.3s ease, background-color 0.2s ease;
+    transition:
+      opacity 0.3s ease,
+      background-color 0.2s ease;
     cursor: pointer;
   }
-  
+
   .left-nav-swipe-hint:hover {
     background: rgba(34, 197, 94, 0.5);
   }
-  
+
   .left-nav--open + .left-nav-swipe-hint,
   .left-nav-swipe-hint--hidden {
     opacity: 0;
@@ -664,43 +670,40 @@ p {
     z-index: 1099;
     opacity: 0;
     visibility: hidden;
-    transition: opacity 0.3s ease, visibility 0.3s ease;
+    transition:
+      opacity 0.3s ease,
+      visibility 0.3s ease;
   }
-  
+
   .left-nav-overlay--visible {
     opacity: 1;
     visibility: visible;
   }
-  
+
   .main-content {
     padding-bottom: 1rem;
   }
-  
+
   .main-container {
     flex-direction: column;
   }
 
-  .arcade-page {
-    flex: none !important;
-    height: 100dvh !important;
-  }
-
   .arcade-header {
-    padding: 0.5rem !important;
-    gap: 0.4rem !important;
+    padding: 0.5rem;
+    gap: 0.4rem;
   }
 
   .arcade-header h1 {
-    font-size: 1rem !important;
+    font-size: 1rem;
   }
 
   .arcade-header span {
-    font-size: 0.75rem !important;
+    font-size: 0.75rem;
   }
 
   .arcade-back-btn {
-    font-size: 1.2rem !important;
-    padding: 0.15rem 0.35rem !important;
+    font-size: 1.2rem;
+    padding: 0.15rem 0.35rem;
   }
 }
 
@@ -725,7 +728,7 @@ p {
   border-radius: 9999px;
   color: var(--text-primary);
   cursor: pointer;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 1rem;
   font-weight: 400;
   transition: all 0.2s ease;
@@ -749,7 +752,7 @@ p {
   color: #000;
   border: none;
   border-radius: 9999px;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 1rem;
   font-weight: bold;
   cursor: pointer;
@@ -765,42 +768,42 @@ p {
   .left-nav .nav-logo,
   .left-nav .nav-user-area,
   .left-nav .nav-legal-links {
-    display: block !important;
+    display: block;
   }
-  
+
   .left-nav .nav-legal-links a {
     display: block;
     padding: 0.5rem 0;
   }
-  
+
   .left-nav .nav-post-button {
-    display: block !important;
+    display: block;
   }
-  
+
   .left-nav .nav-items {
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
     margin-bottom: 2rem;
   }
-  
+
   .left-nav .nav-item {
     justify-content: flex-start;
     padding: 0.75rem 1rem;
     font-size: 1rem;
     border-radius: 9999px;
   }
-  
+
   .left-nav .nav-item span:not(.nav-badge):first-child {
     margin-right: 0.75rem;
   }
-  
+
   .left-nav .nav-item span:not(.nav-badge):not(:first-child) {
     display: inline;
   }
-  
+
   .left-nav .nav-signup-button {
-    display: block !important;
+    display: block;
   }
 }
 
@@ -821,7 +824,7 @@ p {
   border: 1px solid var(--border);
   border-radius: 9999px;
   color: var(--text-primary);
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   outline: none;
   transition: border-color 0.2s ease;
@@ -837,7 +840,7 @@ p {
 }
 
 .search-box.searching::after {
-  content: '';
+  content: "";
   position: absolute;
   right: 1rem;
   top: 50%;
@@ -851,10 +854,13 @@ p {
 }
 
 @keyframes spin {
-  0% { transform: translateY(-50%) rotate(0deg); }
-  100% { transform: translateY(-50%) rotate(360deg); }
+  0% {
+    transform: translateY(-50%) rotate(0deg);
+  }
+  100% {
+    transform: translateY(-50%) rotate(360deg);
+  }
 }
-
 
 .search-input::placeholder {
   color: var(--text-muted);
@@ -915,13 +921,13 @@ p {
 .trending-hashtag {
   color: var(--text-primary);
   font-weight: 600;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 .trending-count {
   color: var(--text-muted);
   font-size: 0.875rem;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 .follow-item {
@@ -962,7 +968,7 @@ p {
 .follow-name {
   color: var(--text-primary);
   font-weight: 600;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   white-space: nowrap;
   overflow: hidden;
@@ -972,7 +978,7 @@ p {
 .follow-handle {
   color: var(--text-muted);
   font-size: 0.875rem;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -984,7 +990,7 @@ p {
   color: var(--accent);
   border: 1px solid var(--accent);
   border-radius: 9999px;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
@@ -996,7 +1002,6 @@ p {
   background: var(--accent);
   color: #000;
 }
-
 
 /* PostCard Styles */
 .post-card {
@@ -1045,7 +1050,7 @@ p {
 .post-text {
   margin-bottom: 1rem;
   line-height: 1.5;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   color: var(--text-primary);
 }
 
@@ -1111,9 +1116,9 @@ p {
   border-radius: 0.5rem;
   padding: 1rem;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  display: block !important;
-  visibility: visible !important;
-  opacity: 1 !important;
+  display: block;
+  visibility: visible;
+  opacity: 1;
 }
 
 .audio-player-loading,
@@ -1122,7 +1127,7 @@ p {
 .image-preview-error,
 .gif-fallback {
   color: var(--text-muted);
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   text-align: center;
   padding: 1rem;
@@ -1171,7 +1176,7 @@ p {
   padding: 0.25rem 0.5rem;
   border-radius: 0.25rem;
   font-size: 0.75rem;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
 .sandbox-frame {
@@ -1196,7 +1201,7 @@ p {
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   transition: color 0.2s ease;
 }
@@ -1257,7 +1262,7 @@ p {
   border: none;
   outline: none;
   color: var(--text-primary);
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 1rem;
   line-height: 1.5;
   resize: none;
@@ -1293,7 +1298,7 @@ p {
 
 .dropzone-text {
   color: var(--text-muted);
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
 }
 
@@ -1339,7 +1344,7 @@ p {
 }
 
 .composer-char-count {
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   color: var(--text-muted);
   min-width: 3rem;
@@ -1352,7 +1357,7 @@ p {
   color: #000;
   border: none;
   border-radius: 9999px;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   font-weight: bold;
   cursor: pointer;
@@ -1410,7 +1415,7 @@ p {
 }
 
 .file-name {
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   color: var(--text-primary);
   flex: 1;
@@ -1443,7 +1448,7 @@ p {
 }
 
 .thumbnail-header {
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--text-muted);
@@ -1469,7 +1474,7 @@ p {
   color: #000;
   border: none;
   border-radius: 9999px;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.75rem;
   font-weight: 600;
   cursor: pointer;
@@ -1481,7 +1486,7 @@ p {
 }
 
 .thumbnail-hint {
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.75rem;
   color: var(--text-muted);
 }
@@ -1545,7 +1550,7 @@ p {
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   font-weight: 500;
   transition: all 0.2s ease;
@@ -1562,7 +1567,7 @@ p {
 }
 
 .feed-toggle-btn.active::after {
-  content: '';
+  content: "";
   position: absolute;
   bottom: -1px;
   left: 0;
@@ -1621,7 +1626,7 @@ p {
   background: var(--background);
   border: 1px solid #334155;
   color: var(--text);
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   border-radius: 0.25rem;
 }
@@ -1642,7 +1647,7 @@ p {
   border: none;
   border-radius: 0.25rem;
   cursor: pointer;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   font-weight: 600;
   transition: all 0.2s ease;
@@ -1665,7 +1670,7 @@ p {
   text-align: center;
   padding: 2rem;
   color: var(--text-muted);
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
 }
 
@@ -1679,7 +1684,7 @@ p {
 
 .ad-label {
   display: block;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.75rem;
   color: var(--text-muted);
   margin-bottom: 0.5rem;
@@ -1697,7 +1702,7 @@ p {
 .ad-placeholder p {
   margin: 0;
   color: var(--text-muted);
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
 }
 
@@ -1714,7 +1719,7 @@ p {
   border: 1px solid #334155;
   border-radius: 0.25rem;
   cursor: pointer;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   font-weight: 600;
   transition: all 0.2s ease;
@@ -1758,7 +1763,7 @@ p {
 
 .fullscreen-message {
   color: var(--text);
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   margin-bottom: 1.5rem;
   line-height: 1.5;
@@ -1776,7 +1781,7 @@ p {
   border: none;
   border-radius: 0.25rem;
   cursor: pointer;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   font-weight: 600;
   transition: all 0.2s ease;
@@ -1820,14 +1825,14 @@ p {
 
 .score-label {
   color: var(--text-muted);
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.75rem;
   flex: 1;
 }
 
 .score-value {
   color: var(--primary);
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.875rem;
   font-weight: 600;
 }
@@ -1892,6 +1897,15 @@ p {
   contain: layout style paint;
 }
 
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--border);
+  border-top: 2px solid var(--accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
 .loading-spinner .spinner {
   width: 24px;
   height: 24px;
@@ -1903,8 +1917,12 @@ p {
 }
 
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 /* Optimized image loading */
@@ -1978,7 +1996,7 @@ img {
 
 /* Optimize font loading - system fonts don't need @font-face */
 html {
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-display: swap;
 }
 
@@ -2080,7 +2098,7 @@ html {
   background: var(--bg-secondary);
   padding: 0.125rem 0.375rem;
   border-radius: 0.25rem;
-  font-family: 'Courier New', Consolas, monospace;
+  font-family: "Courier New", Consolas, monospace;
   font-size: 0.875em;
   color: var(--accent-dark);
 }
@@ -2192,7 +2210,7 @@ html {
   background: var(--bg-secondary);
   padding: 0.125rem 0.375rem;
   border-radius: 0.25rem;
-  font-family: 'Courier New', Consolas, monospace;
+  font-family: "Courier New", Consolas, monospace;
   font-size: 0.875em;
   color: var(--text-muted);
 }
@@ -2332,7 +2350,7 @@ html {
   color: var(--accent);
   border: 1px solid var(--accent);
   border-radius: 0.25rem;
-  font-family: 'Noto Sans', system-ui, -apple-system, sans-serif;
+  font-family: "Noto Sans", system-ui, -apple-system, sans-serif;
   font-size: 0.75rem;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -2382,22 +2400,17 @@ html {
   gap: 0.5rem;
   padding: 1rem;
   color: var(--text-muted);
-  font-family: 'Noto Sans', system-ui, -apple-system, sans-serif;
+  font-family: "Noto Sans", system-ui, -apple-system, sans-serif;
   font-size: 0.875rem;
 }
 
-.spinner {
-  width: 24px;
-  height: 24px;
-  border: 2px solid var(--border);
-  border-top: 2px solid var(--accent);
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
 @keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 .load-more-sentinel {
@@ -2411,7 +2424,7 @@ html {
   background: var(--bg-primary);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 100;
   max-height: 200px;
   overflow-y: auto;
@@ -2455,7 +2468,7 @@ html {
   background: var(--bg-primary);
   color: var(--text-primary);
   font-size: 0.875rem;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   outline: none;
   box-sizing: border-box;
 }
@@ -2484,7 +2497,7 @@ html {
   background: var(--bg-primary);
   color: var(--text-primary);
   font-size: 0.875rem;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   outline: none;
   box-sizing: border-box;
 }
@@ -2516,7 +2529,7 @@ html {
   padding: 6px 12px;
   border-radius: 6px;
   font-size: 0.8rem;
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   transition: all 0.2s;
 }
 
@@ -2532,7 +2545,7 @@ html {
 }
 
 .poll-duration-label {
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.8rem;
   color: var(--text-muted);
   white-space: nowrap;
@@ -2544,7 +2557,7 @@ html {
   border-radius: 6px;
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 0.8rem;
   outline: none;
   cursor: pointer;
@@ -2656,7 +2669,7 @@ html {
   font-size: 1.75rem;
   font-weight: 600;
   margin-bottom: 0.5rem;
-  font-family: 'Noto Sans', system-ui, -apple-system, sans-serif;
+  font-family: "Noto Sans", system-ui, -apple-system, sans-serif;
 }
 
 .legal-effective-date {
@@ -2678,7 +2691,7 @@ html {
   font-size: 1.5rem;
   font-weight: 600;
   margin: 2rem 0 1rem 0;
-  font-family: 'Noto Sans', system-ui, -apple-system, sans-serif;
+  font-family: "Noto Sans", system-ui, -apple-system, sans-serif;
 }
 
 .legal-body h2 {
@@ -2686,7 +2699,7 @@ html {
   font-size: 1.25rem;
   font-weight: 600;
   margin: 1.5rem 0 0.75rem 0;
-  font-family: 'Noto Sans', system-ui, -apple-system, sans-serif;
+  font-family: "Noto Sans", system-ui, -apple-system, sans-serif;
 }
 
 .legal-body h3 {
@@ -2694,13 +2707,13 @@ html {
   font-size: 1.125rem;
   font-weight: 600;
   margin: 1.25rem 0 0.5rem 0;
-  font-family: 'Noto Sans', system-ui, -apple-system, sans-serif;
+  font-family: "Noto Sans", system-ui, -apple-system, sans-serif;
 }
 
 .legal-body p {
   color: var(--text-primary);
   margin-bottom: 1rem;
-  font-family: 'Noto Sans', system-ui, -apple-system, sans-serif;
+  font-family: "Noto Sans", system-ui, -apple-system, sans-serif;
 }
 
 .legal-body ul {
@@ -2711,7 +2724,7 @@ html {
 
 .legal-body li {
   margin-bottom: 0.5rem;
-  font-family: 'Noto Sans', system-ui, -apple-system, sans-serif;
+  font-family: "Noto Sans", system-ui, -apple-system, sans-serif;
 }
 
 .legal-body a {
@@ -2748,14 +2761,14 @@ html {
   font-weight: 600;
   color: var(--text-primary);
   border-bottom: 1px solid var(--border);
-  font-family: 'Noto Sans', system-ui, -apple-system, sans-serif;
+  font-family: "Noto Sans", system-ui, -apple-system, sans-serif;
 }
 
 .legal-table td {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
   color: var(--text-primary);
-  font-family: 'Noto Sans', system-ui, -apple-system, sans-serif;
+  font-family: "Noto Sans", system-ui, -apple-system, sans-serif;
 }
 
 .legal-table tr:last-child td {
@@ -2780,7 +2793,7 @@ html {
   background: var(--bg-secondary);
   padding: 0.125rem 0.375rem;
   border-radius: 0.25rem;
-  font-family: 'Courier New', Consolas, monospace;
+  font-family: "Courier New", Consolas, monospace;
   font-size: 0.875em;
   color: var(--accent-dark);
 }
@@ -2820,7 +2833,7 @@ html {
   color: var(--text-muted);
   font-size: 13px;
   line-height: 1.4;
-  font-family: 'Noto Sans', system-ui, -apple-system, sans-serif;
+  font-family: "Noto Sans", system-ui, -apple-system, sans-serif;
 }
 
 .consent-link {
@@ -2879,7 +2892,7 @@ html {
   margin-top: 1rem;
   color: var(--text-muted);
   font-size: 13px;
-  font-family: 'Noto Sans', system-ui, -apple-system, sans-serif;
+  font-family: "Noto Sans", system-ui, -apple-system, sans-serif;
 }
 
 .legal-notice-link {
@@ -2908,7 +2921,9 @@ html {
   justify-content: center;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
   z-index: 100;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
   opacity: 0;
   transform: scale(0.8);
   pointer-events: none;
@@ -2973,7 +2988,7 @@ html {
 
 .post-modal-close:hover {
   color: var(--text-primary);
-  background: var(--bg-hover, rgba(0,0,0,0.04));
+  background: var(--bg-hover, rgba(0, 0, 0, 0.04));
 }
 
 .post-modal-dialog .post-composer {
@@ -3021,7 +3036,7 @@ html {
 }
 
 .post-modal-draft-item:hover {
-  background: var(--bg-hover, rgba(0,0,0,0.04));
+  background: var(--bg-hover, rgba(0, 0, 0, 0.04));
 }
 
 .post-modal-draft-text {
@@ -3062,14 +3077,25 @@ html {
 
 .post-modal-draft-del:hover {
   color: var(--danger, #ef4444);
-  background: var(--bg-hover, rgba(0,0,0,0.04));
+  background: var(--bg-hover, rgba(0, 0, 0, 0.04));
 }
 
 @keyframes spotlight-pulse {
-  0%, 100% { box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65), 0 0 20px rgba(34, 197, 94, 0.3); }
-  50% { box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65), 0 0 40px rgba(34, 197, 94, 0.5); }
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 9999px rgba(0, 0, 0, 0.65),
+      0 0 20px rgba(34, 197, 94, 0.3);
+  }
+  50% {
+    box-shadow:
+      0 0 0 9999px rgba(0, 0, 0, 0.65),
+      0 0 40px rgba(34, 197, 94, 0.5);
+  }
 }
 
 @keyframes arcade-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }

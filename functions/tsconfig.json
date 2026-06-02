@@ -15,9 +15,7 @@
     "isolatedModules": true,
     "types": ["@cloudflare/workers-types"]
   },
-  "include": [
-    "sandbox/**/*"
-  ],
+  "include": ["sandbox/**/*"],
   "exclude": [
     "node_modules",
     "api",

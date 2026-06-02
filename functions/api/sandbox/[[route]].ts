@@ -1,25 +1,28 @@
-import { Hono } from 'hono'
-import { cors } from 'hono/cors'
-import { ALLOWED_EXTENSIONS } from '../../../src/lib/file-extensions'
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { ALLOWED_EXTENSIONS } from '../../../src/lib/file-extensions';
 
 interface Env {
-  BUCKET: R2Bucket
+  BUCKET: R2Bucket;
 }
 
-type Bindings = Env
+type Bindings = Env;
 
-const app = new Hono<{ Bindings: Bindings }>()
+const app = new Hono<{ Bindings: Bindings }>();
 
 // CORS for sandbox
-app.use('/*', cors({
-  origin: ['https://flaxia.app', 'https://*.pages.dev', 'https://sandbox.flaxia.app'],
-  allowMethods: ['GET', 'POST', 'OPTIONS'],
-  allowHeaders: ['Content-Type'],
-}))
+app.use(
+  '/*',
+  cors({
+    origin: ['https://flaxia.app', 'https://*.pages.dev', 'https://sandbox.flaxia.app'],
+    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    allowHeaders: ['Content-Type'],
+  }),
+);
 
 // Service Worker script
 app.get('/sw.js', async (c) => {
-  const extConfigJson = JSON.stringify(ALLOWED_EXTENSIONS)
+  const extConfigJson = JSON.stringify(ALLOWED_EXTENSIONS);
   const swContent = `console.log('Service Worker script loading...')
 
 importScripts('https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js')
@@ -66,7 +69,7 @@ function validatePath(path) {
   const normalizedPath = path.startsWith('/') ? path.substring(1) : path;
   
   // パス深度のチェック
-  const depth = (normalizedPath.match(/\//g) || []).length;
+  const depth = (normalizedPath.match(///g) || []).length;
   if (depth > 10) {
     console.warn('Blocked path too deep:', path);
     return false;
@@ -179,7 +182,7 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url)
 
   // /sandbox/post/* 配下のリクエストのみ仮想FSで処理
-  const match = url.pathname.match(/^\/sandbox\/post\/[^\/]+(\/.*)?$/)
+  const match = url.pathname.match(/^/sandbox/post/[^/]+(/.*)?$/)
   if (!match) return  // 他はスルー
 
   // sandbox内パス: /sandbox/post/{id}/foo/bar → /foo/bar
@@ -204,7 +207,7 @@ async function serveFromFS(filePath) {
   }
 
   const data = virtualFS.get(filePath)
-    ?? virtualFS.get(filePath.replace(/\/$/, '/index.html'))
+    ?? virtualFS.get(filePath.replace(//$/, '/index.html'))
 
   if (!data) {
     return new Response('404 Not Found: ' + filePath, {
@@ -224,19 +227,19 @@ async function serveFromFS(filePath) {
 function getMime(path) {
   const ext = '.' + path.split('.').pop().toLowerCase()
   return EXT_CONFIG[ext] || 'application/octet-stream'
-}`
-  
+}`;
+
   return new Response(swContent, {
     headers: {
       'Content-Type': 'application/javascript',
       'Cache-Control': 'no-cache',
-      'Service-Worker-Allowed': '/sandbox/'
-    }
-  })
-})
+      'Service-Worker-Allowed': '/sandbox/',
+    },
+  });
+});
 
 export default {
   fetch: (request: Request, env: Env, ctx: ExecutionContext) => {
-    return app.fetch(request, env, ctx)
-  }
-}
+    return app.fetch(request, env, ctx);
+  },
+};

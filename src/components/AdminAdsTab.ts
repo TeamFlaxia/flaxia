@@ -1,83 +1,83 @@
-import { t } from '../lib/i18n.js'
-import { formatCount } from '../lib/format.js'
-import { registerModal } from '../lib/modal-state.js'
-import { showToast } from '../lib/toast.js'
-import { createConfirmDialog } from '../lib/confirm-dialog.js'
+import { createConfirmDialog } from '../lib/confirm-dialog.js';
+import { formatCount } from '../lib/format.js';
+import { t } from '../lib/i18n.js';
+import { registerModal } from '../lib/modal-state.js';
+import { showToast } from '../lib/toast.js';
 
 export interface AdminAd {
-  id: string
-  title: string
-  ad_type: 'self_hosted' | 'admax'
-  body_text: string
-  click_url: string | null
-  payload_key: string | null
-  payload_type: 'zip' | 'swf' | 'gif' | 'image' | null
-  thumbnail_key?: string
-  impressions: number
-  clicks: number
-  active: number
-  created_at: string
-  ctr?: number
-  interaction_count?: number
+  id: string;
+  title: string;
+  ad_type: 'self_hosted' | 'admax';
+  body_text: string;
+  click_url: string | null;
+  payload_key: string | null;
+  payload_type: 'zip' | 'swf' | 'gif' | 'image' | null;
+  thumbnail_key?: string;
+  impressions: number;
+  clicks: number;
+  active: number;
+  created_at: string;
+  ctr?: number;
+  interaction_count?: number;
 }
 
 export interface AdminAdsTabProps {
-  onNavigateToTab: (tab: 'alerts' | 'hidden' | 'users' | 'ads') => void
+  onNavigateToTab: (tab: 'alerts' | 'hidden' | 'users' | 'ads') => void;
 }
 
 export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
-  let element: HTMLElement
-  let ads: AdminAd[] = []
-  let everyN = 8
-  let modalOpen = false
-  let unregisterModalFn: (() => void) | null = null
-  let editingAd: AdminAd | null = null
+  let element: HTMLElement;
+  let ads: AdminAd[] = [];
+  let everyN = 8;
+  let modalOpen = false;
+  let unregisterModalFn: (() => void) | null = null;
+  let editingAd: AdminAd | null = null;
 
   // Create container immediately
-  element = document.createElement('div')
-  element.style.cssText = 'max-width: 1200px;'
+  element = document.createElement('div');
+  element.style.cssText = 'max-width: 1200px;';
 
   const fetchAds = async () => {
     try {
-      const response = await fetch('/api/admin/ads', { credentials: 'include' })
+      const response = await fetch('/api/admin/ads', { credentials: 'include' });
       if (response.status === 403) {
-        console.error('Admin access denied - check if user has admin privileges')
-        alert(t('admin_ads.access_denied'))
-        return []
+        console.error('Admin access denied - check if user has admin privileges');
+        alert(t('admin_ads.access_denied'));
+        return [];
       }
       if (!response.ok) {
-        const errorText = await response.text()
-        console.error('Failed to fetch ads:', response.status, errorText)
-        throw new Error(`Failed to fetch ads: ${response.status}`)
+        const errorText = await response.text();
+        console.error('Failed to fetch ads:', response.status, errorText);
+        throw new Error(`Failed to fetch ads: ${response.status}`);
       }
-      const data = await response.json()
-      return (data as { ads: AdminAd[] }).ads || []
+      const data = await response.json();
+      return (data as { ads: AdminAd[] }).ads || [];
     } catch (error) {
-      console.error('Fetch ads error:', error)
-      alert(t('admin_ads.load_failed', { error: error instanceof Error ? error.message : t('common.error') }))
-      return []
+      console.error('Fetch ads error:', error);
+      alert(t('admin_ads.load_failed', { error: error instanceof Error ? error.message : t('common.error') }));
+      return [];
     }
-  }
+  };
 
   const fetchConfig = async () => {
     try {
-      const response = await fetch('/api/admin/ads/config', { credentials: 'include' })
+      const response = await fetch('/api/admin/ads/config', { credentials: 'include' });
       if (response.status === 403) {
-        console.error('Admin access denied for config - check if user has admin privileges')
-        return 8
+        console.error('Admin access denied for config - check if user has admin privileges');
+        return 8;
       }
       if (!response.ok) {
-        const errorText = await response.text()
-        console.error('Failed to fetch config:', response.status, errorText)
-        throw new Error(`Failed to fetch config: ${response.status}`)
+        const errorText = await response.text();
+        console.error('Failed to fetch config:', response.status, errorText);
+        throw new Error(`Failed to fetch config: ${response.status}`);
       }
-      const data = await response.json()
-      return (data as { every_n: number }).every_n || 8
+      const data = await response.json();
+      return (data as { every_n: number }).every_n || 8;
     } catch (error) {
-      console.error('Fetch config error:', error)
-      return 8
+      console.error('Fetch config error:', error);
+      return 8;
     }
-  }
+  };
 
   const updateAdActive = async (adId: string, active: boolean) => {
     try {
@@ -85,33 +85,33 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ active: active ? 1 : 0 }),
-        credentials: 'include'
-      })
+        credentials: 'include',
+      });
       if (!response.ok) {
-        throw new Error('Failed to update ad')
+        throw new Error('Failed to update ad');
       }
-      return true
+      return true;
     } catch (error) {
-      console.error('Update ad error:', error)
-      return false
+      console.error('Update ad error:', error);
+      return false;
     }
-  }
+  };
 
   const deleteAd = async (adId: string) => {
     try {
       const response = await fetch(`/api/admin/ads/${adId}`, {
         method: 'DELETE',
-        credentials: 'include'
-      })
+        credentials: 'include',
+      });
       if (!response.ok) {
-        throw new Error('Failed to delete ad')
+        throw new Error('Failed to delete ad');
       }
-      return true
+      return true;
     } catch (error) {
-      console.error('Delete ad error:', error)
-      return false
+      console.error('Delete ad error:', error);
+      return false;
     }
-  }
+  };
 
   const saveConfig = async (newEveryN: number) => {
     try {
@@ -119,65 +119,70 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ every_n: newEveryN }),
-        credentials: 'include'
-      })
+        credentials: 'include',
+      });
       if (!response.ok) {
-        throw new Error('Failed to save config')
+        throw new Error('Failed to save config');
       }
-      return true
+      return true;
     } catch (error) {
-      console.error('Save config error:', error)
-      return false
+      console.error('Save config error:', error);
+      return false;
     }
-  }
+  };
 
-  const formatDate = (dateStr: string): string => {
-    const date = new Date(dateStr)
-    return date.toLocaleDateString()
-  }
+  const _formatDate = (dateStr: string): string => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString();
+  };
 
   const getFormatLabel = (payloadType: string | null, adType?: string): string => {
-    if (adType === 'admax') return t('admin_ads.format_admax')
+    if (adType === 'admax') return t('admin_ads.format_admax');
     switch (payloadType) {
-      case 'zip': return t('admin_ads.format_zip')
-      case 'swf': return t('admin_ads.format_swf')
-      case 'gif': return t('admin_ads.format_gif')
-      case 'image': return t('admin_ads.format_image')
-      default: return t('admin_ads.format_default')
+      case 'zip':
+        return t('admin_ads.format_zip');
+      case 'swf':
+        return t('admin_ads.format_swf');
+      case 'gif':
+        return t('admin_ads.format_gif');
+      case 'image':
+        return t('admin_ads.format_image');
+      default:
+        return t('admin_ads.format_default');
     }
-  }
+  };
 
   const createSettingsSection = () => {
-    const section = document.createElement('div')
+    const section = document.createElement('div');
     section.style.cssText = `
       background: #1e293b;
       border-radius: 8px;
       padding: 16px;
       margin-bottom: 24px;
-    `
+    `;
 
-    const title = document.createElement('h3')
-    title.textContent = t('admin_ads.global_settings')
+    const title = document.createElement('h3');
+    title.textContent = t('admin_ads.global_settings');
     title.style.cssText = `
       color: #f1f5f9;
       font-size: 18px;
       font-weight: 600;
       margin-bottom: 16px;
-    `
-    section.appendChild(title)
+    `;
+    section.appendChild(title);
 
-    const form = document.createElement('div')
-    form.style.cssText = 'display: flex; align-items: center; gap: 12px;'
+    const form = document.createElement('div');
+    form.style.cssText = 'display: flex; align-items: center; gap: 12px;';
 
-    const label = document.createElement('label')
-    label.textContent = t('admin_ads.every_n_label')
-    label.style.cssText = 'color: #94a3b8; font-size: 14px;'
-    form.appendChild(label)
+    const label = document.createElement('label');
+    label.textContent = t('admin_ads.every_n_label');
+    label.style.cssText = 'color: #94a3b8; font-size: 14px;';
+    form.appendChild(label);
 
-    const input = document.createElement('input')
-    input.type = 'number'
-    input.min = '1'
-    input.value = everyN.toString()
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '1';
+    input.value = everyN.toString();
     input.style.cssText = `
       background: #0f172a;
       border: 1px solid #334155;
@@ -186,10 +191,10 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       border-radius: 4px;
       font-size: 14px;
       width: 80px;
-    `
+    `;
 
-    const saveBtn = document.createElement('button')
-    saveBtn.textContent = t('common.save')
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = t('common.save');
     saveBtn.style.cssText = `
       background: #22c55e;
       color: #f1f5f9;
@@ -199,56 +204,56 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       cursor: pointer;
       font-size: 14px;
       transition: background 0.2s;
-    `
+    `;
     saveBtn.addEventListener('click', async () => {
-      const newEveryN = parseInt(input.value)
+      const newEveryN = parseInt(input.value);
       if (newEveryN >= 1) {
-        const success = await saveConfig(newEveryN)
+        const success = await saveConfig(newEveryN);
         if (success) {
-          everyN = newEveryN
-          showMessage(t('admin_ads.settings_saved'), 'success')
+          everyN = newEveryN;
+          showMessage(t('admin_ads.settings_saved'), 'success');
         } else {
-          showMessage(t('admin_ads.settings_save_failed'), 'error')
+          showMessage(t('admin_ads.settings_save_failed'), 'error');
         }
       } else {
-        showMessage(t('admin_ads.every_n_validation'), 'error')
+        showMessage(t('admin_ads.every_n_validation'), 'error');
       }
-    })
+    });
 
-    form.appendChild(input)
-    form.appendChild(saveBtn)
-    section.appendChild(form)
+    form.appendChild(input);
+    form.appendChild(saveBtn);
+    section.appendChild(form);
 
-    const messageDiv = document.createElement('div')
-    messageDiv.id = 'config-message'
+    const messageDiv = document.createElement('div');
+    messageDiv.id = 'config-message';
     messageDiv.style.cssText = `
       margin-top: 12px;
       padding: 8px 12px;
       border-radius: 4px;
       font-size: 14px;
       display: none;
-    `
-    section.appendChild(messageDiv)
+    `;
+    section.appendChild(messageDiv);
 
     const showMessage = (text: string, type: 'success' | 'error') => {
-      messageDiv.textContent = text
-      messageDiv.style.display = 'block'
-      messageDiv.style.background = type === 'success' ? '#065f46' : '#dc2626'
-      messageDiv.style.color = '#f1f5f9'
+      messageDiv.textContent = text;
+      messageDiv.style.display = 'block';
+      messageDiv.style.background = type === 'success' ? '#065f46' : '#dc2626';
+      messageDiv.style.color = '#f1f5f9';
       setTimeout(() => {
-        messageDiv.style.display = 'none'
-      }, 3000)
-    }
+        messageDiv.style.display = 'none';
+      }, 3000);
+    };
 
-    return section
-  }
+    return section;
+  };
 
   const createAdsTable = () => {
-    const section = document.createElement('div')
-    section.style.cssText = 'margin-bottom: 24px;'
+    const section = document.createElement('div');
+    section.style.cssText = 'margin-bottom: 24px;';
 
-    const title = document.createElement('h3')
-    title.textContent = t('admin_ads.ad_list')
+    const title = document.createElement('h3');
+    title.textContent = t('admin_ads.ad_list');
     title.style.cssText = `
       color: #f1f5f9;
       font-size: 18px;
@@ -257,11 +262,11 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       display: flex;
       justify-content: space-between;
       align-items: center;
-    `
-    section.appendChild(title)
+    `;
+    section.appendChild(title);
 
-    const newAdBtn = document.createElement('button')
-    newAdBtn.textContent = t('admin_ads.new_ad')
+    const newAdBtn = document.createElement('button');
+    newAdBtn.textContent = t('admin_ads.new_ad');
     newAdBtn.style.cssText = `
       background: #22c55e;
       color: #f1f5f9;
@@ -272,32 +277,33 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       font-size: 14px;
       font-weight: 500;
       transition: background 0.2s;
-    `
+    `;
     newAdBtn.addEventListener('click', () => {
-      editingAd = null
-      modalOpen = true
-      render()
-    })
+      editingAd = null;
+      modalOpen = true;
+      render();
+    });
 
-    title.appendChild(newAdBtn)
+    title.appendChild(newAdBtn);
 
     if (ads.length === 0) {
-      const empty = document.createElement('div')
-      empty.textContent = t('admin_ads.no_ads')
-      empty.style.cssText = 'color: #64748b; font-size: 14px; padding: 24px; text-align: center; background: #1e293b; border-radius: 8px;'
-      section.appendChild(empty)
-      return section
+      const empty = document.createElement('div');
+      empty.textContent = t('admin_ads.no_ads');
+      empty.style.cssText =
+        'color: #64748b; font-size: 14px; padding: 24px; text-align: center; background: #1e293b; border-radius: 8px;';
+      section.appendChild(empty);
+      return section;
     }
 
-    const table = document.createElement('div')
+    const table = document.createElement('div');
     table.style.cssText = `
       background: #1e293b;
       border-radius: 8px;
       overflow: hidden;
-    `
+    `;
 
     // Header
-    const header = document.createElement('div')
+    const header = document.createElement('div');
     header.style.cssText = `
       display: grid;
       grid-template-columns: 2fr 1fr 1fr 80px 100px 100px 80px 120px 120px 80px;
@@ -307,7 +313,7 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 0.875rem;
       color: var(--text-muted);
-    `
+    `;
     header.innerHTML = `
       <div>${t('admin_ads.header_title')}</div>
       <div>${t('admin_ads.header_type')}</div>
@@ -319,12 +325,12 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       <div>${t('admin_ads.header_plays')}</div>
       <div>${t('admin_ads.header_age')}</div>
       <div>${t('admin_ads.header_actions')}</div>
-    `
-    table.appendChild(header)
+    `;
+    table.appendChild(header);
 
     // Rows
-    ads.forEach(ad => {
-      const row = document.createElement('div')
+    ads.forEach((ad) => {
+      const row = document.createElement('div');
       row.style.cssText = `
         display: grid;
         grid-template-columns: 2fr 1fr 1fr 80px 100px 100px 80px 120px 120px 80px;
@@ -333,32 +339,32 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         padding: 12px 16px;
         font-size: 14px;
         align-items: center;
-      `
+      `;
 
-      const title = document.createElement('div')
-      title.textContent = ad.title
-      title.style.cssText = 'color: #f1f5f9; font-weight: 500; overflow: hidden; text-overflow: ellipsis;'
-      title.title = ad.title
-      row.appendChild(title)
+      const title = document.createElement('div');
+      title.textContent = ad.title;
+      title.style.cssText = 'color: #f1f5f9; font-weight: 500; overflow: hidden; text-overflow: ellipsis;';
+      title.title = ad.title;
+      row.appendChild(title);
 
       // Ad Type column
-      const adType = document.createElement('div')
+      const adType = document.createElement('div');
       if (ad.ad_type === 'admax') {
-        adType.textContent = t('admin_ads.type_admax')
-        adType.style.cssText = 'color: #8b5cf6; font-weight: 500;'
+        adType.textContent = t('admin_ads.type_admax');
+        adType.style.cssText = 'color: #8b5cf6; font-weight: 500;';
       } else {
-        adType.textContent = t('admin_ads.type_self')
-        adType.style.cssText = 'color: #22c55e; font-weight: 500;'
+        adType.textContent = t('admin_ads.type_self');
+        adType.style.cssText = 'color: #22c55e; font-weight: 500;';
       }
-      row.appendChild(adType)
+      row.appendChild(adType);
 
-      const format = document.createElement('div')
-      format.textContent = getFormatLabel(ad.payload_type, ad.ad_type)
-      format.style.cssText = 'color: #94a3b8;'
-      row.appendChild(format)
+      const format = document.createElement('div');
+      format.textContent = getFormatLabel(ad.payload_type, ad.ad_type);
+      format.style.cssText = 'color: #94a3b8;';
+      row.appendChild(format);
 
-      const active = document.createElement('button')
-      active.textContent = ad.active ? t('admin_ads.active_yes') : t('admin_ads.active_no')
+      const active = document.createElement('button');
+      active.textContent = ad.active ? t('admin_ads.active_yes') : t('admin_ads.active_no');
       active.style.cssText = `
         background: ${ad.active ? '#065f46' : '#dc2626'};
         color: #f1f5f9;
@@ -368,67 +374,67 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         cursor: pointer;
         font-size: 12px;
         transition: background 0.2s;
-      `
+      `;
       active.addEventListener('click', async () => {
-        const newActive = !ad.active
-        const success = await updateAdActive(ad.id, newActive)
+        const newActive = !ad.active;
+        const success = await updateAdActive(ad.id, newActive);
         if (success) {
-          ad.active = newActive ? 1 : 0
-          active.textContent = newActive ? t('admin_ads.active_yes') : t('admin_ads.active_no')
-          active.style.background = newActive ? '#065f46' : '#dc2626'
+          ad.active = newActive ? 1 : 0;
+          active.textContent = newActive ? t('admin_ads.active_yes') : t('admin_ads.active_no');
+          active.style.background = newActive ? '#065f46' : '#dc2626';
         }
-      })
-      row.appendChild(active)
+      });
+      row.appendChild(active);
 
-      const impressions = document.createElement('div')
-      impressions.textContent = formatCount(ad.impressions)
-      impressions.style.cssText = 'color: #94a3b8;'
-      row.appendChild(impressions)
+      const impressions = document.createElement('div');
+      impressions.textContent = formatCount(ad.impressions);
+      impressions.style.cssText = 'color: #94a3b8;';
+      row.appendChild(impressions);
 
-      const clicks = document.createElement('div')
-      clicks.textContent = formatCount(ad.clicks)
-      clicks.style.cssText = 'color: #94a3b8;'
-      row.appendChild(clicks)
+      const clicks = document.createElement('div');
+      clicks.textContent = formatCount(ad.clicks);
+      clicks.style.cssText = 'color: #94a3b8;';
+      row.appendChild(clicks);
 
-      const ctr = document.createElement('div')
-      const ctrValue = ad.impressions > 0 ? ((ad.clicks / ad.impressions) * 100).toFixed(2) : '—'
-      ctr.textContent = ad.impressions > 0 ? `${ctrValue}%` : '—'
-      ctr.style.cssText = 'color: #94a3b8;'
-      row.appendChild(ctr)
+      const ctr = document.createElement('div');
+      const ctrValue = ad.impressions > 0 ? ((ad.clicks / ad.impressions) * 100).toFixed(2) : '—';
+      ctr.textContent = ad.impressions > 0 ? `${ctrValue}%` : '—';
+      ctr.style.cssText = 'color: #94a3b8;';
+      row.appendChild(ctr);
 
       // Plays/Interactions column for ZIP/SWF
-      const interactions = document.createElement('div')
+      const interactions = document.createElement('div');
       if (ad.payload_type === 'zip' || ad.payload_type === 'swf') {
-        const playCount = ad.interaction_count || 0
-        const playCountEl = document.createElement('div')
-        playCountEl.style.cssText = 'color: #f1f5f9; font-size: 12px;'
-        playCountEl.textContent = t('admin_ads.plays_count', { count: formatCount(playCount) })
-        interactions.appendChild(playCountEl)
+        const playCount = ad.interaction_count || 0;
+        const playCountEl = document.createElement('div');
+        playCountEl.style.cssText = 'color: #f1f5f9; font-size: 12px;';
+        playCountEl.textContent = t('admin_ads.plays_count', { count: formatCount(playCount) });
+        interactions.appendChild(playCountEl);
       } else {
-        interactions.textContent = '—'
-        interactions.style.cssText = 'color: #94a3b8;'
+        interactions.textContent = '—';
+        interactions.style.cssText = 'color: #94a3b8;';
       }
-      row.appendChild(interactions)
+      row.appendChild(interactions);
 
       // Age column
-      const age = document.createElement('div')
-      const createdDate = new Date(ad.created_at)
-      const now = new Date()
-      
+      const age = document.createElement('div');
+      const createdDate = new Date(ad.created_at);
+      const now = new Date();
+
       // Calculate days difference more accurately (accounting for timezone)
-      const createdUTC = Date.UTC(createdDate.getFullYear(), createdDate.getMonth(), createdDate.getDate())
-      const nowUTC = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
-      const daysDiff = Math.floor((nowUTC - createdUTC) / (1000 * 60 * 60 * 24))
-      
-      age.textContent = t('admin_ads.age_days', { days: daysDiff })
-      age.style.cssText = 'color: #94a3b8; font-size: 12px;'
-      row.appendChild(age)
+      const createdUTC = Date.UTC(createdDate.getFullYear(), createdDate.getMonth(), createdDate.getDate());
+      const nowUTC = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+      const daysDiff = Math.floor((nowUTC - createdUTC) / (1000 * 60 * 60 * 24));
 
-      const actions = document.createElement('div')
-      actions.style.cssText = 'display: flex; gap: 8px;'
+      age.textContent = t('admin_ads.age_days', { days: daysDiff });
+      age.style.cssText = 'color: #94a3b8; font-size: 12px;';
+      row.appendChild(age);
 
-      const editBtn = document.createElement('button')
-      editBtn.textContent = t('admin_ads.edit')
+      const actions = document.createElement('div');
+      actions.style.cssText = 'display: flex; gap: 8px;';
+
+      const editBtn = document.createElement('button');
+      editBtn.textContent = t('admin_ads.edit');
       editBtn.style.cssText = `
         background: #334155;
         color: #f1f5f9;
@@ -438,16 +444,16 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         cursor: pointer;
         font-size: 12px;
         transition: background 0.2s;
-      `
+      `;
       editBtn.addEventListener('click', () => {
-        editingAd = ad
-        modalOpen = true
-        render()
-      })
-      actions.appendChild(editBtn)
+        editingAd = ad;
+        modalOpen = true;
+        render();
+      });
+      actions.appendChild(editBtn);
 
-      const deleteBtn = document.createElement('button')
-      deleteBtn.textContent = t('admin_ads.delete')
+      const deleteBtn = document.createElement('button');
+      deleteBtn.textContent = t('admin_ads.delete');
       deleteBtn.style.cssText = `
         background: #dc2626;
         color: #f1f5f9;
@@ -457,29 +463,29 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         cursor: pointer;
         font-size: 12px;
         transition: background 0.2s;
-      `
+      `;
       deleteBtn.addEventListener('click', async () => {
-        const confirmed = await createConfirmDialog(t('admin_ads.delete_confirm', { title: ad.title }))
-        if (!confirmed) return
-        const success = await deleteAd(ad.id)
+        const confirmed = await createConfirmDialog(t('admin_ads.delete_confirm', { title: ad.title }));
+        if (!confirmed) return;
+        const success = await deleteAd(ad.id);
         if (success) {
-          ads = ads.filter(a => a.id !== ad.id)
-          render()
+          ads = ads.filter((a) => a.id !== ad.id);
+          render();
         }
-      })
-      actions.appendChild(deleteBtn)
+      });
+      actions.appendChild(deleteBtn);
 
-      row.appendChild(actions)
-      table.appendChild(row)
-    })
+      row.appendChild(actions);
+      table.appendChild(row);
+    });
 
-    section.appendChild(table)
-    return section
-  }
+    section.appendChild(table);
+    return section;
+  };
 
   const createModal = () => {
-    unregisterModalFn = registerModal()
-    const modal = document.createElement('div')
+    unregisterModalFn = registerModal();
+    const modal = document.createElement('div');
     modal.style.cssText = `
       position: fixed;
       top: 0;
@@ -491,9 +497,9 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       align-items: center;
       justify-content: center;
       z-index: 1000;
-    `
+    `;
 
-    const content = document.createElement('div')
+    const content = document.createElement('div');
     content.style.cssText = `
       background: #1e293b;
       border-radius: 8px;
@@ -502,27 +508,27 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       width: 90%;
       max-height: 80vh;
       overflow-y: auto;
-    `
+    `;
 
-    const header = document.createElement('div')
+    const header = document.createElement('div');
     header.style.cssText = `
       display: flex;
       justify-content: space-between;
       align-items: center;
       margin-bottom: 20px;
-    `
+    `;
 
-    const title = document.createElement('h3')
-    title.textContent = editingAd ? t('admin_ads.modal_edit_title') : t('admin_ads.modal_create_title')
+    const title = document.createElement('h3');
+    title.textContent = editingAd ? t('admin_ads.modal_edit_title') : t('admin_ads.modal_create_title');
     title.style.cssText = `
       color: #f1f5f9;
       font-size: 20px;
       font-weight: 600;
       margin: 0;
-    `
+    `;
 
-    const closeBtn = document.createElement('button')
-    closeBtn.textContent = t('admin_ads.modal_close')
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = t('admin_ads.modal_close');
     closeBtn.style.cssText = `
       background: none;
       border: none;
@@ -535,32 +541,32 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       display: flex;
       align-items: center;
       justify-content: center;
-    `
+    `;
     closeBtn.addEventListener('click', () => {
-      unregisterModalFn?.()
-      unregisterModalFn = null
-      modalOpen = false
-      editingAd = null
-      render()
-    })
+      unregisterModalFn?.();
+      unregisterModalFn = null;
+      modalOpen = false;
+      editingAd = null;
+      render();
+    });
 
-    header.appendChild(title)
-    header.appendChild(closeBtn)
-    content.appendChild(header)
+    header.appendChild(title);
+    header.appendChild(closeBtn);
+    content.appendChild(header);
 
-    const form = document.createElement('div')
-    form.style.cssText = 'display: flex; flex-direction: column; gap: 16px;'
+    const form = document.createElement('div');
+    form.style.cssText = 'display: flex; flex-direction: column; gap: 16px;';
 
     // Ad Type field
-    const adTypeField = document.createElement('div')
-    adTypeField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;'
+    const adTypeField = document.createElement('div');
+    adTypeField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
 
-    const adTypeLabel = document.createElement('label')
-    adTypeLabel.textContent = t('admin_ads.form_ad_type')
-    adTypeLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;'
-    adTypeField.appendChild(adTypeLabel)
+    const adTypeLabel = document.createElement('label');
+    adTypeLabel.textContent = t('admin_ads.form_ad_type');
+    adTypeLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;';
+    adTypeField.appendChild(adTypeLabel);
 
-    const adTypeSelect = document.createElement('select')
+    const adTypeSelect = document.createElement('select');
     adTypeSelect.style.cssText = `
       background: #0f172a;
       border: 1px solid #334155;
@@ -568,39 +574,39 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       padding: 12px;
       border-radius: 4px;
       font-size: 14px;
-    `
-    
-    const selfHostedOption = document.createElement('option')
-    selfHostedOption.value = 'self_hosted'
-    selfHostedOption.textContent = t('admin_ads.form_self_hosted')
-    
-    const admaxOption = document.createElement('option')
-    admaxOption.value = 'admax'
-    admaxOption.textContent = t('admin_ads.form_admax')
-    
-    adTypeSelect.appendChild(selfHostedOption)
-    adTypeSelect.appendChild(admaxOption)
-    
+    `;
+
+    const selfHostedOption = document.createElement('option');
+    selfHostedOption.value = 'self_hosted';
+    selfHostedOption.textContent = t('admin_ads.form_self_hosted');
+
+    const admaxOption = document.createElement('option');
+    admaxOption.value = 'admax';
+    admaxOption.textContent = t('admin_ads.form_admax');
+
+    adTypeSelect.appendChild(selfHostedOption);
+    adTypeSelect.appendChild(admaxOption);
+
     if (editingAd?.ad_type) {
-      adTypeSelect.value = editingAd.ad_type
+      adTypeSelect.value = editingAd.ad_type;
     }
-    
-    adTypeField.appendChild(adTypeSelect)
-    form.appendChild(adTypeField)
+
+    adTypeField.appendChild(adTypeSelect);
+    form.appendChild(adTypeField);
 
     // Title field
-    const titleField = document.createElement('div')
-    titleField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;'
+    const titleField = document.createElement('div');
+    titleField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
 
-    const titleLabel = document.createElement('label')
-    titleLabel.textContent = t('admin_ads.form_title')
-    titleLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;'
-    titleField.appendChild(titleLabel)
+    const titleLabel = document.createElement('label');
+    titleLabel.textContent = t('admin_ads.form_title');
+    titleLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;';
+    titleField.appendChild(titleLabel);
 
-    const titleInput = document.createElement('input')
-    titleInput.type = 'text'
-    titleInput.value = editingAd?.title || ''
-    titleInput.required = true
+    const titleInput = document.createElement('input');
+    titleInput.type = 'text';
+    titleInput.value = editingAd?.title || '';
+    titleInput.required = true;
     titleInput.style.cssText = `
       background: #0f172a;
       border: 1px solid #334155;
@@ -608,33 +614,33 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       padding: 12px;
       border-radius: 4px;
       font-size: 14px;
-    `
+    `;
 
-    const titleCounter = document.createElement('span')
-    titleCounter.style.cssText = 'color: #64748b; font-size: 12px; margin-top: 4px;'
-    titleCounter.textContent = `${titleInput.value.length}/200`
+    const titleCounter = document.createElement('span');
+    titleCounter.style.cssText = 'color: #64748b; font-size: 12px; margin-top: 4px;';
+    titleCounter.textContent = `${titleInput.value.length}/200`;
 
     titleInput.addEventListener('input', () => {
-      titleCounter.textContent = `${titleInput.value.length}/200`
-    })
+      titleCounter.textContent = `${titleInput.value.length}/200`;
+    });
 
-    titleField.appendChild(titleInput)
-    titleField.appendChild(titleCounter)
-    form.appendChild(titleField)
+    titleField.appendChild(titleInput);
+    titleField.appendChild(titleCounter);
+    form.appendChild(titleField);
 
     // Body text field
-    const bodyField = document.createElement('div')
-    bodyField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;'
+    const bodyField = document.createElement('div');
+    bodyField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
 
-    const bodyLabel = document.createElement('label')
-    bodyLabel.textContent = t('admin_ads.form_body')
-    bodyLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;'
-    bodyField.appendChild(bodyLabel)
+    const bodyLabel = document.createElement('label');
+    bodyLabel.textContent = t('admin_ads.form_body');
+    bodyLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;';
+    bodyField.appendChild(bodyLabel);
 
-    const bodyTextarea = document.createElement('textarea')
-    bodyTextarea.value = editingAd?.body_text || ''
-    bodyTextarea.maxLength = 200
-    bodyTextarea.rows = 4
+    const bodyTextarea = document.createElement('textarea');
+    bodyTextarea.value = editingAd?.body_text || '';
+    bodyTextarea.maxLength = 200;
+    bodyTextarea.rows = 4;
     bodyTextarea.style.cssText = `
       background: #0f172a;
       border: 1px solid #334155;
@@ -644,33 +650,33 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       font-size: 14px;
       resize: vertical;
       font-family: inherit;
-    `
+    `;
 
-    const bodyCounter = document.createElement('span')
-    bodyCounter.style.cssText = 'color: #64748b; font-size: 12px; margin-top: 4px;'
-    bodyCounter.textContent = `${bodyTextarea.value.length}/200`
+    const bodyCounter = document.createElement('span');
+    bodyCounter.style.cssText = 'color: #64748b; font-size: 12px; margin-top: 4px;';
+    bodyCounter.textContent = `${bodyTextarea.value.length}/200`;
 
     bodyTextarea.addEventListener('input', () => {
-      bodyCounter.textContent = `${bodyTextarea.value.length}/200`
-    })
+      bodyCounter.textContent = `${bodyTextarea.value.length}/200`;
+    });
 
-    bodyField.appendChild(bodyTextarea)
-    bodyField.appendChild(bodyCounter)
-    form.appendChild(bodyField)
+    bodyField.appendChild(bodyTextarea);
+    bodyField.appendChild(bodyCounter);
+    form.appendChild(bodyField);
 
     // Click URL field
-    const urlField = document.createElement('div')
-    urlField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;'
+    const urlField = document.createElement('div');
+    urlField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
 
-    const urlLabel = document.createElement('label')
-    urlLabel.textContent = t('admin_ads.form_click_url')
-    urlLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;'
-    urlField.appendChild(urlLabel)
+    const urlLabel = document.createElement('label');
+    urlLabel.textContent = t('admin_ads.form_click_url');
+    urlLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;';
+    urlField.appendChild(urlLabel);
 
-    const urlInput = document.createElement('input')
-    urlInput.type = 'url'
-    urlInput.value = editingAd?.click_url || ''
-    urlInput.placeholder = t('admin_ads.form_click_url_placeholder')
+    const urlInput = document.createElement('input');
+    urlInput.type = 'url';
+    urlInput.value = editingAd?.click_url || '';
+    urlInput.placeholder = t('admin_ads.form_click_url_placeholder');
     urlInput.style.cssText = `
       background: #0f172a;
       border: 1px solid #334155;
@@ -678,24 +684,23 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       padding: 12px;
       border-radius: 4px;
       font-size: 14px;
-    `
+    `;
 
-    urlField.appendChild(urlInput)
-    form.appendChild(urlField)
-
+    urlField.appendChild(urlInput);
+    form.appendChild(urlField);
 
     // Payload field
-    const payloadField = document.createElement('div')
-    payloadField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;'
+    const payloadField = document.createElement('div');
+    payloadField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
 
-    const payloadLabel = document.createElement('label')
-    payloadLabel.textContent = t('admin_ads.form_payload')
-    payloadLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;'
-    payloadField.appendChild(payloadLabel)
+    const payloadLabel = document.createElement('label');
+    payloadLabel.textContent = t('admin_ads.form_payload');
+    payloadLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;';
+    payloadField.appendChild(payloadLabel);
 
-    const payloadInput = document.createElement('input')
-    payloadInput.type = 'file'
-    payloadInput.accept = '.zip,.swf,.jsdos,.gif,.png,.jpg,.jpeg'
+    const payloadInput = document.createElement('input');
+    payloadInput.type = 'file';
+    payloadInput.accept = '.zip,.swf,.jsdos,.gif,.png,.jpg,.jpeg';
     payloadInput.style.cssText = `
       background: #0f172a;
       border: 1px solid #334155;
@@ -703,30 +708,30 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       padding: 8px;
       border-radius: 4px;
       font-size: 14px;
-    `
+    `;
 
     if (editingAd?.payload_key) {
-      const currentFile = document.createElement('div')
-      currentFile.textContent = t('admin_ads.form_current_file', { key: editingAd.payload_key })
-      currentFile.style.cssText = 'color: #64748b; font-size: 12px; margin-top: 4px;'
-      payloadField.appendChild(currentFile)
+      const currentFile = document.createElement('div');
+      currentFile.textContent = t('admin_ads.form_current_file', { key: editingAd.payload_key });
+      currentFile.style.cssText = 'color: #64748b; font-size: 12px; margin-top: 4px;';
+      payloadField.appendChild(currentFile);
     }
 
-    payloadField.appendChild(payloadInput)
-    form.appendChild(payloadField)
+    payloadField.appendChild(payloadInput);
+    form.appendChild(payloadField);
 
     // Thumbnail field
-    const thumbnailField = document.createElement('div')
-    thumbnailField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;'
+    const thumbnailField = document.createElement('div');
+    thumbnailField.style.cssText = 'display: flex; flex-direction: column; gap: 8px;';
 
-    const thumbnailLabel = document.createElement('label')
-    thumbnailLabel.textContent = t('admin_ads.form_thumbnail')
-    thumbnailLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;'
-    thumbnailField.appendChild(thumbnailLabel)
+    const thumbnailLabel = document.createElement('label');
+    thumbnailLabel.textContent = t('admin_ads.form_thumbnail');
+    thumbnailLabel.style.cssText = 'color: #f1f5f9; font-size: 14px; font-weight: 500;';
+    thumbnailField.appendChild(thumbnailLabel);
 
-    const thumbnailInput = document.createElement('input')
-    thumbnailInput.type = 'file'
-    thumbnailInput.accept = '.jpg,.jpeg,.png,.gif'
+    const thumbnailInput = document.createElement('input');
+    thumbnailInput.type = 'file';
+    thumbnailInput.accept = '.jpg,.jpeg,.png,.gif';
     thumbnailInput.style.cssText = `
       background: #0f172a;
       border: 1px solid #334155;
@@ -734,39 +739,39 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       padding: 8px;
       border-radius: 4px;
       font-size: 14px;
-    `
+    `;
 
-    const thumbnailHint = document.createElement('div')
-    thumbnailHint.textContent = t('admin_ads.form_thumbnail_hint')
-    thumbnailHint.style.cssText = 'color: #64748b; font-size: 12px; margin-top: 4px;'
+    const thumbnailHint = document.createElement('div');
+    thumbnailHint.textContent = t('admin_ads.form_thumbnail_hint');
+    thumbnailHint.style.cssText = 'color: #64748b; font-size: 12px; margin-top: 4px;';
 
     if (editingAd?.thumbnail_key) {
-      const currentThumbnail = document.createElement('div')
-      currentThumbnail.textContent = t('admin_ads.form_current_thumbnail', { key: editingAd.thumbnail_key })
-      currentThumbnail.style.cssText = 'color: #64748b; font-size: 12px; margin-bottom: 4px;'
-      thumbnailField.appendChild(currentThumbnail)
+      const currentThumbnail = document.createElement('div');
+      currentThumbnail.textContent = t('admin_ads.form_current_thumbnail', { key: editingAd.thumbnail_key });
+      currentThumbnail.style.cssText = 'color: #64748b; font-size: 12px; margin-bottom: 4px;';
+      thumbnailField.appendChild(currentThumbnail);
     }
 
-    thumbnailField.appendChild(thumbnailInput)
-    thumbnailField.appendChild(thumbnailHint)
-    form.appendChild(thumbnailField)
+    thumbnailField.appendChild(thumbnailInput);
+    thumbnailField.appendChild(thumbnailHint);
+    form.appendChild(thumbnailField);
 
     // Function to toggle field visibility based on ad type (now defined after all fields)
     const toggleFieldVisibility = () => {
-      const isAdmax = adTypeSelect.value === 'admax'
-      payloadField.style.display = isAdmax ? 'none' : 'flex'
-      thumbnailField.style.display = isAdmax ? 'none' : 'flex'
-    }
+      const isAdmax = adTypeSelect.value === 'admax';
+      payloadField.style.display = isAdmax ? 'none' : 'flex';
+      thumbnailField.style.display = isAdmax ? 'none' : 'flex';
+    };
 
     // Add event listener to ad type selector
-    adTypeSelect.addEventListener('change', toggleFieldVisibility)
-    
+    adTypeSelect.addEventListener('change', toggleFieldVisibility);
+
     // Set initial visibility
-    toggleFieldVisibility()
+    toggleFieldVisibility();
 
     // Stats row for edit mode
     if (editingAd) {
-      const statsRow = document.createElement('div')
+      const statsRow = document.createElement('div');
       statsRow.style.cssText = `
         background: #0f172a;
         border-radius: 4px;
@@ -776,30 +781,30 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
         gap: 16px;
         font-size: 13px;
         color: #94a3b8;
-      `
-      
+      `;
+
       let statsHTML = `
         <div>Impressions: <strong style="color: #f1f5f9;">${formatCount(editingAd.impressions)}</strong></div>
         <div>Clicks: <strong style="color: #f1f5f9;">${formatCount(editingAd.clicks)}</strong></div>
         <div>CTR: <strong style="color: #f1f5f9;">${editingAd.impressions > 0 ? ((editingAd.clicks / editingAd.impressions) * 100).toFixed(2) : '—'}%</strong></div>
-      `
-      
+      `;
+
       if (editingAd.payload_type === 'zip' || editingAd.payload_type === 'swf') {
-        const playCount = editingAd.interaction_count || 0
-        statsHTML += `<div>Plays: <strong style="color: #f1f5f9;">${formatCount(playCount)}</strong></div>`
+        const playCount = editingAd.interaction_count || 0;
+        statsHTML += `<div>Plays: <strong style="color: #f1f5f9;">${formatCount(playCount)}</strong></div>`;
       } else {
-        statsHTML += `<div>Type: <strong style="color: #f1f5f9;">${getFormatLabel(editingAd.payload_type)}</strong></div>`
+        statsHTML += `<div>Type: <strong style="color: #f1f5f9;">${getFormatLabel(editingAd.payload_type)}</strong></div>`;
       }
-      
-      statsRow.innerHTML = statsHTML
-      form.appendChild(statsRow)
+
+      statsRow.innerHTML = statsHTML;
+      form.appendChild(statsRow);
     }
 
-    content.appendChild(form)
+    content.appendChild(form);
 
     // Submit button
-    const submitBtn = document.createElement('button')
-    submitBtn.textContent = editingAd ? t('admin_ads.form_submit_update') : t('admin_ads.form_submit_create')
+    const submitBtn = document.createElement('button');
+    submitBtn.textContent = editingAd ? t('admin_ads.form_submit_update') : t('admin_ads.form_submit_create');
     submitBtn.style.cssText = `
       background: #22c55e;
       color: #f1f5f9;
@@ -811,35 +816,38 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
       font-weight: 500;
       margin-top: 8px;
       transition: background 0.2s;
-    `
+    `;
     submitBtn.addEventListener('click', async () => {
-      const title = titleInput.value.trim()
-      const bodyText = bodyTextarea.value.trim()
-      const clickUrl = urlInput.value.trim() || null
-      const adType = adTypeSelect.value as 'self_hosted' | 'admax'
+      const title = titleInput.value.trim();
+      const bodyText = bodyTextarea.value.trim();
+      const clickUrl = urlInput.value.trim() || null;
+      const adType = adTypeSelect.value as 'self_hosted' | 'admax';
 
       if (!title || !bodyText) {
-        showToast(t('admin_ads.validation_title_body'), true)
-        return
+        showToast(t('admin_ads.validation_title_body'), true);
+        return;
       }
 
       // Validate admax ads (no payload files allowed)
       if (adType === 'admax' && payloadInput.files?.[0]) {
-        showToast(t('admin_ads.validation_admax_no_payload'), true)
-        return
+        showToast(t('admin_ads.validation_admax_no_payload'), true);
+        return;
       }
 
       // Validate file sizes client-side (100MB limit for Cloudflare Free/Pro)
-      const maxFileSize = 100 * 1024 * 1024 // 100MB
+      const maxFileSize = 100 * 1024 * 1024; // 100MB
       if (payloadInput.files?.[0] && payloadInput.files[0].size > maxFileSize) {
-        const fileSizeMB = (payloadInput.files[0].size / 1024 / 1024).toFixed(1)
-        showToast(t('admin_ads.validation_file_size', { size: fileSizeMB }), true)
-        return
+        const fileSizeMB = (payloadInput.files[0].size / 1024 / 1024).toFixed(1);
+        showToast(t('admin_ads.validation_file_size', { size: fileSizeMB }), true);
+        return;
       }
 
       if (thumbnailInput.files?.[0] && thumbnailInput.files[0].size > 1024 * 1024) {
-        showToast(t('admin_ads.validation_thumbnail_size', { size: (thumbnailInput.files[0].size / 1024 / 1024).toFixed(1) }), true)
-        return
+        showToast(
+          t('admin_ads.validation_thumbnail_size', { size: (thumbnailInput.files[0].size / 1024 / 1024).toFixed(1) }),
+          true,
+        );
+        return;
       }
 
       try {
@@ -848,116 +856,116 @@ export function createAdminAdsTab({ onNavigateToTab }: AdminAdsTabProps) {
           const response = await fetch(`/api/admin/ads/${editingAd.id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              title, 
-              body_text: bodyText, 
+            body: JSON.stringify({
+              title,
+              body_text: bodyText,
               click_url: clickUrl,
-              ad_type: adType
+              ad_type: adType,
             }),
-          })
+          });
           if (!response.ok) {
-            throw new Error('Failed to update ad')
+            throw new Error('Failed to update ad');
           }
         } else {
           // Create new ad
-          const formData = new FormData()
-          formData.append('title', title)
-          formData.append('body_text', bodyText)
-          formData.append('ad_type', adType)
+          const formData = new FormData();
+          formData.append('title', title);
+          formData.append('body_text', bodyText);
+          formData.append('ad_type', adType);
           if (clickUrl) {
-            formData.append('click_url', clickUrl)
+            formData.append('click_url', clickUrl);
           }
           if (payloadInput.files?.[0]) {
-            formData.append('payload', payloadInput.files[0])
+            formData.append('payload', payloadInput.files[0]);
           }
           if (thumbnailInput.files?.[0]) {
-            formData.append('thumbnail', thumbnailInput.files[0])
+            formData.append('thumbnail', thumbnailInput.files[0]);
           }
 
           const response = await fetch('/api/admin/ads', {
             method: 'POST',
             body: formData,
-            credentials: 'include'
-          })
-          
+            credentials: 'include',
+          });
+
           if (!response.ok) {
-            const errorData = await response.json().catch(() => ({})) as { error?: string }
-            throw new Error(errorData.error || `Failed to create ad (${response.status})`)
+            const errorData = (await response.json().catch(() => ({}))) as { error?: string };
+            throw new Error(errorData.error || `Failed to create ad (${response.status})`);
           }
         }
 
-        modalOpen = false
-        editingAd = null
-        await refreshAds()
-        render()
+        modalOpen = false;
+        editingAd = null;
+        await refreshAds();
+        render();
       } catch (error: any) {
-        console.error('Submit ad error:', error)
-        
+        console.error('Submit ad error:', error);
+
         // Show detailed error message for file size issues
         if (error.error && error.limit && error.actualSize) {
-          const actualMB = (error.actualSize / 1024 / 1024).toFixed(1)
-          const limitMB = (error.limit / 1024 / 1024).toFixed(1)
-          showToast(t('admin_ads.validation_file_size', { size: actualMB }), true)
+          const actualMB = (error.actualSize / 1024 / 1024).toFixed(1);
+          const _limitMB = (error.limit / 1024 / 1024).toFixed(1);
+          showToast(t('admin_ads.validation_file_size', { size: actualMB }), true);
         } else {
-          showToast(t('admin_ads.save_error', { error: error?.error || error?.message || t('common.error') }), true)
+          showToast(t('admin_ads.save_error', { error: error?.error || error?.message || t('common.error') }), true);
         }
       }
-    })
+    });
 
-    content.appendChild(submitBtn)
-    modal.appendChild(content)
+    content.appendChild(submitBtn);
+    modal.appendChild(content);
 
     modal.addEventListener('click', (e) => {
       if (e.target === modal) {
-        unregisterModalFn?.()
-        unregisterModalFn = null
-        modalOpen = false
-        editingAd = null
-        render()
+        unregisterModalFn?.();
+        unregisterModalFn = null;
+        modalOpen = false;
+        editingAd = null;
+        render();
       }
-    })
+    });
 
-    return modal
-  }
+    return modal;
+  };
 
   const refreshAds = async () => {
-    ads = await fetchAds() || []
-  }
+    ads = (await fetchAds()) || [];
+  };
 
   const render = async () => {
-    element.innerHTML = ''
+    element.innerHTML = '';
 
     // Settings section
-    element.appendChild(createSettingsSection())
+    element.appendChild(createSettingsSection());
 
     // Ads table
-    element.appendChild(createAdsTable())
+    element.appendChild(createAdsTable());
 
     // Modal
     if (modalOpen) {
-      element.appendChild(createModal())
+      element.appendChild(createModal());
     }
-  }
+  };
 
   const init = async () => {
-    everyN = await fetchConfig()
-    await refreshAds()
-    await render()
-  }
+    everyN = await fetchConfig();
+    await refreshAds();
+    await render();
+  };
 
   // Start initialization but don't wait for it
-  init()
+  init();
 
   return {
     getElement: () => element,
     refresh: async () => {
-      await refreshAds()
-      await render()
+      await refreshAds();
+      await render();
     },
     destroy: () => {
       if (element && element.parentNode) {
-        element.parentNode.removeChild(element)
+        element.parentNode.removeChild(element);
       }
-    }
-  }
+    },
+  };
 }

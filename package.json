@@ -4,6 +4,10 @@
   "description": "Chronological SNS where posts are living, interactive applications",
   "type": "module",
   "scripts": {
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit",
     "dev": "npm run migrate:local && vite build && wrangler pages dev dist --port 8787 --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000",
     "dev:hot": "npm run migrate:local && (trap 'kill 0 2>/dev/null' EXIT; vite build --watch & wrangler pages dev dist --port 8787 --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000 & wait)",
     "dev:api": "npm run migrate:local && wrangler pages dev dist --port 8787 --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000",
@@ -66,6 +70,7 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.16",
     "@capacitor/cli": "^8.3.4",
     "@cloudflare/workers-types": "^4.0.0",
     "@tauri-apps/cli": "^2.11.2",
