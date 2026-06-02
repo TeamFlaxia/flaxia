@@ -7132,44 +7132,6 @@ app.post('/api/push/unregister', requireAuth, async (c) => {
   }
 })
 
-// POST /api/crowd/webhook - Receive sentiment analysis result from crowd orchestrator
-app.post('/api/crowd/webhook', async (c) => {
-  try {
-    const body = await c.req.json() as Record<string, unknown>
-    const { taskId, status, result, error } = body
-    if (!taskId) return c.text('Bad Request', 400)
-
-    if (status === 'done' && (result as any)?.output?.[0]) {
-      const output = (result as any).output[0] as { label: string; score: number }
-      const labelScoreMap: Record<string, number> = {
-        very_negative: 0.0,
-        negative: 0.25,
-        neutral: 0.5,
-        positive: 0.75,
-        very_positive: 1.0,
-      }
-      const score = labelScoreMap[output.label] ?? output.score
-      const row = await c.env.DB.prepare(
-        'SELECT id FROM posts WHERE sentiment_task_id = ?'
-      ).bind(taskId).first() as { id: string } | null
-      const postId = row?.id
-      if (postId) {
-        await c.env.DB.prepare(
-          'UPDATE posts SET sentiment_score = ? WHERE id = ?'
-        ).bind(score, postId).run()
-        console.log(`Sentiment webhook done for post ${postId}: label=${output.label}, score=${score}`)
-      }
-    } else if (status === 'failed') {
-      console.log(`Sentiment task failed: taskId=${taskId}, error=${error || 'unknown'}`)
-    }
-
-    return c.json({ received: true })
-  } catch (e) {
-    console.error('Webhook error:', e)
-    return c.json({ received: true })
-  }
-})
-
 // Export for Cloudflare Pages Functions
 export async function onRequest(context: any) {
   return app.fetch(context.request, context.env, context)

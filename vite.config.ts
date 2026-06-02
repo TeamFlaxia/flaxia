@@ -6,6 +6,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     rollupOptions: {
+      external: ['/api/crowd/index.js'],
       input: {
         main: 'index.html'
       },
@@ -28,6 +29,11 @@ export default defineConfig({
       ignored: ['**/src-tauri/target/**'],
     },
     proxy: {
+      '/api/crowd': {
+        target: 'https://unpkg.com/@flaxia/node@0.1.2/dist',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/crowd/, ''),
+      },
       '/api': {
         target: process.env.VITE_API_TARGET || 'http://localhost:8787',
         changeOrigin: true,
