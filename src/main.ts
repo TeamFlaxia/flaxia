@@ -775,6 +775,24 @@ document.addEventListener('DOMContentLoaded', async () => {
       return { view: 'timeline' as const, postId: null, username: null, tag: null };
     };
 
+    // Page loading overlay
+    let pageLoader: HTMLDivElement | null = null;
+
+    function showPageLoader() {
+      if (!pageLoader) {
+        pageLoader = document.createElement('div');
+        pageLoader.className = 'page-loader';
+        pageLoader.id = 'page-loader';
+        pageLoader.innerHTML = '<div class="page-loader-content"><div class="page-loader-spinner"></div><div>Loading...</div></div>';
+        document.body.appendChild(pageLoader);
+      }
+      requestAnimationFrame(() => pageLoader!.classList.add('active'));
+    }
+
+    function hidePageLoader() {
+      if (pageLoader) pageLoader.classList.remove('active');
+    }
+
     // Navigate to view
     const navigateTo = async (
       view:
@@ -936,6 +954,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       // Clear app content
+      showPageLoader();
       app.innerHTML = '';
 
       // Handle auth pages (full screen, no nav)
@@ -961,6 +980,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         app.appendChild(loginPage.getElement());
+        hidePageLoader();
         return;
       }
 
@@ -986,6 +1006,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         app.appendChild(registerPage.getElement());
+        hidePageLoader();
         return;
       }
 
@@ -1009,6 +1030,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         app.appendChild(legalPage.getElement());
+        hidePageLoader();
         return;
       }
 
@@ -1063,6 +1085,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
 
         app.appendChild(adminLayout.getElement());
+        hidePageLoader();
 
         const renderAdminTab = async (tab: 'alerts' | 'hidden' | 'users' | 'ads') => {
           if (!adminLayout) return;
@@ -1215,6 +1238,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         mainContainer.appendChild(rightPanel.getElement());
 
         app.appendChild(mainContainer);
+        hidePageLoader();
 
         // Setup mobile left nav
         setupMobileLeftNav(leftNav.getElement());
@@ -1312,6 +1336,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         mainContainer.appendChild(rightPanel.getElement());
 
         app.appendChild(mainContainer);
+        hidePageLoader();
 
         setupMobileLeftNav(leftNav.getElement());
 
@@ -1419,6 +1444,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         mainContainer.appendChild(rightPanel.getElement());
 
         app.appendChild(mainContainer);
+        hidePageLoader();
 
         // Setup mobile left nav
         setupMobileLeftNav(leftNav.getElement());
@@ -1523,6 +1549,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         mainContainer.appendChild(rightPanel.getElement());
 
         app.appendChild(mainContainer);
+        hidePageLoader();
 
         // Setup mobile left nav
         setupMobileLeftNav(leftNav.getElement());
@@ -1616,6 +1643,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         mainContainer.appendChild(bookmarksPage.getElement());
         mainContainer.appendChild(rightPanel.getElement());
         app.appendChild(mainContainer);
+        hidePageLoader();
         setupMobileLeftNav(leftNav.getElement());
         return;
       }
@@ -1733,6 +1761,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         mainContainer.appendChild(rightPanel.getElement());
 
         app.appendChild(mainContainer);
+        hidePageLoader();
 
         // Setup mobile left nav
         setupMobileLeftNav(leftNav.getElement());
@@ -1852,6 +1881,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         mainContainer.appendChild(rightPanel.getElement());
 
         app.appendChild(mainContainer);
+        hidePageLoader();
 
         // Setup mobile left nav
         setupMobileLeftNav(leftNav.getElement());
@@ -2031,6 +2061,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       app.appendChild(mainContainer);
+      hidePageLoader();
     };
 
     // Handle browser back/forward
