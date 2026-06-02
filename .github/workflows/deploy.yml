@@ -39,7 +39,10 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Deploy Sandbox Worker
-        run: npx wrangler deploy src/sandbox-worker.ts --config wrangler.sandbox.toml
+        run: |
+          mv wrangler.toml wrangler.toml.bak
+          npx wrangler deploy src/sandbox-worker.ts --config wrangler.sandbox.toml
+          mv wrangler.toml.bak wrangler.toml
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -54,7 +57,10 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Deploy Queue Worker
-        run: npx wrangler deploy --name flaxia-backend --config wrangler.toml.worker
+        run: |
+          mv wrangler.toml wrangler.toml.bak
+          npx wrangler deploy --config wrangler.toml.worker
+          mv wrangler.toml.bak wrangler.toml
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
