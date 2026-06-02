@@ -32,7 +32,7 @@ const generateSitemap = async (env: Bindings): Promise<string> => {
 
   // Add static pages
   const staticPages = [
-    { loc: baseUrl, changefreq: 'weekly', priority: '1.0' },
+    { loc: `${baseUrl}/arcade`, changefreq: 'weekly', priority: '1.0' },
     { loc: `${baseUrl}/explore`, changefreq: 'weekly', priority: '0.5' },
     { loc: `${baseUrl}/legal`, changefreq: 'monthly', priority: '0.5' },
   ];
