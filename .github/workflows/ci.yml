@@ -65,7 +65,7 @@ jobs:
           npm test -- --experimental-test-coverage 2>&1 | tee coverage/test-output.log || EXIT_CODE=$?
           kill $SERVER_PID 2>/dev/null || true
           exit ${EXIT_CODE:-0}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage
