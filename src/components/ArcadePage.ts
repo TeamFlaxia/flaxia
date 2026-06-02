@@ -82,6 +82,7 @@ export class ArcadePage {
 
     this.setupEventListeners();
     this.setupLeftNavSwipeDetection();
+    this.setupPostUpdatedListener();
     window.addEventListener('spaNavigate', this.boundHandleSpaNavigate);
     this.loadGames();
 
@@ -778,9 +779,10 @@ export class ArcadePage {
   }
 
   private commentPanel: HTMLElement | null = null;
-  private commentModalUnregister: (() => void) | null = null;
   private commentPanelKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   private commentListEl: HTMLElement | null = null;
+  private commentModalUnregister: (() => void) | null = null;
+  private boundPostUpdatedHandler?: (e: Event) => void;
 
   private handleComments(): void {
     const game = this.games[this.currentIndex];
@@ -998,6 +1000,19 @@ export class ArcadePage {
       err.textContent = t('common.error');
       list.appendChild(err);
     }
+  }
+
+  private setupPostUpdatedListener(): void {
+    this.boundPostUpdatedHandler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail?.reply) return;
+      const game = this.games[this.currentIndex];
+      if (game && detail.postId === game.postId && this.commentListEl) {
+        const headerTitle = this.commentPanel?.querySelector('span') as HTMLElement;
+        this.loadComments(game.postId, this.commentListEl, headerTitle);
+      }
+    };
+    window.addEventListener('postUpdated', this.boundPostUpdatedHandler);
   }
 
   private handleCommentCreated(newReply: Post, headerTitle: HTMLElement, composer: ReplyComposer | undefined): void {
@@ -2109,6 +2124,10 @@ export class ArcadePage {
     document.removeEventListener('fullscreenchange', this.boundHandleFullscreenChange);
     document.removeEventListener('webkitfullscreenchange', this.boundHandleFullscreenChange);
     window.removeEventListener('spaNavigate', this.boundHandleSpaNavigate);
+    if (this.boundPostUpdatedHandler) {
+      window.removeEventListener('postUpdated', this.boundPostUpdatedHandler);
+      this.boundPostUpdatedHandler = undefined;
+    }
 
     this.hideLoading();
     this.clearCurrentGame();

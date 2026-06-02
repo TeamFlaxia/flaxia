@@ -502,17 +502,14 @@ export class PostCard {
   }
 
   private handleReplyCreated(newReply: Record<string, unknown>): void {
-    // Hide reply composer after successful reply
     this.hideReplyComposer();
-
-    // Update reply count
     this.replyCount++;
     this.updatePost({ reply_count: this.replyCount });
     this.updateActions();
 
     window.dispatchEvent(
       new CustomEvent('postUpdated', {
-        detail: { postId: this.props.post.id, replyCount: this.replyCount },
+        detail: { postId: this.props.post.id, replyCount: this.replyCount, reply: newReply },
       }),
     );
   }

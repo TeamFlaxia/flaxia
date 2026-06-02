@@ -211,11 +211,34 @@ export class ReplyNode {
   }
 
   private handleReplyCreated(newReply: Post): void {
-    // Hide reply composer after successful reply
     this.hideReplyComposer();
 
-    // Notify parent
-    this.props.onReplyCreated(newReply);
+    // Create child container if not exists
+    if (!this.childrenContainer) {
+      this.childrenContainer = document.createElement('div');
+      this.childrenContainer.className = 'reply-children';
+      this.childrenContainer.style.cssText = `
+        margin-top: 0.75rem;
+        padding-left: 1rem;
+        border-left: 2px solid #e2e8f0;
+        display: block;
+      `;
+      this.element.appendChild(this.childrenContainer);
+    } else {
+      this.childrenContainer.style.display = 'block';
+    }
+
+    // Create ReplyNode for the new reply
+    const childNode: PostNode = { post: newReply, children: [] };
+    const childReplyNode = new ReplyNode({
+      node: childNode,
+      sandboxOrigin: this.props.sandboxOrigin,
+      currentUser: this.props.currentUser,
+      onReplyCreated: (reply) => this.props.onReplyCreated(reply),
+      postIndexMap: this.props.postIndexMap,
+    });
+    this.childReplyNodes.push(childReplyNode);
+    this.childrenContainer.appendChild(childReplyNode.getElement());
 
     // Update this post's reply count
     if (this.postCard) {
@@ -223,6 +246,9 @@ export class ReplyNode {
         reply_count: (this.props.node.post.reply_count || 0) + 1,
       });
     }
+
+    // Notify parent
+    this.props.onReplyCreated(newReply);
   }
 
   public getElement(): HTMLElement {

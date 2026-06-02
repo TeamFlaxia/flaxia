@@ -207,6 +207,23 @@ export function createUserPostList(props: {
     }
   };
 
+  // Listen for postUpdated events (fresh, bookmark, reply count changes)
+  const handlePostUpdated = (e: Event): void => {
+    const detail = (e as CustomEvent).detail;
+    if (!detail?.postId) return;
+    const card = postCards.get(detail.postId);
+    if (card) {
+      const update: Partial<Post> = {};
+      if (detail.isFreshed !== undefined) update.is_freshed = detail.isFreshed;
+      if (detail.freshCount !== undefined) update.fresh_count = detail.freshCount;
+      if (detail.isBookmarked !== undefined) update.is_bookmarked = detail.isBookmarked;
+      if (detail.bookmarkCount !== undefined) update.bookmark_count = detail.bookmarkCount;
+      if (detail.replyCount !== undefined) update.reply_count = detail.replyCount;
+      card.updatePost(update);
+    }
+  };
+  window.addEventListener('postUpdated', handlePostUpdated);
+
   // Setup intersection observer and load initial posts
   setupIntersectionObserver();
   loadInitialPosts();
@@ -252,6 +269,7 @@ export function createUserPostList(props: {
       }
     },
     destroy: () => {
+      window.removeEventListener('postUpdated', handlePostUpdated);
       if (intersectionObserver) {
         intersectionObserver.disconnect();
         intersectionObserver = null;

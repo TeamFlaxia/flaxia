@@ -1442,7 +1442,7 @@ export class PostComposer {
         formData.append('thumbnail', this.selectedThumbnail);
         if (poll) formData.append('poll', JSON.stringify(poll));
 
-        const response = await fetch('/api/posts', {
+        const response = await fetch('/api/posts/commit', {
           method: 'POST',
           credentials: 'include',
           body: formData,

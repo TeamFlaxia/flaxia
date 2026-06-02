@@ -1,5 +1,5 @@
 /// <reference types="@cloudflare/workers-types" />
-import { importPublicKey } from './crypto';
+import { importPublicKey } from './crypto.ts';
 
 /**
  * Parse Signature header

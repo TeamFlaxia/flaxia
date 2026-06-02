@@ -21,6 +21,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "types": ["@cloudflare/workers-types"]
   },
   "include": ["src/**/*", "functions/**/*"],

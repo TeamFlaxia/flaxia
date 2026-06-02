@@ -27,11 +27,14 @@ export class ExplorePage {
   private suggestAbortController: AbortController | null = null;
   private static readonly SEARCH_HISTORY_KEY = 'flaxia_search_history';
   private static readonly MAX_HISTORY = 10;
+  private postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
+  private boundPostUpdatedHandler?: (e: Event) => void;
 
   constructor(props: ExplorePageProps) {
     this.props = props;
     this.element = this.createElement();
     this.setupEventListeners();
+    this.setupPostUpdatedListener();
     this.loadContent();
   }
 
@@ -620,6 +623,24 @@ export class ExplorePage {
     });
   }
 
+  private setupPostUpdatedListener(): void {
+    this.boundPostUpdatedHandler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail?.postId) return;
+      const card = this.postCards.get(detail.postId);
+      if (card) {
+        const update: Partial<Post> = {};
+        if (detail.isFreshed !== undefined) update.is_freshed = detail.isFreshed;
+        if (detail.freshCount !== undefined) update.fresh_count = detail.freshCount;
+        if (detail.isBookmarked !== undefined) update.is_bookmarked = detail.isBookmarked;
+        if (detail.bookmarkCount !== undefined) update.bookmark_count = detail.bookmarkCount;
+        if (detail.replyCount !== undefined) update.reply_count = detail.replyCount;
+        card.updatePost(update);
+      }
+    };
+    window.addEventListener('postUpdated', this.boundPostUpdatedHandler);
+  }
+
   private renderPosts(): void {
     const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
     if (!postsContainer) return;
@@ -627,6 +648,7 @@ export class ExplorePage {
     // If initial load, clear container
     if (this.posts.length <= 10 && postsContainer.children.length > 0 && !this.cursor) {
       postsContainer.innerHTML = '';
+      this.postCards.clear();
     }
 
     const fragment = document.createDocumentFragment();
@@ -639,6 +661,7 @@ export class ExplorePage {
         currentUser: this.props.currentUser || undefined,
         depth: post.depth,
       });
+      this.postCards.set(post.id, postCard);
       fragment.appendChild(postCard.getElement());
     });
 
@@ -805,11 +828,16 @@ export class ExplorePage {
   }
 
   public destroy(): void {
+    if (this.boundPostUpdatedHandler) {
+      window.removeEventListener('postUpdated', this.boundPostUpdatedHandler);
+      this.boundPostUpdatedHandler = undefined;
+    }
+    this.postCards.forEach((card) => void card.destroy());
+    this.postCards.clear();
     if (this.intersectionObserver) {
       this.intersectionObserver.disconnect();
       this.intersectionObserver = null;
     }
-    window.removeEventListener('scroll', () => {});
   }
 }
 
