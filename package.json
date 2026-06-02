@@ -43,7 +43,8 @@
     "cap:open:android": "npx cap open android",
     "cap:open:ios": "npx cap open ios",
     "cap:build:android": "npx cap sync && npx cap copy && cd android && ./gradlew assembleDebug",
-    "cap:build:ios": "npx cap sync && npx cap copy"
+    "cap:build:ios": "npx cap sync && npx cap copy",
+    "prepare": "husky"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.4",
@@ -77,10 +78,17 @@
     "@types/dompurify": "^3.0.5",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^20.0.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
     "typescript": "^5.0.0",
     "vite": "^5.0.0",
     "vite-plugin-static-copy": "^3.3.0",
     "wrangler": "^4.73.0"
   },
-  "packageManager": "pnpm@8.0.0"
+  "packageManager": "pnpm@8.0.0",
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx,json,html,css,md}": [
+      "biome check --write --no-errors-on-unmatched"
+    ]
+  }
 }

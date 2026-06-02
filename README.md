@@ -1,5 +1,9 @@
 # Flaxia
 
+[![CI](https://github.com/RemydreScarlet/flaxia/actions/workflows/ci.yml/badge.svg)](https://github.com/RemydreScarlet/flaxia/actions/workflows/ci.yml)
+[![Deploy](https://github.com/RemydreScarlet/flaxia/actions/workflows/deploy.yml/badge.svg)](https://github.com/RemydreScarlet/flaxia/actions/workflows/deploy.yml)
+[![Release](https://github.com/RemydreScarlet/flaxia/actions/workflows/release.yml/badge.svg)](https://github.com/RemydreScarlet/flaxia/actions/workflows/release.yml)
+
 Chronological SNS where posts are living, interactive applications.
 
 ## Development

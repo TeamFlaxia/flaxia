@@ -106,6 +106,9 @@ temp/
 .tern-port
 .aider*
 
+# Husky
+.husky/_
+
 # Capacitor
 android/
 ios/
