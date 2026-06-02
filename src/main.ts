@@ -15,8 +15,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (app) {
     console.log('App mounted');
 
-
-
     history.scrollRestoration = 'manual';
 
     await initI18n();
@@ -769,7 +767,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         pageLoader = document.createElement('div');
         pageLoader.className = 'page-loader';
         pageLoader.id = 'page-loader';
-        pageLoader.innerHTML = '<div class="page-loader-content"><div class="page-loader-spinner"></div><div>Loading...</div></div>';
+        pageLoader.innerHTML =
+          '<div class="page-loader-content"><div class="page-loader-spinner"></div><div>Loading...</div></div>';
         document.body.appendChild(pageLoader);
       } else {
         const content = pageLoader.querySelector('.page-loader-content')!;
@@ -782,12 +781,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       pageLoaderTimer = setTimeout(() => {
         if (!pageLoader || !pageLoader.classList.contains('active')) return;
         const content = pageLoader.querySelector('.page-loader-content')!;
-        content.innerHTML = '<div style="font-size:2rem;margin-bottom:1rem;">⚠</div><div>Failed to load page</div><button class="page-loader-reload-btn" style="margin-top:1rem;padding:0.6rem 1.5rem;border:1px solid var(--border);border-radius:8px;background:var(--accent);color:#000;font-family:inherit;font-size:0.9rem;font-weight:600;cursor:pointer;transition:background .2s">Reload</button>';
+        content.innerHTML =
+          '<div style="font-size:2rem;margin-bottom:1rem;">⚠</div><div>Failed to load page</div><button class="page-loader-reload-btn" style="margin-top:1rem;padding:0.6rem 1.5rem;border:1px solid var(--border);border-radius:8px;background:var(--accent);color:#000;font-family:inherit;font-size:0.9rem;font-weight:600;cursor:pointer;transition:background .2s">Reload</button>';
         content.className = 'page-loader-content';
         const btn = content.querySelector('.page-loader-reload-btn') as HTMLButtonElement;
-        btn.onclick = () => { window.location.reload(); };
-        btn.onmouseenter = () => { btn.style.background = 'var(--accent-dark)'; };
-        btn.onmouseleave = () => { btn.style.background = 'var(--accent)'; };
+        btn.onclick = () => {
+          window.location.reload();
+        };
+        btn.onmouseenter = () => {
+          btn.style.background = 'var(--accent-dark)';
+        };
+        btn.onmouseleave = () => {
+          btn.style.background = 'var(--accent)';
+        };
       }, 15000);
     }
 
@@ -965,1124 +971,1126 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Wrap rendering in try-catch so errors don't leave the loader stuck
       try {
-
-      // Handle auth pages (full screen, no nav)
-      if (view === 'login') {
-        if (leftNavOpenButton) {
-          leftNavOpenButton.remove();
-          leftNavOpenButton = null;
-        }
-        if (leftNavOverlay) {
-          leftNavOverlay.remove();
-          leftNavOverlay = null;
-        }
-        currentView = 'login';
-        currentPostId = null;
-        _currentUsername = null;
-
-        const { createLoginPage } = await import('./components/LoginPage.js');
-        loginPage = createLoginPage({
-          onSuccess: () => {
-            window.history.pushState({}, '', '/arcade');
-            navigateTo('arcade');
-          },
-        });
-
-        app.appendChild(loginPage.getElement());
-        hidePageLoader();
-        return;
-      }
-
-      if (view === 'register') {
-        if (leftNavOpenButton) {
-          leftNavOpenButton.remove();
-          leftNavOpenButton = null;
-        }
-        if (leftNavOverlay) {
-          leftNavOverlay.remove();
-          leftNavOverlay = null;
-        }
-        currentView = 'register';
-        currentPostId = null;
-        _currentUsername = null;
-
-        const { createRegisterPage } = await import('./components/RegisterPage.js');
-        registerPage = createRegisterPage({
-          onSuccess: () => {
-            window.history.pushState({}, '', '/arcade');
-            navigateTo('arcade');
-          },
-        });
-
-        app.appendChild(registerPage.getElement());
-        hidePageLoader();
-        return;
-      }
-
-      // Handle legal pages (public, no auth required, no layout)
-      if (view === 'terms' || view === 'privacy' || view === 'about' || view === 'whitepaper') {
-        if (leftNavOpenButton) {
-          leftNavOpenButton.remove();
-          leftNavOpenButton = null;
-        }
-        if (leftNavOverlay) {
-          leftNavOverlay.remove();
-          leftNavOverlay = null;
-        }
-        currentView = view;
-        currentPostId = null;
-        _currentUsername = null;
-
-        const { createLegalPage } = await import('./components/LegalPage.js');
-        legalPage = createLegalPage({
-          type: view,
-        });
-
-        app.appendChild(legalPage.getElement());
-        hidePageLoader();
-        return;
-      }
-
-      // Handle admin page (separate layout, no Left Nav)
-      if (view === 'admin') {
-        currentView = 'admin';
-        currentAdminTab = adminTab || 'alerts';
-
-        // Cleanup regular views
-        if (timeline) {
-          timeline.destroy();
-          timeline = null;
-        }
-        if (threadPage) {
-          threadPage.destroy();
-          threadPage = null;
-        }
-        if (profilePage) {
-          profilePage.destroy();
-          profilePage = null;
-        }
-        if (explorePage) {
-          explorePage.destroy();
-          explorePage = null;
-        }
-        if (notificationsPage) {
-          notificationsPage.destroy();
-          notificationsPage = null;
-        }
-        if (settingsPage) {
-          settingsPage.destroy();
-          settingsPage = null;
-        }
-
-        const adminModule = await import('./components/AdminLayout.js');
-        const adminTabsModule = await Promise.all([
-          import('./components/AdminAlertsTab.js'),
-          import('./components/AdminHiddenTab.js'),
-          import('./components/AdminUsersTab.js'),
-          import('./components/AdminAdsTab.js'),
-        ]);
-
-        const onTabChange = async (tab: 'alerts' | 'hidden' | 'users' | 'ads') => {
-          currentAdminTab = tab;
-          window.history.pushState({}, '', `/admin/${tab}`);
-          renderAdminTab(tab);
-        };
-
-        adminLayout = adminModule.createAdminLayout({
-          activeTab: currentAdminTab,
-          onTabChange,
-        });
-
-        app.appendChild(adminLayout.getElement());
-        hidePageLoader();
-
-        const renderAdminTab = async (tab: 'alerts' | 'hidden' | 'users' | 'ads') => {
-          if (!adminLayout) return;
-
-          if (tab === 'alerts') {
-            adminAlertsTab = adminTabsModule[0].createAdminAlertsTab({
-              onNavigateToTab: onTabChange,
-            });
-            const alertsElement = adminAlertsTab.getElement();
-            if (alertsElement) {
-              adminLayout.updateMainContent(alertsElement);
-            }
-
-            // Check for access denied
-            try {
-              const response = await fetch('/api/admin/alerts', { credentials: 'include' });
-              if (response.status === 403) {
-                adminLayout.setAccessDenied();
-              }
-            } catch (e) {
-              console.error('Failed to check admin access:', e);
-            }
-          } else if (tab === 'hidden') {
-            adminHiddenTab = adminTabsModule[1].createAdminHiddenTab({
-              onNavigateToTab: onTabChange,
-            });
-            const hiddenElement = adminHiddenTab.getElement();
-            if (hiddenElement) {
-              adminLayout.updateMainContent(hiddenElement);
-            }
-          } else if (tab === 'users') {
-            adminUsersTab = adminTabsModule[2].createAdminUsersTab({
-              onNavigateToTab: onTabChange,
-            });
-            const usersElement = adminUsersTab.getElement();
-            if (usersElement) {
-              adminLayout.updateMainContent(usersElement);
-            }
-          } else if (tab === 'ads') {
-            adminAdsTab = adminTabsModule[3].createAdminAdsTab({
-              onNavigateToTab: onTabChange,
-            });
-            const adsElement = adminAdsTab.getElement();
-            if (adsElement) {
-              adminLayout.updateMainContent(adsElement);
-            }
+        // Handle auth pages (full screen, no nav)
+        if (view === 'login') {
+          if (leftNavOpenButton) {
+            leftNavOpenButton.remove();
+            leftNavOpenButton = null;
           }
-        };
+          if (leftNavOverlay) {
+            leftNavOverlay.remove();
+            leftNavOverlay = null;
+          }
+          currentView = 'login';
+          currentPostId = null;
+          _currentUsername = null;
 
-        // Render initial tab
-        renderAdminTab(currentAdminTab);
-        return;
-      }
-
-      // Handle explore page (within 3-column layout)
-      if (view === 'explore') {
-        currentView = 'explore';
-        currentPostId = null;
-        _currentUsername = null;
-        currentTag = tag || null;
-
-        // Create main container for 3-column layout
-        const mainContainer = document.createElement('div');
-        mainContainer.className = 'main-container';
-
-        // Create Left Nav
-        const leftNav = createLeftNav({
-          activeItem: 'explore',
-          unreadCount: unreadNotificationCount,
-          currentUser: currentUser || undefined,
-          onNavigate: async (item) => {
-            console.log('Navigate to:', item);
-            if (item === 'home') {
-              window.history.pushState({}, '', '/home');
-              navigateTo('timeline');
-            } else if (item === 'explore') {
-              window.history.pushState({}, '', '/explore');
-              navigateTo('explore');
-            } else if (item === 'arcade') {
+          const { createLoginPage } = await import('./components/LoginPage.js');
+          loginPage = createLoginPage({
+            onSuccess: () => {
               window.history.pushState({}, '', '/arcade');
               navigateTo('arcade');
-            } else if (item === 'notifications') {
-              window.history.pushState({}, '', '/notifications');
-              navigateTo('notifications');
-            } else if (item === 'bookmarks') {
-              window.history.pushState({}, '', '/bookmarks');
-              navigateTo('bookmarks');
-            } else if (item === 'settings') {
-              window.history.pushState({}, '', '/settings');
-              navigateTo('settings');
-            } else if (item === 'profile') {
-              if (!currentUser) {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-                return;
-              }
-              window.history.pushState({}, '', `/profile/${currentUser.username}`);
-              navigateTo('profile', undefined, currentUser.username);
-            }
-          },
-          onSignIn: () => {
-            window.history.pushState({}, '', '/login');
-            navigateTo('login');
-          },
-          onSignUp: () => {
-            window.history.pushState({}, '', '/register');
-            navigateTo('register');
-          },
-        });
-
-        leftNavInstances.add(leftNav);
-
-        const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app';
-
-        if (cachedContentComponent?.view === 'explore') {
-          console.log('Restoring cached explore page');
-          explorePage = cachedContentComponent.component;
-          const scrollY = cachedContentComponent.scrollY;
-          cachedContentComponent = null;
-
-          requestAnimationFrame(() => {
-            window.scrollTo(0, scrollY);
-          });
-        } else {
-          // Create fresh explore page
-          const { createExplorePage } = await import('./components/ExplorePage.js');
-          explorePage = createExplorePage({
-            tag: currentTag || undefined,
-            sandboxOrigin,
-            currentUser,
-          });
-          window.scrollTo(0, 0);
-        }
-
-        // Create Right Panel
-        const rightPanel = createRightPanel({
-          onSearch: (query) => {
-            console.log('Search:', query);
-            // Handle search here
-          },
-          onFollowUser: (userId) => {
-            console.log('Follow user:', userId);
-            // Handle follow here
-          },
-        });
-
-        // Assemble layout
-        mainContainer.appendChild(leftNav.getElement());
-        mainContainer.appendChild(explorePage.getElement());
-        mainContainer.appendChild(rightPanel.getElement());
-
-        app.appendChild(mainContainer);
-        hidePageLoader();
-
-        // Setup mobile left nav
-        setupMobileLeftNav(leftNav.getElement());
-
-        return;
-      }
-
-      // Handle search page (within 3-column layout)
-      if (view === 'search') {
-        currentView = 'search';
-        currentPostId = null;
-        _currentUsername = null;
-        currentTag = null;
-
-        const mainContainer = document.createElement('div');
-        mainContainer.className = 'main-container';
-
-        const leftNav = createLeftNav({
-          activeItem: 'explore',
-          unreadCount: unreadNotificationCount,
-          currentUser: currentUser || undefined,
-          onNavigate: async (item) => {
-            if (item === 'home') {
-              window.history.pushState({}, '', '/home');
-              navigateTo('timeline');
-            } else if (item === 'explore') {
-              window.history.pushState({}, '', '/explore');
-              navigateTo('explore');
-            } else if (item === 'arcade') {
-              window.history.pushState({}, '', '/arcade');
-              navigateTo('arcade');
-            } else if (item === 'notifications') {
-              window.history.pushState({}, '', '/notifications');
-              navigateTo('notifications');
-            } else if (item === 'bookmarks') {
-              window.history.pushState({}, '', '/bookmarks');
-              navigateTo('bookmarks');
-            } else if (item === 'settings') {
-              window.history.pushState({}, '', '/settings');
-              navigateTo('settings');
-            } else if (item === 'profile') {
-              if (!currentUser) {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-                return;
-              }
-              window.history.pushState({}, '', `/profile/${currentUser.username}`);
-              navigateTo('profile', undefined, currentUser.username);
-            }
-          },
-          onSignIn: () => {
-            window.history.pushState({}, '', '/login');
-            navigateTo('login');
-          },
-          onSignUp: () => {
-            window.history.pushState({}, '', '/register');
-            navigateTo('register');
-          },
-        });
-
-        leftNavInstances.add(leftNav);
-
-        const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app';
-
-        if (cachedContentComponent?.view === 'search') {
-          console.log('Restoring cached search page');
-          searchPage = cachedContentComponent.component;
-          const scrollY = cachedContentComponent.scrollY;
-          cachedContentComponent = null;
-
-          requestAnimationFrame(() => {
-            window.scrollTo(0, scrollY);
-          });
-        } else {
-          const { createSearchPage } = await import('./components/SearchPage.js');
-          searchPage = createSearchPage({
-            query: searchQuery || '',
-            type: searchType || 'posts',
-            currentUser: currentUser,
-            sandboxOrigin,
-          });
-        }
-
-        const rightPanel = createRightPanel({
-          onSearch: (query) => {
-            console.log('Search:', query);
-          },
-          onFollowUser: (userId) => {
-            console.log('Follow user:', userId);
-          },
-        });
-
-        mainContainer.appendChild(leftNav.getElement());
-        mainContainer.appendChild(searchPage.getElement());
-        mainContainer.appendChild(rightPanel.getElement());
-
-        app.appendChild(mainContainer);
-        hidePageLoader();
-
-        setupMobileLeftNav(leftNav.getElement());
-
-        return;
-      }
-
-      // Handle arcade page (within 3-column layout)
-      if (view === 'arcade') {
-        currentView = 'arcade';
-        currentPostId = postId || null;
-        _currentUsername = null;
-        currentTag = null;
-
-        // Create main container for 3-column layout
-        const mainContainer = document.createElement('div');
-        mainContainer.className = 'main-container';
-
-        // Create Left Nav
-        const leftNav = createLeftNav({
-          activeItem: 'arcade',
-          unreadCount: unreadNotificationCount,
-          currentUser: currentUser || undefined,
-          onNavigate: async (item) => {
-            console.log('Navigate to:', item);
-            if (item === 'home') {
-              window.history.pushState({}, '', '/home');
-              navigateTo('timeline');
-            } else if (item === 'explore') {
-              window.history.pushState({}, '', '/explore');
-              navigateTo('explore');
-            } else if (item === 'arcade') {
-              window.history.pushState({}, '', '/arcade');
-              navigateTo('arcade');
-            } else if (item === 'notifications') {
-              window.history.pushState({}, '', '/notifications');
-              navigateTo('notifications');
-            } else if (item === 'bookmarks') {
-              window.history.pushState({}, '', '/bookmarks');
-              navigateTo('bookmarks');
-            } else if (item === 'settings') {
-              window.history.pushState({}, '', '/settings');
-              navigateTo('settings');
-            } else if (item === 'profile') {
-              if (!currentUser) {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-                return;
-              }
-              window.history.pushState({}, '', `/profile/${currentUser.username}`);
-              navigateTo('profile', undefined, currentUser.username);
-            }
-          },
-          onSignIn: () => {
-            window.history.pushState({}, '', '/login');
-            navigateTo('login');
-          },
-          onSignUp: () => {
-            window.history.pushState({}, '', '/register');
-            navigateTo('register');
-          },
-        });
-
-        leftNavInstances.add(leftNav);
-
-        const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app';
-
-        if (cachedContentComponent?.view === 'arcade') {
-          console.log('Restoring cached arcade page');
-          arcadePage = cachedContentComponent.component;
-          const scrollY = cachedContentComponent.scrollY;
-          cachedContentComponent = null;
-
-          requestAnimationFrame(() => {
-            window.scrollTo(0, scrollY);
-          });
-        } else {
-          // Create fresh arcade page
-          const { createArcadePage } = await import('./components/ArcadePage.js');
-          arcadePage = createArcadePage({
-            sandboxOrigin,
-            currentUser,
-            initialGameId: currentPostId || undefined,
-            onBack: () => {
-              console.log('Arcade back button clicked');
-              window.history.back();
             },
           });
-        }
 
-        // Create Right Panel
-        const rightPanel = createRightPanel({
-          onSearch: (query) => {
-            console.log('Search:', query);
-            // Handle search here
-          },
-          onFollowUser: (userId) => {
-            console.log('Follow user:', userId);
-            // Handle follow here
-          },
-        });
-
-        // Assemble layout
-        mainContainer.appendChild(leftNav.getElement());
-        mainContainer.appendChild(arcadePage.getElement());
-        mainContainer.appendChild(rightPanel.getElement());
-
-        app.appendChild(mainContainer);
-        hidePageLoader();
-
-        // Setup mobile left nav
-        setupMobileLeftNav(leftNav.getElement());
-
-        return;
-      }
-
-      // Handle profile page (within 3-column layout)
-      if (view === 'profile' && username) {
-        currentView = 'profile';
-        currentPostId = null;
-        _currentUsername = username;
-        currentTag = null;
-
-        // Create main container for 3-column layout
-        const mainContainer = document.createElement('div');
-        mainContainer.className = 'main-container';
-
-        // Create Left Nav
-        const leftNav = createLeftNav({
-          activeItem: 'profile',
-          unreadCount: unreadNotificationCount,
-          currentUser: currentUser || undefined,
-          onNavigate: async (item) => {
-            console.log('Navigate to:', item);
-            if (item === 'home') {
-              window.history.pushState({}, '', '/home');
-              navigateTo('timeline');
-            } else if (item === 'explore') {
-              window.history.pushState({}, '', '/explore');
-              navigateTo('explore');
-            } else if (item === 'arcade') {
-              window.history.pushState({}, '', '/arcade');
-              navigateTo('arcade');
-            } else if (item === 'notifications') {
-              window.history.pushState({}, '', '/notifications');
-              navigateTo('notifications');
-            } else if (item === 'bookmarks') {
-              window.history.pushState({}, '', '/bookmarks');
-              navigateTo('bookmarks');
-            } else if (item === 'settings') {
-              window.history.pushState({}, '', '/settings');
-              navigateTo('settings');
-            } else if (item === 'profile') {
-              if (!currentUser) {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-                return;
-              }
-              window.history.pushState({}, '', `/profile/${currentUser.username}`);
-              navigateTo('profile', undefined, currentUser.username);
-            }
-          },
-          onSignIn: () => {
-            window.history.pushState({}, '', '/login');
-            navigateTo('login');
-          },
-          onSignUp: () => {
-            window.history.pushState({}, '', '/register');
-            navigateTo('register');
-          },
-        });
-
-        leftNavInstances.add(leftNav);
-
-        const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app';
-
-        if (cachedContentComponent?.view === 'profile') {
-          console.log('Restoring cached profile');
-          profilePage = cachedContentComponent.component;
-          const scrollY = cachedContentComponent.scrollY;
-          cachedContentComponent = null;
-
-          requestAnimationFrame(() => {
-            window.scrollTo(0, scrollY);
-          });
-        } else {
-          // Create fresh profile page
-          const { createProfilePage } = await import('./components/ProfilePage.js');
-          profilePage = createProfilePage({
-            username,
-            currentUser,
-            sandboxOrigin,
-          });
-        }
-
-        // Create Right Panel
-        const rightPanel = createRightPanel({
-          onSearch: (query) => {
-            console.log('Search:', query);
-            // Handle search here
-          },
-          onFollowUser: (userId) => {
-            console.log('Follow user:', userId);
-            // Handle follow here
-          },
-        });
-
-        // Assemble layout
-        mainContainer.appendChild(leftNav.getElement());
-        mainContainer.appendChild(profilePage.getElement());
-        mainContainer.appendChild(rightPanel.getElement());
-
-        app.appendChild(mainContainer);
-        hidePageLoader();
-
-        // Setup mobile left nav
-        setupMobileLeftNav(leftNav.getElement());
-
-        return;
-      }
-
-      // Handle bookmarks page (within 3-column layout)
-      if (view === 'bookmarks') {
-        currentView = 'bookmarks';
-        currentPostId = null;
-        _currentUsername = null;
-        currentTag = null;
-
-        if (!currentUser) {
-          window.history.pushState({}, '', '/explore');
-          navigateTo('explore');
+          app.appendChild(loginPage.getElement());
+          hidePageLoader();
           return;
         }
 
-        const mainContainer = document.createElement('div');
-        mainContainer.className = 'main-container';
-
-        const leftNav = createLeftNav({
-          activeItem: 'bookmarks',
-          unreadCount: unreadNotificationCount,
-          currentUser: currentUser || undefined,
-          onNavigate: async (item) => {
-            if (item === 'home') {
-              window.history.pushState({}, '', '/home');
-              navigateTo('timeline');
-            } else if (item === 'explore') {
-              window.history.pushState({}, '', '/explore');
-              navigateTo('explore');
-            } else if (item === 'arcade') {
-              window.history.pushState({}, '', '/arcade');
-              navigateTo('arcade');
-            } else if (item === 'notifications') {
-              window.history.pushState({}, '', '/notifications');
-              navigateTo('notifications');
-            } else if (item === 'bookmarks') {
-              window.history.pushState({}, '', '/bookmarks');
-              navigateTo('bookmarks');
-            } else if (item === 'settings') {
-              window.history.pushState({}, '', '/settings');
-              navigateTo('settings');
-            } else if (item === 'profile') {
-              if (!currentUser) {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-                return;
-              }
-              window.history.pushState({}, '', `/profile/${currentUser.username}`);
-              navigateTo('profile', undefined, currentUser.username);
-            }
-          },
-          onSignIn: () => {
-            window.history.pushState({}, '', '/login');
-            navigateTo('login');
-          },
-          onSignUp: () => {
-            window.history.pushState({}, '', '/register');
-            navigateTo('register');
-          },
-        });
-        leftNavInstances.add(leftNav);
-
-        if (cachedContentComponent?.view === 'bookmarks') {
-          bookmarksPage = cachedContentComponent.component;
-          const scrollY = cachedContentComponent.scrollY;
-          cachedContentComponent = null;
-          requestAnimationFrame(() => {
-            window.scrollTo(0, scrollY);
-          });
-        } else {
-          const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app';
-          const { createBookmarksPage } = await import('./components/BookmarksPage.js');
-          bookmarksPage = createBookmarksPage({
-            sandboxOrigin,
-            currentUser,
-          });
-          window.scrollTo(0, 0);
-        }
-
-        const rightPanel = createRightPanel({
-          onSearch: (query) => {},
-          onFollowUser: (userId) => {},
-        });
-
-        mainContainer.appendChild(leftNav.getElement());
-        mainContainer.appendChild(bookmarksPage.getElement());
-        mainContainer.appendChild(rightPanel.getElement());
-        app.appendChild(mainContainer);
-        hidePageLoader();
-        setupMobileLeftNav(leftNav.getElement());
-        return;
-      }
-
-      // Handle notifications page (within 3-column layout)
-      if (view === 'notifications') {
-        currentView = 'notifications';
-        currentPostId = null;
-        _currentUsername = null;
-        currentTag = null;
-
-        // Save unread count before fetching notifications data (the API might mark
-        // notifications as read, which would reset the count and lose the badge)
-        const savedUnreadCount = unreadNotificationCount;
-
-        // Fetch notifications data for the page content
-        const [notificationsData] = await Promise.all([fetchNotifications()]);
-
-        // Restore the pre-fetch unread count so the badge reflects the actual unread count
-        // (fetchNotifications may have changed it)
-        if (notificationsData.unread_count === 0 && savedUnreadCount > 0) {
-          unreadNotificationCount = savedUnreadCount;
-        }
-
-        // Create main container for 3-column layout
-        const mainContainer = document.createElement('div');
-        mainContainer.className = 'main-container';
-
-        // Create Left Nav with unread count
-        const leftNav = createLeftNav({
-          activeItem: 'notifications',
-          unreadCount: unreadNotificationCount,
-          currentUser: currentUser || undefined,
-          onNavigate: async (item) => {
-            console.log('Navigate to:', item);
-            if (item === 'home') {
-              window.history.pushState({}, '', '/home');
-              navigateTo('timeline');
-            } else if (item === 'explore') {
-              window.history.pushState({}, '', '/explore');
-              navigateTo('explore');
-            } else if (item === 'arcade') {
-              window.history.pushState({}, '', '/arcade');
-              navigateTo('arcade');
-            } else if (item === 'notifications') {
-              window.history.pushState({}, '', '/notifications');
-              navigateTo('notifications');
-            } else if (item === 'bookmarks') {
-              window.history.pushState({}, '', '/bookmarks');
-              navigateTo('bookmarks');
-            } else if (item === 'settings') {
-              window.history.pushState({}, '', '/settings');
-              navigateTo('settings');
-            } else if (item === 'profile') {
-              if (!currentUser) {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-                return;
-              }
-              window.history.pushState({}, '', `/profile/${currentUser.username}`);
-              navigateTo('profile', undefined, currentUser.username);
-            }
-          },
-          onSignIn: () => {
-            window.history.pushState({}, '', '/login');
-            navigateTo('login');
-          },
-          onSignUp: () => {
-            window.history.pushState({}, '', '/register');
-            navigateTo('register');
-          },
-        });
-
-        leftNavInstances.add(leftNav);
-
-        // Create Notifications Page
-        const { createNotificationsPage } = await import('./components/NotificationsPage.js');
-        notificationsPage = createNotificationsPage({
-          notifications: notificationsData.notifications,
-          unreadCount: notificationsData.unread_count,
-          onMarkAllRead: async () => {
-            await fetch('/api/notifications/read-all', {
-              method: 'POST',
-              credentials: 'include',
-            });
-            unreadNotificationCount = 0;
-            leftNav.setUnreadCount(0);
-            leftNavInstances.forEach((ln: any) => {
-              if (typeof ln.setUnreadCount === 'function') {
-                ln.setUnreadCount(0);
-              }
-            });
-            stopNotificationPolling();
-            startNotificationPolling();
-          },
-          onNavigateToPost: (postId) => {
-            window.history.pushState({}, '', `/thread/${postId}`);
-            navigateTo('thread', postId);
-          },
-        });
-
-        // Create Right Panel
-        const rightPanel = createRightPanel({
-          onSearch: (query) => {
-            console.log('Search:', query);
-          },
-          onFollowUser: (userId) => {
-            console.log('Follow user:', userId);
-          },
-        });
-
-        // Assemble layout
-        mainContainer.appendChild(leftNav.getElement());
-        mainContainer.appendChild(notificationsPage.getElement());
-        mainContainer.appendChild(rightPanel.getElement());
-
-        app.appendChild(mainContainer);
-        hidePageLoader();
-
-        // Setup mobile left nav
-        setupMobileLeftNav(leftNav.getElement());
-
-        return;
-      }
-
-      // Handle settings page (within 3-column layout)
-      if (view === 'settings') {
-        currentView = 'settings';
-        currentPostId = null;
-        _currentUsername = null;
-        currentTag = null;
-
-        // Create main container for 3-column layout
-        const mainContainer = document.createElement('div');
-        mainContainer.className = 'main-container';
-
-        // Create Left Nav
-        const leftNav = createLeftNav({
-          activeItem: 'settings',
-          unreadCount: unreadNotificationCount,
-          currentUser: currentUser || undefined,
-          onNavigate: async (item) => {
-            console.log('Navigate to:', item);
-            if (item === 'home') {
-              window.history.pushState({}, '', '/home');
-              navigateTo('timeline');
-            } else if (item === 'explore') {
-              window.history.pushState({}, '', '/explore');
-              navigateTo('explore');
-            } else if (item === 'arcade') {
-              window.history.pushState({}, '', '/arcade');
-              navigateTo('arcade');
-            } else if (item === 'notifications') {
-              window.history.pushState({}, '', '/notifications');
-              navigateTo('notifications');
-            } else if (item === 'bookmarks') {
-              window.history.pushState({}, '', '/bookmarks');
-              navigateTo('bookmarks');
-            } else if (item === 'settings') {
-              window.history.pushState({}, '', '/settings');
-              navigateTo('settings');
-            } else if (item === 'profile') {
-              if (!currentUser) {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-                return;
-              }
-              window.history.pushState({}, '', `/profile/${currentUser.username}`);
-              navigateTo('profile', undefined, currentUser.username);
-            }
-          },
-          onSignIn: () => {
-            window.history.pushState({}, '', '/login');
-            navigateTo('login');
-          },
-          onSignUp: () => {
-            window.history.pushState({}, '', '/register');
-            navigateTo('register');
-          },
-        });
-
-        leftNavInstances.add(leftNav);
-
-        // Create Settings Page (as main content)
-        const settingsModule = await import('./components/SettingsPage.js');
-        settingsPage = settingsModule.createSettingsPage({
-          currentUser: currentUser || undefined,
-        });
-
-        // Load user data asynchronously
-        const loadUserData = async () => {
-          try {
-            const userData = await getMe();
-            if (userData) {
-              // Recreate settings page with full user data
-              const oldElement = settingsPage.getElement();
-              settingsPage.destroy();
-              settingsPage = settingsModule.createSettingsPage({
-                currentUser: userData.user,
-              });
-
-              // Wait for the next tick to ensure the element is in the DOM
-              setTimeout(() => {
-                if (oldElement.parentNode) {
-                  oldElement.parentNode.replaceChild(settingsPage.getElement(), oldElement);
-                } else {
-                  // If still not in DOM, add it to the main container in the correct position
-                  const leftNavElement = mainContainer.children[0];
-                  if (leftNavElement && mainContainer.children[1]) {
-                    mainContainer.insertBefore(settingsPage.getElement(), mainContainer.children[1]);
-                  }
-                }
-              }, 0);
-            }
-          } catch (error) {
-            console.error('Failed to load user data:', error);
+        if (view === 'register') {
+          if (leftNavOpenButton) {
+            leftNavOpenButton.remove();
+            leftNavOpenButton = null;
           }
-        };
+          if (leftNavOverlay) {
+            leftNavOverlay.remove();
+            leftNavOverlay = null;
+          }
+          currentView = 'register';
+          currentPostId = null;
+          _currentUsername = null;
 
-        loadUserData();
-
-        // Create Right Panel
-        const rightPanel = createRightPanel({
-          onSearch: (query) => {
-            console.log('Search:', query);
-          },
-          onFollowUser: (userId) => {
-            console.log('Follow user:', userId);
-          },
-        });
-
-        // Assemble layout
-        mainContainer.appendChild(leftNav.getElement());
-        mainContainer.appendChild(settingsPage.getElement());
-        mainContainer.appendChild(rightPanel.getElement());
-
-        app.appendChild(mainContainer);
-        hidePageLoader();
-
-        // Setup mobile left nav
-        setupMobileLeftNav(leftNav.getElement());
-
-        return;
-      }
-
-      // Create main container for timeline/thread views
-      const mainContainer = document.createElement('div');
-      mainContainer.className = 'main-container';
-
-      if (view === 'thread' && postId) {
-        // Thread page view
-        console.log('Creating thread page for postId:', postId);
-        currentView = 'thread';
-        currentPostId = postId;
-
-        const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app';
-        const { createThreadPage } = await import('./components/ThreadPage.js');
-        threadPage = createThreadPage({
-          postId,
-          sandboxOrigin,
-          currentUser,
-          unreadCount: unreadNotificationCount,
-          onBack: () => {
-            console.log('Back button clicked, returning to previous view');
-            if (cachedContentComponent) {
-              window.history.back();
-            } else {
-              window.history.pushState({}, '', '/home');
-              navigateTo('timeline');
-            }
-          },
-        });
-
-        console.log('Thread page created, adding to container');
-        mainContainer.appendChild(threadPage.getElement());
-        console.log('Thread page added to DOM');
-
-        // ThreadPage has its own LeftNav, find it and setup mobile functionality
-        const threadLeftNav = threadPage.getElement().querySelector('.left-nav') as HTMLElement;
-        if (threadLeftNav) {
-          // Add thread page specific class for styling
-          threadLeftNav.classList.add('thread-page-left-nav');
-          setupMobileLeftNav(threadLeftNav);
-        }
-
-        // Create Right Panel
-        const threadRightPanel = createRightPanel({
-          onSearch: (query) => {
-            console.log('Search:', query);
-          },
-          onFollowUser: (userId) => {
-            console.log('Follow user:', userId);
-          },
-        });
-        mainContainer.appendChild(threadRightPanel.getElement());
-      } else {
-        // Timeline view
-        currentView = 'timeline';
-        currentPostId = null;
-
-        // Create Left Nav
-        const leftNav = createLeftNav({
-          activeItem: 'home',
-          unreadCount: unreadNotificationCount,
-          currentUser: currentUser || undefined,
-          onNavigate: async (item) => {
-            console.log('Navigate to:', item);
-            if (item === 'home') {
-              window.history.pushState({}, '', '/home');
-              navigateTo('timeline');
-            } else if (item === 'explore') {
-              window.history.pushState({}, '', '/explore');
-              navigateTo('explore');
-            } else if (item === 'arcade') {
+          const { createRegisterPage } = await import('./components/RegisterPage.js');
+          registerPage = createRegisterPage({
+            onSuccess: () => {
               window.history.pushState({}, '', '/arcade');
               navigateTo('arcade');
-            } else if (item === 'notifications') {
-              window.history.pushState({}, '', '/notifications');
-              navigateTo('notifications');
-            } else if (item === 'bookmarks') {
-              window.history.pushState({}, '', '/bookmarks');
-              navigateTo('bookmarks');
-            } else if (item === 'settings') {
-              window.history.pushState({}, '', '/settings');
-              navigateTo('settings');
-            } else if (item === 'profile') {
-              if (!currentUser) {
+            },
+          });
+
+          app.appendChild(registerPage.getElement());
+          hidePageLoader();
+          return;
+        }
+
+        // Handle legal pages (public, no auth required, no layout)
+        if (view === 'terms' || view === 'privacy' || view === 'about' || view === 'whitepaper') {
+          if (leftNavOpenButton) {
+            leftNavOpenButton.remove();
+            leftNavOpenButton = null;
+          }
+          if (leftNavOverlay) {
+            leftNavOverlay.remove();
+            leftNavOverlay = null;
+          }
+          currentView = view;
+          currentPostId = null;
+          _currentUsername = null;
+
+          const { createLegalPage } = await import('./components/LegalPage.js');
+          legalPage = createLegalPage({
+            type: view,
+          });
+
+          app.appendChild(legalPage.getElement());
+          hidePageLoader();
+          return;
+        }
+
+        // Handle admin page (separate layout, no Left Nav)
+        if (view === 'admin') {
+          currentView = 'admin';
+          currentAdminTab = adminTab || 'alerts';
+
+          // Cleanup regular views
+          if (timeline) {
+            timeline.destroy();
+            timeline = null;
+          }
+          if (threadPage) {
+            threadPage.destroy();
+            threadPage = null;
+          }
+          if (profilePage) {
+            profilePage.destroy();
+            profilePage = null;
+          }
+          if (explorePage) {
+            explorePage.destroy();
+            explorePage = null;
+          }
+          if (notificationsPage) {
+            notificationsPage.destroy();
+            notificationsPage = null;
+          }
+          if (settingsPage) {
+            settingsPage.destroy();
+            settingsPage = null;
+          }
+
+          const adminModule = await import('./components/AdminLayout.js');
+          const adminTabsModule = await Promise.all([
+            import('./components/AdminAlertsTab.js'),
+            import('./components/AdminHiddenTab.js'),
+            import('./components/AdminUsersTab.js'),
+            import('./components/AdminAdsTab.js'),
+          ]);
+
+          const onTabChange = async (tab: 'alerts' | 'hidden' | 'users' | 'ads') => {
+            currentAdminTab = tab;
+            window.history.pushState({}, '', `/admin/${tab}`);
+            renderAdminTab(tab);
+          };
+
+          adminLayout = adminModule.createAdminLayout({
+            activeTab: currentAdminTab,
+            onTabChange,
+          });
+
+          app.appendChild(adminLayout.getElement());
+          hidePageLoader();
+
+          const renderAdminTab = async (tab: 'alerts' | 'hidden' | 'users' | 'ads') => {
+            if (!adminLayout) return;
+
+            if (tab === 'alerts') {
+              adminAlertsTab = adminTabsModule[0].createAdminAlertsTab({
+                onNavigateToTab: onTabChange,
+              });
+              const alertsElement = adminAlertsTab.getElement();
+              if (alertsElement) {
+                adminLayout.updateMainContent(alertsElement);
+              }
+
+              // Check for access denied
+              try {
+                const response = await fetch('/api/admin/alerts', { credentials: 'include' });
+                if (response.status === 403) {
+                  adminLayout.setAccessDenied();
+                }
+              } catch (e) {
+                console.error('Failed to check admin access:', e);
+              }
+            } else if (tab === 'hidden') {
+              adminHiddenTab = adminTabsModule[1].createAdminHiddenTab({
+                onNavigateToTab: onTabChange,
+              });
+              const hiddenElement = adminHiddenTab.getElement();
+              if (hiddenElement) {
+                adminLayout.updateMainContent(hiddenElement);
+              }
+            } else if (tab === 'users') {
+              adminUsersTab = adminTabsModule[2].createAdminUsersTab({
+                onNavigateToTab: onTabChange,
+              });
+              const usersElement = adminUsersTab.getElement();
+              if (usersElement) {
+                adminLayout.updateMainContent(usersElement);
+              }
+            } else if (tab === 'ads') {
+              adminAdsTab = adminTabsModule[3].createAdminAdsTab({
+                onNavigateToTab: onTabChange,
+              });
+              const adsElement = adminAdsTab.getElement();
+              if (adsElement) {
+                adminLayout.updateMainContent(adsElement);
+              }
+            }
+          };
+
+          // Render initial tab
+          renderAdminTab(currentAdminTab);
+          return;
+        }
+
+        // Handle explore page (within 3-column layout)
+        if (view === 'explore') {
+          currentView = 'explore';
+          currentPostId = null;
+          _currentUsername = null;
+          currentTag = tag || null;
+
+          // Create main container for 3-column layout
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          // Create Left Nav
+          const leftNav = createLeftNav({
+            activeItem: 'explore',
+            unreadCount: unreadNotificationCount,
+            currentUser: currentUser || undefined,
+            onNavigate: async (item) => {
+              console.log('Navigate to:', item);
+              if (item === 'home') {
+                window.history.pushState({}, '', '/home');
+                navigateTo('timeline');
+              } else if (item === 'explore') {
+                window.history.pushState({}, '', '/explore');
+                navigateTo('explore');
+              } else if (item === 'arcade') {
                 window.history.pushState({}, '', '/arcade');
                 navigateTo('arcade');
-                return;
-              }
-              window.history.pushState({}, '', `/profile/${currentUser.username}`);
-              navigateTo('profile', undefined, currentUser.username);
-            }
-          },
-          onSignIn: () => {
-            window.history.pushState({}, '', '/login');
-            navigateTo('login');
-          },
-          onSignUp: () => {
-            window.history.pushState({}, '', '/register');
-            navigateTo('register');
-          },
-        });
-
-        leftNavInstances.add(leftNav);
-
-        const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app';
-
-        if (cachedContentComponent?.view === 'timeline') {
-          console.log('Restoring cached timeline');
-          timeline = cachedContentComponent.component;
-          const scrollY = cachedContentComponent.scrollY;
-          cachedContentComponent = null;
-
-          requestAnimationFrame(() => {
-            window.scrollTo(0, scrollY);
-          });
-        } else {
-          // Create fresh timeline
-          const { createTimeline } = await import('./components/Timeline.js');
-          timeline = createTimeline({
-            sandboxOrigin,
-            currentUser,
-          });
-
-          // Listen for navigation events from timeline
-          timeline.getElement().addEventListener('navigateToThread', (e: any) => {
-            const postId = e.detail.postId;
-            window.history.pushState({ postId }, '', `/thread/${postId}`);
-            navigateTo('thread', postId);
-          });
-
-          // Listen for openLeftNav events from timeline (mobile swipe)
-          timeline.getElement().addEventListener('openLeftNav', () => {
-            const leftNavElement = document.querySelector('.left-nav') as HTMLElement;
-            if (leftNavElement) {
-              openLeftNav(leftNavElement);
-            }
-          });
-
-          // Restore scroll position after timeline posts load
-          timeline.getElement().addEventListener(
-            'timelineReady',
-            () => {
-              if (savedScrollY > 0) {
-                const scrollY = savedScrollY;
-                savedScrollY = 0;
-                window.scrollTo(0, scrollY);
+              } else if (item === 'notifications') {
+                window.history.pushState({}, '', '/notifications');
+                navigateTo('notifications');
+              } else if (item === 'bookmarks') {
+                window.history.pushState({}, '', '/bookmarks');
+                navigateTo('bookmarks');
+              } else if (item === 'settings') {
+                window.history.pushState({}, '', '/settings');
+                navigateTo('settings');
+              } else if (item === 'profile') {
+                if (!currentUser) {
+                  window.history.pushState({}, '', '/arcade');
+                  navigateTo('arcade');
+                  return;
+                }
+                window.history.pushState({}, '', `/profile/${currentUser.username}`);
+                navigateTo('profile', undefined, currentUser.username);
               }
             },
-            { once: true },
-          );
+            onSignIn: () => {
+              window.history.pushState({}, '', '/login');
+              navigateTo('login');
+            },
+            onSignUp: () => {
+              window.history.pushState({}, '', '/register');
+              navigateTo('register');
+            },
+          });
+
+          leftNavInstances.add(leftNav);
+
+          const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app';
+
+          if (cachedContentComponent?.view === 'explore') {
+            console.log('Restoring cached explore page');
+            explorePage = cachedContentComponent.component;
+            const scrollY = cachedContentComponent.scrollY;
+            cachedContentComponent = null;
+
+            requestAnimationFrame(() => {
+              window.scrollTo(0, scrollY);
+            });
+          } else {
+            // Create fresh explore page
+            const { createExplorePage } = await import('./components/ExplorePage.js');
+            explorePage = createExplorePage({
+              tag: currentTag || undefined,
+              sandboxOrigin,
+              currentUser,
+            });
+            window.scrollTo(0, 0);
+          }
+
+          // Create Right Panel
+          const rightPanel = createRightPanel({
+            onSearch: (query) => {
+              console.log('Search:', query);
+              // Handle search here
+            },
+            onFollowUser: (userId) => {
+              console.log('Follow user:', userId);
+              // Handle follow here
+            },
+          });
+
+          // Assemble layout
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(explorePage.getElement());
+          mainContainer.appendChild(rightPanel.getElement());
+
+          app.appendChild(mainContainer);
+          hidePageLoader();
+
+          // Setup mobile left nav
+          setupMobileLeftNav(leftNav.getElement());
+
+          return;
         }
 
-        // Setup mobile left nav functionality
-        setupMobileLeftNav(leftNav.getElement());
+        // Handle search page (within 3-column layout)
+        if (view === 'search') {
+          currentView = 'search';
+          currentPostId = null;
+          _currentUsername = null;
+          currentTag = null;
 
-        // Create Right Panel
-        const rightPanel = createRightPanel({
-          onSearch: (query) => {
-            console.log('Search:', query);
-            // Handle search here
-          },
-          onFollowUser: (userId) => {
-            console.log('Follow user:', userId);
-            // Handle follow here
-          },
-        });
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
 
-        // Assemble layout
-        mainContainer.appendChild(leftNav.getElement());
-        mainContainer.appendChild(timeline.getElement());
-        mainContainer.appendChild(rightPanel.getElement());
-      }
+          const leftNav = createLeftNav({
+            activeItem: 'explore',
+            unreadCount: unreadNotificationCount,
+            currentUser: currentUser || undefined,
+            onNavigate: async (item) => {
+              if (item === 'home') {
+                window.history.pushState({}, '', '/home');
+                navigateTo('timeline');
+              } else if (item === 'explore') {
+                window.history.pushState({}, '', '/explore');
+                navigateTo('explore');
+              } else if (item === 'arcade') {
+                window.history.pushState({}, '', '/arcade');
+                navigateTo('arcade');
+              } else if (item === 'notifications') {
+                window.history.pushState({}, '', '/notifications');
+                navigateTo('notifications');
+              } else if (item === 'bookmarks') {
+                window.history.pushState({}, '', '/bookmarks');
+                navigateTo('bookmarks');
+              } else if (item === 'settings') {
+                window.history.pushState({}, '', '/settings');
+                navigateTo('settings');
+              } else if (item === 'profile') {
+                if (!currentUser) {
+                  window.history.pushState({}, '', '/arcade');
+                  navigateTo('arcade');
+                  return;
+                }
+                window.history.pushState({}, '', `/profile/${currentUser.username}`);
+                navigateTo('profile', undefined, currentUser.username);
+              }
+            },
+            onSignIn: () => {
+              window.history.pushState({}, '', '/login');
+              navigateTo('login');
+            },
+            onSignUp: () => {
+              window.history.pushState({}, '', '/register');
+              navigateTo('register');
+            },
+          });
 
-      app.appendChild(mainContainer);
-      hidePageLoader();
+          leftNavInstances.add(leftNav);
+
+          const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app';
+
+          if (cachedContentComponent?.view === 'search') {
+            console.log('Restoring cached search page');
+            searchPage = cachedContentComponent.component;
+            const scrollY = cachedContentComponent.scrollY;
+            cachedContentComponent = null;
+
+            requestAnimationFrame(() => {
+              window.scrollTo(0, scrollY);
+            });
+          } else {
+            const { createSearchPage } = await import('./components/SearchPage.js');
+            searchPage = createSearchPage({
+              query: searchQuery || '',
+              type: searchType || 'posts',
+              currentUser: currentUser,
+              sandboxOrigin,
+            });
+          }
+
+          const rightPanel = createRightPanel({
+            onSearch: (query) => {
+              console.log('Search:', query);
+            },
+            onFollowUser: (userId) => {
+              console.log('Follow user:', userId);
+            },
+          });
+
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(searchPage.getElement());
+          mainContainer.appendChild(rightPanel.getElement());
+
+          app.appendChild(mainContainer);
+          hidePageLoader();
+
+          setupMobileLeftNav(leftNav.getElement());
+
+          return;
+        }
+
+        // Handle arcade page (within 3-column layout)
+        if (view === 'arcade') {
+          currentView = 'arcade';
+          currentPostId = postId || null;
+          _currentUsername = null;
+          currentTag = null;
+
+          // Create main container for 3-column layout
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          // Create Left Nav
+          const leftNav = createLeftNav({
+            activeItem: 'arcade',
+            unreadCount: unreadNotificationCount,
+            currentUser: currentUser || undefined,
+            onNavigate: async (item) => {
+              console.log('Navigate to:', item);
+              if (item === 'home') {
+                window.history.pushState({}, '', '/home');
+                navigateTo('timeline');
+              } else if (item === 'explore') {
+                window.history.pushState({}, '', '/explore');
+                navigateTo('explore');
+              } else if (item === 'arcade') {
+                window.history.pushState({}, '', '/arcade');
+                navigateTo('arcade');
+              } else if (item === 'notifications') {
+                window.history.pushState({}, '', '/notifications');
+                navigateTo('notifications');
+              } else if (item === 'bookmarks') {
+                window.history.pushState({}, '', '/bookmarks');
+                navigateTo('bookmarks');
+              } else if (item === 'settings') {
+                window.history.pushState({}, '', '/settings');
+                navigateTo('settings');
+              } else if (item === 'profile') {
+                if (!currentUser) {
+                  window.history.pushState({}, '', '/arcade');
+                  navigateTo('arcade');
+                  return;
+                }
+                window.history.pushState({}, '', `/profile/${currentUser.username}`);
+                navigateTo('profile', undefined, currentUser.username);
+              }
+            },
+            onSignIn: () => {
+              window.history.pushState({}, '', '/login');
+              navigateTo('login');
+            },
+            onSignUp: () => {
+              window.history.pushState({}, '', '/register');
+              navigateTo('register');
+            },
+          });
+
+          leftNavInstances.add(leftNav);
+
+          const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app';
+
+          if (cachedContentComponent?.view === 'arcade') {
+            console.log('Restoring cached arcade page');
+            arcadePage = cachedContentComponent.component;
+            const scrollY = cachedContentComponent.scrollY;
+            cachedContentComponent = null;
+
+            requestAnimationFrame(() => {
+              window.scrollTo(0, scrollY);
+            });
+          } else {
+            // Create fresh arcade page
+            const { createArcadePage } = await import('./components/ArcadePage.js');
+            arcadePage = createArcadePage({
+              sandboxOrigin,
+              currentUser,
+              initialGameId: currentPostId || undefined,
+              onBack: () => {
+                console.log('Arcade back button clicked');
+                window.history.back();
+              },
+            });
+          }
+
+          // Create Right Panel
+          const rightPanel = createRightPanel({
+            onSearch: (query) => {
+              console.log('Search:', query);
+              // Handle search here
+            },
+            onFollowUser: (userId) => {
+              console.log('Follow user:', userId);
+              // Handle follow here
+            },
+          });
+
+          // Assemble layout
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(arcadePage.getElement());
+          mainContainer.appendChild(rightPanel.getElement());
+
+          app.appendChild(mainContainer);
+          hidePageLoader();
+
+          // Setup mobile left nav
+          setupMobileLeftNav(leftNav.getElement());
+
+          return;
+        }
+
+        // Handle profile page (within 3-column layout)
+        if (view === 'profile' && username) {
+          currentView = 'profile';
+          currentPostId = null;
+          _currentUsername = username;
+          currentTag = null;
+
+          // Create main container for 3-column layout
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          // Create Left Nav
+          const leftNav = createLeftNav({
+            activeItem: 'profile',
+            unreadCount: unreadNotificationCount,
+            currentUser: currentUser || undefined,
+            onNavigate: async (item) => {
+              console.log('Navigate to:', item);
+              if (item === 'home') {
+                window.history.pushState({}, '', '/home');
+                navigateTo('timeline');
+              } else if (item === 'explore') {
+                window.history.pushState({}, '', '/explore');
+                navigateTo('explore');
+              } else if (item === 'arcade') {
+                window.history.pushState({}, '', '/arcade');
+                navigateTo('arcade');
+              } else if (item === 'notifications') {
+                window.history.pushState({}, '', '/notifications');
+                navigateTo('notifications');
+              } else if (item === 'bookmarks') {
+                window.history.pushState({}, '', '/bookmarks');
+                navigateTo('bookmarks');
+              } else if (item === 'settings') {
+                window.history.pushState({}, '', '/settings');
+                navigateTo('settings');
+              } else if (item === 'profile') {
+                if (!currentUser) {
+                  window.history.pushState({}, '', '/arcade');
+                  navigateTo('arcade');
+                  return;
+                }
+                window.history.pushState({}, '', `/profile/${currentUser.username}`);
+                navigateTo('profile', undefined, currentUser.username);
+              }
+            },
+            onSignIn: () => {
+              window.history.pushState({}, '', '/login');
+              navigateTo('login');
+            },
+            onSignUp: () => {
+              window.history.pushState({}, '', '/register');
+              navigateTo('register');
+            },
+          });
+
+          leftNavInstances.add(leftNav);
+
+          const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app';
+
+          if (cachedContentComponent?.view === 'profile') {
+            console.log('Restoring cached profile');
+            profilePage = cachedContentComponent.component;
+            const scrollY = cachedContentComponent.scrollY;
+            cachedContentComponent = null;
+
+            requestAnimationFrame(() => {
+              window.scrollTo(0, scrollY);
+            });
+          } else {
+            // Create fresh profile page
+            const { createProfilePage } = await import('./components/ProfilePage.js');
+            profilePage = createProfilePage({
+              username,
+              currentUser,
+              sandboxOrigin,
+            });
+          }
+
+          // Create Right Panel
+          const rightPanel = createRightPanel({
+            onSearch: (query) => {
+              console.log('Search:', query);
+              // Handle search here
+            },
+            onFollowUser: (userId) => {
+              console.log('Follow user:', userId);
+              // Handle follow here
+            },
+          });
+
+          // Assemble layout
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(profilePage.getElement());
+          mainContainer.appendChild(rightPanel.getElement());
+
+          app.appendChild(mainContainer);
+          hidePageLoader();
+
+          // Setup mobile left nav
+          setupMobileLeftNav(leftNav.getElement());
+
+          return;
+        }
+
+        // Handle bookmarks page (within 3-column layout)
+        if (view === 'bookmarks') {
+          currentView = 'bookmarks';
+          currentPostId = null;
+          _currentUsername = null;
+          currentTag = null;
+
+          if (!currentUser) {
+            window.history.pushState({}, '', '/explore');
+            navigateTo('explore');
+            return;
+          }
+
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          const leftNav = createLeftNav({
+            activeItem: 'bookmarks',
+            unreadCount: unreadNotificationCount,
+            currentUser: currentUser || undefined,
+            onNavigate: async (item) => {
+              if (item === 'home') {
+                window.history.pushState({}, '', '/home');
+                navigateTo('timeline');
+              } else if (item === 'explore') {
+                window.history.pushState({}, '', '/explore');
+                navigateTo('explore');
+              } else if (item === 'arcade') {
+                window.history.pushState({}, '', '/arcade');
+                navigateTo('arcade');
+              } else if (item === 'notifications') {
+                window.history.pushState({}, '', '/notifications');
+                navigateTo('notifications');
+              } else if (item === 'bookmarks') {
+                window.history.pushState({}, '', '/bookmarks');
+                navigateTo('bookmarks');
+              } else if (item === 'settings') {
+                window.history.pushState({}, '', '/settings');
+                navigateTo('settings');
+              } else if (item === 'profile') {
+                if (!currentUser) {
+                  window.history.pushState({}, '', '/arcade');
+                  navigateTo('arcade');
+                  return;
+                }
+                window.history.pushState({}, '', `/profile/${currentUser.username}`);
+                navigateTo('profile', undefined, currentUser.username);
+              }
+            },
+            onSignIn: () => {
+              window.history.pushState({}, '', '/login');
+              navigateTo('login');
+            },
+            onSignUp: () => {
+              window.history.pushState({}, '', '/register');
+              navigateTo('register');
+            },
+          });
+          leftNavInstances.add(leftNav);
+
+          if (cachedContentComponent?.view === 'bookmarks') {
+            bookmarksPage = cachedContentComponent.component;
+            const scrollY = cachedContentComponent.scrollY;
+            cachedContentComponent = null;
+            requestAnimationFrame(() => {
+              window.scrollTo(0, scrollY);
+            });
+          } else {
+            const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app';
+            const { createBookmarksPage } = await import('./components/BookmarksPage.js');
+            bookmarksPage = createBookmarksPage({
+              sandboxOrigin,
+              currentUser,
+            });
+            window.scrollTo(0, 0);
+          }
+
+          const rightPanel = createRightPanel({
+            onSearch: (query) => {},
+            onFollowUser: (userId) => {},
+          });
+
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(bookmarksPage.getElement());
+          mainContainer.appendChild(rightPanel.getElement());
+          app.appendChild(mainContainer);
+          hidePageLoader();
+          setupMobileLeftNav(leftNav.getElement());
+          return;
+        }
+
+        // Handle notifications page (within 3-column layout)
+        if (view === 'notifications') {
+          currentView = 'notifications';
+          currentPostId = null;
+          _currentUsername = null;
+          currentTag = null;
+
+          // Save unread count before fetching notifications data (the API might mark
+          // notifications as read, which would reset the count and lose the badge)
+          const savedUnreadCount = unreadNotificationCount;
+
+          // Fetch notifications data for the page content
+          const [notificationsData] = await Promise.all([fetchNotifications()]);
+
+          // Restore the pre-fetch unread count so the badge reflects the actual unread count
+          // (fetchNotifications may have changed it)
+          if (notificationsData.unread_count === 0 && savedUnreadCount > 0) {
+            unreadNotificationCount = savedUnreadCount;
+          }
+
+          // Create main container for 3-column layout
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          // Create Left Nav with unread count
+          const leftNav = createLeftNav({
+            activeItem: 'notifications',
+            unreadCount: unreadNotificationCount,
+            currentUser: currentUser || undefined,
+            onNavigate: async (item) => {
+              console.log('Navigate to:', item);
+              if (item === 'home') {
+                window.history.pushState({}, '', '/home');
+                navigateTo('timeline');
+              } else if (item === 'explore') {
+                window.history.pushState({}, '', '/explore');
+                navigateTo('explore');
+              } else if (item === 'arcade') {
+                window.history.pushState({}, '', '/arcade');
+                navigateTo('arcade');
+              } else if (item === 'notifications') {
+                window.history.pushState({}, '', '/notifications');
+                navigateTo('notifications');
+              } else if (item === 'bookmarks') {
+                window.history.pushState({}, '', '/bookmarks');
+                navigateTo('bookmarks');
+              } else if (item === 'settings') {
+                window.history.pushState({}, '', '/settings');
+                navigateTo('settings');
+              } else if (item === 'profile') {
+                if (!currentUser) {
+                  window.history.pushState({}, '', '/arcade');
+                  navigateTo('arcade');
+                  return;
+                }
+                window.history.pushState({}, '', `/profile/${currentUser.username}`);
+                navigateTo('profile', undefined, currentUser.username);
+              }
+            },
+            onSignIn: () => {
+              window.history.pushState({}, '', '/login');
+              navigateTo('login');
+            },
+            onSignUp: () => {
+              window.history.pushState({}, '', '/register');
+              navigateTo('register');
+            },
+          });
+
+          leftNavInstances.add(leftNav);
+
+          // Create Notifications Page
+          const { createNotificationsPage } = await import('./components/NotificationsPage.js');
+          notificationsPage = createNotificationsPage({
+            notifications: notificationsData.notifications,
+            unreadCount: notificationsData.unread_count,
+            onMarkAllRead: async () => {
+              await fetch('/api/notifications/read-all', {
+                method: 'POST',
+                credentials: 'include',
+              });
+              unreadNotificationCount = 0;
+              leftNav.setUnreadCount(0);
+              leftNavInstances.forEach((ln: any) => {
+                if (typeof ln.setUnreadCount === 'function') {
+                  ln.setUnreadCount(0);
+                }
+              });
+              stopNotificationPolling();
+              startNotificationPolling();
+            },
+            onNavigateToPost: (postId) => {
+              window.history.pushState({}, '', `/thread/${postId}`);
+              navigateTo('thread', postId);
+            },
+          });
+
+          // Create Right Panel
+          const rightPanel = createRightPanel({
+            onSearch: (query) => {
+              console.log('Search:', query);
+            },
+            onFollowUser: (userId) => {
+              console.log('Follow user:', userId);
+            },
+          });
+
+          // Assemble layout
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(notificationsPage.getElement());
+          mainContainer.appendChild(rightPanel.getElement());
+
+          app.appendChild(mainContainer);
+          hidePageLoader();
+
+          // Setup mobile left nav
+          setupMobileLeftNav(leftNav.getElement());
+
+          return;
+        }
+
+        // Handle settings page (within 3-column layout)
+        if (view === 'settings') {
+          currentView = 'settings';
+          currentPostId = null;
+          _currentUsername = null;
+          currentTag = null;
+
+          // Create main container for 3-column layout
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          // Create Left Nav
+          const leftNav = createLeftNav({
+            activeItem: 'settings',
+            unreadCount: unreadNotificationCount,
+            currentUser: currentUser || undefined,
+            onNavigate: async (item) => {
+              console.log('Navigate to:', item);
+              if (item === 'home') {
+                window.history.pushState({}, '', '/home');
+                navigateTo('timeline');
+              } else if (item === 'explore') {
+                window.history.pushState({}, '', '/explore');
+                navigateTo('explore');
+              } else if (item === 'arcade') {
+                window.history.pushState({}, '', '/arcade');
+                navigateTo('arcade');
+              } else if (item === 'notifications') {
+                window.history.pushState({}, '', '/notifications');
+                navigateTo('notifications');
+              } else if (item === 'bookmarks') {
+                window.history.pushState({}, '', '/bookmarks');
+                navigateTo('bookmarks');
+              } else if (item === 'settings') {
+                window.history.pushState({}, '', '/settings');
+                navigateTo('settings');
+              } else if (item === 'profile') {
+                if (!currentUser) {
+                  window.history.pushState({}, '', '/arcade');
+                  navigateTo('arcade');
+                  return;
+                }
+                window.history.pushState({}, '', `/profile/${currentUser.username}`);
+                navigateTo('profile', undefined, currentUser.username);
+              }
+            },
+            onSignIn: () => {
+              window.history.pushState({}, '', '/login');
+              navigateTo('login');
+            },
+            onSignUp: () => {
+              window.history.pushState({}, '', '/register');
+              navigateTo('register');
+            },
+          });
+
+          leftNavInstances.add(leftNav);
+
+          // Create Settings Page (as main content)
+          const settingsModule = await import('./components/SettingsPage.js');
+          settingsPage = settingsModule.createSettingsPage({
+            currentUser: currentUser || undefined,
+          });
+
+          // Load user data asynchronously
+          const loadUserData = async () => {
+            try {
+              const userData = await getMe();
+              if (userData) {
+                // Recreate settings page with full user data
+                const oldElement = settingsPage.getElement();
+                settingsPage.destroy();
+                settingsPage = settingsModule.createSettingsPage({
+                  currentUser: userData.user,
+                });
+
+                // Wait for the next tick to ensure the element is in the DOM
+                setTimeout(() => {
+                  if (oldElement.parentNode) {
+                    oldElement.parentNode.replaceChild(settingsPage.getElement(), oldElement);
+                  } else {
+                    // If still not in DOM, add it to the main container in the correct position
+                    const leftNavElement = mainContainer.children[0];
+                    if (leftNavElement && mainContainer.children[1]) {
+                      mainContainer.insertBefore(settingsPage.getElement(), mainContainer.children[1]);
+                    }
+                  }
+                }, 0);
+              }
+            } catch (error) {
+              console.error('Failed to load user data:', error);
+            }
+          };
+
+          loadUserData();
+
+          // Create Right Panel
+          const rightPanel = createRightPanel({
+            onSearch: (query) => {
+              console.log('Search:', query);
+            },
+            onFollowUser: (userId) => {
+              console.log('Follow user:', userId);
+            },
+          });
+
+          // Assemble layout
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(settingsPage.getElement());
+          mainContainer.appendChild(rightPanel.getElement());
+
+          app.appendChild(mainContainer);
+          hidePageLoader();
+
+          // Setup mobile left nav
+          setupMobileLeftNav(leftNav.getElement());
+
+          return;
+        }
+
+        // Create main container for timeline/thread views
+        const mainContainer = document.createElement('div');
+        mainContainer.className = 'main-container';
+
+        if (view === 'thread' && postId) {
+          // Thread page view
+          console.log('Creating thread page for postId:', postId);
+          currentView = 'thread';
+          currentPostId = postId;
+
+          const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app';
+          const { createThreadPage } = await import('./components/ThreadPage.js');
+          threadPage = createThreadPage({
+            postId,
+            sandboxOrigin,
+            currentUser,
+            unreadCount: unreadNotificationCount,
+            onBack: () => {
+              console.log('Back button clicked, returning to previous view');
+              if (cachedContentComponent) {
+                window.history.back();
+              } else {
+                window.history.pushState({}, '', '/home');
+                navigateTo('timeline');
+              }
+            },
+          });
+
+          console.log('Thread page created, adding to container');
+          mainContainer.appendChild(threadPage.getElement());
+          console.log('Thread page added to DOM');
+
+          // ThreadPage has its own LeftNav, find it and setup mobile functionality
+          const threadLeftNav = threadPage.getElement().querySelector('.left-nav') as HTMLElement;
+          if (threadLeftNav) {
+            // Add thread page specific class for styling
+            threadLeftNav.classList.add('thread-page-left-nav');
+            setupMobileLeftNav(threadLeftNav);
+          }
+
+          // Create Right Panel
+          const threadRightPanel = createRightPanel({
+            onSearch: (query) => {
+              console.log('Search:', query);
+            },
+            onFollowUser: (userId) => {
+              console.log('Follow user:', userId);
+            },
+          });
+          mainContainer.appendChild(threadRightPanel.getElement());
+        } else {
+          // Timeline view
+          currentView = 'timeline';
+          currentPostId = null;
+
+          // Create Left Nav
+          const leftNav = createLeftNav({
+            activeItem: 'home',
+            unreadCount: unreadNotificationCount,
+            currentUser: currentUser || undefined,
+            onNavigate: async (item) => {
+              console.log('Navigate to:', item);
+              if (item === 'home') {
+                window.history.pushState({}, '', '/home');
+                navigateTo('timeline');
+              } else if (item === 'explore') {
+                window.history.pushState({}, '', '/explore');
+                navigateTo('explore');
+              } else if (item === 'arcade') {
+                window.history.pushState({}, '', '/arcade');
+                navigateTo('arcade');
+              } else if (item === 'notifications') {
+                window.history.pushState({}, '', '/notifications');
+                navigateTo('notifications');
+              } else if (item === 'bookmarks') {
+                window.history.pushState({}, '', '/bookmarks');
+                navigateTo('bookmarks');
+              } else if (item === 'settings') {
+                window.history.pushState({}, '', '/settings');
+                navigateTo('settings');
+              } else if (item === 'profile') {
+                if (!currentUser) {
+                  window.history.pushState({}, '', '/arcade');
+                  navigateTo('arcade');
+                  return;
+                }
+                window.history.pushState({}, '', `/profile/${currentUser.username}`);
+                navigateTo('profile', undefined, currentUser.username);
+              }
+            },
+            onSignIn: () => {
+              window.history.pushState({}, '', '/login');
+              navigateTo('login');
+            },
+            onSignUp: () => {
+              window.history.pushState({}, '', '/register');
+              navigateTo('register');
+            },
+          });
+
+          leftNavInstances.add(leftNav);
+
+          const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app';
+
+          if (cachedContentComponent?.view === 'timeline') {
+            console.log('Restoring cached timeline');
+            timeline = cachedContentComponent.component;
+            const scrollY = cachedContentComponent.scrollY;
+            cachedContentComponent = null;
+
+            requestAnimationFrame(() => {
+              window.scrollTo(0, scrollY);
+            });
+          } else {
+            // Create fresh timeline
+            const { createTimeline } = await import('./components/Timeline.js');
+            timeline = createTimeline({
+              sandboxOrigin,
+              currentUser,
+            });
+
+            // Listen for navigation events from timeline
+            timeline.getElement().addEventListener('navigateToThread', (e: any) => {
+              const postId = e.detail.postId;
+              window.history.pushState({ postId }, '', `/thread/${postId}`);
+              navigateTo('thread', postId);
+            });
+
+            // Listen for openLeftNav events from timeline (mobile swipe)
+            timeline.getElement().addEventListener('openLeftNav', () => {
+              const leftNavElement = document.querySelector('.left-nav') as HTMLElement;
+              if (leftNavElement) {
+                openLeftNav(leftNavElement);
+              }
+            });
+
+            // Restore scroll position after timeline posts load
+            timeline.getElement().addEventListener(
+              'timelineReady',
+              () => {
+                if (savedScrollY > 0) {
+                  const scrollY = savedScrollY;
+                  savedScrollY = 0;
+                  window.scrollTo(0, scrollY);
+                }
+              },
+              { once: true },
+            );
+          }
+
+          // Setup mobile left nav functionality
+          setupMobileLeftNav(leftNav.getElement());
+
+          // Create Right Panel
+          const rightPanel = createRightPanel({
+            onSearch: (query) => {
+              console.log('Search:', query);
+              // Handle search here
+            },
+            onFollowUser: (userId) => {
+              console.log('Follow user:', userId);
+              // Handle follow here
+            },
+          });
+
+          // Assemble layout
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(timeline.getElement());
+          mainContainer.appendChild(rightPanel.getElement());
+        }
+
+        app.appendChild(mainContainer);
+        hidePageLoader();
       } catch (e) {
         console.error('Navigation error:', e);
         if (pageLoader) {
           const c = pageLoader.querySelector('.page-loader-content')!;
-          c.innerHTML = '<div style="font-size:2rem;margin-bottom:1rem;">⚠</div><div>Failed to load page</div><button class="page-loader-reload-btn" style="margin-top:1rem;padding:0.6rem 1.5rem;border:1px solid var(--border);border-radius:8px;background:var(--accent);color:#000;font-family:inherit;font-size:0.9rem;font-weight:600;cursor:pointer">Reload</button>';
+          c.innerHTML =
+            '<div style="font-size:2rem;margin-bottom:1rem;">⚠</div><div>Failed to load page</div><button class="page-loader-reload-btn" style="margin-top:1rem;padding:0.6rem 1.5rem;border:1px solid var(--border);border-radius:8px;background:var(--accent);color:#000;font-family:inherit;font-size:0.9rem;font-weight:600;cursor:pointer">Reload</button>';
           c.className = 'page-loader-content';
           const btn = c.querySelector('.page-loader-reload-btn') as HTMLButtonElement;
-          btn.onclick = () => { window.location.reload(); };
+          btn.onclick = () => {
+            window.location.reload();
+          };
         }
       }
     };
-    
+
     async function safeNavigate(
       view: string,
       postId?: string,
@@ -2093,24 +2101,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       searchType?: string,
     ) {
       try {
-        await navigateTo(
-          view as any,
-          postId,
-          username,
-          tag,
-          adminTab as any,
-          searchQuery,
-          searchType as any,
-        );
+        await navigateTo(view as any, postId, username, tag, adminTab as any, searchQuery, searchType as any);
       } catch (e) {
         console.error('Navigation failed:', e);
         // Show error on the loading overlay if it's visible, otherwise reload
         if (pageLoader && pageLoader.classList.contains('active')) {
           const c = pageLoader.querySelector('.page-loader-content')!;
-          c.innerHTML = '<div style="font-size:2rem;margin-bottom:1rem;">⚠</div><div>Failed to load page</div><button class="page-loader-reload-btn" style="margin-top:1rem;padding:0.6rem 1.5rem;border:1px solid var(--border);border-radius:8px;background:var(--accent);color:#000;font-family:inherit;font-size:0.9rem;font-weight:600;cursor:pointer">Reload</button>';
+          c.innerHTML =
+            '<div style="font-size:2rem;margin-bottom:1rem;">⚠</div><div>Failed to load page</div><button class="page-loader-reload-btn" style="margin-top:1rem;padding:0.6rem 1.5rem;border:1px solid var(--border);border-radius:8px;background:var(--accent);color:#000;font-family:inherit;font-size:0.9rem;font-weight:600;cursor:pointer">Reload</button>';
           c.className = 'page-loader-content';
           const btn = c.querySelector('.page-loader-reload-btn') as HTMLButtonElement;
-          btn.onclick = () => { window.location.reload(); };
+          btn.onclick = () => {
+            window.location.reload();
+          };
         } else {
           window.location.reload();
         }
