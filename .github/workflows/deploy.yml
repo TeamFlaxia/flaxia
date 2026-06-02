@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          node-version: '22'
           cache: npm
       - run: npm ci
       - run: npm run build
@@ -35,14 +35,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          node-version: '22'
           cache: npm
       - run: npm ci
       - name: Deploy Sandbox Worker
-        run: |
-          mv wrangler.toml wrangler.toml.bak
-          npx wrangler deploy src/sandbox-worker.ts --config wrangler.sandbox.toml
-          mv wrangler.toml.bak wrangler.toml
+        run: npx wrangler deploy src/sandbox-worker.ts --config wrangler.sandbox.toml
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -53,14 +50,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version-file: .nvmrc
+          node-version: '22'
           cache: npm
       - run: npm ci
       - name: Deploy Queue Worker
-        run: |
-          mv wrangler.toml wrangler.toml.bak
-          npx wrangler deploy --config wrangler.toml.worker
-          mv wrangler.toml.bak wrangler.toml
+        run: npx wrangler deploy functions/queue-worker.ts --name flaxia-backend --config wrangler.toml.worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
