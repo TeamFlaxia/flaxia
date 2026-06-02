@@ -23,15 +23,15 @@ let vapidKeys: { publicKey: string; privateKey: string } | null = null;
  */
 function ensureVapid(vapidPublicKey?: string, vapidPrivateKey?: string, subject?: string) {
   if (vapidKeys) return;
-  const pub = vapidPublicKey || (globalThis as any).VAPID_PUBLIC_KEY;
-  const priv = vapidPrivateKey || (globalThis as any).VAPID_PRIVATE_KEY;
+  const pub = vapidPublicKey || VAPID_PUBLIC_KEY;
+  const priv = vapidPrivateKey || VAPID_PRIVATE_KEY;
   if (pub && priv) {
     vapidKeys = { publicKey: pub, privateKey: priv };
   } else {
     vapidKeys = webpush.generateVAPIDKeys();
     console.warn('VAPID keys auto-generated. Set VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY env vars for production.');
   }
-  webpush.setVapidDetails(subject || 'mailto:push@flaxia.app', vapidKeys.publicKey, vapidKeys.privateKey);
+  webpush.setVapidDetails(subject || 'mailto:push@flaxia.app', vapidKeys!.publicKey, vapidKeys!.privateKey);
 }
 
 /**
@@ -47,7 +47,7 @@ export async function sendPushToSubscription(
   try {
     ensureVapid(vapidPublicKey, vapidPrivateKey);
     // Generate the request details but send via Workers' fetch()
-    const details = webpush.generateRequestDetails(subscription as any, JSON.stringify(payload));
+    const details = webpush.generateRequestDetails(subscription, JSON.stringify(payload));
 
     const res = await fetch(details.endpoint, {
       method: details.method as 'POST',

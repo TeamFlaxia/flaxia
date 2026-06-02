@@ -2,7 +2,7 @@ import { getMe } from '../lib/auth-cache.js';
 import { t } from '../lib/i18n.js';
 import { injectAds } from '../lib/inject-ads.js';
 import { openPostModal } from '../lib/post-modal.js';
-import { Ad, isAd, Post, TimelineProps, TimelineState } from '../types/post.js';
+import { Ad, isAd, Post, PostCardMode, TimelineProps, TimelineState } from '../types/post.js';
 import { createAdCard } from './AdCard.js';
 import { createPostCard } from './PostCard.js';
 import { createPostComposer, PostComposer } from './PostComposer.js';
@@ -351,13 +351,13 @@ export class Timeline {
     const detail = (e as CustomEvent).detail;
     const postCard = this.postCards.get(detail.postId);
     if (postCard) {
-      const update: Record<string, any> = {};
+      const update: Partial<Post> = {};
       if (detail.isFreshed !== undefined) update.is_freshed = detail.isFreshed;
       if (detail.freshCount !== undefined) update.fresh_count = detail.freshCount;
       if (detail.isBookmarked !== undefined) update.is_bookmarked = detail.isBookmarked;
       if (detail.bookmarkCount !== undefined) update.bookmark_count = detail.bookmarkCount;
       if (detail.replyCount !== undefined) update.reply_count = detail.replyCount;
-      postCard.updatePost(update as any);
+      postCard.updatePost(update);
     }
   }
 
@@ -581,7 +581,7 @@ export class Timeline {
           post: item,
           currentUser: this.props.currentUser,
           sandboxOrigin: this.props.sandboxOrigin,
-          initialMode: 'preview' as any,
+          initialMode: PostCardMode.PREVIEW,
           depth: item.depth,
         });
 

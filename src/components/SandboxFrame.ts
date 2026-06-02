@@ -42,8 +42,11 @@ function handleSandboxMessage(message: ParentMessage, iframe: HTMLIFrameElement)
     case 'REQUEST_FULLSCREEN':
       if (iframe.requestFullscreen) {
         iframe.requestFullscreen();
-      } else if ((iframe as any).webkitRequestFullscreen) {
-        (iframe as any).webkitRequestFullscreen();
+      } else {
+        const webkitIframe = iframe as HTMLIFrameElement & { webkitRequestFullscreen?: () => Promise<void> };
+        if (webkitIframe.webkitRequestFullscreen) {
+          webkitIframe.webkitRequestFullscreen();
+        }
       }
       break;
 

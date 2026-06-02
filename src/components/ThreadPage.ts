@@ -23,6 +23,7 @@ export class ThreadPage {
   private rootPostCard?: ReturnType<typeof createPostCard>;
   private rootReplyComposer?: ReplyComposer;
   private isRootReplyComposerOpen: boolean = false;
+  private isLoading: boolean = false;
   private replyNodes: ReplyNode[] = [];
   private leftNav?: ReturnType<typeof createLeftNav>;
 

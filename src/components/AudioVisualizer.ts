@@ -17,7 +17,7 @@ export class AudioVisualizer {
   private setupAudioContext(): void {
     try {
       // Create audio context
-      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      this.audioContext = new (window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext!)();
       this.analyser = this.audioContext.createAnalyser();
 
       // Configure analyser

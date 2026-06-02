@@ -527,11 +527,3 @@ function linkifyPostRefs(container: HTMLElement): void {
     parent.replaceChild(fragment, textNode);
   }
 }
-
-declare global {
-  interface Window {
-    katex?: {
-      render: (text: string, element: HTMLElement, options: { throwOnError: boolean; displayMode: boolean }) => void;
-    };
-  }
-}

@@ -27,21 +27,21 @@ export default {
 
     for (const message of batch.messages) {
       try {
-        console.log(`Processing message type: ${(message.body as any).type}`);
+        console.log(`Processing message type: ${message.body.type}`);
 
         if (message.body.type === 'inbox') {
           await handleInboxActivity(message.body, env, message);
         } else if (message.body.type === 'delivery') {
           await handleDeliveryActivity(message.body, env, message);
         } else {
-          console.error('Unknown message type:', (message.body as any).type);
+          console.error('Unknown message type:', (message.body as QueueMessage).type);
           message.ack();
         }
       } catch (error: any) {
         console.error('Error processing message:', {
           error: error.message,
           stack: error.stack,
-          messageType: (message.body as any).type,
+          messageType: message.body.type,
           messageId: message.id,
         });
 
@@ -56,7 +56,7 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: a
   const { inboxUrl, activity, senderUsername } = msg;
   const retryCount = message.retryCount || 0;
   const maxRetries = 3;
-  let timeoutId: number | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   try {
     // Get user's private and public keys for signing
@@ -84,7 +84,7 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: a
 
     // Add timeout and better error handling
     const controller = new AbortController();
-    timeoutId = setTimeout(() => controller.abort(), 30000) as any; // 30 second timeout
+    timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
     const response = await fetch(inboxUrl, {
       method: 'POST',
@@ -98,7 +98,7 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: a
     }
 
     if (response.ok) {
-      console.log('ActivityPub delivery successful:', inboxUrl, 'activity:', (activity as any).type);
+      console.log('ActivityPub delivery successful:', inboxUrl, 'activity:', (activity as { type: string }).type);
       message.ack();
     } else {
       const responseText = await response.text();
@@ -107,7 +107,7 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: a
         status: response.status,
         statusText: response.statusText,
         responseText: responseText.substring(0, 500),
-        activityType: (activity as any).type,
+        activityType: (activity as { type: string }).type,
       });
 
       // Retry on server errors (5xx) or network issues
@@ -134,7 +134,7 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: a
       error: e.message,
       name: e.name,
       retryCount,
-      activityType: (activity as any).type,
+      activityType: (activity as { type: string }).type,
     });
 
     // Retry on network errors or timeouts
@@ -152,7 +152,7 @@ async function handleInboxActivity(msg: InboxMessage, env: Env, message: any): P
   const { username, activity, actorId } = msg;
 
   try {
-    const activityType = (activity as any).type;
+    const activityType = (activity as { type: string }).type;
 
     switch (activityType) {
       case 'Create':
@@ -334,8 +334,8 @@ async function handleFollowActivity(activity: any, username: string, actorId: st
     });
 
     if (actorResponse.ok) {
-      actorData = (await actorResponse.json()) as any;
-      inboxUrl = actorData.inbox || activity.actor;
+      actorData = (await actorResponse.json()) as Record<string, unknown>;
+      inboxUrl = actorData.inbox as string || activity.actor;
     }
   } catch (e) {
     console.error('Failed to fetch actor inbox:', e);

@@ -21,6 +21,19 @@ interface PostWithExtras extends Post {
   root_id?: string | null;
 }
 
+interface NoteObject {
+  '@context': string;
+  id: string;
+  type: string;
+  attributedTo: string;
+  content: string;
+  published: string;
+  url: string;
+  to: string[];
+  cc: string[];
+  inReplyTo?: string;
+}
+
 function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -51,7 +64,7 @@ export function buildNoteObject(
   user: User,
   baseUrl: string,
   mentionActorUrls?: string[],
-): object {
+): NoteObject {
   const noteId = `${baseUrl}/notes/${post.id}`;
   const actorUrl = `${baseUrl}/actors/${user.username}`;
 
@@ -65,7 +78,7 @@ export function buildNoteObject(
     }
   }
 
-  const note: any = {
+  const note: NoteObject = {
     '@context': 'https://www.w3.org/ns/activitystreams',
     id: noteId,
     type: 'Note',
@@ -87,16 +100,16 @@ export function buildNoteObject(
 /**
  * Build a Create activity for a Note
  */
-export function buildCreateActivity(note: object, user: User, baseUrl: string): object {
-  const noteId = (note as any).id;
+export function buildCreateActivity(note: NoteObject, user: User, baseUrl: string): object {
+  const noteId = note.id;
   const actorUrl = `${baseUrl}/actors/${user.username}`;
 
   // Extract post ID from note URL to create activity ID
   const postId = noteId.split('/notes/')[1];
   const activityId = `${baseUrl}/activities/create-${postId}`;
 
-  const to = (note as any).to || [];
-  const cc = (note as any).cc || [];
+  const to = note.to || [];
+  const cc = note.cc || [];
 
   return {
     '@context': 'https://www.w3.org/ns/activitystreams',

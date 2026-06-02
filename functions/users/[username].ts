@@ -34,7 +34,14 @@ app.get('/', async (c) => {
       WHERE username = ? COLLATE NOCASE
     `)
       .bind(username)
-      .first()) as any;
+      .first()) as {
+      id: string;
+      username: string;
+      display_name: string;
+      bio: string;
+      avatar_key: string | null;
+      created_at: string;
+    } | null;
 
     if (!user) {
       return c.json({ error: 'User not found' }, 404);

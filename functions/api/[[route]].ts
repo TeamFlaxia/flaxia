@@ -1,4 +1,4 @@
-import { FlaxiaClient } from '@flaxia/sdk';
+import { FlaxiaClient, type SubmitTaskOptions } from '@flaxia/sdk';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { nanoid } from 'nanoid';
@@ -44,6 +44,90 @@ type Bindings = {
 type Variables = {
   user: User | null;
 };
+
+type PostRow = {
+  id: string;
+  user_id: string;
+  username: string;
+  display_name?: string | null;
+  avatar_key?: string | null;
+  text: string;
+  hashtags: string;
+  mentions: string;
+  gif_key: string | null;
+  payload_key: string | null;
+  swf_key: string | null;
+  thumbnail_key: string | null;
+  parent_id: string | null;
+  root_id: string | null;
+  depth: number;
+  fresh_count: number;
+  bookmark_count: number;
+  reply_count: number;
+  impressions: number;
+  status: string;
+  hidden: number;
+  sentiment_score: number | null;
+  sentiment_task_id: string | null;
+  actor_id: string | null;
+  created_at: string;
+  is_freshed?: boolean;
+  is_bookmarked?: boolean;
+  poll?: any;
+};
+
+type UserRow = {
+  id: string;
+  username: string;
+  display_name: string | null;
+  bio: string | null;
+  avatar_key: string | null;
+};
+
+type NotificationRow = {
+  id: string;
+  actor_id: string;
+  actor_data: string;
+  user_id: string;
+  post_id: string;
+  type: string;
+  created_at: string;
+  read: number;
+};
+
+type PollRow = {
+  id: string;
+  post_id: string;
+  question: string;
+  multiple_choice: number;
+  ends_at: string | null;
+  ended_notified: number;
+};
+
+type PollOptionRow = {
+  id: string;
+  poll_id: string;
+  label: string;
+  votes_count: number;
+};
+
+type VoteRow = {
+  id: string;
+  poll_id: string;
+  user_id: string;
+  option_id: string;
+};
+
+type WebfingerData = {
+  links?: Array<{ rel: string; href?: string; type?: string }>;
+};
+
+type ActorData = {
+  inbox?: string;
+  publicKey?: { publicKeyPem?: string };
+};
+
+type SubmitTaskOptionsWithTimeout = SubmitTaskOptions & { timeoutMs: number };
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -132,9 +216,9 @@ async function analyzeSentiment(c: any, postId: string, text: string): Promise<v
       },
       callbackUrl,
       timeoutMs: 600000,
-    });
+    } as SubmitTaskOptionsWithTimeout);
 
-    const taskId = (task as any).taskId;
+    const taskId = (task as { taskId?: string }).taskId;
     if (!taskId) return;
     await c.env.DB.prepare('UPDATE posts SET sentiment_task_id = ? WHERE id = ?').bind(taskId, postId).run();
     console.log(`Sentiment task submitted for post ${postId}: taskId=${taskId}`);
@@ -1609,7 +1693,7 @@ app.post('/api/remote-follow', requireAuth, async (c) => {
       return c.json({ error: 'Could not resolve remote user' }, 404);
     }
 
-    const wfData = (await wfResponse.json()) as any;
+    const wfData = (await wfResponse.json()) as WebfingerData;
     const selfLink = wfData.links?.find((l: any) => l.rel === 'self');
     if (!selfLink?.href) {
       return c.json({ error: 'Remote user has no ActivityPub actor link' }, 400);
@@ -1626,7 +1710,7 @@ app.post('/api/remote-follow', requireAuth, async (c) => {
       return c.json({ error: 'Could not fetch remote actor' }, 404);
     }
 
-    const actorData = (await actorResponse.json()) as any;
+    const actorData = (await actorResponse.json()) as ActorData;
     const inboxUrl = actorData.inbox;
     if (!inboxUrl) {
       return c.json({ error: 'Remote actor has no inbox' }, 400);
@@ -1718,7 +1802,7 @@ app.delete('/api/remote-follow', requireAuth, async (c) => {
       return c.json({ error: 'Could not resolve remote user' }, 404);
     }
 
-    const wfData = (await wfResponse.json()) as any;
+    const wfData = (await wfResponse.json()) as WebfingerData;
     const selfLink = wfData.links?.find((l: any) => l.rel === 'self');
     if (!selfLink?.href) {
       return c.json({ error: 'Remote user has no ActivityPub actor link' }, 400);
@@ -1845,12 +1929,12 @@ app.get('/api/actors/:username', async (c) => {
       `SELECT id, username, display_name, bio, avatar_key FROM users WHERE username = ? COLLATE NOCASE`,
     )
       .bind(username)
-      .first()) as any;
+      .first()) as { id: string; username: string; display_name: string | null; bio: string | null; avatar_key: string | null } | null;
     if (!user) return c.json({ error: 'User not found' }, 404);
 
     const keyRecord = (await c.env.DB.prepare(`SELECT public_key_pem FROM actor_keys WHERE user_id = ?`)
       .bind(user.id)
-      .first()) as any;
+      .first()) as { public_key_pem: string } | null;
     let publicKeyPem = keyRecord?.public_key_pem;
     if (!publicKeyPem) {
       const keyPair = await generateKeyPair();
@@ -2115,18 +2199,18 @@ app.get('/api/actors/:username/followers', async (c) => {
     // Count local followers
     const localCount =
       (
-        (await c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE followee_id = ?')
+        await c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE followee_id = ?')
           .bind(user.id)
-          .first()) as any
-      ).count || 0;
+          .first<{ count: number }>()
+      )?.count || 0;
 
     // Count remote followers
     const remoteCount =
       (
-        (await c.env.DB.prepare('SELECT COUNT(*) as count FROM ap_followers WHERE local_user_id = ?')
+        await c.env.DB.prepare('SELECT COUNT(*) as count FROM ap_followers WHERE local_user_id = ?')
           .bind(user.id)
-          .first()) as any
-      ).count || 0;
+          .first<{ count: number }>()
+      )?.count || 0;
 
     const totalItems = localCount + remoteCount;
 
@@ -2217,10 +2301,10 @@ app.get('/api/actors/:username/following', async (c) => {
     // Count local following (remote following not counted here for simplicity)
     const totalCount =
       (
-        (await c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE follower_id = ?')
+        await c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE follower_id = ?')
           .bind(user.id)
-          .first()) as any
-      ).count || 0;
+          .first<{ count: number }>()
+      )?.count || 0;
 
     // If page parameter is present, return OrderedCollectionPage
     if (pageParam) {
@@ -2708,7 +2792,7 @@ app.get('/api/users/:username/followers', async (c) => {
 
     const users = results.results.slice(0, limit);
     const hasMore = results.results.length > limit;
-    const nextCursor = hasMore ? (users[users.length - 1] as any).username : null;
+    const nextCursor = hasMore ? (users[users.length - 1] as { username: string }).username : null;
 
     return c.json({
       users,
@@ -2797,7 +2881,7 @@ app.get('/api/users/:username/following', async (c) => {
 
     const users = results.results.slice(0, limit);
     const hasMore = results.results.length > limit;
-    const nextCursor = hasMore ? (users[users.length - 1] as any).username : null;
+    const nextCursor = hasMore ? (users[users.length - 1] as { username: string }).username : null;
 
     return c.json({
       users,
@@ -3034,7 +3118,7 @@ app.patch('/api/users/me/email', requireAuth, async (c) => {
       SELECT password_hash FROM users WHERE id = ?
     `)
       .bind(userId)
-      .first()) as any;
+      .first()) as { password_hash: string } | null;
 
     if (!userWithPassword) {
       return c.json({ error: 'User not found' }, 404);
@@ -3099,7 +3183,7 @@ app.patch('/api/users/me/password', requireAuth, async (c) => {
       SELECT password_hash FROM users WHERE id = ?
     `)
       .bind(userId)
-      .first()) as any;
+      .first()) as { password_hash: string } | null;
 
     if (!userWithPassword) {
       return c.json({ error: 'User not found' }, 404);
@@ -3511,7 +3595,7 @@ app.get('/api/posts', async (c) => {
 
     // Batch fetch poll data for posts with polls
     await enrichPostsWithPolls(
-      posts as any[],
+      posts as PostRow[],
       c.env.DB,
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
@@ -3519,7 +3603,7 @@ app.get('/api/posts', async (c) => {
     );
 
     // Trigger sentiment analysis for at most one unprocessed post in background per request
-    for (const p of posts as any[]) {
+    for (const p of posts as PostRow[]) {
       if (p.sentiment_score == null && p.text) {
         const now = Date.now();
         // Ensure at least 2 minutes have passed since the previous task submission
@@ -3620,7 +3704,7 @@ app.get('/api/posts/trending', async (c) => {
     }
 
     await enrichPostsWithPolls(
-      posts as any[],
+      posts as PostRow[],
       c.env.DB,
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
@@ -3722,7 +3806,7 @@ app.get('/api/posts/recommended', async (c) => {
     }
 
     await enrichPostsWithPolls(
-      posts as any[],
+      posts as PostRow[],
       c.env.DB,
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
@@ -4091,7 +4175,7 @@ app.post('/api/ads/:id/play', async (c) => {
 app.get('/api/admin/ads/config', async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env as any, user.username)) {
+    if (!user || !isAdmin(c.env, user.username)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -4116,7 +4200,7 @@ app.get('/api/admin/ads/config', async (c) => {
 app.patch('/api/admin/ads/config', requireAuth, async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env as any, user.username)) {
+    if (!user || !isAdmin(c.env, user.username)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -4151,7 +4235,7 @@ app.patch('/api/admin/ads/config', requireAuth, async (c) => {
 app.get('/api/admin/ads', requireAuth, async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env as any, user.username)) {
+    if (!user || !isAdmin(c.env, user.username)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -4194,7 +4278,7 @@ app.get('/api/admin/ads', requireAuth, async (c) => {
 app.post('/api/admin/ads', requireAuth, async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env as any, user.username)) {
+    if (!user || !isAdmin(c.env, user.username)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -4364,7 +4448,7 @@ app.post('/api/admin/ads', requireAuth, async (c) => {
 app.patch('/api/admin/ads/:id', requireAuth, async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env as any, user.username)) {
+    if (!user || !isAdmin(c.env, user.username)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -4441,7 +4525,7 @@ app.patch('/api/admin/ads/:id', requireAuth, async (c) => {
 app.delete('/api/admin/ads/:id', requireAuth, async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env as any, user.username)) {
+    if (!user || !isAdmin(c.env, user.username)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -4787,7 +4871,7 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
       "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key as payloadKey, p.swf_key as swfKey, p.thumbnail_key as thumbnailKey, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?",
     )
       .bind(postId)
-      .first()) as any;
+      .first()) as PostRow;
 
     if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
       try {
@@ -4936,10 +5020,10 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
 
   // Get post to check ownership for notification and remote actor
   const post = (await c.env.DB.prepare(
-    "SELECT user_id, actor_id, username FROM posts WHERE id = ? AND status = 'published'",
+    "SELECT user_id, actor_id, username, text FROM posts WHERE id = ? AND status = 'published'",
   )
     .bind(postId)
-    .first()) as { user_id: string; actor_id: string | null; username: string } | null;
+    .first()) as { user_id: string; actor_id: string | null; username: string; text: string } | null;
 
   if (!post) {
     return c.json({ error: 'Post not found' }, 404);
@@ -5003,7 +5087,7 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
           {
             const actor = c.get('user');
             const actorName = actor?.display_name || actor?.username || 'Someone';
-            const textPreview = post.text || '';
+            const textPreview = (post as any).text || '';
             sendPushToUser(
               c.env.DB,
               post.user_id,
@@ -5025,7 +5109,7 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
           headers: { Accept: 'application/activity+json, application/ld+json' },
         });
         if (actorResponse.ok) {
-          const actorData = (await actorResponse.json()) as any;
+          const actorData = (await actorResponse.json()) as ActorData;
           const inboxUrl = actorData.inbox;
           if (inboxUrl) {
             const likeActivity = {
@@ -5342,7 +5426,7 @@ app.post('/api/posts/:id/share', requireAuth, async (c) => {
             headers: { Accept: 'application/activity+json, application/ld+json' },
           });
           if (actorResponse.ok) {
-            const actorData = (await actorResponse.json()) as any;
+            const actorData = (await actorResponse.json()) as ActorData;
             const inboxUrl = actorData.inbox;
             if (inboxUrl) {
               const announceActivity = {
@@ -5813,22 +5897,30 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
     }
 
     // Validate parent still exists and is published
-    const parentPost = await c.env.DB.prepare(
+    const parentPost = (await c.env.DB.prepare(
       "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published'",
     )
       .bind(postId)
-      .first();
+      .first()) as {
+      id: string;
+      user_id: string;
+      username: string;
+      text: string;
+      depth: number;
+      root_id: string | null;
+    } | null;
 
     if (!parentPost) {
       return c.json({ error: 'Parent post no longer available' }, 422);
     }
 
     let reply: any;
+    let mentionsJson: string | null = '[]';
 
     if (gifKey) {
       // Resolve mentions
       const replyUsername = c.get('user')?.username || 'anonymous';
-      const mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, replyUsername);
+      mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, replyUsername);
 
       // Validate that this is a pending reply and gifKey matches
       const pendingReply = await c.env.DB.prepare(`
@@ -5870,7 +5962,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
     } else {
       // Resolve mentions
       const replyUsername = c.get('user')?.username || 'anonymous';
-      const mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, replyUsername);
+      mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, replyUsername);
 
       // Create text-only reply directly
       const depth = Math.min(Number(parentPost.depth || 0) + 1, 5);
@@ -6433,7 +6525,7 @@ app.get('/api/posts/:id', async (c) => {
     }
 
     // Check if post is hidden - allow admin bypass
-    if (post.hidden && !isAdmin(c.env as unknown as Bindings, c.get('user')?.username ?? '')) {
+    if (post.hidden && !isAdmin(c.env, c.get('user')?.username ?? '')) {
       return c.json({ error: 'Gone' }, 410);
     }
 
@@ -6549,7 +6641,7 @@ async function insertAdminAlert(
 }
 
 async function enrichPostsWithPolls(
-  posts: any[],
+  posts: PostRow[],
   db: D1Database,
   currentUserId?: string | null,
   vapidPublicKey?: string,
@@ -6561,26 +6653,26 @@ async function enrichPostsWithPolls(
   const pollsResult = await db
     .prepare(`SELECT * FROM polls WHERE post_id IN (${placeholders})`)
     .bind(...postIds)
-    .all();
+    .all<PollRow>();
 
   if (!pollsResult.success || pollsResult.results.length === 0) return;
 
-  const pollMap = new Map<string, any>();
+  const pollMap = new Map<string, PollRow>();
   for (const poll of pollsResult.results) {
-    pollMap.set((poll as any).post_id, poll);
+    pollMap.set(poll.post_id, poll);
   }
 
-  const pollIds = pollsResult.results.map((p: any) => p.id);
+  const pollIds = pollsResult.results.map((p: PollRow) => p.id);
   const optPlaceholders = pollIds.map(() => '?').join(',');
   const optsResult = await db
     .prepare(`SELECT * FROM poll_options WHERE poll_id IN (${optPlaceholders}) ORDER BY rowid`)
     .bind(...pollIds)
-    .all();
+    .all<PollOptionRow>();
 
-  const optsByPoll = new Map<string, any[]>();
+  const optsByPoll = new Map<string, PollOptionRow[]>();
   if (optsResult.success) {
     for (const opt of optsResult.results) {
-      const pid = (opt as any).poll_id;
+      const pid = opt.poll_id;
       if (!optsByPoll.has(pid)) optsByPoll.set(pid, []);
       optsByPoll.get(pid)!.push(opt);
     }
@@ -6591,10 +6683,10 @@ async function enrichPostsWithPolls(
     const votesResult = await db
       .prepare(`SELECT poll_id, option_id FROM poll_votes WHERE poll_id IN (${optPlaceholders}) AND user_id = ?`)
       .bind(...pollIds, currentUserId)
-      .all();
+      .all<{ poll_id: string; option_id: string }>();
     if (votesResult.success) {
       for (const v of votesResult.results) {
-        userVotes.set((v as any).poll_id, (v as any).option_id);
+        userVotes.set(v.poll_id, v.option_id);
       }
     }
   }
@@ -6941,7 +7033,7 @@ app.delete('/api/admin/users/:id', requireAuth, requireAdmin, async (c) => {
     }
 
     // Check if trying to delete an admin
-    if (isAdmin(c.env as unknown as Bindings, targetUser.username)) {
+    if (isAdmin(c.env, targetUser.username)) {
       return c.json({ error: 'Cannot delete admin accounts' }, 403);
     }
 
@@ -7016,7 +7108,7 @@ app.get('/api/notifications', requireAuth, async (c) => {
     for (const row of rows) {
       if (row.type === 'fresh' && row.actor_data) {
         try {
-          const ids = JSON.parse(row.actor_data);
+          const ids = JSON.parse(row.actor_data as string);
           if (Array.isArray(ids)) ids.forEach((id: string) => void allActorIds.add(id));
         } catch {}
       }
@@ -7032,7 +7124,7 @@ app.get('/api/notifications', requireAuth, async (c) => {
       `)
         .bind(...Array.from(allActorIds))
         .all();
-      for (const u of userRows.results || []) {
+      for (const u of (userRows.results || []) as any[]) {
         actorUserMap.set(u.id, u);
       }
     }
@@ -7205,7 +7297,8 @@ app.get('/api/push/vapid-key', async (c) => {
 // POST /api/push/register - Register a Web Push subscription (protected)
 app.post('/api/push/register', requireAuth, async (c) => {
   try {
-    const user = c.get('user');
+    const user = c.get('user') as { id: string; username: string } | undefined;
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const body = (await c.req.json()) as {
       endpoint: string;
       keys: { p256dh: string; auth: string };

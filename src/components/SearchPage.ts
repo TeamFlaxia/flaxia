@@ -1,5 +1,6 @@
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { PostCardMode } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
 interface SearchPageProps {
@@ -519,7 +520,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         post,
         currentUser,
         sandboxOrigin,
-        initialMode: 'preview' as any,
+        initialMode: PostCardMode.PREVIEW,
         depth: post.depth,
       });
       content.appendChild(postCard.getElement());

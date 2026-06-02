@@ -1,5 +1,7 @@
+import type { Post } from '../types/post.js';
+
 export interface PostComposerProps {
-  onPostCreated?: (post: any) => void;
+  onPostCreated?: (post: Post) => void;
   currentUser?: { username: string; display_name?: string; avatar_key?: string } | null;
   onDraftSaved?: () => void;
 }
@@ -196,7 +198,7 @@ export class PostComposer {
       max-height: 240px;
       overflow-y: auto;
     `;
-    const footer = container.querySelector('.composer-footer');
+    const footer = container.querySelector('.composer-footer') as HTMLElement | null;
     if (footer) {
       footer.style.position = 'relative';
       footer.appendChild(this.draftsDropdown);
@@ -217,7 +219,7 @@ export class PostComposer {
       display: none;
       min-width: 200px;
     `;
-    const composerHeader = container.querySelector('.composer-header');
+    const composerHeader = container.querySelector('.composer-header') as HTMLElement | null;
     if (composerHeader) {
       composerHeader.style.position = 'relative';
       composerHeader.appendChild(this.mentionDropdown);
@@ -955,7 +957,7 @@ export class PostComposer {
     const question = this.pollQuestion.trim();
     const options = this.pollOptionsArr.map((o) => o.trim()).filter((o) => o.length > 0);
     if (!question || options.length < 2) return null;
-    const select = this.element.querySelector('.poll-duration-select') as HTMLSelectElement;
+    const select = this.element.querySelector('.poll-duration-select') as unknown as HTMLSelectElement;
     const durationMs = parseInt(select.value, 10);
     const endsAt = new Date(Date.now() + durationMs).toISOString();
     return { question, options, multipleChoice: false, endsAt };
@@ -998,7 +1000,7 @@ export class PostComposer {
         savedAt: Date.now(),
       };
       if (this.pollActive) {
-        const select = this.element.querySelector('.poll-duration-select') as HTMLSelectElement;
+        const select = this.element.querySelector('.poll-duration-select') as unknown as HTMLSelectElement;
         draft.poll = {
           question: this.pollQuestion,
           options: [...this.pollOptionsArr],
@@ -1029,7 +1031,7 @@ export class PostComposer {
         if (section) section.style.display = 'block';
         const questionInput = this.element.querySelector('.poll-question-input') as HTMLInputElement;
         if (questionInput) questionInput.value = this.pollQuestion;
-        const select = this.element.querySelector('.poll-duration-select') as HTMLSelectElement;
+        const select = this.element.querySelector('.poll-duration-select') as unknown as HTMLSelectElement;
         if (select && draft.poll.duration) select.value = draft.poll.duration;
         this.renderPollOptions();
       }
@@ -1427,7 +1429,7 @@ export class PostComposer {
       }
 
       // Step 2: Create post using multipart form data if thumbnail is present, otherwise use commit
-      let commitResult: any;
+      let commitResult: { post: Post } | null;
       const poll = this.getPollData();
       if (this.selectedThumbnail) {
         // Use multipart form data for thumbnail upload
@@ -1449,7 +1451,7 @@ export class PostComposer {
         if (!response.ok) {
           let errMsg = 'Failed to create post';
           try {
-            const errBody = (await response.json()) as any;
+            const errBody = (await response.json()) as { error?: string };
             if (errBody?.error) errMsg += `: ${errBody.error}`;
           } catch {
             const errText = await response.text().catch(() => '');
@@ -1477,7 +1479,7 @@ export class PostComposer {
       if (this.pollActive) this.togglePollSection();
 
       // Notify parent
-      if (this.props.onPostCreated && commitResult.post) {
+      if (this.props.onPostCreated && commitResult?.post) {
         this.props.onPostCreated(commitResult.post);
       }
     } catch (error: any) {
@@ -1522,7 +1524,15 @@ export class PostComposer {
         throw new Error(errMsg);
       }
 
-      const result = (await response.json()) as any;
+      const result = (await response.json()) as {
+        postId: string;
+        zipUploadUrl?: string;
+        zipKey?: string;
+        swfUploadUrl?: string;
+        swfKey?: string;
+        gifUploadUrl?: string;
+        gifKey?: string;
+      };
 
       // Handle ZIP, SWF, and non-ZIP responses
       if (result.zipUploadUrl && result.zipKey) {
@@ -1598,7 +1608,7 @@ export class PostComposer {
     swfKey: string | undefined,
     text: string,
     poll?: { question: string; options: string[]; multipleChoice: boolean; endsAt?: string } | null,
-  ): Promise<{ post: any } | null> {
+  ): Promise<{ post: Post } | null> {
     try {
       // Extract hashtags from text - support Japanese and other Unicode characters
       const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu;
@@ -1638,7 +1648,7 @@ export class PostComposer {
         throw new Error(errMsg);
       }
 
-      return (await response.json()) as { post: any };
+      return (await response.json()) as { post: Post };
     } catch (error) {
       console.error('Commit post failed:', error);
       return null;

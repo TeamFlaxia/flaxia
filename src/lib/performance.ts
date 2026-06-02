@@ -31,7 +31,7 @@ export class PerformanceMonitor {
       if (PerformanceObserver.supportedEntryTypes.includes('layout-shift')) {
         const clsObserver = new PerformanceObserver((list) => {
           for (const entry of list.getEntries()) {
-            const layoutShiftEntry = entry as any;
+            const layoutShiftEntry = entry as PerformanceEntry & { hadRecentInput: boolean; value: number };
             if (!layoutShiftEntry.hadRecentInput) {
               this.metrics.cls = (this.metrics.cls || 0) + layoutShiftEntry.value;
             }
@@ -62,7 +62,7 @@ export class PerformanceMonitor {
       if (PerformanceObserver.supportedEntryTypes.includes('first-input')) {
         const fidObserver = new PerformanceObserver((list) => {
           for (const entry of list.getEntries()) {
-            this.metrics.fid = (entry as any).processingStart - entry.startTime;
+            this.metrics.fid = (entry as PerformanceEntry & { processingStart: number }).processingStart - entry.startTime;
           }
         });
         fidObserver.observe({ entryTypes: ['first-input'] });
@@ -218,7 +218,7 @@ export const PerformanceOptimizer = {
   // Use requestIdleCallback for non-critical tasks
   runWhenIdle(callback: () => void, timeout = 2000): void {
     if ('requestIdleCallback' in window) {
-      (window as any).requestIdleCallback(callback, { timeout });
+      window.requestIdleCallback!(callback, { timeout });
     } else {
       setTimeout(callback, 1);
     }
@@ -237,8 +237,8 @@ export const initPerformanceMonitoring = (): void => {
       console.log('Core Web Vitals:', metrics);
 
       // Report to analytics if available
-      if (typeof window !== 'undefined' && (window as any).gtag) {
-        (window as any).gtag('event', 'core_web_vitals', {
+      if (typeof window !== 'undefined' && window.gtag) {
+        window.gtag('event', 'core_web_vitals', {
           cls: metrics.cls,
           lcp: metrics.lcp,
           fid: metrics.fid,

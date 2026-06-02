@@ -569,7 +569,7 @@ export class ReplyComposer {
         img.src = `/api/images/${user.avatar_key}`;
       };
       if ('requestIdleCallback' in window) {
-        (window as any).requestIdleCallback(loadAvatar, { timeout: 1000 });
+        window.requestIdleCallback?.(loadAvatar, { timeout: 1000 });
       } else {
         setTimeout(loadAvatar, 100);
       }
@@ -756,7 +756,7 @@ export class ReplyComposer {
       if (response.status === 401) {
         throw new Error(t('reply_composer.error_auth_required'));
       }
-      const error = (await response.json()) as any;
+      const error = (await response.json()) as { error?: string };
       console.error('Commit reply failed:', error);
       return null;
     }

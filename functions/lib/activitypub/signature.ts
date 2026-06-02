@@ -192,7 +192,7 @@ export async function fetchActorPublicKey(
       return null;
     }
 
-    const actor = await response.json();
+    const actor = await response.json() as { publicKey?: { publicKeyPem?: string } };
 
     if (!actor.publicKey || !actor.publicKey.publicKeyPem) {
       console.error('Actor missing publicKey.publicKeyPem');

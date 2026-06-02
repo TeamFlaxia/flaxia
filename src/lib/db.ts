@@ -25,7 +25,7 @@ export class Database {
 
   async getPosts(cursor?: string, limit = 10): Promise<Post[]> {
     let query = 'SELECT * FROM posts ORDER BY created_at DESC LIMIT ?';
-    const params: any[] = [limit];
+    const params: unknown[] = [limit];
 
     if (cursor) {
       query = 'SELECT * FROM posts WHERE created_at < ? ORDER BY created_at DESC LIMIT ?';
@@ -35,8 +35,8 @@ export class Database {
     const result = await this.db
       .prepare(query)
       .bind(...params)
-      .all();
-    return result.results as unknown as Post[];
+      .all<Post>();
+    return result.results;
   }
 
   async createPost(post: Omit<Post, 'created_at' | 'fresh_count' | 'favorite_count'>): Promise<string> {
@@ -88,12 +88,12 @@ export class Database {
   }
 
   async getFollowers(userId: string): Promise<string[]> {
-    const result = await this.db.prepare('SELECT follower_id FROM follows WHERE followee_id = ?').bind(userId).all();
-    return (result.results as any[]).map((r) => r.follower_id);
+    const result = await this.db.prepare('SELECT follower_id FROM follows WHERE followee_id = ?').bind(userId).all<{ follower_id: string }>();
+    return result.results.map((r) => r.follower_id);
   }
 
   async getFollowing(userId: string): Promise<string[]> {
-    const result = await this.db.prepare('SELECT followee_id FROM follows WHERE follower_id = ?').bind(userId).all();
-    return (result.results as any[]).map((r) => r.followee_id);
+    const result = await this.db.prepare('SELECT followee_id FROM follows WHERE follower_id = ?').bind(userId).all<{ followee_id: string }>();
+    return result.results.map((r) => r.followee_id);
   }
 }

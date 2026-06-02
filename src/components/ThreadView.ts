@@ -15,6 +15,7 @@ export class ThreadView {
   private element: HTMLElement;
   private props: ThreadViewProps;
   private rootPostCard?: PostCardClass;
+  private isLoading: boolean = false;
   private replyNodes: ReplyNode[] = [];
 
   constructor(props: ThreadViewProps) {
@@ -150,7 +151,7 @@ export class ThreadView {
     // Increment reply count on root post
     if (this.rootPostCard) {
       this.rootPostCard.updatePost({
-        reply_count: (this.rootPostCard.props.post.reply_count || 0) + 1,
+        reply_count: (this.rootPostCard.getReplyCount() || 0) + 1,
       });
     }
   }

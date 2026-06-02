@@ -112,7 +112,7 @@ export class PostCard {
     container.appendChild(textElement);
 
     if ('requestIdleCallback' in window) {
-      (window as any).requestIdleCallback(
+      window.requestIdleCallback?.(
         async () => {
           try {
             const richText = await createPostText({
@@ -586,6 +586,10 @@ export class PostCard {
 
   public getElement(): HTMLElement {
     return this.element;
+  }
+
+  public getReplyCount(): number {
+    return this.replyCount;
   }
 
   public updatePost(post: Partial<typeof this.props.post>): void {
@@ -1066,7 +1070,7 @@ export class PostCard {
     dmcaData?: { work_description: string; reporter_email: string; sworn: boolean },
   ): Promise<void> {
     try {
-      const body: any = { post_id: this.props.post.id, category };
+      const body: { post_id: string; category: string; dmca?: { work_description: string; reporter_email: string; sworn: boolean } } = { post_id: this.props.post.id, category };
       if (dmcaData) {
         body.dmca = dmcaData;
       }
@@ -1281,11 +1285,11 @@ export class PostCard {
               return;
             }
             if (!response.ok) {
-              const errBody = await response.json().catch(() => ({}));
+              const errBody = await response.json().catch(() => ({})) as any;
               if (errBody?.error) console.error(t('poll.vote_error'), errBody.error);
               return;
             }
-            const data = await response.json();
+            const data = await response.json() as { options: Array<{ id: string; label: string; votes_count: number }>; userVote: string | null };
             const newPoll = { ...poll, options: data.options, userVote: data.userVote };
             container.replaceWith(this.createPollElement(newPoll));
           } catch (e) {

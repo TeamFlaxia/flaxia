@@ -1438,7 +1438,7 @@ export class ArcadePage {
   }
 
   private handleFullscreenChange(): void {
-    const isFullscreen = !!(document.fullscreenElement || (document as any).webkitFullscreenElement);
+    const isFullscreen = !!(document.fullscreenElement || (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement);
     if (isFullscreen === this.isFullscreen) return;
     this.isFullscreen = isFullscreen;
 

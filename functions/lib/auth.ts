@@ -37,10 +37,10 @@ function base64ToUint8Array(base64: string): Uint8Array {
 
 export async function hashPassword(password: string): Promise<string> {
   const enc = new TextEncoder();
-  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const salt = crypto.getRandomValues(new Uint8Array(16)) as Uint8Array<ArrayBuffer>;
 
   const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
-  const hash = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: 600000, hash: 'SHA-256' }, key, 256);
+  const hash = (await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations: 600000, hash: 'SHA-256' }, key, 256)) as ArrayBuffer;
 
   // バージョンプリフィックス(1byte) + salt(16) + hash(32) → base64
   const combined = new Uint8Array(1 + salt.byteLength + hash.byteLength);
@@ -53,8 +53,8 @@ export async function hashPassword(password: string): Promise<string> {
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const combined = base64ToUint8Array(stored);
 
-  let salt: Uint8Array;
-  let originalHash: Uint8Array;
+  let salt: Uint8Array<ArrayBuffer>;
+  let originalHash: Uint8Array<ArrayBuffer>;
   let iterations: number;
 
   if (combined[0] === 2) {
@@ -70,9 +70,9 @@ export async function verifyPassword(password: string, stored: string): Promise<
 
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
-  const hash = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, key, 256);
+  const hash = (await crypto.subtle.deriveBits({ name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, key, 256)) as ArrayBuffer;
 
-  const hashBytes = new Uint8Array(hash);
+  const hashBytes = new Uint8Array(hash as ArrayBuffer);
   return hashBytes.every((b, i) => b === originalHash[i]);
 }
 
@@ -237,7 +237,16 @@ export async function loginUser(env: any, email: string, password: string): Prom
     FROM users WHERE email = ?
   `)
     .bind(email)
-    .first()) as any;
+    .first()) as {
+    id: string;
+    email: string;
+    password_hash: string;
+    username: string;
+    display_name: string;
+    bio: string;
+    avatar_key: string | null;
+    created_at: string;
+  } | null;
 
   if (!userWithPassword) {
     throw new Error('Invalid credentials');
@@ -259,7 +268,7 @@ export async function loginUser(env: any, email: string, password: string): Prom
     username: userWithPassword.username,
     display_name: userWithPassword.display_name,
     bio: userWithPassword.bio,
-    avatar_key: userWithPassword.avatar_key,
+    avatar_key: userWithPassword.avatar_key ?? undefined,
     created_at: userWithPassword.created_at,
   };
 

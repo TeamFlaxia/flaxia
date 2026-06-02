@@ -14,6 +14,7 @@ export interface UserSuggestion {
 
 export class RightPanel {
   private element: HTMLElement;
+  private props: RightPanelProps;
   private trendingTags: Array<{ tag: string; count: number; percentage: number }> = [];
   private userSuggestions: UserSuggestion[] = [];
 

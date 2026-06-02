@@ -13,12 +13,12 @@ export interface LeftNavProps {
     username: string;
     display_name?: string;
     avatar_key?: string;
-  };
+  } | null;
 }
 
 export class LeftNav {
   private element: HTMLElement;
-  private props: LeftNavProps;
+  public readonly props: LeftNavProps;
   private activeItem: string;
   private boundHandleResize: () => void;
   private boundHandleModalChange: (e: Event) => void;
@@ -350,6 +350,10 @@ export class LeftNav {
     });
   }
 
+  public getActiveItem(): string {
+    return this.activeItem;
+  }
+
   public getElement(): HTMLElement {
     return this.element;
   }
@@ -380,8 +384,8 @@ export class LeftNav {
         navItem.appendChild(badge);
       }
     } else if (existingBadge) {
-      existingBadge.textContent = '';
-      existingBadge.style.display = 'none';
+      (existingBadge as HTMLElement).textContent = '';
+      (existingBadge as HTMLElement).style.display = 'none';
       existingBadge.remove();
     }
   }
@@ -412,7 +416,7 @@ export function updateLeftNavUser(
   } | null,
 ): void {
   // Update the props
-  (leftNav as any).props.currentUser = currentUser;
+  leftNav.props.currentUser = currentUser;
 
   // Remove existing user area if present
   const existingUserArea = leftNav.getElement().querySelector('.nav-user-area');
@@ -451,12 +455,12 @@ export function updateLeftNavUser(
 
       items.forEach((item) => {
         const navItem = document.createElement('button');
-        navItem.className = `nav-item ${(leftNav as any).activeItem === item.id ? 'nav-item--active' : ''}`;
+        navItem.className = `nav-item ${leftNav.getActiveItem() === item.id ? 'nav-item--active' : ''}`;
         navItem.setAttribute('data-nav-id', item.id);
         navItem.innerHTML = `<span style="margin-right: 0.75rem;">${item.icon}</span><span>${item.label}</span>`;
 
         // Add unread badge for notifications
-        if (item.id === 'notifications' && (leftNav as any).props.unreadCount > 0) {
+        if (item.id === 'notifications' && (leftNav.props.unreadCount ?? 0) > 0) {
           const badge = document.createElement('span');
           badge.className = 'nav-badge';
           badge.style.cssText = `
@@ -469,14 +473,15 @@ export function updateLeftNavUser(
             min-width: 20px;
             text-align: center;
           `;
+          const count = leftNav.props.unreadCount ?? 0;
           badge.textContent =
-            (leftNav as any).props.unreadCount >= 99 ? '99+' : String((leftNav as any).props.unreadCount);
+            count >= 99 ? '99+' : String(count);
           navItem.appendChild(badge);
         }
 
         navItem.addEventListener('click', () => {
-          (leftNav as any).setActiveItem(item.id);
-          (leftNav as any).props.onNavigate?.(item.id);
+          leftNav.setActiveItem(item.id);
+          leftNav.props.onNavigate?.(item.id);
         });
         navItems.appendChild(navItem);
       });
@@ -491,12 +496,12 @@ export function updateLeftNavUser(
 
       items.forEach((item) => {
         const navItem = document.createElement('button');
-        navItem.className = `nav-item ${(leftNav as any).activeItem === item.id ? 'nav-item--active' : ''}`;
+        navItem.className = `nav-item ${leftNav.getActiveItem() === item.id ? 'nav-item--active' : ''}`;
         navItem.setAttribute('data-nav-id', item.id);
         navItem.innerHTML = `<span style="margin-right: 0.75rem;">${item.icon}</span><span>${item.label}</span>`;
         navItem.addEventListener('click', () => {
-          (leftNav as any).setActiveItem(item.id);
-          (leftNav as any).props.onNavigate?.(item.id);
+          leftNav.setActiveItem(item.id);
+          leftNav.props.onNavigate?.(item.id);
         });
         navItems.appendChild(navItem);
       });
@@ -630,7 +635,7 @@ export function updateLeftNavUser(
       signUpButton.style.opacity = '1';
     });
     signUpButton.addEventListener('click', () => {
-      (leftNav as any).props.onSignUp?.();
+      leftNav.props.onSignUp?.();
     });
 
     authButtons.appendChild(signUpButton);

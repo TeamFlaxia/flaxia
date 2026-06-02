@@ -128,9 +128,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       try {
         const isNative =
           typeof window !== 'undefined' &&
-          typeof (window as any).Capacitor !== 'undefined' &&
-          typeof (window as any).Capacitor.isNativePlatform === 'function' &&
-          (window as any).Capacitor.isNativePlatform();
+          typeof window.Capacitor !== 'undefined' &&
+          typeof window.Capacitor.isNativePlatform === 'function' &&
+          window.Capacitor.isNativePlatform();
         if (!isNative) return;
 
         const { LocalNotifications } = await import('@capacitor/local-notifications');
@@ -162,7 +162,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     /** Register Web Push in browser (Service Worker), or skip in Tauri/Capacitor. */
     /** Convert VAPID base64 key to Uint8Array for PushManager.subscribe(). */
-    function urlBase64ToUint8Array(base64: string): Uint8Array {
+    function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
       const padding = '='.repeat((4 - (base64.length % 4)) % 4);
       const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
       const raw = atob(b64);
@@ -182,7 +182,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Get VAPID public key from server
         const keyRes = await fetch('/api/push/vapid-key');
         if (!keyRes.ok) return;
-        const { publicKey } = await keyRes.json();
+        const { publicKey } = await keyRes.json() as { publicKey: string };
 
         // Subscribe
         const sub = await reg.pushManager.subscribe({
@@ -203,14 +203,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     const initializeWebPush = async () => {
-      if (typeof window !== 'undefined' && ((window as any).__TAURI__ || (window as any).__TAURI_INTERNALS__)) {
+      if (typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__)) {
         return; // Tauri desktop/mobile — no Service Worker push needed
       }
       if (
         typeof window !== 'undefined' &&
-        typeof (window as any).Capacitor !== 'undefined' &&
-        typeof (window as any).Capacitor.isNativePlatform === 'function' &&
-        (window as any).Capacitor.isNativePlatform()
+        typeof window.Capacitor !== 'undefined' &&
+        typeof window.Capacitor.isNativePlatform === 'function' &&
+        window.Capacitor.isNativePlatform()
       ) {
         return; // Capacitor mobile — no Service Worker push needed
       }
@@ -252,13 +252,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Show notification when new unread notifications arrive
       const isRealTauriAndroid =
         typeof window !== 'undefined' &&
-        ((window as any).__TAURI__ || (window as any).__TAURI_INTERNALS__) &&
+        (window.__TAURI__ || window.__TAURI_INTERNALS__) &&
         /Android/i.test(navigator.userAgent);
       const isCapacitorMobile =
         typeof window !== 'undefined' &&
-        typeof (window as any).Capacitor !== 'undefined' &&
-        typeof (window as any).Capacitor.isNativePlatform === 'function' &&
-        (window as any).Capacitor.isNativePlatform();
+        typeof window.Capacitor !== 'undefined' &&
+        typeof window.Capacitor.isNativePlatform === 'function' &&
+        window.Capacitor.isNativePlatform();
       if (
         tauriNotify &&
         !isRealTauriAndroid &&
@@ -297,16 +297,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Expose for Rust desktop background polling (lib.rs background thread, Tauri desktop only)
     const isCapacitorPlatform =
       typeof window !== 'undefined' &&
-      typeof (window as any).Capacitor !== 'undefined' &&
-      typeof (window as any).Capacitor.isNativePlatform === 'function' &&
-      (window as any).Capacitor.isNativePlatform();
+      typeof window.Capacitor !== 'undefined' &&
+      typeof window.Capacitor.isNativePlatform === 'function' &&
+      window.Capacitor.isNativePlatform();
     const isTauriDesktop =
       typeof window !== 'undefined' &&
-      ((window as any).__TAURI__ || (window as any).__TAURI_INTERNALS__) &&
+      (window.__TAURI__ || window.__TAURI_INTERNALS__) &&
       !/Android/i.test(navigator.userAgent) &&
       !isCapacitorPlatform;
     if (isTauriDesktop) {
-      (window as any).__tauriDesktopPoll = refreshNotificationBadges;
+      window.__tauriDesktopPoll = refreshNotificationBadges;
     }
 
     const startNotificationPolling = () => {
@@ -2025,8 +2025,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
 
             // Listen for navigation events from timeline
-            timeline.getElement().addEventListener('navigateToThread', (e: any) => {
-              const postId = e.detail.postId;
+            timeline.getElement().addEventListener('navigateToThread', (e: Event) => {
+              const postId = (e as CustomEvent<{ postId: string }>).detail.postId;
               window.history.pushState({ postId }, '', `/thread/${postId}`);
               navigateTo('thread', postId);
             });
@@ -2101,7 +2101,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       searchType?: string,
     ) {
       try {
-        await navigateTo(view as any, postId, username, tag, adminTab as any, searchQuery, searchType as any);
+        await navigateTo(view as 'timeline' | 'thread' | 'login' | 'register' | 'profile' | 'explore' | 'search' | 'notifications' | 'bookmarks' | 'terms' | 'privacy' | 'about' | 'whitepaper' | 'admin' | 'settings' | 'arcade', postId, username, tag, adminTab as 'alerts' | 'hidden' | 'users', searchQuery, searchType as 'posts' | 'users' | 'arcade');
       } catch (e) {
         console.error('Navigation failed:', e);
         // Show error on the loading overlay if it's visible, otherwise reload
@@ -2137,8 +2137,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // Handle SPA navigation events
-    window.addEventListener('spaNavigate', async (e: any) => {
-      const detail = e.detail;
+    window.addEventListener('spaNavigate', async (e: Event) => {
+      const detail = (e as CustomEvent<{ view: string; postId?: string; username?: string; tag?: string; adminTab?: string; searchQuery?: string; searchType?: string }>).detail;
       await safeNavigate(
         detail.view,
         detail.postId,
@@ -2170,13 +2170,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Defer non-critical initialization to after the first paint
     const deferInit = (fn: () => void) => {
       if ('requestIdleCallback' in window) {
-        (window as any).requestIdleCallback(fn, { timeout: 3000 });
+        window.requestIdleCallback(fn, { timeout: 3000 });
       } else {
         setTimeout(fn, 3000);
       }
     };
 
     deferInit(async () => {
+      // @ts-ignore - dynamic import of local path
       const { initFlaxiaNode } = await import('/api/crowd/index.js');
       initFlaxiaNode({
         orchestratorUrl: 'https://flaxia-worker.remydre8.workers.dev',

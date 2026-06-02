@@ -481,7 +481,7 @@ export class ExplorePage {
       if (newPosts.length > 0) {
         this.posts.push(...newPosts);
         if (!this.props.tag) {
-          const lastPost = newPosts[newPosts.length - 1] as any;
+          const lastPost = newPosts[newPosts.length - 1] as Post & { score: number };
           this.cursor = `${lastPost.score},${lastPost.created_at}`;
         } else {
           this.cursor = newPosts[newPosts.length - 1].created_at;
@@ -520,12 +520,12 @@ export class ExplorePage {
     const [tagsRes, postsRes] = await Promise.all([fetch('/api/tags/trending'), fetch('/api/posts/trending?limit=10')]);
 
     if (tagsRes.ok) {
-      const tagsData = await tagsRes.json();
+      const tagsData = await tagsRes.json() as { tags: Array<{ tag: string; percentage: string }> };
       this.renderTrendingTags(tagsData.tags || []);
     }
 
     if (postsRes.ok) {
-      const postsData = await postsRes.json();
+      const postsData = await postsRes.json() as { posts: Post[] };
       this.handleNewPosts(postsData.posts || []);
     }
   }
@@ -645,7 +645,7 @@ export class ExplorePage {
     postsContainer.appendChild(fragment);
   }
 
-  private renderTrendingTags(tags: any[]): void {
+  private renderTrendingTags(tags: Array<{ tag: string; percentage: string }>): void {
     const container = this.element.querySelector('.explore-trending-tags') as HTMLElement;
     if (!container) return;
 
@@ -739,7 +739,6 @@ export class ExplorePage {
         'margin-top: 1rem; padding: 0.5rem 1rem; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer; font-family: inherit;';
       retryBtn.addEventListener('click', () => {
         loadingElement.style.display = 'none';
-        this.retryCount = 0;
         void this.loadMorePosts();
       });
 
