@@ -19,7 +19,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm install
+      - run: npm ci
       - run: npx @biomejs/biome ci .
 
   typecheck:
@@ -30,7 +30,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm install
+      - run: npm ci
       - run: npx tsc --noEmit
 
   test:
@@ -41,7 +41,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm install
+      - run: npm ci
       - run: npm run build
       - name: Start dev server and run tests
         run: |
@@ -79,5 +79,5 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm install
+      - run: npm ci
       - run: npm run build
