@@ -1168,7 +1168,9 @@ app.get('/api/games', async (c) => {
         const { results: sliceData } = await c.env.DB.prepare(`
           SELECT
             p.id as postId, p.user_id, p.text, p.swf_key, p.payload_key,
-            p.thumbnail_key, p.fresh_count, p.reply_count, p.bookmark_count, p.impressions, p.created_at,
+            p.thumbnail_key, p.fresh_count,
+            (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,
+            p.bookmark_count, p.impressions, p.created_at,
             u.username, u.display_name, u.avatar_key
           FROM posts p
           JOIN users u ON p.user_id = u.id
@@ -1250,7 +1252,7 @@ app.get('/api/games', async (c) => {
         p.payload_key,
         p.thumbnail_key,
         p.fresh_count,
-        p.reply_count,
+        (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,
         p.impressions,
         p.created_at,
         u.username,
@@ -3574,9 +3576,9 @@ app.get('/api/posts/trending', async (c) => {
     // SQLite doesn't have POW, so we use (hours + 2) * (hours + 2) as a simpler decay
     const query = `
       SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
-      (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, 
+      (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, 
       COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
-      ((p.fresh_count * 2.0 + (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') * 3.0 + p.impressions * 0.1 + 1.0) / 
+      ((p.fresh_count * 2.0 + (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') * 3.0 + p.impressions * 0.1 + 1.0) / 
       ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0) * ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0)) as score
       FROM posts p 
       LEFT JOIN users u ON p.user_id = u.id 
@@ -3658,7 +3660,7 @@ app.get('/api/posts/recommended', async (c) => {
     if (currentUserId) {
       query = `
         SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
-        (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, 
+        (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, 
         COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
         ${scoreFormula} as score
         FROM posts p 
@@ -3676,7 +3678,7 @@ app.get('/api/posts/recommended', async (c) => {
     } else {
       query = `
         SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
-        (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, 
+        (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, 
         COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
         ${scoreFormula} as score
         FROM posts p 

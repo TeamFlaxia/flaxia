@@ -24,7 +24,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       typeof (window as any).Capacitor.isNativePlatform === 'function' &&
       (window as any).Capacitor.isNativePlatform();
     const isTauriMobile = isTauri && /Android/i.test(navigator.userAgent);
-    const isCapacitorMobile = isCapacitor && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const isCapacitorMobile = isCapacitor;
     const isMobile = isTauriMobile || isCapacitorMobile;
     if (isMobile || isLocalhost) {
       document.documentElement.classList.add('tauri-android');
