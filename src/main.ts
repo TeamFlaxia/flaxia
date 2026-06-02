@@ -15,22 +15,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (app) {
     console.log('App mounted');
 
-    // Top bar: Capacitor/Tauri mobile (production) or localhost dev (browser testing)
-    const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-    const isTauri = typeof window !== 'undefined' && ((window as any).__TAURI__ || (window as any).__TAURI_INTERNALS__);
-    const isCapacitor =
-      typeof window !== 'undefined' &&
-      typeof (window as any).Capacitor !== 'undefined' &&
-      typeof (window as any).Capacitor.isNativePlatform === 'function' &&
-      (window as any).Capacitor.isNativePlatform();
-    const isTauriMobile = isTauri && /Android/i.test(navigator.userAgent);
-    const isCapacitorMobile = isCapacitor;
-    const isMobile = isTauriMobile || isCapacitorMobile;
-    if (isMobile || isLocalhost) {
-      document.documentElement.classList.add('tauri-android');
-      const topbar = document.getElementById('flaxia-topbar');
-      if (topbar) topbar.hidden = false;
-    }
+
 
     history.scrollRestoration = 'manual';
 
@@ -791,7 +776,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         content.innerHTML = '<div class="page-loader-spinner"></div><div>Loading...</div>';
         content.className = 'page-loader-content';
       }
-      requestAnimationFrame(() => pageLoader!.classList.add('active'));
+      pageLoader!.classList.add('active');
 
       if (pageLoaderTimer) clearTimeout(pageLoaderTimer);
       pageLoaderTimer = setTimeout(() => {
