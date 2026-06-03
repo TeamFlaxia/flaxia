@@ -23,7 +23,6 @@ export class ThreadPage {
   private rootPostCard?: ReturnType<typeof createPostCard>;
   private rootReplyComposer?: ReplyComposer;
   private isRootReplyComposerOpen: boolean = false;
-  private isLoading: boolean = false;
   private replyNodes: ReplyNode[] = [];
   private leftNav?: ReturnType<typeof createLeftNav>;
   private boundPostUpdatedHandler?: (e: Event) => void;
@@ -39,7 +38,9 @@ export class ThreadPage {
   private setupPostUpdatedListener(): void {
     this.boundPostUpdatedHandler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      if (!detail?.reply || detail.postId === this.props.postId) return;
+      if (!detail?.reply) return;
+      const replyRootId = (detail.reply as Record<string, unknown>)?.root_id;
+      if (!replyRootId || replyRootId !== this.props.postId) return;
       // For flat mode (2ch): when a reply is created via inline PostCard composer,
       // insert the reply into the flat list.
       const replyStyle = getReplyStyle();
@@ -57,6 +58,16 @@ export class ThreadPage {
     const repliesContainer = repliesContent.querySelector('.replies-container') as HTMLElement;
     if (!repliesContainer) return;
 
+    // Shift existing indices by +1 and prepend new reply as index 1 (newest-first)
+    const prevCards = repliesContainer.querySelectorAll('[data-post-index]');
+    prevCards.forEach((card) => {
+      const cur = parseInt(card.getAttribute('data-post-index')!, 10);
+      card.setAttribute('data-post-index', String(cur + 1));
+      const span = card.querySelector('span');
+      if (span && /^\d+$/.test(span.textContent || '')) {
+        span.textContent = String(cur + 1);
+      }
+    });
     const card = createPostCard({
       post: newReply as unknown as Post,
       sandboxOrigin: this.props.sandboxOrigin,
@@ -64,10 +75,10 @@ export class ThreadPage {
       depth: (newReply.depth as number) || 0,
       onDelete: () => {},
       disableNavigation: true,
-      postIndex: repliesContainer.children.length + 1,
+      postIndex: 1,
       enablePostRefs: true,
     });
-    repliesContainer.appendChild(card.getElement());
+    repliesContainer.insertBefore(card.getElement(), repliesContainer.firstChild);
 
     // Update replies header count
     const header = repliesContent.querySelector('#thread-replies-header, h2') as HTMLElement;
@@ -350,7 +361,6 @@ export class ThreadPage {
   }
 
   private async loadThread(): Promise<void> {
-    this.isLoading = true;
     const rootContainer = this.element.querySelector('.thread-root-post-container') as HTMLElement;
     const repliesContent = this.element.querySelector('.thread-replies-content') as HTMLElement;
     const loading = this.element.querySelector('.thread-loading') as HTMLElement;
@@ -501,7 +511,6 @@ export class ThreadPage {
       loading.textContent = t('thread.load_failed');
       loading.style.color = '#ef4444';
     } finally {
-      this.isLoading = false;
     }
   }
 
@@ -550,16 +559,29 @@ export class ThreadPage {
     if (replyStyle === 'twitter') {
       // Tree mode: create a ReplyNode for the new reply
       const node = { post: newReply, children: [] };
+      const nextIndex = repliesContainer.children.length + 1;
+      const indexMap = new Map<string, number>();
+      indexMap.set(newReply.id, nextIndex);
       const replyNode = createReplyNode({
         node,
         sandboxOrigin: this.props.sandboxOrigin,
         currentUser: this.props.currentUser,
         onReplyCreated: (reply) => this.handleReplyCreated(reply),
+        postIndexMap: indexMap,
       });
       this.replyNodes.push(replyNode);
       repliesContainer.appendChild(replyNode.getElement());
     } else {
-      // 2ch flat mode: create a PostCard
+      // 2ch flat mode: prepend as PostCard (newest-first, matching API ordering)
+      const prevCards = repliesContainer.querySelectorAll('[data-post-index]');
+      prevCards.forEach((card) => {
+        const cur = parseInt(card.getAttribute('data-post-index')!, 10);
+        card.setAttribute('data-post-index', String(cur + 1));
+        const span = card.querySelector('span');
+        if (span && /^\d+$/.test(span.textContent || '')) {
+          span.textContent = String(cur + 1);
+        }
+      });
       const card = createPostCard({
         post: newReply,
         sandboxOrigin: this.props.sandboxOrigin,
@@ -567,10 +589,10 @@ export class ThreadPage {
         depth: newReply.depth,
         onDelete: () => {},
         disableNavigation: true,
-        postIndex: repliesContainer.children.length + 1,
+        postIndex: 1,
         enablePostRefs: true,
       });
-      repliesContainer.appendChild(card.getElement());
+      repliesContainer.insertBefore(card.getElement(), repliesContainer.firstChild);
     }
 
     // Update root post reply count

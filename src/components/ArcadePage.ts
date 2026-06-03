@@ -783,6 +783,7 @@ export class ArcadePage {
   private commentListEl: HTMLElement | null = null;
   private commentModalUnregister: (() => void) | null = null;
   private boundPostUpdatedHandler?: (e: Event) => void;
+  private commentLoadGeneration = 0;
 
   private handleComments(): void {
     const game = this.games[this.currentIndex];
@@ -890,10 +891,18 @@ export class ArcadePage {
     headerTitle: HTMLElement,
     composer?: ReplyComposer,
   ): Promise<void> {
+    const myGen = ++this.commentLoadGeneration;
     try {
       const res = await fetch(`/api/posts/${postId}/thread`);
       if (!res.ok) throw new Error('Failed to load comments');
+
+      // If a newer call superseded this one, skip rendering
+      if (myGen !== this.commentLoadGeneration) return;
+
       const data = (await res.json()) as { root: Post; replies: Post[] };
+
+      // If superseded while parsing JSON, skip
+      if (myGen !== this.commentLoadGeneration) return;
 
       // Assign sequential indices to replies (1-based)
       const postIdToIndex = new Map<string, number>();
@@ -911,6 +920,7 @@ export class ArcadePage {
 
       // Replies header (matching ThreadPage spec)
       const repliesHeader = document.createElement('div');
+      repliesHeader.className = 'replies-header';
       repliesHeader.textContent = `${t('thread.replies_header', { count: formatCount(data.replies.length) })}`;
       repliesHeader.style.cssText = `
         color: #64748b;
@@ -940,15 +950,13 @@ export class ArcadePage {
               node,
               sandboxOrigin: this.props.sandboxOrigin,
               currentUser: this.props.currentUser,
-              onReplyCreated: (newReply) => {
-                const game = this.games[this.currentIndex];
-                if (game) {
-                  game.replyCount = (game.replyCount || 0) + 1;
-                  headerTitle.textContent = `${t('thread_view.title')} (${formatCount(game.replyCount)})`;
-                  this.updateFloatingActions(game);
-                }
-                if (this.commentListEl && game) {
-                  this.loadComments(game.postId, this.commentListEl, headerTitle);
+              onReplyCreated: () => {
+                // Tree mode: ReplyNode handles DOM insertion internally
+                const g = this.games[this.currentIndex];
+                if (g) {
+                  g.replyCount = (g.replyCount || 0) + 1;
+                  headerTitle.textContent = `${t('thread_view.title')} (${formatCount(g.replyCount)})`;
+                  this.updateFloatingActions(g);
                 }
               },
               postIndexMap: postIdToIndex,
@@ -1007,26 +1015,32 @@ export class ArcadePage {
       const detail = (e as CustomEvent).detail;
       if (!detail?.reply) return;
       const game = this.games[this.currentIndex];
-      if (game && detail.postId === game.postId && this.commentListEl) {
-        const headerTitle = this.commentPanel?.querySelector('span') as HTMLElement;
-        this.loadComments(game.postId, this.commentListEl, headerTitle);
+      if (!game || !this.commentListEl) return;
+
+      // Only handle replies belonging to the current game's thread
+      const replyRootId = (detail.reply as Post)?.root_id;
+      if (!replyRootId || replyRootId !== game.postId) return;
+
+      const headerTitle = this.commentPanel?.querySelector('span') as HTMLElement;
+      if (headerTitle) {
+        this.handleCommentCreated(detail.reply as Post, headerTitle, undefined);
       }
     };
     window.addEventListener('postUpdated', this.boundPostUpdatedHandler);
   }
 
-  private handleCommentCreated(newReply: Post, headerTitle: HTMLElement, composer: ReplyComposer | undefined): void {
+  private handleCommentCreated(newReply: Post, headerTitle: HTMLElement, _composer: ReplyComposer | undefined): void {
     const game = this.games[this.currentIndex];
-    if (game) {
-      game.replyCount = (game.replyCount || 0) + 1;
-      headerTitle.textContent = `${t('thread_view.title')} (${formatCount(game.replyCount)})`;
-      this.updateFloatingActions(game);
-    }
+    if (!game) return;
 
-    // Re-fetch comments to show the new reply
-    if (this.commentListEl && game) {
-      this.loadComments(game.postId, this.commentListEl, headerTitle);
-    }
+    game.replyCount = (game.replyCount || 0) + 1;
+    headerTitle.textContent = `${t('thread_view.title')} (${formatCount(game.replyCount)})`;
+    this.updateFloatingActions(game);
+
+    if (!this.commentListEl) return;
+
+    // Re-fetch all comments from API to ensure display matches reload state
+    void this.loadComments(game.postId, this.commentListEl, headerTitle);
   }
 
   private handleSpaNavigate(): void {

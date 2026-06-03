@@ -14,12 +14,10 @@ export interface UserSuggestion {
 
 export class RightPanel {
   private element: HTMLElement;
-  private props: RightPanelProps;
   private trendingTags: Array<{ tag: string; count: number; percentage: number }> = [];
   private userSuggestions: UserSuggestion[] = [];
 
   constructor(props: RightPanelProps = {}) {
-    this.props = props;
     this.element = this.createElement();
     this.setupEventListeners();
     this.loadTrendingTags();

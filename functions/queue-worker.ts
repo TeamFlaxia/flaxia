@@ -16,13 +16,6 @@ interface InboxMessage {
 
 type QueueMessage = DeliveryMessage | InboxMessage;
 
-interface Activity {
-  type: string;
-  actor?: string;
-  object?: Record<string, unknown>;
-  [key: string]: unknown;
-}
-
 interface Env {
   DB: D1Database;
   BASE_URL: string;

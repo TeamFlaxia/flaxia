@@ -89,25 +89,6 @@ type PostRow = {
   };
 };
 
-type UserRow = {
-  id: string;
-  username: string;
-  display_name: string | null;
-  bio: string | null;
-  avatar_key: string | null;
-};
-
-type NotificationRow = {
-  id: string;
-  actor_id: string;
-  actor_data: string;
-  user_id: string;
-  post_id: string;
-  type: string;
-  created_at: string;
-  read: number;
-};
-
 type PollRow = {
   id: string;
   post_id: string;
@@ -122,13 +103,6 @@ type PollOptionRow = {
   poll_id: string;
   label: string;
   votes_count: number;
-};
-
-type VoteRow = {
-  id: string;
-  poll_id: string;
-  user_id: string;
-  option_id: string;
 };
 
 type WebfingerData = {
@@ -255,6 +229,14 @@ const MAGIC_TYPES: { offset: number; bytes: number[]; mime: string }[] = [
   { offset: 0, bytes: [0x50, 0x4b, 0x05, 0x06], mime: 'application/zip' },
   { offset: 0, bytes: [0x43, 0x57, 0x53], mime: 'application/x-shockwave-flash' },
   { offset: 0, bytes: [0x46, 0x57, 0x53], mime: 'application/x-shockwave-flash' },
+  { offset: 0, bytes: [0x49, 0x44, 0x33], mime: 'audio/mpeg' }, // MP3 with ID3v2 tag
+  { offset: 0, bytes: [0xff, 0xfb], mime: 'audio/mpeg' }, // MP3 MPEG1 Layer3
+  { offset: 0, bytes: [0xff, 0xf3], mime: 'audio/mpeg' }, // MP3 MPEG1 Layer3 no CRC
+  { offset: 0, bytes: [0xff, 0xf2], mime: 'audio/mpeg' }, // MP3 variant
+  { offset: 0, bytes: [0xff, 0xe3], mime: 'audio/mpeg' }, // MP3 MPEG2 Layer3
+  { offset: 0, bytes: [0xff, 0xe2], mime: 'audio/mpeg' }, // MP3 MPEG2 Layer3 no CRC
+  { offset: 8, bytes: [0x57, 0x41, 0x56, 0x45], mime: 'audio/wav' }, // WAV (RIFF....WAVE)
+  { offset: 0, bytes: [0x4f, 0x67, 0x67, 0x53], mime: 'audio/ogg' }, // OGG
 ];
 
 function detectMimeType(data: ArrayBuffer): string | null {
@@ -280,7 +262,7 @@ function detectMimeType(data: ArrayBuffer): string | null {
   return null;
 }
 
-function isAllowedImageMime(mime: string | null): mime is string {
+function isAllowedImageMime(mime: string | null): mime is 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' {
   return !!mime && ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(mime);
 }
 
@@ -333,6 +315,7 @@ app.put('/api/upload/*', requireAuth, async (c) => {
     // Disallow SVG disguised as other types (SVG has no unique magic bytes, would fail detection above)
     if (
       !isAllowedImageMime(detectedMime) &&
+      !detectedMime.startsWith('audio/') &&
       detectedMime !== 'application/zip' &&
       detectedMime !== 'application/x-shockwave-flash'
     ) {
@@ -4950,16 +4933,54 @@ app.post('/api/posts/prepare', requireAuth, async (c) => {
 // Step 3 — POST /api/posts/commit (protected)
 app.post('/api/posts/commit', requireAuth, async (c) => {
   try {
-    const {
-      postId,
-      gifKey,
-      swfKey,
-      text,
-      hashtags: requestHashtags,
-      poll: pollData,
-      zipKey,
-      thumbnailKey,
-    } = await c.req.json();
+    const contentType = c.req.header('content-type');
+    let postId: string | undefined;
+    let gifKey: string | undefined;
+    let swfKey: string | undefined;
+    let text: string;
+    let requestHashtags: string[] = [];
+    let pollData: any;
+    let zipKey: string | undefined;
+    let thumbnailKey: string | undefined;
+
+    if (contentType?.includes('multipart/form-data')) {
+      const formData = await c.req.formData();
+      text = formData.get('text') as string;
+      postId = (formData.get('postId') as string) || undefined;
+      gifKey = (formData.get('gifKey') as string) || undefined;
+      swfKey = (formData.get('swfKey') as string) || undefined;
+      zipKey = (formData.get('payloadKey') as string) || undefined;
+      const pollStr = formData.get('poll') as string;
+      pollData = pollStr ? JSON.parse(pollStr) : undefined;
+
+      const thumbnailFile = (formData.get('thumbnail') as File | null) || undefined;
+      if (thumbnailFile && thumbnailFile.size > 0) {
+        if (thumbnailFile.size > 1024 * 1024) {
+          return c.json({ error: 'Thumbnail must be ≤1MB' }, 400);
+        }
+        const allowedExts = ['jpg', 'jpeg', 'png', 'gif'];
+        const ext = thumbnailFile.name.toLowerCase().split('.').pop();
+        if (!ext || !allowedExts.includes(ext)) {
+          return c.json({ error: 'Thumbnail must be .jpg, .jpeg, .png, or .gif' }, 400);
+        }
+        const thumbnailR2Key = `payload/${postId || crypto.randomUUID()}.thumb.${ext}`;
+        const thumbnailBuffer = await thumbnailFile.arrayBuffer();
+        await c.env.BUCKET.put(thumbnailR2Key, thumbnailBuffer, {
+          httpMetadata: { contentType: thumbnailFile.type },
+        });
+        thumbnailKey = thumbnailR2Key;
+      }
+    } else {
+      const body = await c.req.json();
+      postId = body.postId;
+      gifKey = body.gifKey;
+      swfKey = body.swfKey;
+      text = body.text;
+      requestHashtags = body.hashtags || [];
+      pollData = body.poll;
+      zipKey = body.zipKey;
+      thumbnailKey = body.thumbnailKey;
+    }
     const payloadKey = zipKey;
     const userId = c.get('user')?.id || '';
     const username = c.get('user')?.username || 'anonymous';
@@ -5812,7 +5833,7 @@ app.get('/api/posts/:id/replies', async (c) => {
     }
 
     const replies = result.results || [];
-    const nextCursor = replies.length === limit ? replies[replies.length - 1].created_at : null;
+    const _nextCursor = replies.length === limit ? replies[replies.length - 1].created_at : null;
 
     await enrichPostsWithPolls(
       replies as PostRow[],

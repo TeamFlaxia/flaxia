@@ -15,7 +15,6 @@ export class ThreadView {
   private element: HTMLElement;
   private props: ThreadViewProps;
   private rootPostCard?: PostCardClass;
-  private isLoading: boolean = false;
   private replyNodes: ReplyNode[] = [];
 
   constructor(props: ThreadViewProps) {
@@ -99,7 +98,6 @@ export class ThreadView {
   }
 
   private async loadThread(): Promise<void> {
-    this.isLoading = true;
     const content = this.element.querySelector('.thread-content') as HTMLElement;
     const loading = this.element.querySelector('.thread-loading') as HTMLElement;
 
@@ -143,7 +141,6 @@ export class ThreadView {
       loading.textContent = t('thread_view.load_failed');
       loading.style.color = '#ef4444';
     } finally {
-      this.isLoading = false;
     }
   }
 
