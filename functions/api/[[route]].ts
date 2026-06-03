@@ -25,6 +25,7 @@ import {
   verifyPassword,
 } from '../lib/auth';
 import { sendPushToAll } from '../lib/notify';
+
 import { getVapidPublicKey } from '../lib/push';
 
 type Bindings = {
