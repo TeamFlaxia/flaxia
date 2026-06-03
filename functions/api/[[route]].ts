@@ -24,7 +24,8 @@ import {
   User,
   verifyPassword,
 } from '../lib/auth';
-import { getPushPayload, getVapidPublicKey, sendPushToUser } from '../lib/push';
+import { sendPushToAll } from '../lib/notify';
+import { getVapidPublicKey } from '../lib/push';
 
 type Bindings = {
   DB: D1Database;
@@ -43,6 +44,7 @@ type Bindings = {
   CF_ACCESS_AUD: string;
   CF_TEAM_DOMAIN: string;
   CROWD_ORCHESTRATOR?: Fetcher;
+  NOTIFICATION_STREAM?: DurableObjectNamespace;
 };
 
 type Variables = {
@@ -5105,13 +5107,7 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
             .run();
           const actor = c.get('user');
           const actorName = actor?.display_name || actor?.username || 'Someone';
-          sendPushToUser(
-            c.env.DB,
-            mention.user_id,
-            getPushPayload('mention', actorName, text || '', postId),
-            c.env.VAPID_PUBLIC_KEY,
-            c.env.VAPID_PRIVATE_KEY,
-          );
+          await sendPushToAll(c.env, mention.user_id, 'mention', actorName, text || '', postId);
         }
       } catch (e) {
         // Don't fail the post creation if mention notifications fail
@@ -5245,13 +5241,7 @@ app.get('/api/polls/:postId', async (c) => {
           )
             .bind(crypto.randomUUID(), post.user_id, 'poll_ended', postId, '')
             .run();
-          sendPushToUser(
-            c.env.DB,
-            post.user_id,
-            getPushPayload('poll_ended', '', '', postId),
-            c.env.VAPID_PUBLIC_KEY,
-            c.env.VAPID_PRIVATE_KEY,
-          );
+          await sendPushToAll(c.env, post.user_id, 'poll_ended');
           await c.env.DB.prepare('UPDATE polls SET ended_notified = 1 WHERE id = ?')
             .bind(poll.id as string)
             .run();
@@ -5407,13 +5397,7 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
             const actor = c.get('user');
             const actorName = actor?.display_name || actor?.username || 'Someone';
             const textPreview = ((post as Record<string, unknown>).text as string) || '';
-            sendPushToUser(
-              c.env.DB,
-              post.user_id,
-              getPushPayload('fresh', actorName, textPreview, postId),
-              c.env.VAPID_PUBLIC_KEY,
-              c.env.VAPID_PRIVATE_KEY,
-            );
+            await sendPushToAll(c.env, post.user_id, 'fresh', actorName, textPreview, postId);
           }
         }
       } catch (e) {
@@ -6347,13 +6331,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
           {
             const actor = c.get('user');
             const actorName = actor?.display_name || actor?.username || 'Someone';
-            sendPushToUser(
-              c.env.DB,
-              parentPost.user_id,
-              getPushPayload('reply', actorName, text, postId),
-              c.env.VAPID_PUBLIC_KEY,
-              c.env.VAPID_PRIVATE_KEY,
-            );
+            await sendPushToAll(c.env, parentPost.user_id, 'reply', actorName, text, postId);
           }
         }
         notifiedUserIds.add(parentPost.user_id);
@@ -6377,13 +6355,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
           {
             const actor = c.get('user');
             const actorName = actor?.display_name || actor?.username || 'Someone';
-            sendPushToUser(
-              c.env.DB,
-              mention.user_id,
-              getPushPayload('mention', actorName, text, postId),
-              c.env.VAPID_PUBLIC_KEY,
-              c.env.VAPID_PRIVATE_KEY,
-            );
+            await sendPushToAll(c.env, mention.user_id, 'mention', actorName, text, postId);
           }
         }
       } catch (e) {
@@ -6435,13 +6407,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
                 .run();
               const actor = c.get('user');
               const actorName = actor?.display_name || actor?.username || 'Someone';
-              sendPushToUser(
-                c.env.DB,
-                referencedPost.user_id as string,
-                getPushPayload('reply', actorName, text || '', replyId),
-                c.env.VAPID_PUBLIC_KEY,
-                c.env.VAPID_PRIVATE_KEY,
-              );
+              await sendPushToAll(c.env, referencedPost.user_id as string, 'reply', actorName, text || '', replyId);
             }
           }
         }
@@ -7010,12 +6976,10 @@ async function enrichPostsWithPolls(
             .prepare('INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)')
             .bind(nanoid(), post.user_id, 'poll_ended', post.id, '')
             .run();
-          sendPushToUser(
-            db,
+          await sendPushToAll(
+            { DB: db, VAPID_PUBLIC_KEY: vapidPublicKey, VAPID_PRIVATE_KEY: vapidPrivateKey } as any,
             post.user_id,
-            getPushPayload('poll_ended', '', '', post.id),
-            vapidPublicKey,
-            vapidPrivateKey,
+            'poll_ended',
           );
           await db.prepare('UPDATE polls SET ended_notified = 1 WHERE id = ?').bind(poll.id).run();
         } catch (e) {
@@ -7799,9 +7763,22 @@ app.post('/api/push/unregister', requireAuth, async (c) => {
 
 // Export for Cloudflare Pages Functions
 export async function onRequest(context: Record<string, unknown>) {
-  return app.fetch(
-    context.request as Request,
-    context.env as Record<string, unknown>,
-    context as unknown as ExecutionContext,
-  );
+  const request = context.request as Request;
+  const env = context.env as Bindings;
+
+  // WebSocket 通知ストリーム — デスクトップアプリからの接続を受け付ける
+  const url = new URL(request.url);
+  if (url.pathname === '/api/ws/notifications' && request.headers.get('Upgrade') === 'websocket') {
+    const sessionToken = getSessionToken(request);
+    if (!sessionToken) return new Response('Unauthorized', { status: 401 });
+    const session = await getSession(env, sessionToken);
+    if (!session) return new Response('Unauthorized', { status: 401 });
+
+    if (!env.NOTIFICATION_STREAM) return new Response('Notifications not available', { status: 503 });
+    const doId = env.NOTIFICATION_STREAM.idFromName(session.user.id);
+    const stub = env.NOTIFICATION_STREAM.get(doId);
+    return stub.fetch(request);
+  }
+
+  return app.fetch(request, env as unknown as Record<string, unknown>, context as unknown as ExecutionContext);
 }

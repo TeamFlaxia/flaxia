@@ -3,13 +3,15 @@ use tauri::Manager;
 
 struct TrayState(Mutex<Option<tauri::tray::TrayIcon<tauri::Wry>>>);
 
-/// JSの refreshNotificationBadges から呼ばれる: トレイアイコン即時更新
+/// JS の refreshNotificationBadges から呼ばれる: トレイアイコン即時更新
+/// ビルド時に生成したバッジ付き PNG に切り替えるだけ (ランタイムの画像加工なし)
 #[tauri::command]
 fn set_notification_count(app: tauri::AppHandle, count: u32) -> Result<(), String> {
   eprintln!("set_notification_count({})", count);
   if let Some(tray_state) = app.try_state::<TrayState>() {
     let guard = tray_state.0.lock().map_err(|e| e.to_string())?;
     if let Some(tray) = guard.as_ref() {
+      // ツールチップ更新
       let tip = if count > 0 {
         format!("Flaxia ({} unread)", count)
       } else {
@@ -17,34 +19,13 @@ fn set_notification_count(app: tauri::AppHandle, count: u32) -> Result<(), Strin
       };
       let _ = tray.set_tooltip(Some(&tip));
 
-      // Decode base icon, draw red dot in top-right if unread > 0
-      let base = include_bytes!("../icons/32x32.png");
-      let base_img = tauri::image::Image::from_bytes(base).map_err(|e| e.to_string())?;
-      let (w, h) = (base_img.width(), base_img.height());
-      let mut rgba = base_img.rgba().to_vec();
-
-      if count > 0 {
-        let cx = w as i32 - 8;
-        let cy = 8i32;
-        let r = 6i32;
-        for py in (cy - r)..=cy + r {
-          for px in (cx - r)..=cx + r {
-            let dx = px - cx;
-            let dy = py - cy;
-            if dx * dx + dy * dy <= r * r {
-              let idx = (py as u32 * w + px as u32) as usize * 4;
-              if idx + 3 < rgba.len() {
-                rgba[idx] = 255;
-                rgba[idx + 1] = 0;
-                rgba[idx + 2] = 0;
-                rgba[idx + 3] = 255;
-              }
-            }
-          }
-        }
-      }
-
-      let icon = tauri::image::Image::new_owned(rgba, w, h);
+      // ビルド時に含めた PNG を切り替える — ランタイムの RGBA 操作は一切しない
+      let icon_bytes: &[u8] = if count > 0 {
+        include_bytes!("../icons/32x32-badge.png")
+      } else {
+        include_bytes!("../icons/32x32.png")
+      };
+      let icon = tauri::image::Image::from_bytes(icon_bytes).map_err(|e| e.to_string())?;
       tray.set_icon(Some(icon)).map_err(|e| e.to_string())?;
     }
   }
@@ -114,7 +95,7 @@ pub fn run() {
         let handle = app.handle().clone();
         std::thread::spawn(move || {
           loop {
-            std::thread::sleep(std::time::Duration::from_secs(30));
+            std::thread::sleep(std::time::Duration::from_secs(15));
             if let Some(window) = handle.get_webview_window("main") {
               let _ = window.eval("window.__tauriDesktopPoll?.()");
             }

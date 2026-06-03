@@ -95,9 +95,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           '@tauri-apps/plugin-notification'
         );
 
-        // Try to grant permission, but don't gate on it — on Windows/Linux the
-        // permission model doesn't apply (notifications always work), and on macOS
-        // the OS will prompt or silently drop the notification if denied.
         try {
           const granted = await isPermissionGranted();
           if (!granted) {
@@ -114,30 +111,101 @@ document.addEventListener('DOMContentLoaded', async () => {
             console.error('[notif] sendNotification failed:', err);
           }
         };
-        // Badge always works even without notification permission
+      } catch {
+        console.log('[notif] Tauri notification plugin not available — OS notifications disabled');
+      }
+    };
+
+    /** Dock/taskbar badge + tray icon badge — independent of the notification plugin. */
+    const initTauriBadge = async () => {
+      // Dock/taskbar badge count (macOS, Windows, some Linux DEs)
+      try {
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
         tauriBadge = async (count: number) => {
           try {
-            const { getCurrentWindow } = await import('@tauri-apps/api/window');
             await getCurrentWindow().setBadgeCount(count);
-          } catch {
-            // badge not supported on this platform
+            console.log('[badge] setBadgeCount:', count);
+          } catch (err) {
+            console.log('[badge] setBadgeCount failed:', err);
           }
         };
-        // Desktop tray icon badge: store count so Rust bg thread updates the icon
-        if (!/Android/i.test(navigator.userAgent)) {
+      } catch {
+        console.log('[badge] @tauri-apps/api/window not available');
+      }
+
+      // Desktop tray icon: invoke Rust set_notification_count
+      if (!/Android/i.test(navigator.userAgent)) {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
           tauriSetNotificationCount = async (count: number) => {
             try {
-              const { invoke } = await import('@tauri-apps/api/core');
-              console.log('[notif] invoking set_notification_count with', count);
+              console.log('[badge] invoking set_notification_count with', count);
               await invoke('set_notification_count', { count });
-              console.log('[notif] invoke succeeded');
+              console.log('[badge] invoke succeeded');
             } catch (err) {
-              console.log('[notif] invoke error:', err);
+              console.log('[badge] invoke error:', err);
             }
           };
+          // Test: force an initial update so we can see if the Rust side responds
+          console.log('[badge] Tauri badge functions initialized');
+        } catch {
+          console.log('[badge] @tauri-apps/api/core not available');
         }
-      } catch {
-        // Not running in Tauri
+      }
+    };
+
+    /// WebSocket 経由のプッシュ通知を受け取り OS 通知を表示する
+    let pushWs: WebSocket | null = null;
+    let _pushWsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const connectPushWebSocket = () => {
+      // ブラウザ版は Service Worker (Web Push) を使うので WebSocket は使わない
+      if (typeof window !== 'undefined' && !(window as any).__TAURI__ && !(window as any).__TAURI_INTERNALS__) {
+        return;
+      }
+
+      if (pushWs) return; // already connected/reconnecting
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const url = `${protocol}//${window.location.host}/api/ws/notifications`;
+
+      console.log('[push] connecting to', url);
+      try {
+        const ws = new WebSocket(url);
+        ws.onopen = () => console.log('[push] connected');
+        ws.onmessage = (ev) => {
+          try {
+            const data = JSON.parse(ev.data);
+            console.log('[push] received:', data);
+            // OS通知を表示 (Tauri desktop)
+            if (typeof tauriNotify === 'function') {
+              tauriNotify(data.title || 'Flaxia', data.body || 'New notification');
+            }
+            // バッジ即時更新
+            refreshNotificationBadges();
+          } catch (e) {
+            console.error('[push] parse error:', e);
+          }
+        };
+        ws.onclose = () => {
+          console.log('[push] disconnected, reconnecting in 10s');
+          pushWs = null;
+          _pushWsReconnectTimer = setTimeout(() => {
+            _pushWsReconnectTimer = null;
+            connectPushWebSocket();
+          }, 10000);
+        };
+        ws.onerror = () => {
+          ws.close();
+        };
+        pushWs = ws;
+      } catch (e) {
+        console.error('[push] connection error:', e);
+        pushWs = null;
+        _pushWsReconnectTimer = setTimeout(() => {
+          _pushWsReconnectTimer = null;
+          connectPushWebSocket();
+        }, 10000);
       }
     };
 
@@ -234,15 +302,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       await registerPushToken();
     };
 
-    // Initialize Tauri native notifications (badge / local notif, no-op in browser)
+    // Initialize Tauri native notifications (OS-level, no-op in browser/Capacitor)
     await initTauriNotifications();
+    // Initialize Tauri dock/taskbar badge + tray icon badge (independent of notification plugin)
+    await initTauriBadge();
     // Initialize Capacitor native notifications (mobile only)
     await initCapacitorNotifications();
     // Register Service Worker for Web Push (browser only, no-op in Tauri/Capacitor)
     initializeWebPush();
 
     const refreshNotificationBadges = async () => {
+      console.log('[poll] refreshNotificationBadges called');
       const data = await fetchNotifications();
+      console.log('[poll] unread count:', unreadNotificationCount);
       leftNavInstances.forEach((leftNav) => {
         if (typeof leftNav.setUnreadCount === 'function') {
           leftNav.setUnreadCount(unreadNotificationCount);
@@ -258,12 +330,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Update notification count for desktop tray icon badge (Rust bg thread checks this)
       if (tauriSetNotificationCount) {
-        console.log('[notif] calling set_notification_count with', unreadNotificationCount);
+        console.log('[badge] calling set_notification_count with', unreadNotificationCount);
         tauriSetNotificationCount(unreadNotificationCount).catch((err) => {
-          console.log('[notif] set_notification_count failed:', err);
+          console.log('[badge] set_notification_count failed:', err);
         });
       } else {
-        console.log('[notif] tauriSetNotificationCount is null (not in Tauri desktop)');
+        console.log('[badge] tauriSetNotificationCount is null');
       }
 
       // Show notification when new unread notifications arrive
@@ -328,7 +400,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const startNotificationPolling = () => {
       if (notificationPollInterval) return;
-      notificationPollInterval = setInterval(refreshNotificationBadges, 30000);
+      notificationPollInterval = setInterval(refreshNotificationBadges, 15000);
     };
 
     const stopNotificationPolling = () => {
@@ -358,6 +430,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           // Start background polling for unread notification count
           startNotificationPolling();
+
+          // WebSocket プッシュ通知に接続 (Tauri desktop)
+          connectPushWebSocket();
 
           return true;
         }
@@ -1750,14 +1825,13 @@ document.addEventListener('DOMContentLoaded', async () => {
                 credentials: 'include',
               });
               unreadNotificationCount = 0;
-              leftNav.setUnreadCount(0);
               leftNavInstances.forEach((ln) => {
                 if (typeof ln.setUnreadCount === 'function') {
                   ln.setUnreadCount(0);
                 }
               });
-              stopNotificationPolling();
-              startNotificationPolling();
+              // 即時バッジ更新 (ポーリングを待たない)
+              await refreshNotificationBadges();
             },
             onNavigateToPost: (postId) => {
               window.history.pushState({}, '', `/thread/${postId}`);

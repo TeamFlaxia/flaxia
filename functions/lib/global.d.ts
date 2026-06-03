@@ -9,5 +9,6 @@ interface Env {
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   CROWD_ORCHESTRATOR?: Fetcher;
+  NOTIFICATION_STREAM?: DurableObjectNamespace;
   [key: string]: unknown;
 }
