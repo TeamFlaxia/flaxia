@@ -20,30 +20,47 @@ export async function onRequest(context: {
       const { taskId, status, result, error } = body;
       if (!taskId) return new Response('Bad Request', { status: 400 });
 
-      if (
-        status === 'done' &&
-        ((result as Record<string, unknown>).output as Array<{ label: string; score: number }>)?.[0]
-      ) {
-        const output = ((result as Record<string, unknown>).output as Array<{ label: string; score: number }>)[0] as {
-          label: string;
-          score: number;
-        };
-        const labelScoreMap: Record<string, number> = {
-          very_negative: 0.0,
-          negative: 0.25,
-          neutral: 0.5,
-          positive: 0.75,
-          very_positive: 1.0,
-        };
-        const score = labelScoreMap[output.label] ?? output.score;
-        const db = (context.env as { DB: D1Database }).DB;
-        const row = (await db.prepare('SELECT id FROM posts WHERE sentiment_task_id = ?').bind(taskId).first()) as {
-          id: string;
-        } | null;
-        const postId = row?.id;
-        if (postId) {
-          await db.prepare('UPDATE posts SET sentiment_score = ? WHERE id = ?').bind(score, postId).run();
-          console.log(`Sentiment webhook done for post ${postId}: label=${output.label}, score=${score}`);
+      if (status === 'done') {
+        const resultObj = result as Record<string, unknown> | undefined;
+        const output = resultObj?.output;
+
+        if (output) {
+          const starScoreMap: Record<string, number> = {
+            '1 star': 0.0,
+            '2 stars': 0.25,
+            '3 stars': 0.5,
+            '4 stars': 0.75,
+            '5 stars': 1.0,
+          };
+
+          let score: number | undefined;
+
+          if (Array.isArray(output)) {
+            let total = 0;
+            for (const item of output) {
+              const entry = item as { label: string; score: number } | undefined;
+              if (entry?.label && typeof entry.score === 'number') {
+                total += (starScoreMap[entry.label] ?? 0.5) * entry.score;
+              }
+            }
+            score = total;
+          } else {
+            const entry = output as { label: string; score: number } | undefined;
+            if (entry?.label && typeof entry.score === 'number') {
+              score = starScoreMap[entry.label] ?? entry.score;
+            }
+          }
+
+          const db = (context.env as { DB: D1Database }).DB;
+          const row = await db
+            .prepare('SELECT id FROM posts WHERE sentiment_task_id = ?')
+            .bind(taskId)
+            .first<{ id: string }>();
+          const postId = row?.id;
+          if (postId && score !== undefined) {
+            await db.prepare('UPDATE posts SET sentiment_score = ? WHERE id = ?').bind(score, postId).run();
+            console.log(`Sentiment webhook done for post ${postId}: score=${score}`);
+          }
         }
       } else if (status === 'failed') {
         console.log(`Sentiment task failed: taskId=${taskId}, error=${error || 'unknown'}`);
