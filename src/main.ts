@@ -174,7 +174,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (pushWs) return; // already connected/reconnecting
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const url = `${protocol}//${window.location.host}/api/ws/notifications`;
+      const sessionToken = document.cookie.replace(/(?:(?:^|.*;\s*)session\s*=\s*([^;]*).*$)|^.*$/, '$1');
+      const url = `${protocol}//${window.location.host}/api/ws/notifications${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`;
 
       console.log('[push] connecting to', url);
       try {

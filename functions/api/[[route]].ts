@@ -7797,7 +7797,7 @@ export async function onRequest(context: Record<string, unknown>) {
   // WebSocket 通知ストリーム — デスクトップアプリからの接続を受け付ける
   const url = new URL(request.url);
   if (url.pathname === '/api/ws/notifications' && request.headers.get('Upgrade') === 'websocket') {
-    const sessionToken = getSessionToken(request);
+    const sessionToken = getSessionToken(request) || url.searchParams.get('token');
     if (!sessionToken) return new Response('Unauthorized', { status: 401 });
     const session = await getSession(env, sessionToken);
     if (!session) return new Response('Unauthorized', { status: 401 });
