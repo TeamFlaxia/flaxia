@@ -86,6 +86,21 @@ export class PostCard {
     });
     headerContainer.appendChild(header);
 
+    // Sentiment Rating
+    if (typeof this.props.post.sentiment_score === 'number') {
+      const score = this.props.post.sentiment_score;
+      const rating = Math.round(score * 5);
+      const ratingEl = document.createElement('span');
+      ratingEl.style.cssText = `
+        font-size: 0.8rem;
+        margin-left: 0.5rem;
+        color: var(--accent);
+      `;
+      ratingEl.textContent = '★'.repeat(rating) + '☆'.repeat(5 - rating);
+      ratingEl.title = `Sentiment Score: ${score.toFixed(2)}`;
+      headerContainer.appendChild(ratingEl);
+    }
+
     // ... menu button
     const isOwnPost = this.props.currentUser?.username === this.props.post.username;
     const menuButton = this.createMenuButton(isOwnPost);
