@@ -7715,15 +7715,41 @@ app.get('/api/push/vapid-key', async (c) => {
   return c.json({ publicKey: getVapidPublicKey(c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY) });
 });
 
-// POST /api/push/register - Register a Web Push subscription (protected)
+// POST /api/push/register - Register a push subscription (Web Push or FCM)
 app.post('/api/push/register', requireAuth, async (c) => {
   try {
     const user = c.get('user') as { id: string; username: string } | undefined;
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const body = (await c.req.json()) as {
+      type?: string;
       endpoint: string;
-      keys: { p256dh: string; auth: string };
+      keys?: { p256dh: string; auth: string };
     };
+    const subscriptionType = body.type || 'webpush';
+
+    if (subscriptionType === 'fcm') {
+      if (!body.endpoint) {
+        return c.json({ error: 'Invalid FCM token' }, 400);
+      }
+      const existing = await c.env.DB.prepare('SELECT id FROM push_subscriptions WHERE endpoint = ? AND type = ?')
+        .bind(body.endpoint, 'fcm')
+        .first();
+      if (existing) {
+        await c.env.DB.prepare(
+          "UPDATE push_subscriptions SET user_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE endpoint = ? AND type = ?",
+        )
+          .bind(user.id, body.endpoint, 'fcm')
+          .run();
+      } else {
+        await c.env.DB.prepare(
+          'INSERT INTO push_subscriptions (id, user_id, type, endpoint, auth_key, p256dh_key) VALUES (?, ?, ?, ?, ?, ?)',
+        )
+          .bind(nanoid(), user.id, 'fcm', body.endpoint, '', '')
+          .run();
+      }
+      return c.json({ ok: true });
+    }
+
     if (!body.endpoint || !body.keys?.p256dh || !body.keys?.auth) {
       return c.json({ error: 'Invalid subscription' }, 400);
     }
@@ -7738,9 +7764,9 @@ app.post('/api/push/register', requireAuth, async (c) => {
         .run();
     } else {
       await c.env.DB.prepare(
-        'INSERT INTO push_subscriptions (id, user_id, endpoint, auth_key, p256dh_key) VALUES (?, ?, ?, ?, ?)',
+        'INSERT INTO push_subscriptions (id, user_id, type, endpoint, auth_key, p256dh_key) VALUES (?, ?, ?, ?, ?, ?)',
       )
-        .bind(nanoid(), user.id, body.endpoint, body.keys.auth, body.keys.p256dh)
+        .bind(nanoid(), user.id, 'webpush', body.endpoint, body.keys.auth, body.keys.p256dh)
         .run();
     }
     return c.json({ ok: true });

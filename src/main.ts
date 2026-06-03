@@ -255,6 +255,30 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     };
 
+    const initCapacitorPushRegistration = async () => {
+      if (!isCapacitorNative) return;
+      try {
+        const { PushNotifications } = await import('@capacitor/push-notifications');
+        await PushNotifications.requestPermissions();
+        await PushNotifications.register();
+
+        await PushNotifications.addListener('registration', (token) => {
+          fetch('/api/push/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ type: 'fcm', endpoint: token.value }),
+          }).catch((err) => console.error('[push] FCM register failed:', err));
+        });
+
+        await PushNotifications.addListener('registrationError', (err) => {
+          console.error('[push] FCM registration error:', err);
+        });
+      } catch {
+        console.log('[push] @capacitor/push-notifications not available');
+      }
+    };
+
     /** Register Web Push in browser (Service Worker), or skip in Tauri/Capacitor. */
     /** Convert VAPID base64 key to Uint8Array for PushManager.subscribe(). */
     function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
@@ -311,8 +335,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     await initTauriNotifications();
     // Initialize Tauri dock/taskbar badge + tray icon badge (independent of notification plugin)
     await initTauriBadge();
-    // Initialize Capacitor native notifications (mobile only)
+    // Initialize Capacitor native notifications + FCM push registration (mobile only)
     await initCapacitorNotifications();
+    await initCapacitorPushRegistration();
     // Capacitor ライフサイクル: アプリ復帰時に WebSocket 再接続
     if (isCapacitorNative) {
       try {

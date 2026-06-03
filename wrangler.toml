@@ -41,6 +41,13 @@ binding = "AP_DELIVERY_QUEUE"
 # CROWD_API_KEY は本番環境では secret 推奨:
 #   npx wrangler secret put CROWD_API_KEY
 
+# FCM (Firebase Cloud Messaging) — Capacitor モバイルアプリ向けプッシュ通知
+# Firebase Console → プロジェクトの設定 → サービスアカウント → 新しい秘密鍵を生成
+# ダウンロードされた JSON ファイルの内容全体を secret に設定:
+#   npx wrangler secret put FCM_SERVER_KEY
+# またはローカル開発用に .dev.vars に保存:
+#   echo "FCM_SERVER_KEY=$(cat service-account.json)" > .dev.vars
+
 # Web Push (VAPID)
 # 本番環境では下記の secret を設定:
 #   npx wrangler secret put VAPID_PUBLIC_KEY

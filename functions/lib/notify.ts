@@ -19,12 +19,13 @@ export async function dispatchToDO(
   }
 }
 
-/// Web Push (browser) + WebSocket (desktop) 両方に通知を送る
+/// Web Push (browser) + FCM (mobile) + WebSocket (desktop) に通知を送る
 export async function sendPushToAll(
   env: {
     DB: D1Database;
     VAPID_PUBLIC_KEY?: string;
     VAPID_PRIVATE_KEY?: string;
+    FCM_SERVER_KEY?: string;
     NOTIFICATION_STREAM?: DurableObjectNamespace;
   },
   userId: string,
@@ -35,8 +36,8 @@ export async function sendPushToAll(
 ): Promise<void> {
   const payload = getPushPayload(type, actorName, postPreview, postId);
 
-  // Web Push (browser)
-  await sendPushToUser(env.DB, userId, payload, env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY);
+  // Web Push (browser) + FCM (mobile)
+  await sendPushToUser(env.DB, userId, payload, env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY, env);
 
   // WebSocket (desktop)
   await dispatchToDO(env as { NOTIFICATION_STREAM?: DurableObjectNamespace }, userId, payload);

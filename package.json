@@ -54,6 +54,7 @@
     "@capacitor/core": "^8.3.4",
     "@capacitor/ios": "^8.3.4",
     "@capacitor/local-notifications": "^8.2.0",
+    "@capacitor/push-notifications": "^8.1.1",
     "@capawesome/capacitor-badge": "^8.0.2",
     "@cloudflare/kv-asset-handler": "^0.4.2",
     "@flaxia/node": "^0.1.2",

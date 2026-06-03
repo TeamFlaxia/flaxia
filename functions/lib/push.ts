@@ -1,4 +1,5 @@
 import webpush from 'web-push';
+import { sendPushToDevice } from './fcm';
 
 export type PushSubscription = {
   endpoint: string;
@@ -81,21 +82,28 @@ export async function sendPushToUser(
   payload: PushPayload,
   vapidPublicKey?: string,
   vapidPrivateKey?: string,
+  env?: { FCM_SERVER_KEY?: string },
 ): Promise<void> {
   const { results } = (await db
-    .prepare('SELECT endpoint, auth_key, p256dh_key FROM push_subscriptions WHERE user_id = ?')
+    .prepare('SELECT type, endpoint, auth_key, p256dh_key FROM push_subscriptions WHERE user_id = ?')
     .bind(userId)
-    .all()) as { results: { endpoint: string; auth_key: string; p256dh_key: string }[] };
+    .all()) as { results: { type: string; endpoint: string; auth_key: string; p256dh_key: string }[] };
 
   for (const row of results) {
-    const subscription: PushSubscription = {
-      endpoint: row.endpoint,
-      keys: { p256dh: row.p256dh_key, auth: row.auth_key },
-    };
-    const ok = await sendPushToSubscription(subscription, payload, vapidPublicKey, vapidPrivateKey);
-    // Remove expired subscriptions
-    if (!ok) {
-      await db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(row.endpoint).run();
+    if (row.type === 'fcm') {
+      const ok = await sendPushToDevice(row.endpoint, payload, env?.FCM_SERVER_KEY || '');
+      if (!ok) {
+        await db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(row.endpoint).run();
+      }
+    } else {
+      const subscription: PushSubscription = {
+        endpoint: row.endpoint,
+        keys: { p256dh: row.p256dh_key, auth: row.auth_key },
+      };
+      const ok = await sendPushToSubscription(subscription, payload, vapidPublicKey, vapidPrivateKey);
+      if (!ok) {
+        await db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(row.endpoint).run();
+      }
     }
   }
 }
