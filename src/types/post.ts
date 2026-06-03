@@ -35,7 +35,7 @@ export interface Post {
   status: string;
   hidden: number;
   created_at: string;
-  sentiment_score?: number;
+  sentiment_score?: number | null;
   is_freshed?: boolean; // Whether current user has freshed this post
   is_bookmarked?: boolean; // Whether current user has bookmarked this post
   poll?: {

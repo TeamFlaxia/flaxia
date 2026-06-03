@@ -87,8 +87,9 @@ export class PostCard {
     headerContainer.appendChild(header);
 
     // Sentiment Rating
-    if (this.props.post.sentiment_score !== undefined) {
-      const rating = Math.round(this.props.post.sentiment_score * 5);
+    if (this.props.post.sentiment_score !== undefined && this.props.post.sentiment_score !== null) {
+      const score = this.props.post.sentiment_score;
+      const rating = Math.round(score * 5);
       const ratingEl = document.createElement('span');
       ratingEl.style.cssText = `
         font-size: 0.8rem;
@@ -96,7 +97,7 @@ export class PostCard {
         color: var(--accent);
       `;
       ratingEl.textContent = '★'.repeat(rating) + '☆'.repeat(5 - rating);
-      ratingEl.title = `Sentiment Score: ${this.props.post.sentiment_score.toFixed(2)}`;
+      ratingEl.title = `Sentiment Score: ${score.toFixed(2)}`;
       headerContainer.appendChild(ratingEl);
     }
 
