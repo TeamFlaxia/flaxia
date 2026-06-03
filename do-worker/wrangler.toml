@@ -9,4 +9,4 @@ class_name = "NotificationStream"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["NotificationStream"]
+new_sqlite_classes = ["NotificationStream"]
