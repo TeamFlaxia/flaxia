@@ -233,10 +233,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         await LocalNotifications.requestPermissions();
 
+        let notifId = 0;
         capacitorNotify = async (title: string, body: string) => {
           try {
+            notifId = (notifId + 1) % 2147483647;
             await LocalNotifications.schedule({
-              notifications: [{ title, body, id: Date.now() }],
+              notifications: [{ title, body, id: notifId }],
             });
           } catch (err) {
             console.error('[notif] Capacitor sendNotification failed:', err);
