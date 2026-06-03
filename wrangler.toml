@@ -3,6 +3,11 @@ compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 pages_build_output_dir = "dist"
 
+[[durable_objects.bindings]]
+name = "NOTIFICATION_STREAM"
+class_name = "NotificationStream"
+script_name = "notif-stream"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "flaxia"

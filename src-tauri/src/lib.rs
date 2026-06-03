@@ -56,6 +56,7 @@ pub fn run() {
         let tray = TrayIconBuilder::new()
           .icon(icon)
           .tooltip("Flaxia")
+          .show_menu_on_left_click(false)
           .on_menu_event(|app, event| {
             match event.id.as_ref() {
               "show" => {
@@ -71,15 +72,23 @@ pub fn run() {
             }
           })
           .on_tray_icon_event(|tray, event| {
-            if let tauri::tray::TrayIconEvent::Click {
-              button: MouseButton::Left,
-              button_state: MouseButtonState::Up,
-              ..
-            } = event {
+            let show_window = |tray: &tauri::tray::TrayIcon| {
               if let Some(window) = tray.app_handle().get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
               }
+            };
+            match event {
+              tauri::tray::TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+              } => show_window(tray),
+              tauri::tray::TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+              } => show_window(tray),
+              _ => {}
             }
           });
 
