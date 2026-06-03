@@ -48,7 +48,7 @@ async function getAccessToken(serviceAccount: ServiceAccount): Promise<string> {
     return cachedToken.accessToken;
   }
 
-  const header = base64Url(new TextEncoder().encode(JSON.stringify({ alg: 'RS256', typ: 'JWT' })));
+  const header = base64Url(new TextEncoder().encode(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).buffer);
   const payload = base64Url(
     new TextEncoder().encode(
       JSON.stringify({
@@ -58,7 +58,7 @@ async function getAccessToken(serviceAccount: ServiceAccount): Promise<string> {
         exp: now + 3600,
         iat: now,
       }),
-    ),
+    ).buffer,
   );
 
   const signature = await signRsa256(`${header}.${payload}`, serviceAccount.private_key);
