@@ -87,7 +87,7 @@ export class PostCard {
     headerContainer.appendChild(header);
 
     // Sentiment Rating
-    if (this.props.post.sentiment_score !== undefined && this.props.post.sentiment_score !== null) {
+    if (typeof this.props.post.sentiment_score === 'number') {
       const score = this.props.post.sentiment_score;
       const rating = Math.round(score * 5);
       const ratingEl = document.createElement('span');
