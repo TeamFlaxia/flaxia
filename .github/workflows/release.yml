@@ -81,6 +81,7 @@ jobs:
             patchelf
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
+      - run: npm run build
       - run: npm run tauri:build:linux
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -102,6 +103,7 @@ jobs:
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
+      - run: npm run build
       - run: npm run tauri:build:windows
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
