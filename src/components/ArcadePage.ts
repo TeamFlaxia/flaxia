@@ -890,6 +890,7 @@ export class ArcadePage {
     list: HTMLElement,
     headerTitle: HTMLElement,
     composer?: ReplyComposer,
+    scrollToPostId?: string,
   ): Promise<void> {
     const myGen = ++this.commentLoadGeneration;
     try {
@@ -1001,6 +1002,17 @@ export class ArcadePage {
           }
         }
       });
+
+      // Scroll to newly created reply if requested
+      if (scrollToPostId) {
+        const newIndex = postIdToIndex.get(scrollToPostId);
+        if (newIndex !== undefined) {
+          const newPostEl = list.querySelector(`[data-post-index="${newIndex}"]`);
+          if (newPostEl) {
+            newPostEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+      }
     } catch {
       list.innerHTML = '';
       const err = document.createElement('div');
@@ -1040,7 +1052,7 @@ export class ArcadePage {
     if (!this.commentListEl) return;
 
     // Re-fetch all comments from API to ensure display matches reload state
-    void this.loadComments(game.postId, this.commentListEl, headerTitle);
+    void this.loadComments(game.postId, this.commentListEl, headerTitle, undefined, newReply.id);
   }
 
   private handleSpaNavigate(): void {

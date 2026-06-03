@@ -78,7 +78,9 @@ export class ThreadPage {
       postIndex: 1,
       enablePostRefs: true,
     });
-    repliesContainer.insertBefore(card.getElement(), repliesContainer.firstChild);
+    const cardEl = card.getElement();
+    repliesContainer.insertBefore(cardEl, repliesContainer.firstChild);
+    cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
     // Update replies header count
     const header = repliesContent.querySelector('#thread-replies-header, h2') as HTMLElement;
@@ -570,7 +572,9 @@ export class ThreadPage {
         postIndexMap: indexMap,
       });
       this.replyNodes.push(replyNode);
-      repliesContainer.appendChild(replyNode.getElement());
+      const replyEl = replyNode.getElement();
+      repliesContainer.appendChild(replyEl);
+      replyEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } else {
       // 2ch flat mode: prepend as PostCard (newest-first, matching API ordering)
       const prevCards = repliesContainer.querySelectorAll('[data-post-index]');
@@ -592,7 +596,9 @@ export class ThreadPage {
         postIndex: 1,
         enablePostRefs: true,
       });
-      repliesContainer.insertBefore(card.getElement(), repliesContainer.firstChild);
+      const cardEl = card.getElement();
+      repliesContainer.insertBefore(cardEl, repliesContainer.firstChild);
+      cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
     // Update root post reply count
