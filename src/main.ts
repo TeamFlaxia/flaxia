@@ -158,10 +158,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     let pushWs: WebSocket | null = null;
     let _pushWsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
+    const isCapacitorNative =
+      typeof window !== 'undefined' &&
+      typeof window.Capacitor !== 'undefined' &&
+      typeof window.Capacitor.isNativePlatform === 'function' &&
+      window.Capacitor.isNativePlatform();
+
     const connectPushWebSocket = () => {
       // ブラウザ版は Service Worker (Web Push) を使うので WebSocket は使わない
+      // Capacitor も WebSocket でプッシュを受信する（Service Worker 非対応のため）
       if (typeof window !== 'undefined' && !(window as any).__TAURI__ && !(window as any).__TAURI_INTERNALS__) {
-        return;
+        if (!isCapacitorNative) return;
       }
 
       if (pushWs) return; // already connected/reconnecting
@@ -177,9 +184,12 @@ document.addEventListener('DOMContentLoaded', async () => {
           try {
             const data = JSON.parse(ev.data);
             console.log('[push] received:', data);
-            // OS通知を表示 (Tauri desktop)
+            // OS通知を表示 (Tauri desktop / Capacitor mobile)
             if (typeof tauriNotify === 'function') {
               tauriNotify(data.title || 'Flaxia', data.body || 'New notification');
+            }
+            if (typeof capacitorNotify === 'function') {
+              capacitorNotify(data.title || 'Flaxia', data.body || 'New notification');
             }
             // バッジ即時更新
             refreshNotificationBadges();
@@ -291,12 +301,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__)) {
         return; // Tauri desktop/mobile — no Service Worker push needed
       }
-      if (
-        typeof window !== 'undefined' &&
-        typeof window.Capacitor !== 'undefined' &&
-        typeof window.Capacitor.isNativePlatform === 'function' &&
-        window.Capacitor.isNativePlatform()
-      ) {
+      if (isCapacitorNative) {
         return; // Capacitor mobile — no Service Worker push needed
       }
       await registerPushToken();
@@ -308,6 +313,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     await initTauriBadge();
     // Initialize Capacitor native notifications (mobile only)
     await initCapacitorNotifications();
+    // Capacitor ライフサイクル: アプリ復帰時に WebSocket 再接続
+    if (isCapacitorNative) {
+      try {
+        const { App } = await import('@capacitor/app');
+        await App.addListener('appStateChange', ({ isActive }) => {
+          if (isActive) {
+            // フォアグラウンド復帰時、WebSocket を再接続 & 未読カウント即時取得
+            if (!pushWs) connectPushWebSocket();
+            refreshNotificationBadges();
+          }
+        });
+      } catch {
+        console.log('[push] @capacitor/app not available');
+      }
+    }
     // Register Service Worker for Web Push (browser only, no-op in Tauri/Capacitor)
     initializeWebPush();
 
@@ -343,15 +363,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         typeof window !== 'undefined' &&
         (window.__TAURI__ || window.__TAURI_INTERNALS__) &&
         /Android/i.test(navigator.userAgent);
-      const isCapacitorMobile =
-        typeof window !== 'undefined' &&
-        typeof window.Capacitor !== 'undefined' &&
-        typeof window.Capacitor.isNativePlatform === 'function' &&
-        window.Capacitor.isNativePlatform();
       if (
         tauriNotify &&
         !isRealTauriAndroid &&
-        !isCapacitorMobile &&
+        !isCapacitorNative &&
         unreadNotificationCount > previousUnreadCount &&
         data?.notifications?.length
       ) {
@@ -366,7 +381,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
       } else if (
         capacitorNotify &&
-        isCapacitorMobile &&
+        isCapacitorNative &&
         unreadNotificationCount > previousUnreadCount &&
         data?.notifications?.length
       ) {
@@ -384,16 +399,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     // Expose for Rust desktop background polling (lib.rs background thread, Tauri desktop only)
-    const isCapacitorPlatform =
-      typeof window !== 'undefined' &&
-      typeof window.Capacitor !== 'undefined' &&
-      typeof window.Capacitor.isNativePlatform === 'function' &&
-      window.Capacitor.isNativePlatform();
     const isTauriDesktop =
       typeof window !== 'undefined' &&
       (window.__TAURI__ || window.__TAURI_INTERNALS__) &&
       !/Android/i.test(navigator.userAgent) &&
-      !isCapacitorPlatform;
+      !isCapacitorNative;
     if (isTauriDesktop) {
       window.__tauriDesktopPoll = refreshNotificationBadges;
     }
