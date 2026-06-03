@@ -12,7 +12,7 @@ export type SandboxMessage =
 
 export function isParentMessage(msg: unknown): msg is ParentMessage {
   if (typeof msg !== 'object' || msg === null) return false;
-  const m = msg as any;
+  const m = msg as Record<string, unknown>;
 
   switch (m.type) {
     case 'REQUEST_FULLSCREEN':
@@ -28,7 +28,7 @@ export function isParentMessage(msg: unknown): msg is ParentMessage {
 
 export function isSandboxMessage(msg: unknown): msg is SandboxMessage {
   if (typeof msg !== 'object' || msg === null) return false;
-  const m = msg as any;
+  const m = msg as Record<string, unknown>;
 
   switch (m.type) {
     case 'FULLSCREEN_GRANTED':

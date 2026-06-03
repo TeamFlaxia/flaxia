@@ -60,7 +60,11 @@ export async function executeUniversalZip(
 // Helper function to detect best mode based on environment
 export function getOptimalZipMode(): ZipExecutionMode {
   // Check if running in Cloudflare Workers environment
-  if (typeof globalThis !== 'undefined' && (globalThis as any).WebSocketPair && (globalThis as any).D1Database) {
+  if (
+    typeof globalThis !== 'undefined' &&
+    (globalThis as { WebSocketPair?: unknown }).WebSocketPair &&
+    (globalThis as { D1Database?: unknown }).D1Database
+  ) {
     return 'wvfs';
   }
 

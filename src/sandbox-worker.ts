@@ -112,7 +112,7 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
     if (response) return response;
 
     return c.json({ error: 'File not found in ZIP', path: filePath }, 404);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('WVFS error:', error);
     if (error instanceof Error && error.message.includes('Path traversal')) {
       console.warn('Security violation: Path traversal attempt detected');

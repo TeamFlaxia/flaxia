@@ -1,10 +1,11 @@
 import { createPostComposer, PostComposer } from '../components/PostComposer.js';
+import type { Post } from '../types/post.js';
 import { t } from './i18n.js';
 import { registerModal } from './modal-state.js';
 
 export function openPostModal(opts: {
   currentUser: { username: string; id?: string; display_name?: string; avatar_key?: string } | null | undefined;
-  onPostCreated: (post: any) => void;
+  onPostCreated: (post: Post) => void;
 }): void {
   const unregister = registerModal();
   const overlay = document.createElement('div');

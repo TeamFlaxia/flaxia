@@ -1,3 +1,4 @@
+import type JSZipType from 'jszip';
 import { validateFileType } from './file-extensions';
 import { t } from './i18n.js';
 
@@ -12,14 +13,14 @@ const _SANDBOX_API_ORIGIN = '';
 let activeHandle: ZipExecutorHandle | null = null;
 
 // Cache for dynamic imports
-let jszipPromise: Promise<any> | null = null;
+let jszipPromise: Promise<{ default: JSZipType }> | null = null;
 
-async function getJSZip() {
+async function getJSZip(): Promise<JSZipType> {
   if (!jszipPromise) {
-    jszipPromise = import('jszip');
+    jszipPromise = import('jszip') as Promise<{ default: JSZipType }>;
   }
   const JSZipModule = await jszipPromise;
-  return (JSZipModule as any).default;
+  return JSZipModule.default;
 }
 
 export async function executeZip(
@@ -184,7 +185,7 @@ export async function rewriteIndexHtmlLegacy(zipData: ArrayBuffer, blobUrlMap: M
 }
 
 // Private helper functions (used by legacy functions)
-function validateZip(zip: any): void {
+function validateZip(zip: JSZipType): void {
   const files = Object.entries(zip.files);
 
   if (files.length > 255) {
@@ -195,7 +196,7 @@ function validateZip(zip: any): void {
   let hasIndexHtml = false;
 
   for (const [path, file] of files) {
-    if ((file as any).dir) continue;
+    if (file.dir) continue;
 
     if (path.length > 255) {
       throw new Error(`Path too long: ${path}`);
@@ -206,7 +207,7 @@ function validateZip(zip: any): void {
       throw new Error(`Directory too deep: ${path}`);
     }
 
-    const fileSize = (file as any)._data?.uncompressedSize || 0;
+    const fileSize = (file as { _data?: { uncompressedSize: number } })._data?.uncompressedSize || 0;
     totalSize += fileSize;
     if (totalSize > 100 * 1024 * 1024) {
       throw new Error('Extracted size too large (max 100MB)');
@@ -216,8 +217,8 @@ function validateZip(zip: any): void {
       throw new Error('Nested ZIP files are not allowed');
     }
 
-    const unixPermissions = (file as any).unixPermissions;
-    if (unixPermissions && (unixPermissions & 0xf000) === 0xa000) {
+    const unixPermissions = file.unixPermissions;
+    if (typeof unixPermissions === 'number' && (unixPermissions & 0xf000) === 0xa000) {
       throw new Error('Symbolic links are not allowed');
     }
 
@@ -251,17 +252,17 @@ export async function validateZipLegacy(zipData: ArrayBuffer): Promise<void> {
   validateZip(zip);
 }
 
-async function generateBlobUrlMap(zip: any): Promise<Map<string, string>> {
+async function generateBlobUrlMap(zip: JSZipType): Promise<Map<string, string>> {
   const blobUrlMap = new Map<string, string>();
 
   for (const [path, file] of Object.entries(zip.files)) {
-    if ((file as any).dir) continue;
+    if (file.dir) continue;
 
     const normalizedPath = path.replace(/^\.\//, '');
     const { mimeType } = validateFileType(path);
 
     if (mimeType) {
-      const content = await (file as any).async('uint8array');
+      const content = await file.async('uint8array');
       const arrayBuffer = content.buffer.slice(
         content.byteOffset,
         content.byteOffset + content.byteLength,
@@ -275,13 +276,13 @@ async function generateBlobUrlMap(zip: any): Promise<Map<string, string>> {
   return blobUrlMap;
 }
 
-async function rewriteIndexHtml(zip: any, blobUrlMap: Map<string, string>): Promise<string> {
+async function rewriteIndexHtml(zip: JSZipType, blobUrlMap: Map<string, string>): Promise<string> {
   const indexFile = zip.files['index.html'];
   if (!indexFile || indexFile.dir) {
     throw new Error('index.html not found at root');
   }
 
-  let htmlContent = await (indexFile as any).async('string');
+  let htmlContent = await indexFile.async('string');
   htmlContent = rewriteHtmlString(htmlContent, blobUrlMap);
 
   return htmlContent;

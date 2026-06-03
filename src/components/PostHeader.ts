@@ -26,7 +26,7 @@ export function createPostHeader(props: PostHeaderProps): HTMLElement {
   if (props.avatar_key) {
     // requestIdleCallback を使ってアイコン読み込みを遅延
     if ('requestIdleCallback' in window) {
-      (window as any).requestIdleCallback(
+      window.requestIdleCallback?.(
         () => {
           loadAvatarImage(avatar, props.avatar_key!);
         },

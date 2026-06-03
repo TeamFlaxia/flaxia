@@ -620,7 +620,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
         languageMessage.textContent = errorData.error || t('settings.language_save_failed');
         languageMessage.style.color = 'var(--danger)';
       }
-    } catch (_error: any) {
+    } catch (_error: unknown) {
       languageMessage.textContent = t('settings.language_network_error');
       languageMessage.style.color = 'var(--danger)';
     } finally {
@@ -662,7 +662,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
         emailMessage.textContent = errorData.error || t('settings.email_save_failed');
         emailMessage.style.color = 'var(--danger)';
       }
-    } catch (_error: any) {
+    } catch (_error: unknown) {
       emailMessage.textContent = t('settings.email_network_error');
       emailMessage.style.color = 'var(--danger)';
     } finally {
@@ -718,7 +718,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
         passwordMessage.textContent = errorData.error || t('settings.password_save_failed');
         passwordMessage.style.color = 'var(--danger)';
       }
-    } catch (_error: any) {
+    } catch (_error: unknown) {
       passwordMessage.textContent = t('settings.password_network_error');
       passwordMessage.style.color = 'var(--danger)';
     } finally {

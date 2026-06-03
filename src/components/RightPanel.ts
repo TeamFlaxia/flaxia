@@ -18,7 +18,6 @@ export class RightPanel {
   private userSuggestions: UserSuggestion[] = [];
 
   constructor(props: RightPanelProps = {}) {
-    this.props = props;
     this.element = this.createElement();
     this.setupEventListeners();
     this.loadTrendingTags();

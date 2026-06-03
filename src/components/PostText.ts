@@ -1,12 +1,13 @@
 import DOMPurify from 'dompurify';
+import type MarkdownIt from 'markdown-it';
 import { PostTextProps } from '../types/post.js';
 
 // Configure markdown-it with security settings
-let md: any = null;
+let md: MarkdownIt | null = null;
 
 // Cache for dynamic imports
 let katexPromise: Promise<typeof import('katex')> | null = null;
-let markdownitPromise: Promise<any> | null = null;
+let markdownitPromise: Promise<typeof import('markdown-it')> | null = null;
 let katexLoadingPromise: Promise<void> | null = null;
 
 async function getMarkdownIt() {
@@ -454,7 +455,7 @@ async function loadKaTeX(): Promise<void> {
   const katex = await getKatex();
 
   // Make katex available globally
-  (window as any).katex = katex.default;
+  (window as unknown as Record<string, unknown>).katex = katex.default;
   katexLoadingPromise = null;
 }
 
@@ -525,13 +526,5 @@ function linkifyPostRefs(container: HTMLElement): void {
     }
 
     parent.replaceChild(fragment, textNode);
-  }
-}
-
-declare global {
-  interface Window {
-    katex?: {
-      render: (text: string, element: HTMLElement, options: { throwOnError: boolean; displayMode: boolean }) => void;
-    };
   }
 }

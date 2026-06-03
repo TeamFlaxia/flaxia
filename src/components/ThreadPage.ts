@@ -25,12 +25,68 @@ export class ThreadPage {
   private isRootReplyComposerOpen: boolean = false;
   private replyNodes: ReplyNode[] = [];
   private leftNav?: ReturnType<typeof createLeftNav>;
+  private boundPostUpdatedHandler?: (e: Event) => void;
 
   constructor(props: ThreadPageProps) {
     this.props = props;
     this.element = this.createElement();
     this.setupSwipeDetection();
+    this.setupPostUpdatedListener();
     this.loadThread();
+  }
+
+  private setupPostUpdatedListener(): void {
+    this.boundPostUpdatedHandler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail?.reply) return;
+      const replyRootId = (detail.reply as Record<string, unknown>)?.root_id;
+      if (!replyRootId || replyRootId !== this.props.postId) return;
+      // For flat mode (2ch): when a reply is created via inline PostCard composer,
+      // insert the reply into the flat list.
+      const replyStyle = getReplyStyle();
+      if (replyStyle !== 'twitter') {
+        this.insertFlatReply(detail.reply);
+      }
+    };
+    window.addEventListener('postUpdated', this.boundPostUpdatedHandler);
+  }
+
+  private insertFlatReply(newReply: Record<string, unknown>): void {
+    const repliesContent = this.element.querySelector('.thread-replies-content') as HTMLElement;
+    if (!repliesContent) return;
+
+    const repliesContainer = repliesContent.querySelector('.replies-container') as HTMLElement;
+    if (!repliesContainer) return;
+
+    // Shift existing indices by +1 and prepend new reply as index 1 (newest-first)
+    const prevCards = repliesContainer.querySelectorAll('[data-post-index]');
+    prevCards.forEach((card) => {
+      const cur = parseInt(card.getAttribute('data-post-index')!, 10);
+      card.setAttribute('data-post-index', String(cur + 1));
+      const span = card.querySelector('span');
+      if (span && /^\d+$/.test(span.textContent || '')) {
+        span.textContent = String(cur + 1);
+      }
+    });
+    const card = createPostCard({
+      post: newReply as unknown as Post,
+      sandboxOrigin: this.props.sandboxOrigin,
+      currentUser: this.props.currentUser || undefined,
+      depth: (newReply.depth as number) || 0,
+      onDelete: () => {},
+      disableNavigation: true,
+      postIndex: 1,
+      enablePostRefs: true,
+    });
+    const cardEl = card.getElement();
+    repliesContainer.insertBefore(cardEl, repliesContainer.firstChild);
+    cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+    // Update replies header count
+    const header = repliesContent.querySelector('#thread-replies-header, h2') as HTMLElement;
+    if (header) {
+      header.textContent = t('thread.replies_header', { count: formatCount(repliesContainer.children.length) });
+    }
   }
 
   private createElement(): HTMLElement {
@@ -73,6 +129,11 @@ export class ThreadPage {
           if (this.props.currentUser) {
             window.history.pushState({}, '', '/notifications');
             window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'notifications' } }));
+          }
+        } else if (item === 'bookmarks') {
+          if (this.props.currentUser) {
+            window.history.pushState({}, '', '/bookmarks');
+            window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'bookmarks' } }));
           }
         } else if (item === 'settings') {
           window.history.pushState({}, '', '/settings');
@@ -302,7 +363,6 @@ export class ThreadPage {
   }
 
   private async loadThread(): Promise<void> {
-    this.isLoading = true;
     const rootContainer = this.element.querySelector('.thread-root-post-container') as HTMLElement;
     const repliesContent = this.element.querySelector('.thread-replies-content') as HTMLElement;
     const loading = this.element.querySelector('.thread-loading') as HTMLElement;
@@ -358,11 +418,12 @@ export class ThreadPage {
       rootContainer.appendChild(this.rootReplyComposer.getElement());
 
       // Setup event listener for root post reply toggle
-      this.rootPostCard.getElement().addEventListener('replyToggle', (e: any) => {
-        if (e.detail.postId === data.root.id) {
+      this.rootPostCard.getElement().addEventListener('replyToggle', ((e: Event) => {
+        const customEvent = e as CustomEvent;
+        if (customEvent.detail.postId === data.root.id) {
           this.toggleRootReplyComposer();
         }
-      });
+      }) as EventListener);
 
       // Add replies header
       const repliesHeader = document.createElement('h2');
@@ -452,16 +513,106 @@ export class ThreadPage {
       loading.textContent = t('thread.load_failed');
       loading.style.color = '#ef4444';
     } finally {
-      this.isLoading = false;
     }
   }
 
   private handleRootReplyCreated(newReply: Post): void {
-    // Hide root reply composer after successful reply
     this.hideRootReplyComposer();
 
-    // Reload the thread to show the new reply with updated counts from server
-    this.loadThread();
+    const repliesContent = this.element.querySelector('.thread-replies-content') as HTMLElement;
+    if (!repliesContent) return;
+
+    // Remove "no replies" placeholder if present
+    const noReplies = repliesContent.querySelector('.thread-no-replies, p');
+    if (noReplies && !noReplies.closest('.replies-container') && !noReplies.closest('.reply-node')) {
+      noReplies.remove();
+    }
+
+    // Get or create replies container
+    let repliesContainer = repliesContent.querySelector('.replies-container') as HTMLElement;
+    if (!repliesContainer) {
+      // Create replies header
+      const repliesHeader = document.createElement('h2');
+      repliesHeader.id = 'thread-replies-header';
+      repliesHeader.textContent = t('thread.replies_header', { count: formatCount(1) });
+      repliesHeader.style.cssText = `
+        color: #64748b;
+        font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-size: 1rem;
+        margin: 0 0 1rem 0;
+        padding-top: 1rem;
+        font-weight: normal;
+      `;
+      repliesContent.appendChild(repliesHeader);
+
+      repliesContainer = document.createElement('div');
+      repliesContainer.className = 'replies-container';
+      repliesContent.appendChild(repliesContainer);
+    } else {
+      // Update replies header count
+      const header = repliesContent.querySelector('#thread-replies-header, h2') as HTMLElement;
+      if (header) {
+        const currentCount = repliesContainer.children.length;
+        header.textContent = t('thread.replies_header', { count: formatCount(currentCount + 1) });
+      }
+    }
+
+    const replyStyle = getReplyStyle();
+    if (replyStyle === 'twitter') {
+      // Tree mode: create a ReplyNode for the new reply
+      const node = { post: newReply, children: [] };
+      const nextIndex = repliesContainer.children.length + 1;
+      const indexMap = new Map<string, number>();
+      indexMap.set(newReply.id, nextIndex);
+      const replyNode = createReplyNode({
+        node,
+        sandboxOrigin: this.props.sandboxOrigin,
+        currentUser: this.props.currentUser,
+        onReplyCreated: (reply) => this.handleReplyCreated(reply),
+        postIndexMap: indexMap,
+      });
+      this.replyNodes.push(replyNode);
+      const replyEl = replyNode.getElement();
+      repliesContainer.appendChild(replyEl);
+      replyEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } else {
+      // 2ch flat mode: prepend as PostCard (newest-first, matching API ordering)
+      const prevCards = repliesContainer.querySelectorAll('[data-post-index]');
+      prevCards.forEach((card) => {
+        const cur = parseInt(card.getAttribute('data-post-index')!, 10);
+        card.setAttribute('data-post-index', String(cur + 1));
+        const span = card.querySelector('span');
+        if (span && /^\d+$/.test(span.textContent || '')) {
+          span.textContent = String(cur + 1);
+        }
+      });
+      const card = createPostCard({
+        post: newReply,
+        sandboxOrigin: this.props.sandboxOrigin,
+        currentUser: this.props.currentUser || undefined,
+        depth: newReply.depth,
+        onDelete: () => {},
+        disableNavigation: true,
+        postIndex: 1,
+        enablePostRefs: true,
+      });
+      const cardEl = card.getElement();
+      repliesContainer.insertBefore(cardEl, repliesContainer.firstChild);
+      cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    // Update root post reply count
+    if (this.rootPostCard) {
+      const currentCount = this.rootPostCard.getReplyCount() || 0;
+      this.rootPostCard.updatePost({ reply_count: currentCount + 1 });
+    }
+
+    // Notify Timeline PostCards about updated reply count
+    window.dispatchEvent(
+      new CustomEvent('postUpdated', {
+        detail: { postId: this.props.postId, replyCount: repliesContainer.children.length },
+      }),
+    );
   }
 
   private toggleRootReplyComposer(): void {
@@ -509,8 +660,11 @@ export class ThreadPage {
   }
 
   private handleReplyCreated(newReply: Post): void {
-    // Reload the thread to show the new reply with updated counts from server
-    this.loadThread();
+    // In tree mode, ReplyNode.handleReplyCreated already inserts the child reply into the DOM.
+    // Just update root reply count.
+    if (this.rootPostCard) {
+      this.rootPostCard.updatePost({ reply_count: (this.rootPostCard.getReplyCount() || 0) + 1 });
+    }
   }
 
   public getElement(): HTMLElement {
@@ -532,6 +686,12 @@ export class ThreadPage {
     if (this.rootReplyComposer) {
       this.rootReplyComposer.destroy();
       this.rootReplyComposer = undefined;
+    }
+
+    // Cleanup event listener
+    if (this.boundPostUpdatedHandler) {
+      window.removeEventListener('postUpdated', this.boundPostUpdatedHandler);
+      this.boundPostUpdatedHandler = undefined;
     }
 
     // Cleanup left nav

@@ -1,5 +1,6 @@
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { Post, PostCardMode } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
 interface SearchPageProps {
@@ -15,9 +16,16 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
 
   let activeFilter: 'all' | 'users' | 'posts' | 'arcade' = initialFilter;
 
-  let allUsers: any[] = [];
-  let allPosts: any[] = [];
-  let allArcade: any[] = [];
+  let allUsers: Array<{
+    id: string;
+    username: string;
+    display_name?: string;
+    avatar_key?: string;
+    bio?: string;
+    is_following?: boolean;
+  }> = [];
+  let allPosts: Post[] = [];
+  let allArcade: Post[] = [];
 
   const container = document.createElement('div');
   container.className = 'search-page';
@@ -229,8 +237,8 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
           })),
         );
       }
-    } catch (err: any) {
-      if (err?.name !== 'AbortError') console.error('Suggest error:', err);
+    } catch (err: unknown) {
+      if ((err as { name?: string })?.name !== 'AbortError') console.error('Suggest error:', err);
     }
   };
 
@@ -369,8 +377,18 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         fetch(`/api/search?q=${encodeURIComponent(query)}&type=posts&limit=20`),
         fetch(`/api/search?q=${encodeURIComponent(query)}&type=arcade&limit=20`),
       ]);
-      const postsData = (await postsRes.json()) as { results: any[]; users?: any[] };
-      const arcadeData = (await arcadeRes.json()) as { results: any[] };
+      const postsData = (await postsRes.json()) as {
+        results: Post[];
+        users?: Array<{
+          id: string;
+          username: string;
+          display_name?: string;
+          avatar_key?: string;
+          bio?: string;
+          is_following?: boolean;
+        }>;
+      };
+      const arcadeData = (await arcadeRes.json()) as { results: Post[] };
 
       allUsers = postsData.users || [];
       allPosts = postsData.results || [];
@@ -460,7 +478,16 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
     }
   };
 
-  const renderUsers = (users: any[]) => {
+  const renderUsers = (
+    users: Array<{
+      id: string;
+      username: string;
+      display_name?: string;
+      avatar_key?: string;
+      bio?: string;
+      is_following?: boolean;
+    }>,
+  ) => {
     users.forEach((user) => {
       const userItem = document.createElement('div');
       userItem.style.cssText = `
@@ -513,20 +540,20 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
     });
   };
 
-  const renderPosts = (posts: any[]) => {
+  const renderPosts = (posts: Post[]) => {
     posts.forEach((post) => {
       const postCard = createPostCard({
         post,
         currentUser,
         sandboxOrigin,
-        initialMode: 'preview' as any,
+        initialMode: PostCardMode.PREVIEW,
         depth: post.depth,
       });
       content.appendChild(postCard.getElement());
     });
   };
 
-  const renderArcade = (posts: any[], grid: boolean) => {
+  const renderArcade = (posts: Post[], grid: boolean) => {
     if (grid) {
       // YouTube-style horizontal list
       for (const post of posts) {

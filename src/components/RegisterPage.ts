@@ -250,7 +250,7 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
         }),
       });
 
-      const data = (await response.json()) as { error?: string; user?: any };
+      const data = (await response.json()) as { error?: string; user?: Record<string, unknown> };
 
       if (response.ok) {
         onSuccess();

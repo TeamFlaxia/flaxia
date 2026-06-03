@@ -569,7 +569,7 @@ export class ReplyComposer {
         img.src = `/api/images/${user.avatar_key}`;
       };
       if ('requestIdleCallback' in window) {
-        (window as any).requestIdleCallback(loadAvatar, { timeout: 1000 });
+        window.requestIdleCallback?.(loadAvatar, { timeout: 1000 });
       } else {
         setTimeout(loadAvatar, 100);
       }
@@ -633,12 +633,13 @@ export class ReplyComposer {
       if (this.props.onReplyCreated && commitResult.reply) {
         this.props.onReplyCreated(commitResult.reply);
       }
-    } catch (error: any) {
-      console.error('Failed to create reply:', error);
-      const isAuthError = error?.message === t('reply_composer.error_auth_required');
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      console.error('Failed to create reply:', err);
+      const isAuthError = err?.message === t('reply_composer.error_auth_required');
       const errorMessage = isAuthError
         ? t('reply_composer.error_auth_required')
-        : error?.message || t('composer.error_create_failed');
+        : err?.message || t('composer.error_create_failed');
       showToast(errorMessage, true);
       if (isAuthError) {
         showSignInPrompt(
@@ -703,7 +704,7 @@ export class ReplyComposer {
         console.error('Upload failed response:', responseText);
 
         // Try to parse as JSON, fallback to text if it fails
-        let error: any;
+        let error: Record<string, unknown>;
         try {
           error = JSON.parse(responseText);
         } catch {
@@ -756,7 +757,7 @@ export class ReplyComposer {
       if (response.status === 401) {
         throw new Error(t('reply_composer.error_auth_required'));
       }
-      const error = (await response.json()) as any;
+      const error = (await response.json()) as { error?: string };
       console.error('Commit reply failed:', error);
       return null;
     }

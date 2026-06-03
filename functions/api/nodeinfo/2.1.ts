@@ -57,9 +57,12 @@ app.get('/', async (c) => {
     return c.json(nodeInfo, 200, {
       'Content-Type': 'application/json; profile=http://nodeinfo.diaspora.software/ns/schema/2.1#',
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('NodeInfo error:', error);
-    return c.json({ error: 'NodeInfo failed', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'NodeInfo failed', details: (error as { message?: string }).message || 'Unknown error' },
+      500,
+    );
   }
 });
 

@@ -98,7 +98,6 @@ export class ThreadView {
   }
 
   private async loadThread(): Promise<void> {
-    this.isLoading = true;
     const content = this.element.querySelector('.thread-content') as HTMLElement;
     const loading = this.element.querySelector('.thread-loading') as HTMLElement;
 
@@ -142,7 +141,6 @@ export class ThreadView {
       loading.textContent = t('thread_view.load_failed');
       loading.style.color = '#ef4444';
     } finally {
-      this.isLoading = false;
     }
   }
 
@@ -150,7 +148,7 @@ export class ThreadView {
     // Increment reply count on root post
     if (this.rootPostCard) {
       this.rootPostCard.updatePost({
-        reply_count: (this.rootPostCard.props.post.reply_count || 0) + 1,
+        reply_count: (this.rootPostCard.getReplyCount() || 0) + 1,
       });
     }
   }

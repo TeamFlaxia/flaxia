@@ -1,4 +1,5 @@
-import { FlaxiaClient } from '@flaxia/sdk';
+import { FlaxiaClient, type SubmitTaskOptions } from '@flaxia/sdk';
+import type { Context, Next } from 'hono';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { nanoid } from 'nanoid';
@@ -39,11 +40,81 @@ type Bindings = {
   CROWD_API_KEY: string;
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
+  CF_ACCESS_AUD: string;
+  CF_TEAM_DOMAIN: string;
+  CROWD_ORCHESTRATOR?: Fetcher;
 };
 
 type Variables = {
   user: User | null;
 };
+
+type PostRow = {
+  id: string;
+  user_id: string;
+  username: string;
+  display_name?: string | null;
+  avatar_key?: string | null;
+  text: string;
+  hashtags: string;
+  mentions: string;
+  gif_key: string | null;
+  payload_key: string | null;
+  swf_key: string | null;
+  thumbnail_key: string | null;
+  parent_id: string | null;
+  root_id: string | null;
+  depth: number;
+  fresh_count: number;
+  bookmark_count: number;
+  reply_count: number;
+  impressions: number;
+  status: string;
+  hidden: number;
+  sentiment_score: number | null;
+  sentiment_task_id: string | null;
+  actor_id: string | null;
+  created_at: string;
+  is_freshed?: boolean;
+  is_bookmarked?: boolean;
+  poll?: {
+    id: string;
+    question: string;
+    multipleChoice: boolean;
+    endsAt?: string | null;
+    ended_notified?: number;
+    expired: boolean;
+    options: Array<{ id: string; label: string; votes_count: number }>;
+    userVote: string | null;
+  };
+};
+
+type PollRow = {
+  id: string;
+  post_id: string;
+  question: string;
+  multiple_choice: number;
+  ends_at: string | null;
+  ended_notified: number;
+};
+
+type PollOptionRow = {
+  id: string;
+  poll_id: string;
+  label: string;
+  votes_count: number;
+};
+
+type WebfingerData = {
+  links?: Array<{ rel: string; href?: string; type?: string }>;
+};
+
+type ActorData = {
+  inbox?: string;
+  publicKey?: { publicKeyPem?: string };
+};
+
+type SubmitTaskOptionsWithTimeout = SubmitTaskOptions & { timeoutMs: number };
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -68,7 +139,7 @@ app.use('/api/*', async (c, next) => {
   await next();
 });
 
-const requireAuth = async (c: any, next: any) => {
+const requireAuth = async (c: Context<{ Bindings: Bindings; Variables: Variables }>, next: Next) => {
   if (!c.get('user')) {
     return c.json({ error: 'Unauthorized' }, 401);
   }
@@ -99,7 +170,7 @@ app.use(
   }),
 );
 
-function getCrowdClient(c: any): FlaxiaClient | null {
+function getCrowdClient(c: Context<{ Bindings: Bindings; Variables: Variables }>): FlaxiaClient | null {
   const orchestratorUrl = (c.env.CROWD_ORCHESTRATOR_URL ?? '').replace(/\/+$/, '');
   const apiKey = c.env.CROWD_API_KEY;
   if (!orchestratorUrl || !apiKey) return null;
@@ -112,7 +183,11 @@ const processingPosts = new Set<string>();
 // Timestamp of the last sentiment analysis task submitted (ms since epoch)
 let lastSentimentTaskAt = 0;
 
-async function analyzeSentiment(c: any, postId: string, text: string): Promise<void> {
+async function analyzeSentiment(
+  c: Context<{ Bindings: Bindings; Variables: Variables }>,
+  postId: string,
+  text: string,
+): Promise<void> {
   if (processingPosts.has(postId)) return;
   processingPosts.add(postId);
   try {
@@ -132,9 +207,9 @@ async function analyzeSentiment(c: any, postId: string, text: string): Promise<v
       },
       callbackUrl,
       timeoutMs: 600000,
-    });
+    } as SubmitTaskOptionsWithTimeout);
 
-    const taskId = (task as any).taskId;
+    const taskId = (task as { taskId?: string }).taskId;
     if (!taskId) return;
     await c.env.DB.prepare('UPDATE posts SET sentiment_task_id = ? WHERE id = ?').bind(taskId, postId).run();
     console.log(`Sentiment task submitted for post ${postId}: taskId=${taskId}`);
@@ -154,6 +229,14 @@ const MAGIC_TYPES: { offset: number; bytes: number[]; mime: string }[] = [
   { offset: 0, bytes: [0x50, 0x4b, 0x05, 0x06], mime: 'application/zip' },
   { offset: 0, bytes: [0x43, 0x57, 0x53], mime: 'application/x-shockwave-flash' },
   { offset: 0, bytes: [0x46, 0x57, 0x53], mime: 'application/x-shockwave-flash' },
+  { offset: 0, bytes: [0x49, 0x44, 0x33], mime: 'audio/mpeg' }, // MP3 with ID3v2 tag
+  { offset: 0, bytes: [0xff, 0xfb], mime: 'audio/mpeg' }, // MP3 MPEG1 Layer3
+  { offset: 0, bytes: [0xff, 0xf3], mime: 'audio/mpeg' }, // MP3 MPEG1 Layer3 no CRC
+  { offset: 0, bytes: [0xff, 0xf2], mime: 'audio/mpeg' }, // MP3 variant
+  { offset: 0, bytes: [0xff, 0xe3], mime: 'audio/mpeg' }, // MP3 MPEG2 Layer3
+  { offset: 0, bytes: [0xff, 0xe2], mime: 'audio/mpeg' }, // MP3 MPEG2 Layer3 no CRC
+  { offset: 8, bytes: [0x57, 0x41, 0x56, 0x45], mime: 'audio/wav' }, // WAV (RIFF....WAVE)
+  { offset: 0, bytes: [0x4f, 0x67, 0x67, 0x53], mime: 'audio/ogg' }, // OGG
 ];
 
 function detectMimeType(data: ArrayBuffer): string | null {
@@ -179,7 +262,7 @@ function detectMimeType(data: ArrayBuffer): string | null {
   return null;
 }
 
-function isAllowedImageMime(mime: string | null): mime is string {
+function isAllowedImageMime(mime: string | null): mime is 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' {
   return !!mime && ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(mime);
 }
 
@@ -232,6 +315,7 @@ app.put('/api/upload/*', requireAuth, async (c) => {
     // Disallow SVG disguised as other types (SVG has no unique magic bytes, would fail detection above)
     if (
       !isAllowedImageMime(detectedMime) &&
+      !detectedMime.startsWith('audio/') &&
       detectedMime !== 'application/zip' &&
       detectedMime !== 'application/x-shockwave-flash'
     ) {
@@ -250,9 +334,12 @@ app.put('/api/upload/*', requireAuth, async (c) => {
     });
 
     return c.json({ success: true, key });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Upload error:', error);
-    return c.json({ error: 'Upload failed', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Upload failed', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -305,9 +392,12 @@ app.get('/api/images/*', async (c) => {
         'Access-Control-Allow-Origin': '*',
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Image proxy error:', error);
-    return c.json({ error: 'Failed to fetch image', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to fetch image', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -367,9 +457,12 @@ app.get('/api/audio/*', async (c) => {
         'Content-Length': object.size?.toString() || '0',
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Audio proxy error:', error);
-    return c.json({ error: 'Failed to fetch audio', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to fetch audio', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -519,9 +612,12 @@ app.get('/api/dos-player/:postId', async (c) => {
         'Cross-Origin-Embedder-Policy': 'credentialless',
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('DOS player error:', error);
-    return c.json({ error: 'Failed to serve DOS player', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to serve DOS player', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -562,9 +658,12 @@ app.get('/api/zip/:postId', async (c) => {
         'Cross-Origin-Resource-Policy': 'cross-origin',
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('ZIP proxy error:', error);
-    return c.json({ error: 'Failed to fetch ZIP', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to fetch ZIP', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -645,9 +744,12 @@ app.get('/api/ads/:id/payload', async (c) => {
         'Access-Control-Allow-Origin': '*',
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Ad payload error:', error);
-    return c.json({ error: 'Failed to fetch ad payload', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to fetch ad payload', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -715,9 +817,12 @@ app.get('/api/thumbnail/:id', async (c) => {
         'Access-Control-Allow-Origin': '*',
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Thumbnail proxy error:', error);
-    return c.json({ error: 'Failed to fetch thumbnail', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to fetch thumbnail', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -755,9 +860,12 @@ app.get('/api/swf/:postId', async (c) => {
         'Cross-Origin-Resource-Policy': 'cross-origin',
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('SWF proxy error:', error);
-    return c.json({ error: 'Failed to fetch SWF', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to fetch SWF', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -1015,9 +1123,12 @@ app.get('/api/link-preview', async (c) => {
 
     const previewData = parseMetaTags(html, targetUrl.toString());
     return c.json(previewData);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Link preview error:', error);
-    return c.json({ error: 'Failed to fetch link preview', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to fetch link preview', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -1041,7 +1152,7 @@ app.get('/api/me', requireAuth, async (c) => {
         ng_words: JSON.parse(sessionData.user.ng_words ?? '[]') as string[],
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Auth check error:', error);
     return c.json({ error: 'Auth check failed' }, 500);
   }
@@ -1073,17 +1184,19 @@ app.get('/api/games', async (c) => {
         const currentUserId = sessionData?.user?.id;
 
         if (currentUserId && parsed.games.length > 0) {
-          const gameIds = parsed.games.map((g: any) => g.id);
+          const gameIds = parsed.games.map((g: Record<string, unknown>) => g.id as string);
           const freshResults = await c.env.DB.prepare(`
             SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${gameIds.map(() => '?').join(',')})
           `)
             .bind(currentUserId, ...gameIds)
             .all();
 
-          const freshedPostIds = new Set(freshResults.results?.map((r: any) => r.post_id) || []);
+          const freshedPostIds = new Set(
+            freshResults.results?.map((r: Record<string, unknown>) => r.post_id as string) || [],
+          );
 
-          parsed.games.forEach((game: any) => {
-            game.isFreshed = freshedPostIds.has(game.id);
+          parsed.games.forEach((game: Record<string, unknown>) => {
+            game.isFreshed = freshedPostIds.has(game.id as string);
           });
         }
 
@@ -1122,7 +1235,7 @@ app.get('/api/games', async (c) => {
           ORDER BY p.created_at DESC
         `).all();
 
-        shuffledIds = (idResults.results || []).map((r: any) => r.id);
+        shuffledIds = (idResults.results || []).map((r: Record<string, unknown>) => r.id as string);
 
         for (let i = shuffledIds.length - 1; i > 0; i--) {
           const j = Math.floor(Math.random() * (i + 1));
@@ -1161,7 +1274,7 @@ app.get('/api/games', async (c) => {
       const newOffset = offset + pageIds.length;
       const hasMore = newOffset < shuffledIds.length;
 
-      let shuffledGames: any[] = [];
+      let shuffledGames: Array<Record<string, unknown>> = [];
 
       if (pageIds.length > 0) {
         const placeholders = pageIds.map(() => '?').join(',');
@@ -1203,7 +1316,9 @@ app.get('/api/games', async (c) => {
           `)
             .bind(currentUserId, ...slicePostIds)
             .all();
-          sliceFreshedPostIds = new Set(freshResults.results?.map((r: any) => r.post_id) || []);
+          sliceFreshedPostIds = new Set(
+            freshResults.results?.map((r: Record<string, unknown>) => r.post_id as string) || [],
+          );
         }
 
         shuffledGames = pageIds
@@ -1214,7 +1329,7 @@ app.get('/api/games', async (c) => {
             if (row.swf_key) type = 'flash';
             else if (row.payload_key && row.payload_key.startsWith('dos/')) type = 'dos';
             else type = 'zip';
-            return {
+            const game: Record<string, unknown> = {
               id: row.postId,
               postId: row.postId,
               title: row.text?.substring(0, 100) || `Game by @${row.username}`,
@@ -1231,8 +1346,9 @@ app.get('/api/games', async (c) => {
               isFreshed: sliceFreshedPostIds.has(row.postId),
               createdAt: row.created_at,
             };
+            return game;
           })
-          .filter(Boolean);
+          .filter((x): x is Record<string, unknown> => x !== null);
       }
 
       return c.json({
@@ -1309,7 +1425,7 @@ app.get('/api/games', async (c) => {
         .bind(currentUserId, ...postIds)
         .all();
 
-      freshedPostIds = new Set(freshResults.results?.map((r: any) => r.post_id) || []);
+      freshedPostIds = new Set(freshResults.results?.map((r: Record<string, unknown>) => r.post_id as string) || []);
     }
 
     const games = (results || []).map((row) => {
@@ -1369,9 +1485,9 @@ app.get('/api/games', async (c) => {
     }
 
     return c.json(responseData);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Games fetch error:', error);
-    return c.json({ error: 'Failed to fetch games', details: error?.message }, 500);
+    return c.json({ error: 'Failed to fetch games', details: (error as { message?: string })?.message }, 500);
   }
 });
 
@@ -1385,8 +1501,9 @@ app.post('/api/auth/register', async (c) => {
       limit: 3,
       windowSeconds: 3600,
     });
-  } catch (kvError: any) {
-    console.warn('Register rate limit check failed, proceeding anyway:', kvError.message);
+  } catch (kvError: unknown) {
+    const err = kvError as { message?: string };
+    console.warn('Register rate limit check failed, proceeding anyway:', err.message);
   }
   if (!rl.allowed) return rateLimitResponse(c, rl.resetIn, 3);
 
@@ -1435,9 +1552,12 @@ app.post('/api/auth/register', async (c) => {
     setSessionCookie(response, session.id, isSecure);
 
     return response;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Registration error:', error);
-    return c.json({ error: 'Registration failed', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Registration failed', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -1451,8 +1571,9 @@ app.post('/api/auth/login', async (c) => {
       limit: 20,
       windowSeconds: 3600,
     });
-  } catch (kvError: any) {
-    console.warn('Login rate limit check failed, proceeding anyway:', kvError.message);
+  } catch (kvError: unknown) {
+    const err = kvError as { message?: string };
+    console.warn('Login rate limit check failed, proceeding anyway:', err.message);
   }
   if (!rl.allowed) return rateLimitResponse(c, rl.resetIn, 20);
 
@@ -1472,9 +1593,9 @@ app.post('/api/auth/login', async (c) => {
     setSessionCookie(response, result.session.id, isSecure);
 
     return response;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Login error:', error);
-    return c.json({ error: 'Login failed', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Login failed', details: (error as { message?: string })?.message || 'Unknown error' }, 500);
   }
 });
 
@@ -1492,9 +1613,12 @@ app.post('/api/auth/logout', requireAuth, async (c) => {
     clearSessionCookie(response, isSecure);
 
     return response;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Logout error:', error);
-    return c.json({ error: 'Logout failed', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Logout failed', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -1527,7 +1651,7 @@ app.get('/api/users/suggestions', async (c) => {
       .all();
 
     return c.json({ users: suggestions.results || [] });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('User suggestions error:', error);
     return c.json({ users: [] });
   }
@@ -1572,9 +1696,12 @@ app.post('/api/follows/:id', requireAuth, async (c) => {
       .run();
 
     return c.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Follow error:', error);
-    return c.json({ error: 'Failed to follow user', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to follow user', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -1609,8 +1736,8 @@ app.post('/api/remote-follow', requireAuth, async (c) => {
       return c.json({ error: 'Could not resolve remote user' }, 404);
     }
 
-    const wfData = (await wfResponse.json()) as any;
-    const selfLink = wfData.links?.find((l: any) => l.rel === 'self');
+    const wfData = (await wfResponse.json()) as WebfingerData;
+    const selfLink = wfData.links?.find((l: { rel: string }) => l.rel === 'self');
     if (!selfLink?.href) {
       return c.json({ error: 'Remote user has no ActivityPub actor link' }, 400);
     }
@@ -1626,7 +1753,7 @@ app.post('/api/remote-follow', requireAuth, async (c) => {
       return c.json({ error: 'Could not fetch remote actor' }, 404);
     }
 
-    const actorData = (await actorResponse.json()) as any;
+    const actorData = (await actorResponse.json()) as ActorData;
     const inboxUrl = actorData.inbox;
     if (!inboxUrl) {
       return c.json({ error: 'Remote actor has no inbox' }, 400);
@@ -1681,9 +1808,12 @@ app.post('/api/remote-follow', requireAuth, async (c) => {
       status: 'pending',
       message: 'Follow request sent to remote user',
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Remote follow error:', error);
-    return c.json({ error: 'Failed to follow remote user', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to follow remote user', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -1718,8 +1848,8 @@ app.delete('/api/remote-follow', requireAuth, async (c) => {
       return c.json({ error: 'Could not resolve remote user' }, 404);
     }
 
-    const wfData = (await wfResponse.json()) as any;
-    const selfLink = wfData.links?.find((l: any) => l.rel === 'self');
+    const wfData = (await wfResponse.json()) as WebfingerData;
+    const selfLink = wfData.links?.find((l: { rel: string }) => l.rel === 'self');
     if (!selfLink?.href) {
       return c.json({ error: 'Remote user has no ActivityPub actor link' }, 400);
     }
@@ -1771,9 +1901,12 @@ app.delete('/api/remote-follow', requireAuth, async (c) => {
       target: target,
       message: 'Unfollow request sent to remote user',
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Remote unfollow error:', error);
-    return c.json({ error: 'Failed to unfollow remote user', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to unfollow remote user', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -1831,7 +1964,7 @@ app.get('/api/.well-known/webfinger', async (c) => {
     return c.json(webfingerResponse, 200, {
       'Content-Type': 'application/jrd+json',
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('WebFinger error:', error);
     return c.json({ error: 'WebFinger failed' }, 500);
   }
@@ -1845,12 +1978,18 @@ app.get('/api/actors/:username', async (c) => {
       `SELECT id, username, display_name, bio, avatar_key FROM users WHERE username = ? COLLATE NOCASE`,
     )
       .bind(username)
-      .first()) as any;
+      .first()) as {
+      id: string;
+      username: string;
+      display_name: string | null;
+      bio: string | null;
+      avatar_key: string | null;
+    } | null;
     if (!user) return c.json({ error: 'User not found' }, 404);
 
     const keyRecord = (await c.env.DB.prepare(`SELECT public_key_pem FROM actor_keys WHERE user_id = ?`)
       .bind(user.id)
-      .first()) as any;
+      .first()) as { public_key_pem: string } | null;
     let publicKeyPem = keyRecord?.public_key_pem;
     if (!publicKeyPem) {
       const keyPair = await generateKeyPair();
@@ -1864,7 +2003,7 @@ app.get('/api/actors/:username', async (c) => {
 
     const actorUrl = `${c.env.BASE_URL}/api/actors/${username}`;
 
-    const actor: any = {
+    const actor: Record<string, unknown> = {
       '@context': ['https://www.w3.org/ns/activitystreams', 'https://w3id.org/security/v1'],
       type: 'Person',
       id: actorUrl,
@@ -1894,7 +2033,7 @@ app.get('/api/actors/:username', async (c) => {
     }
 
     return c.json(actor, 200, { 'Content-Type': 'application/activity+json' });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Actor endpoint error:', error);
     return c.json({ error: 'Actor endpoint failed' }, 500);
   }
@@ -1919,14 +2058,14 @@ app.post('/api/actors/:username/inbox', async (c) => {
     }
 
     const body = await c.req.text();
-    let activity: any;
+    let activity: Record<string, unknown>;
     try {
-      activity = JSON.parse(body);
+      activity = JSON.parse(body) as Record<string, unknown>;
     } catch {
       return c.json({ error: 'Invalid JSON' }, 400);
     }
 
-    const actorId = activity.actor;
+    const actorId = activity.actor as string;
     if (!actorId || typeof actorId !== 'string') {
       return c.json({ error: 'Invalid actor' }, 400);
     }
@@ -1977,9 +2116,9 @@ app.post('/api/actors/:username/inbox', async (c) => {
     }
 
     return c.json({ ok: true }, 202);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Inbox error:', error);
-    return c.json({ error: 'Inbox processing failed', details: error?.message }, 500);
+    return c.json({ error: 'Inbox processing failed', details: (error as { message?: string })?.message }, 500);
   }
 });
 
@@ -1993,14 +2132,14 @@ app.post('/api/inbox', async (c) => {
     }
 
     const body = await c.req.text();
-    let activity: any;
+    let activity: Record<string, unknown>;
     try {
-      activity = JSON.parse(body);
+      activity = JSON.parse(body) as Record<string, unknown>;
     } catch {
       return c.json({ error: 'Invalid JSON' }, 400);
     }
 
-    const actorId = activity.actor;
+    const actorId = activity.actor as string;
     if (!actorId || typeof actorId !== 'string') {
       return c.json({ error: 'Invalid actor' }, 400);
     }
@@ -2039,7 +2178,9 @@ app.post('/api/inbox', async (c) => {
     if (!digestValid) {
       return c.json({ error: 'Invalid Digest' }, 401);
     }
-    const targetAudience = [activity.to, activity.cc].flat().filter(Boolean) as string[];
+    const targetAudience = [(activity.to as string[] | undefined) ?? [], (activity.cc as string[] | undefined) ?? []]
+      .flat()
+      .filter(Boolean) as string[];
     const localActorUrls = targetAudience.filter(
       (url: string) => typeof url === 'string' && url.startsWith(baseUrl) && url.includes('/actors/'),
     );
@@ -2053,14 +2194,14 @@ app.post('/api/inbox', async (c) => {
 
     // If no local target found via to/cc, try the object field (for Follow activities)
     if (targetUsernames.size === 0 && activity.object && typeof activity.object === 'string') {
-      const match = activity.object.match(/\/actors\/([^/]+)/);
+      const match = (activity.object as string).match(/\/actors\/([^/]+)/);
       if (match) targetUsernames.add(match[1]);
     }
 
     // Fallback: if still no target, try all local users by checking the activity object
     if (targetUsernames.size === 0 && activity.object && typeof activity.object === 'object') {
-      const objId = activity.object.id || '';
-      const match = objId.match(/\/actors\/([^/]+)/);
+      const objId = (activity.object as Record<string, unknown>).id || '';
+      const match = (objId as string).match(/\/actors\/([^/]+)/);
       if (match) targetUsernames.add(match[1]);
     }
 
@@ -2070,7 +2211,7 @@ app.post('/api/inbox', async (c) => {
           event: 'sharedInbox:no_target_user',
           activityType: activity.type,
           actorId,
-          activityId: activity.id || null,
+          activityId: (activity.id as string) || null,
           timestamp: new Date().toISOString(),
         }),
       );
@@ -2090,9 +2231,9 @@ app.post('/api/inbox', async (c) => {
     }
 
     return c.json({ ok: true }, 202);
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('sharedInbox error:', error);
-    return c.json({ error: 'sharedInbox processing failed', details: error?.message }, 500);
+    return c.json({ error: 'sharedInbox processing failed', details: (error as { message?: string })?.message }, 500);
   }
 });
 
@@ -2115,18 +2256,18 @@ app.get('/api/actors/:username/followers', async (c) => {
     // Count local followers
     const localCount =
       (
-        (await c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE followee_id = ?')
+        await c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE followee_id = ?')
           .bind(user.id)
-          .first()) as any
-      ).count || 0;
+          .first<{ count: number }>()
+      )?.count || 0;
 
     // Count remote followers
     const remoteCount =
       (
-        (await c.env.DB.prepare('SELECT COUNT(*) as count FROM ap_followers WHERE local_user_id = ?')
+        await c.env.DB.prepare('SELECT COUNT(*) as count FROM ap_followers WHERE local_user_id = ?')
           .bind(user.id)
-          .first()) as any
-      ).count || 0;
+          .first<{ count: number }>()
+      )?.count || 0;
 
     const totalItems = localCount + remoteCount;
 
@@ -2192,7 +2333,7 @@ app.get('/api/actors/:username/followers', async (c) => {
       200,
       { 'Content-Type': 'application/activity+json' },
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Followers endpoint error:', error);
     return c.json({ error: 'Followers endpoint failed' }, 500);
   }
@@ -2217,10 +2358,10 @@ app.get('/api/actors/:username/following', async (c) => {
     // Count local following (remote following not counted here for simplicity)
     const totalCount =
       (
-        (await c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE follower_id = ?')
+        await c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE follower_id = ?')
           .bind(user.id)
-          .first()) as any
-      ).count || 0;
+          .first<{ count: number }>()
+      )?.count || 0;
 
     // If page parameter is present, return OrderedCollectionPage
     if (pageParam) {
@@ -2265,7 +2406,7 @@ app.get('/api/actors/:username/following', async (c) => {
       200,
       { 'Content-Type': 'application/activity+json' },
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Following endpoint error:', error);
     return c.json({ error: 'Following endpoint failed' }, 500);
   }
@@ -2333,9 +2474,12 @@ app.get('/api/notes/:noteId', async (c) => {
     return c.json(activity, 200, {
       'Content-Type': 'application/activity+json',
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Note endpoint error:', error);
-    return c.json({ error: 'Note endpoint failed', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Note endpoint failed', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -2438,9 +2582,12 @@ app.get('/api/actors/:username/outbox', async (c) => {
       200,
       { 'Content-Type': 'application/activity+json' },
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Outbox endpoint error:', error);
-    return c.json({ error: 'Outbox endpoint failed', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Outbox endpoint failed', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -2506,9 +2653,12 @@ app.get('/notes/:noteId', async (c) => {
     return c.json(activity, 200, {
       'Content-Type': 'application/activity+json',
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Note endpoint error:', error);
-    return c.json({ error: 'Note endpoint failed', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Note endpoint failed', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -2564,9 +2714,12 @@ app.get('/.well-known/webfinger', async (c) => {
         'Content-Type': 'application/jrd+json',
       },
     );
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('WebFinger error:', error);
-    return c.json({ error: 'WebFinger failed', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'WebFinger failed', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -2626,9 +2779,12 @@ app.get('/api/users/:username', async (c) => {
         is_following,
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Get user error:', error);
-    return c.json({ error: 'Failed to get user', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to get user', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -2684,7 +2840,7 @@ app.get('/api/users/:username/followers', async (c) => {
       WHERE f.followee_id = ?
     `;
 
-    const params: any[] = [currentUserId, currentUserId, user.id];
+    const params: Array<string | null> = [currentUserId, currentUserId, user.id as string];
 
     if (cursor) {
       query += ` AND u.username > ?`;
@@ -2692,7 +2848,7 @@ app.get('/api/users/:username/followers', async (c) => {
     }
 
     query += ` ORDER BY u.username ASC LIMIT ?`;
-    params.push(limit + 1); // Get one extra to check if there are more
+    params.push(String(limit + 1)); // Get one extra to check if there are more
 
     const results = await c.env.DB.prepare(query)
       .bind(...params)
@@ -2708,16 +2864,19 @@ app.get('/api/users/:username/followers', async (c) => {
 
     const users = results.results.slice(0, limit);
     const hasMore = results.results.length > limit;
-    const nextCursor = hasMore ? (users[users.length - 1] as any).username : null;
+    const nextCursor = hasMore ? (users[users.length - 1] as { username: string }).username : null;
 
     return c.json({
       users,
       next_cursor: nextCursor,
       has_more: hasMore,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Get followers error:', error);
-    return c.json({ error: 'Failed to get followers', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to get followers', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -2773,7 +2932,7 @@ app.get('/api/users/:username/following', async (c) => {
       WHERE f.follower_id = ?
     `;
 
-    const params: any[] = [currentUserId, currentUserId, user.id];
+    const params: Array<string | null> = [currentUserId, currentUserId, user.id as string];
 
     if (cursor) {
       query += ` AND u.username > ?`;
@@ -2781,7 +2940,7 @@ app.get('/api/users/:username/following', async (c) => {
     }
 
     query += ` ORDER BY u.username ASC LIMIT ?`;
-    params.push(limit + 1); // Get one extra to check if there are more
+    params.push(String(limit + 1)); // Get one extra to check if there are more
 
     const results = await c.env.DB.prepare(query)
       .bind(...params)
@@ -2797,16 +2956,19 @@ app.get('/api/users/:username/following', async (c) => {
 
     const users = results.results.slice(0, limit);
     const hasMore = results.results.length > limit;
-    const nextCursor = hasMore ? (users[users.length - 1] as any).username : null;
+    const nextCursor = hasMore ? (users[users.length - 1] as { username: string }).username : null;
 
     return c.json({
       users,
       next_cursor: nextCursor,
       has_more: hasMore,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Get following error:', error);
-    return c.json({ error: 'Failed to get following', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to get following', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -2995,9 +3157,12 @@ app.patch('/api/users/me', requireAuth, async (c) => {
         ng_words: JSON.parse(updatedUser?.ng_words ?? '[]') as string[],
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Update profile error:', error);
-    return c.json({ error: 'Failed to update profile', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to update profile', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -3034,7 +3199,7 @@ app.patch('/api/users/me/email', requireAuth, async (c) => {
       SELECT password_hash FROM users WHERE id = ?
     `)
       .bind(userId)
-      .first()) as any;
+      .first()) as { password_hash: string } | null;
 
     if (!userWithPassword) {
       return c.json({ error: 'User not found' }, 404);
@@ -3062,9 +3227,12 @@ app.patch('/api/users/me/email', requireAuth, async (c) => {
     }
 
     return c.json({ ok: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Update email error:', error);
-    return c.json({ error: 'Failed to update email', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to update email', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -3099,7 +3267,7 @@ app.patch('/api/users/me/password', requireAuth, async (c) => {
       SELECT password_hash FROM users WHERE id = ?
     `)
       .bind(userId)
-      .first()) as any;
+      .first()) as { password_hash: string } | null;
 
     if (!userWithPassword) {
       return c.json({ error: 'User not found' }, 404);
@@ -3124,9 +3292,12 @@ app.patch('/api/users/me/password', requireAuth, async (c) => {
     }
 
     return c.json({ ok: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Update password error:', error);
-    return c.json({ error: 'Failed to update password', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to update password', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -3158,9 +3329,12 @@ app.delete('/api/users/me', requireAuth, async (c) => {
     }
 
     return c.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Delete account error:', error);
-    return c.json({ error: 'Failed to delete account', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to delete account', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -3249,9 +3423,12 @@ app.post('/api/users/me/avatar', requireAuth, async (c) => {
     }
 
     return c.json({ success: true, avatar_key: avatarKey });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Avatar upload error:', error);
-    return c.json({ error: 'Avatar upload failed', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Avatar upload failed', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -3306,9 +3483,12 @@ app.post('/api/users/:username/follow', requireAuth, async (c) => {
       followers_count: (followersResult?.count as number) || 0,
       following_count: (followingResult?.count as number) || 0,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Follow error:', error);
-    return c.json({ error: 'Failed to follow user', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to follow user', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -3358,9 +3538,12 @@ app.delete('/api/users/:username/follow', requireAuth, async (c) => {
       followers_count: (followersResult?.count as number) || 0,
       following_count: (followingResult?.count as number) || 0,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Unfollow error:', error);
-    return c.json({ error: 'Failed to unfollow user', details: error?.message || 'Unknown error' }, 500);
+    return c.json(
+      { error: 'Failed to unfollow user', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
   }
 });
 
@@ -3393,7 +3576,7 @@ app.get('/api/posts', async (c) => {
     }
 
     let query: string;
-    let params: any[] = [];
+    let params: Array<string | number> = [];
 
     if (hashtag) {
       // Filter by hashtag using json_each
@@ -3476,7 +3659,7 @@ app.get('/api/posts', async (c) => {
 
     // Add fresh and bookmark status for current user if logged in
     if (currentUserId && posts.length > 0) {
-      const postIds = posts.map((p: any) => p.id);
+      const postIds = posts.map((p: Record<string, unknown>) => String(p.id));
       const placeholders = postIds.map(() => '?').join(',');
 
       const freshResult = await c.env.DB.prepare(
@@ -3486,11 +3669,13 @@ app.get('/api/posts', async (c) => {
         .all();
 
       if (freshResult.success) {
-        const freshedPostIds = new Set((freshResult.results || []).map((f: any) => f.post_id));
+        const freshedPostIds = new Set(
+          (freshResult.results || []).map((f: Record<string, unknown>) => f.post_id as string),
+        );
 
         // Add is_freshed field to each post
-        posts.forEach((post: any) => {
-          post.is_freshed = freshedPostIds.has(post.id);
+        posts.forEach((post: Record<string, unknown>) => {
+          post.is_freshed = freshedPostIds.has(post.id as string);
         });
       }
 
@@ -3502,16 +3687,18 @@ app.get('/api/posts', async (c) => {
         .all();
 
       if (bookmarkResult.success) {
-        const bookmarkedPostIds = new Set((bookmarkResult.results || []).map((b: any) => b.post_id));
-        posts.forEach((post: any) => {
-          post.is_bookmarked = bookmarkedPostIds.has(post.id);
+        const bookmarkedPostIds = new Set(
+          (bookmarkResult.results || []).map((b: Record<string, unknown>) => b.post_id as string),
+        );
+        posts.forEach((post: Record<string, unknown>) => {
+          post.is_bookmarked = bookmarkedPostIds.has(post.id as string);
         });
       }
     }
 
     // Batch fetch poll data for posts with polls
     await enrichPostsWithPolls(
-      posts as any[],
+      posts as PostRow[],
       c.env.DB,
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
@@ -3519,7 +3706,7 @@ app.get('/api/posts', async (c) => {
     );
 
     // Trigger sentiment analysis for at most one unprocessed post in background per request
-    for (const p of posts as any[]) {
+    for (const p of posts as PostRow[]) {
       if (p.sentiment_score == null && p.text) {
         const now = Date.now();
         // Ensure at least 2 minutes have passed since the previous task submission
@@ -3545,9 +3732,10 @@ app.get('/api/posts', async (c) => {
     }
 
     return c.json({ posts });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Posts fetch error:', error);
-    return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -3587,7 +3775,8 @@ app.get('/api/posts/trending', async (c) => {
       ORDER BY score DESC, p.created_at DESC
       LIMIT ?
     `;
-    const params: any[] = numericScore !== null ? [numericScore, numericScore, cursorCreatedAt, limit] : [limit];
+    const params: Array<unknown> =
+      numericScore !== null ? [numericScore, numericScore, cursorCreatedAt, limit] : [limit];
 
     const result = await c.env.DB.prepare(query)
       .bind(...params)
@@ -3596,16 +3785,18 @@ app.get('/api/posts/trending', async (c) => {
 
     // Add fresh and bookmark status for current user if logged in
     if (currentUserId && posts.length > 0) {
-      const postIds = posts.map((p: any) => p.id);
+      const postIds = posts.map((p: Record<string, unknown>) => String(p.id));
       const freshResult = await c.env.DB.prepare(
         `SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`,
       )
         .bind(currentUserId, ...postIds)
         .all();
 
-      const freshedPostIds = new Set((freshResult.results || []).map((f: any) => f.post_id));
-      posts.forEach((post: any) => {
-        post.is_freshed = freshedPostIds.has(post.id);
+      const freshedPostIds = new Set(
+        (freshResult.results || []).map((f: Record<string, unknown>) => f.post_id as string),
+      );
+      posts.forEach((post: Record<string, unknown>) => {
+        post.is_freshed = freshedPostIds.has(post.id as string);
       });
 
       const bookmarkResult = await c.env.DB.prepare(
@@ -3613,14 +3804,16 @@ app.get('/api/posts/trending', async (c) => {
       )
         .bind(currentUserId, ...postIds)
         .all();
-      const bookmarkedPostIds = new Set((bookmarkResult.results || []).map((b: any) => b.post_id));
-      posts.forEach((post: any) => {
-        post.is_bookmarked = bookmarkedPostIds.has(post.id);
+      const bookmarkedPostIds = new Set(
+        (bookmarkResult.results || []).map((b: Record<string, unknown>) => b.post_id as string),
+      );
+      posts.forEach((post: Record<string, unknown>) => {
+        post.is_bookmarked = bookmarkedPostIds.has(post.id as string);
       });
     }
 
     await enrichPostsWithPolls(
-      posts as any[],
+      posts as PostRow[],
       c.env.DB,
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
@@ -3628,9 +3821,90 @@ app.get('/api/posts/trending', async (c) => {
     );
 
     return c.json({ posts });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Trending posts error:', error);
     return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
+// GET /api/tags/trending - get top 5 trending hashtags (based on recent N posts percentage)
+app.get('/api/tags/trending', async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const recentCountParam = c.req.query('recent_count');
+    const recentCount = recentCountParam ? parseInt(recentCountParam, 10) : 100;
+    const validRecentCount = Number.isNaN(recentCount) || recentCount < 10 || recentCount > 1000 ? 100 : recentCount;
+
+    const result = await c.env.DB.prepare(`
+WITH recent_posts AS (
+  SELECT id, hashtags
+  FROM posts
+  WHERE hidden = 0 AND status = 'published'
+  ORDER BY created_at DESC
+  LIMIT ?
+)
+SELECT
+  value AS tag,
+  COUNT(*) AS count,
+  ROUND(COUNT(*) * 100.0 / ?, 1) AS percentage
+FROM recent_posts, json_each(recent_posts.hashtags)
+GROUP BY value
+ORDER BY count DESC
+LIMIT 5
+    `)
+      .bind(validRecentCount, validRecentCount)
+      .all();
+
+    if (!result.success) {
+      return c.json({ error: 'Failed to fetch trending tags' }, 500);
+    }
+
+    const tags = result.results || [];
+
+    return c.json({ tags }, 200, {
+      'Cache-Control': 'public, max-age=60',
+    });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Trending tags error:', error);
+    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// GET /api/tags/suggest?q=prefix - suggest hashtags matching prefix
+app.get('/api/tags/suggest', async (c) => {
+  try {
+    const q = c.req.query('q');
+    if (!q || q.length < 1) {
+      return c.json({ tags: [] });
+    }
+
+    const limit = Math.min(parseInt(c.req.query('limit') || '10', 10), 20);
+    const prefix = q.toLowerCase();
+
+    const result = await c.env.DB.prepare(`
+      SELECT DISTINCT value AS tag, COUNT(*) AS count
+      FROM posts, json_each(posts.hashtags)
+      WHERE posts.hidden = 0 AND posts.status = 'published'
+        AND LOWER(value) LIKE ?
+      GROUP BY value
+      ORDER BY count DESC
+      LIMIT ?
+    `)
+      .bind(prefix + '%', limit)
+      .all();
+
+    const tags = result.results || [];
+    return c.json({ tags }, 200, {
+      'Cache-Control': 'public, max-age=30',
+    });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Tag suggest error:', error);
+    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -3653,7 +3927,7 @@ app.get('/api/posts/recommended', async (c) => {
     const currentUserId = sessionData?.user?.id;
 
     let query: string;
-    let params: any[] = [];
+    let params: Array<unknown> = [];
 
     const scoreFormula = `((p.fresh_count * 2.0 + p.impressions * 0.1 + 1.0) / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))`;
 
@@ -3698,16 +3972,18 @@ app.get('/api/posts/recommended', async (c) => {
 
     // Add fresh and bookmark status if logged in
     if (currentUserId && posts.length > 0) {
-      const postIds = posts.map((p: any) => p.id);
+      const postIds = posts.map((p: Record<string, unknown>) => String(p.id));
       const freshResult = await c.env.DB.prepare(
         `SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`,
       )
         .bind(currentUserId, ...postIds)
         .all();
 
-      const freshedPostIds = new Set((freshResult.results || []).map((f: any) => f.post_id));
-      posts.forEach((post: any) => {
-        post.is_freshed = freshedPostIds.has(post.id);
+      const freshedPostIds = new Set(
+        (freshResult.results || []).map((f: Record<string, unknown>) => f.post_id as string),
+      );
+      posts.forEach((post: Record<string, unknown>) => {
+        post.is_freshed = freshedPostIds.has(post.id as string);
       });
 
       const bookmarkResult = await c.env.DB.prepare(
@@ -3715,14 +3991,16 @@ app.get('/api/posts/recommended', async (c) => {
       )
         .bind(currentUserId, ...postIds)
         .all();
-      const bookmarkedPostIds = new Set((bookmarkResult.results || []).map((b: any) => b.post_id));
-      posts.forEach((post: any) => {
-        post.is_bookmarked = bookmarkedPostIds.has(post.id);
+      const bookmarkedPostIds = new Set(
+        (bookmarkResult.results || []).map((b: Record<string, unknown>) => b.post_id as string),
+      );
+      posts.forEach((post: Record<string, unknown>) => {
+        post.is_bookmarked = bookmarkedPostIds.has(post.id as string);
       });
     }
 
     await enrichPostsWithPolls(
-      posts as any[],
+      posts as PostRow[],
       c.env.DB,
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
@@ -3730,9 +4008,10 @@ app.get('/api/posts/recommended', async (c) => {
     );
 
     return c.json({ posts });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Recommended posts error:', error);
-    return c.json({ error: 'Internal server error', details: error.message }, 500);
+    return c.json({ error: 'Internal server error', details: err.message }, 500);
   }
 });
 
@@ -3756,9 +4035,10 @@ app.get('/api/ads/active', async (c) => {
     const shuffled = [...(result.results || [])].sort(() => Math.random() - 0.5);
 
     return c.json({ ads: shuffled });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Get active ads error:', error);
-    return c.json({ error: 'Failed to get active ads', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to get active ads', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -3776,11 +4056,12 @@ app.post('/api/ads/:id/impression', async (c) => {
         limit: 60,
         windowSeconds: 60,
       });
-    } catch (kvError: any) {
+    } catch (kvError: unknown) {
+      const err = kvError as { message?: string };
       // Log KV error but don't fail the request
-      console.warn('KV rate limit check failed, proceeding anyway:', kvError.message);
+      console.warn('KV rate limit check failed, proceeding anyway:', err.message);
       // Check if it's specifically a KV put limit exceeded error
-      if (kvError.message && kvError.message.includes('KV put() limit exceeded')) {
+      if (err.message && err.message.includes('KV put() limit exceeded')) {
         console.warn('KV put limit exceeded, skipping rate limit check for ad impression');
       }
     }
@@ -3804,7 +4085,7 @@ app.post('/api/ads/:id/impression', async (c) => {
     }
 
     return c.json({ ok: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Record impression error:', error);
     // Always return success to ensure content display continues
     // even if impression tracking fails
@@ -3826,11 +4107,12 @@ app.post('/api/posts/:id/impression', async (c) => {
         limit: 60,
         windowSeconds: 60,
       });
-    } catch (kvError: any) {
+    } catch (kvError: unknown) {
+      const err = kvError as { message?: string };
       // Log KV error but don't fail the request
-      console.warn('KV rate limit check failed, proceeding anyway:', kvError.message);
+      console.warn('KV rate limit check failed, proceeding anyway:', err.message);
       // Check if it's specifically a KV put limit exceeded error
-      if (kvError.message && kvError.message.includes('KV put() limit exceeded')) {
+      if (err.message && err.message.includes('KV put() limit exceeded')) {
         console.warn('KV put limit exceeded, skipping rate limit check for post impression');
       }
     }
@@ -3856,7 +4138,7 @@ app.post('/api/posts/:id/impression', async (c) => {
     }
 
     return c.json({ ok: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Record post impression error:', error);
     // Always return success to ensure content display continues
     // even if impression tracking fails
@@ -3887,11 +4169,12 @@ app.post('/api/posts/impressions/batch', async (c) => {
         limit: 10,
         windowSeconds: 60,
       });
-    } catch (kvError: any) {
+    } catch (kvError: unknown) {
+      const err = kvError as { message?: string };
       // Log KV error but don't fail the request
-      console.warn('KV rate limit check failed, proceeding anyway:', kvError.message);
+      console.warn('KV rate limit check failed, proceeding anyway:', err.message);
       // Check if it's specifically a KV put limit exceeded error
-      if (kvError.message && kvError.message.includes('KV put() limit exceeded')) {
+      if (err.message && err.message.includes('KV put() limit exceeded')) {
         console.warn('KV put limit exceeded, skipping rate limit check for batch impressions');
       }
     }
@@ -3919,7 +4202,7 @@ app.post('/api/posts/impressions/batch', async (c) => {
     }
 
     return c.json({ ok: true, updated: result.meta?.changes || 0 });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Batch post impressions error:', error);
     // Always return success to ensure content display continues
     // even if impression tracking fails
@@ -3945,11 +4228,11 @@ app.post('/api/ads/:id/click', async (c) => {
         limit: 20,
         windowSeconds: 60,
       });
-    } catch (kvError: any) {
+    } catch (kvError: unknown) {
       // Log KV error but don't fail the request
-      console.warn('KV rate limit check failed, proceeding anyway:', kvError.message);
+      console.warn('KV rate limit check failed, proceeding anyway:', (kvError as Error).message);
       // Check if it's specifically a KV put limit exceeded error
-      if (kvError.message && kvError.message.includes('KV put() limit exceeded')) {
+      if ((kvError as Error).message && (kvError as Error).message.includes('KV put() limit exceeded')) {
         console.warn('KV put limit exceeded, skipping rate limit check for ad click');
       }
     }
@@ -3973,7 +4256,7 @@ app.post('/api/ads/:id/click', async (c) => {
     }
 
     return c.json({ ok: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Record click error:', error);
     // Always return success to ensure content display continues
     // even if click tracking fails
@@ -3995,11 +4278,11 @@ app.post('/api/ads/:id/interaction', async (c) => {
         limit: 30,
         windowSeconds: 60,
       });
-    } catch (kvError: any) {
+    } catch (kvError: unknown) {
       // Log KV error but don't fail the request
-      console.warn('KV rate limit check failed, proceeding anyway:', kvError.message);
+      console.warn('KV rate limit check failed, proceeding anyway:', (kvError as Error).message);
       // Check if it's specifically a KV put limit exceeded error
-      if (kvError.message && kvError.message.includes('KV put() limit exceeded')) {
+      if ((kvError as Error).message && (kvError as Error).message.includes('KV put() limit exceeded')) {
         console.warn('KV put limit exceeded, skipping rate limit check for ad interaction');
       }
     }
@@ -4026,7 +4309,7 @@ app.post('/api/ads/:id/interaction', async (c) => {
     }
 
     return c.json({ ok: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Record interaction error:', error);
     // Always return success to ensure content display continues
     // even if interaction tracking fails
@@ -4048,11 +4331,11 @@ app.post('/api/ads/:id/play', async (c) => {
         limit: 30,
         windowSeconds: 60,
       });
-    } catch (kvError: any) {
+    } catch (kvError: unknown) {
       // Log KV error but don't fail the request
-      console.warn('KV rate limit check failed, proceeding anyway:', kvError.message);
+      console.warn('KV rate limit check failed, proceeding anyway:', (kvError as Error).message);
       // Check if it's specifically a KV put limit exceeded error
-      if (kvError.message && kvError.message.includes('KV put() limit exceeded')) {
+      if ((kvError as Error).message && (kvError as Error).message.includes('KV put() limit exceeded')) {
         console.warn('KV put limit exceeded, skipping rate limit check for ad play');
       }
     }
@@ -4079,7 +4362,7 @@ app.post('/api/ads/:id/play', async (c) => {
     }
 
     return c.json({ ok: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Record play error:', error);
     // Always return success to ensure content display continues
     // even if play tracking fails
@@ -4091,7 +4374,7 @@ app.post('/api/ads/:id/play', async (c) => {
 app.get('/api/admin/ads/config', async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env as any, user.username)) {
+    if (!user || !isAdmin(c.env, user.username)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -4106,9 +4389,10 @@ app.get('/api/admin/ads/config', async (c) => {
     }
 
     return c.json({ every_n: Number(result.value) });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Get ad config error:', error);
-    return c.json({ error: 'Failed to get ad config', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to get ad config', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -4116,7 +4400,7 @@ app.get('/api/admin/ads/config', async (c) => {
 app.patch('/api/admin/ads/config', requireAuth, async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env as any, user.username)) {
+    if (!user || !isAdmin(c.env, user.username)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -4141,9 +4425,10 @@ app.patch('/api/admin/ads/config', requireAuth, async (c) => {
     }
 
     return c.json({ every_n });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Update ad config error:', error);
-    return c.json({ error: 'Failed to update ad config', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to update ad config', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -4151,7 +4436,7 @@ app.patch('/api/admin/ads/config', requireAuth, async (c) => {
 app.get('/api/admin/ads', requireAuth, async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env as any, user.username)) {
+    if (!user || !isAdmin(c.env, user.username)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -4184,9 +4469,10 @@ app.get('/api/admin/ads', requireAuth, async (c) => {
     }
 
     return c.json({ ads: result.results || [] });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Get admin ads error:', error);
-    return c.json({ error: 'Failed to fetch ads', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to fetch ads', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -4194,7 +4480,7 @@ app.get('/api/admin/ads', requireAuth, async (c) => {
 app.post('/api/admin/ads', requireAuth, async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env as any, user.username)) {
+    if (!user || !isAdmin(c.env, user.username)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -4354,9 +4640,10 @@ app.post('/api/admin/ads', requireAuth, async (c) => {
     const createdAd = await c.env.DB.prepare('SELECT * FROM ads WHERE id = ?').bind(adId).first();
 
     return c.json({ ad: createdAd });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Create ad error:', error);
-    return c.json({ error: 'Failed to create ad', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to create ad', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -4364,7 +4651,7 @@ app.post('/api/admin/ads', requireAuth, async (c) => {
 app.patch('/api/admin/ads/:id', requireAuth, async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env as any, user.username)) {
+    if (!user || !isAdmin(c.env, user.username)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -4414,7 +4701,71 @@ app.patch('/api/admin/ads/:id', requireAuth, async (c) => {
       return c.json({ error: 'No fields to update' }, 400);
     }
 
-    values.push(adId);
+    values.push(adId ?? '');
+
+    const result = await c.env.DB.prepare(`
+      UPDATE ads SET ${updates.join(', ')} WHERE id = ?
+    `)
+      .bind(...values)
+      .run();
+
+    if (!result.success) {
+      console.error('Database update failed:', result);
+      return c.json({ error: 'Failed to update ad' }, 500);
+    }
+
+    return c.json({ success: true });
+  } catch (error) {
+    console.error('Error updating ad:', error);
+    return c.json({ error: 'Failed to update ad' }, 500);
+  }
+});
+
+// Admin middleware helper
+const requireAdmin = async (c: Context, next: Next) => {
+  const username = c.get('user')?.username;
+  if (!username || !isAdmin(c.env as { ADMIN_USERNAMES: string }, username)) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+  await next();
+};
+
+// PUT /api/ads/:id - update ad (for PATCH-like updates)
+app.put('/api/ads/:id', requireAdmin, async (c) => {
+  try {
+    const adId = c.req.param('id');
+    const body = await c.req.json();
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    // Build UPDATE query dynamically
+    const updates: string[] = [];
+    const values: (string | number | null)[] = [];
+
+    if (body.title !== undefined) {
+      updates.push('title = ?');
+      values.push(body.title);
+    }
+    if (body.body_text !== undefined) {
+      updates.push('body_text = ?');
+      values.push(body.body_text);
+    }
+    if (body.click_url !== undefined) {
+      updates.push('click_url = ?');
+      values.push(body.click_url);
+    }
+    if (body.active !== undefined) {
+      updates.push('active = ?');
+      values.push(body.active ? 1 : 0);
+    }
+
+    if (updates.length === 0) {
+      return c.json({ error: 'No fields to update' }, 400);
+    }
+
+    values.push(adId ?? '');
 
     const result = await c.env.DB.prepare(`
       UPDATE ads SET ${updates.join(', ')} WHERE id = ?
@@ -4431,9 +4782,10 @@ app.patch('/api/admin/ads/:id', requireAuth, async (c) => {
     const updatedAd = await c.env.DB.prepare('SELECT * FROM ads WHERE id = ?').bind(adId).first();
 
     return c.json({ ad: updatedAd });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Update ad error:', error);
-    return c.json({ error: 'Failed to update ad', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to update ad', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -4441,7 +4793,7 @@ app.patch('/api/admin/ads/:id', requireAuth, async (c) => {
 app.delete('/api/admin/ads/:id', requireAuth, async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env as any, user.username)) {
+    if (!user || !isAdmin(c.env, user.username)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -4472,9 +4824,10 @@ app.delete('/api/admin/ads/:id', requireAuth, async (c) => {
     }
 
     return c.json({ ok: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Delete ad error:', error);
-    return c.json({ error: 'Failed to delete ad', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to delete ad', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -4556,7 +4909,7 @@ app.post('/api/posts/prepare', requireAuth, async (c) => {
 
     const origin = new URL(c.req.url).origin;
     const uploadUrl = `${origin}/api/upload/${storageKey}`;
-    const resp: any = { postId };
+    const resp: Record<string, unknown> = { postId };
 
     if (responseType === 'zip') {
       resp.zipUploadUrl = uploadUrl;
@@ -4570,25 +4923,64 @@ app.post('/api/posts/prepare', requireAuth, async (c) => {
     }
 
     return c.json(resp);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Prepare post error:', error);
-    return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
   }
 });
 
 // Step 3 — POST /api/posts/commit (protected)
 app.post('/api/posts/commit', requireAuth, async (c) => {
   try {
-    const {
-      postId,
-      gifKey,
-      swfKey,
-      text,
-      hashtags: requestHashtags,
-      poll: pollData,
-      zipKey,
-      thumbnailKey,
-    } = await c.req.json();
+    const contentType = c.req.header('content-type');
+    let postId: string | undefined;
+    let gifKey: string | undefined;
+    let swfKey: string | undefined;
+    let text: string;
+    let requestHashtags: string[] = [];
+    let pollData: any;
+    let zipKey: string | undefined;
+    let thumbnailKey: string | undefined;
+
+    if (contentType?.includes('multipart/form-data')) {
+      const formData = await c.req.formData();
+      text = formData.get('text') as string;
+      postId = (formData.get('postId') as string) || undefined;
+      gifKey = (formData.get('gifKey') as string) || undefined;
+      swfKey = (formData.get('swfKey') as string) || undefined;
+      zipKey = (formData.get('payloadKey') as string) || undefined;
+      const pollStr = formData.get('poll') as string;
+      pollData = pollStr ? JSON.parse(pollStr) : undefined;
+
+      const thumbnailFile = (formData.get('thumbnail') as File | null) || undefined;
+      if (thumbnailFile && thumbnailFile.size > 0) {
+        if (thumbnailFile.size > 1024 * 1024) {
+          return c.json({ error: 'Thumbnail must be ≤1MB' }, 400);
+        }
+        const allowedExts = ['jpg', 'jpeg', 'png', 'gif'];
+        const ext = thumbnailFile.name.toLowerCase().split('.').pop();
+        if (!ext || !allowedExts.includes(ext)) {
+          return c.json({ error: 'Thumbnail must be .jpg, .jpeg, .png, or .gif' }, 400);
+        }
+        const thumbnailR2Key = `payload/${postId || crypto.randomUUID()}.thumb.${ext}`;
+        const thumbnailBuffer = await thumbnailFile.arrayBuffer();
+        await c.env.BUCKET.put(thumbnailR2Key, thumbnailBuffer, {
+          httpMetadata: { contentType: thumbnailFile.type },
+        });
+        thumbnailKey = thumbnailR2Key;
+      }
+    } else {
+      const body = await c.req.json();
+      postId = body.postId;
+      gifKey = body.gifKey;
+      swfKey = body.swfKey;
+      text = body.text;
+      requestHashtags = body.hashtags || [];
+      pollData = body.poll;
+      zipKey = body.zipKey;
+      thumbnailKey = body.thumbnailKey;
+    }
     const payloadKey = zipKey;
     const userId = c.get('user')?.id || '';
     const username = c.get('user')?.username || 'anonymous';
@@ -4736,19 +5128,17 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
 
       if (user && c.env.AP_DELIVERY_QUEUE) {
         // Get post details including mentions
-        const post = (await c.env.DB.prepare(
-          'SELECT id, text, created_at, visibility, mentions FROM posts WHERE id = ?',
-        )
+        const post = (await c.env.DB.prepare('SELECT id, text, created_at, status, mentions FROM posts WHERE id = ?')
           .bind(postId)
           .first()) as {
           id: string;
           text: string;
           created_at: string;
-          visibility: string;
+          status: string;
           mentions: string | null;
         } | null;
 
-        if (post && post.visibility === 'public') {
+        if (post && post.status === 'published') {
           // Build mention actor URLs for CC
           const mentionActorUrls: string[] = [];
           try {
@@ -4787,7 +5177,7 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
       "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key as payloadKey, p.swf_key as swfKey, p.thumbnail_key as thumbnailKey, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?",
     )
       .bind(postId)
-      .first()) as any;
+      .first()) as PostRow;
 
     if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
       try {
@@ -4806,9 +5196,10 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
     c.executionCtx.waitUntil(analyzeSentiment(c, fullPost.id, fullPost.text));
 
     return c.json({ post: fullPost });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Post creation error:', error);
-    return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -4818,7 +5209,10 @@ app.get('/api/polls/:postId', async (c) => {
     const postId = c.req.param('postId');
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
 
-    const poll = (await c.env.DB.prepare('SELECT * FROM polls WHERE post_id = ?').bind(postId).first()) as any | null;
+    const poll = (await c.env.DB.prepare('SELECT * FROM polls WHERE post_id = ?').bind(postId).first()) as Record<
+      string,
+      unknown
+    > | null;
 
     if (!poll) return c.json({ error: 'Poll not found' }, 404);
 
@@ -4837,7 +5231,7 @@ app.get('/api/polls/:postId', async (c) => {
     }
 
     const now = new Date();
-    const endsAt = poll.ends_at || null;
+    const endsAt = (poll.ends_at as string | undefined) || null;
     const expired = endsAt ? new Date(endsAt) <= now : false;
 
     if (expired && !poll.ended_notified) {
@@ -4858,7 +5252,9 @@ app.get('/api/polls/:postId', async (c) => {
             c.env.VAPID_PUBLIC_KEY,
             c.env.VAPID_PRIVATE_KEY,
           );
-          await c.env.DB.prepare('UPDATE polls SET ended_notified = 1 WHERE id = ?').bind(poll.id).run();
+          await c.env.DB.prepare('UPDATE polls SET ended_notified = 1 WHERE id = ?')
+            .bind(poll.id as string)
+            .run();
         }
       } catch (e) {
         console.error('Failed to create poll ended notification:', e);
@@ -4866,9 +5262,10 @@ app.get('/api/polls/:postId', async (c) => {
     }
 
     return c.json({ poll, options, userVote, expired });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Get poll error:', error);
-    return c.json({ error: 'Failed to get poll', details: error?.message }, 500);
+    return c.json({ error: 'Failed to get poll', details: err.message }, 500);
   }
 });
 
@@ -4882,32 +5279,37 @@ app.post('/api/polls/:pollId/vote', requireAuth, async (c) => {
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
     if (!optionId) return c.json({ error: 'optionId is required' }, 400);
 
-    const poll = (await c.env.DB.prepare('SELECT * FROM polls WHERE id = ?').bind(pollId).first()) as any | null;
+    const poll = (await c.env.DB.prepare('SELECT * FROM polls WHERE id = ?').bind(pollId).first()) as Record<
+      string,
+      unknown
+    > | null;
 
     if (!poll) return c.json({ error: 'Poll not found' }, 404);
 
-    if (poll.ends_at && new Date(poll.ends_at) <= new Date()) {
+    if (poll.ends_at && new Date(poll.ends_at as string) <= new Date()) {
       return c.json({ error: 'Poll has ended' }, 400);
     }
 
     const option = (await c.env.DB.prepare('SELECT * FROM poll_options WHERE id = ? AND poll_id = ?')
       .bind(optionId, pollId)
-      .first()) as any | null;
+      .first()) as Record<string, unknown> | null;
 
     if (!option) return c.json({ error: 'Option not found' }, 404);
 
     const existingVote = (await c.env.DB.prepare('SELECT * FROM poll_votes WHERE poll_id = ? AND user_id = ?')
       .bind(pollId, userId)
-      .first()) as any | null;
+      .first()) as Record<string, unknown> | null;
 
     if (existingVote) {
-      if (existingVote.option_id === optionId) {
+      if ((existingVote.option_id as string) === optionId) {
         return c.json({ error: 'Already voted for this option' }, 409);
       }
       // Change vote: remove old vote, decrement old option, add new vote, increment new option
-      await c.env.DB.prepare('DELETE FROM poll_votes WHERE id = ?').bind(existingVote.id).run();
+      await c.env.DB.prepare('DELETE FROM poll_votes WHERE id = ?')
+        .bind(existingVote.id as string)
+        .run();
       await c.env.DB.prepare('UPDATE poll_options SET votes_count = MAX(0, votes_count - 1) WHERE id = ?')
-        .bind(existingVote.option_id)
+        .bind(existingVote.option_id as string)
         .run();
     }
 
@@ -4922,9 +5324,10 @@ app.post('/api/polls/:pollId/vote', requireAuth, async (c) => {
       .all();
 
     return c.json({ options, userVote: optionId });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Vote error:', error);
-    return c.json({ error: 'Failed to vote', details: error?.message }, 500);
+    return c.json({ error: 'Failed to vote', details: err.message }, 500);
   }
 });
 
@@ -4936,10 +5339,10 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
 
   // Get post to check ownership for notification and remote actor
   const post = (await c.env.DB.prepare(
-    "SELECT user_id, actor_id, username FROM posts WHERE id = ? AND status = 'published'",
+    "SELECT user_id, actor_id, username, text FROM posts WHERE id = ? AND status = 'published'",
   )
     .bind(postId)
-    .first()) as { user_id: string; actor_id: string | null; username: string } | null;
+    .first()) as { user_id: string; actor_id: string | null; username: string; text: string } | null;
 
   if (!post) {
     return c.json({ error: 'Post not found' }, 404);
@@ -4978,13 +5381,13 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
           "SELECT id, actor_id, actor_data FROM notifications WHERE user_id = ? AND post_id = ? AND type = 'fresh' ORDER BY created_at DESC LIMIT 1",
         )
           .bind(post.user_id, postId)
-          .first()) as any;
+          .first()) as Record<string, unknown>;
 
         if (existingNotif) {
           const actorData = existingNotif.actor_data
-            ? JSON.parse(existingNotif.actor_data)
+            ? JSON.parse(existingNotif.actor_data as string)
             : existingNotif.actor_id
-              ? [existingNotif.actor_id]
+              ? [existingNotif.actor_id as string]
               : [];
           if (!actorData.includes(userId)) {
             actorData.push(userId);
@@ -4992,7 +5395,7 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
           await c.env.DB.prepare(
             "UPDATE notifications SET actor_id = ?, actor_data = ?, created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), read = 0 WHERE id = ?",
           )
-            .bind(actorData[0], JSON.stringify(actorData), existingNotif.id)
+            .bind(actorData[0], JSON.stringify(actorData), existingNotif.id as string)
             .run();
         } else {
           await c.env.DB.prepare(
@@ -5003,7 +5406,7 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
           {
             const actor = c.get('user');
             const actorName = actor?.display_name || actor?.username || 'Someone';
-            const textPreview = post.text || '';
+            const textPreview = ((post as Record<string, unknown>).text as string) || '';
             sendPushToUser(
               c.env.DB,
               post.user_id,
@@ -5025,7 +5428,7 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
           headers: { Accept: 'application/activity+json, application/ld+json' },
         });
         if (actorResponse.ok) {
-          const actorData = (await actorResponse.json()) as any;
+          const actorData = (await actorResponse.json()) as ActorData;
           const inboxUrl = actorData.inbox;
           if (inboxUrl) {
             const likeActivity = {
@@ -5103,7 +5506,7 @@ app.get('/api/bookmarks', requireAuth, async (c) => {
     const userId = c.get('user')?.id || '';
 
     let query: string;
-    const params: any[] = [userId];
+    const params: Array<unknown> = [userId];
 
     if (cursor) {
       params.push(cursor);
@@ -5140,14 +5543,14 @@ app.get('/api/bookmarks', requireAuth, async (c) => {
     const posts = result.results || [];
 
     // All posts fetched from bookmarks are by definition bookmarked
-    posts.forEach((post: any) => {
+    posts.forEach((post: Record<string, unknown>) => {
       post.is_bookmarked = true;
     });
 
     const nextCursor = posts.length === limit ? posts[posts.length - 1].created_at : null;
 
     return c.json({ posts, nextCursor });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Bookmarks fetch error:', error);
     return c.json({ error: 'Internal server error' }, 500);
   }
@@ -5226,7 +5629,7 @@ app.post('/api/posts/fresh/batch', requireAuth, async (c) => {
               .bind(...userPostPairs.flatMap((p) => [p.userId, p.postId]))
               .all();
 
-            const existingMap = new Map<string, any>();
+            const existingMap = new Map<string, Record<string, unknown>>();
             for (const row of existingNotifs.results || []) {
               existingMap.set(`${row.user_id}:${row.post_id}`, row);
             }
@@ -5239,9 +5642,9 @@ app.post('/api/posts/fresh/batch', requireAuth, async (c) => {
 
               if (existing) {
                 const actorData = existing.actor_data
-                  ? JSON.parse(existing.actor_data)
+                  ? JSON.parse(existing.actor_data as string)
                   : existing.actor_id
-                    ? [existing.actor_id]
+                    ? [existing.actor_id as string]
                     : [];
                 if (!actorData.includes(userId)) {
                   actorData.push(userId);
@@ -5249,7 +5652,7 @@ app.post('/api/posts/fresh/batch', requireAuth, async (c) => {
                 await c.env.DB.prepare(
                   "UPDATE notifications SET actor_id = ?, actor_data = ?, created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), read = 0 WHERE id = ?",
                 )
-                  .bind(actorData[0], JSON.stringify(actorData), existing.id)
+                  .bind(actorData[0], JSON.stringify(actorData), existing.id as string)
                   .run();
               } else {
                 inserts.push([nanoid(), String(p.user_id), 'fresh', String(p.id), userId]);
@@ -5288,9 +5691,10 @@ app.post('/api/posts/fresh/batch', requireAuth, async (c) => {
 
       return c.json({ unfreshed: post_ids });
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Batch fresh error:', error);
-    return c.json({ error: 'Batch fresh operation failed', details: error?.message }, 500);
+    return c.json({ error: 'Batch fresh operation failed', details: err.message }, 500);
   }
 });
 
@@ -5342,7 +5746,7 @@ app.post('/api/posts/:id/share', requireAuth, async (c) => {
             headers: { Accept: 'application/activity+json, application/ld+json' },
           });
           if (actorResponse.ok) {
-            const actorData = (await actorResponse.json()) as any;
+            const actorData = (await actorResponse.json()) as ActorData;
             const inboxUrl = actorData.inbox;
             if (inboxUrl) {
               const announceActivity = {
@@ -5368,9 +5772,10 @@ app.post('/api/posts/:id/share', requireAuth, async (c) => {
 
       return c.json({ shared: true, share_id: shareId });
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Share error:', error);
-    return c.json({ error: 'Share operation failed', details: error?.message }, 500);
+    return c.json({ error: 'Share operation failed', details: err.message }, 500);
   }
 });
 
@@ -5407,7 +5812,7 @@ app.get('/api/posts/:id/replies', async (c) => {
        LEFT JOIN users u ON p.user_id = u.id
        WHERE p.parent_id = ? AND p.status = 'published' 
        ORDER BY p.created_at ASC LIMIT ?`;
-    const params: any[] = [postId, limit];
+    const params: Array<unknown> = [postId, limit];
 
     if (cursor) {
       query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
@@ -5428,101 +5833,56 @@ app.get('/api/posts/:id/replies', async (c) => {
     }
 
     const replies = result.results || [];
-    const nextCursor = replies.length === limit ? replies[replies.length - 1].created_at : null;
+    const _nextCursor = replies.length === limit ? replies[replies.length - 1].created_at : null;
 
     await enrichPostsWithPolls(
-      replies as any[],
+      replies as PostRow[],
       c.env.DB,
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
       c.env.VAPID_PRIVATE_KEY,
     );
 
-    return c.json({ replies, nextCursor });
-  } catch (error: any) {
-    console.error('Replies fetch error:', error);
-    return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500);
-  }
-});
+    // Add poll data
+    await enrichPostsWithPolls(
+      [parentPost as PostRow],
+      c.env.DB,
+      currentUserId,
+      c.env.VAPID_PUBLIC_KEY,
+      c.env.VAPID_PRIVATE_KEY,
+    );
+    await enrichPostsWithPolls(
+      replies as PostRow[],
+      c.env.DB,
+      currentUserId,
+      c.env.VAPID_PUBLIC_KEY,
+      c.env.VAPID_PRIVATE_KEY,
+    );
 
-// GET /api/tags/trending - get top 5 trending hashtags (based on recent N posts percentage)
-app.get('/api/tags/trending', async (c) => {
-  try {
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500);
+    // Trigger sentiment analysis for unprocessed posts in background
+    if (
+      (parentPost as Record<string, unknown>).sentiment_score == null &&
+      (parentPost as Record<string, unknown>).text
+    ) {
+      c.executionCtx.waitUntil(
+        analyzeSentiment(
+          c,
+          (parentPost as Record<string, unknown>).id as string,
+          (parentPost as Record<string, unknown>).text as string,
+        ),
+      );
+    }
+    for (const r of replies as Array<Record<string, unknown>>) {
+      if (r.sentiment_score == null && r.text) {
+        c.executionCtx.waitUntil(analyzeSentiment(c, r.id as string, r.text as string));
+      }
     }
 
-    // Get recent posts count from query param (default: 100)
-    const recentCountParam = c.req.query('recent_count');
-    const recentCount = recentCountParam ? parseInt(recentCountParam, 10) : 100;
-    const validRecentCount = Number.isNaN(recentCount) || recentCount < 10 || recentCount > 1000 ? 100 : recentCount;
-
-    // Query trending tags based on percentage in recent N posts
-    const result = await c.env.DB.prepare(`
-WITH recent_posts AS (
-  SELECT id, hashtags
-  FROM posts
-  WHERE hidden = 0 AND status = 'published'
-  ORDER BY created_at DESC
-  LIMIT ?
-)
-SELECT
-  value AS tag,
-  COUNT(*) AS count,
-  ROUND(COUNT(*) * 100.0 / ?, 1) AS percentage
-FROM recent_posts, json_each(recent_posts.hashtags)
-GROUP BY value
-ORDER BY count DESC
-LIMIT 5
-    `)
-      .bind(validRecentCount, validRecentCount)
-      .all();
-
-    if (!result.success) {
-      return c.json({ error: 'Failed to fetch trending tags' }, 500);
-    }
-
-    const tags = result.results || [];
-
-    return c.json({ tags }, 200, {
-      'Cache-Control': 'public, max-age=60',
-    });
-  } catch (error: any) {
-    console.error('Trending tags error:', error);
-    return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500);
-  }
-});
-
-// GET /api/tags/suggest?q=prefix - suggest hashtags matching prefix
-app.get('/api/tags/suggest', async (c) => {
-  try {
-    const q = c.req.query('q');
-    if (!q || q.length < 1) {
-      return c.json({ tags: [] });
-    }
-
-    const limit = Math.min(parseInt(c.req.query('limit') || '10', 10), 20);
-    const prefix = q.toLowerCase();
-
-    const result = await c.env.DB.prepare(`
-      SELECT DISTINCT value AS tag, COUNT(*) AS count
-      FROM posts, json_each(posts.hashtags)
-      WHERE posts.hidden = 0 AND posts.status = 'published'
-        AND LOWER(value) LIKE ?
-      GROUP BY value
-      ORDER BY count DESC
-      LIMIT ?
-    `)
-      .bind(prefix + '%', limit)
-      .all();
-
-    const tags = result.results || [];
-    return c.json({ tags }, 200, {
-      'Cache-Control': 'public, max-age=30',
-    });
-  } catch (error: any) {
-    console.error('Tag suggest error:', error);
-    return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ root: parentPost, replies });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Thread fetch error:', error);
+    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -5531,7 +5891,6 @@ app.get('/api/posts/:id/thread', async (c) => {
   try {
     const postId = c.req.param('id');
 
-    // Get current user ID from session (optional)
     const token = getSessionToken(c.req.raw);
     const sessionData = token ? await getSession(c.env, token) : null;
     const currentUserId = sessionData?.user?.id || null;
@@ -5540,7 +5899,6 @@ app.get('/api/posts/:id/thread', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    // First get the post to find root_id
     const post = await c.env.DB.prepare(
       "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published'",
     )
@@ -5551,9 +5909,8 @@ app.get('/api/posts/:id/thread', async (c) => {
       return c.json({ error: 'Post not found' }, 404);
     }
 
-    const rootId = post.root_id || post.id;
+    const rootId = (post as Record<string, unknown>).root_id || (post as Record<string, unknown>).id;
 
-    // Get root post with user info
     const rootPost = await c.env.DB.prepare(
       `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
        u.display_name, u.avatar_key
@@ -5568,7 +5925,6 @@ app.get('/api/posts/:id/thread', async (c) => {
       return c.json({ error: 'Thread not found' }, 404);
     }
 
-    // Get all replies in thread with user info (max 200 for MVP)
     const repliesResult = await c.env.DB.prepare(
       `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
        u.display_name, u.avatar_key
@@ -5586,10 +5942,12 @@ app.get('/api/posts/:id/thread', async (c) => {
 
     const replies = repliesResult.results || [];
 
-    // Add fresh and bookmark status for current user if logged in
     if (currentUserId) {
-      const allPosts = [rootPost, ...replies];
-      const postIds = allPosts.map((p: any) => p.id);
+      const allPosts: Array<Record<string, unknown>> = [
+        rootPost as Record<string, unknown>,
+        ...(replies as Array<Record<string, unknown>>),
+      ];
+      const postIds = allPosts.map((p: Record<string, unknown>) => p.id as string);
       const placeholders = postIds.map(() => '?').join(',');
 
       const freshResult = await c.env.DB.prepare(
@@ -5599,60 +5957,70 @@ app.get('/api/posts/:id/thread', async (c) => {
         .all();
 
       if (freshResult.success) {
-        const freshedPostIds = new Set((freshResult.results || []).map((f: any) => f.post_id));
-
-        // Add is_freshed field to root post and replies
-        rootPost.is_freshed = freshedPostIds.has(rootPost.id);
-        replies.forEach((post: any) => {
-          post.is_freshed = freshedPostIds.has(post.id);
+        const freshedPostIds = new Set(
+          (freshResult.results || []).map((f: Record<string, unknown>) => f.post_id as string),
+        );
+        (rootPost as Record<string, unknown>).is_freshed = freshedPostIds.has(
+          (rootPost as Record<string, unknown>).id as string,
+        );
+        (replies as Array<Record<string, unknown>>).forEach((post: Record<string, unknown>) => {
+          post.is_freshed = freshedPostIds.has(post.id as string);
         });
       }
 
-      // Add is_bookmarked field to root post and replies
       const bookmarkResult = await c.env.DB.prepare(
         `SELECT post_id FROM bookmarks WHERE user_id = ? AND post_id IN (${placeholders})`,
       )
         .bind(currentUserId, ...postIds)
         .all();
       if (bookmarkResult.success) {
-        const bookmarkedPostIds = new Set((bookmarkResult.results || []).map((b: any) => b.post_id));
-        rootPost.is_bookmarked = bookmarkedPostIds.has(rootPost.id);
-        replies.forEach((post: any) => {
-          post.is_bookmarked = bookmarkedPostIds.has(post.id);
+        const bookmarkedPostIds = new Set(
+          (bookmarkResult.results || []).map((b: Record<string, unknown>) => b.post_id as string),
+        );
+        (rootPost as Record<string, unknown>).is_bookmarked = bookmarkedPostIds.has(
+          (rootPost as Record<string, unknown>).id as string,
+        );
+        (replies as Array<Record<string, unknown>>).forEach((post: Record<string, unknown>) => {
+          post.is_bookmarked = bookmarkedPostIds.has(post.id as string);
         });
       }
     }
 
-    // Add poll data
     await enrichPostsWithPolls(
-      [rootPost as any],
+      [rootPost as PostRow],
       c.env.DB,
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
       c.env.VAPID_PRIVATE_KEY,
     );
     await enrichPostsWithPolls(
-      replies as any[],
+      replies as PostRow[],
       c.env.DB,
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
       c.env.VAPID_PRIVATE_KEY,
     );
 
-    // Trigger sentiment analysis for unprocessed posts in background
-    if ((rootPost as any).sentiment_score == null && (rootPost as any).text) {
-      c.executionCtx.waitUntil(analyzeSentiment(c, (rootPost as any).id, (rootPost as any).text));
+    if ((rootPost as Record<string, unknown>).sentiment_score == null && (rootPost as Record<string, unknown>).text) {
+      c.executionCtx.waitUntil(
+        analyzeSentiment(
+          c,
+          (rootPost as Record<string, unknown>).id as string,
+          (rootPost as Record<string, unknown>).text as string,
+        ),
+      );
     }
-    for (const r of replies as any[]) {
+    for (const r of replies as Array<Record<string, unknown>>) {
       if (r.sentiment_score == null && r.text) {
-        c.executionCtx.waitUntil(analyzeSentiment(c, r.id, r.text));
+        c.executionCtx.waitUntil(analyzeSentiment(c, r.id as string, r.text as string));
       }
     }
 
     return c.json({ root: rootPost, replies });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Thread fetch error:', error);
-    return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -5766,7 +6134,7 @@ app.post('/api/posts/:id/replies/prepare', requireAuth, async (c) => {
       gifUploadUrl,
       gifKey,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Prepare reply error:', error);
     return c.json({ error: 'Internal server error' }, 500);
   }
@@ -5813,22 +6181,30 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
     }
 
     // Validate parent still exists and is published
-    const parentPost = await c.env.DB.prepare(
+    const parentPost = (await c.env.DB.prepare(
       "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published'",
     )
       .bind(postId)
-      .first();
+      .first()) as {
+      id: string;
+      user_id: string;
+      username: string;
+      text: string;
+      depth: number;
+      root_id: string | null;
+    } | null;
 
     if (!parentPost) {
       return c.json({ error: 'Parent post no longer available' }, 422);
     }
 
-    let reply: any;
+    let reply: Record<string, unknown> | undefined;
+    let mentionsJson: string | null = '[]';
 
     if (gifKey) {
       // Resolve mentions
       const replyUsername = c.get('user')?.username || 'anonymous';
-      const mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, replyUsername);
+      mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, replyUsername);
 
       // Validate that this is a pending reply and gifKey matches
       const pendingReply = await c.env.DB.prepare(`
@@ -5862,15 +6238,16 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
       }
 
       // Return the updated reply
-      reply = await c.env.DB.prepare(`
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
+      reply =
+        (await c.env.DB.prepare(`
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
       `)
-        .bind(replyId)
-        .first();
+          .bind(replyId)
+          .first()) ?? undefined;
     } else {
       // Resolve mentions
       const replyUsername = c.get('user')?.username || 'anonymous';
-      const mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, replyUsername);
+      mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, replyUsername);
 
       // Create text-only reply directly
       const depth = Math.min(Number(parentPost.depth || 0) + 1, 5);
@@ -5903,20 +6280,22 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
         }
 
         // Return the created reply
-        reply = await c.env.DB.prepare(`
-          SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
+        reply =
+          (await c.env.DB.prepare(`
+          SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
         `)
-          .bind(replyId)
-          .first();
-      } catch (dbError: any) {
+            .bind(replyId)
+            .first()) ?? undefined;
+      } catch (dbError: unknown) {
+        const err = dbError as { message?: string; stack?: string; cause?: unknown; name?: string };
         console.error('Database error creating reply:', dbError);
         console.error('Error details:', {
-          message: dbError?.message,
-          stack: dbError?.stack,
-          cause: dbError?.cause,
-          name: dbError?.name,
+          message: err.message,
+          stack: err.stack,
+          cause: err.cause,
+          name: err.name,
         });
-        return c.json({ error: 'Database error', details: dbError?.message || 'Unknown error' }, 500);
+        return c.json({ error: 'Database error', details: err.message || 'Unknown error' }, 500);
       }
     }
 
@@ -5942,13 +6321,13 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
           "SELECT id, actor_id, actor_data FROM notifications WHERE user_id = ? AND post_id = ? AND type = 'reply' ORDER BY created_at DESC LIMIT 1",
         )
           .bind(parentPost.user_id, postId)
-          .first()) as any;
+          .first()) as Record<string, unknown>;
 
         if (existingNotif) {
           const actorData = existingNotif.actor_data
-            ? JSON.parse(existingNotif.actor_data)
+            ? JSON.parse(existingNotif.actor_data as string)
             : existingNotif.actor_id
-              ? [existingNotif.actor_id]
+              ? [existingNotif.actor_id as string]
               : [];
           if (!actorData.includes(replyUserId)) {
             actorData.push(replyUserId);
@@ -5956,7 +6335,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
           await c.env.DB.prepare(
             "UPDATE notifications SET actor_id = ?, actor_data = ?, created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), read = 0 WHERE id = ?",
           )
-            .bind(actorData[0], JSON.stringify(actorData), existingNotif.id)
+            .bind(actorData[0], JSON.stringify(actorData), existingNotif.id as string)
             .run();
         } else {
           await c.env.DB.prepare(
@@ -6037,28 +6416,28 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
         for (const refIndex of referencedIndices) {
           const arrayIndex = refIndex - 1;
           if (arrayIndex >= 0 && arrayIndex < allReplies.length) {
-            const referencedPost = allReplies[arrayIndex] as any;
+            const referencedPost = allReplies[arrayIndex] as Record<string, unknown>;
             // Increment reply_count for the referenced post (skip if it's the direct parent to avoid double-count)
             if (referencedPost.id !== postId) {
               await c.env.DB.prepare('UPDATE posts SET reply_count = COALESCE(reply_count, 0) + 1 WHERE id = ?')
-                .bind(referencedPost.id)
+                .bind(referencedPost.id as string)
                 .run();
             }
             if (
               referencedPost.user_id &&
-              referencedPost.user_id !== replyUserId &&
-              !notifiedUserIds.has(referencedPost.user_id)
+              (referencedPost.user_id as string) !== replyUserId &&
+              !notifiedUserIds.has(referencedPost.user_id as string)
             ) {
               await c.env.DB.prepare(
                 'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
               )
-                .bind(nanoid(), referencedPost.user_id, 'reply', replyId, replyUserId)
+                .bind(nanoid(), referencedPost.user_id as string, 'reply', replyId, replyUserId)
                 .run();
               const actor = c.get('user');
               const actorName = actor?.display_name || actor?.username || 'Someone';
               sendPushToUser(
                 c.env.DB,
-                referencedPost.user_id,
+                referencedPost.user_id as string,
                 getPushPayload('reply', actorName, text || '', replyId),
                 c.env.VAPID_PUBLIC_KEY,
                 c.env.VAPID_PRIVATE_KEY,
@@ -6072,17 +6451,18 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
     }
 
     return c.json({ reply });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string; stack?: string; cause?: unknown; name?: string; replyId?: string };
     console.error('Commit reply error:', error);
     console.error('Full error details:', {
-      message: error?.message,
-      stack: error?.stack,
-      cause: error?.cause,
-      name: error?.name,
+      message: err.message,
+      stack: err.stack,
+      cause: err.cause,
+      name: err.name,
       postId: postId || 'unknown',
-      replyId: error?.replyId || 'unknown',
+      replyId: err.replyId || 'unknown',
     });
-    return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -6125,7 +6505,7 @@ app.get('/api/search', async (c) => {
 
     // Build multi-term AND search for posts / arcade
     const conditions: string[] = [];
-    const params: any[] = [];
+    const params: Array<unknown> = [];
 
     if (type === 'arcade') {
       conditions.push(
@@ -6149,7 +6529,7 @@ app.get('/api/search', async (c) => {
     const cleanQuery = query.trim().replace(/^@/, '');
     const searchTerm = `%${cleanQuery.toLowerCase()}%`;
 
-    let usersResult: any[] = [];
+    let usersResult: Array<Record<string, unknown>> = [];
 
     if (conditions.length === 0) {
       // No specific tokens, but still search users by the raw query
@@ -6162,7 +6542,7 @@ app.get('/api/search', async (c) => {
         `)
           .bind(searchTerm, searchTerm, limit)
           .all();
-        usersResult = (users.results || []).map((u: any) => ({
+        usersResult = (users.results || []).map((u: Record<string, unknown>) => ({
           username: u.username,
           display_name: u.display_name || '',
           avatar_key: u.avatar_key || '',
@@ -6193,7 +6573,7 @@ app.get('/api/search', async (c) => {
       `)
         .bind(searchTerm, searchTerm, limit)
         .all();
-      usersResult = (users.results || []).map((u: any) => ({
+      usersResult = (users.results || []).map((u: Record<string, unknown>) => ({
         username: u.username,
         display_name: u.display_name || '',
         avatar_key: u.avatar_key || '',
@@ -6206,9 +6586,10 @@ app.get('/api/search', async (c) => {
       results: posts.results || [],
       users: usersResult,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Search error:', error);
-    return c.json({ error: 'Search failed', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Search failed', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -6235,7 +6616,7 @@ app.get('/api/users/suggest', async (c) => {
       .bind(prefix + '%', prefix + '%', prefix + '%', limit)
       .all();
 
-    const users = (result.results || []).map((u: any) => ({
+    const users = (result.results || []).map((u: Record<string, unknown>) => ({
       username: u.username,
       display_name: u.display_name || '',
       avatar_key: u.avatar_key || '',
@@ -6244,7 +6625,7 @@ app.get('/api/users/suggest', async (c) => {
     return c.json({ users }, 200, {
       'Cache-Control': 'public, max-age=15',
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('User suggest error:', error);
     return c.json({ error: 'Internal server error' }, 500);
   }
@@ -6332,7 +6713,7 @@ app.delete('/api/posts/:id', requireAuth, async (c) => {
         await c.env.DB.prepare('DELETE FROM posts WHERE id = ?').bind(reply.id).run();
       }
     };
-    await deleteReplies(postId);
+    await deleteReplies(postId ?? '');
 
     // Delete the post
     const result = await c.env.DB.prepare('DELETE FROM posts WHERE id = ?').bind(postId).run();
@@ -6411,9 +6792,10 @@ app.delete('/api/posts/:id', requireAuth, async (c) => {
     }
 
     return c.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Delete post error:', error);
-    return c.json({ error: 'Failed to delete post', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to delete post', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -6426,45 +6808,52 @@ app.get('/api/posts/:id', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    const post = (await c.env.DB.prepare('SELECT * FROM posts WHERE id = ?').bind(postId).first()) as any | null;
+    const post = (await c.env.DB.prepare('SELECT * FROM posts WHERE id = ?').bind(postId).first()) as Record<
+      string,
+      unknown
+    > | null;
 
     if (!post) {
       return c.json({ error: 'Not found' }, 404);
     }
 
     // Check if post is hidden - allow admin bypass
-    if (post.hidden && !isAdmin(c.env as unknown as Bindings, c.get('user')?.username ?? '')) {
+    if (post.hidden && !isAdmin(c.env, c.get('user')?.username ?? '')) {
       return c.json({ error: 'Gone' }, 410);
     }
 
     // Fetch poll data if available
-    const poll = (await c.env.DB.prepare('SELECT * FROM polls WHERE post_id = ?').bind(postId).first()) as any | null;
+    const poll = (await c.env.DB.prepare('SELECT * FROM polls WHERE post_id = ?').bind(postId).first()) as Record<
+      string,
+      unknown
+    > | null;
     if (poll) {
       const { results: options } = await c.env.DB.prepare('SELECT * FROM poll_options WHERE poll_id = ? ORDER BY rowid')
-        .bind(poll.id)
+        .bind(poll.id as string)
         .all();
       let userVote: string | null = null;
       const currentUserId = c.get('user')?.id;
       if (currentUserId) {
         const vote = (await c.env.DB.prepare('SELECT option_id FROM poll_votes WHERE poll_id = ? AND user_id = ?')
-          .bind(poll.id, currentUserId)
+          .bind(poll.id as string, currentUserId)
           .first()) as { option_id: string } | null;
         if (vote) userVote = vote.option_id;
       }
       post.poll = {
-        id: poll.id,
-        question: poll.question,
+        id: poll.id as string,
+        question: poll.question as string,
         multipleChoice: !!poll.multiple_choice,
-        endsAt: poll.ends_at,
+        endsAt: poll.ends_at as string | undefined,
         options,
         userVote,
       };
     }
 
     return c.json(post);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Get post error:', error);
-    return c.json({ error: 'Failed to get post', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to get post', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -6549,7 +6938,7 @@ async function insertAdminAlert(
 }
 
 async function enrichPostsWithPolls(
-  posts: any[],
+  posts: PostRow[],
   db: D1Database,
   currentUserId?: string | null,
   vapidPublicKey?: string,
@@ -6561,26 +6950,26 @@ async function enrichPostsWithPolls(
   const pollsResult = await db
     .prepare(`SELECT * FROM polls WHERE post_id IN (${placeholders})`)
     .bind(...postIds)
-    .all();
+    .all<PollRow>();
 
   if (!pollsResult.success || pollsResult.results.length === 0) return;
 
-  const pollMap = new Map<string, any>();
+  const pollMap = new Map<string, PollRow>();
   for (const poll of pollsResult.results) {
-    pollMap.set((poll as any).post_id, poll);
+    pollMap.set(poll.post_id, poll);
   }
 
-  const pollIds = pollsResult.results.map((p: any) => p.id);
+  const pollIds = pollsResult.results.map((p: PollRow) => p.id);
   const optPlaceholders = pollIds.map(() => '?').join(',');
   const optsResult = await db
     .prepare(`SELECT * FROM poll_options WHERE poll_id IN (${optPlaceholders}) ORDER BY rowid`)
     .bind(...pollIds)
-    .all();
+    .all<PollOptionRow>();
 
-  const optsByPoll = new Map<string, any[]>();
+  const optsByPoll = new Map<string, PollOptionRow[]>();
   if (optsResult.success) {
     for (const opt of optsResult.results) {
-      const pid = (opt as any).poll_id;
+      const pid = opt.poll_id;
       if (!optsByPoll.has(pid)) optsByPoll.set(pid, []);
       optsByPoll.get(pid)!.push(opt);
     }
@@ -6591,10 +6980,10 @@ async function enrichPostsWithPolls(
     const votesResult = await db
       .prepare(`SELECT poll_id, option_id FROM poll_votes WHERE poll_id IN (${optPlaceholders}) AND user_id = ?`)
       .bind(...pollIds, currentUserId)
-      .all();
+      .all<{ poll_id: string; option_id: string }>();
     if (votesResult.success) {
       for (const v of votesResult.results) {
-        userVotes.set((v as any).poll_id, (v as any).option_id);
+        userVotes.set(v.poll_id, v.option_id);
       }
     }
   }
@@ -6646,8 +7035,8 @@ app.post('/api/report', requireAuth, async (c) => {
       limit: 10,
       windowSeconds: 60,
     });
-  } catch (kvError: any) {
-    console.warn('Report rate limit check failed, proceeding anyway:', kvError.message);
+  } catch (kvError: unknown) {
+    console.warn('Report rate limit check failed, proceeding anyway:', (kvError as Error).message);
   }
   if (!rl.allowed) return rateLimitResponse(c, rl.resetIn, 10);
 
@@ -6773,20 +7162,12 @@ app.post('/api/report', requireAuth, async (c) => {
     }
 
     return c.json({ success: true, report_id: reportId });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Report error:', error);
-    return c.json({ error: 'Failed to report post', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to report post', details: err.message || 'Unknown error' }, 500);
   }
 });
-
-// Admin middleware helper
-const requireAdmin = async (c: any, next: any) => {
-  const username = c.get('user')?.username;
-  if (!username || !isAdmin(c.env, username)) {
-    return c.json({ error: 'Forbidden' }, 403);
-  }
-  await next();
-};
 
 // GET /api/admin/alerts - get unresolved admin alerts (admin only)
 app.get('/api/admin/alerts', requireAuth, requireAdmin, async (c) => {
@@ -6807,9 +7188,10 @@ app.get('/api/admin/alerts', requireAuth, requireAdmin, async (c) => {
     `).all();
 
     return c.json({ alerts: result.results || [] });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Fetch admin alerts error:', error);
-    return c.json({ error: 'Failed to fetch alerts', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to fetch alerts', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -6825,9 +7207,10 @@ app.post('/api/admin/alerts/:id/resolve', requireAuth, requireAdmin, async (c) =
     await c.env.DB.prepare('UPDATE admin_alerts SET resolved = 1 WHERE id = ?').bind(alertId).run();
 
     return c.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Resolve alert error:', error);
-    return c.json({ error: 'Failed to resolve alert', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to resolve alert', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -6849,9 +7232,10 @@ app.post('/api/admin/posts/:id/hide', requireAuth, requireAdmin, async (c) => {
     await c.env.DB.prepare('UPDATE posts SET hidden = 1 WHERE id = ?').bind(postId).run();
 
     return c.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Hide post error:', error);
-    return c.json({ error: 'Failed to hide post', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to hide post', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -6873,9 +7257,10 @@ app.post('/api/admin/posts/:id/unhide', requireAuth, requireAdmin, async (c) => 
     await c.env.DB.prepare('UPDATE posts SET hidden = 0 WHERE id = ?').bind(postId).run();
 
     return c.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Unhide post error:', error);
-    return c.json({ error: 'Failed to unhide post', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to unhide post', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -6895,9 +7280,10 @@ app.get('/api/admin/posts/hidden', requireAuth, requireAdmin, async (c) => {
     `).all();
 
     return c.json({ posts: result.results || [] });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Fetch hidden posts error:', error);
-    return c.json({ error: 'Failed to fetch hidden posts', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to fetch hidden posts', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -6915,9 +7301,10 @@ app.get('/api/admin/users', requireAuth, requireAdmin, async (c) => {
     `).all();
 
     return c.json({ users: result.results || [] });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Fetch users error:', error);
-    return c.json({ error: 'Failed to fetch users', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to fetch users', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -6941,7 +7328,7 @@ app.delete('/api/admin/users/:id', requireAuth, requireAdmin, async (c) => {
     }
 
     // Check if trying to delete an admin
-    if (isAdmin(c.env as unknown as Bindings, targetUser.username)) {
+    if (isAdmin(c.env, targetUser.username)) {
       return c.json({ error: 'Cannot delete admin accounts' }, 403);
     }
 
@@ -6956,9 +7343,165 @@ app.delete('/api/admin/users/:id', requireAuth, requireAdmin, async (c) => {
     // For now, we just delete the user row
 
     return c.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Delete user error:', error);
-    return c.json({ error: 'Failed to delete user', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to delete user', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// POST /api/admin/alerts/:id/resolve - mark alert as resolved (admin only)
+app.post('/api/admin/alerts/:id/resolve', requireAuth, requireAdmin, async (c) => {
+  try {
+    const alertId = c.req.param('id');
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    await c.env.DB.prepare('UPDATE admin_alerts SET resolved = 1 WHERE id = ?').bind(alertId).run();
+
+    return c.json({ success: true });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Resolve alert error:', error);
+    return c.json({ error: 'Failed to resolve alert', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// POST /api/admin/posts/:id/hide - manually hide a post (admin only)
+app.post('/api/admin/posts/:id/hide', requireAuth, requireAdmin, async (c) => {
+  try {
+    const postId = c.req.param('id');
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const post = await c.env.DB.prepare('SELECT id, user_id FROM posts WHERE id = ?').bind(postId).first();
+
+    if (!post) {
+      return c.json({ error: 'Post not found' }, 404);
+    }
+
+    await c.env.DB.prepare('UPDATE posts SET hidden = 1 WHERE id = ?').bind(postId).run();
+
+    return c.json({ success: true });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Hide post error:', error);
+    return c.json({ error: 'Failed to hide post', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// POST /api/admin/posts/:id/unhide - restore a hidden post (admin only)
+app.post('/api/admin/posts/:id/unhide', requireAuth, requireAdmin, async (c) => {
+  try {
+    const postId = c.req.param('id');
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const post = await c.env.DB.prepare('SELECT id, user_id FROM posts WHERE id = ?').bind(postId).first();
+
+    if (!post) {
+      return c.json({ error: 'Post not found' }, 404);
+    }
+
+    await c.env.DB.prepare('UPDATE posts SET hidden = 0 WHERE id = ?').bind(postId).run();
+
+    return c.json({ success: true });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Unhide post error:', error);
+    return c.json({ error: 'Failed to unhide post', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// GET /api/admin/posts/hidden - get hidden posts (admin only)
+app.get('/api/admin/posts/hidden', requireAuth, requireAdmin, async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const result = await c.env.DB.prepare(`
+      SELECT posts.*, users.username, users.display_name
+      FROM posts
+      JOIN users ON posts.user_id = users.id
+      WHERE posts.hidden = 1
+      ORDER BY posts.created_at DESC
+    `).all();
+
+    return c.json({ posts: result.results || [] });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Fetch hidden posts error:', error);
+    return c.json({ error: 'Failed to fetch hidden posts', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// GET /api/admin/users - get all users (admin only)
+app.get('/api/admin/users', requireAuth, requireAdmin, async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const result = await c.env.DB.prepare(`
+      SELECT id, username, display_name, email, created_at
+      FROM users
+      ORDER BY created_at DESC
+    `).all();
+
+    return c.json({ users: result.results || [] });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Fetch users error:', error);
+    return c.json({ error: 'Failed to fetch users', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// DELETE /api/admin/users/:id - delete a user account (admin only)
+app.delete('/api/admin/users/:id', requireAuth, requireAdmin, async (c) => {
+  try {
+    const targetUserId = c.req.param('id');
+    const _adminUsername = c.get('user')?.username;
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    // Get the target user
+    const targetUser = (await c.env.DB.prepare('SELECT id, username FROM users WHERE id = ?')
+      .bind(targetUserId)
+      .first()) as { id: string; username: string } | null;
+
+    if (!targetUser) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    // Check if trying to delete an admin
+    if (isAdmin(c.env, targetUser.username)) {
+      return c.json({ error: 'Cannot delete admin accounts' }, 403);
+    }
+
+    // Delete the user (posts remain with user_id intact)
+    const result = await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(targetUserId).run();
+
+    if (!result.success) {
+      return c.json({ error: 'Failed to delete account' }, 500);
+    }
+
+    // Invalidate all sessions for this user (simplified - in production, use session table)
+    // For now, we just delete the user row
+
+    return c.json({ success: true });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Delete user error:', error);
+    return c.json({ error: 'Failed to delete user', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -7016,14 +7559,14 @@ app.get('/api/notifications', requireAuth, async (c) => {
     for (const row of rows) {
       if (row.type === 'fresh' && row.actor_data) {
         try {
-          const ids = JSON.parse(row.actor_data);
+          const ids = JSON.parse(row.actor_data as string);
           if (Array.isArray(ids)) ids.forEach((id: string) => void allActorIds.add(id));
         } catch {}
       }
     }
 
     // Fetch user info for all grouped actors
-    const actorUserMap = new Map<string, any>();
+    const actorUserMap = new Map<string, Record<string, unknown>>();
     if (allActorIds.size > 0) {
       const userRows = await c.env.DB.prepare(`
         SELECT id, username, display_name, avatar_key FROM users WHERE id IN (${Array.from(allActorIds)
@@ -7032,13 +7575,13 @@ app.get('/api/notifications', requireAuth, async (c) => {
       `)
         .bind(...Array.from(allActorIds))
         .all();
-      for (const u of userRows.results || []) {
-        actorUserMap.set(u.id, u);
+      for (const u of (userRows.results || []) as Array<Record<string, unknown>>) {
+        actorUserMap.set(u.id as string, u);
       }
     }
 
-    const notifications = rows.map((row: any) => {
-      const notif: any = {
+    const notifications = rows.map((row: Record<string, unknown>) => {
+      const notif: Record<string, unknown> = {
         id: row.id,
         type: row.type,
         post_id: row.post_id,
@@ -7059,7 +7602,7 @@ app.get('/api/notifications', requireAuth, async (c) => {
       // For fresh notifications with grouped actors, include all actors
       if (row.type === 'fresh' && row.actor_data) {
         try {
-          const ids = JSON.parse(row.actor_data);
+          const ids = JSON.parse(row.actor_data as string);
           if (Array.isArray(ids) && ids.length > 1) {
             notif.actors = ids
               .map((id: string) => {
@@ -7078,9 +7621,10 @@ app.get('/api/notifications', requireAuth, async (c) => {
       notifications,
       unread_count: unreadResult?.count || 0,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Fetch notifications error:', error);
-    return c.json({ error: 'Failed to fetch notifications', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to fetch notifications', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -7096,9 +7640,10 @@ app.post('/api/notifications/read-all', requireAuth, async (c) => {
     await c.env.DB.prepare('UPDATE notifications SET read = 1 WHERE user_id = ? AND read = 0').bind(userId).run();
 
     return c.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Mark all read error:', error);
-    return c.json({ error: 'Failed to mark notifications as read', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to mark notifications as read', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -7185,15 +7730,17 @@ app.get('/api/current-topic', async (c) => {
       created_at: result.created_at,
       type: result.swf_key
         ? 'flash'
-        : (result as any).payload_key && (result as any).payload_key.startsWith('dos/')
+        : typeof (result as Record<string, unknown>).payload_key === 'string' &&
+            ((result as Record<string, unknown>).payload_key as string).startsWith('dos/')
           ? 'dos'
           : 'html',
     };
 
     return c.json(topicPost);
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const err = error as { message?: string };
     console.error('Current topic fetch error:', error);
-    return c.json({ error: 'Internal server error', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
   }
 });
 
@@ -7205,7 +7752,8 @@ app.get('/api/push/vapid-key', async (c) => {
 // POST /api/push/register - Register a Web Push subscription (protected)
 app.post('/api/push/register', requireAuth, async (c) => {
   try {
-    const user = c.get('user');
+    const user = c.get('user') as { id: string; username: string } | undefined;
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const body = (await c.req.json()) as {
       endpoint: string;
       keys: { p256dh: string; auth: string };
@@ -7250,6 +7798,10 @@ app.post('/api/push/unregister', requireAuth, async (c) => {
 });
 
 // Export for Cloudflare Pages Functions
-export async function onRequest(context: any) {
-  return app.fetch(context.request, context.env, context);
+export async function onRequest(context: Record<string, unknown>) {
+  return app.fetch(
+    context.request as Request,
+    context.env as Record<string, unknown>,
+    context as unknown as ExecutionContext,
+  );
 }

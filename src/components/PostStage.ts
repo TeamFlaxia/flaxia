@@ -89,18 +89,25 @@ function createSwfExecutionButton(props: {
 }
 
 // Load JSZip dynamically
-declare const JSZip: any;
+interface JSZipInstance {
+  file(name: string): { name: string; dir: boolean } | null;
+  files: Record<string, { name: string; dir: boolean }>;
+}
 
-async function loadJSZip(): Promise<any> {
-  if (typeof window !== 'undefined' && (window as any).JSZip) {
-    return (window as any).JSZip;
+interface JSZipStatic {
+  loadAsync(data: Blob): Promise<JSZipInstance>;
+}
+
+async function loadJSZip(): Promise<JSZipStatic | null> {
+  if (typeof window !== 'undefined' && window.JSZip) {
+    return window.JSZip as JSZipStatic;
   }
 
   // Load JSZip from CDN if not available
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
     script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
-    script.onload = () => resolve((window as any).JSZip);
+    script.onload = () => resolve(window.JSZip as JSZipStatic);
     script.onerror = reject;
     document.head.appendChild(script);
   });
@@ -109,6 +116,7 @@ async function loadJSZip(): Promise<any> {
 async function validateZipContainsIndexHtml(zipBlob: Blob): Promise<boolean> {
   try {
     const JSZip = await loadJSZip();
+    if (!JSZip) return false;
     const zip = await JSZip.loadAsync(zipBlob);
 
     // Check if index.html exists in the ZIP
@@ -382,7 +390,7 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
   }
 
   if (props.mode === PostCardMode.PREVIEW) {
-    let mediaElement: HTMLElement;
+    let mediaElement: HTMLElement = null!;
 
     // Check if it's a DOS ZIP file (payload_key starting with 'dos/')
     if (props.post.payload_key && props.post.payload_key.startsWith('dos/')) {

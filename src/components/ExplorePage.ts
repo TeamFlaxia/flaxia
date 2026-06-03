@@ -27,11 +27,14 @@ export class ExplorePage {
   private suggestAbortController: AbortController | null = null;
   private static readonly SEARCH_HISTORY_KEY = 'flaxia_search_history';
   private static readonly MAX_HISTORY = 10;
+  private postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
+  private boundPostUpdatedHandler?: (e: Event) => void;
 
   constructor(props: ExplorePageProps) {
     this.props = props;
     this.element = this.createElement();
     this.setupEventListeners();
+    this.setupPostUpdatedListener();
     this.loadContent();
   }
 
@@ -153,7 +156,7 @@ export class ExplorePage {
       this.fabButton.addEventListener('click', () => {
         openPostModal({
           currentUser: this.props.currentUser,
-          onPostCreated: (post) => this.handleNewPost(post),
+          onPostCreated: (post) => this.handleNewPost(post as unknown as Post),
         });
       });
       container.appendChild(this.fabButton);
@@ -254,8 +257,8 @@ export class ExplorePage {
               })),
             );
           }
-        } catch (err: any) {
-          if (err?.name !== 'AbortError') console.error('Suggest error:', err);
+        } catch (err: unknown) {
+          if ((err as { name?: string })?.name !== 'AbortError') console.error('Suggest error:', err);
         }
       };
 
@@ -481,7 +484,7 @@ export class ExplorePage {
       if (newPosts.length > 0) {
         this.posts.push(...newPosts);
         if (!this.props.tag) {
-          const lastPost = newPosts[newPosts.length - 1] as any;
+          const lastPost = newPosts[newPosts.length - 1] as Post & { score: number };
           this.cursor = `${lastPost.score},${lastPost.created_at}`;
         } else {
           this.cursor = newPosts[newPosts.length - 1].created_at;
@@ -520,12 +523,12 @@ export class ExplorePage {
     const [tagsRes, postsRes] = await Promise.all([fetch('/api/tags/trending'), fetch('/api/posts/trending?limit=10')]);
 
     if (tagsRes.ok) {
-      const tagsData = await tagsRes.json();
+      const tagsData = (await tagsRes.json()) as { tags: Array<{ tag: string; percentage: string }> };
       this.renderTrendingTags(tagsData.tags || []);
     }
 
     if (postsRes.ok) {
-      const postsData = await postsRes.json();
+      const postsData = (await postsRes.json()) as { posts: Post[] };
       this.handleNewPosts(postsData.posts || []);
     }
   }
@@ -620,6 +623,24 @@ export class ExplorePage {
     });
   }
 
+  private setupPostUpdatedListener(): void {
+    this.boundPostUpdatedHandler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail?.postId) return;
+      const card = this.postCards.get(detail.postId);
+      if (card) {
+        const update: Partial<Post> = {};
+        if (detail.isFreshed !== undefined) update.is_freshed = detail.isFreshed;
+        if (detail.freshCount !== undefined) update.fresh_count = detail.freshCount;
+        if (detail.isBookmarked !== undefined) update.is_bookmarked = detail.isBookmarked;
+        if (detail.bookmarkCount !== undefined) update.bookmark_count = detail.bookmarkCount;
+        if (detail.replyCount !== undefined) update.reply_count = detail.replyCount;
+        card.updatePost(update);
+      }
+    };
+    window.addEventListener('postUpdated', this.boundPostUpdatedHandler);
+  }
+
   private renderPosts(): void {
     const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
     if (!postsContainer) return;
@@ -627,6 +648,7 @@ export class ExplorePage {
     // If initial load, clear container
     if (this.posts.length <= 10 && postsContainer.children.length > 0 && !this.cursor) {
       postsContainer.innerHTML = '';
+      this.postCards.clear();
     }
 
     const fragment = document.createDocumentFragment();
@@ -639,13 +661,14 @@ export class ExplorePage {
         currentUser: this.props.currentUser || undefined,
         depth: post.depth,
       });
+      this.postCards.set(post.id, postCard);
       fragment.appendChild(postCard.getElement());
     });
 
     postsContainer.appendChild(fragment);
   }
 
-  private renderTrendingTags(tags: any[]): void {
+  private renderTrendingTags(tags: Array<{ tag: string; percentage: string }>): void {
     const container = this.element.querySelector('.explore-trending-tags') as HTMLElement;
     if (!container) return;
 
@@ -739,7 +762,6 @@ export class ExplorePage {
         'margin-top: 1rem; padding: 0.5rem 1rem; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer; font-family: inherit;';
       retryBtn.addEventListener('click', () => {
         loadingElement.style.display = 'none';
-        this.retryCount = 0;
         void this.loadMorePosts();
       });
 
@@ -806,11 +828,16 @@ export class ExplorePage {
   }
 
   public destroy(): void {
+    if (this.boundPostUpdatedHandler) {
+      window.removeEventListener('postUpdated', this.boundPostUpdatedHandler);
+      this.boundPostUpdatedHandler = undefined;
+    }
+    this.postCards.forEach((card) => void card.destroy());
+    this.postCards.clear();
     if (this.intersectionObserver) {
       this.intersectionObserver.disconnect();
       this.intersectionObserver = null;
     }
-    window.removeEventListener('scroll', () => {});
   }
 }
 

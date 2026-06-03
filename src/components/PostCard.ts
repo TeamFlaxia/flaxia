@@ -127,7 +127,7 @@ export class PostCard {
     container.appendChild(textElement);
 
     if ('requestIdleCallback' in window) {
-      (window as any).requestIdleCallback(
+      window.requestIdleCallback?.(
         async () => {
           try {
             const richText = await createPostText({
@@ -168,7 +168,7 @@ export class PostCard {
 
     // Poll section
     if (this.props.post.poll) {
-      const pollEl = this.createPollElement(this.props.post.poll);
+      const pollEl = this.createPollElement({ ...this.props.post.poll, expired: false });
       container.appendChild(pollEl);
     }
 
@@ -216,11 +216,12 @@ export class PostCard {
 
     // Reply composer (hidden by default, only if reply composer is not disabled)
     if (!this.props.disableReply && !this.props.disableReplyComposer) {
-      const prefill = this.props.postIndex !== undefined ? `>>${this.props.postIndex} ` : undefined;
+      const currentIndex = container.getAttribute('data-post-index');
+      const prefill = currentIndex !== null ? `>>${currentIndex} ` : undefined;
       this.replyComposer = createReplyComposer({
         postId: this.props.post.id,
         sandboxOrigin: this.props.sandboxOrigin,
-        onReplyCreated: (newReply) => this.handleReplyCreated(newReply),
+        onReplyCreated: (newReply) => this.handleReplyCreated(newReply as unknown as Record<string, unknown>),
         onCancel: () => this.hideReplyComposer(),
         prefillText: prefill,
         currentUser: this.props.currentUser || undefined,
@@ -516,18 +517,15 @@ export class PostCard {
     }
   }
 
-  private handleReplyCreated(newReply: any): void {
-    // Hide reply composer after successful reply
+  private handleReplyCreated(newReply: Record<string, unknown>): void {
     this.hideReplyComposer();
-
-    // Update reply count
     this.replyCount++;
     this.updatePost({ reply_count: this.replyCount });
     this.updateActions();
 
     window.dispatchEvent(
       new CustomEvent('postUpdated', {
-        detail: { postId: this.props.post.id, replyCount: this.replyCount },
+        detail: { postId: this.props.post.id, replyCount: this.replyCount, reply: newReply },
       }),
     );
   }
@@ -601,6 +599,10 @@ export class PostCard {
 
   public getElement(): HTMLElement {
     return this.element;
+  }
+
+  public getReplyCount(): number {
+    return this.replyCount;
   }
 
   public updatePost(post: Partial<typeof this.props.post>): void {
@@ -1081,7 +1083,11 @@ export class PostCard {
     dmcaData?: { work_description: string; reporter_email: string; sworn: boolean },
   ): Promise<void> {
     try {
-      const body: any = { post_id: this.props.post.id, category };
+      const body: {
+        post_id: string;
+        category: string;
+        dmca?: { work_description: string; reporter_email: string; sworn: boolean };
+      } = { post_id: this.props.post.id, category };
       if (dmcaData) {
         body.dmca = dmcaData;
       }
@@ -1221,8 +1227,19 @@ export class PostCard {
     return container;
   }
 
-  private createPollElement(poll: any): HTMLElement {
-    const totalVotes = poll.options.reduce((sum: number, opt: any) => sum + Number(opt.votes_count || 0), 0);
+  private createPollElement(poll: {
+    id: string;
+    question: string;
+    userVote: string | null;
+    expired: boolean;
+    multipleChoice: boolean;
+    endsAt?: string | null;
+    options: Array<{ id: string; label: string; votes_count: number }>;
+  }): HTMLElement {
+    const totalVotes = poll.options.reduce(
+      (sum: number, opt: { id: string; label: string; votes_count: number }) => sum + Number(opt.votes_count || 0),
+      0,
+    );
     const hasVoted = !!poll.userVote;
     const isExpired = poll.expired;
     const showResults = hasVoted || isExpired;
@@ -1245,7 +1262,7 @@ export class PostCard {
       container.appendChild(endedBadge);
     }
 
-    poll.options.forEach((opt: any) => {
+    poll.options.forEach((opt: { id: string; label: string; votes_count: number }) => {
       const optEl = document.createElement('div');
       optEl.className = 'poll-option';
       const pct = totalVotes > 0 ? Math.round((opt.votes_count / totalVotes) * 100) : 0;
@@ -1296,11 +1313,14 @@ export class PostCard {
               return;
             }
             if (!response.ok) {
-              const errBody = await response.json().catch(() => ({}));
+              const errBody = (await response.json().catch(() => ({}))) as Record<string, unknown>;
               if (errBody?.error) console.error(t('poll.vote_error'), errBody.error);
               return;
             }
-            const data = await response.json();
+            const data = (await response.json()) as {
+              options: Array<{ id: string; label: string; votes_count: number }>;
+              userVote: string | null;
+            };
             const newPoll = { ...poll, options: data.options, userVote: data.userVote };
             container.replaceWith(this.createPollElement(newPoll));
           } catch (e) {
@@ -1327,8 +1347,8 @@ export class PostCard {
     const votedText = hasVoted ? ` · ${t('poll.voted')}` : '';
     const changeHint = canChangeVote ? ` · ${t('poll.click_to_change')}` : '';
     let timeText = '';
-    if (poll.ends_at && !isExpired) {
-      const remaining = this.formatRemainingTime(poll.ends_at);
+    if (poll.endsAt && !isExpired) {
+      const remaining = this.formatRemainingTime(poll.endsAt);
       timeText = ` · ${t('poll.remaining', { time: remaining })}`;
     }
 
@@ -1387,9 +1407,18 @@ export class PostCard {
         if (!res.ok) throw new Error('Preview fetch failed');
         return res.json();
       })
-      .then((data: any) => {
-        if (data && data.url) {
-          const card = this.createLinkPreviewCard(data);
+      .then((data: unknown) => {
+        const d = data as {
+          title: string;
+          description: string;
+          image: string;
+          siteName: string;
+          url: string;
+          type?: string;
+          video?: { url?: string; secureUrl?: string; type?: string; width?: number; height?: number };
+        };
+        if (d && d.url) {
+          const card = this.createLinkPreviewCard(d);
           container.appendChild(card);
         }
       })

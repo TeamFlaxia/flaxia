@@ -20,10 +20,13 @@ export class BookmarksPage {
   private intersectionObserver: IntersectionObserver | null = null;
   private loadMoreSentinel: HTMLElement | null = null;
   private fabButton: HTMLElement | null = null;
+  private postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
+  private boundPostUpdatedHandler?: (e: Event) => void;
 
   constructor(props: BookmarksPageProps) {
     this.props = props;
     this.element = this.createElement();
+    this.setupPostUpdatedListener();
     this.loadContent();
   }
 
@@ -145,6 +148,24 @@ export class BookmarksPage {
     }
   }
 
+  private setupPostUpdatedListener(): void {
+    this.boundPostUpdatedHandler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail?.postId) return;
+      const card = this.postCards.get(detail.postId);
+      if (card) {
+        const update: Partial<Post> = {};
+        if (detail.isFreshed !== undefined) update.is_freshed = detail.isFreshed;
+        if (detail.freshCount !== undefined) update.fresh_count = detail.freshCount;
+        if (detail.isBookmarked !== undefined) update.is_bookmarked = detail.isBookmarked;
+        if (detail.bookmarkCount !== undefined) update.bookmark_count = detail.bookmarkCount;
+        if (detail.replyCount !== undefined) update.reply_count = detail.replyCount;
+        card.updatePost(update);
+      }
+    };
+    window.addEventListener('postUpdated', this.boundPostUpdatedHandler);
+  }
+
   private renderPosts(): void {
     const postsContainer = this.element.querySelector('.bookmarks-posts') as HTMLElement;
     if (!postsContainer) return;
@@ -160,6 +181,7 @@ export class BookmarksPage {
           currentUser: this.props.currentUser || undefined,
           depth: this.posts[i].depth,
         });
+        this.postCards.set(this.posts[i].id, postCard);
         fragment.appendChild(postCard.getElement());
       } catch (err) {
         console.error('Failed to render bookmark post:', err);
@@ -271,6 +293,12 @@ export class BookmarksPage {
   }
 
   public destroy(): void {
+    if (this.boundPostUpdatedHandler) {
+      window.removeEventListener('postUpdated', this.boundPostUpdatedHandler);
+      this.boundPostUpdatedHandler = undefined;
+    }
+    this.postCards.forEach((card) => void card.destroy());
+    this.postCards.clear();
     if (this.intersectionObserver) {
       this.intersectionObserver.disconnect();
       this.intersectionObserver = null;
