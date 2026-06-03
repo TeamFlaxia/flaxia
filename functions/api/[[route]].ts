@@ -1593,7 +1593,7 @@ app.post('/api/auth/login', async (c) => {
 
     // Set session cookie
     const isSecure = c.req.url.startsWith('https');
-    const response = c.json({ user: result.user });
+    const response = c.json({ user: result.user, sessionId: result.session.id });
     setSessionCookie(response, result.session.id, isSecure);
 
     return response;

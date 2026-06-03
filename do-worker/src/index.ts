@@ -20,6 +20,10 @@ export class NotificationStream {
       return new Response(null, { status: 101, webSocket: client });
     }
 
+    if (request.method === 'GET') {
+      return new Response('NotificationStream DO', { status: 200 });
+    }
+
     if (request.method === 'POST') {
       const body = await request.text();
       const websockets = this.ctx.getWebSockets();

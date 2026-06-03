@@ -120,9 +120,12 @@ export function createLoginPage({ onSuccess }: LoginProps) {
         body: JSON.stringify({ email, password }),
       });
 
-      const data = (await response.json()) as { error?: string };
+      const data = (await response.json()) as { error?: string; sessionId?: string };
 
       if (response.ok) {
+        if (data.sessionId) {
+          localStorage.setItem('flaxia_session', data.sessionId);
+        }
         onSuccess();
       } else {
         errorDiv.textContent = data.error || t('login.error_invalid');

@@ -174,7 +174,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (pushWs) return; // already connected/reconnecting
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const sessionToken = document.cookie.replace(/(?:(?:^|.*;\s*)session\s*=\s*([^;]*).*$)|^.*$/, '$1');
+      const sessionToken = localStorage.getItem('flaxia_session');
       const url = `${protocol}//${window.location.host}/api/ws/notifications${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`;
 
       console.log('[push] connecting to', url);
@@ -198,16 +198,16 @@ document.addEventListener('DOMContentLoaded', async () => {
             console.error('[push] parse error:', e);
           }
         };
-        ws.onclose = () => {
-          console.log('[push] disconnected, reconnecting in 10s');
+        ws.onclose = (ev) => {
+          console.log(`[push] disconnected (code=${ev.code} reason=${ev.reason}), reconnecting in 10s`);
           pushWs = null;
           _pushWsReconnectTimer = setTimeout(() => {
             _pushWsReconnectTimer = null;
             connectPushWebSocket();
           }, 10000);
         };
-        ws.onerror = () => {
-          ws.close();
+        ws.onerror = (ev) => {
+          console.error('[push] error:', ev);
         };
         pushWs = ws;
       } catch (e) {

@@ -1,5 +1,6 @@
 /*
   X-Frame-Options: SAMEORIGIN
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://flaxia.app wss://flaxia.app https://*.googleapis.com; img-src 'self' data: https://flaxia.app https://*.flaxia.app; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src 'self' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://unpkg.com; media-src 'self' https://flaxia.app
 
 /assets/*.js
   Content-Type: application/javascript
