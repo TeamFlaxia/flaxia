@@ -205,6 +205,7 @@ async function analyzeSentiment(
         input: text,
         options: {
           dtype: 'uint8',
+          top_k: 5,
         },
       },
       callbackUrl,
