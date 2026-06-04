@@ -34,8 +34,11 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     container.style.cssText = `
       position: relative;
       width: 100%;
-      height: auto;
-      display: block;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: var(--bg-input);
+      border-radius: 8px;
     `;
   }
 
@@ -51,17 +54,14 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     img.src = imageUrl;
     container.appendChild(img);
   } else {
-    // Full image: show at natural aspect ratio, scale down if too tall
+    // Full image: fit within container while preserving aspect ratio
     img.style.cssText = `
-      max-width: 100%;
+      width: 100%;
       max-height: 75vh;
-      width: auto;
-      height: auto;
+      object-fit: scale-down;
       cursor: pointer;
       display: block;
-      margin: 0 auto;
       border-radius: 8px;
-      background: var(--bg-input);
     `;
 
     // Show a placeholder with the same styling before load
