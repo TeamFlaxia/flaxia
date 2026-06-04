@@ -368,6 +368,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           leftNav.setUnreadCount(unreadNotificationCount);
         }
       });
+      updateLeftNavOpenBadge(unreadNotificationCount);
 
       // Update badge count (Tauri desktop or Capacitor mobile)
       if (capacitorBadge) {
@@ -570,12 +571,24 @@ document.addEventListener('DOMContentLoaded', async () => {
       button.type = 'button';
       button.className = 'left-nav-open-button';
       button.setAttribute('aria-label', 'Open navigation');
-      button.textContent = '→';
+      button.innerHTML = '→<span class="left-nav-open-badge"></span>';
       button.addEventListener('click', () => {
         openLeftNav(leftNavElement);
       });
       document.body.appendChild(button);
       return button;
+    };
+
+    const updateLeftNavOpenBadge = (count: number): void => {
+      if (!leftNavOpenButton) return;
+      const badge = leftNavOpenButton.querySelector('.left-nav-open-badge') as HTMLElement;
+      if (!badge) return;
+      if (count > 0) {
+        badge.textContent = count >= 99 ? '99+' : String(count);
+        badge.style.display = '';
+      } else {
+        badge.style.display = 'none';
+      }
     };
 
     let leftNavWasOpen = false;
@@ -1788,18 +1801,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           _currentUsername = null;
           currentTag = null;
 
-          // Save unread count before fetching notifications data (the API might mark
-          // notifications as read, which would reset the count and lose the badge)
-          const savedUnreadCount = unreadNotificationCount;
-
           // Fetch notifications data for the page content
           const [notificationsData] = await Promise.all([fetchNotifications()]);
-
-          // Restore the pre-fetch unread count so the badge reflects the actual unread count
-          // (fetchNotifications may have changed it)
-          if (notificationsData.unread_count === 0 && savedUnreadCount > 0) {
-            unreadNotificationCount = savedUnreadCount;
-          }
 
           // Create main container for 3-column layout
           const mainContainer = document.createElement('div');
@@ -1863,13 +1866,21 @@ document.addEventListener('DOMContentLoaded', async () => {
                 credentials: 'include',
               });
               unreadNotificationCount = 0;
+              // キャッシュをクリアして次回のfetchで最新データを取得
+              cachedNotifications = null;
+              lastNotificationFetch = 0;
               leftNavInstances.forEach((ln) => {
                 if (typeof ln.setUnreadCount === 'function') {
                   ln.setUnreadCount(0);
                 }
               });
-              // 即時バッジ更新 (ポーリングを待たない)
-              await refreshNotificationBadges();
+              updateLeftNavOpenBadge(0);
+              if (capacitorBadge) {
+                await capacitorBadge(0);
+              }
+              if (tauriBadge) {
+                await tauriBadge(0);
+              }
             },
             onNavigateToPost: (postId) => {
               window.history.pushState({}, '', `/thread/${postId}`);
