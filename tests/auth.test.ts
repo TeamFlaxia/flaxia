@@ -13,6 +13,8 @@ describe('POST /api/auth/register', () => {
       display_name: 'User A',
     });
     assert.equal(res.status, 201);
+    const body = (await res.json()) as { sessionId?: string };
+    assert.ok(body.sessionId, 'response should include sessionId for WebSocket auth');
   });
 
   it('rejects duplicate email → 409', async () => {

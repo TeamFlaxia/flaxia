@@ -250,21 +250,27 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
         }),
       });
 
-      const data = (await response.json()) as { error?: string; user?: Record<string, unknown> };
-
       if (response.ok) {
+        const data = (await response.json()) as { user?: Record<string, unknown>; sessionId?: string };
+        if (data.sessionId) {
+          try {
+            localStorage.setItem('flaxia_session', data.sessionId);
+          } catch {
+            /* ignore */
+          }
+        }
         onSuccess();
       } else {
-        // Show specific field errors based on the error message
-        if (data.error?.includes('Email')) {
-          emailError.textContent = data.error;
+        const data = (await response.json()) as { error?: string };
+        const msg = data.error || t('register.error_general');
+        if (msg.toLowerCase().includes('email')) {
+          emailError.textContent = msg;
           emailError.style.display = 'block';
-        } else if (data.error?.includes('Username')) {
-          usernameError.textContent = data.error;
+        } else if (msg.toLowerCase().includes('username')) {
+          usernameError.textContent = msg;
           usernameError.style.display = 'block';
         } else {
-          // General error - show on first field
-          emailError.textContent = data.error || t('register.error_general');
+          emailError.textContent = msg;
           emailError.style.display = 'block';
         }
       }

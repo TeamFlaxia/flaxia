@@ -1553,16 +1553,20 @@ app.post('/api/auth/register', async (c) => {
     // Create session and set cookie so user is logged in after registration
     const session = await createSession(c.env, user.id);
     const isSecure = c.req.url.startsWith('https');
-    const response = c.json({ user });
+    const response = c.json({ user, sessionId: session.id }, 201);
     setSessionCookie(response, session.id, isSecure);
 
     return response;
   } catch (error: unknown) {
-    console.error('Registration error:', error);
-    return c.json(
-      { error: 'Registration failed', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    const message = (error as { message?: string })?.message || 'Unknown error';
+    console.error('Registration error:', message);
+    if (message.includes('Email')) {
+      return c.json({ error: message }, 409);
+    }
+    if (message.includes('Username')) {
+      return c.json({ error: message }, 409);
+    }
+    return c.json({ error: message }, 400);
   }
 });
 
