@@ -653,6 +653,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Always create the button (CSS shows/hides via media query)
       leftNavOpenButton = createLeftNavOpenButton(leftNavElement);
 
+      // Sync button visibility with current notification count
+      updateLeftNavOpenBadge(unreadNotificationCount);
+
       // Listen for openLeftNav events from timeline
       document.addEventListener('openLeftNav', () => {
         openLeftNav(leftNavElement);
