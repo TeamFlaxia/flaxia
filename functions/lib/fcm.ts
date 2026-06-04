@@ -116,7 +116,7 @@ export async function sendPushToDevice(
             priority: 'high',
             notification: {
               sound: 'default',
-              channelId: 'default',
+              channelId: 'flaxia_notifications',
               icon: 'ic_launcher_foreground',
             },
           },
