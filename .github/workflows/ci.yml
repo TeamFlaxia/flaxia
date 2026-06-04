@@ -10,6 +10,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # onnxruntime-node binary download fails in CI; we only use the web build
+  ONNXRUNTIME_NODE_DISABLE_DOWNLOAD: 1
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -19,7 +23,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npx @biomejs/biome ci .
 
   typecheck:
@@ -30,7 +34,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npx tsc --noEmit
 
   test:
@@ -41,7 +45,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - name: Start dev server and run tests
         run: |
@@ -79,5 +83,5 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build

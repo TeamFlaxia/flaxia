@@ -10,6 +10,10 @@ permissions:
   contents: write
   actions: read
 
+env:
+  # onnxruntime-node binary download fails in CI; we only use the web build
+  ONNXRUNTIME_NODE_DISABLE_DOWNLOAD: 1
+
 jobs:
   check-ci:
     runs-on: ubuntu-latest
@@ -96,7 +100,7 @@ jobs:
             librsvg2-dev \
             patchelf
       - uses: dtolnay/rust-toolchain@stable
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm run tauri:build
         env:
@@ -122,7 +126,7 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm run tauri:build
         env:
@@ -153,7 +157,7 @@ jobs:
           yes | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager \
             "platforms;android-36" "build-tools;36.0.0" \
             --sdk_root=${ANDROID_SDK_ROOT}
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npx cap add android
       - run: npx cap sync
@@ -185,7 +189,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - name: Deploy DO Worker (NotificationStream)
         run: npx wrangler deploy --config do-worker/wrangler.toml
