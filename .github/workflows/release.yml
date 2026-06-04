@@ -139,6 +139,7 @@ jobs:
             --sdk_root=${ANDROID_SDK_ROOT}
       - run: npm ci
       - run: npm run build
+      - run: npx cap add android
       - run: npx cap sync
       - name: Decode google-services.json
         run: |
