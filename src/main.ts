@@ -679,8 +679,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (window.innerWidth > 768) return;
         const { open } = (e as CustomEvent<{ open: boolean }>).detail;
         closeLeftNav();
-        if (leftNavOpenButton) {
-          leftNavOpenButton.style.display = open ? 'none' : '';
+        if (open && leftNavOpenButton) {
+          leftNavOpenButton.style.display = 'none';
+        } else {
+          updateLeftNavOpenBadge(unreadNotificationCount);
         }
       };
       window.addEventListener('modalchange', currentModalChangeHandler);
