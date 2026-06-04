@@ -10,6 +10,9 @@ concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  ONNXRUNTIME_NODE_DISABLE_DOWNLOAD: 1
+
 jobs:
   deploy-pages:
     runs-on: ubuntu-latest
@@ -21,7 +24,7 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - name: Deploy to Cloudflare Pages
         run: npx wrangler pages deploy dist
@@ -37,7 +40,7 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - name: Deploy Sandbox Worker
         run: npx wrangler deploy src/sandbox-worker.ts --config wrangler.sandbox.toml
         env:
@@ -52,7 +55,7 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - name: Deploy Queue Worker
         run: npx wrangler deploy functions/queue-worker.ts --name flaxia-backend --config wrangler.toml.worker --compatibility-date 2026-06-02
         env:
@@ -67,7 +70,7 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - name: Deploy DO Worker (NotificationStream)
         run: npx wrangler deploy --config do-worker/wrangler.toml
         env:
