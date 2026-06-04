@@ -115,7 +115,7 @@ export class ArcadePage {
     const header = document.createElement('div');
     header.className = 'arcade-header';
     header.style.cssText = `
-      padding: 1rem;
+      padding: 0.4rem 0.75rem;
       border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
@@ -130,10 +130,10 @@ export class ArcadePage {
       backBtn.style.cssText = `
         background: none;
         border: none;
-        font-size: 1.5rem;
+        font-size: 1.2rem;
         cursor: pointer;
         color: var(--text-primary);
-        padding: 0.25rem 0.5rem;
+        padding: 0.15rem 0.35rem;
         border-radius: 4px;
         line-height: 1;
         transition: background 0.2s;
@@ -155,7 +155,7 @@ export class ArcadePage {
     title.textContent = t('arcade.title');
     title.style.cssText = `
       margin: 0;
-      font-size: 1.25rem;
+      font-size: 1rem;
       font-weight: 600;
       color: var(--text-primary);
       white-space: nowrap;
@@ -164,7 +164,7 @@ export class ArcadePage {
     const subtitle = document.createElement('span');
     subtitle.textContent = t('arcade.subtitle');
     subtitle.style.cssText = `
-      font-size: 0.875rem;
+      font-size: 0.75rem;
       white-space: nowrap;
       color: var(--text-muted);
     `;
