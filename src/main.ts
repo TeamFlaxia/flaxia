@@ -234,6 +234,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         await LocalNotifications.requestPermissions();
 
+        try {
+          await LocalNotifications.createChannel({
+            id: 'flaxia_notifications',
+            name: 'Flaxia Notifications',
+            importance: 5,
+            sound: 'default',
+            visibility: 1,
+          });
+        } catch {
+          // channel may already exist
+        }
+
         let notifId = 0;
         capacitorNotify = async (title: string, body: string) => {
           try {
