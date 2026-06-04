@@ -584,12 +584,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       const badge = leftNavOpenButton.querySelector('.left-nav-open-badge') as HTMLElement;
       if (!badge) return;
       if (count > 0) {
-        leftNavOpenButton.style.display = '';
         badge.textContent = count >= 99 ? '99+' : String(count);
         badge.style.display = '';
       } else {
         badge.style.display = 'none';
-        leftNavOpenButton.style.display = 'none';
       }
     };
 
@@ -682,10 +680,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (window.innerWidth > 768) return;
         const { open } = (e as CustomEvent<{ open: boolean }>).detail;
         closeLeftNav();
-        if (open && leftNavOpenButton) {
-          leftNavOpenButton.style.display = 'none';
-        } else {
-          updateLeftNavOpenBadge(unreadNotificationCount);
+        if (leftNavOpenButton) {
+          leftNavOpenButton.style.display = open ? 'none' : '';
         }
       };
       window.addEventListener('modalchange', currentModalChangeHandler);
