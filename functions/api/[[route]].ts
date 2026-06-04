@@ -6875,7 +6875,7 @@ app.post('/api/posts/:id/translate', requireAuth, async (c) => {
         options: {
           src_lang: post.author_language,
           tgt_lang: targetLang,
-          dtype: 'int8',
+          dtype: 'q4f16',
           max_new_tokens: 256,
         },
       },
