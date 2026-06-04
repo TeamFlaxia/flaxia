@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { resolve } from 'node:path';
 
 // launcher icons (generate from assets/icon.png via capacitor-assets)
 try {
@@ -30,11 +30,14 @@ const drawableDir = resolve('android/app/src/main/res/drawable');
 const bitmapDrawablePath = resolve(drawableDir, 'ic_launcher_foreground.xml');
 if (!existsSync(bitmapDrawablePath)) {
   mkdirSync(drawableDir, { recursive: true });
-  writeFileSync(bitmapDrawablePath, `<?xml version="1.0" encoding="utf-8"?>
+  writeFileSync(
+    bitmapDrawablePath,
+    `<?xml version="1.0" encoding="utf-8"?>
 <bitmap xmlns:android="http://schemas.android.com/apk/res/android"
     android:src="@mipmap/ic_launcher_foreground"
     android:gravity="center" />
-`);
+`,
+  );
   console.log('Created drawable/ic_launcher_foreground.xml (bitmap wrapper)');
 }
 
