@@ -584,6 +584,11 @@ export class Timeline {
           sandboxOrigin: this.props.sandboxOrigin,
           initialMode: PostCardMode.PREVIEW,
           depth: item.depth,
+          onDelete: (postId) => {
+            this.state.posts = this.state.posts.filter((p) => !isAd(p) && p.id !== postId);
+            this.postCards.delete(postId);
+            this.renderPostList();
+          },
         });
 
         this.postCards.set(item.id, postCard);
