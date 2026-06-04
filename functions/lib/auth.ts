@@ -41,41 +41,26 @@ export async function hashPassword(password: string): Promise<string> {
 
   const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
   const hash = (await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: 600000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
     key,
     256,
   )) as ArrayBuffer;
 
-  // バージョンプリフィックス(1byte) + salt(16) + hash(32) → base64
-  const combined = new Uint8Array(1 + salt.byteLength + hash.byteLength);
-  combined[0] = 2; // version: 600000 iterations
-  combined.set(salt, 1);
-  combined.set(new Uint8Array(hash), 1 + salt.byteLength);
+  const combined = new Uint8Array(salt.byteLength + hash.byteLength);
+  combined.set(salt, 0);
+  combined.set(new Uint8Array(hash), salt.byteLength);
   return uint8ArrayToBase64(combined);
 }
 
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
   const combined = base64ToUint8Array(stored);
-
-  let salt: Uint8Array<ArrayBuffer>;
-  let originalHash: Uint8Array<ArrayBuffer>;
-  let iterations: number;
-
-  if (combined[0] === 2) {
-    salt = combined.slice(1, 17);
-    originalHash = combined.slice(17);
-    iterations = 600000;
-  } else {
-    // Legacy format (100000 iterations, no version prefix)
-    salt = combined.slice(0, 16);
-    originalHash = combined.slice(16);
-    iterations = 100000;
-  }
+  const salt = combined.slice(0, 16);
+  const originalHash = combined.slice(16);
 
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits']);
   const hash = (await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
     key,
     256,
   )) as ArrayBuffer;
