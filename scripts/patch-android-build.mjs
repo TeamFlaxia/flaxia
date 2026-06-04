@@ -48,9 +48,8 @@ content = content.replace(
 );
 
 content = content.replace(
-  /^\s+release\s*\{$/m,
-  `        release {
-            signingConfig signingConfigs.release`,
+  /(buildTypes\s*\{[^}]*?release\s*\{)/,
+  '$1\n            signingConfig signingConfigs.release',
 );
 
 writeFileSync(buildGradlePath, content);
