@@ -74,6 +74,7 @@ type PostRow = {
   impressions: number;
   status: string;
   hidden: number;
+  author_language?: string | null;
   sentiment_score: number | null;
   sentiment_task_id: string | null;
   actor_id: string | null;
@@ -2831,7 +2832,7 @@ app.get('/api/users/:username/followers', async (c) => {
     // Build query for followers with cursor-based pagination
     let query = `
       SELECT 
-        u.id, u.username, u.display_name, u.avatar_key,
+        u.id, u.username, u.display_name, u.avatar_key, u.language as author_language,
         u.created_at,
         (SELECT COUNT(*) FROM follows WHERE followee_id = u.id) as followers_count,
         (SELECT COUNT(*) FROM follows WHERE follower_id = u.id) as following_count,
@@ -2923,7 +2924,7 @@ app.get('/api/users/:username/following', async (c) => {
     // Build query for following with cursor-based pagination
     let query = `
       SELECT 
-        u.id, u.username, u.display_name, u.avatar_key,
+        u.id, u.username, u.display_name, u.avatar_key, u.language as author_language,
         u.created_at,
         (SELECT COUNT(*) FROM follows WHERE followee_id = u.id) as followers_count,
         (SELECT COUNT(*) FROM follows WHERE follower_id = u.id) as following_count,
@@ -3586,17 +3587,17 @@ app.get('/api/posts', async (c) => {
       // Filter by hashtag using json_each
       if (cursor) {
         query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
+          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
         params = [hashtag, cursor, limit];
       } else {
         query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ORDER BY p.created_at DESC LIMIT ?";
+          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ORDER BY p.created_at DESC LIMIT ?";
         params = [hashtag, limit];
       }
     } else if (following && currentUserId) {
       // Following tab - show posts from followed users and current user's own posts
       if (cursor) {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
           (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, 
           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score 
           FROM posts p 
@@ -3611,7 +3612,7 @@ app.get('/api/posts', async (c) => {
           ORDER BY p.created_at DESC LIMIT ?`;
         params = [currentUserId, currentUserId, cursor, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
           (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, 
           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score 
           FROM posts p 
@@ -3630,22 +3631,22 @@ app.get('/api/posts', async (c) => {
       // Username filter - show posts from specific user
       if (cursor) {
         query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
+          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
         params = [username, cursor, limit];
       } else {
         query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 ORDER BY p.created_at DESC LIMIT ?";
+          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 ORDER BY p.created_at DESC LIMIT ?";
         params = [username, limit];
       }
     } else {
       // Regular timeline query (For You tab)
       if (cursor) {
         query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
+          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
         params = [cursor, limit];
       } else {
         query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ORDER BY p.created_at DESC LIMIT ?";
+          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ORDER BY p.created_at DESC LIMIT ?";
         params = [limit];
       }
     }
@@ -3767,7 +3768,7 @@ app.get('/api/posts/trending', async (c) => {
     // Trending algorithm: (fresh_count * 2 + reply_count * 3 + impressions * 0.1 + 1) / (hours_since_creation + 2)^1.5
     // SQLite doesn't have POW, so we use (hours + 2) * (hours + 2) as a simpler decay
     const query = `
-      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
+      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
       (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, 
       COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
       ((p.fresh_count * 2.0 + (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') * 3.0 + p.impressions * 0.1 + 1.0) / 
@@ -3937,7 +3938,7 @@ app.get('/api/posts/recommended', async (c) => {
 
     if (currentUserId) {
       query = `
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
         (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, 
         COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
         ${scoreFormula} as score
@@ -3955,7 +3956,7 @@ app.get('/api/posts/recommended', async (c) => {
           : [currentUserId, limit];
     } else {
       query = `
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
         (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, 
         COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
         ${scoreFormula} as score
@@ -5172,7 +5173,7 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
 
     // Fetch the created post for enrichment
     const fullPost = (await c.env.DB.prepare(
-      "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key as payloadKey, p.swf_key as swfKey, p.thumbnail_key as thumbnailKey, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?",
+      "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key as payloadKey, p.swf_key as swfKey, p.thumbnail_key as thumbnailKey, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?",
     )
       .bind(postId)
       .first()) as PostRow;
@@ -5497,7 +5498,7 @@ app.get('/api/bookmarks', requireAuth, async (c) => {
     if (cursor) {
       params.push(cursor);
       query = `
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
         (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,
         COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
         FROM posts p
@@ -5510,7 +5511,7 @@ app.get('/api/bookmarks', requireAuth, async (c) => {
       params.push(limit);
     } else {
       query = `
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
         (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,
         COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
         FROM posts p
@@ -5793,7 +5794,7 @@ app.get('/api/posts/:id/replies', async (c) => {
     }
 
     let query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
-       u.display_name, u.avatar_key
+       u.display_name, u.avatar_key, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
        WHERE p.parent_id = ? AND p.status = 'published' 
@@ -5802,7 +5803,7 @@ app.get('/api/posts/:id/replies', async (c) => {
 
     if (cursor) {
       query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
-       u.display_name, u.avatar_key
+       u.display_name, u.avatar_key, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
        WHERE p.parent_id = ? AND p.status = 'published' AND p.created_at < ?
@@ -5899,7 +5900,7 @@ app.get('/api/posts/:id/thread', async (c) => {
 
     const rootPost = await c.env.DB.prepare(
       `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
-       u.display_name, u.avatar_key
+       u.display_name, u.avatar_key, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
        WHERE p.id = ? AND p.status = 'published'`,
@@ -5913,7 +5914,7 @@ app.get('/api/posts/:id/thread', async (c) => {
 
     const repliesResult = await c.env.DB.prepare(
       `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
-       u.display_name, u.avatar_key
+       u.display_name, u.avatar_key, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
        WHERE p.root_id = ? AND p.status = 'published' AND p.id != ?
@@ -6226,7 +6227,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
       // Return the updated reply
       reply =
         (await c.env.DB.prepare(`
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
       `)
           .bind(replyId)
           .first()) ?? undefined;
@@ -6268,7 +6269,7 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
         // Return the created reply
         reply =
           (await c.env.DB.prepare(`
-          SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
+          SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
         `)
             .bind(replyId)
             .first()) ?? undefined;
@@ -6522,7 +6523,7 @@ app.get('/api/search', async (c) => {
     const whereClause = `WHERE p.status = 'published' AND p.hidden = 0 AND (${conditions.join(' AND ')})`;
 
     const selectColumns = `
-      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
+      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
       FROM posts p
       LEFT JOIN users u ON p.user_id = u.id
     `;
@@ -6776,10 +6777,11 @@ app.get('/api/posts/:id', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    const post = (await c.env.DB.prepare('SELECT * FROM posts WHERE id = ?').bind(postId).first()) as Record<
-      string,
-      unknown
-    > | null;
+    const post = (await c.env.DB.prepare(
+      'SELECT p.*, u.language as author_language FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?',
+    )
+      .bind(postId)
+      .first()) as Record<string, unknown> | null;
 
     if (!post) {
       return c.json({ error: 'Not found' }, 404);
@@ -6822,6 +6824,100 @@ app.get('/api/posts/:id', async (c) => {
     const err = error as { message?: string };
     console.error('Get post error:', error);
     return c.json({ error: 'Failed to get post', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// POST /api/posts/:id/translate - submit translation task
+app.post('/api/posts/:id/translate', requireAuth, async (c) => {
+  try {
+    const postId = c.req.param('id');
+    const targetLang = c.req.query('target');
+    if (!targetLang) return c.json({ error: 'target query param required' }, 400);
+
+    const post = (await c.env.DB.prepare(
+      "SELECT p.id, p.user_id, p.text, u.language as author_language FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ? AND p.status = 'published'",
+    )
+      .bind(postId)
+      .first()) as { id: string; user_id: string; text: string; author_language: string | null } | null;
+    if (!post) return c.json({ error: 'Not found' }, 404);
+    if (!post.author_language) return c.json({ error: 'Author language not set' }, 400);
+    if (post.author_language === targetLang) {
+      return c.json({ status: 'done', translated_text: post.text });
+    }
+
+    const existing = (await c.env.DB.prepare(
+      'SELECT translated_text, task_id FROM post_translations WHERE post_id = ? AND language = ?',
+    )
+      .bind(postId, targetLang)
+      .first()) as { translated_text: string; task_id: string | null } | null;
+
+    if (existing) {
+      if (existing.translated_text) {
+        return c.json({ status: 'done', translated_text: existing.translated_text });
+      }
+      return c.json({ status: 'processing' });
+    }
+
+    const client = getCrowdClient(c);
+    if (!client) return c.json({ error: 'Crowd Worker not configured' }, 500);
+
+    const callbackUrl = `${c.env.BASE_URL || 'https://flaxia.app'}/api/crowd/webhook?type=translation&postId=${postId}&lang=${targetLang}`;
+    const task = await client.submit({
+      workload: 'ai-inference',
+      payload: {
+        task: 'translation',
+        model: 'Xenova/m2m100_418M',
+        input: post.text,
+        options: {
+          src_lang: post.author_language,
+          tgt_lang: targetLang,
+          dtype: 'int8',
+          max_new_tokens: 256,
+        },
+      },
+      callbackUrl,
+      timeoutMs: 600000,
+    } as SubmitTaskOptionsWithTimeout);
+
+    const taskId = (task as { taskId?: string }).taskId;
+    if (!taskId) return c.json({ error: 'Failed to get task ID' }, 500);
+
+    await c.env.DB.prepare(
+      "INSERT INTO post_translations (post_id, language, task_id, created_at) VALUES (?, ?, ?, datetime('now'))",
+    )
+      .bind(postId, targetLang, taskId)
+      .run();
+
+    return c.json({ status: 'processing' }, 202);
+  } catch (err: unknown) {
+    const e = err as { message?: string };
+    console.error('Translation submission error:', err);
+    return c.json({ error: 'Translation submission failed', details: e.message || 'Unknown error' }, 500);
+  }
+});
+
+// GET /api/posts/:id/translate - poll translation status
+app.get('/api/posts/:id/translate', async (c) => {
+  try {
+    const postId = c.req.param('id');
+    const targetLang = c.req.query('target');
+    if (!targetLang) return c.json({ error: 'target query param required' }, 400);
+
+    const row = (await c.env.DB.prepare(
+      'SELECT translated_text, task_id FROM post_translations WHERE post_id = ? AND language = ?',
+    )
+      .bind(postId, targetLang)
+      .first()) as { translated_text: string; task_id: string | null } | null;
+
+    if (!row) return c.json({ status: 'not_found' }, 404);
+    if (row.translated_text) {
+      return c.json({ status: 'done', translated_text: row.translated_text });
+    }
+    return c.json({ status: 'processing' });
+  } catch (err: unknown) {
+    const e = err as { message?: string };
+    console.error('Translation status error:', err);
+    return c.json({ error: 'Failed to check translation status', details: e.message || 'Unknown error' }, 500);
   }
 });
 
@@ -7648,7 +7744,7 @@ app.get('/api/current-topic', async (c) => {
     const _currentHour = new Date().getHours();
     const result = await c.env.DB.prepare(`
       SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.created_at,
-             u.display_name, u.avatar_key,
+             u.display_name, u.avatar_key, u.language as author_language,
              (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count,
              COALESCE(p.impressions, 0) as impressions,
              p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count

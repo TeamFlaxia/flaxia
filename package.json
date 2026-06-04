@@ -40,11 +40,11 @@
     "tauri:dev:linux": "TAURI_TARGET_PLATFORM=linux node scripts/merge-tauri-config.mjs && tauri dev",
     "tauri:build:linux": "TAURI_TARGET_PLATFORM=linux node scripts/merge-tauri-config.mjs && tauri build",
     "cap:init": "npx cap init Flaxia app.flaxia.app",
-    "cap:sync": "npx cap sync",
-    "cap:copy": "npx cap copy",
+    "cap:sync": "npx cap sync && node scripts/patch-android-build.mjs",
+    "cap:copy": "npx cap copy && node scripts/patch-android-build.mjs",
     "cap:open:android": "npx cap open android",
     "cap:open:ios": "npx cap open ios",
-    "cap:build:android": "npx cap sync && npx cap copy && cd android && ./gradlew assembleDebug",
+    "cap:build:android": "npx cap sync && node scripts/patch-android-build.mjs && npx cap copy && cd android && ./gradlew assembleDebug",
     "cap:build:ios": "npx cap sync && npx cap copy",
     "prepare": "husky"
   },
@@ -76,6 +76,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
+    "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^8.3.4",
     "@cloudflare/workers-types": "^4.0.0",
     "@tauri-apps/cli": "^2.11.2",
