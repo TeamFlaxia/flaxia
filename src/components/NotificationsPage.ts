@@ -107,6 +107,7 @@ export class NotificationsPage {
     // Mark all read button (only show if there are unread)
     if (this.props.unreadCount > 0) {
       const markAllBtn = document.createElement('button');
+      markAllBtn.className = 'mark-all-read-btn';
       markAllBtn.textContent = t('notifications.mark_all_read');
       markAllBtn.style.cssText = `
         padding: 8px 16px;
@@ -126,6 +127,8 @@ export class NotificationsPage {
         markAllBtn.style.background = 'var(--bg-secondary)';
       });
       markAllBtn.addEventListener('click', async () => {
+        markAllBtn.disabled = true;
+        markAllBtn.style.opacity = '0.5';
         await this.props.onMarkAllRead();
         this.updateAllAsRead();
       });
@@ -437,7 +440,7 @@ export class NotificationsPage {
     });
 
     // Remove the "Mark all read" button
-    const markAllBtn = this.element.querySelector('button');
+    const markAllBtn = this.element.querySelector('.mark-all-read-btn');
     if (markAllBtn) {
       markAllBtn.remove();
     }
