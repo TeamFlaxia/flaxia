@@ -117,6 +117,7 @@ export async function sendPushToDevice(
             notification: {
               sound: 'default',
               channelId: 'default',
+              icon: 'ic_launcher_foreground',
             },
           },
           apns: {
