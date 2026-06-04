@@ -16,136 +16,99 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     return container;
   }
 
-  // Add aspect ratio container to prevent CLS
-  const aspectRatioContainer = document.createElement('div');
-  aspectRatioContainer.className = 'image-preview-aspect-ratio';
-  // When isThumbnail is true, the parent .post-stage--image-thumb already establishes the
-  // aspect ratio via padding-bottom, so we use absolute positioning to fill it instead of
-  // adding another padding-bottom (which would double the height).
-  if (props.isThumbnail) {
-    aspectRatioContainer.style.cssText = `
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: var(--bg-input);
-      border-radius: 8px;
-      overflow: hidden;
-    `;
-  } else {
-    const ratio = '56.25';
-    aspectRatioContainer.style.cssText = `
-      position: relative;
-      width: 100%;
-      padding-bottom: ${ratio}%;
-      background: var(--bg-input);
-      border-radius: 8px;
-      overflow: hidden;
-    `;
-  }
-
-  // Add loading indicator
-  const loading = document.createElement('div');
-  loading.className = 'image-preview-loading';
-  loading.style.cssText = `
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--bg-input);
-    color: var(--text-muted);
-    font-family: monospace;
-    font-size: 0.875rem;
-  `;
-  loading.textContent = t('common.loading');
-
-  // Create image container with proper sizing
-  const imageContainer = document.createElement('div');
-  imageContainer.style.cssText = `
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  `;
+  const imageUrl = props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`;
 
   const img = document.createElement('img');
   img.className = 'image-preview-img';
   img.alt = t('image_preview.post_preview', { id: props.postId });
   img.loading = 'lazy';
-  img.style.cssText = `
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    cursor: pointer;
-    transition: opacity 0.2s ease;
-    image-rendering: -webkit-optimize-contrast;
-    image-rendering: auto;
-    image-rendering: smooth;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    backface-visibility: hidden;
-    transform: translateZ(0);
-    filter: contrast(1.1) brightness(1.05);
-  `;
-
-  // Use the API proxy endpoint for images
-  const imageUrl = props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`;
-  img.src = imageUrl;
-
-  // Handle image load success
-  img.onload = () => {
-    loading.style.display = 'none';
-    img.style.opacity = '1';
-  };
-
-  // Handle image loading errors
-  img.onerror = () => {
-    loading.style.display = 'none';
-    img.style.display = 'none';
-    const fallback = document.createElement('div');
-    fallback.className = 'image-preview-error';
-    fallback.style.cssText = `
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: var(--bg-secondary);
-      color: var(--text-muted);
-      font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      font-size: 0.875rem;
-      text-align: center;
-      padding: 2rem;
-    `;
-    fallback.textContent = t('image_preview.load_failed');
-    imageContainer.appendChild(fallback);
-  };
-
-  // Set initial opacity for smooth loading
-  img.style.opacity = '0';
 
   // Add click handler for overlay display
   img.onclick = (e) => {
-    e.stopPropagation(); // Prevent post card click
+    e.stopPropagation();
     createImageOverlay(imageUrl, props.postId);
   };
 
-  imageContainer.appendChild(img);
-  aspectRatioContainer.appendChild(loading);
-  aspectRatioContainer.appendChild(imageContainer);
-  container.appendChild(aspectRatioContainer);
+  // Override CSS default positioning for non-thumbnails
+  if (!props.isThumbnail) {
+    container.style.cssText = `
+      position: relative;
+      width: 100%;
+      height: auto;
+      display: block;
+    `;
+  }
+
+  if (props.isThumbnail) {
+    // Thumbnail: fill parent's fixed aspect ratio (set by .post-stage--image-thumb)
+    img.style.cssText = `
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      cursor: pointer;
+      display: block;
+    `;
+    img.src = imageUrl;
+    container.appendChild(img);
+  } else {
+    // Full image: show at natural aspect ratio, no cropping
+    img.style.cssText = `
+      width: 100%;
+      height: auto;
+      max-height: 75vh;
+      object-fit: contain;
+      cursor: pointer;
+      display: block;
+      border-radius: 8px;
+      background: var(--bg-input);
+    `;
+
+    // Show a placeholder with the same styling before load
+    const placeholder = document.createElement('div');
+    placeholder.className = 'image-preview-loading';
+    placeholder.style.cssText = `
+      width: 100%;
+      padding-bottom: 56.25%;
+      background: var(--bg-input);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-family: monospace;
+      font-size: 0.875rem;
+    `;
+    placeholder.textContent = t('common.loading');
+
+    img.onload = () => {
+      placeholder.style.display = 'none';
+    };
+    img.onerror = () => {
+      placeholder.style.display = 'none';
+      const fallback = document.createElement('div');
+      fallback.className = 'image-preview-error';
+      fallback.style.cssText = `
+        width: 100%;
+        padding-bottom: 56.25%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-secondary);
+        color: var(--text-muted);
+        font-size: 0.875rem;
+        text-align: center;
+        padding: 2rem;
+        border-radius: 8px;
+      `;
+      fallback.textContent = t('image_preview.load_failed');
+      container.appendChild(fallback);
+    };
+
+    img.src = imageUrl;
+    container.appendChild(placeholder);
+    container.appendChild(img);
+  }
+
   return container;
 }
 
