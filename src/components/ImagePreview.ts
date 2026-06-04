@@ -57,7 +57,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     // Full image: fit within container while preserving aspect ratio
     img.style.cssText = `
       width: 100%;
-      max-height: 75vh;
+      max-height: min(60vh, 500px);
       object-fit: scale-down;
       cursor: pointer;
       display: block;
