@@ -1,24 +1,9 @@
-import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-// launcher icons (generate from assets/icon.png via capacitor-assets)
-try {
-  execSync('npx capacitor-assets generate --android --assetPath assets', {
-    stdio: 'pipe',
-    timeout: 30000,
-  });
-  console.log('Generated Android launcher icons');
-} catch {
-  // non-fatal: icons may already exist or tool may not be installed
-  console.log('Skipped launcher icon generation');
-}
-
-// notification small icon (always ensure it exists, even in CI fresh checkout)
 const drawableDir = resolve('android/app/src/main/res/drawable');
 const iconPath = resolve(drawableDir, 'ic_notification.xml');
-mkdirSync(drawableDir, { recursive: true });
-if (!existsSync(iconPath)) {
+if (existsSync(drawableDir) && !existsSync(iconPath)) {
   writeFileSync(
     iconPath,
     '<vector xmlns:android="http://schemas.android.com/apk/res/android"\n' +
