@@ -51,14 +51,15 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     img.src = imageUrl;
     container.appendChild(img);
   } else {
-    // Full image: show at natural aspect ratio, no cropping
+    // Full image: show at natural aspect ratio, scale down if too tall
     img.style.cssText = `
-      width: 100%;
-      height: auto;
+      max-width: 100%;
       max-height: 75vh;
-      object-fit: contain;
+      width: auto;
+      height: auto;
       cursor: pointer;
       display: block;
+      margin: 0 auto;
       border-radius: 8px;
       background: var(--bg-input);
     `;
