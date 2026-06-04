@@ -20,11 +20,35 @@ export async function onRequest(context: {
       const { taskId, status, result, error } = body;
       if (!taskId) return new Response('Bad Request', { status: 400 });
 
+      const callbackType = url.searchParams.get('type');
+      const db = (context.env as { DB: D1Database }).DB;
+
       if (status === 'done') {
         const resultObj = result as Record<string, unknown> | undefined;
         const output = resultObj?.output;
 
-        if (output) {
+        if (!output) {
+          return new Response(JSON.stringify({ received: true }), {
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        if (callbackType === 'translation') {
+          const postId = url.searchParams.get('postId');
+          const lang = url.searchParams.get('lang');
+          if (postId && lang) {
+            const translationText = Array.isArray(output)
+              ? (output[0] as Record<string, unknown> | undefined)?.translation_text
+              : (output as Record<string, unknown> | undefined)?.translation_text;
+            if (typeof translationText === 'string') {
+              await db
+                .prepare('UPDATE post_translations SET translated_text = ? WHERE post_id = ? AND language = ?')
+                .bind(translationText, postId, lang)
+                .run();
+              console.log(`Translation webhook done for post ${postId} → ${lang}`);
+            }
+          }
+        } else {
           const starScoreMap: Record<string, number> = {
             '1 star': 0.0,
             '2 stars': 0.25,
@@ -51,7 +75,6 @@ export async function onRequest(context: {
             }
           }
 
-          const db = (context.env as { DB: D1Database }).DB;
           const row = await db
             .prepare('SELECT id FROM posts WHERE sentiment_task_id = ?')
             .bind(taskId)
@@ -63,7 +86,7 @@ export async function onRequest(context: {
           }
         }
       } else if (status === 'failed') {
-        console.log(`Sentiment task failed: taskId=${taskId}, error=${error || 'unknown'}`);
+        console.log(`Task failed: taskId=${taskId}, type=${callbackType || 'sentiment'}, error=${error || 'unknown'}`);
       }
 
       return new Response(JSON.stringify({ received: true }), {

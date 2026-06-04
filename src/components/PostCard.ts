@@ -1,5 +1,5 @@
 import { formatCount } from '../lib/format.js';
-import { t } from '../lib/i18n.js';
+import { getLocale, t } from '../lib/i18n.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { registerModal } from '../lib/modal-state.js';
 import { useSandboxBridge } from '../lib/sandbox-bridge.js';
@@ -30,8 +30,12 @@ export class PostCard {
   private menuDropdown?: HTMLElement;
   private freshLoading: boolean = false;
   private bookmarkLoading: boolean = false;
+  private translatedText: string | null = null;
+  private showingOriginal: boolean = true;
+  private originalText: string;
 
   constructor(props: PostCardProps) {
+    this.originalText = props.post.text;
     this.props = props;
     this.mode = props.initialMode || PostCardMode.PREVIEW;
     // Use is_freshed from API response if available, otherwise default to false
@@ -110,21 +114,117 @@ export class PostCard {
     container.appendChild(headerContainer);
 
     // Post text - 優先的にプレーンテキストで表示
+    const displayText = this.props.stripLeadingPostRef
+      ? this.props.post.text.replace(/^\s*>>\d+\s*/g, '').trimStart()
+      : this.props.post.text;
+    this.originalText = displayText;
+
+    const postTextContainer = document.createElement('div');
+    postTextContainer.style.cssText = 'margin-bottom: 1rem;';
+
     const textElement = document.createElement('div');
     textElement.className = 'post-text';
     textElement.style.cssText = `
-      margin-bottom: 1rem;
       line-height: 1.6;
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       color: var(--text-primary);
       white-space: pre-wrap;
       word-break: break-word;
     `;
-    const displayText = this.props.stripLeadingPostRef
-      ? this.props.post.text.replace(/^\s*>>\d+\s*/g, '').trimStart()
-      : this.props.post.text;
     textElement.textContent = displayText;
-    container.appendChild(textElement);
+    postTextContainer.appendChild(textElement);
+
+    // Translate button
+    const authorLang = this.props.post.author_language;
+    const currentLocale = getLocale();
+    if (authorLang && authorLang !== currentLocale) {
+      const translateBar = document.createElement('div');
+      translateBar.style.cssText = 'margin-top: 0.5rem;';
+
+      const translateBtn = document.createElement('button');
+      translateBtn.className = 'translate-btn';
+      translateBtn.textContent = `Translate to ${currentLocale.toUpperCase()}`;
+      translateBtn.style.cssText = `
+        font-size: 0.8rem;
+        color: var(--accent);
+        background: none;
+        border: 1px solid var(--accent);
+        border-radius: 4px;
+        padding: 2px 8px;
+        cursor: pointer;
+      `;
+      translateBtn.addEventListener('click', async () => {
+        translateBtn.disabled = true;
+        translateBtn.textContent = 'Translating...';
+        try {
+          const res = await fetch(`/api/posts/${this.props.post.id}/translate?target=${currentLocale}`, {
+            method: 'POST',
+          });
+          if (!res.ok) {
+            translateBtn.remove();
+            return;
+          }
+
+          const poll = async (): Promise<void> => {
+            const pollRes = await fetch(`/api/posts/${this.props.post.id}/translate?target=${currentLocale}`);
+            if (!pollRes.ok) {
+              translateBtn.remove();
+              return;
+            }
+            const data = (await pollRes.json()) as { status: string; translated_text?: string };
+            if (data.status === 'done' && data.translated_text) {
+              this.translatedText = data.translated_text;
+              this.showingOriginal = false;
+              textElement.textContent = data.translated_text;
+              translateBar.innerHTML = '';
+              const showOriginal = document.createElement('button');
+              showOriginal.textContent = 'Show original';
+              showOriginal.style.cssText = `
+                font-size: 0.8rem;
+                color: var(--accent);
+                background: none;
+                border: none;
+                padding: 2px 0;
+                cursor: pointer;
+                text-decoration: underline;
+              `;
+              showOriginal.addEventListener('click', () => {
+                if (this.showingOriginal) {
+                  textElement.textContent = this.translatedText!;
+                  showOriginal.textContent = 'Show original';
+                } else {
+                  textElement.textContent = this.originalText;
+                  showOriginal.textContent = 'Show translation';
+                }
+                this.showingOriginal = !this.showingOriginal;
+              });
+              translateBar.appendChild(showOriginal);
+            } else if (data.status === 'processing') {
+              setTimeout(poll, 2000);
+            } else {
+              translateBtn.remove();
+            }
+          };
+          setTimeout(poll, 2000);
+        } catch {
+          translateBtn.remove();
+        }
+      });
+
+      translateBar.appendChild(translateBtn);
+      postTextContainer.appendChild(translateBar);
+
+      // Listen for locale changes
+      const onLocaleChange = (e: Event) => {
+        const detail = (e as CustomEvent).detail;
+        if (detail.locale !== authorLang) {
+          translateBtn.textContent = `Translate to ${detail.locale.toUpperCase()}`;
+        }
+      };
+      window.addEventListener('localechange', onLocaleChange);
+    }
+
+    container.appendChild(postTextContainer);
 
     if ('requestIdleCallback' in window) {
       window.requestIdleCallback?.(
@@ -135,11 +235,9 @@ export class PostCard {
               mentions: this.props.post.mentions,
               enablePostRefs: this.props.enablePostRefs,
             });
-            // リッチテキストに置き換え
             textElement.replaceWith(richText);
           } catch (error) {
             console.error('Failed to create rich post text:', error);
-            // エラー時はプレーンテキストのまま
           }
         },
         { timeout: 2000 },
