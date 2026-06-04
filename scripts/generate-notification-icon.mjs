@@ -4,7 +4,7 @@
  * Run: node scripts/generate-notification-icon.mjs
  */
 
-import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
 

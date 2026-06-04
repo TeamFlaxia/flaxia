@@ -277,6 +277,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         await PushNotifications.addListener('registrationError', (err) => {
           console.error('[push] FCM registration error:', err);
         });
+
+        await PushNotifications.addListener('pushNotificationReceived', (notification) => {
+          if (notification.title && typeof capacitorNotify === 'function') {
+            capacitorNotify(notification.title, notification.body || '');
+          }
+        });
+
+        await PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
+          const clickUrl = action.notification?.data?.click_url;
+          if (clickUrl) {
+            window.location.href = clickUrl;
+          }
+        });
       } catch {
         console.log('[push] @capacitor/push-notifications not available');
       }

@@ -112,6 +112,11 @@ export async function sendPushToDevice(
             title: payload.title,
             body: payload.body,
           },
+          data: {
+            title: payload.title,
+            body: payload.body,
+            click_url: '/',
+          },
           android: {
             priority: 'high',
             notification: {
