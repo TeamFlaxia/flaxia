@@ -584,10 +584,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       const badge = leftNavOpenButton.querySelector('.left-nav-open-badge') as HTMLElement;
       if (!badge) return;
       if (count > 0) {
+        leftNavOpenButton.style.display = '';
         badge.textContent = count >= 99 ? '99+' : String(count);
         badge.style.display = '';
       } else {
         badge.style.display = 'none';
+        leftNavOpenButton.style.display = 'none';
       }
     };
 
