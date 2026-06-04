@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 // launcher icons (generate from assets/icon.png via capacitor-assets)
@@ -22,23 +22,18 @@ if (existsSync(faceIconPath)) {
   console.log('Removed drawable-v24/ic_launcher_foreground.xml (emoji face)');
 }
 
-// Create a bitmap drawable that references the mipmap ic_launcher_foreground
-// (generated from assets/icon.png by capacitor-assets above).
-// This ensures R.drawable.ic_launcher_foreground resolves to the Flaxia icon,
-// which is used as the Android notification smallIcon (smallIcon in capacitor.config.ts).
+// Copy the generated mipmap foreground PNG to drawable/ so it can be
+// referenced as R.drawable.ic_launcher_foreground for the notification
+// smallIcon. The mipmap PNGs are generated from assets/icon.png above.
 const drawableDir = resolve('android/app/src/main/res/drawable');
-const bitmapDrawablePath = resolve(drawableDir, 'ic_launcher_foreground.xml');
-if (!existsSync(bitmapDrawablePath)) {
+const foregroundPng = resolve(drawableDir, 'ic_launcher_foreground.png');
+if (!existsSync(foregroundPng)) {
   mkdirSync(drawableDir, { recursive: true });
-  writeFileSync(
-    bitmapDrawablePath,
-    `<?xml version="1.0" encoding="utf-8"?>
-<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
-    android:src="@mipmap/ic_launcher_foreground"
-    android:gravity="center" />
-`,
-  );
-  console.log('Created drawable/ic_launcher_foreground.xml (bitmap wrapper)');
+  const mipmapHdpi = resolve('android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png');
+  if (existsSync(mipmapHdpi)) {
+    copyFileSync(mipmapHdpi, foregroundPng);
+    console.log('Copied ic_launcher_foreground.png to drawable/');
+  }
 }
 
 const buildGradlePath = resolve('android/app/build.gradle');
