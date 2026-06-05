@@ -66,10 +66,11 @@ function parseCentralDirectory(data: Uint8Array): Map<string, ZipIndexEntry> {
 
     const fileNameBytes = data.slice(offset + 46, offset + 46 + fileNameLen);
     const fileName = new TextDecoder().decode(fileNameBytes);
+    const normalizedName = fileName.replace(/^(\.\/)+/, '');
 
-    if (!fileName.endsWith('/')) {
-      index.set(fileName, {
-        fileName,
+    if (normalizedName && !normalizedName.endsWith('/')) {
+      index.set(normalizedName, {
+        fileName: normalizedName,
         localHeaderOffset: readUint32(view, offset + 42),
         compressedSize: readUint32(view, offset + 20),
         uncompressedSize: readUint32(view, offset + 22),
@@ -174,6 +175,12 @@ function findFileInMap(fileMap: Map<string, Uint8Array>, filePath: string): Uint
     if (fileData) return fileData;
   }
 
+  // Also try with ./ prefix in case stored paths weren't normalized
+  if (!filePath.startsWith('./')) {
+    fileData = fileMap.get('./' + filePath);
+    if (fileData) return fileData;
+  }
+
   return null;
 }
 
@@ -195,6 +202,12 @@ function findFileInIndex(index: Map<string, ZipIndexEntry>, filePath: string): Z
 
   for (const fallback of fallbacks) {
     entry = index.get(fallback);
+    if (entry) return entry;
+  }
+
+  // Also try with ./ prefix in case stored paths weren't normalized
+  if (!filePath.startsWith('./')) {
+    entry = index.get('./' + filePath);
     if (entry) return entry;
   }
 
@@ -287,7 +300,8 @@ export async function extractZipToWvfs(zipData: ArrayBuffer, postId: string): Pr
     const fileMap = new Map<string, Uint8Array>();
     for (const [filename, fileData] of Object.entries(zip)) {
       if (filename.endsWith('/')) continue;
-      fileMap.set(filename, fileData);
+      const normalizedName = filename.replace(/^(\.\/)+/, '');
+      if (normalizedName) fileMap.set(normalizedName, fileData);
     }
 
     wvfsStorage.set(postId, {
