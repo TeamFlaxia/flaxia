@@ -46,6 +46,7 @@ type Bindings = {
   CF_TEAM_DOMAIN: string;
   CROWD_ORCHESTRATOR?: Fetcher;
   NOTIFICATION_STREAM?: DurableObjectNamespace;
+  FCM_SERVER_KEY?: string;
 };
 
 type Variables = {
@@ -3712,6 +3713,7 @@ app.get('/api/posts', async (c) => {
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
       c.env.VAPID_PRIVATE_KEY,
+      c.env.FCM_SERVER_KEY,
     );
 
     // Trigger sentiment analysis for at most one unprocessed post in background per request
@@ -3827,6 +3829,7 @@ app.get('/api/posts/trending', async (c) => {
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
       c.env.VAPID_PRIVATE_KEY,
+      c.env.FCM_SERVER_KEY,
     );
 
     return c.json({ posts });
@@ -4014,6 +4017,7 @@ app.get('/api/posts/recommended', async (c) => {
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
       c.env.VAPID_PRIVATE_KEY,
+      c.env.FCM_SERVER_KEY,
     );
 
     return c.json({ posts });
@@ -5832,6 +5836,7 @@ app.get('/api/posts/:id/replies', async (c) => {
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
       c.env.VAPID_PRIVATE_KEY,
+      c.env.FCM_SERVER_KEY,
     );
 
     // Add poll data
@@ -5841,6 +5846,7 @@ app.get('/api/posts/:id/replies', async (c) => {
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
       c.env.VAPID_PRIVATE_KEY,
+      c.env.FCM_SERVER_KEY,
     );
     await enrichPostsWithPolls(
       replies as PostRow[],
@@ -5848,6 +5854,7 @@ app.get('/api/posts/:id/replies', async (c) => {
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
       c.env.VAPID_PRIVATE_KEY,
+      c.env.FCM_SERVER_KEY,
     );
 
     // Trigger sentiment analysis for unprocessed posts in background
@@ -5983,6 +5990,7 @@ app.get('/api/posts/:id/thread', async (c) => {
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
       c.env.VAPID_PRIVATE_KEY,
+      c.env.FCM_SERVER_KEY,
     );
     await enrichPostsWithPolls(
       replies as PostRow[],
@@ -5990,6 +5998,7 @@ app.get('/api/posts/:id/thread', async (c) => {
       currentUserId,
       c.env.VAPID_PUBLIC_KEY,
       c.env.VAPID_PRIVATE_KEY,
+      c.env.FCM_SERVER_KEY,
     );
 
     if ((rootPost as Record<string, unknown>).sentiment_score == null && (rootPost as Record<string, unknown>).text) {
@@ -7011,6 +7020,7 @@ async function enrichPostsWithPolls(
   currentUserId?: string | null,
   vapidPublicKey?: string,
   vapidPrivateKey?: string,
+  fcmServerKey?: string,
 ): Promise<void> {
   if (posts.length === 0) return;
   const postIds = posts.map((p) => p.id);
@@ -7079,7 +7089,12 @@ async function enrichPostsWithPolls(
             .bind(nanoid(), post.user_id, 'poll_ended', post.id, '')
             .run();
           await sendPushToAll(
-            { DB: db, VAPID_PUBLIC_KEY: vapidPublicKey, VAPID_PRIVATE_KEY: vapidPrivateKey } as any,
+            {
+              DB: db,
+              VAPID_PUBLIC_KEY: vapidPublicKey,
+              VAPID_PRIVATE_KEY: vapidPrivateKey,
+              FCM_SERVER_KEY: fcmServerKey,
+            } as any,
             post.user_id,
             'poll_ended',
           );
