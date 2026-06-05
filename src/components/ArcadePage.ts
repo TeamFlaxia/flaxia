@@ -1596,6 +1596,8 @@ export class ArcadePage {
 
     const boundBlockOutside = (e: Event) => {
       if (overlay.contains(e.target as Node)) return;
+      const consentContainer = document.getElementById('flaxia-consent-container');
+      if (consentContainer && e.composedPath().includes(consentContainer)) return;
       e.stopPropagation();
       e.preventDefault();
     };
