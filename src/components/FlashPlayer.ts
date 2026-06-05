@@ -11,6 +11,7 @@ export async function executeFlash(
   containerEl: HTMLElement,
   url?: string,
   hideFullscreen: boolean = false,
+  preloadedData?: ArrayBuffer,
 ): Promise<FlashPlayerHandle> {
   if (activeHandle) {
     activeHandle.destroy();
@@ -20,11 +21,13 @@ export async function executeFlash(
   try {
     const swfUrl = url || `/api/swf/${postId}`;
 
-    // Start SWF fetch immediately — parallel with iframe creation
-    const swfPromise = fetch(swfUrl).then((r) => {
-      if (!r.ok) throw new Error('Failed to fetch SWF');
-      return r.arrayBuffer();
-    });
+    // Use preloaded data if available, otherwise fetch
+    const swfPromise = preloadedData
+      ? Promise.resolve(preloadedData)
+      : fetch(swfUrl).then((r) => {
+          if (!r.ok) throw new Error('Failed to fetch SWF');
+          return r.arrayBuffer();
+        });
 
     const iframeContainer = document.createElement('div');
     iframeContainer.style.cssText = `

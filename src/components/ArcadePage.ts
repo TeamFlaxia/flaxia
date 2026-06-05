@@ -49,6 +49,8 @@ export class ArcadePage {
   private tutorialEl: HTMLElement | null = null;
   private isFullscreen: boolean = false;
   private loadingEl: HTMLElement | null = null;
+  private preloadCache = new Map<string, ArrayBuffer>();
+  private preloadedIds = new Set<string>();
 
   private static TUTORIAL_SEEN_KEY = 'flaxia_tutorial_seen';
 
@@ -90,11 +92,14 @@ export class ArcadePage {
       this.showTutorial();
     }
 
-    // Preload Ruffle CDN — browser resolves DNS + caches early
-    const preconnect = document.createElement('link');
-    preconnect.rel = 'preconnect';
-    preconnect.href = 'https://unpkg.com';
-    document.head.appendChild(preconnect);
+    // Preconnect to emulator CDNs and sandbox
+    const preconnects = ['https://unpkg.com', 'https://v8.js-dos.com', 'https://sandbox.flaxia.app'];
+    for (const href of preconnects) {
+      const link = document.createElement('link');
+      link.rel = 'preconnect';
+      link.href = href;
+      document.head.appendChild(link);
+    }
   }
 
   private createElement(): HTMLElement {
@@ -1259,8 +1264,11 @@ export class ArcadePage {
     this.showLoading(container, game.type);
     try {
       if (game.type === 'flash' && game.swfKey) {
-        const handle = await executeFlash(game.postId, container, `/api/swf/${game.postId}`, true);
+        const preloaded = this.preloadCache.get(game.postId);
+        const handle = await executeFlash(game.postId, container, `/api/swf/${game.postId}`, true, preloaded);
         this.currentGameHandle = handle;
+        // Free cached data after use
+        this.preloadCache.delete(game.postId);
       } else if (game.type === 'zip' && game.payloadKey) {
         // Use WVFS for ZIP execution
         const handle = await executeWvfsZip(game.postId, container, undefined, true);
@@ -1331,8 +1339,50 @@ export class ArcadePage {
   }
 
   private preloadNextGame(): void {
-    // Preload logic can be implemented here
-    // For now, we'll just ensure smooth transitions
+    for (let i = 1; i <= 2; i++) {
+      const nextIndex = this.currentIndex + i;
+      if (nextIndex < this.games.length) {
+        const game = this.games[nextIndex];
+        this.prefetchGameBinary(game);
+      }
+    }
+  }
+
+  private prefetchLink(href: string): void {
+    if (this.preloadedIds.has(href)) return;
+    this.preloadedIds.add(href);
+    const link = document.createElement('link');
+    link.rel = 'prefetch';
+    link.href = href;
+    document.head.appendChild(link);
+  }
+
+  private async prefetchGameBinary(game: Game): Promise<void> {
+    if (this.preloadedIds.has(game.postId)) return;
+    this.preloadedIds.add(game.postId);
+
+    try {
+      if (game.type === 'flash') {
+        const url = `/api/swf/${game.postId}`;
+        this.prefetchLink(url);
+        const resp = await fetch(url, { credentials: 'include' });
+        if (resp.ok) {
+          this.preloadCache.set(game.postId, await resp.arrayBuffer());
+        }
+      } else if (game.type === 'dos') {
+        const url = `/api/zip/${game.postId}`;
+        this.prefetchLink(url);
+        const resp = await fetch(url, { credentials: 'include' });
+        if (resp.ok) {
+          await resp.blob();
+        }
+      } else if (game.type === 'zip') {
+        const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
+        this.prefetchLink(`${sandboxOrigin}/api/wvfs-zip/${game.postId}`);
+      }
+    } catch {
+      // Prefetch failed — game will load normally on demand
+    }
   }
 
   private updateViewportTransform(): void {
