@@ -88,51 +88,6 @@ function createSwfExecutionButton(props: {
   return container;
 }
 
-// Load JSZip dynamically
-interface JSZipInstance {
-  file(name: string): { name: string; dir: boolean } | null;
-  files: Record<string, { name: string; dir: boolean }>;
-}
-
-interface JSZipStatic {
-  loadAsync(data: Blob): Promise<JSZipInstance>;
-}
-
-async function loadJSZip(): Promise<JSZipStatic | null> {
-  if (typeof window !== 'undefined' && window.JSZip) {
-    return window.JSZip as JSZipStatic;
-  }
-
-  // Load JSZip from CDN if not available
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
-    script.onload = () => resolve(window.JSZip as JSZipStatic);
-    script.onerror = reject;
-    document.head.appendChild(script);
-  });
-}
-
-async function validateZipContainsIndexHtml(zipBlob: Blob): Promise<boolean> {
-  try {
-    const JSZip = await loadJSZip();
-    if (!JSZip) return false;
-    const zip = await JSZip.loadAsync(zipBlob);
-
-    // Check if index.html exists in the ZIP
-    const hasIndexHtml =
-      zip.file('index.html') !== null ||
-      zip.file('index.htm') !== null ||
-      zip.files['index.html'] !== null ||
-      zip.files['index.htm'] !== null;
-
-    return hasIndexHtml;
-  } catch (error) {
-    console.error('Error validating ZIP:', error);
-    return false;
-  }
-}
-
 interface ZipExecutionButtonProps {
   postId: string;
   label: string;
@@ -184,42 +139,9 @@ function createExecutionButton(props: ZipExecutionButtonProps): HTMLElement {
   });
 
   // Click handler
-  container.addEventListener('click', async (e) => {
+  container.addEventListener('click', (e) => {
     e.stopPropagation();
-
-    // Show loading state
-    const originalContent = container.innerHTML;
-    container.innerHTML = t('post_stage.loading_zip');
-    container.style.pointerEvents = 'none';
-
-    try {
-      // Fetch ZIP file
-      const response = await fetch(`/api/zip/${props.postId}`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch ZIP file');
-      }
-
-      // Get ZIP blob
-      const zipBlob = await response.blob();
-
-      // Validate ZIP contains index.html
-      const hasIndexHtml = await validateZipContainsIndexHtml(zipBlob);
-      if (!hasIndexHtml) {
-        throw new Error('ZIP file must contain index.html');
-      }
-
-      // For now, just log that we would execute the ZIP
-      // The actual execution engine will be implemented separately
-      console.log('execute', props.postId, zipBlob);
-
-      // Trigger the mode change to show sandbox
-      props.onClick();
-    } catch (error) {
-      console.error('Failed to load ZIP:', error);
-      container.innerHTML = originalContent;
-      container.style.pointerEvents = 'auto';
-      alert(t('post_stage.zip_load_failed'));
-    }
+    props.onClick();
   });
 
   return container;
