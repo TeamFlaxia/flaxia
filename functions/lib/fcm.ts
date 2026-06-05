@@ -108,10 +108,6 @@ export async function sendPushToDevice(
       body: JSON.stringify({
         message: {
           token,
-          notification: {
-            title: payload.title,
-            body: payload.body,
-          },
           data: {
             title: payload.title,
             body: payload.body,
@@ -119,11 +115,6 @@ export async function sendPushToDevice(
           },
           android: {
             priority: 'high',
-            notification: {
-              sound: 'default',
-              channelId: 'flaxia_notifications',
-              icon: 'ic_stat_flaxia',
-            },
           },
           apns: {
             payload: {
