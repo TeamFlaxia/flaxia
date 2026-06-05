@@ -5117,8 +5117,16 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
             .bind(nanoid(), mention.user_id, 'mention', postId, userId)
             .run();
           const actor = c.get('user');
-          const actorName = actor?.display_name || actor?.username || 'Someone';
-          await sendPushToAll(c.env, mention.user_id, 'mention', actorName, text || '', postId);
+
+          await sendPushToAll(
+            c.env,
+            mention.user_id,
+            'mention',
+            actor?.username,
+            actor?.display_name,
+            text || '',
+            postId,
+          );
         }
       } catch (e) {
         // Don't fail the post creation if mention notifications fail
@@ -5406,9 +5414,17 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
             .run();
           {
             const actor = c.get('user');
-            const actorName = actor?.display_name || actor?.username || 'Someone';
+
             const textPreview = ((post as Record<string, unknown>).text as string) || '';
-            await sendPushToAll(c.env, post.user_id, 'fresh', actorName, textPreview, postId);
+            await sendPushToAll(
+              c.env,
+              post.user_id,
+              'fresh',
+              actor?.username,
+              actor?.display_name,
+              textPreview,
+              postId,
+            );
           }
         }
       } catch (e) {
@@ -6346,8 +6362,8 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
           // Send push notification to parent post author
           {
             const actor = c.get('user');
-            const actorName = actor?.display_name || actor?.username || 'Someone';
-            await sendPushToAll(c.env, parentPost.user_id, 'reply', actorName, text, postId);
+
+            await sendPushToAll(c.env, parentPost.user_id, 'reply', actor?.username, actor?.display_name, text, postId);
           }
         }
         notifiedUserIds.add(parentPost.user_id);
@@ -6370,8 +6386,8 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
             .run();
           {
             const actor = c.get('user');
-            const actorName = actor?.display_name || actor?.username || 'Someone';
-            await sendPushToAll(c.env, mention.user_id, 'mention', actorName, text, postId);
+
+            await sendPushToAll(c.env, mention.user_id, 'mention', actor?.username, actor?.display_name, text, postId);
           }
         }
       } catch (e) {
@@ -6422,8 +6438,16 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
                 .bind(nanoid(), referencedPost.user_id as string, 'reply', replyId, replyUserId)
                 .run();
               const actor = c.get('user');
-              const actorName = actor?.display_name || actor?.username || 'Someone';
-              await sendPushToAll(c.env, referencedPost.user_id as string, 'reply', actorName, text || '', replyId);
+
+              await sendPushToAll(
+                c.env,
+                referencedPost.user_id as string,
+                'reply',
+                actor?.username,
+                actor?.display_name,
+                text || '',
+                replyId,
+              );
             }
           }
         }

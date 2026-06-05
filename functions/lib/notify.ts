@@ -30,11 +30,12 @@ export async function sendPushToAll(
   },
   userId: string,
   type: string,
-  actorName?: string,
+  actorUsername?: string,
+  actorDisplayName?: string,
   postPreview?: string,
   postId?: string,
 ): Promise<void> {
-  const payload = getPushPayload(type, actorName, postPreview, postId);
+  const payload = getPushPayload(type, actorUsername, actorDisplayName, postPreview, postId);
 
   // Web Push (browser) + FCM (mobile)
   await sendPushToUser(env.DB, userId, payload, env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY, env);

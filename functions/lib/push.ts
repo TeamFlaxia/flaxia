@@ -108,26 +108,36 @@ export async function sendPushToUser(
   }
 }
 
-export function getPushPayload(type: string, actorName?: string, postPreview?: string, postId?: string): PushPayload {
-  const name = actorName || 'Someone';
+export function getPushPayload(
+  type: string,
+  actorUsername?: string,
+  actorDisplayName?: string,
+  postPreview?: string,
+  postId?: string,
+): PushPayload {
+  const name = actorUsername
+    ? actorDisplayName && actorDisplayName !== actorUsername
+      ? `@${actorUsername} (${actorDisplayName})`
+      : `@${actorUsername}`
+    : 'Someone';
   const preview = postPreview ? `: ${postPreview.slice(0, 50)}` : '';
   const url = postId ? `/thread/${postId}` : '/notifications';
 
   switch (type) {
     case 'fresh':
-      return { title: 'Flaxia', body: `${name} liked your post${preview}`, url };
+      return { title: 'Flaxia', body: `${name} freshed your post${preview}`, url };
     case 'reply':
-      return { title: 'Flaxia', body: `${name} replied to your post${preview}`, url };
+      return { title: 'Flaxia', body: `${name} replied to you${preview}`, url };
     case 'mention':
       return { title: 'Flaxia', body: `${name} mentioned you${preview}`, url };
     case 'ap_follow':
       return { title: 'Flaxia', body: `${name} followed you`, url: '/notifications' };
     case 'ap_like':
-      return { title: 'Flaxia', body: `${name} liked your post from the Fediverse${preview}`, url };
+      return { title: 'Flaxia', body: `${name} liked your post${preview}`, url };
     case 'ap_announce':
       return { title: 'Flaxia', body: `${name} boosted your post${preview}`, url };
     case 'poll_ended':
-      return { title: 'Flaxia', body: `A poll you voted on has ended${preview}`, url };
+      return { title: 'Flaxia', body: `Your poll has ended${preview}`, url };
     case 'bookmark':
       return { title: 'Flaxia', body: `${name} bookmarked your post${preview}`, url };
     default:

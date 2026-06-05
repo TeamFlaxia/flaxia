@@ -427,7 +427,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         const latest = data.notifications[0];
         let body = '';
         if (latest.actor) {
-          body = `${latest.actor.display_name || latest.actor.username}: `;
+          const u = latest.actor.username;
+          const d = latest.actor.display_name;
+          body = d && d !== u ? `@${u} (${d})` : `@${u}: `;
         }
         body += latest.post_text_preview || 'New notification';
         tauriNotify('Flaxia', body).catch((err) => {
@@ -442,7 +444,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         const latest = data.notifications[0];
         let body = '';
         if (latest.actor) {
-          body = `${latest.actor.display_name || latest.actor.username}: `;
+          const u = latest.actor.username;
+          const d = latest.actor.display_name;
+          body = d && d !== u ? `@${u} (${d})` : `@${u}: `;
         }
         body += latest.post_text_preview || 'New notification';
         capacitorNotify('Flaxia', body).catch((err) => {
