@@ -58,16 +58,8 @@ export class ThreadPage {
     const repliesContainer = repliesContent.querySelector('.replies-container') as HTMLElement;
     if (!repliesContainer) return;
 
-    // Shift existing indices by +1 and prepend new reply as index 1 (newest-first)
-    const prevCards = repliesContainer.querySelectorAll('[data-post-index]');
-    prevCards.forEach((card) => {
-      const cur = parseInt(card.getAttribute('data-post-index')!, 10);
-      card.setAttribute('data-post-index', String(cur + 1));
-      const span = card.querySelector('span');
-      if (span && /^\d+$/.test(span.textContent || '')) {
-        span.textContent = String(cur + 1);
-      }
-    });
+    // Append new reply at the end (matching API ordering: oldest-first)
+    const nextIndex = repliesContainer.children.length + 1;
     const card = createPostCard({
       post: newReply as unknown as Post,
       sandboxOrigin: this.props.sandboxOrigin,
@@ -75,11 +67,11 @@ export class ThreadPage {
       depth: (newReply.depth as number) || 0,
       onDelete: () => {},
       disableNavigation: true,
-      postIndex: 1,
+      postIndex: nextIndex,
       enablePostRefs: true,
     });
     const cardEl = card.getElement();
-    repliesContainer.insertBefore(cardEl, repliesContainer.firstChild);
+    repliesContainer.appendChild(cardEl);
     cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
     // Update replies header count
