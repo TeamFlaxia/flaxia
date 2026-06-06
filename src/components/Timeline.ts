@@ -443,17 +443,20 @@ export class Timeline {
         throw new Error('Failed to fetch posts');
       }
 
-      const data = (await response.json()) as { posts: Post[] };
+      const data = (await response.json()) as { posts?: Post[] };
+
+      // Ensure posts is an array (handle unexpected API responses)
+      const postsArray = Array.isArray(data.posts) ? data.posts : [];
 
       // Inject ads into posts
-      const postsWithAds = injectAds(data.posts, this.state.ads, this.state.everyN);
+      const postsWithAds = injectAds(postsArray, this.state.ads, this.state.everyN);
       this.state.posts = postsWithAds;
 
-      if (data.posts.length > 0) {
-        this.state.cursor = data.posts[data.posts.length - 1].created_at;
+      if (postsArray.length > 0) {
+        this.state.cursor = postsArray[postsArray.length - 1].created_at;
       }
 
-      this.state.hasMore = data.posts.length === 20;
+      this.state.hasMore = postsArray.length === 20;
       this.renderPostList();
 
       // Dispatch ready event for scroll restoration
@@ -497,17 +500,20 @@ export class Timeline {
         throw new Error('Failed to fetch more posts');
       }
 
-      const data = (await response.json()) as { posts: Post[] };
+      const data = (await response.json()) as { posts?: Post[] };
+
+      // Ensure posts is an array (handle unexpected API responses)
+      const postsArray = Array.isArray(data.posts) ? data.posts : [];
 
       // Inject ads into new posts
-      const postsWithAds = injectAds(data.posts, this.state.ads, this.state.everyN);
+      const postsWithAds = injectAds(postsArray, this.state.ads, this.state.everyN);
       this.state.posts = [...this.state.posts, ...postsWithAds];
 
-      if (data.posts.length > 0) {
-        this.state.cursor = data.posts[data.posts.length - 1].created_at;
+      if (postsArray.length > 0) {
+        this.state.cursor = postsArray[postsArray.length - 1].created_at;
       }
 
-      this.state.hasMore = data.posts.length === 20;
+      this.state.hasMore = postsArray.length === 20;
       this.renderPostList();
     } catch (error) {
       console.error('Failed to load more posts:', error);
