@@ -7,6 +7,9 @@
   <meta name="description" content="The SNS where your posts are playable.">
   <meta property="og:title" content="Flaxia">
   <meta property="og:description" content="The SNS where your posts are playable.">
+  <meta property="og:image" content="https://flaxia.app/og-default-v2.png">
+  <meta property="og:url" content="https://flaxia.app">
+  <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="Flaxia">
   <meta name="twitter:description" content="The SNS where your posts are playable.">
   
@@ -205,15 +208,25 @@
         ogTitle: isJapanese ? 'Flaxia' : 'Flaxia',
         ogDescription: isJapanese ? 'ゲームやアプリをそのまま投稿できるSNS' : 'The SNS where your posts are playable.',
         twitterTitle: isJapanese ? 'Flaxia' : 'Flaxia',
-        twitterDescription: isJapanese ? 'ゲームやアプリをそのまま投稿できるSNS' : 'The SNS where your posts are playable.'
+        twitterDescription: isJapanese ? 'ゲームやアプリをそのまま投稿できるSNS' : 'The SNS where your posts are playable.',
+        ogImage: 'https://flaxia.app/og-default-v2.png',
+        ogUrl: 'https://flaxia.app',
+        twitterCard: 'summary_large_image'
       };
       
       document.title = metaTags.title;
-      document.querySelector('meta[name="description"]').setAttribute('content', metaTags.description);
-      document.querySelector('meta[property="og:title"]').setAttribute('content', metaTags.ogTitle);
-      document.querySelector('meta[property="og:description"]').setAttribute('content', metaTags.ogDescription);
-      document.querySelector('meta[name="twitter:title"]').setAttribute('content', metaTags.twitterTitle);
-      document.querySelector('meta[name="twitter:description"]').setAttribute('content', metaTags.twitterDescription);
+      const setMeta = (selector, attr, value) => {
+        const el = document.querySelector(selector);
+        if (el) el.setAttribute(attr, value);
+      };
+      setMeta('meta[name="description"]', 'content', metaTags.description);
+      setMeta('meta[property="og:title"]', 'content', metaTags.ogTitle);
+      setMeta('meta[property="og:description"]', 'content', metaTags.ogDescription);
+      setMeta('meta[property="og:image"]', 'content', metaTags.ogImage);
+      setMeta('meta[property="og:url"]', 'content', metaTags.ogUrl);
+      setMeta('meta[name="twitter:card"]', 'content', metaTags.twitterCard);
+      setMeta('meta[name="twitter:title"]', 'content', metaTags.twitterTitle);
+      setMeta('meta[name="twitter:description"]', 'content', metaTags.twitterDescription);
       
       document.documentElement.lang = isJapanese ? 'ja' : 'en';
     })();

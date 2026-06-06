@@ -1,11 +1,13 @@
 type Env = {
   DB: D1Database;
   BASE_URL?: string;
+  SANDBOX_ORIGIN?: string;
 };
 
 export async function onRequest(context: { request: Request; env: Env; params: { id: string } }): Promise<Response> {
   const { env, params } = context;
   const baseUrl = env.BASE_URL ?? 'https://flaxia.app';
+  const sandboxOrigin = env.SANDBOX_ORIGIN ?? 'https://sandbox.flaxia.app';
   const postId = params.id;
 
   if (!postId) {
@@ -35,7 +37,7 @@ export async function onRequest(context: { request: Request; env: Env; params: {
     }
 
     if (payloadKey) {
-      return serveZipPlayer(postId);
+      return serveZipPlayer(postId, sandboxOrigin);
     }
 
     return new Response('No game found', { status: 404 });
@@ -45,7 +47,7 @@ export async function onRequest(context: { request: Request; env: Env; params: {
   }
 }
 
-function serveZipPlayer(postId: string): Response {
+function serveZipPlayer(postId: string, sandboxOrigin: string): Response {
   const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -58,7 +60,7 @@ function serveZipPlayer(postId: string): Response {
   </style>
 </head>
 <body>
-  <iframe src="https://sandbox.flaxia.app/api/wvfs-zip/${postId}"
+  <iframe src="${sandboxOrigin}/api/wvfs-zip/${postId}"
     sandbox="allow-scripts allow-pointer-lock allow-fullscreen allow-same-origin"
     allow="fullscreen"
     referrerpolicy="no-referrer"></iframe>
