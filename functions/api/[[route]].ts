@@ -3934,7 +3934,7 @@ app.get('/api/posts/recommended', async (c) => {
     if (currentUserId) {
       // Get recent 50 fresh post IDs for this user
       const freshRows = await c.env.DB.prepare(
-        'SELECT post_id FROM freshs WHERE user_id = ? ORDER BY created_at DESC LIMIT 50',
+        'SELECT f.post_id FROM freshs f JOIN posts p ON p.id = f.post_id WHERE f.user_id = ? ORDER BY p.created_at DESC LIMIT 50',
       )
         .bind(currentUserId)
         .all<{ post_id: string }>();
