@@ -74,7 +74,13 @@ export async function onRequest(context: {
       );
     }
 
-    const image = result.gif_key ? r2Url(String(result.gif_key)) : defaultImage;
+    const gifKey = String(result.gif_key || '');
+    const isImage = result.gif_key && !gifKey.startsWith('audio/');
+    const image = isImage ? r2Url(gifKey) : result.thumbnail_key ? r2Url(String(result.thumbnail_key)) : defaultImage;
+
+    const hasGame = result.payload_key || result.swf_key;
+    const playerUrl = hasGame ? `${baseUrl}/api/ogp-player/${id}` : undefined;
+    const twitterCard = hasGame ? 'player' : 'summary_large_image';
 
     return new Response(
       renderOgHtml(
@@ -84,7 +90,8 @@ export async function onRequest(context: {
           image,
           url: `${baseUrl}/thread/${id}`,
           type: 'article',
-          twitterCard: 'summary_large_image',
+          twitterCard,
+          playerUrl,
         },
         baseUrl,
       ),
