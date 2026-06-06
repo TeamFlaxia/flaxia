@@ -51,7 +51,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentPostId: string | null = null;
     let _currentUsername: string | null = null;
     let currentTag: string | null = null;
-    let currentAdminTab: 'alerts' | 'hidden' | 'users' | 'ads' = 'alerts';
+    let currentAdminTab: 'alerts' | 'hidden' | 'users' | 'ads' | 'counter' = 'alerts';
     let timeline: Timeline | null = null;
     let threadPage: ThreadPage | null = null;
     let savedScrollY = 0;
@@ -910,10 +910,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       // Admin route - requires auth
-      const adminMatch = cleanPath.match(/^\/admin(\/alerts|\/hidden|\/users)?$/);
+      const adminMatch = cleanPath.match(/^\/admin(\/alerts|\/hidden|\/users|\/counter)?$/);
       if (adminMatch) {
         console.log('Admin route detected');
-        const tab = adminMatch[1] ? (adminMatch[1].replace('/', '') as 'alerts' | 'hidden' | 'users') : 'alerts';
+        const tab = adminMatch[1]
+          ? (adminMatch[1].replace('/', '') as 'alerts' | 'hidden' | 'users' | 'counter')
+          : 'alerts';
         return { view: 'admin' as const, postId: null, username: null, tag: null, adminTab: tab };
       }
 
@@ -1003,7 +1005,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       postId?: string,
       username?: string,
       tag?: string,
-      adminTab?: 'alerts' | 'hidden' | 'users',
+      adminTab?: 'alerts' | 'hidden' | 'users' | 'counter',
       searchQuery?: string,
       searchType?: 'posts' | 'users' | 'arcade',
     ) => {
@@ -1251,7 +1253,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             import('./components/AdminAdsTab.js'),
           ]);
 
-          const onTabChange = async (tab: 'alerts' | 'hidden' | 'users' | 'ads') => {
+          const onTabChange = async (tab: 'alerts' | 'hidden' | 'users' | 'ads' | 'counter') => {
             currentAdminTab = tab;
             window.history.pushState({}, '', `/admin/${tab}`);
             renderAdminTab(tab);
@@ -1265,7 +1267,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           app.appendChild(adminLayout.getElement());
           hidePageLoader();
 
-          const renderAdminTab = async (tab: 'alerts' | 'hidden' | 'users' | 'ads') => {
+          const renderAdminTab = async (tab: 'alerts' | 'hidden' | 'users' | 'ads' | 'counter') => {
             if (!adminLayout) return;
 
             if (tab === 'alerts') {
@@ -1309,6 +1311,15 @@ document.addEventListener('DOMContentLoaded', async () => {
               const adsElement = adminAdsTab.getElement();
               if (adsElement) {
                 adminLayout.updateMainContent(adsElement);
+              }
+            } else if (tab === 'counter') {
+              const counterModule = await import('./components/AdminCounterTab.js');
+              const adminCounterTab = counterModule.createAdminCounterTab({
+                onNavigateToTab: onTabChange,
+              });
+              const counterElement = adminCounterTab.getElement();
+              if (counterElement) {
+                adminLayout.updateMainContent(counterElement);
               }
             }
           };
@@ -2289,7 +2300,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           postId,
           username,
           tag,
-          adminTab as 'alerts' | 'hidden' | 'users',
+          adminTab as 'alerts' | 'hidden' | 'users' | 'counter',
           searchQuery,
           searchType as 'posts' | 'users' | 'arcade',
         );

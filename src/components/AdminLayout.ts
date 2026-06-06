@@ -1,8 +1,8 @@
 import { t } from '../lib/i18n.js';
 
 export interface AdminLayoutProps {
-  activeTab: 'alerts' | 'hidden' | 'users' | 'ads';
-  onTabChange: (tab: 'alerts' | 'hidden' | 'users' | 'ads') => void;
+  activeTab: 'alerts' | 'hidden' | 'users' | 'ads' | 'counter';
+  onTabChange: (tab: 'alerts' | 'hidden' | 'users' | 'ads' | 'counter') => void;
 }
 
 export function createAdminLayout({ activeTab, onTabChange }: AdminLayoutProps) {
@@ -57,8 +57,9 @@ export function createAdminLayout({ activeTab, onTabChange }: AdminLayoutProps) 
       padding: 16px 0;
     `;
 
-    const tabs: { id: 'alerts' | 'hidden' | 'users' | 'ads'; label: string }[] = [
+    const tabs: { id: 'alerts' | 'hidden' | 'users' | 'ads' | 'counter'; label: string }[] = [
       { id: 'alerts', label: t('admin_layout.tab_alerts') },
+      { id: 'counter', label: t('admin_layout.tab_counter') },
       { id: 'hidden', label: t('admin_layout.tab_hidden') },
       { id: 'users', label: t('admin_layout.tab_users') },
       { id: 'ads', label: t('admin_layout.tab_ads') },

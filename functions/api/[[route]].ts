@@ -7040,6 +7040,16 @@ app.get('/api/posts/:id', async (c) => {
       return c.json({ error: 'Not found' }, 404);
     }
 
+    // Auto-restore if counter-notification period has passed
+    if (post.hidden) {
+      await autoRestoreIfEligible(c.env.DB, postId);
+      // Re-fetch after potential restore
+      const refreshed = (await c.env.DB.prepare('SELECT hidden FROM posts WHERE id = ?').bind(postId).first()) as {
+        hidden: number;
+      } | null;
+      if (refreshed) post.hidden = refreshed.hidden;
+    }
+
     // Check if post is hidden - allow admin bypass
     if (post.hidden && !isAdmin(c.env, c.get('user')?.username ?? '')) {
       return c.json({ error: 'Gone' }, 410);
@@ -7177,7 +7187,7 @@ app.get('/api/posts/:id/translate', async (c) => {
 // Helper function to get threshold for a category
 function getThreshold(category: ReportCategory): number {
   const thresholds: Record<ReportCategory, number> = {
-    spam: 1,
+    spam: 3,
     harassment: 3,
     inappropriate: 3,
     misinformation: 3,
@@ -7246,11 +7256,36 @@ async function insertAdminAlert(
 ) {
   const id = nanoid();
   const result = await db
-    .prepare('INSERT INTO alerts (id, post_id, category, priority, status) VALUES (?, ?, ?, ?, ?)')
+    .prepare('INSERT INTO admin_alerts (id, post_id, category, priority, status) VALUES (?, ?, ?, ?, ?)')
     .bind(id, postId, category, priority, 'open')
     .run();
   if (!result.success) {
     console.error('Failed to create admin alert');
+  }
+}
+
+// Check and auto-restore posts where counter-notification period has expired
+async function autoRestoreIfEligible(db: D1Database, postId: string): Promise<void> {
+  try {
+    const now = new Date().toISOString();
+    const result = await db
+      .prepare(
+        `SELECT id FROM counter_notifications
+         WHERE post_id = ? AND status = 'pending' AND restore_at IS NOT NULL AND restore_at <= ?`,
+      )
+      .bind(postId, now)
+      .first();
+
+    if (result) {
+      await db.prepare('UPDATE posts SET hidden = 0 WHERE id = ?').bind(postId).run();
+      await db
+        .prepare("UPDATE counter_notifications SET status = ? WHERE post_id = ? AND status = 'pending'")
+        .bind('auto_restored', postId)
+        .run();
+      console.log(`Auto-restored post ${postId} after counter-notification period`);
+    }
+  } catch (err) {
+    console.error('Auto-restore check failed:', err);
   }
 }
 
@@ -7490,6 +7525,191 @@ app.post('/api/report', requireAuth, async (c) => {
   }
 });
 
+// Helper: add N business days to a date (weekdays only, no holiday calendar)
+function addBusinessDays(date: Date, days: number): Date {
+  const d = new Date(date);
+  let added = 0;
+  while (added < days) {
+    d.setDate(d.getDate() + 1);
+    const dow = d.getDay();
+    if (dow !== 0 && dow !== 6) added++;
+  }
+  return d;
+}
+
+// POST /api/posts/:id/counter-notice - file a DMCA counter-notification (protected)
+app.post('/api/posts/:id/counter-notice', requireAuth, async (c) => {
+  try {
+    const userId = c.get('user')?.id || '';
+    const postId = c.req.param('id') || '';
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+    if (!postId) {
+      return c.json({ error: 'Post ID is required' }, 400);
+    }
+
+    const post = (await c.env.DB.prepare('SELECT id, user_id, hidden FROM posts WHERE id = ?')
+      .bind(postId)
+      .first()) as { id: string; user_id: string; hidden: number } | null;
+
+    if (!post) {
+      return c.json({ error: 'Post not found' }, 404);
+    }
+
+    if (post.user_id !== userId) {
+      return c.json({ error: 'You can only file a counter-notice for your own posts' }, 403);
+    }
+
+    if (!post.hidden) {
+      return c.json({ error: 'Post is not hidden, no counter-notice needed' }, 400);
+    }
+
+    // Check existing counter-notice
+    const existing = await c.env.DB.prepare(
+      'SELECT id FROM counter_notifications WHERE post_id = ? AND user_id = ? AND status = ?',
+    )
+      .bind(postId, userId, 'pending')
+      .first();
+
+    if (existing) {
+      return c.json({ error: 'A pending counter-notice already exists for this post' }, 409);
+    }
+
+    const { name, email, address, phone, statement, consent_jurisdiction } = (await c.req.json()) as {
+      name: string;
+      email: string;
+      address: string;
+      phone: string;
+      statement: boolean;
+      consent_jurisdiction: boolean;
+    };
+
+    if (!name || !email || !address || !phone) {
+      return c.json({ error: 'Name, email, address, and phone are required' }, 400);
+    }
+
+    if (!statement) {
+      return c.json(
+        {
+          error:
+            'You must declare under penalty of perjury that the material was removed due to mistake or misidentification',
+        },
+        400,
+      );
+    }
+
+    if (!consent_jurisdiction) {
+      return c.json({ error: 'You must consent to the jurisdiction of the federal district court' }, 400);
+    }
+
+    const now = new Date();
+    const restoreAt = addBusinessDays(now, 14);
+    const id = nanoid();
+
+    await c.env.DB.prepare(
+      `INSERT INTO counter_notifications
+       (id, post_id, user_id, name, email, address, phone, statement, consent_jurisdiction, submitted_at, restore_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(
+        id,
+        postId,
+        userId,
+        name,
+        email,
+        address,
+        phone,
+        statement ? 1 : 0,
+        consent_jurisdiction ? 1 : 0,
+        now.toISOString(),
+        restoreAt.toISOString(),
+      )
+      .run();
+
+    // Notify admins
+    await insertAdminAlert(c.env.DB, postId, 'copyright', 'high');
+
+    return c.json({ success: true, counter_id: id, restore_at: restoreAt.toISOString() });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Counter-notice error:', error);
+    return c.json({ error: 'Failed to file counter-notice', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// GET /api/admin/counter/pending - get pending counter-notifications (admin only)
+app.get('/api/admin/counter/pending', requireAuth, requireAdmin, async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    // Auto-restore any expired counter-notifications before listing
+    const now = new Date().toISOString();
+    const expired = await c.env.DB.prepare(
+      `SELECT post_id FROM counter_notifications WHERE status = 'pending' AND restore_at IS NOT NULL AND restore_at <= ?`,
+    )
+      .bind(now)
+      .all();
+
+    if (expired.results && expired.results.length > 0) {
+      for (const row of expired.results as Array<{ post_id: string }>) {
+        await autoRestoreIfEligible(c.env.DB, row.post_id);
+      }
+    }
+
+    const result = await c.env.DB.prepare(`
+      SELECT cn.*, u.username, u.display_name
+      FROM counter_notifications cn
+      JOIN users u ON cn.user_id = u.id
+      WHERE cn.status = 'pending'
+      ORDER BY cn.submitted_at ASC
+    `).all();
+
+    return c.json({ counter_notices: result.results || [] });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Fetch counter-notices error:', error);
+    return c.json({ error: 'Failed to fetch counter-notices', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// POST /api/admin/counter/:id/reject - reject a counter-notification (admin only)
+app.post('/api/admin/counter/:id/reject', requireAuth, requireAdmin, async (c) => {
+  try {
+    const counterId = c.req.param('id');
+    const adminId = c.get('user')?.id || '';
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const counter = (await c.env.DB.prepare('SELECT id, status FROM counter_notifications WHERE id = ?')
+      .bind(counterId)
+      .first()) as { id: string; status: string } | null;
+
+    if (!counter) {
+      return c.json({ error: 'Counter-notification not found' }, 404);
+    }
+
+    if (counter.status !== 'pending') {
+      return c.json({ error: 'Counter-notification is not pending' }, 400);
+    }
+
+    await c.env.DB.prepare('UPDATE counter_notifications SET status = ?, rejected_by = ?, rejected_at = ? WHERE id = ?')
+      .bind('rejected_by_admin', adminId, new Date().toISOString(), counterId)
+      .run();
+
+    return c.json({ success: true });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Reject counter-notice error:', error);
+    return c.json({ error: 'Failed to reject counter-notice', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
 // GET /api/admin/alerts - get unresolved admin alerts (admin only)
 app.get('/api/admin/alerts', requireAuth, requireAdmin, async (c) => {
   try {
@@ -7592,6 +7812,20 @@ app.get('/api/admin/posts/hidden', requireAuth, requireAdmin, async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
+    // Auto-restore any expired counter-notifications
+    const now = new Date().toISOString();
+    const expired = await c.env.DB.prepare(
+      `SELECT post_id FROM counter_notifications WHERE status = 'pending' AND restore_at IS NOT NULL AND restore_at <= ?`,
+    )
+      .bind(now)
+      .all();
+
+    if (expired.results && expired.results.length > 0) {
+      for (const row of expired.results as Array<{ post_id: string }>) {
+        await autoRestoreIfEligible(c.env.DB, row.post_id);
+      }
+    }
+
     const result = await c.env.DB.prepare(`
       SELECT posts.*, users.username, users.display_name
       FROM posts
@@ -7689,143 +7923,6 @@ app.post('/api/admin/alerts/:id/resolve', requireAuth, requireAdmin, async (c) =
     return c.json({ error: 'Failed to resolve alert', details: err.message || 'Unknown error' }, 500);
   }
 });
-
-// POST /api/admin/posts/:id/hide - manually hide a post (admin only)
-app.post('/api/admin/posts/:id/hide', requireAuth, requireAdmin, async (c) => {
-  try {
-    const postId = c.req.param('id');
-
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500);
-    }
-
-    const post = await c.env.DB.prepare('SELECT id, user_id FROM posts WHERE id = ?').bind(postId).first();
-
-    if (!post) {
-      return c.json({ error: 'Post not found' }, 404);
-    }
-
-    await c.env.DB.prepare('UPDATE posts SET hidden = 1 WHERE id = ?').bind(postId).run();
-
-    return c.json({ success: true });
-  } catch (error: unknown) {
-    const err = error as { message?: string };
-    console.error('Hide post error:', error);
-    return c.json({ error: 'Failed to hide post', details: err.message || 'Unknown error' }, 500);
-  }
-});
-
-// POST /api/admin/posts/:id/unhide - restore a hidden post (admin only)
-app.post('/api/admin/posts/:id/unhide', requireAuth, requireAdmin, async (c) => {
-  try {
-    const postId = c.req.param('id');
-
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500);
-    }
-
-    const post = await c.env.DB.prepare('SELECT id, user_id FROM posts WHERE id = ?').bind(postId).first();
-
-    if (!post) {
-      return c.json({ error: 'Post not found' }, 404);
-    }
-
-    await c.env.DB.prepare('UPDATE posts SET hidden = 0 WHERE id = ?').bind(postId).run();
-
-    return c.json({ success: true });
-  } catch (error: unknown) {
-    const err = error as { message?: string };
-    console.error('Unhide post error:', error);
-    return c.json({ error: 'Failed to unhide post', details: err.message || 'Unknown error' }, 500);
-  }
-});
-
-// GET /api/admin/posts/hidden - get hidden posts (admin only)
-app.get('/api/admin/posts/hidden', requireAuth, requireAdmin, async (c) => {
-  try {
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500);
-    }
-
-    const result = await c.env.DB.prepare(`
-      SELECT posts.*, users.username, users.display_name
-      FROM posts
-      JOIN users ON posts.user_id = users.id
-      WHERE posts.hidden = 1
-      ORDER BY posts.created_at DESC
-    `).all();
-
-    return c.json({ posts: result.results || [] });
-  } catch (error: unknown) {
-    const err = error as { message?: string };
-    console.error('Fetch hidden posts error:', error);
-    return c.json({ error: 'Failed to fetch hidden posts', details: err.message || 'Unknown error' }, 500);
-  }
-});
-
-// GET /api/admin/users - get all users (admin only)
-app.get('/api/admin/users', requireAuth, requireAdmin, async (c) => {
-  try {
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500);
-    }
-
-    const result = await c.env.DB.prepare(`
-      SELECT id, username, display_name, email, created_at
-      FROM users
-      ORDER BY created_at DESC
-    `).all();
-
-    return c.json({ users: result.results || [] });
-  } catch (error: unknown) {
-    const err = error as { message?: string };
-    console.error('Fetch users error:', error);
-    return c.json({ error: 'Failed to fetch users', details: err.message || 'Unknown error' }, 500);
-  }
-});
-
-// DELETE /api/admin/users/:id - delete a user account (admin only)
-app.delete('/api/admin/users/:id', requireAuth, requireAdmin, async (c) => {
-  try {
-    const targetUserId = c.req.param('id');
-    const _adminUsername = c.get('user')?.username;
-
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500);
-    }
-
-    // Get the target user
-    const targetUser = (await c.env.DB.prepare('SELECT id, username FROM users WHERE id = ?')
-      .bind(targetUserId)
-      .first()) as { id: string; username: string } | null;
-
-    if (!targetUser) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    // Check if trying to delete an admin
-    if (isAdmin(c.env, targetUser.username)) {
-      return c.json({ error: 'Cannot delete admin accounts' }, 403);
-    }
-
-    // Delete the user (posts remain with user_id intact)
-    const result = await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(targetUserId).run();
-
-    if (!result.success) {
-      return c.json({ error: 'Failed to delete account' }, 500);
-    }
-
-    // Invalidate all sessions for this user (simplified - in production, use session table)
-    // For now, we just delete the user row
-
-    return c.json({ success: true });
-  } catch (error: unknown) {
-    const err = error as { message?: string };
-    console.error('Delete user error:', error);
-    return c.json({ error: 'Failed to delete user', details: err.message || 'Unknown error' }, 500);
-  }
-});
-
 // GET /api/notifications - fetch notifications (protected)
 app.get('/api/notifications', requireAuth, async (c) => {
   try {

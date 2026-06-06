@@ -182,62 +182,64 @@ describe('POST /api/posts/:id/fresh', () => {
   });
 });
 
-describe('POST /api/posts/:id/report', () => {
+describe('POST /api/report', () => {
   beforeEach(resetDb);
 
-  it('reports post successfully → 201', async () => {
-    const { cookie } = await seedUserAndLogin('1');
+  it('reports post successfully → 200', async () => {
+    const { cookie: cookie1 } = await seedUserAndLogin('1');
+    const { cookie: cookie2 } = await seedUserAndLogin('2');
     const createRes = await fetch(`${BASE_URL}/api/posts`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Cookie: cookie,
+        Cookie: cookie1,
       },
       body: JSON.stringify({ text: 'Reportable post' }),
     });
     const createData = await createRes.json();
     const postId = createData.id;
 
-    const res = await fetch(`${BASE_URL}/api/posts/${postId}/report`, {
+    const res = await fetch(`${BASE_URL}/api/report`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Cookie: cookie,
+        Cookie: cookie2,
       },
-      body: JSON.stringify({ reason: 'spam' }),
+      body: JSON.stringify({ post_id: postId, category: 'spam' }),
     });
-    assert.equal(res.status, 201);
+    assert.equal(res.status, 200);
   });
 
   it('rejects duplicate report → 409', async () => {
-    const { cookie } = await seedUserAndLogin('1');
+    const { cookie: cookie1 } = await seedUserAndLogin('1');
+    const { cookie: cookie2 } = await seedUserAndLogin('2');
     const createRes = await fetch(`${BASE_URL}/api/posts`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Cookie: cookie,
+        Cookie: cookie1,
       },
       body: JSON.stringify({ text: 'Reportable post' }),
     });
     const createData = await createRes.json();
     const postId = createData.id;
 
-    await fetch(`${BASE_URL}/api/posts/${postId}/report`, {
+    await fetch(`${BASE_URL}/api/report`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Cookie: cookie,
+        Cookie: cookie2,
       },
-      body: JSON.stringify({ reason: 'spam' }),
+      body: JSON.stringify({ post_id: postId, category: 'spam' }),
     });
 
-    const res = await fetch(`${BASE_URL}/api/posts/${postId}/report`, {
+    const res = await fetch(`${BASE_URL}/api/report`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Cookie: cookie,
+        Cookie: cookie2,
       },
-      body: JSON.stringify({ reason: 'spam' }),
+      body: JSON.stringify({ post_id: postId, category: 'spam' }),
     });
     assert.equal(res.status, 409);
   });
@@ -255,21 +257,22 @@ describe('POST /api/posts/:id/report', () => {
     const createData = await createRes.json();
     const postId = createData.id;
 
-    const res = await fetch(`${BASE_URL}/api/posts/${postId}/report`, {
+    const res = await fetch(`${BASE_URL}/api/report`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Cookie: cookie,
       },
-      body: JSON.stringify({ reason: 'spam' }),
+      body: JSON.stringify({ post_id: postId, category: 'spam' }),
     });
     assert.equal(res.status, 403);
   });
 
-  it('3rd report triggers notification', async () => {
+  it('3rd spam report triggers hide + notification', async () => {
     const { cookie: cookie1 } = await seedUserAndLogin('1');
     const { cookie: cookie2 } = await seedUserAndLogin('2');
     const { cookie: cookie3 } = await seedUserAndLogin('3');
+    const { cookie: cookie4 } = await seedUserAndLogin('4');
 
     const createRes = await fetch(`${BASE_URL}/api/posts`, {
       method: 'POST',
@@ -282,33 +285,41 @@ describe('POST /api/posts/:id/report', () => {
     const createData = await createRes.json();
     const postId = createData.id;
 
-    await fetch(`${BASE_URL}/api/posts/${postId}/report`, {
+    // 1st report
+    const r1 = await fetch(`${BASE_URL}/api/report`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: cookie2,
-      },
-      body: JSON.stringify({ reason: 'spam' }),
+      headers: { 'Content-Type': 'application/json', Cookie: cookie2 },
+      body: JSON.stringify({ post_id: postId, category: 'spam' }),
     });
+    assert.equal(r1.status, 200);
 
-    await fetch(`${BASE_URL}/api/posts/${postId}/report`, {
+    // 2nd report
+    const r2 = await fetch(`${BASE_URL}/api/report`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: cookie3,
-      },
-      body: JSON.stringify({ reason: 'spam' }),
+      headers: { 'Content-Type': 'application/json', Cookie: cookie3 },
+      body: JSON.stringify({ post_id: postId, category: 'spam' }),
     });
+    assert.equal(r2.status, 200);
 
-    const res = await fetch(`${BASE_URL}/api/posts/${postId}/report`, {
+    // 3rd report → threshold reached, post hidden
+    const r3 = await fetch(`${BASE_URL}/api/report`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: cookie1,
-      },
-      body: JSON.stringify({ reason: 'spam' }),
+      headers: { 'Content-Type': 'application/json', Cookie: cookie4 },
+      body: JSON.stringify({ post_id: postId, category: 'spam' }),
     });
-    assert.equal(res.status, 201);
+    assert.equal(r3.status, 200);
+
+    // Verify post is hidden
+    const getRes = await fetch(`${BASE_URL}/api/posts/${postId}`);
+    assert.equal(getRes.status, 410);
+
+    // Verify notification was created for the post owner
+    const notifRes = await fetch(`${BASE_URL}/api/notifications`, {
+      headers: { Cookie: cookie1 },
+    });
+    const notifData = await notifRes.json();
+    const notifications = notifData.notifications || notifData;
+    assert.ok(notifications.length > 0);
   });
 });
 
