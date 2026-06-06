@@ -183,17 +183,21 @@ function getCrowdClient(c: Context<{ Bindings: Bindings; Variables: Variables }>
 
 const embeddingPosts = new Set<string>();
 async function embedPost(
-  c: Context<{ Bindings: Bindings; Variables: Variables }>,
+  orchestratorUrl: string,
+  apiKey: string,
+  baseUrl: string,
   postId: string,
   text: string,
 ): Promise<void> {
   if (embeddingPosts.has(postId)) return;
   embeddingPosts.add(postId);
   try {
-    const client = getCrowdClient(c);
-    if (!client) return;
+    const normalizedUrl = orchestratorUrl.replace(/\/+$/, '');
+    if (!normalizedUrl || !apiKey) return;
 
-    const callbackUrl = `${c.env.BASE_URL || 'https://flaxia.app'}/api/crowd/webhook?type=vector-embed&postId=${postId}`;
+    const client = new FlaxiaClient({ baseUrl: `${normalizedUrl}/crowd`, apiKey });
+
+    const callbackUrl = `${baseUrl || 'https://flaxia.app'}/api/crowd/webhook?type=vector-embed&postId=${postId}`;
     await client.submit({
       workload: 'vector-embed',
       payload: { text },
@@ -3703,7 +3707,9 @@ app.get('/api/posts', async (c) => {
       if (p.text) {
         const existing = await c.env.DB.prepare('SELECT 1 FROM post_embeddings WHERE post_id = ?').bind(p.id).first();
         if (!existing) {
-          c.executionCtx.waitUntil(embedPost(c, p.id, p.text));
+          embedPost(c.env.CROWD_ORCHESTRATOR_URL, c.env.CROWD_API_KEY, c.env.BASE_URL, p.id, p.text).catch((e) =>
+            console.error('Background embed failed:', e),
+          );
           break;
         }
       }
@@ -5405,7 +5411,9 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
       }
     }
 
-    c.executionCtx.waitUntil(embedPost(c, fullPost.id, fullPost.text));
+    embedPost(c.env.CROWD_ORCHESTRATOR_URL, c.env.CROWD_API_KEY, c.env.BASE_URL, fullPost.id, fullPost.text).catch(
+      (e) => console.error('Background embed failed:', e),
+    );
 
     return c.json({ post: fullPost });
   } catch (error: unknown) {
@@ -6082,7 +6090,13 @@ app.get('/api/posts/:id/replies', async (c) => {
       const existingIds = new Set((existingRows.results || []).map((r) => r.post_id));
       for (const p of toEmbed) {
         if (!existingIds.has(p.id as string)) {
-          c.executionCtx.waitUntil(embedPost(c, p.id as string, p.text as string));
+          embedPost(
+            c.env.CROWD_ORCHESTRATOR_URL,
+            c.env.CROWD_API_KEY,
+            c.env.BASE_URL,
+            p.id as string,
+            p.text as string,
+          ).catch((e) => console.error('Background embed failed:', e));
         }
       }
     }
@@ -6223,7 +6237,13 @@ app.get('/api/posts/:id/thread', async (c) => {
       const existingIds2 = new Set((existingRows2.results || []).map((r) => r.post_id));
       for (const p of toEmbed2) {
         if (!existingIds2.has(p.id as string)) {
-          c.executionCtx.waitUntil(embedPost(c, p.id as string, p.text as string));
+          embedPost(
+            c.env.CROWD_ORCHESTRATOR_URL,
+            c.env.CROWD_API_KEY,
+            c.env.BASE_URL,
+            p.id as string,
+            p.text as string,
+          ).catch((e) => console.error('Background embed failed:', e));
         }
       }
     }
