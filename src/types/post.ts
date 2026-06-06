@@ -61,6 +61,7 @@ export interface PostCardProps {
   onDelete?: (postId: string) => void;
   disableReply?: boolean;
   disableReplyComposer?: boolean;
+  onReplyToggle?: () => void;
   depth?: number;
   postIndex?: number;
   enablePostRefs?: boolean;

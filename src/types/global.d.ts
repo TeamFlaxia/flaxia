@@ -7,6 +7,7 @@ interface Window {
   requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
   webkitAudioContext?: typeof AudioContext;
   gtag?: (...args: unknown[]) => void;
+  dataLayer?: unknown[];
   JSZip?: unknown;
   katex?: {
     render: (text: string, element: HTMLElement, options: { throwOnError: boolean; displayMode: boolean }) => void;
