@@ -3969,17 +3969,15 @@ app.get('/api/posts/recommended', async (c) => {
     // Fallback: pure engagement-based for anonymous / no interest data
     if (!interestVector) {
       const scoreFormula = `((p.fresh_count * 2.0 + p.impressions * 0.1 + 1.0) / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))`;
+      const cursorClause = numericCursor !== null ? 'AND p.created_at < ?' : '';
       let query: string;
       let params: Array<unknown> = [];
       if (currentUserId) {
-        query = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.user_id != ? ${numericCursor !== null ? 'AND (score < ? OR (score = ? AND p.created_at < ?))' : ''} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
-        params =
-          numericCursor !== null
-            ? [currentUserId, numericCursor, numericCursor, cursorCreatedAt, limit]
-            : [currentUserId, limit];
+        query = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.user_id != ? ${cursorClause} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
+        params = numericCursor !== null ? [currentUserId, cursorCreatedAt!, limit] : [currentUserId, limit];
       } else {
-        query = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${numericCursor !== null ? 'AND (score < ? OR (score = ? AND p.created_at < ?))' : ''} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
-        params = numericCursor !== null ? [numericCursor, numericCursor, cursorCreatedAt, limit] : [limit];
+        query = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${cursorClause} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
+        params = numericCursor !== null ? [cursorCreatedAt!, limit] : [limit];
       }
       const result = await c.env.DB.prepare(query)
         .bind(...params)
