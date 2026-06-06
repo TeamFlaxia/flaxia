@@ -14,7 +14,6 @@ export class NotificationStream {
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
 
-      server.accept();
       this.ctx.acceptWebSocket(server);
 
       return new Response(null, { status: 101, webSocket: client });
