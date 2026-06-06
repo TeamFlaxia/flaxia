@@ -1,7 +1,7 @@
 import { isCrawler } from '../../src/lib/is-crawler';
 import { renderOgHtml } from '../../src/lib/og-html';
 
-const r2Url = (key: string) => `https://r2.flaxia.com/${key}`;
+const assetUrl = (baseUrl: string, key: string) => `${baseUrl}/api/images/${key}`;
 
 type Env = {
   DB: D1Database;
@@ -76,7 +76,11 @@ export async function onRequest(context: {
 
     const gifKey = String(result.gif_key || '');
     const isImage = result.gif_key && !gifKey.startsWith('audio/');
-    const image = isImage ? r2Url(gifKey) : result.thumbnail_key ? r2Url(String(result.thumbnail_key)) : defaultImage;
+    const image = isImage
+      ? assetUrl(baseUrl, gifKey)
+      : result.thumbnail_key
+        ? assetUrl(baseUrl, String(result.thumbnail_key))
+        : defaultImage;
 
     const hasGame = result.payload_key || result.swf_key;
     const playerUrl = hasGame ? `${baseUrl}/api/ogp-player/${id}` : undefined;
