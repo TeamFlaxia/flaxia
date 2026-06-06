@@ -419,6 +419,7 @@ export class ThreadPage {
 
       // Add replies header
       const repliesHeader = document.createElement('h2');
+      repliesHeader.id = 'thread-replies-header';
       repliesHeader.textContent = t('thread.replies_header', { count: formatCount(data.replies.length) });
       repliesHeader.style.cssText = `
         color: #64748b;
@@ -523,19 +524,22 @@ export class ThreadPage {
     // Get or create replies container
     let repliesContainer = repliesContent.querySelector('.replies-container') as HTMLElement;
     if (!repliesContainer) {
-      // Create replies header
-      const repliesHeader = document.createElement('h2');
+      // Reuse existing header (from loadThread) or create new one
+      let repliesHeader = repliesContent.querySelector('h2') as HTMLElement;
+      if (!repliesHeader) {
+        repliesHeader = document.createElement('h2');
+        repliesHeader.style.cssText = `
+          color: #64748b;
+          font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          font-size: 1rem;
+          margin: 0 0 1rem 0;
+          padding-top: 1rem;
+          font-weight: normal;
+        `;
+        repliesContent.appendChild(repliesHeader);
+      }
       repliesHeader.id = 'thread-replies-header';
       repliesHeader.textContent = t('thread.replies_header', { count: formatCount(1) });
-      repliesHeader.style.cssText = `
-        color: #64748b;
-        font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        font-size: 1rem;
-        margin: 0 0 1rem 0;
-        padding-top: 1rem;
-        font-weight: normal;
-      `;
-      repliesContent.appendChild(repliesHeader);
 
       repliesContainer = document.createElement('div');
       repliesContainer.className = 'replies-container';
