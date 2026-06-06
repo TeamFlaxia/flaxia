@@ -526,11 +526,11 @@ export class Timeline {
     }
 
     if (this.state.mode === 'following') {
-      // Following tab - filter to show only posts from followed users
       params.set('following', 'true');
       return `/api/posts?${params.toString()}`;
+    } else if (this.state.mode === 'foryou') {
+      return `/api/posts/recommended?${params.toString()}`;
     } else {
-      // For You / Global - same API endpoint, no following filter
       return `/api/posts?${params.toString()}`;
     }
   }

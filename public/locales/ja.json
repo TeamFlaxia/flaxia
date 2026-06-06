@@ -45,6 +45,8 @@
   "post.delete_message": "この操作は取り消せません。",
   "post.deleted": "投稿を削除しました",
   "post.delete_failed": "投稿の削除に失敗しました",
+  "post.recommended": "おすすめ",
+  "post.no_recommended": "おすすめはまだありません",
   "post.report_title": "🚩 投稿を報告",
   "post.report_question": "この投稿を報告する理由は何ですか？",
   "post.report_category_spam": "スパム",

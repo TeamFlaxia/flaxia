@@ -45,6 +45,8 @@
   "post.delete_message": "This cannot be undone.",
   "post.deleted": "Post deleted",
   "post.delete_failed": "Failed to delete post",
+  "post.recommended": "Recommended",
+  "post.no_recommended": "No recommendations yet",
   "post.report_title": "🚩 Report post",
   "post.report_question": "Why are you reporting this post?",
   "post.report_category_spam": "Spam",

@@ -1,4 +1,4 @@
-import { FlaxiaClient, type SubmitTaskOptions } from '@flaxia/sdk';
+import { FlaxiaClient } from '@flaxia/sdk';
 import type { Context, Next } from 'hono';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -47,6 +47,7 @@ type Bindings = {
   CROWD_ORCHESTRATOR?: Fetcher;
   NOTIFICATION_STREAM?: DurableObjectNamespace;
   FCM_SERVER_KEY?: string;
+  VECTORIZE?: Vectorize;
 };
 
 type Variables = {
@@ -76,8 +77,6 @@ type PostRow = {
   status: string;
   hidden: number;
   author_language?: string | null;
-  sentiment_score: number | null;
-  sentiment_task_id: string | null;
   actor_id: string | null;
   created_at: string;
   is_freshed?: boolean;
@@ -118,8 +117,6 @@ type ActorData = {
   inbox?: string;
   publicKey?: { publicKeyPem?: string };
 };
-
-type SubmitTaskOptionsWithTimeout = SubmitTaskOptions & { timeoutMs: number };
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -184,45 +181,30 @@ function getCrowdClient(c: Context<{ Bindings: Bindings; Variables: Variables }>
   return new FlaxiaClient({ baseUrl, apiKey });
 }
 
-const processingPosts = new Set<string>();
-// Timestamp of the last sentiment analysis task submitted (ms since epoch)
-let lastSentimentTaskAt = 0;
-
-async function analyzeSentiment(
+const embeddingPosts = new Set<string>();
+async function embedPost(
   c: Context<{ Bindings: Bindings; Variables: Variables }>,
   postId: string,
   text: string,
 ): Promise<void> {
-  if (processingPosts.has(postId)) return;
-  processingPosts.add(postId);
+  if (embeddingPosts.has(postId)) return;
+  embeddingPosts.add(postId);
   try {
     const client = getCrowdClient(c);
     if (!client) return;
 
-    const callbackUrl = `${c.env.BASE_URL || 'https://flaxia.app'}/api/crowd/webhook`;
-    const task = await client.submit({
-      workload: 'ai-inference',
-      payload: {
-        task: 'text-classification',
-        model: 'Xenova/bert-base-multilingual-uncased-sentiment',
-        input: text,
-        options: {
-          dtype: 'uint8',
-          top_k: 5,
-        },
-      },
+    const callbackUrl = `${c.env.BASE_URL || 'https://flaxia.app'}/api/crowd/webhook?type=vector-embed&postId=${postId}`;
+    await client.submit({
+      workload: 'vector-embed',
+      payload: { text },
       callbackUrl,
       timeoutMs: 600000,
-    } as SubmitTaskOptionsWithTimeout);
-
-    const taskId = (task as { taskId?: string }).taskId;
-    if (!taskId) return;
-    await c.env.DB.prepare('UPDATE posts SET sentiment_task_id = ? WHERE id = ?').bind(taskId, postId).run();
-    console.log(`Sentiment task submitted for post ${postId}: taskId=${taskId}`);
+    } as never);
+    console.log(`Embedding task submitted for post ${postId}`);
   } catch (err) {
-    console.error(`Sentiment analysis submission failed for post ${postId}:`, err);
+    console.error(`Embedding submission failed for post ${postId}:`, err);
   } finally {
-    processingPosts.delete(postId);
+    embeddingPosts.delete(postId);
   }
 }
 
@@ -3592,11 +3574,11 @@ app.get('/api/posts', async (c) => {
       // Filter by hashtag using json_each
       if (cursor) {
         query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
+          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
         params = [hashtag, cursor, limit];
       } else {
         query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ORDER BY p.created_at DESC LIMIT ?";
+          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ORDER BY p.created_at DESC LIMIT ?";
         params = [hashtag, limit];
       }
     } else if (following && currentUserId) {
@@ -3604,7 +3586,7 @@ app.get('/api/posts', async (c) => {
       if (cursor) {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
           (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, 
-          COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score 
+          COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at 
           FROM posts p 
           LEFT JOIN users u ON p.user_id = u.id 
           WHERE (
@@ -3619,7 +3601,7 @@ app.get('/api/posts', async (c) => {
       } else {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
           (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, 
-          COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score 
+          COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at 
           FROM posts p 
           LEFT JOIN users u ON p.user_id = u.id 
           WHERE (
@@ -3636,22 +3618,22 @@ app.get('/api/posts', async (c) => {
       // Username filter - show posts from specific user
       if (cursor) {
         query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
+          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
         params = [username, cursor, limit];
       } else {
         query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 ORDER BY p.created_at DESC LIMIT ?";
+          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 ORDER BY p.created_at DESC LIMIT ?";
         params = [username, limit];
       }
     } else {
       // Regular timeline query (For You tab)
       if (cursor) {
         query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
+          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
         params = [cursor, limit];
       } else {
         query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ORDER BY p.created_at DESC LIMIT ?";
+          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ORDER BY p.created_at DESC LIMIT ?";
         params = [limit];
       }
     }
@@ -3716,19 +3698,14 @@ app.get('/api/posts', async (c) => {
       c.env.FCM_SERVER_KEY,
     );
 
-    // Trigger sentiment analysis for at most one unprocessed post in background per request
+    // Trigger vector embedding for at most one unprocessed post in background per request
     for (const p of posts as PostRow[]) {
-      if (p.sentiment_score == null && p.text) {
-        const now = Date.now();
-        // Ensure at least 2 minutes have passed since the previous task submission
-        if (now - lastSentimentTaskAt < 2 * 60 * 1000) {
-          // Skip this post; will be retried on a later request
-          continue;
+      if (p.text) {
+        const existing = await c.env.DB.prepare('SELECT 1 FROM post_embeddings WHERE post_id = ?').bind(p.id).first();
+        if (!existing) {
+          c.executionCtx.waitUntil(embedPost(c, p.id, p.text));
+          break;
         }
-        c.executionCtx.waitUntil(analyzeSentiment(c, p.id, p.text));
-        lastSentimentTaskAt = now;
-        // Only one task per request to avoid flooding the crowd worker
-        break;
       }
     }
 
@@ -3920,94 +3897,316 @@ app.get('/api/tags/suggest', async (c) => {
   }
 });
 
-// GET /api/posts/recommended - get recommended posts for the user
+function cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0,
+    na = 0,
+    nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb);
+  return denom === 0 ? 0 : dot / denom;
+}
+
+const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
+  (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, 
+  COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at`;
+
+// GET /api/posts/recommended - get recommended posts for the user (vector hybrid)
 app.get('/api/posts/recommended', async (c) => {
   try {
     const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
     const cursor = c.req.query('cursor');
-    // Cursor is expected to be "score,created_at"
     const [cursorScore, cursorCreatedAt] = cursor ? cursor.split(',') : [null, null];
-    let numericScore = cursorScore !== null ? parseFloat(cursorScore) : null;
-    if (Number.isNaN(numericScore!)) numericScore = null;
+    let numericCursor = cursorScore !== null ? parseFloat(cursorScore) : null;
+    if (Number.isNaN(numericCursor!)) numericCursor = null;
 
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500);
-    }
+    if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
 
     const token = getSessionToken(c.req.raw);
     const sessionData = token ? await getSession(c.env, token) : null;
     const currentUserId = sessionData?.user?.id;
 
-    let query: string;
-    let params: Array<unknown> = [];
-
-    const scoreFormula = `((p.fresh_count * 2.0 + p.impressions * 0.1 + 1.0) / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))`;
-
+    // Build user interest vector from recent Fresh history
+    let interestVector: number[] | null = null;
     if (currentUserId) {
-      query = `
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
-        (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, 
-        COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
-        ${scoreFormula} as score
-        FROM posts p 
-        LEFT JOIN users u ON p.user_id = u.id 
-        WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
-        AND p.user_id != ?
-        ${cursorScore !== null ? 'AND (score < ? OR (score = ? AND p.created_at < ?))' : ''}
-        ORDER BY score DESC, p.created_at DESC
-        LIMIT ?
-      `;
-      params =
-        cursorScore !== null
-          ? [currentUserId, numericScore, numericScore, cursorCreatedAt, limit]
-          : [currentUserId, limit];
-    } else {
-      query = `
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
-        (SELECT COUNT(*) FROM posts WHERE root_id = p.id AND status = 'published') as reply_count, 
-        COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
-        ${scoreFormula} as score
-        FROM posts p 
-        LEFT JOIN users u ON p.user_id = u.id 
-        WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
-        ${cursorScore !== null ? 'AND (score < ? OR (score = ? AND p.created_at < ?))' : ''}
-        ORDER BY score DESC, p.created_at DESC
-        LIMIT ?
-      `;
-      params = cursorScore !== null ? [numericScore, numericScore, cursorCreatedAt, limit] : [limit];
+      // Get recent 50 fresh post IDs for this user
+      const freshRows = await c.env.DB.prepare(
+        'SELECT post_id FROM freshs WHERE user_id = ? ORDER BY created_at DESC LIMIT 50',
+      )
+        .bind(currentUserId)
+        .all<{ post_id: string }>();
+      const freshIds = (freshRows.results || []).map((r) => r.post_id);
+
+      if (freshIds.length > 0) {
+        const embedRows = await c.env.DB.prepare(
+          `SELECT embedding FROM post_embeddings WHERE post_id IN (${freshIds.map(() => '?').join(',')})`,
+        )
+          .bind(...freshIds)
+          .all<{ embedding: string }>();
+        const vectors: number[][] = [];
+        for (const row of embedRows.results || []) {
+          try {
+            const v = JSON.parse(row.embedding);
+            if (Array.isArray(v)) vectors.push(v);
+          } catch {
+            /* skip malformed */
+          }
+        }
+        if (vectors.length > 0) {
+          const dim = vectors[0].length;
+          interestVector = new Array(dim).fill(0);
+          for (const v of vectors) {
+            for (let i = 0; i < dim; i++) interestVector[i] += v[i];
+          }
+          for (let i = 0; i < dim; i++) interestVector[i] /= vectors.length;
+        }
+      }
     }
 
-    const result = await c.env.DB.prepare(query)
-      .bind(...params)
+    // Fallback: pure engagement-based for anonymous / no interest data
+    if (!interestVector) {
+      const scoreFormula = `((p.fresh_count * 2.0 + p.impressions * 0.1 + 1.0) / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))`;
+      let query: string;
+      let params: Array<unknown> = [];
+      if (currentUserId) {
+        query = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.user_id != ? ${numericCursor !== null ? 'AND (score < ? OR (score = ? AND p.created_at < ?))' : ''} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
+        params =
+          numericCursor !== null
+            ? [currentUserId, numericCursor, numericCursor, cursorCreatedAt, limit]
+            : [currentUserId, limit];
+      } else {
+        query = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${numericCursor !== null ? 'AND (score < ? OR (score = ? AND p.created_at < ?))' : ''} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
+        params = numericCursor !== null ? [numericCursor, numericCursor, cursorCreatedAt, limit] : [limit];
+      }
+      const result = await c.env.DB.prepare(query)
+        .bind(...params)
+        .all();
+      const posts = enrichRecommendedPosts(result.results || [], c.env.DB, currentUserId, c);
+      return c.json({ posts });
+    }
+
+    // Hybrid: query Vectorize then re-rank with engagement
+    let vectorMatches: Array<{ id: string; score: number }> = [];
+    const vectorize = c.env.VECTORIZE;
+
+    if (vectorize) {
+      try {
+        const queryResult = await vectorize.query(interestVector, {
+          topK: 100,
+          returnValues: false,
+          returnMetadata: false,
+        });
+        vectorMatches = (queryResult.matches || []).map((m) => ({ id: m.id, score: m.score }));
+      } catch (e) {
+        console.error('Vectorize query failed, falling back to D1:', e);
+      }
+    }
+
+    // Fallback: compute cosine similarity from D1 post_embeddings
+    if (vectorMatches.length === 0) {
+      const allEmbedRows = await c.env.DB.prepare('SELECT post_id, embedding FROM post_embeddings').all<{
+        post_id: string;
+        embedding: string;
+      }>();
+      for (const row of allEmbedRows.results || []) {
+        try {
+          const v = JSON.parse(row.embedding);
+          if (Array.isArray(v)) {
+            const sim = cosineSimilarity(interestVector, v);
+            vectorMatches.push({ id: row.post_id, score: sim });
+          }
+        } catch {
+          /* skip */
+        }
+      }
+      vectorMatches.sort((a, b) => b.score - a.score);
+      vectorMatches = vectorMatches.slice(0, 100);
+    }
+
+    if (vectorMatches.length === 0) return c.json({ posts: [] });
+
+    const candidateIds = vectorMatches.map((m) => m.id);
+    const engFormula = `((p.fresh_count * 2.0 + p.impressions * 0.1 + 1.0) / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))`;
+    const candidateQuery = `${RECOMMENDED_SELECT}, ${engFormula} as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id IN (${candidateIds.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL`;
+    const candResult = await c.env.DB.prepare(candidateQuery)
+      .bind(...candidateIds)
       .all();
-    const posts = result.results || [];
+    const candidatePosts = (candResult.results || []) as Array<Record<string, unknown>>;
 
-    // Add fresh and bookmark status if logged in
-    if (currentUserId && posts.length > 0) {
-      const postIds = posts.map((p: Record<string, unknown>) => String(p.id));
-      const freshResult = await c.env.DB.prepare(
-        `SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`,
-      )
-        .bind(currentUserId, ...postIds)
-        .all();
+    // Normalize engagement scores and compute hybrid
+    const engScores = candidatePosts.map((p) => Number(p.eng_score) || 0);
+    const maxEng = Math.max(...engScores, 1);
+    const vecScoreMap = new Map(vectorMatches.map((m) => [m.id, m.score]));
+    const maxVec = Math.max(...vectorMatches.map((m) => m.score), 1);
 
-      const freshedPostIds = new Set(
-        (freshResult.results || []).map((f: Record<string, unknown>) => f.post_id as string),
-      );
-      posts.forEach((post: Record<string, unknown>) => {
-        post.is_freshed = freshedPostIds.has(post.id as string);
+    const hybrid = candidatePosts.map((p) => {
+      const vecSim = (vecScoreMap.get(p.id as string) || 0) / maxVec;
+      const engNorm = (Number(p.eng_score) || 0) / maxEng;
+      return { post: p, score: 0.7 * vecSim + 0.3 * engNorm };
+    });
+
+    hybrid.sort((a, b) => {
+      const diff = b.score - a.score;
+      if (diff !== 0) return diff;
+      return String(b.post.created_at || '').localeCompare(String(a.post.created_at || ''));
+    });
+
+    // Apply cursor
+    let filtered = hybrid;
+    if (numericCursor !== null && cursorCreatedAt) {
+      filtered = hybrid.filter((h) => {
+        const s = h.score;
+        const ca = String(h.post.created_at || '');
+        return s < numericCursor! || (s === numericCursor && ca < cursorCreatedAt);
       });
+    }
 
-      const bookmarkResult = await c.env.DB.prepare(
-        `SELECT post_id FROM bookmarks WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`,
-      )
+    const page = filtered.slice(0, limit);
+    const posts = page.map((h) => {
+      const p = h.post;
+      p.score = h.score;
+      return p;
+    });
+
+    const result = await enrichRecommendedPosts(posts, c.env.DB, currentUserId, c);
+    return c.json({ posts: result });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Recommended posts error:', error);
+    return c.json({ error: 'Internal server error', details: err.message }, 500);
+  }
+});
+
+async function enrichRecommendedPosts(
+  posts: Record<string, unknown>[],
+  db: D1Database,
+  currentUserId: string | null | undefined,
+  c: Context<{ Bindings: Bindings; Variables: Variables }>,
+): Promise<Record<string, unknown>[]> {
+  if (posts.length === 0) return [];
+  if (currentUserId) {
+    const postIds = posts.map((p) => String(p.id));
+    const [freshResult, bookmarkResult] = await Promise.all([
+      db
+        .prepare(`SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`)
         .bind(currentUserId, ...postIds)
-        .all();
-      const bookmarkedPostIds = new Set(
-        (bookmarkResult.results || []).map((b: Record<string, unknown>) => b.post_id as string),
-      );
-      posts.forEach((post: Record<string, unknown>) => {
-        post.is_bookmarked = bookmarkedPostIds.has(post.id as string);
+        .all(),
+      db
+        .prepare(`SELECT post_id FROM bookmarks WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`)
+        .bind(currentUserId, ...postIds)
+        .all(),
+    ]);
+    const freshedIds = new Set((freshResult.results || []).map((f: Record<string, unknown>) => f.post_id as string));
+    const bookmarkedIds = new Set(
+      (bookmarkResult.results || []).map((b: Record<string, unknown>) => b.post_id as string),
+    );
+    posts.forEach((p) => {
+      p.is_freshed = freshedIds.has(p.id as string);
+      p.is_bookmarked = bookmarkedIds.has(p.id as string);
+    });
+  }
+  await enrichPostsWithPolls(
+    posts as PostRow[],
+    db,
+    currentUserId,
+    c.env.VAPID_PUBLIC_KEY,
+    c.env.VAPID_PRIVATE_KEY,
+    c.env.FCM_SERVER_KEY,
+  );
+  return posts;
+}
+
+// GET /api/posts/:id/similar - get similar posts based on vector embedding
+app.get('/api/posts/:id/similar', async (c) => {
+  try {
+    const postId = c.req.param('id');
+    const limit = Math.min(Number(c.req.query('limit') || '5'), 20);
+    if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
+
+    const token = getSessionToken(c.req.raw);
+    const sessionData = token ? await getSession(c.env, token) : null;
+    const currentUserId = sessionData?.user?.id;
+
+    // Get the post's embedding
+    const embedRow = await c.env.DB.prepare('SELECT embedding FROM post_embeddings WHERE post_id = ?')
+      .bind(postId)
+      .first<{ embedding: string }>();
+    if (!embedRow) return c.json({ posts: [] });
+
+    let vector: number[];
+    try {
+      vector = JSON.parse(embedRow.embedding);
+    } catch {
+      return c.json({ posts: [] });
+    }
+    if (!Array.isArray(vector)) return c.json({ posts: [] });
+
+    // Query Vectorize
+    let similarIds: string[] = [];
+    const vectorize = c.env.VECTORIZE;
+    if (vectorize) {
+      try {
+        const result = await vectorize.query(vector, { topK: limit + 1, returnValues: false, returnMetadata: false });
+        similarIds = (result.matches || [])
+          .map((m) => m.id)
+          .filter((id) => id !== postId)
+          .slice(0, limit);
+      } catch (e) {
+        console.error('Vectorize query for similar failed:', e);
+      }
+    }
+
+    // Fallback: D1 cosine similarity
+    if (similarIds.length === 0) {
+      const allRows = await c.env.DB.prepare('SELECT post_id, embedding FROM post_embeddings').all<{
+        post_id: string;
+        embedding: string;
+      }>();
+      const scored: Array<{ id: string; sim: number }> = [];
+      for (const row of allRows.results || []) {
+        if (row.post_id === postId) continue;
+        try {
+          const v = JSON.parse(row.embedding);
+          if (Array.isArray(v)) scored.push({ id: row.post_id, sim: cosineSimilarity(vector, v) });
+        } catch {
+          /* skip */
+        }
+      }
+      scored.sort((a, b) => b.sim - a.sim);
+      similarIds = scored.slice(0, limit).map((s) => s.id);
+    }
+
+    if (similarIds.length === 0) return c.json({ posts: [] });
+
+    const postsResult = await c.env.DB.prepare(
+      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id IN (${similarIds.map(() => '?').join(',')})`,
+    )
+      .bind(...similarIds)
+      .all();
+    const posts = postsResult.results || [];
+
+    if (currentUserId && posts.length > 0) {
+      const pids = posts.map((p: Record<string, unknown>) => String(p.id));
+      const [freshR, bookmarkR] = await Promise.all([
+        c.env.DB.prepare(
+          `SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${pids.map(() => '?').join(',')})`,
+        )
+          .bind(currentUserId, ...pids)
+          .all(),
+        c.env.DB.prepare(
+          `SELECT post_id FROM bookmarks WHERE user_id = ? AND post_id IN (${pids.map(() => '?').join(',')})`,
+        )
+          .bind(currentUserId, ...pids)
+          .all(),
+      ]);
+      const freshed = new Set((freshR.results || []).map((r: Record<string, unknown>) => r.post_id as string));
+      const bookmarked = new Set((bookmarkR.results || []).map((r: Record<string, unknown>) => r.post_id as string));
+      posts.forEach((p: Record<string, unknown>) => {
+        p.is_freshed = freshed.has(p.id as string);
+        p.is_bookmarked = bookmarked.has(p.id as string);
       });
     }
 
@@ -4023,7 +4222,7 @@ app.get('/api/posts/recommended', async (c) => {
     return c.json({ posts });
   } catch (error: unknown) {
     const err = error as { message?: string };
-    console.error('Recommended posts error:', error);
+    console.error('Similar posts error:', error);
     return c.json({ error: 'Internal server error', details: err.message }, 500);
   }
 });
@@ -5189,7 +5388,7 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
 
     // Fetch the created post for enrichment
     const fullPost = (await c.env.DB.prepare(
-      "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key as payloadKey, p.swf_key as swfKey, p.thumbnail_key as thumbnailKey, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.sentiment_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?",
+      "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key as payloadKey, p.swf_key as swfKey, p.thumbnail_key as thumbnailKey, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?",
     )
       .bind(postId)
       .first()) as PostRow;
@@ -5208,7 +5407,7 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
       }
     }
 
-    c.executionCtx.waitUntil(analyzeSentiment(c, fullPost.id, fullPost.text));
+    c.executionCtx.waitUntil(embedPost(c, fullPost.id, fullPost.text));
 
     return c.json({ post: fullPost });
   } catch (error: unknown) {
@@ -5873,22 +6072,20 @@ app.get('/api/posts/:id/replies', async (c) => {
       c.env.FCM_SERVER_KEY,
     );
 
-    // Trigger sentiment analysis for unprocessed posts in background
-    if (
-      (parentPost as Record<string, unknown>).sentiment_score == null &&
-      (parentPost as Record<string, unknown>).text
-    ) {
-      c.executionCtx.waitUntil(
-        analyzeSentiment(
-          c,
-          (parentPost as Record<string, unknown>).id as string,
-          (parentPost as Record<string, unknown>).text as string,
-        ),
-      );
-    }
-    for (const r of replies as Array<Record<string, unknown>>) {
-      if (r.sentiment_score == null && r.text) {
-        c.executionCtx.waitUntil(analyzeSentiment(c, r.id as string, r.text as string));
+    // Trigger vector embedding for unprocessed posts in background
+    const allPosts = [parentPost as Record<string, unknown>, ...(replies as Array<Record<string, unknown>>)];
+    const toEmbed = allPosts.filter((p) => p.text);
+    if (toEmbed.length > 0) {
+      const existingRows = await c.env.DB.prepare(
+        `SELECT post_id FROM post_embeddings WHERE post_id IN (${toEmbed.map(() => '?').join(',')})`,
+      )
+        .bind(...toEmbed.map((p) => p.id as string))
+        .all<{ post_id: string }>();
+      const existingIds = new Set((existingRows.results || []).map((r) => r.post_id));
+      for (const p of toEmbed) {
+        if (!existingIds.has(p.id as string)) {
+          c.executionCtx.waitUntil(embedPost(c, p.id as string, p.text as string));
+        }
       }
     }
 
@@ -6017,18 +6214,19 @@ app.get('/api/posts/:id/thread', async (c) => {
       c.env.FCM_SERVER_KEY,
     );
 
-    if ((rootPost as Record<string, unknown>).sentiment_score == null && (rootPost as Record<string, unknown>).text) {
-      c.executionCtx.waitUntil(
-        analyzeSentiment(
-          c,
-          (rootPost as Record<string, unknown>).id as string,
-          (rootPost as Record<string, unknown>).text as string,
-        ),
-      );
-    }
-    for (const r of replies as Array<Record<string, unknown>>) {
-      if (r.sentiment_score == null && r.text) {
-        c.executionCtx.waitUntil(analyzeSentiment(c, r.id as string, r.text as string));
+    const allPosts2 = [rootPost as Record<string, unknown>, ...(replies as Array<Record<string, unknown>>)];
+    const toEmbed2 = allPosts2.filter((p) => p.text);
+    if (toEmbed2.length > 0) {
+      const existingRows2 = await c.env.DB.prepare(
+        `SELECT post_id FROM post_embeddings WHERE post_id IN (${toEmbed2.map(() => '?').join(',')})`,
+      )
+        .bind(...toEmbed2.map((p) => p.id as string))
+        .all<{ post_id: string }>();
+      const existingIds2 = new Set((existingRows2.results || []).map((r) => r.post_id));
+      for (const p of toEmbed2) {
+        if (!existingIds2.has(p.id as string)) {
+          c.executionCtx.waitUntil(embedPost(c, p.id as string, p.text as string));
+        }
       }
     }
 
@@ -6914,7 +7112,7 @@ app.post('/api/posts/:id/translate', requireAuth, async (c) => {
       },
       callbackUrl,
       timeoutMs: 600000,
-    } as SubmitTaskOptionsWithTimeout);
+    } as never);
 
     const taskId = (task as { taskId?: string }).taskId;
     if (!taskId) return c.json({ error: 'Failed to get task ID' }, 500);

@@ -48,45 +48,32 @@ export async function onRequest(context: {
               console.log(`Translation webhook done for post ${postId} → ${lang}`);
             }
           }
-        } else {
-          const starScoreMap: Record<string, number> = {
-            '1 star': 0.0,
-            '2 stars': 0.25,
-            '3 stars': 0.5,
-            '4 stars': 0.75,
-            '5 stars': 1.0,
-          };
-
-          let score: number | undefined;
-
-          if (Array.isArray(output)) {
-            let total = 0;
-            for (const item of output) {
-              const entry = item as { label: string; score: number } | undefined;
-              if (entry?.label && typeof entry.score === 'number') {
-                total += (starScoreMap[entry.label] ?? 0.5) * entry.score;
+        } else if (callbackType === 'vector-embed') {
+          const postId = url.searchParams.get('postId');
+          if (postId && typeof output === 'object' && output !== null) {
+            const result = output as Record<string, unknown>;
+            const vector = result.vector as number[] | undefined;
+            const model = (result.model as string) || 'Qwen/Qwen3-Embedding-0.6B';
+            const dimensions = (result.dimensions as number) || 1024;
+            if (vector && Array.isArray(vector)) {
+              const vectorize = (context.env as Record<string, unknown>).VECTORIZE as
+                | { upsert(vectors: Array<{ id: string; values: number[] }>): Promise<unknown> }
+                | undefined;
+              if (vectorize) {
+                await vectorize.upsert([{ id: postId, values: vector }]);
               }
+              await db
+                .prepare(
+                  'INSERT OR REPLACE INTO post_embeddings (post_id, embedding, model, dimensions) VALUES (?, ?, ?, ?)',
+                )
+                .bind(postId, JSON.stringify(vector), model, dimensions)
+                .run();
+              console.log(`Vector embed webhook done for post ${postId}: dims=${dimensions}`);
             }
-            score = total;
-          } else {
-            const entry = output as { label: string; score: number } | undefined;
-            if (entry?.label && typeof entry.score === 'number') {
-              score = starScoreMap[entry.label] ?? entry.score;
-            }
-          }
-
-          const row = await db
-            .prepare('SELECT id FROM posts WHERE sentiment_task_id = ?')
-            .bind(taskId)
-            .first<{ id: string }>();
-          const postId = row?.id;
-          if (postId && score !== undefined) {
-            await db.prepare('UPDATE posts SET sentiment_score = ? WHERE id = ?').bind(score, postId).run();
-            console.log(`Sentiment webhook done for post ${postId}: score=${score}`);
           }
         }
       } else if (status === 'failed') {
-        console.log(`Task failed: taskId=${taskId}, type=${callbackType || 'sentiment'}, error=${error || 'unknown'}`);
+        console.log(`Task failed: taskId=${taskId}, type=${callbackType || 'unknown'}, error=${error || 'unknown'}`);
       }
 
       return new Response(JSON.stringify({ received: true }), {
