@@ -164,16 +164,18 @@ jobs:
       - run: npx cap add android
       - run: npx cap sync
       - name: Decode google-services.json
-        run: |
-          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' | base64 -d > android/app/google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: echo "$GOOGLE_SERVICES_JSON" | base64 -d > android/app/google-services.json
       - name: Setup signing and build
         env:
           ANDROID_KEYSTORE_FILE: ${{ github.workspace }}/android/app/release.keystore
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
         run: |
-          echo '${{ secrets.ANDROID_KEYSTORE }}' | base64 -d > "$ANDROID_KEYSTORE_FILE"
+          echo "$ANDROID_KEYSTORE" | base64 -d > "$ANDROID_KEYSTORE_FILE"
           node scripts/patch-android-build.mjs
           cd android && ./gradlew assembleRelease
       - name: Upload Release Artifacts
