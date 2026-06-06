@@ -576,16 +576,8 @@ export class ThreadPage {
       repliesContainer.appendChild(replyEl);
       replyEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } else {
-      // 2ch flat mode: prepend as PostCard (newest-first, matching API ordering)
-      const prevCards = repliesContainer.querySelectorAll('[data-post-index]');
-      prevCards.forEach((card) => {
-        const cur = parseInt(card.getAttribute('data-post-index')!, 10);
-        card.setAttribute('data-post-index', String(cur + 1));
-        const span = card.querySelector('span');
-        if (span && /^\d+$/.test(span.textContent || '')) {
-          span.textContent = String(cur + 1);
-        }
-      });
+      // 2ch flat mode: append as PostCard (matching API ordering)
+      const nextIndex = repliesContainer.children.length + 1;
       const card = createPostCard({
         post: newReply,
         sandboxOrigin: this.props.sandboxOrigin,
@@ -593,11 +585,11 @@ export class ThreadPage {
         depth: newReply.depth,
         onDelete: () => {},
         disableNavigation: true,
-        postIndex: 1,
+        postIndex: nextIndex,
         enablePostRefs: true,
       });
       const cardEl = card.getElement();
-      repliesContainer.insertBefore(cardEl, repliesContainer.firstChild);
+      repliesContainer.appendChild(cardEl);
       cardEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
