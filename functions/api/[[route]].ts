@@ -8710,6 +8710,7 @@ app.post('/api/chat/channels/:id/messages', requireAuth, async (c) => {
       .bind(messageId, channelId, userId, content.trim(), reply_to_id || null)
       .run();
 
+    const user = c.get('user') as { username: string; display_name?: string; avatar_key?: string };
     const newMessage = {
       id: messageId,
       channel_id: channelId,
@@ -8720,6 +8721,11 @@ app.post('/api/chat/channels/:id/messages', requireAuth, async (c) => {
       pinned: false,
       created_at: new Date().toISOString(),
       reactions: [],
+      author: {
+        username: user?.username || 'unknown',
+        display_name: user?.display_name || user?.username || 'unknown',
+        avatar_key: user?.avatar_key || null,
+      },
     };
 
     dispatchChatEvent(c.env as { CHAT_STREAM?: DurableObjectNamespace }, chan.server_id, {
