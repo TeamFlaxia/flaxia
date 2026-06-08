@@ -20,8 +20,10 @@ export class LeftNav {
   private element: HTMLElement;
   public readonly props: LeftNavProps;
   private activeItem: string;
+  private popupOpen: boolean = false;
   private boundHandleResize: () => void;
   private boundHandleModalChange: (e: Event) => void;
+  private boundHandleDocumentClick: (e: MouseEvent) => void;
 
   constructor(props: LeftNavProps = {}) {
     this.props = props;
@@ -30,6 +32,7 @@ export class LeftNav {
     // Initialize bound event handler for proper cleanup
     this.boundHandleResize = this.handleWindowResize.bind(this);
     this.boundHandleModalChange = this.handleModalChange.bind(this);
+    this.boundHandleDocumentClick = this.handleDocumentClick.bind(this);
 
     this.element = this.createElement();
     this.setupEventListeners();
@@ -70,10 +73,6 @@ export class LeftNav {
         { id: 'home', label: t('nav.home'), icon: '🏠' },
         { id: 'explore', label: t('nav.explore'), icon: '🔍' },
         { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
-        { id: 'notifications', label: t('nav.notifications'), icon: '🔔' },
-        { id: 'bookmarks', label: t('nav.bookmarks'), icon: '🔖' },
-        { id: 'profile', label: t('nav.profile'), icon: '👤' },
-        { id: 'settings', label: t('nav.settings'), icon: '⚙️' },
       ];
 
       items.forEach((item) => {
@@ -91,23 +90,6 @@ export class LeftNav {
         navItem.appendChild(iconSpan);
         navItem.appendChild(labelSpan);
 
-        if (item.id === 'notifications' && this.props.unreadCount && this.props.unreadCount > 0) {
-          const badge = document.createElement('span');
-          badge.className = 'nav-badge';
-          badge.style.cssText = `
-            margin-left: auto;
-            background: var(--accent);
-            font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            font-size: 0.75rem;
-            padding: 2px 8px;
-            border-radius: 9999px;
-            min-width: 20px;
-            text-align: center;
-          `;
-          badge.textContent = this.props.unreadCount >= 99 ? '99+' : String(this.props.unreadCount);
-          navItem.appendChild(badge);
-        }
-
         navItems.appendChild(navItem);
       });
     } else {
@@ -116,7 +98,6 @@ export class LeftNav {
         { id: 'home', label: t('nav.home'), icon: '🏠' },
         { id: 'explore', label: t('nav.explore'), icon: '🔍' },
         { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
-        { id: 'settings', label: t('nav.settings'), icon: '⚙️' },
       ];
 
       items.forEach((item) => {
@@ -139,6 +120,114 @@ export class LeftNav {
 
     nav.appendChild(logo);
     nav.appendChild(navItems);
+
+    // User account area (logged-in users only)
+    if (this.props.currentUser) {
+      const userArea = document.createElement('div');
+      userArea.className = 'nav-user-area';
+
+      const avatar = document.createElement('div');
+      avatar.className = 'nav-user-avatar';
+      if (this.props.currentUser.avatar_key) {
+        avatar.style.backgroundImage = `url(/api/images/${this.props.currentUser.avatar_key})`;
+      } else {
+        avatar.textContent = (this.props.currentUser.display_name || this.props.currentUser.username)
+          .charAt(0)
+          .toUpperCase();
+        avatar.style.background = 'var(--accent)';
+      }
+
+      const info = document.createElement('div');
+      info.className = 'nav-user-info';
+
+      const name = document.createElement('div');
+      name.className = 'nav-user-name';
+
+      const nameText = document.createElement('span');
+      nameText.className = 'nav-user-name-text';
+      nameText.textContent = this.props.currentUser.display_name || this.props.currentUser.username;
+
+      const badge = document.createElement('span');
+      badge.className = 'nav-user-badge';
+      badge.style.display = 'none';
+
+      name.appendChild(nameText);
+      name.appendChild(badge);
+
+      const handle = document.createElement('div');
+      handle.className = 'nav-user-handle';
+      handle.textContent = `@${this.props.currentUser.username}`;
+
+      info.appendChild(name);
+      info.appendChild(handle);
+
+      const caret = document.createElement('span');
+      caret.className = 'nav-user-caret';
+      caret.textContent = '▼';
+
+      userArea.appendChild(avatar);
+      userArea.appendChild(info);
+      userArea.appendChild(caret);
+
+      // Init badge count
+      if (this.props.unreadCount && this.props.unreadCount > 0) {
+        const count = this.props.unreadCount >= 99 ? '99+' : String(this.props.unreadCount);
+        badge.textContent = count;
+        badge.style.display = '';
+      }
+
+      // Popup menu
+      const popup = document.createElement('div');
+      popup.className = 'nav-user-popup';
+
+      const menuItems = [
+        { id: 'profile', label: t('nav.profile'), icon: '👤' },
+        { id: 'notifications', label: t('nav.notifications'), icon: '🔔' },
+        { id: 'bookmarks', label: t('nav.bookmarks'), icon: '🔖' },
+        { id: 'settings', label: t('nav.settings'), icon: '⚙️' },
+      ];
+
+      menuItems.forEach((item) => {
+        const popupItem = document.createElement('button');
+        popupItem.className = 'nav-user-popup-item';
+        popupItem.setAttribute('data-nav-id', item.id);
+        popupItem.innerHTML = `<span>${item.icon}</span><span>${item.label}</span>`;
+
+        // Unread badge for notifications in popup
+        if (item.id === 'notifications' && this.props.unreadCount && this.props.unreadCount > 0) {
+          const notifBadge = document.createElement('span');
+          notifBadge.className = 'nav-badge';
+          notifBadge.style.cssText = `
+            margin-left: auto;
+            background: var(--accent);
+            font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 9999px;
+            min-width: 20px;
+            text-align: center;
+          `;
+          notifBadge.textContent = this.props.unreadCount >= 99 ? '99+' : String(this.props.unreadCount);
+          popupItem.appendChild(notifBadge);
+        }
+
+        popupItem.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.closePopup();
+          this.props.onNavigate?.(item.id);
+        });
+        popup.appendChild(popupItem);
+      });
+
+      userArea.appendChild(popup);
+
+      userArea.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.togglePopup();
+      });
+
+      nav.appendChild(userArea);
+    }
 
     // Add legal links (privacy policy and terms)
     const legalLinks = document.createElement('div');
@@ -360,10 +449,25 @@ export class LeftNav {
 
   public setUnreadCount(count: number): void {
     this.props.unreadCount = count;
-    const navItem = this.element.querySelector('[data-nav-id="notifications"]');
-    if (!navItem) return;
 
-    const existingBadge = navItem.querySelector('.nav-badge');
+    // Update user chip badge
+    const userBadge = this.element.querySelector('.nav-user-area .nav-user-badge') as HTMLElement | null;
+    if (userBadge) {
+      if (count > 0) {
+        userBadge.textContent = count >= 99 ? '99+' : formatCount(count);
+        userBadge.style.display = '';
+      } else {
+        userBadge.style.display = 'none';
+      }
+    }
+
+    // Update popup notifications item badge
+    const notifItem = this.element.querySelector(
+      '.nav-user-popup-item[data-nav-id="notifications"]',
+    ) as HTMLElement | null;
+    if (!notifItem) return;
+
+    const existingBadge = notifItem.querySelector('.nav-badge') as HTMLElement | null;
     if (count > 0) {
       if (existingBadge) {
         existingBadge.textContent = count >= 99 ? '99+' : formatCount(count);
@@ -381,19 +485,55 @@ export class LeftNav {
           text-align: center;
         `;
         badge.textContent = count >= 99 ? '99+' : formatCount(count);
-        navItem.appendChild(badge);
+        notifItem.appendChild(badge);
       }
     } else if (existingBadge) {
-      (existingBadge as HTMLElement).textContent = '';
-      (existingBadge as HTMLElement).style.display = 'none';
+      existingBadge.textContent = '';
+      existingBadge.style.display = 'none';
       existingBadge.remove();
     }
+  }
+
+  public togglePopup(): void {
+    this.popupOpen = !this.popupOpen;
+    const popup = this.element.querySelector('.nav-user-popup') as HTMLElement | null;
+    const caret = this.element.querySelector('.nav-user-caret') as HTMLElement | null;
+    if (popup) {
+      popup.classList.toggle('nav-user-popup--open', this.popupOpen);
+    }
+    if (caret) {
+      caret.classList.toggle('nav-user-caret--open', this.popupOpen);
+    }
+    if (this.popupOpen) {
+      document.addEventListener('click', this.boundHandleDocumentClick);
+    } else {
+      document.removeEventListener('click', this.boundHandleDocumentClick);
+    }
+  }
+
+  private handleDocumentClick(e: MouseEvent): void {
+    const userArea = this.element.querySelector('.nav-user-area');
+    if (userArea && !userArea.contains(e.target as Node)) {
+      this.closePopup();
+    }
+  }
+
+  public closePopup(): void {
+    this.popupOpen = false;
+    const popup = this.element.querySelector('.nav-user-popup') as HTMLElement | null;
+    const caret = this.element.querySelector('.nav-user-caret') as HTMLElement | null;
+    if (popup) popup.classList.remove('nav-user-popup--open');
+    if (caret) caret.classList.remove('nav-user-caret--open');
+    document.removeEventListener('click', this.boundHandleDocumentClick);
   }
 
   public destroy(): void {
     // Clean up window event listeners
     window.removeEventListener('resize', this.boundHandleResize);
     window.removeEventListener('modalchange', this.boundHandleModalChange);
+
+    // Clean up popup document listener
+    this.closePopup();
 
     // Clean up event listeners and remove element
     this.element.remove();
@@ -447,10 +587,6 @@ export function updateLeftNavUser(
         { id: 'home', label: t('nav.home'), icon: '🏠' },
         { id: 'explore', label: t('nav.explore'), icon: '🔍' },
         { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
-        { id: 'notifications', label: t('nav.notifications'), icon: '🔔' },
-        { id: 'bookmarks', label: t('nav.bookmarks'), icon: '🔖' },
-        { id: 'profile', label: t('nav.profile'), icon: '👤' },
-        { id: 'settings', label: t('nav.settings'), icon: '⚙️' },
       ];
 
       items.forEach((item) => {
@@ -458,25 +594,6 @@ export function updateLeftNavUser(
         navItem.className = `nav-item ${leftNav.getActiveItem() === item.id ? 'nav-item--active' : ''}`;
         navItem.setAttribute('data-nav-id', item.id);
         navItem.innerHTML = `<span style="margin-right: 0.75rem;">${item.icon}</span><span>${item.label}</span>`;
-
-        // Add unread badge for notifications
-        if (item.id === 'notifications' && (leftNav.props.unreadCount ?? 0) > 0) {
-          const badge = document.createElement('span');
-          badge.className = 'nav-badge';
-          badge.style.cssText = `
-            margin-left: auto;
-            background: var(--accent);
-            font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            font-size: 0.75rem;
-            padding: 2px 8px;
-            border-radius: 9999px;
-            min-width: 20px;
-            text-align: center;
-          `;
-          const count = leftNav.props.unreadCount ?? 0;
-          badge.textContent = count >= 99 ? '99+' : String(count);
-          navItem.appendChild(badge);
-        }
 
         navItem.addEventListener('click', () => {
           leftNav.setActiveItem(item.id);
@@ -490,7 +607,6 @@ export function updateLeftNavUser(
         { id: 'home', label: t('nav.home'), icon: '🏠' },
         { id: 'explore', label: t('nav.explore'), icon: '🔍' },
         { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
-        { id: 'settings', label: t('nav.settings'), icon: '⚙️' },
       ];
 
       items.forEach((item) => {
@@ -601,6 +717,113 @@ export function updateLeftNavUser(
 
   legalLinks.appendChild(whitepaperLink);
   leftNav.getElement().appendChild(legalLinks);
+
+  // User account area (logged-in users only)
+  if (currentUser) {
+    const userArea = document.createElement('div');
+    userArea.className = 'nav-user-area';
+
+    const avatar = document.createElement('div');
+    avatar.className = 'nav-user-avatar';
+    if (currentUser.avatar_key) {
+      avatar.style.backgroundImage = `url(/api/images/${currentUser.avatar_key})`;
+    } else {
+      avatar.textContent = (currentUser.display_name || currentUser.username).charAt(0).toUpperCase();
+      avatar.style.background = 'var(--accent)';
+    }
+
+    const info = document.createElement('div');
+    info.className = 'nav-user-info';
+
+    const name = document.createElement('div');
+    name.className = 'nav-user-name';
+
+    const nameText = document.createElement('span');
+    nameText.className = 'nav-user-name-text';
+    nameText.textContent = currentUser.display_name || currentUser.username;
+
+    const badge = document.createElement('span');
+    badge.className = 'nav-user-badge';
+    badge.style.display = 'none';
+
+    name.appendChild(nameText);
+    name.appendChild(badge);
+
+    const handle = document.createElement('div');
+    handle.className = 'nav-user-handle';
+    handle.textContent = `@${currentUser.username}`;
+
+    info.appendChild(name);
+    info.appendChild(handle);
+
+    const caret = document.createElement('span');
+    caret.className = 'nav-user-caret';
+    caret.textContent = '▼';
+
+    userArea.appendChild(avatar);
+    userArea.appendChild(info);
+    userArea.appendChild(caret);
+
+    // Init badge count
+    if (leftNav.props.unreadCount && leftNav.props.unreadCount > 0) {
+      const count = leftNav.props.unreadCount >= 99 ? '99+' : String(leftNav.props.unreadCount);
+      badge.textContent = count;
+      badge.style.display = '';
+    }
+
+    // Popup menu
+    const popup = document.createElement('div');
+    popup.className = 'nav-user-popup';
+
+    const menuItems = [
+      { id: 'profile', label: t('nav.profile'), icon: '👤' },
+      { id: 'notifications', label: t('nav.notifications'), icon: '🔔' },
+      { id: 'bookmarks', label: t('nav.bookmarks'), icon: '🔖' },
+      { id: 'settings', label: t('nav.settings'), icon: '⚙️' },
+    ];
+
+    menuItems.forEach((item) => {
+      const popupItem = document.createElement('button');
+      popupItem.className = 'nav-user-popup-item';
+      popupItem.setAttribute('data-nav-id', item.id);
+      popupItem.innerHTML = `<span>${item.icon}</span><span>${item.label}</span>`;
+
+      // Unread badge for notifications in popup
+      if (item.id === 'notifications' && (leftNav.props.unreadCount ?? 0) > 0) {
+        const notifBadge = document.createElement('span');
+        notifBadge.className = 'nav-badge';
+        notifBadge.style.cssText = `
+          margin-left: auto;
+          background: var(--accent);
+          font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          font-size: 0.75rem;
+          padding: 2px 8px;
+          border-radius: 9999px;
+          min-width: 20px;
+          text-align: center;
+        `;
+        const count = leftNav.props.unreadCount ?? 0;
+        notifBadge.textContent = count >= 99 ? '99+' : String(count);
+        popupItem.appendChild(notifBadge);
+      }
+
+      popupItem.addEventListener('click', (e) => {
+        e.stopPropagation();
+        leftNav.closePopup();
+        leftNav.props.onNavigate?.(item.id);
+      });
+      popup.appendChild(popupItem);
+    });
+
+    userArea.appendChild(popup);
+
+    userArea.addEventListener('click', (e) => {
+      e.stopPropagation();
+      leftNav.togglePopup();
+    });
+
+    leftNav.getElement().insertBefore(userArea, legalLinks);
+  }
 
   if (!currentUser) {
     // Add auth buttons for guests
