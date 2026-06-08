@@ -745,6 +745,110 @@ h1 {
   background: var(--accent-dark);
 }
 
+/* LeftNav user area */
+.nav-user-area {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: background 0.2s;
+  position: relative;
+  margin-bottom: 0.5rem;
+}
+
+.nav-user-area:hover {
+  background: var(--bg-secondary);
+}
+
+.nav-user-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 1rem;
+  color: #fff;
+  flex-shrink: 0;
+  background-size: cover;
+  background-position: center;
+}
+
+.nav-user-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.nav-user-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nav-user-handle {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nav-user-caret {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.nav-user-caret--open {
+  transform: rotate(180deg);
+}
+
+/* User popup menu */
+.nav-user-popup {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  z-index: 50;
+  overflow: hidden;
+  display: none;
+}
+
+.nav-user-popup--open {
+  display: block;
+}
+
+.nav-user-popup-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  transition: background 0.15s;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+}
+
+.nav-user-popup-item:hover {
+  background: var(--bg-secondary);
+}
+
 /* Mobile slide-out navigation - show all nav content */
 @media (max-width: 768px) {
   .left-nav .nav-logo,
