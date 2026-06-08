@@ -98,7 +98,6 @@ export class LeftNav {
         { id: 'home', label: t('nav.home'), icon: '🏠' },
         { id: 'explore', label: t('nav.explore'), icon: '🔍' },
         { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
-        { id: 'settings', label: t('nav.settings'), icon: '⚙️' },
       ];
 
       items.forEach((item) => {
@@ -608,7 +607,6 @@ export function updateLeftNavUser(
         { id: 'home', label: t('nav.home'), icon: '🏠' },
         { id: 'explore', label: t('nav.explore'), icon: '🔍' },
         { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
-        { id: 'settings', label: t('nav.settings'), icon: '⚙️' },
       ];
 
       items.forEach((item) => {
