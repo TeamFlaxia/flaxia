@@ -1,6 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 
-export class NotificationStream {
+export class ChatStream {
   private ctx: DurableObjectState;
 
   constructor(ctx: DurableObjectState, _env: unknown) {
@@ -8,8 +8,6 @@ export class NotificationStream {
   }
 
   async fetch(request: Request): Promise<Response> {
-    const _url = new URL(request.url);
-
     if (request.headers.get('Upgrade') === 'websocket') {
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
@@ -20,7 +18,7 @@ export class NotificationStream {
     }
 
     if (request.method === 'GET') {
-      return new Response('NotificationStream DO', { status: 200 });
+      return new Response('ChatStream DO', { status: 200 });
     }
 
     if (request.method === 'POST') {
@@ -39,7 +37,3 @@ export class NotificationStream {
     return new Response('Not found', { status: 404 });
   }
 }
-
-export { ChatStream } from './chat-stream';
-
-export default {};

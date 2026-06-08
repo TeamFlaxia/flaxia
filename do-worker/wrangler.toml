@@ -7,6 +7,14 @@ compatibility_flags = ["nodejs_compat"]
 name = "NOTIFICATION_STREAM"
 class_name = "NotificationStream"
 
+[[durable_objects.bindings]]
+name = "CHAT_STREAM"
+class_name = "ChatStream"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["NotificationStream"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["ChatStream"]

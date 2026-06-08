@@ -11,6 +11,7 @@ interface Env {
   VAPID_PRIVATE_KEY?: string;
   CROWD_ORCHESTRATOR?: Fetcher;
   NOTIFICATION_STREAM?: DurableObjectNamespace;
+  CHAT_STREAM?: DurableObjectNamespace;
   FCM_SERVER_KEY?: string;
   [key: string]: unknown;
 }
