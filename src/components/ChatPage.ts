@@ -82,6 +82,8 @@ export class ChatPage {
   private scrollSentinelEl!: HTMLElement;
   private serverSectionEl!: HTMLElement;
   private dmSectionEl!: HTMLElement;
+  private welcomeStateEl!: HTMLElement;
+  private addServerBtnEl!: HTMLElement;
 
   constructor(_props: ChatPageProps = {}) {
     this.element = this.createElement();
@@ -99,6 +101,7 @@ export class ChatPage {
             <span class="chat-section-title">${t('chat.servers') || 'Servers'}</span>
           </div>
           <div class="chat-server-list"></div>
+          <div class="chat-add-server-btn" title="Create Server">+</div>
         </div>
         <div class="chat-server-section" data-panel="dms">
           <div class="chat-section-header">
@@ -118,6 +121,14 @@ export class ChatPage {
           <span class="chat-channel-name"></span>
         </div>
         <div class="chat-message-list"></div>
+        <div class="chat-welcome-state">
+          <div class="chat-welcome-icon">💬</div>
+          <div class="chat-welcome-title">${t('chat.welcome_title') || 'Welcome to Chat!'}</div>
+          <div class="chat-welcome-text">${t('chat.welcome_text') || 'Create a server or start a conversation to get started.'}</div>
+          <div class="chat-welcome-actions">
+            <button class="chat-welcome-create-btn">${t('chat.create_server') || 'Create Server'}</button>
+          </div>
+        </div>
         <div class="chat-empty-state" style="display:none">
           <div class="chat-empty-icon">💬</div>
           <div class="chat-empty-text">${t('chat.select_channel') || 'Select a channel to start chatting'}</div>
@@ -144,6 +155,13 @@ export class ChatPage {
     this.serverNameEl = container.querySelector('.chat-server-name')!;
     this.serverSectionEl = container.querySelector('.chat-server-section[data-panel="servers"]')!;
     this.dmSectionEl = container.querySelector('.chat-server-section[data-panel="dms"]')!;
+    this.welcomeStateEl = container.querySelector('.chat-welcome-state')!;
+    this.addServerBtnEl = container.querySelector('.chat-add-server-btn')!;
+
+    this.addServerBtnEl.addEventListener('click', () => this.showCreateServerModal());
+    this.welcomeStateEl
+      .querySelector('.chat-welcome-create-btn')
+      ?.addEventListener('click', () => this.showCreateServerModal());
 
     return container;
   }
@@ -206,6 +224,86 @@ export class ChatPage {
 
     this.loadingServers = false;
     this.renderServerList();
+    this.updateWelcomeState();
+  }
+
+  private updateWelcomeState(): void {
+    const hasContent = this.servers.length > 0 || this.dms.length > 0;
+    if (hasContent || this.selectedServer) {
+      this.welcomeStateEl.style.display = 'none';
+    } else {
+      this.welcomeStateEl.style.display = 'flex';
+      this.messageListEl.style.display = 'none';
+      this.emptyStateEl.style.display = 'none';
+    }
+  }
+
+  private async showCreateServerModal(): Promise<void> {
+    const modal = document.createElement('div');
+    modal.className = 'chat-modal-overlay';
+    modal.innerHTML = `
+      <div class="chat-modal">
+        <div class="chat-modal-header">${t('chat.create_server') || 'Create Server'}</div>
+        <input class="chat-modal-input" type="text" placeholder="${t('chat.server_name_placeholder') || 'Server name'}" maxlength="100">
+        <input class="chat-modal-input" type="text" placeholder="${t('chat.server_desc_placeholder') || 'Description (optional)'}" maxlength="500">
+        <div class="chat-modal-actions">
+          <button class="chat-modal-cancel">${t('chat.cancel') || 'Cancel'}</button>
+          <button class="chat-modal-confirm" disabled>${t('chat.create') || 'Create'}</button>
+        </div>
+      </div>
+    `;
+
+    const nameInput = modal.querySelector('.chat-modal-input') as HTMLInputElement;
+    const confirmBtn = modal.querySelector('.chat-modal-confirm') as HTMLButtonElement;
+    const cancelBtn = modal.querySelector('.chat-modal-cancel') as HTMLButtonElement;
+
+    nameInput.addEventListener('input', () => {
+      confirmBtn.disabled = !nameInput.value.trim();
+    });
+
+    const closeModal = () => modal.remove();
+
+    cancelBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) closeModal();
+    });
+
+    confirmBtn.addEventListener('click', async () => {
+      const name = nameInput.value.trim();
+      const descInput = modal.querySelectorAll('.chat-modal-input')[1] as HTMLInputElement;
+      const description = descInput.value.trim();
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = t('chat.creating') || 'Creating...';
+
+      try {
+        const res = await fetch('/api/chat/servers', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, description }),
+        });
+        if (res.ok) {
+          closeModal();
+          await this.loadServers();
+        } else {
+          const err = (await res.json()) as { error: string };
+          confirmBtn.textContent = err.error || 'Failed';
+          setTimeout(() => {
+            confirmBtn.textContent = t('chat.create') || 'Create';
+            confirmBtn.disabled = false;
+          }, 2000);
+        }
+      } catch {
+        confirmBtn.textContent = 'Error';
+        setTimeout(() => {
+          confirmBtn.textContent = t('chat.create') || 'Create';
+          confirmBtn.disabled = false;
+        }, 2000);
+      }
+    });
+
+    document.body.appendChild(modal);
+    setTimeout(() => nameInput.focus(), 100);
   }
 
   private renderServerList(): void {
@@ -272,6 +370,7 @@ export class ChatPage {
     this.channelHeaderEl.textContent = '';
     this.messageListEl.innerHTML = '';
     this.messageListEl.style.display = 'none';
+    this.welcomeStateEl.style.display = 'none';
     this.emptyStateEl.style.display = '';
     this.messageInputEl.disabled = true;
     (this.element.querySelector('.chat-send-btn') as HTMLButtonElement).disabled = true;
