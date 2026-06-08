@@ -27,6 +27,7 @@ export const ALLOWED_EXTENSIONS: Record<string, string> = {
   '.wav': 'audio/wav',
   '.ogg': 'audio/ogg',
   '.m4a': 'audio/mp4',
+  '.opus': 'audio/opus',
 
   // Video
   '.mp4': 'video/mp4',
@@ -57,6 +58,7 @@ export const ALLOWED_EXTENSIONS: Record<string, string> = {
   '.jsdos': 'application/zip',
   '.ovl': 'application/octet-stream',
   '.cfg': 'text/plain',
+  '.db': 'application/x-sqlite3',
 };
 
 export function isExtensionAllowed(filename: string): boolean {
