@@ -8263,7 +8263,7 @@ async function dispatchChatEvent(
 
 // ===================== Chat API =====================
 
-// GET /api/chat/servers - List user's chat servers
+// GET /api/chat/servers - List user's chat servers (type='server')
 app.get('/api/chat/servers', requireAuth, async (c) => {
   try {
     const userId = c.get('user')?.id || '';
@@ -8272,7 +8272,7 @@ app.get('/api/chat/servers', requireAuth, async (c) => {
       SELECT cs.*, csm.role
       FROM chat_servers cs
       JOIN chat_server_members csm ON cs.id = csm.server_id
-      WHERE csm.user_id = ?
+      WHERE csm.user_id = ? AND cs.type = 'server'
       ORDER BY cs.created_at DESC
     `)
       .bind(userId)
@@ -8300,11 +8300,12 @@ app.post('/api/chat/servers', requireAuth, async (c) => {
     const channelId = nanoid();
 
     await c.env.DB.batch([
-      c.env.DB.prepare('INSERT INTO chat_servers (id, name, description, owner_id) VALUES (?, ?, ?, ?)').bind(
+      c.env.DB.prepare('INSERT INTO chat_servers (id, name, description, owner_id, type) VALUES (?, ?, ?, ?, ?)').bind(
         serverId,
         name.trim(),
         description?.trim() || '',
         user.id,
+        'server',
       ),
       c.env.DB.prepare('INSERT INTO chat_server_members (server_id, user_id, role) VALUES (?, ?, ?)').bind(
         serverId,
@@ -8480,6 +8481,107 @@ app.post('/api/chat/servers/:id/channels', requireAuth, async (c) => {
     const err = error as { message?: string };
     console.error('Create channel error:', error);
     return c.json({ error: 'Failed to create channel', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// GET /api/chat/dm - List user's DM conversations
+app.get('/api/chat/dm', requireAuth, async (c) => {
+  try {
+    const userId = c.get('user')?.id || '';
+    if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
+    const result = await c.env.DB.prepare(`
+      SELECT cs.*, csm.role,
+        (SELECT cc.id FROM chat_channels cc WHERE cc.server_id = cs.id ORDER BY cc.position ASC LIMIT 1) as channel_id,
+        (SELECT cm.content FROM chat_messages cm JOIN chat_channels cc ON cm.channel_id = cc.id WHERE cc.server_id = cs.id ORDER BY cm.created_at DESC LIMIT 1) as last_message_content,
+        (SELECT cm.created_at FROM chat_messages cm JOIN chat_channels cc ON cm.channel_id = cc.id WHERE cc.server_id = cs.id ORDER BY cm.created_at DESC LIMIT 1) as last_message_at
+      FROM chat_servers cs
+      JOIN chat_server_members csm ON cs.id = csm.server_id
+      WHERE csm.user_id = ? AND cs.type = 'dm'
+      ORDER BY last_message_at DESC
+    `)
+      .bind(userId)
+      .all();
+    if (!result.success) return c.json({ error: 'Failed to fetch DMs' }, 500);
+    return c.json({ dms: result.results });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Fetch DMs error:', error);
+    return c.json({ error: 'Failed to fetch DMs', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// GET /api/chat/dm/check?user_id=X - Find or create a DM with a user
+app.get('/api/chat/dm/check', requireAuth, async (c) => {
+  try {
+    const userId = c.get('user')?.id || '';
+    const targetUserId = c.req.query('user_id');
+    if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
+    if (!targetUserId) return c.json({ error: 'user_id query param is required' }, 400);
+    if (targetUserId === userId) return c.json({ error: 'Cannot DM yourself' }, 400);
+
+    // Verify target user exists
+    const targetUser = await c.env.DB.prepare('SELECT id, username, display_name, avatar_key FROM users WHERE id = ?')
+      .bind(targetUserId)
+      .first();
+    if (!targetUser) return c.json({ error: 'User not found' }, 404);
+
+    // Find existing DM between these two users (exactly 2 members)
+    const existing = await c.env.DB.prepare(`
+      SELECT cs.id as server_id,
+        (SELECT cc.id FROM chat_channels cc WHERE cc.server_id = cs.id ORDER BY cc.position ASC LIMIT 1) as channel_id
+      FROM chat_servers cs
+      WHERE cs.type = 'dm'
+        AND (SELECT COUNT(*) FROM chat_server_members WHERE server_id = cs.id) = 2
+        AND EXISTS (SELECT 1 FROM chat_server_members WHERE server_id = cs.id AND user_id = ?)
+        AND EXISTS (SELECT 1 FROM chat_server_members WHERE server_id = cs.id AND user_id = ?)
+      LIMIT 1
+    `)
+      .bind(userId, targetUserId)
+      .first();
+
+    if (existing) {
+      return c.json({
+        server_id: (existing as Record<string, unknown>).server_id,
+        channel_id: (existing as Record<string, unknown>).channel_id,
+        created: false,
+      });
+    }
+
+    // Create new DM
+    const serverId = nanoid();
+    const channelId = nanoid();
+
+    await c.env.DB.batch([
+      c.env.DB.prepare('INSERT INTO chat_servers (id, name, description, owner_id, type) VALUES (?, ?, ?, ?, ?)').bind(
+        serverId,
+        '',
+        '',
+        userId,
+        'dm',
+      ),
+      c.env.DB.prepare('INSERT INTO chat_server_members (server_id, user_id, role) VALUES (?, ?, ?)').bind(
+        serverId,
+        userId,
+        'member',
+      ),
+      c.env.DB.prepare('INSERT INTO chat_server_members (server_id, user_id, role) VALUES (?, ?, ?)').bind(
+        serverId,
+        targetUserId,
+        'member',
+      ),
+      c.env.DB.prepare('INSERT INTO chat_channels (id, server_id, name, position) VALUES (?, ?, ?, ?)').bind(
+        channelId,
+        serverId,
+        'dm',
+        0,
+      ),
+    ]);
+
+    return c.json({ server_id: serverId, channel_id: channelId, created: true });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Check DM error:', error);
+    return c.json({ error: 'Failed to check/create DM', details: err.message || 'Unknown error' }, 500);
   }
 });
 
