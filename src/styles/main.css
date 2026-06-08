@@ -783,6 +783,13 @@ h1 {
 }
 
 .nav-user-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.nav-user-name-text {
   font-size: 0.875rem;
   font-weight: 600;
   color: var(--text-primary);
@@ -808,6 +815,21 @@ h1 {
 
 .nav-user-caret--open {
   transform: rotate(180deg);
+}
+
+.nav-user-badge {
+  margin-left: auto;
+  background: var(--accent);
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  min-width: 18px;
+  text-align: center;
+  color: #fff;
+  font-weight: 600;
+  line-height: 1.4;
+  flex-shrink: 0;
 }
 
 /* User popup menu */
