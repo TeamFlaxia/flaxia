@@ -70,6 +70,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let bookmarksPage: BookmarksPage | null = null;
     let messagesPage: MessagesPage | null = null;
     let conversationView: ConversationView | null = null;
+    let cachedContentComponent: { view: string; component: unknown; scrollY: number } | null = null;
     let adminLayout:
       | (PageComponent & { updateMainContent: (el: HTMLElement) => void; setAccessDenied: () => void })
       | null = null;
