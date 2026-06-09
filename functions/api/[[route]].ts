@@ -8485,15 +8485,6 @@ app.post('/api/dm/conversations/:id/messages/prepare', requireAuth, async (c) =>
       return c.json({ error: 'Unsupported file type' }, 400);
     }
 
-    // Insert a pending marker message that we'll update on final send
-    // We use a placeholder to reserve the storage key
-    const now = new Date().toISOString();
-    await c.env.DB.prepare(
-      'INSERT INTO dm_messages (id, conversation_id, sender_id, content, created_at) VALUES (?, ?, ?, ?, ?)',
-    )
-      .bind(msgId, convId, senderId, '', now)
-      .run();
-
     const origin = new URL(c.req.url).origin;
     const uploadUrl = `${origin}/api/dm/upload/${storageKey}`;
     const resp: Record<string, unknown> = { msgId, uploadUrl, storageKey };
@@ -8517,7 +8508,6 @@ app.post('/api/dm/conversations/:id/messages/prepare', requireAuth, async (c) =>
 // PUT /api/dm/upload/:key — direct file upload for DM messages
 app.put('/api/dm/upload/*', requireAuth, async (c) => {
   try {
-    const user = c.get('user')!;
     const key = c.req.path.replace('/api/dm/upload/', '');
     const contentLength = c.req.header('content-length');
 
@@ -8529,18 +8519,6 @@ app.put('/api/dm/upload/*', requireAuth, async (c) => {
     const maxSize = 25 * 1024 * 1024;
     if (contentLength && Number(contentLength) > maxSize) {
       return c.json({ error: 'File too large. Maximum size is 25MB' }, 413);
-    }
-
-    // Verify the user owns a DM message with this storage key
-    // We check against gif_key, payload_key, swf_key columns
-    const pending = (await c.env.DB.prepare(
-      "SELECT id FROM dm_messages WHERE sender_id = ? AND (gif_key = ? OR payload_key = ? OR swf_key = ?) AND content = ''",
-    )
-      .bind(user.id, key, key, key)
-      .first()) as { id: string } | null;
-
-    if (!pending) {
-      return c.json({ error: 'No pending message found for this key' }, 403);
     }
 
     const fileData = await c.req.arrayBuffer();
@@ -8570,10 +8548,6 @@ app.put('/api/dm/upload/*', requireAuth, async (c) => {
     await c.env.BUCKET.put(key, fileData, {
       httpMetadata: { contentType: detectedMime },
     });
-
-    // Update the pending message with the key
-    const column = key.startsWith('dm/swf/') ? 'swf_key' : key.startsWith('dm/zip/') ? 'payload_key' : 'gif_key';
-    await c.env.DB.prepare(`UPDATE dm_messages SET ${column} = ? WHERE id = ?`).bind(key, pending.id).run();
 
     return c.json({ success: true, key });
   } catch (error: unknown) {
