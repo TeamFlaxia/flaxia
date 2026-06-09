@@ -2719,6 +2719,45 @@ app.get('/.well-known/webfinger', async (c) => {
   }
 });
 
+// GET /api/users/suggest?q=prefix - suggest usernames matching prefix
+app.get('/api/users/suggest', async (c) => {
+  try {
+    const q = c.req.query('q');
+    if (!q || q.length < 1) {
+      return c.json({ users: [] });
+    }
+
+    const limit = Math.min(parseInt(c.req.query('limit') || '10', 10), 20);
+    const prefix = q.toLowerCase();
+
+    const result = await c.env.DB.prepare(`
+      SELECT id, username, display_name, avatar_key
+      FROM users
+      WHERE LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?
+      ORDER BY
+        CASE WHEN LOWER(username) LIKE ? THEN 0 ELSE 1 END,
+        created_at DESC
+      LIMIT ?
+    `)
+      .bind(prefix + '%', prefix + '%', prefix + '%', limit)
+      .all();
+
+    const users = (result.results || []).map((u: Record<string, unknown>) => ({
+      id: u.id,
+      username: u.username,
+      display_name: u.display_name || '',
+      avatar_key: u.avatar_key || '',
+    }));
+
+    return c.json({ users }, 200, {
+      'Cache-Control': 'public, max-age=15',
+    });
+  } catch (error: unknown) {
+    console.error('User suggest error:', error);
+    return c.json({ error: 'Internal server error' }, 500);
+  }
+});
+
 // GET /api/users/:username - get public user profile
 app.get('/api/users/:username', async (c) => {
   try {
@@ -6812,44 +6851,6 @@ app.get('/api/search', async (c) => {
     const err = error as { message?: string };
     console.error('Search error:', error);
     return c.json({ error: 'Search failed', details: err.message || 'Unknown error' }, 500);
-  }
-});
-
-// GET /api/users/suggest?q=prefix - suggest usernames matching prefix
-app.get('/api/users/suggest', async (c) => {
-  try {
-    const q = c.req.query('q');
-    if (!q || q.length < 1) {
-      return c.json({ users: [] });
-    }
-
-    const limit = Math.min(parseInt(c.req.query('limit') || '10', 10), 20);
-    const prefix = q.toLowerCase();
-
-    const result = await c.env.DB.prepare(`
-      SELECT username, display_name, avatar_key
-      FROM users
-      WHERE LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?
-      ORDER BY
-        CASE WHEN LOWER(username) LIKE ? THEN 0 ELSE 1 END,
-        created_at DESC
-      LIMIT ?
-    `)
-      .bind(prefix + '%', prefix + '%', prefix + '%', limit)
-      .all();
-
-    const users = (result.results || []).map((u: Record<string, unknown>) => ({
-      username: u.username,
-      display_name: u.display_name || '',
-      avatar_key: u.avatar_key || '',
-    }));
-
-    return c.json({ users }, 200, {
-      'Cache-Control': 'public, max-age=15',
-    });
-  } catch (error: unknown) {
-    console.error('User suggest error:', error);
-    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 
