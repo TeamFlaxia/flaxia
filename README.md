@@ -402,9 +402,9 @@ opencode "src/main.ts の役割を解説して"
 モデルを deepseek-v4-flash-free に変更しました
 ```
 
-Flaxia の開発では **DeepSeek V5 Flash Free** の使用をおすすめします（無料で高速、コード生成に優れる）。
+Flaxia の開発では **DeepSeek V4 Flash Free** の使用をおすすめします（無料で高速、コード生成に優れる）。
 
-| 項目 | DeepSeek V5 Flash Free |
+| 項目 | DeepSeek V4 Flash Free |
 |------|----------------------|
 | 料金 | **無料** |
 | 速度 | 高速（Flash モデル） |
