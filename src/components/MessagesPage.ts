@@ -43,41 +43,19 @@ export class MessagesPage {
   private createElement(): HTMLElement {
     const container = document.createElement('div');
     container.className = 'messages-page';
-    container.style.cssText = `
-      max-width: 600px;
-      margin: 0 auto;
-    `;
 
     // Header
     const header = document.createElement('div');
-    header.style.cssText = `
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 1rem;
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      background: var(--bg-primary);
-    `;
+    header.className = 'messages-page-header';
 
     const backBtn = document.createElement('button');
+    backBtn.className = 'messages-page-back';
     backBtn.textContent = '←';
-    backBtn.style.cssText = `
-      background: none;
-      border: none;
-      font-size: 1.25rem;
-      cursor: pointer;
-      color: var(--text-primary);
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-    `;
     backBtn.addEventListener('mouseenter', () => {
       backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))';
     });
     backBtn.addEventListener('mouseleave', () => {
-      backBtn.style.background = 'none';
+      backBtn.style.background = '';
     });
     backBtn.addEventListener('click', () => {
       window.history.back();
@@ -85,31 +63,10 @@ export class MessagesPage {
 
     const title = document.createElement('h1');
     title.textContent = t('messages.title');
-    title.style.cssText = `
-      margin: 0;
-      font-size: 24px;
-      color: var(--text-primary);
-    `;
 
     const newBtn = document.createElement('button');
+    newBtn.className = 'messages-page-new-btn';
     newBtn.textContent = `+ ${t('messages.new')}`;
-    newBtn.style.cssText = `
-      margin-left: auto;
-      padding: 8px 16px;
-      background: var(--accent);
-      color: #000;
-      border: none;
-      border-radius: 9999px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-    `;
-    newBtn.addEventListener('mouseenter', () => {
-      newBtn.style.opacity = '0.8';
-    });
-    newBtn.addEventListener('mouseleave', () => {
-      newBtn.style.opacity = '1';
-    });
     newBtn.addEventListener('click', () => {
       this.toggleSearch();
     });
@@ -143,6 +100,7 @@ export class MessagesPage {
       outline: none;
       box-sizing: border-box;
     `;
+    // Input stays inline for dynamic value handling
     searchInput.addEventListener('input', () => {
       this.searchInputValue = searchInput.value;
       if (this.searchTimer) clearTimeout(this.searchTimer);
@@ -237,6 +195,7 @@ export class MessagesPage {
         padding: 12px 8px;
         cursor: pointer;
         border-radius: 8px;
+        transition: background 0.15s ease;
       `;
       row.addEventListener('mouseenter', () => {
         row.style.background = 'var(--bg-secondary)';
@@ -251,6 +210,7 @@ export class MessagesPage {
         width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
         background: var(--accent); display: flex; align-items: center; justify-content: center;
         color: #000; font-weight: 600; font-size: 16px;
+        overflow: hidden;
       `;
       if (user.avatar_key) {
         avatar.style.backgroundImage = `url(/api/images/${user.avatar_key})`;
@@ -336,15 +296,8 @@ export class MessagesPage {
 
     this.conversations.forEach((conv) => {
       const row = document.createElement('div');
-      row.style.cssText = `
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 16px;
-        cursor: pointer;
-        border-bottom: 1px solid var(--border);
-        background: ${conv.unread ? 'var(--bg-secondary)' : 'var(--bg-primary)'};
-      `;
+      row.className = 'messages-conv-row';
+      row.style.background = conv.unread ? 'var(--bg-secondary)' : 'var(--bg-primary)';
       row.addEventListener('mouseenter', () => {
         row.style.background = 'var(--bg-tertiary, #f0f0f0)';
       });
@@ -354,11 +307,7 @@ export class MessagesPage {
       row.addEventListener('click', () => this.props.onNavigateToConversation(conv.id));
 
       const avatar = document.createElement('div');
-      avatar.style.cssText = `
-        width: 48px; height: 48px; border-radius: 50%; flex-shrink: 0;
-        background: var(--accent); display: flex; align-items: center; justify-content: center;
-        color: #000; font-weight: 600; font-size: 18px;
-      `;
+      avatar.className = 'messages-conv-avatar';
       if (conv.other_user.avatar_key) {
         avatar.style.backgroundImage = `url(/api/images/${conv.other_user.avatar_key})`;
         avatar.style.backgroundSize = 'cover';
@@ -368,19 +317,17 @@ export class MessagesPage {
       }
 
       const info = document.createElement('div');
-      info.style.cssText = 'flex: 1; min-width: 0;';
+      info.className = 'messages-conv-info';
 
       const topRow = document.createElement('div');
-      topRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center;';
+      topRow.className = 'messages-conv-top';
 
       const name = document.createElement('div');
-      name.style.cssText = `
-        color: var(--text-primary); font-weight: ${conv.unread ? '700' : '500'}; font-size: 15px;
-      `;
+      name.className = `messages-conv-name ${conv.unread ? 'unread' : 'read'}`;
       name.textContent = conv.other_user.display_name || conv.other_user.username;
 
       const time = document.createElement('div');
-      time.style.cssText = 'color: var(--text-muted); font-size: 12px; flex-shrink: 0; margin-left: 8px;';
+      time.className = 'messages-conv-time';
       if (conv.last_message) {
         time.textContent = this.formatTime(conv.last_message.created_at);
       }
@@ -389,14 +336,7 @@ export class MessagesPage {
       topRow.appendChild(time);
 
       const preview = document.createElement('div');
-      preview.style.cssText = `
-        color: ${conv.unread ? 'var(--text-primary)' : 'var(--text-muted)'};
-        font-size: 14px;
-        margin-top: 2px;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      `;
+      preview.className = `messages-conv-preview ${conv.unread ? 'unread' : 'read'}`;
       if (conv.last_message) {
         const prefix = conv.last_message.is_mine ? 'You: ' : '';
         preview.textContent = `${prefix}${conv.last_message.content}`;
@@ -410,10 +350,7 @@ export class MessagesPage {
 
       if (conv.unread) {
         const dot = document.createElement('div');
-        dot.style.cssText = `
-          width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
-          background: var(--accent);
-        `;
+        dot.className = 'messages-unread-dot';
         row.appendChild(dot);
       }
 

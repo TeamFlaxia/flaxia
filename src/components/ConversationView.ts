@@ -39,40 +39,14 @@ export class ConversationView {
   private createElement(): HTMLElement {
     const container = document.createElement('div');
     container.className = 'conversation-view';
-    container.style.cssText = `
-      max-width: 600px;
-      margin: 0 auto;
-      display: flex;
-      flex-direction: column;
-      height: 100%;
-    `;
 
     // Header
     const header = document.createElement('div');
-    header.style.cssText = `
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      background: var(--bg-primary);
-      flex-shrink: 0;
-    `;
+    header.className = 'conv-header';
 
     const backBtn = document.createElement('button');
+    backBtn.className = 'conv-header-back';
     backBtn.textContent = '←';
-    backBtn.style.cssText = `
-      background: none;
-      border: none;
-      font-size: 1.25rem;
-      cursor: pointer;
-      color: var(--text-primary);
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-    `;
     backBtn.addEventListener('click', () => {
       this.stopPolling();
       this.props.onBack();
@@ -80,17 +54,11 @@ export class ConversationView {
 
     const userAvatar = document.createElement('div');
     userAvatar.id = 'conv-user-avatar';
-    userAvatar.style.cssText = `
-      width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
-      background: var(--accent); display: flex; align-items: center; justify-content: center;
-      color: #000; font-weight: 600; font-size: 14px;
-    `;
+    userAvatar.className = 'conv-header-avatar';
 
     const userName = document.createElement('div');
     userName.id = 'conv-user-name';
-    userName.style.cssText = `
-      font-weight: 600; font-size: 16px; color: var(--text-primary);
-    `;
+    userName.className = 'conv-header-name';
 
     header.appendChild(backBtn);
     header.appendChild(userAvatar);
@@ -99,14 +67,7 @@ export class ConversationView {
     // Messages area
     const messagesArea = document.createElement('div');
     messagesArea.id = 'conv-messages-area';
-    messagesArea.style.cssText = `
-      flex: 1;
-      overflow-y: auto;
-      padding: 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    `;
+    messagesArea.className = 'conv-messages-area';
     messagesArea.addEventListener('scroll', () => {
       if (messagesArea.scrollTop < 100 && this.hasMore && !this.loadingMore) {
         this.loadOlderMessages();
@@ -115,30 +76,13 @@ export class ConversationView {
 
     // Input area
     const inputArea = document.createElement('div');
-    inputArea.style.cssText = `
-      display: flex;
-      gap: 8px;
-      padding: 12px 16px;
-      border-top: 1px solid var(--border);
-      background: var(--bg-primary);
-      flex-shrink: 0;
-    `;
+    inputArea.className = 'conv-input-area';
 
     const input = document.createElement('input');
     input.type = 'text';
     input.id = 'conv-message-input';
+    input.className = 'conv-input';
     input.placeholder = t('messages.placeholder');
-    input.style.cssText = `
-      flex: 1;
-      padding: 10px 14px;
-      border: 1px solid var(--border);
-      border-radius: 9999px;
-      background: var(--bg-secondary);
-      color: var(--text-primary);
-      font-size: 14px;
-      font-family: inherit;
-      outline: none;
-    `;
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -149,34 +93,16 @@ export class ConversationView {
 
     const sendBtn = document.createElement('button');
     sendBtn.id = 'conv-send-btn';
+    sendBtn.className = 'conv-send-btn';
     sendBtn.textContent = t('messages.send');
-    sendBtn.style.cssText = `
-      padding: 10px 20px;
-      background: var(--accent);
-      color: #000;
-      border: none;
-      border-radius: 9999px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      flex-shrink: 0;
-    `;
     sendBtn.addEventListener('click', () => this.sendMessage());
 
     const charCount = document.createElement('div');
     charCount.id = 'conv-char-count';
-    charCount.style.cssText = `
-      position: absolute;
-      right: 120px;
-      bottom: 20px;
-      font-size: 12px;
-      color: var(--text-muted);
-      pointer-events: none;
-    `;
+    charCount.className = 'conv-char-count';
 
     inputArea.appendChild(input);
     inputArea.appendChild(sendBtn);
-    inputArea.style.position = 'relative';
     inputArea.appendChild(charCount);
 
     container.appendChild(header);
@@ -407,34 +333,14 @@ export class ConversationView {
     this.messages.forEach((msg, idx) => {
       const bubble = document.createElement('div');
       bubble.setAttribute('data-msg-id', msg.id);
-      bubble.style.cssText = `
-        display: flex;
-        flex-direction: column;
-        align-items: ${msg.is_mine ? 'flex-end' : 'flex-start'};
-        max-width: 80%;
-        align-self: ${msg.is_mine ? 'flex-end' : 'flex-start'};
-      `;
+      bubble.className = `conv-bubble ${msg.is_mine ? 'conv-bubble-mine' : 'conv-bubble-other'}`;
 
       const text = document.createElement('div');
-      text.style.cssText = `
-        padding: 10px 14px;
-        border-radius: 18px;
-        background: ${msg.is_mine ? 'var(--accent)' : 'var(--bg-secondary)'};
-        color: ${msg.is_mine ? '#000' : 'var(--text-primary)'};
-        font-size: 15px;
-        line-height: 1.4;
-        word-wrap: break-word;
-        ${msg.is_mine ? 'border-bottom-right-radius: 4px;' : 'border-bottom-left-radius: 4px;'}
-      `;
+      text.className = `conv-bubble-text ${msg.is_mine ? 'mine' : 'other'}`;
       text.textContent = msg.content;
 
       const time = document.createElement('div');
-      time.style.cssText = `
-        font-size: 11px;
-        color: var(--text-muted);
-        margin-top: 2px;
-        padding: 0 4px;
-      `;
+      time.className = 'conv-bubble-time';
       time.textContent = this.formatTime(msg.created_at, idx, msg);
 
       bubble.appendChild(text);
