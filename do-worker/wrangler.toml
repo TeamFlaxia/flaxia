@@ -7,3 +7,15 @@ compatibility_flags = ["nodejs_compat"]
 name = "NOTIFICATION_STREAM"
 class_name = "NotificationStream"
 
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["NotificationStream"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["ChatStream"]
+
+[[migrations]]
+tag = "v3"
+deleted_classes = ["ChatStream"]
+
