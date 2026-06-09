@@ -1,7 +1,9 @@
 import type { ArcadePageHandle } from './components/ArcadePage.js';
 import { BookmarksPage } from './components/BookmarksPage.js';
+import { ConversationView } from './components/ConversationView.js';
 import { ExplorePage } from './components/ExplorePage.js';
 import { createLeftNav, LeftNav, updateLeftNavUser } from './components/LeftNav.js';
+import { MessagesPage } from './components/MessagesPage.js';
 import { NotificationsPage } from './components/NotificationsPage.js';
 import { createRightPanel } from './components/RightPanel.js';
 import { ThreadPage } from './components/ThreadPage.js';
@@ -47,7 +49,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'whitepaper'
       | 'admin'
       | 'settings'
-      | 'arcade' = 'timeline';
+      | 'arcade'
+      | 'messages' = 'timeline';
     let currentPostId: string | null = null;
     let _currentUsername: string | null = null;
     let currentTag: string | null = null;
@@ -65,6 +68,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let arcadePage: ArcadePageHandle | null = null;
     let searchPage: PageComponent | null = null;
     let bookmarksPage: BookmarksPage | null = null;
+    let messagesPage: MessagesPage | null = null;
+    let conversationView: ConversationView | null = null;
     let adminLayout:
       | (PageComponent & { updateMainContent: (el: HTMLElement) => void; setAccessDenied: () => void })
       | null = null;
@@ -75,6 +80,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const leftNavInstances: Set<LeftNav> = new Set();
     let currentUser: { username: string; id: string; display_name?: string; avatar_key?: string } | null = null;
     let unreadNotificationCount = 0;
+    let unreadDmCount = 0;
     let previousUnreadCount = 0;
     let notificationPollInterval: ReturnType<typeof setInterval> | null = null;
     let cachedContentComponent: {
@@ -387,6 +393,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const refreshNotificationBadges = async () => {
       console.log('[poll] refreshNotificationBadges called');
       const data = await fetchNotifications();
+      await fetchDmUnreadCount();
       console.log('[poll] unread count:', unreadNotificationCount);
       leftNavInstances.forEach((leftNav) => {
         if (typeof leftNav.setUnreadCount === 'function') {
@@ -560,6 +567,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     let cachedNotifications: NotificationData | null = null;
     let lastNotificationFetch = 0;
     const NOTIFICATION_FETCH_TTL = 10000; // 10秒以内の連続fetchはキャッシュ
+
+    const fetchDmUnreadCount = async (): Promise<void> => {
+      try {
+        const res = await fetch('/api/dm/unread-count', { credentials: 'include' });
+        if (res.ok) {
+          const data = (await res.json()) as { unread_count: number };
+          unreadDmCount = data.unread_count || 0;
+          leftNavInstances.forEach((ln) => {
+            if (typeof ln.setUnreadDmCount === 'function') {
+              ln.setUnreadDmCount(unreadDmCount);
+            }
+          });
+        }
+      } catch {
+        // ignore
+      }
+    };
 
     const fetchNotifications = async (): Promise<NotificationData> => {
       const now = Date.now();
@@ -757,6 +781,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         return true;
       }
 
+      // For /messages, redirect to arcade if not authenticated
+      if (cleanPath === '/messages' || cleanPath.startsWith('/messages/')) {
+        if (!isAuthenticated) {
+          window.history.replaceState({}, '', '/arcade');
+          navigateTo('arcade');
+          return false;
+        }
+        return true;
+      }
+
       // For /notifications, redirect to arcade if not authenticated
       if (cleanPath === '/notifications') {
         if (!isAuthenticated) {
@@ -886,6 +920,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         return { view: 'notifications' as const, postId: null, username: null, tag: null };
       }
 
+      // Messages routes - require auth
+      const messagesConvMatch = cleanPath.match(/^\/messages\/([^/]+)$/);
+      if (messagesConvMatch) {
+        console.log('Messages conversation route detected, id:', messagesConvMatch[1]);
+        return { view: 'messages' as const, postId: messagesConvMatch[1], username: null, tag: null };
+      }
+
+      if (cleanPath === '/messages') {
+        console.log('Messages route detected');
+        return { view: 'messages' as const, postId: null, username: null, tag: null };
+      }
+
       // Bookmarks route - requires auth
       if (cleanPath === '/bookmarks') {
         console.log('Bookmarks route detected');
@@ -999,7 +1045,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         | 'whitepaper'
         | 'admin'
         | 'settings'
-        | 'arcade',
+        | 'arcade'
+        | 'messages',
       postId?: string,
       username?: string,
       tag?: string,
@@ -1058,6 +1105,14 @@ document.addEventListener('DOMContentLoaded', async () => {
           bookmarksPage.destroy();
           bookmarksPage = null;
         }
+        if (messagesPage) {
+          messagesPage.destroy();
+          messagesPage = null;
+        }
+        if (conversationView) {
+          conversationView.destroy();
+          conversationView = null;
+        }
       } else {
         // Auth guard for protected routes
         const isAuthenticated = await requireAuth();
@@ -1065,8 +1120,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           return; // Auth guard will redirect to login
         }
 
-        // Cache current view when navigating to thread or arcade (for back navigation with preserved content)
-        if ((view === 'thread' || view === 'arcade') && currentView !== view) {
+        // Cache current view when navigating to thread, arcade, or messages conversation (for back navigation with preserved content)
+        if ((view === 'thread' || view === 'arcade' || view === 'messages') && currentView !== view) {
           console.log(`Caching current view for back navigation to ${view}:`, currentView);
           if (currentView === 'timeline' && timeline) {
             cachedContentComponent = { view: 'timeline', component: timeline, scrollY: window.scrollY };
@@ -1086,6 +1141,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           } else if (currentView === 'bookmarks' && bookmarksPage) {
             cachedContentComponent = { view: 'bookmarks', component: bookmarksPage, scrollY: window.scrollY };
             bookmarksPage = null;
+          } else if (currentView === 'messages' && messagesPage) {
+            cachedContentComponent = { view: 'messages', component: messagesPage, scrollY: window.scrollY };
+            messagesPage = null;
           }
         }
 
@@ -1138,6 +1196,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (searchPage) {
           searchPage.destroy();
           searchPage = null;
+        }
+        if (messagesPage) {
+          messagesPage.destroy();
+          messagesPage = null;
+        }
+        if (conversationView) {
+          conversationView.destroy();
+          conversationView = null;
         }
       }
 
@@ -1360,6 +1426,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'bookmarks') {
                 window.history.pushState({}, '', '/bookmarks');
                 navigateTo('bookmarks');
+              } else if (item === 'messages') {
+                window.history.pushState({}, '', '/messages');
+                navigateTo('messages');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -1463,6 +1532,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'bookmarks') {
                 window.history.pushState({}, '', '/bookmarks');
                 navigateTo('bookmarks');
+              } else if (item === 'messages') {
+                window.history.pushState({}, '', '/messages');
+                navigateTo('messages');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -1563,6 +1635,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'bookmarks') {
                 window.history.pushState({}, '', '/bookmarks');
                 navigateTo('bookmarks');
+              } else if (item === 'messages') {
+                window.history.pushState({}, '', '/messages');
+                navigateTo('messages');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -1672,6 +1747,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'bookmarks') {
                 window.history.pushState({}, '', '/bookmarks');
                 navigateTo('bookmarks');
+              } else if (item === 'messages') {
+                window.history.pushState({}, '', '/messages');
+                navigateTo('messages');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -1780,6 +1858,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'bookmarks') {
                 window.history.pushState({}, '', '/bookmarks');
                 navigateTo('bookmarks');
+              } else if (item === 'messages') {
+                window.history.pushState({}, '', '/messages');
+                navigateTo('messages');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -1871,6 +1952,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'bookmarks') {
                 window.history.pushState({}, '', '/bookmarks');
                 navigateTo('bookmarks');
+              } else if (item === 'messages') {
+                window.history.pushState({}, '', '/messages');
+                navigateTo('messages');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -1953,6 +2037,126 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
+        // Handle messages page (within 3-column layout)
+        if (view === 'messages') {
+          currentView = 'messages';
+          currentPostId = postId || null;
+          _currentUsername = null;
+          currentTag = null;
+
+          if (!currentUser) {
+            window.history.pushState({}, '', '/explore');
+            navigateTo('explore');
+            return;
+          }
+
+          // Create main container for 3-column layout
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          const leftNav = createLeftNav({
+            activeItem: 'messages',
+            unreadCount: unreadNotificationCount,
+            unreadDmCount,
+            currentUser: currentUser || undefined,
+            onNavigate: async (item) => {
+              if (item === 'home') {
+                window.history.pushState({}, '', '/home');
+                navigateTo('timeline');
+              } else if (item === 'explore') {
+                window.history.pushState({}, '', '/explore');
+                navigateTo('explore');
+              } else if (item === 'arcade') {
+                window.history.pushState({}, '', '/arcade');
+                navigateTo('arcade');
+              } else if (item === 'messages') {
+                window.history.pushState({}, '', '/messages');
+                navigateTo('messages');
+              } else if (item === 'notifications') {
+                window.history.pushState({}, '', '/notifications');
+                navigateTo('notifications');
+              } else if (item === 'bookmarks') {
+                window.history.pushState({}, '', '/bookmarks');
+                navigateTo('bookmarks');
+              } else if (item === 'settings') {
+                window.history.pushState({}, '', '/settings');
+                navigateTo('settings');
+              } else if (item === 'profile') {
+                if (!currentUser) {
+                  window.history.pushState({}, '', '/arcade');
+                  navigateTo('arcade');
+                  return;
+                }
+                window.history.pushState({}, '', `/profile/${currentUser.username}`);
+                navigateTo('profile', undefined, currentUser.username);
+              }
+            },
+            onSignIn: () => {
+              window.history.pushState({}, '', '/login');
+              navigateTo('login');
+            },
+            onSignUp: () => {
+              window.history.pushState({}, '', '/register');
+              navigateTo('register');
+            },
+          });
+
+          leftNavInstances.add(leftNav);
+
+          if (postId) {
+            // Conversation thread view
+            if (cachedContentComponent?.view === 'messages' && messagesPage) {
+              messagesPage = null;
+            }
+
+            const { createConversationView } = await import('./components/ConversationView.js');
+            conversationView = createConversationView({
+              conversationId: postId,
+              currentUser,
+              onBack: () => {
+                window.history.pushState({}, '', '/messages');
+                navigateTo('messages');
+              },
+            });
+
+            mainContainer.appendChild(leftNav.getElement());
+            mainContainer.appendChild(conversationView.getElement());
+          } else {
+            // Messages list view
+            if (cachedContentComponent?.view === 'messages') {
+              messagesPage = cachedContentComponent.component as MessagesPage;
+              cachedContentComponent = null;
+              messagesPage.refresh();
+            } else {
+              const { createMessagesPage } = await import('./components/MessagesPage.js');
+              messagesPage = createMessagesPage({
+                currentUser,
+                onNavigateToConversation: (convId) => {
+                  window.history.pushState({}, '', `/messages/${convId}`);
+                  navigateTo('messages', convId);
+                },
+              });
+            }
+
+            // Create Right Panel
+            const rightPanel = createRightPanel({
+              onSearch: (query) => {},
+              onFollowUser: (userId) => {},
+            });
+
+            mainContainer.appendChild(leftNav.getElement());
+            mainContainer.appendChild(messagesPage.getElement());
+            mainContainer.appendChild(rightPanel.getElement());
+          }
+
+          app.appendChild(mainContainer);
+          hidePageLoader();
+
+          setupMobileLeftNav(leftNav.getElement());
+
+          return;
+        }
+
         // Handle settings page (within 3-column layout)
         if (view === 'settings') {
           currentView = 'settings';
@@ -1986,6 +2190,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'bookmarks') {
                 window.history.pushState({}, '', '/bookmarks');
                 navigateTo('bookmarks');
+              } else if (item === 'messages') {
+                window.history.pushState({}, '', '/messages');
+                navigateTo('messages');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -2138,6 +2345,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = createLeftNav({
             activeItem: 'home',
             unreadCount: unreadNotificationCount,
+            unreadDmCount,
             currentUser: currentUser || undefined,
             onNavigate: async (item) => {
               console.log('Navigate to:', item);
@@ -2156,6 +2364,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'bookmarks') {
                 window.history.pushState({}, '', '/bookmarks');
                 navigateTo('bookmarks');
+              } else if (item === 'messages') {
+                window.history.pushState({}, '', '/messages');
+                navigateTo('messages');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -2294,7 +2505,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             | 'whitepaper'
             | 'admin'
             | 'settings'
-            | 'arcade',
+            | 'arcade'
+            | 'messages',
           postId,
           username,
           tag,

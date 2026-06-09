@@ -5,6 +5,7 @@ import { isModalOpen } from '../lib/modal-state';
 export interface LeftNavProps {
   activeItem?: string;
   unreadCount?: number;
+  unreadDmCount?: number;
   onNavigate?: (item: string) => void;
   onSignIn?: () => void;
   onSignUp?: () => void;
@@ -73,7 +74,8 @@ export class LeftNav {
         { id: 'home', label: t('nav.home'), icon: '🏠' },
         { id: 'explore', label: t('nav.explore'), icon: '🔍' },
         { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
-      ];
+        { id: 'messages', label: t('nav.messages'), icon: '💬' },
+      ] as const;
 
       items.forEach((item) => {
         const navItem = document.createElement('button');
@@ -89,6 +91,25 @@ export class LeftNav {
 
         navItem.appendChild(iconSpan);
         navItem.appendChild(labelSpan);
+
+        // DM unread badge for messages
+        if (item.id === 'messages' && this.props.unreadDmCount && this.props.unreadDmCount > 0) {
+          const badge = document.createElement('span');
+          badge.className = 'nav-dm-badge';
+          badge.style.cssText = `
+            margin-left: auto;
+            background: var(--accent);
+            color: #000;
+            font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 9999px;
+            min-width: 20px;
+            text-align: center;
+          `;
+          badge.textContent = this.props.unreadDmCount >= 99 ? '99+' : String(this.props.unreadDmCount);
+          navItem.appendChild(badge);
+        }
 
         navItems.appendChild(navItem);
       });
@@ -439,6 +460,40 @@ export class LeftNav {
     });
   }
 
+  public setUnreadDmCount(count: number): void {
+    this.props.unreadDmCount = count;
+
+    const dmItem = this.element.querySelector('.nav-item[data-nav-id="messages"]') as HTMLElement | null;
+    if (!dmItem) return;
+
+    const existingBadge = dmItem.querySelector('.nav-dm-badge') as HTMLElement | null;
+    if (count > 0) {
+      if (existingBadge) {
+        existingBadge.textContent = count >= 99 ? '99+' : formatCount(count);
+      } else {
+        const badge = document.createElement('span');
+        badge.className = 'nav-dm-badge';
+        badge.style.cssText = `
+          margin-left: auto;
+          background: var(--accent);
+          color: #000;
+          font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          font-size: 0.75rem;
+          padding: 2px 8px;
+          border-radius: 9999px;
+          min-width: 20px;
+          text-align: center;
+        `;
+        badge.textContent = count >= 99 ? '99+' : formatCount(count);
+        dmItem.appendChild(badge);
+      }
+    } else if (existingBadge) {
+      existingBadge.textContent = '';
+      existingBadge.style.display = 'none';
+      existingBadge.remove();
+    }
+  }
+
   public getActiveItem(): string {
     return this.activeItem;
   }
@@ -587,13 +642,34 @@ export function updateLeftNavUser(
         { id: 'home', label: t('nav.home'), icon: '🏠' },
         { id: 'explore', label: t('nav.explore'), icon: '🔍' },
         { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
-      ];
+        { id: 'messages', label: t('nav.messages'), icon: '💬' },
+      ] as const;
 
       items.forEach((item) => {
         const navItem = document.createElement('button');
         navItem.className = `nav-item ${leftNav.getActiveItem() === item.id ? 'nav-item--active' : ''}`;
         navItem.setAttribute('data-nav-id', item.id);
         navItem.innerHTML = `<span style="margin-right: 0.75rem;">${item.icon}</span><span>${item.label}</span>`;
+
+        // DM unread badge for messages
+        if (item.id === 'messages' && (leftNav.props.unreadDmCount ?? 0) > 0) {
+          const badge = document.createElement('span');
+          badge.className = 'nav-dm-badge';
+          badge.style.cssText = `
+            margin-left: auto;
+            background: var(--accent);
+            color: #000;
+            font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 9999px;
+            min-width: 20px;
+            text-align: center;
+          `;
+          const dmCount = leftNav.props.unreadDmCount ?? 0;
+          badge.textContent = dmCount >= 99 ? '99+' : String(dmCount);
+          navItem.appendChild(badge);
+        }
 
         navItem.addEventListener('click', () => {
           leftNav.setActiveItem(item.id);

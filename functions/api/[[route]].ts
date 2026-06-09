@@ -8065,6 +8065,379 @@ app.post('/api/notifications/read-all', requireAuth, async (c) => {
   }
 });
 
+// ─── Direct Messages ──────────────────────────────────────────────────────────
+
+// GET /api/dm/conversations - list conversations for current user
+app.get('/api/dm/conversations', requireAuth, async (c) => {
+  try {
+    const userId = c.get('user')?.id || '';
+
+    const convs = await c.env.DB.prepare(`
+      SELECT
+        c.id,
+        c.user_a_id,
+        c.user_b_id,
+        c.last_message_id,
+        c.last_message_content,
+        c.last_message_sender_id,
+        c.last_message_created_at,
+        c.user_a_read_at,
+        c.user_b_read_at,
+        c.updated_at,
+        u.id as other_user_id,
+        u.username as other_username,
+        u.display_name as other_display_name,
+        u.avatar_key as other_avatar_key,
+        CASE
+          WHEN c.last_message_sender_id != ? THEN 1
+          WHEN c.last_message_created_at IS NULL THEN 0
+          WHEN c.user_a_id = ? AND (c.user_b_read_at IS NULL OR c.last_message_created_at > c.user_b_read_at) THEN 1
+          WHEN c.user_b_id = ? AND (c.user_a_read_at IS NULL OR c.last_message_created_at > c.user_a_read_at) THEN 1
+          ELSE 0
+        END as unread
+      FROM dm_conversations c
+      JOIN users u ON u.id = CASE WHEN c.user_a_id = ? THEN c.user_b_id ELSE c.user_a_id END
+      WHERE c.user_a_id = ? OR c.user_b_id = ?
+      ORDER BY c.updated_at DESC
+    `)
+      .bind(userId, userId, userId, userId, userId, userId)
+      .all();
+
+    const conversations = (convs.results || []).map((row: Record<string, unknown>) => ({
+      id: row.id,
+      other_user: {
+        id: row.other_user_id,
+        username: row.other_username,
+        display_name: row.other_display_name,
+        avatar_key: row.other_avatar_key,
+      },
+      last_message: row.last_message_id
+        ? {
+            id: row.last_message_id,
+            content: row.last_message_content,
+            sender_id: row.last_message_sender_id,
+            created_at: row.last_message_created_at,
+            is_mine: row.last_message_sender_id === userId,
+          }
+        : null,
+      unread: row.unread === 1,
+      updated_at: row.updated_at,
+    }));
+
+    return c.json({ conversations });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('DM conversations error:', error);
+    return c.json({ error: 'Failed to fetch conversations', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// POST /api/dm/conversations - create or get existing conversation with a user
+app.post('/api/dm/conversations', requireAuth, async (c) => {
+  try {
+    const userId = c.get('user')?.id || '';
+    const { userId: otherUserId } = (await c.req.json()) as { userId: string };
+
+    if (!otherUserId) {
+      return c.json({ error: 'userId is required' }, 400);
+    }
+    if (otherUserId === userId) {
+      return c.json({ error: 'Cannot create conversation with yourself' }, 400);
+    }
+
+    // Enforce ordering: smaller id first
+    const [userAId, userBId] = userId < otherUserId ? [userId, otherUserId] : [otherUserId, userId];
+
+    // Check if conversation already exists
+    const existing = await c.env.DB.prepare('SELECT id FROM dm_conversations WHERE user_a_id = ? AND user_b_id = ?')
+      .bind(userAId, userBId)
+      .first();
+
+    if (existing) {
+      // Return the other user info
+      const otherUser = await c.env.DB.prepare('SELECT id, username, display_name, avatar_key FROM users WHERE id = ?')
+        .bind(otherUserId)
+        .first();
+      return c.json({
+        id: existing.id,
+        other_user: otherUser,
+      });
+    }
+
+    // Create new conversation
+    const id = nanoid();
+    const now = new Date().toISOString();
+
+    await c.env.DB.prepare(
+      'INSERT INTO dm_conversations (id, user_a_id, user_b_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
+    )
+      .bind(id, userAId, userBId, now, now)
+      .run();
+
+    const otherUser = await c.env.DB.prepare('SELECT id, username, display_name, avatar_key FROM users WHERE id = ?')
+      .bind(otherUserId)
+      .first();
+
+    return c.json({
+      id,
+      other_user: otherUser,
+    });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('DM create conversation error:', error);
+    return c.json({ error: 'Failed to create conversation', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// GET /api/dm/conversations/:id - get conversation details
+app.get('/api/dm/conversations/:id', requireAuth, async (c) => {
+  try {
+    const userId = c.get('user')?.id || '';
+    const convId = c.req.param('id');
+
+    const conv = await c.env.DB.prepare(`
+      SELECT
+        c.id, c.user_a_id, c.user_b_id,
+        u.id as other_user_id, u.username as other_username,
+        u.display_name as other_display_name, u.avatar_key as other_avatar_key
+      FROM dm_conversations c
+      JOIN users u ON u.id = CASE WHEN c.user_a_id = ? THEN c.user_b_id ELSE c.user_a_id END
+      WHERE c.id = ? AND (c.user_a_id = ? OR c.user_b_id = ?)
+    `)
+      .bind(userId, convId, userId, userId)
+      .first();
+
+    if (!conv) {
+      return c.json({ error: 'Conversation not found' }, 404);
+    }
+
+    return c.json({
+      id: conv.id,
+      other_user: {
+        id: conv.other_user_id,
+        username: conv.other_username,
+        display_name: conv.other_display_name,
+        avatar_key: conv.other_avatar_key,
+      },
+    });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('DM get conversation error:', error);
+    return c.json({ error: 'Failed to fetch conversation', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// GET /api/dm/conversations/:id/messages - get messages (cursor-based)
+app.get('/api/dm/conversations/:id/messages', requireAuth, async (c) => {
+  try {
+    const userId = c.get('user')?.id || '';
+    const convId = c.req.param('id');
+    const cursor = c.req.query('cursor');
+    const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
+
+    // Verify user is participant
+    const conv = await c.env.DB.prepare(
+      'SELECT id FROM dm_conversations WHERE id = ? AND (user_a_id = ? OR user_b_id = ?)',
+    )
+      .bind(convId, userId, userId)
+      .first();
+
+    if (!conv) {
+      return c.json({ error: 'Conversation not found' }, 404);
+    }
+
+    let messages: { results?: Array<Record<string, unknown>> };
+    if (cursor) {
+      messages = await c.env.DB.prepare(`
+        SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at,
+               u.username as sender_username, u.display_name as sender_display_name
+        FROM dm_messages m
+        JOIN users u ON m.sender_id = u.id
+        WHERE m.conversation_id = ? AND m.created_at < ?
+        ORDER BY m.created_at DESC
+        LIMIT ?
+      `)
+        .bind(convId, cursor, limit)
+        .all();
+    } else {
+      messages = await c.env.DB.prepare(`
+        SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at,
+               u.username as sender_username, u.display_name as sender_display_name
+        FROM dm_messages m
+        JOIN users u ON m.sender_id = u.id
+        WHERE m.conversation_id = ?
+        ORDER BY m.created_at DESC
+        LIMIT ?
+      `)
+        .bind(convId, limit)
+        .all();
+    }
+
+    const rows = (messages.results || []) as Array<Record<string, unknown>>;
+    const nextCursor = rows.length === limit ? (rows[rows.length - 1].created_at as string) : null;
+
+    return c.json({
+      messages: rows.map((row) => ({
+        id: row.id,
+        conversation_id: row.conversation_id,
+        sender_id: row.sender_id,
+        content: row.content,
+        created_at: row.created_at,
+        is_mine: row.sender_id === userId,
+        sender: {
+          username: row.sender_username,
+          display_name: row.sender_display_name,
+        },
+      })),
+      next_cursor: nextCursor,
+    });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('DM get messages error:', error);
+    return c.json({ error: 'Failed to fetch messages', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// POST /api/dm/conversations/:id/messages - send a message
+app.post('/api/dm/conversations/:id/messages', requireAuth, async (c) => {
+  try {
+    const senderId = c.get('user')?.id || '';
+    const convId = c.req.param('id');
+    const { content } = (await c.req.json()) as { content?: string };
+
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+      return c.json({ error: 'Content is required' }, 400);
+    }
+
+    const trimmed = content.trim();
+    if (trimmed.length > 200) {
+      return c.json({ error: 'Message must be 200 characters or less' }, 400);
+    }
+
+    // Verify user is participant
+    const conv = (await c.env.DB.prepare(
+      'SELECT id, user_a_id, user_b_id FROM dm_conversations WHERE id = ? AND (user_a_id = ? OR user_b_id = ?)',
+    )
+      .bind(convId, senderId, senderId)
+      .first()) as { id: string; user_a_id: string; user_b_id: string } | null;
+
+    if (!conv) {
+      return c.json({ error: 'Conversation not found' }, 404);
+    }
+
+    const msgId = nanoid();
+    const now = new Date().toISOString();
+
+    // Insert message
+    await c.env.DB.prepare(
+      'INSERT INTO dm_messages (id, conversation_id, sender_id, content, created_at) VALUES (?, ?, ?, ?, ?)',
+    )
+      .bind(msgId, convId, senderId, trimmed, now)
+      .run();
+
+    // Update conversation last_message and updated_at
+    await c.env.DB.prepare(`
+      UPDATE dm_conversations
+      SET last_message_id = ?, last_message_content = ?, last_message_sender_id = ?,
+          last_message_created_at = ?, updated_at = ?
+      WHERE id = ?
+    `)
+      .bind(msgId, trimmed, senderId, now, now, convId)
+      .run();
+
+    // Send push notification to the other participant
+    const otherUserId = conv.user_a_id === senderId ? conv.user_b_id : conv.user_a_id;
+    const sender = c.get('user');
+    const senderDisplayName = sender?.display_name || sender?.username || 'Someone';
+
+    await sendPushToAll(
+      c.env as {
+        DB: D1Database;
+        VAPID_PUBLIC_KEY?: string;
+        VAPID_PRIVATE_KEY?: string;
+        FCM_SERVER_KEY?: string;
+        NOTIFICATION_STREAM?: DurableObjectNamespace;
+      },
+      otherUserId,
+      'dm',
+      sender?.username,
+      senderDisplayName,
+      trimmed,
+      convId,
+    );
+
+    return c.json({
+      id: msgId,
+      conversation_id: convId,
+      sender_id: senderId,
+      content: trimmed,
+      created_at: now,
+      is_mine: true,
+    });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('DM send message error:', error);
+    return c.json({ error: 'Failed to send message', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// POST /api/dm/conversations/:id/read - mark conversation as read
+app.post('/api/dm/conversations/:id/read', requireAuth, async (c) => {
+  try {
+    const userId = c.get('user')?.id || '';
+    const convId = c.req.param('id');
+
+    const conv = (await c.env.DB.prepare(
+      'SELECT id, user_a_id, user_b_id FROM dm_conversations WHERE id = ? AND (user_a_id = ? OR user_b_id = ?)',
+    )
+      .bind(convId, userId, userId)
+      .first()) as { id: string; user_a_id: string; user_b_id: string } | null;
+
+    if (!conv) {
+      return c.json({ error: 'Conversation not found' }, 404);
+    }
+
+    const now = new Date().toISOString();
+    if (conv.user_a_id === userId) {
+      await c.env.DB.prepare('UPDATE dm_conversations SET user_a_read_at = ? WHERE id = ?').bind(now, convId).run();
+    } else {
+      await c.env.DB.prepare('UPDATE dm_conversations SET user_b_read_at = ? WHERE id = ?').bind(now, convId).run();
+    }
+
+    return c.json({ success: true });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('DM mark read error:', error);
+    return c.json({ error: 'Failed to mark as read', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// GET /api/dm/unread-count - get total unread DM count
+app.get('/api/dm/unread-count', requireAuth, async (c) => {
+  try {
+    const userId = c.get('user')?.id || '';
+
+    const result = (await c.env.DB.prepare(`
+      SELECT COUNT(*) as count FROM dm_conversations
+      WHERE (user_a_id = ? OR user_b_id = ?)
+        AND last_message_created_at IS NOT NULL
+        AND last_message_sender_id != ?
+        AND (
+          (user_a_id = ? AND (user_b_read_at IS NULL OR last_message_created_at > user_b_read_at))
+          OR (user_b_id = ? AND (user_a_read_at IS NULL OR last_message_created_at > user_a_read_at))
+        )
+    `)
+      .bind(userId, userId, userId, userId, userId)
+      .first()) as { count: number };
+
+    return c.json({ unread_count: result?.count || 0 });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('DM unread count error:', error);
+    return c.json({ error: 'Failed to get unread count', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
 // POST /api/test/reset - reset database for testing (only allowed in test environment)
 app.post('/api/test/reset', async (c) => {
   // Allow reset if we're using the test database binding or BASE_URL is localhost
