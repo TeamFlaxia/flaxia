@@ -388,22 +388,21 @@ opencode "src/main.ts の役割を解説して"
 
 ### 使用するモデルの変更
 
-opencode はデフォルトのモデル以外にも様々なモデルを選択できます。
-Flaxia の開発では **DeepSeek V5 Flash (Free)** の使用をおすすめします（無料で高速、コード生成に優れる）。
+対話モード起動中に **`/model` コマンド** を使うと、使用する AI モデルを切り替えられます。
 
-```bash
-# モデルを指定して起動（対話モード）
-opencode --model deepseek-v4-flash-free
+```
+> /model
+使用可能なモデル一覧:
+- deepseek-v4-flash-free
+- claude-sonnet-4-20250514
+- gemini-2.5-flash-preview-04-2025
+...
 
-# または環境変数でデフォルトモデルを設定
-export OPENCODE_MODEL=deepseek-v4-flash-free
-opencode
-
-# 使用可能なモデルを確認
-opencode --list-models
+> /model deepseek-v4-flash-free
+モデルを deepseek-v4-flash-free に変更しました
 ```
 
-**推奨する理由**:
+Flaxia の開発では **DeepSeek V5 Flash Free** の使用をおすすめします（無料で高速、コード生成に優れる）。
 
 | 項目 | DeepSeek V5 Flash Free |
 |------|----------------------|
