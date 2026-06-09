@@ -238,6 +238,7 @@ gh auth login
 | **[Cloudflare Workers](https://marketplace.visualstudio.com/items?itemName=cloudflare.cloudflare-workers)** | Wrangler 統合 | `wrangler.toml` のシンタックスハイライト、デプロイ操作 |
 | **[Error Lens](https://marketplace.visualstudio.com/items?itemName=usernamehw.errorlens)** | インラインエラー表示 | 編集中にエラーをその場で確認可能 |
 | **[Pretty TypeScript Errors](https://marketplace.visualstudio.com/items?itemName=yoavbls.pretty-ts-errors)** | 型エラーを見やすく | TypeScript の複雑な型エラーを人間可読に |
+| **[Japanese Language Pack](https://marketplace.visualstudio.com/items?itemName=MS-CEINTL.vscode-language-pack-ja)** | UI の日本語化 | VS Code のメニューや設定を日本語に。Ctrl+Shift+P → `Configure Display Language` で切り替え |
 
 **VS Code 設定 (`settings.json`)** の推奨設定:
 
