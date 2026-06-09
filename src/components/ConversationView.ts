@@ -1,11 +1,16 @@
 import { t } from '../lib/i18n.js';
+import { showToast } from '../lib/toast.js';
 
 export interface Message {
   id: string;
   conversation_id: string;
   sender_id: string;
   content: string;
+  gif_key?: string | null;
+  payload_key?: string | null;
+  swf_key?: string | null;
   created_at: string;
+  edited_at?: string | null;
   is_mine: boolean;
   sender: {
     username: string;
@@ -29,6 +34,9 @@ export class ConversationView {
   private nextCursor: string | null = null;
   private loadingMore = false;
   private hasMore = true;
+
+  private selectedFile: File | null = null;
+  private editingMsgId: string | null = null;
 
   constructor(props: ConversationViewProps) {
     this.props = props;
@@ -78,6 +86,23 @@ export class ConversationView {
     const inputArea = document.createElement('div');
     inputArea.className = 'conv-input-area';
 
+    const fileBtn = document.createElement('button');
+    fileBtn.id = 'conv-file-btn';
+    fileBtn.className = 'conv-file-btn';
+    fileBtn.textContent = '📎';
+    fileBtn.title = t('composer.attach_file');
+    fileBtn.addEventListener('click', () => fileInput.click());
+
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.id = 'conv-file-input';
+    fileInput.style.display = 'none';
+    fileInput.accept = '.gif,.jpg,.jpeg,.png,.webp,.mp3,.wav,.ogg,.m4a,.webm,.zip,.swf,.jsdos';
+    fileInput.addEventListener('change', (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) this.handleFileSelection(file);
+    });
+
     const input = document.createElement('input');
     input.type = 'text';
     input.id = 'conv-message-input';
@@ -101,9 +126,26 @@ export class ConversationView {
     charCount.id = 'conv-char-count';
     charCount.className = 'conv-char-count';
 
+    // File preview
+    const filePreview = document.createElement('div');
+    filePreview.id = 'conv-file-preview';
+    filePreview.className = 'conv-file-preview';
+    filePreview.style.display = 'none';
+    const filePreviewInfo = document.createElement('span');
+    filePreviewInfo.className = 'conv-file-preview-info';
+    const fileRemoveBtn = document.createElement('button');
+    fileRemoveBtn.className = 'conv-file-preview-remove';
+    fileRemoveBtn.textContent = '✕';
+    fileRemoveBtn.addEventListener('click', () => this.clearFileSelection());
+    filePreview.appendChild(filePreviewInfo);
+    filePreview.appendChild(fileRemoveBtn);
+
+    inputArea.appendChild(fileBtn);
+    inputArea.appendChild(fileInput);
     inputArea.appendChild(input);
     inputArea.appendChild(sendBtn);
     inputArea.appendChild(charCount);
+    inputArea.appendChild(filePreview);
 
     container.appendChild(header);
     container.appendChild(messagesArea);
@@ -118,6 +160,29 @@ export class ConversationView {
     if (input && count) {
       count.textContent = `${input.value.length}/200`;
     }
+  }
+
+  private handleFileSelection(file: File): void {
+    const maxSize = 25 * 1024 * 1024;
+    if (file.size > maxSize) {
+      showToast(t('composer.error_file_too_large'), true);
+      return;
+    }
+    this.selectedFile = file;
+    const preview = this.element.querySelector('#conv-file-preview') as HTMLElement;
+    const info = this.element.querySelector('.conv-file-preview-info') as HTMLElement;
+    if (preview && info) {
+      info.textContent = file.name;
+      preview.style.display = 'flex';
+    }
+  }
+
+  private clearFileSelection(): void {
+    this.selectedFile = null;
+    const preview = this.element.querySelector('#conv-file-preview') as HTMLElement;
+    const input = this.element.querySelector('#conv-file-input') as HTMLInputElement;
+    if (preview) preview.style.display = 'none';
+    if (input) input.value = '';
   }
 
   private async loadConversation(): Promise<void> {
@@ -263,22 +328,124 @@ export class ConversationView {
     await this.fetchMessages(false);
   }
 
+  private startEdit(msg: Message): void {
+    this.editingMsgId = msg.id;
+    const input = this.element.querySelector('#conv-message-input') as HTMLInputElement;
+    const sendBtn = this.element.querySelector('#conv-send-btn') as HTMLButtonElement;
+    if (input) {
+      input.value = msg.content;
+      input.focus();
+      this.updateCharCount();
+    }
+    if (sendBtn) sendBtn.textContent = t('messages.save');
+  }
+
+  private cancelEdit(): void {
+    this.editingMsgId = null;
+    const input = this.element.querySelector('#conv-message-input') as HTMLInputElement;
+    const sendBtn = this.element.querySelector('#conv-send-btn') as HTMLButtonElement;
+    if (input) input.value = '';
+    if (sendBtn) sendBtn.textContent = t('messages.send');
+    this.updateCharCount();
+  }
+
   private async sendMessage(): Promise<void> {
     const input = this.element.querySelector('#conv-message-input') as HTMLInputElement;
     const sendBtn = this.element.querySelector('#conv-send-btn') as HTMLButtonElement;
     const content = input?.value?.trim();
-    if (!content || this.sending) return;
+    if ((!content && !this.selectedFile) || this.sending) return;
 
     this.sending = true;
     sendBtn.disabled = true;
     sendBtn.style.opacity = '0.5';
 
     try {
+      if (this.editingMsgId) {
+        // Edit existing message
+        const res = await fetch(`/api/dm/conversations/${this.props.conversationId}/messages/${this.editingMsgId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ content }),
+        });
+
+        if (res.ok) {
+          const updated = (await res.json()) as { id: string; content: string; edited_at: string };
+          const idx = this.messages.findIndex((m) => m.id === updated.id);
+          if (idx !== -1) {
+            this.messages[idx].content = updated.content;
+            this.messages[idx].edited_at = updated.edited_at;
+          }
+          this.renderMessages();
+          this.cancelEdit();
+        } else {
+          const err = (await res.json()) as { error?: string };
+          showToast(err.error || 'Edit failed', true);
+        }
+        this.sending = false;
+        sendBtn.disabled = false;
+        sendBtn.style.opacity = '1';
+        return;
+      }
+
+      // Send new message
+      let gifKey: string | undefined;
+      let payloadKey: string | undefined;
+      let swfKey: string | undefined;
+
+      // Upload file if selected
+      if (this.selectedFile) {
+        const prepareRes = await fetch(`/api/dm/conversations/${this.props.conversationId}/messages/prepare`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ filename: this.selectedFile.name }),
+        });
+
+        if (!prepareRes.ok) {
+          const err = (await prepareRes.json()) as { error?: string };
+          showToast(err.error || 'Failed to prepare upload', true);
+          throw new Error('Prepare failed');
+        }
+
+        const prepareData = (await prepareRes.json()) as {
+          msgId: string;
+          uploadUrl: string;
+          storageKey: string;
+          gifKey?: string;
+          payloadKey?: string;
+          swfKey?: string;
+        };
+
+        gifKey = prepareData.gifKey;
+        payloadKey = prepareData.payloadKey;
+        swfKey = prepareData.swfKey;
+
+        // Upload file
+        const uploadRes = await fetch(prepareData.uploadUrl, {
+          method: 'PUT',
+          body: this.selectedFile,
+          credentials: 'include',
+        });
+
+        if (!uploadRes.ok) {
+          showToast('Failed to upload file', true);
+          throw new Error('Upload failed');
+        }
+      }
+
+      // Send message
+      const body: Record<string, unknown> = {};
+      if (content) body.content = content;
+      if (gifKey) body.gifKey = gifKey;
+      if (payloadKey) body.payloadKey = payloadKey;
+      if (swfKey) body.swfKey = swfKey;
+
       const res = await fetch(`/api/dm/conversations/${this.props.conversationId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ content }),
+        body: JSON.stringify(body),
       });
 
       if (res.ok) {
@@ -287,10 +454,12 @@ export class ConversationView {
         this.renderMessages();
         this.scrollToBottom();
         input.value = '';
+        this.clearFileSelection();
         this.updateCharCount();
       } else {
         const err = (await res.json()) as { error?: string };
         console.error('Send failed:', err.error);
+        showToast(err.error || 'Send failed', true);
       }
     } catch {
       console.error('Send failed');
@@ -335,18 +504,134 @@ export class ConversationView {
       bubble.setAttribute('data-msg-id', msg.id);
       bubble.className = `conv-bubble ${msg.is_mine ? 'conv-bubble-mine' : 'conv-bubble-other'}`;
 
-      const text = document.createElement('div');
-      text.className = `conv-bubble-text ${msg.is_mine ? 'mine' : 'other'}`;
-      text.textContent = msg.content;
+      // Attachment rendering (before text for visual consistency)
+      if (msg.gif_key || msg.payload_key || msg.swf_key) {
+        const attachment = document.createElement('div');
+        attachment.className = 'conv-bubble-attachment';
+        this.renderAttachment(attachment, msg);
+        bubble.appendChild(attachment);
+      }
 
-      const time = document.createElement('div');
+      // Text content
+      if (msg.content) {
+        const text = document.createElement('div');
+        text.className = `conv-bubble-text ${msg.is_mine ? 'mine' : 'other'}`;
+        text.textContent = msg.content;
+        bubble.appendChild(text);
+      }
+
+      // Time + edited indicator + edit button
+      const meta = document.createElement('div');
+      meta.className = 'conv-bubble-meta';
+
+      const time = document.createElement('span');
       time.className = 'conv-bubble-time';
       time.textContent = this.formatTime(msg.created_at, idx, msg);
 
-      bubble.appendChild(text);
-      bubble.appendChild(time);
+      meta.appendChild(time);
+
+      if (msg.edited_at) {
+        const edited = document.createElement('span');
+        edited.className = 'conv-bubble-edited';
+        edited.textContent = t('messages.edited');
+        meta.appendChild(edited);
+      }
+
+      if (msg.is_mine) {
+        const editBtn = document.createElement('button');
+        editBtn.className = 'conv-bubble-edit-btn';
+        editBtn.textContent = t('messages.edit');
+        editBtn.addEventListener('click', () => this.startEdit(msg));
+        meta.appendChild(editBtn);
+      }
+
+      bubble.appendChild(meta);
       area.appendChild(bubble);
     });
+  }
+
+  private renderAttachment(container: HTMLElement, msg: Message): void {
+    const gifKey = msg.gif_key;
+    const payloadKey = msg.payload_key;
+    const swfKey = msg.swf_key;
+
+    if (gifKey && gifKey.startsWith('dm/audio/')) {
+      // Audio player
+      const audio = document.createElement('audio');
+      audio.className = 'conv-audio-player';
+      audio.controls = true;
+      audio.preload = 'metadata';
+      audio.style.width = '100%';
+      audio.style.maxWidth = '300px';
+      audio.style.borderRadius = '8px';
+      const audioUrl = `/api/audio/${gifKey}`;
+      audio.src = audioUrl;
+      container.appendChild(audio);
+    } else if (gifKey && gifKey.startsWith('dm/gif/')) {
+      // Image
+      const img = document.createElement('img');
+      img.className = 'conv-image-attachment';
+      img.loading = 'lazy';
+      img.style.cssText = `
+        max-width: 100%;
+        max-height: 300px;
+        border-radius: 12px;
+        cursor: pointer;
+        display: block;
+      `;
+      img.src = `/api/images/${gifKey}`;
+      img.addEventListener('click', () => {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+          position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+          background: rgba(0,0,0,0.85); display: flex;
+          align-items: center; justify-content: center; z-index: 9999;
+          cursor: pointer;
+        `;
+        const fullImg = document.createElement('img');
+        fullImg.src = img.src;
+        fullImg.style.cssText = `
+          max-width: 90%; max-height: 90%; object-fit: contain;
+          border-radius: 8px;
+        `;
+        overlay.appendChild(fullImg);
+        overlay.addEventListener('click', () => overlay.remove());
+        document.body.appendChild(overlay);
+      });
+      container.appendChild(img);
+    } else if (payloadKey && payloadKey.startsWith('dm/zip/')) {
+      // ZIP file - show download/execute button
+      const zipBtn = document.createElement('div');
+      zipBtn.className = 'conv-zip-attachment';
+      zipBtn.style.cssText = `
+        display: flex; align-items: center; gap: 8px;
+        padding: 10px 14px; background: var(--bg-secondary);
+        border-radius: 12px; cursor: pointer;
+        color: var(--text-primary); font-size: 14px;
+        max-width: 300px;
+      `;
+      zipBtn.textContent = '📦 ' + t('messages.open_zip');
+      zipBtn.addEventListener('click', () => {
+        window.open(`/api/zip/${payloadKey}`, '_blank');
+      });
+      container.appendChild(zipBtn);
+    } else if (swfKey && swfKey.startsWith('dm/swf/')) {
+      // SWF file - show play button
+      const swfBtn = document.createElement('div');
+      swfBtn.className = 'conv-swf-attachment';
+      swfBtn.style.cssText = `
+        display: flex; align-items: center; gap: 8px;
+        padding: 10px 14px; background: var(--bg-secondary);
+        border-radius: 12px; cursor: pointer;
+        color: var(--text-primary); font-size: 14px;
+        max-width: 300px;
+      `;
+      swfBtn.textContent = '⚡ ' + t('messages.play_flash');
+      swfBtn.addEventListener('click', () => {
+        window.open(`/api/swf/${swfKey}`, '_blank');
+      });
+      container.appendChild(swfBtn);
+    }
   }
 
   private formatTime(createdAt: string, _idx: number, _msg: Message): string {

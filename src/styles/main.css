@@ -4134,6 +4134,125 @@ html {
   padding: 0 4px;
 }
 
+.conv-bubble-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  padding: 0 4px;
+}
+
+.conv-bubble-edited {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.conv-bubble-edit-btn {
+  background: none;
+  border: none;
+  font-size: 10px;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  opacity: 0.6;
+}
+
+.conv-bubble-edit-btn:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+.conv-bubble-attachment {
+  margin-bottom: 6px;
+}
+
+.conv-file-btn {
+  background: none;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: background 0.2s;
+}
+
+.conv-file-btn:hover {
+  background: var(--bg-hover, rgba(128, 128, 128, 0.1));
+}
+
+.conv-file-preview {
+  position: absolute;
+  bottom: 100%;
+  left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px 8px 0 0;
+  font-size: 12px;
+  color: var(--text-primary);
+  max-width: 200px;
+}
+
+.conv-file-preview-info {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conv-file-preview-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.conv-file-preview-remove:hover {
+  color: var(--danger);
+}
+
+.conv-image-attachment {
+  max-width: 100%;
+  max-height: 300px;
+  border-radius: 12px;
+  cursor: pointer;
+  display: block;
+}
+
+.conv-audio-player {
+  width: 100%;
+  max-width: 300px;
+  border-radius: 8px;
+}
+
+.conv-zip-attachment,
+.conv-swf-attachment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 14px;
+  max-width: 300px;
+  transition: background 0.2s;
+}
+
+.conv-zip-attachment:hover,
+.conv-swf-attachment:hover {
+  background: var(--bg-hover, rgba(128, 128, 128, 0.15));
+}
+
 /* Mobile Responsive for Messages & Conversation */
 @media (max-width: 768px) {
   .messages-page-header {
@@ -4212,6 +4331,19 @@ html {
     width: 30px;
     height: 30px;
     font-size: 12px;
+  }
+
+  .conv-file-btn {
+    font-size: 1rem;
+    padding: 2px 4px;
+  }
+
+  .conv-image-attachment {
+    max-height: 200px;
+  }
+
+  .conv-audio-player {
+    max-width: 100%;
   }
 }
 

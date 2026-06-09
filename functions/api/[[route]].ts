@@ -8251,6 +8251,7 @@ app.get('/api/dm/conversations/:id/messages', requireAuth, async (c) => {
     if (cursor) {
       messages = await c.env.DB.prepare(`
         SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at,
+               m.gif_key, m.payload_key, m.swf_key, m.edited_at,
                u.username as sender_username, u.display_name as sender_display_name
         FROM dm_messages m
         JOIN users u ON m.sender_id = u.id
@@ -8263,6 +8264,7 @@ app.get('/api/dm/conversations/:id/messages', requireAuth, async (c) => {
     } else {
       messages = await c.env.DB.prepare(`
         SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at,
+               m.gif_key, m.payload_key, m.swf_key, m.edited_at,
                u.username as sender_username, u.display_name as sender_display_name
         FROM dm_messages m
         JOIN users u ON m.sender_id = u.id
@@ -8283,7 +8285,11 @@ app.get('/api/dm/conversations/:id/messages', requireAuth, async (c) => {
         conversation_id: row.conversation_id,
         sender_id: row.sender_id,
         content: row.content,
+        gif_key: row.gif_key || null,
+        payload_key: row.payload_key || null,
+        swf_key: row.swf_key || null,
         created_at: row.created_at,
+        edited_at: row.edited_at || null,
         is_mine: row.sender_id === userId,
         sender: {
           username: row.sender_username,
@@ -8304,13 +8310,18 @@ app.post('/api/dm/conversations/:id/messages', requireAuth, async (c) => {
   try {
     const senderId = c.get('user')?.id || '';
     const convId = c.req.param('id');
-    const { content } = (await c.req.json()) as { content?: string };
+    const { content, gifKey, payloadKey, swfKey } = (await c.req.json()) as {
+      content?: string;
+      gifKey?: string;
+      payloadKey?: string;
+      swfKey?: string;
+    };
 
-    if (!content || typeof content !== 'string' || content.trim().length === 0) {
-      return c.json({ error: 'Content is required' }, 400);
+    const trimmed = content?.trim() || '';
+    if (!trimmed && !gifKey && !payloadKey && !swfKey) {
+      return c.json({ error: 'Content or file attachment is required' }, 400);
     }
 
-    const trimmed = content.trim();
     if (trimmed.length > 200) {
       return c.json({ error: 'Message must be 200 characters or less' }, 400);
     }
@@ -8329,21 +8340,22 @@ app.post('/api/dm/conversations/:id/messages', requireAuth, async (c) => {
     const msgId = nanoid();
     const now = new Date().toISOString();
 
-    // Insert message
+    // Insert message with optional attachment keys
     await c.env.DB.prepare(
-      'INSERT INTO dm_messages (id, conversation_id, sender_id, content, created_at) VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO dm_messages (id, conversation_id, sender_id, content, created_at, gif_key, payload_key, swf_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     )
-      .bind(msgId, convId, senderId, trimmed, now)
+      .bind(msgId, convId, senderId, trimmed, now, gifKey || null, payloadKey || null, swfKey || null)
       .run();
 
     // Update conversation last_message and updated_at
+    const displayContent = trimmed || (gifKey ? '[Image]' : payloadKey ? '[File]' : swfKey ? '[Flash]' : '');
     await c.env.DB.prepare(`
       UPDATE dm_conversations
       SET last_message_id = ?, last_message_content = ?, last_message_sender_id = ?,
           last_message_created_at = ?, updated_at = ?
       WHERE id = ?
     `)
-      .bind(msgId, trimmed, senderId, now, now, convId)
+      .bind(msgId, displayContent, senderId, now, now, convId)
       .run();
 
     // Send push notification to the other participant
@@ -8363,7 +8375,7 @@ app.post('/api/dm/conversations/:id/messages', requireAuth, async (c) => {
       'dm',
       sender?.username,
       senderDisplayName,
-      trimmed,
+      displayContent,
       convId,
     );
 
@@ -8372,7 +8384,11 @@ app.post('/api/dm/conversations/:id/messages', requireAuth, async (c) => {
       conversation_id: convId,
       sender_id: senderId,
       content: trimmed,
+      gif_key: gifKey || null,
+      payload_key: payloadKey || null,
+      swf_key: swfKey || null,
       created_at: now,
+      edited_at: null,
       is_mine: true,
     });
   } catch (error: unknown) {
@@ -8410,6 +8426,217 @@ app.post('/api/dm/conversations/:id/read', requireAuth, async (c) => {
     const err = error as { message?: string };
     console.error('DM mark read error:', error);
     return c.json({ error: 'Failed to mark as read', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// POST /api/dm/conversations/:id/messages/prepare - prepare DM message with file attachment
+app.post('/api/dm/conversations/:id/messages/prepare', requireAuth, async (c) => {
+  try {
+    const senderId = c.get('user')?.id || '';
+    const convId = c.req.param('id');
+    const { filename } = (await c.req.json()) as { filename?: string };
+
+    if (!filename) {
+      return c.json({ error: 'Missing filename' }, 400);
+    }
+
+    // Verify user is participant
+    const conv = (await c.env.DB.prepare(
+      'SELECT id FROM dm_conversations WHERE id = ? AND (user_a_id = ? OR user_b_id = ?)',
+    )
+      .bind(convId, senderId, senderId)
+      .first()) as { id: string } | null;
+
+    if (!conv) {
+      return c.json({ error: 'Conversation not found' }, 404);
+    }
+
+    const name = filename.toLowerCase();
+    const ext = name.match(/\.(\w+)$/)?.[1];
+    const msgId = nanoid();
+
+    let storageKey: string;
+    let responseType: 'gif' | 'zip' | 'swf';
+
+    if (name.endsWith('.swf') || ext === 'swf') {
+      storageKey = `dm/swf/${msgId}.swf`;
+      responseType = 'swf';
+    } else if (name.endsWith('.zip') || name.endsWith('.jsdos') || name.endsWith('.dosz')) {
+      storageKey = `dm/zip/${msgId}.zip`;
+      responseType = 'zip';
+    } else if (ext && ['mp3', 'wav', 'ogg', 'm4a', 'webm'].includes(ext)) {
+      const extMap: Record<string, string> = { mp3: '.mp3', wav: '.wav', ogg: '.ogg', m4a: '.m4a', webm: '.webm' };
+      storageKey = `dm/audio/${msgId}${extMap[ext]}`;
+      responseType = 'gif';
+    } else if (ext && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) {
+      const extMap: Record<string, string> = {
+        png: '.png',
+        jpg: '.jpg',
+        jpeg: '.jpg',
+        gif: '.gif',
+        webp: '.webp',
+        svg: '.svg',
+        bmp: '.bmp',
+        ico: '.ico',
+      };
+      storageKey = `dm/gif/${msgId}${extMap[ext]}`;
+      responseType = 'gif';
+    } else {
+      return c.json({ error: 'Unsupported file type' }, 400);
+    }
+
+    // Insert a pending marker message that we'll update on final send
+    // We use a placeholder to reserve the storage key
+    const now = new Date().toISOString();
+    await c.env.DB.prepare(
+      'INSERT INTO dm_messages (id, conversation_id, sender_id, content, created_at) VALUES (?, ?, ?, ?, ?)',
+    )
+      .bind(msgId, convId, senderId, '', now)
+      .run();
+
+    const origin = new URL(c.req.url).origin;
+    const uploadUrl = `${origin}/api/dm/upload/${storageKey}`;
+    const resp: Record<string, unknown> = { msgId, uploadUrl, storageKey };
+
+    if (responseType === 'zip') {
+      resp.payloadKey = storageKey;
+    } else if (responseType === 'swf') {
+      resp.swfKey = storageKey;
+    } else {
+      resp.gifKey = storageKey;
+    }
+
+    return c.json(resp);
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('DM prepare error:', error);
+    return c.json({ error: 'Failed to prepare message', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// PUT /api/dm/upload/:key — direct file upload for DM messages
+app.put('/api/dm/upload/*', requireAuth, async (c) => {
+  try {
+    const user = c.get('user')!;
+    const key = c.req.path.replace('/api/dm/upload/', '');
+    const contentLength = c.req.header('content-length');
+
+    if (!key) {
+      return c.json({ error: 'Missing file key' }, 400);
+    }
+
+    // Check file size limit (25MB)
+    const maxSize = 25 * 1024 * 1024;
+    if (contentLength && Number(contentLength) > maxSize) {
+      return c.json({ error: 'File too large. Maximum size is 25MB' }, 413);
+    }
+
+    // Verify the user owns a DM message with this storage key
+    // We check against gif_key, payload_key, swf_key columns
+    const pending = (await c.env.DB.prepare(
+      "SELECT id FROM dm_messages WHERE sender_id = ? AND (gif_key = ? OR payload_key = ? OR swf_key = ?) AND content = ''",
+    )
+      .bind(user.id, key, key, key)
+      .first()) as { id: string } | null;
+
+    if (!pending) {
+      return c.json({ error: 'No pending message found for this key' }, 403);
+    }
+
+    const fileData = await c.req.arrayBuffer();
+
+    if (fileData.byteLength > maxSize) {
+      return c.json({ error: 'File too large. Maximum size is 25MB' }, 413);
+    }
+
+    if (!c.env.BUCKET) {
+      return c.json({ error: 'Storage not available' }, 500);
+    }
+
+    // Validate magic bytes
+    const detectedMime = detectMimeType(fileData);
+    if (!detectedMime) {
+      return c.json({ error: 'Unrecognized file format. Magic bytes do not match any allowed type.' }, 400);
+    }
+    if (
+      !isAllowedImageMime(detectedMime) &&
+      !detectedMime.startsWith('audio/') &&
+      detectedMime !== 'application/zip' &&
+      detectedMime !== 'application/x-shockwave-flash'
+    ) {
+      return c.json({ error: 'File type not allowed' }, 400);
+    }
+
+    await c.env.BUCKET.put(key, fileData, {
+      httpMetadata: { contentType: detectedMime },
+    });
+
+    // Update the pending message with the key
+    const column = key.startsWith('dm/swf/') ? 'swf_key' : key.startsWith('dm/zip/') ? 'payload_key' : 'gif_key';
+    await c.env.DB.prepare(`UPDATE dm_messages SET ${column} = ? WHERE id = ?`).bind(key, pending.id).run();
+
+    return c.json({ success: true, key });
+  } catch (error: unknown) {
+    console.error('DM upload error:', error);
+    return c.json(
+      { error: 'Upload failed', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
+  }
+});
+
+// PUT /api/dm/conversations/:id/messages/:msgId - edit a DM message
+app.put('/api/dm/conversations/:id/messages/:msgId', requireAuth, async (c) => {
+  try {
+    const userId = c.get('user')?.id || '';
+    const convId = c.req.param('id');
+    const msgId = c.req.param('msgId');
+    const { content } = (await c.req.json()) as { content?: string };
+
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+      return c.json({ error: 'Content is required' }, 400);
+    }
+
+    const trimmed = content.trim();
+    if (trimmed.length > 200) {
+      return c.json({ error: 'Message must be 200 characters or less' }, 400);
+    }
+
+    // Verify user owns this message
+    const msg = (await c.env.DB.prepare(
+      'SELECT id, content FROM dm_messages WHERE id = ? AND conversation_id = ? AND sender_id = ?',
+    )
+      .bind(msgId, convId, userId)
+      .first()) as { id: string; content: string } | null;
+
+    if (!msg) {
+      return c.json({ error: 'Message not found or not yours to edit' }, 404);
+    }
+
+    const now = new Date().toISOString();
+
+    await c.env.DB.prepare('UPDATE dm_messages SET content = ?, edited_at = ? WHERE id = ?')
+      .bind(trimmed, now, msgId)
+      .run();
+
+    // Update conversation last_message if this was the last message
+    await c.env.DB.prepare(`
+      UPDATE dm_conversations
+      SET last_message_content = ?, updated_at = ?
+      WHERE id = ? AND last_message_id = ?
+    `)
+      .bind(trimmed, now, convId, msgId)
+      .run();
+
+    return c.json({
+      id: msgId,
+      content: trimmed,
+      edited_at: now,
+    });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('DM edit message error:', error);
+    return c.json({ error: 'Failed to edit message', details: err.message || 'Unknown error' }, 500);
   }
 });
 
