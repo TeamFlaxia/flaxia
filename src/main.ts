@@ -82,12 +82,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     let unreadNotificationCount = 0;
     let unreadDmCount = 0;
     let previousUnreadCount = 0;
-    let notificationPollInterval: ReturnType<typeof setInterval> | null = null;
-    let cachedContentComponent: {
-      view: string;
-      component: PageComponent | ExplorePage | ArcadePageHandle | BookmarksPage | null;
-      scrollY: number;
-    } | null = null;
 
     let tauriNotify: ((title: string, body: string) => Promise<void>) | null = null;
     let tauriBadge: ((count: number) => Promise<void>) | null = null;
@@ -171,13 +165,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       window.Capacitor.isNativePlatform();
 
     const connectPushWebSocket = () => {
-      // ブラウザ版は Service Worker (Web Push) を使うので WebSocket は使わない
-      // Capacitor も WebSocket でプッシュを受信する（Service Worker 非対応のため）
-      if (typeof window !== 'undefined' && !(window as any).__TAURI__ && !(window as any).__TAURI_INTERNALS__) {
-        if (!isCapacitorNative) return;
-      }
-
-      if (pushWs) return; // already connected/reconnecting
+      if (pushWs) return;
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const sessionToken = localStorage.getItem('flaxia_session');
@@ -186,20 +174,32 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.log('[push] connecting to', url);
       try {
         const ws = new WebSocket(url);
-        ws.onopen = () => console.log('[push] connected');
+        ws.onopen = () => {
+          console.log('[push] connected');
+          refreshNotificationBadges();
+        };
         ws.onmessage = (ev) => {
           try {
             const data = JSON.parse(ev.data);
             console.log('[push] received:', data);
-            // OS通知を表示 (Tauri desktop / Capacitor mobile)
-            if (typeof tauriNotify === 'function') {
-              tauriNotify(data.title || 'Flaxia', data.body || 'New notification');
+            if (data.type === 'notification') {
+              unreadNotificationCount = data.unread_count;
+              updateBadgeUI();
+              if (data.push && typeof tauriNotify === 'function') {
+                tauriNotify(data.push.title, data.push.body);
+              }
+              if (data.push && typeof capacitorNotify === 'function') {
+                capacitorNotify(data.push.title, data.push.body);
+              }
+            } else if (data.title) {
+              if (typeof tauriNotify === 'function') {
+                tauriNotify(data.title, data.body || 'New notification');
+              }
+              if (typeof capacitorNotify === 'function') {
+                capacitorNotify(data.title, data.body || 'New notification');
+              }
+              refreshNotificationBadges();
             }
-            if (typeof capacitorNotify === 'function') {
-              capacitorNotify(data.title || 'Flaxia', data.body || 'New notification');
-            }
-            // バッジ即時更新
-            refreshNotificationBadges();
           } catch (e) {
             console.error('[push] parse error:', e);
           }
@@ -390,11 +390,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Register Service Worker for Web Push (browser only, no-op in Tauri/Capacitor)
     initializeWebPush();
 
-    const refreshNotificationBadges = async () => {
-      console.log('[poll] refreshNotificationBadges called');
-      const data = await fetchNotifications();
-      await fetchDmUnreadCount();
-      console.log('[poll] unread count:', unreadNotificationCount);
+    const updateBadgeUI = () => {
       leftNavInstances.forEach((leftNav) => {
         if (typeof leftNav.setUnreadCount === 'function') {
           leftNav.setUnreadCount(unreadNotificationCount);
@@ -402,24 +398,27 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       updateLeftNavOpenBadge(unreadNotificationCount);
 
-      // Update badge count (Tauri desktop or Capacitor mobile)
       if (capacitorBadge) {
         capacitorBadge(unreadNotificationCount);
       } else if (tauriBadge) {
         tauriBadge(unreadNotificationCount);
       }
 
-      // Update notification count for desktop tray icon badge (Rust bg thread checks this)
       if (tauriSetNotificationCount) {
-        console.log('[badge] calling set_notification_count with', unreadNotificationCount);
         tauriSetNotificationCount(unreadNotificationCount).catch((err) => {
           console.log('[badge] set_notification_count failed:', err);
         });
-      } else {
-        console.log('[badge] tauriSetNotificationCount is null');
       }
+    };
 
-      // Show notification when new unread notifications arrive
+    const refreshNotificationBadges = async () => {
+      console.log('[poll] refreshNotificationBadges called');
+      const data = await fetchNotifications();
+      await fetchDmUnreadCount();
+      console.log('[poll] unread count:', unreadNotificationCount);
+      updateBadgeUI();
+
+      // Show notification when new unread notifications arrive (legacy polling path)
       const isRealTauriAndroid =
         typeof window !== 'undefined' &&
         (window.__TAURI__ || window.__TAURI_INTERNALS__) &&
@@ -474,15 +473,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     const startNotificationPolling = () => {
-      if (notificationPollInterval) return;
-      notificationPollInterval = setInterval(refreshNotificationBadges, 15000);
+      // 初回一度だけ HTTP 取得（以降は WebSocket でリアルタイム更新）
+      refreshNotificationBadges();
     };
 
     const stopNotificationPolling = () => {
-      if (notificationPollInterval) {
-        clearInterval(notificationPollInterval);
-        notificationPollInterval = null;
-      }
+      // polling は廃止。WebSocket 切断時は再接続時に onopen で再取得する
     };
 
     // Check current user session
@@ -503,10 +499,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             updateLeftNavUser(leftNav, currentUser);
           });
 
-          // Start background polling for unread notification count
+          // 初回の未読通知数を取得（以降は WebSocket でリアルタイム更新）
           startNotificationPolling();
 
-          // WebSocket プッシュ通知に接続 (Tauri desktop)
+          // WebSocket でリアルタイム通知受信（全プラットフォーム）
           connectPushWebSocket();
 
           return true;

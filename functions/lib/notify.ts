@@ -1,10 +1,16 @@
 import { getPushPayload, type PushPayload, sendPushToUser } from './push';
 
-/// WebSocket (Durable Object) 経由でデスクトップアプリに通知を届ける
+interface NotificationWSMessage {
+  type: 'notification';
+  unread_count: number;
+  push: PushPayload;
+}
+
+/// WebSocket (Durable Object) 経由で通知を届ける
 export async function dispatchToDO(
   env: { NOTIFICATION_STREAM?: DurableObjectNamespace },
   userId: string,
-  payload: PushPayload,
+  payload: unknown,
 ): Promise<void> {
   if (!env.NOTIFICATION_STREAM) return;
   try {
@@ -19,7 +25,7 @@ export async function dispatchToDO(
   }
 }
 
-/// Web Push (browser) + FCM (mobile) + WebSocket (desktop) に通知を送る
+/// Web Push (browser) + FCM (mobile) + WebSocket (全プラットフォーム) に通知を送る
 export async function sendPushToAll(
   env: {
     DB: D1Database;
@@ -40,6 +46,24 @@ export async function sendPushToAll(
   // Web Push (browser) + FCM (mobile)
   await sendPushToUser(env.DB, userId, payload, env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY, env);
 
-  // WebSocket (desktop)
-  await dispatchToDO(env as { NOTIFICATION_STREAM?: DurableObjectNamespace }, userId, payload);
+  // WebSocket (全プラットフォーム) — 未読数も一緒に送信してポーリング不要に
+  if (env.NOTIFICATION_STREAM) {
+    try {
+      const unreadResult = (await env.DB.prepare(
+        'SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND read = 0',
+      )
+        .bind(userId)
+        .first()) as { count: number } | null;
+
+      const wsMsg: NotificationWSMessage = {
+        type: 'notification',
+        unread_count: unreadResult?.count ?? 0,
+        push: payload,
+      };
+
+      await dispatchToDO(env as { NOTIFICATION_STREAM?: DurableObjectNamespace }, userId, wsMsg);
+    } catch (e) {
+      console.error('[notify] WebSocket notification dispatch failed:', e);
+    }
+  }
 }

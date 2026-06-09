@@ -100,16 +100,9 @@ pub fn run() {
 
         app.manage(TrayState(Mutex::new(Some(tray))));
 
-        // Background thread: triggers JS poll (tray update is done inside the command)
-        let handle = app.handle().clone();
-        std::thread::spawn(move || {
-          loop {
-            std::thread::sleep(std::time::Duration::from_secs(15));
-            if let Some(window) = handle.get_webview_window("main") {
-              let _ = window.eval("window.__tauriDesktopPoll?.()");
-            }
-          }
-        });
+        // バックグラウンドスレッドでのポーリングは廃止。
+        // 代わりに WebSocket でリアルタイムにバッジ更新を受信する。
+        // トレイアイコンの更新は JS の updateBadgeUI → set_notification_count 経由で行われる。
       }
 
       Ok(())
