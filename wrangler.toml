@@ -8,11 +8,6 @@ name = "NOTIFICATION_STREAM"
 class_name = "NotificationStream"
 script_name = "notif-stream"
 
-[[durable_objects.bindings]]
-name = "CHAT_STREAM"
-class_name = "ChatStream"
-script_name = "notif-stream"
-
 [[d1_databases]]
 binding = "DB"
 database_name = "flaxia"

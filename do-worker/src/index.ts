@@ -40,6 +40,4 @@ export class NotificationStream {
   }
 }
 
-export { ChatStream } from './chat-stream';
-
 export default {};

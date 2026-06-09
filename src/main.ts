@@ -47,8 +47,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'whitepaper'
       | 'admin'
       | 'settings'
-      | 'arcade'
-      | 'chat' = 'timeline';
+      | 'arcade' = 'timeline';
     let currentPostId: string | null = null;
     let _currentUsername: string | null = null;
     let currentTag: string | null = null;
@@ -66,7 +65,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     let arcadePage: ArcadePageHandle | null = null;
     let searchPage: PageComponent | null = null;
     let bookmarksPage: BookmarksPage | null = null;
-    let chatPage: PageComponent | null = null;
     let adminLayout:
       | (PageComponent & { updateMainContent: (el: HTMLElement) => void; setAccessDenied: () => void })
       | null = null;
@@ -769,16 +767,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         return true;
       }
 
-      // For /chat, redirect to arcade if not authenticated
-      if (cleanPath === '/chat') {
-        if (!isAuthenticated) {
-          window.history.replaceState({}, '', '/arcade');
-          navigateTo('arcade');
-          return false;
-        }
-        return true;
-      }
-
       // For all other protected routes, redirect to login if not authenticated
       if (!isAuthenticated) {
         // Use replaceState so the browser back button doesn't return to the
@@ -904,12 +892,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         return { view: 'bookmarks' as const, postId: null, username: null, tag: null };
       }
 
-      // Chat route - requires auth
-      if (cleanPath === '/chat') {
-        console.log('Chat route detected');
-        return { view: 'chat' as const, postId: null, username: null, tag: null };
-      }
-
       // Settings route - requires auth
       if (cleanPath === '/settings') {
         console.log('Settings route detected');
@@ -1011,7 +993,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         | 'search'
         | 'notifications'
         | 'bookmarks'
-        | 'chat'
         | 'terms'
         | 'privacy'
         | 'about'
@@ -1076,10 +1057,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (bookmarksPage) {
           bookmarksPage.destroy();
           bookmarksPage = null;
-        }
-        if (chatPage) {
-          chatPage.destroy();
-          chatPage = null;
         }
       } else {
         // Auth guard for protected routes
@@ -1153,10 +1130,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (bookmarksPage) {
           bookmarksPage.destroy();
           bookmarksPage = null;
-        }
-        if (chatPage) {
-          chatPage.destroy();
-          chatPage = null;
         }
         if (arcadePage) {
           arcadePage.destroy();
@@ -1980,21 +1953,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
-        // Handle chat page (full-width, no standard layout)
-        if (view === 'chat') {
-          currentView = 'chat';
-          currentPostId = null;
-          _currentUsername = null;
-          currentTag = null;
-
-          const { createChatPage } = await import('./components/ChatPage.js');
-          chatPage = createChatPage();
-
-          app.appendChild(chatPage.getElement());
-          hidePageLoader();
-          return;
-        }
-
         // Handle settings page (within 3-column layout)
         if (view === 'settings') {
           currentView = 'settings';
@@ -2330,7 +2288,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             | 'search'
             | 'notifications'
             | 'bookmarks'
-            | 'chat'
             | 'terms'
             | 'privacy'
             | 'about'
