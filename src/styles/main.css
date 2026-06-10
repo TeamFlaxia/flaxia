@@ -4148,17 +4148,26 @@ html {
   font-style: italic;
 }
 
-.conv-bubble-edit-btn {
+.conv-bubble-edit-btn,
+.conv-bubble-delete-btn {
   background: none;
   border: none;
   font-size: 10px;
-  color: var(--accent);
   cursor: pointer;
   padding: 0;
   opacity: 0.6;
 }
 
-.conv-bubble-edit-btn:hover {
+.conv-bubble-edit-btn {
+  color: var(--accent);
+}
+
+.conv-bubble-delete-btn {
+  color: var(--danger, #e74c3c);
+}
+
+.conv-bubble-edit-btn:hover,
+.conv-bubble-delete-btn:hover {
   opacity: 1;
   text-decoration: underline;
 }

@@ -8625,6 +8625,81 @@ app.put('/api/dm/conversations/:id/messages/:msgId', requireAuth, async (c) => {
   }
 });
 
+// DELETE /api/dm/conversations/:id/messages/:msgId - delete a DM message
+app.delete('/api/dm/conversations/:id/messages/:msgId', requireAuth, async (c) => {
+  try {
+    const userId = c.get('user')?.id || '';
+    const convId = c.req.param('id');
+    const msgId = c.req.param('msgId');
+
+    // Verify user owns this message
+    const msg = (await c.env.DB.prepare(
+      'SELECT id, conversation_id, sender_id, gif_key, payload_key, swf_key FROM dm_messages WHERE id = ? AND conversation_id = ?',
+    )
+      .bind(msgId, convId)
+      .first()) as {
+      id: string;
+      conversation_id: string;
+      sender_id: string;
+      gif_key?: string;
+      payload_key?: string;
+      swf_key?: string;
+    } | null;
+
+    if (!msg) {
+      return c.json({ error: 'Message not found' }, 404);
+    }
+
+    if (msg.sender_id !== userId) {
+      return c.json({ error: 'Forbidden' }, 403);
+    }
+
+    // Delete associated files from R2
+    if (c.env.BUCKET) {
+      if (msg.gif_key) {
+        try {
+          await c.env.BUCKET.delete(msg.gif_key);
+        } catch (e) {
+          console.error('Failed to delete gif file:', e);
+        }
+      }
+      if (msg.payload_key) {
+        try {
+          await c.env.BUCKET.delete(msg.payload_key);
+        } catch (e) {
+          console.error('Failed to delete payload file:', e);
+        }
+      }
+      if (msg.swf_key) {
+        try {
+          await c.env.BUCKET.delete(msg.swf_key);
+        } catch (e) {
+          console.error('Failed to delete SWF file:', e);
+        }
+      }
+    }
+
+    // Delete the message
+    await c.env.DB.prepare('DELETE FROM dm_messages WHERE id = ?').bind(msgId).run();
+
+    // If deleted message was the conversation's last message, update it
+    await c.env.DB.prepare(`
+      UPDATE dm_conversations
+      SET last_message_id = NULL, last_message_content = NULL, last_message_sender_id = NULL,
+          last_message_created_at = NULL, updated_at = ?
+      WHERE id = ? AND last_message_id = ?
+    `)
+      .bind(new Date().toISOString(), convId, msgId)
+      .run();
+
+    return c.json({ success: true });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('DM delete message error:', error);
+    return c.json({ error: 'Failed to delete message', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
 // GET /api/dm/unread-count - get total unread DM count
 app.get('/api/dm/unread-count', requireAuth, async (c) => {
   try {

@@ -28,6 +28,8 @@
   "messages.edited": "(編集済み)",
   "messages.open_zip": "ZIPファイルを開く",
   "messages.play_flash": "Flashを再生",
+  "messages.delete_title": "このメッセージを削除しますか？",
+  "messages.delete_message": "この操作は取り消せません。",
   "bookmarks.empty": "ブックマークはまだありません",
   "bookmarks.error": "ブックマークの読み込みに失敗しました。もう一度お試しください。",
   "bookmarks.retry": "再試行",

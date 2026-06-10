@@ -551,6 +551,12 @@ export class ConversationView {
         editBtn.textContent = t('messages.edit');
         editBtn.addEventListener('click', () => this.startEdit(msg));
         meta.appendChild(editBtn);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'conv-bubble-delete-btn';
+        deleteBtn.textContent = t('common.delete');
+        deleteBtn.addEventListener('click', () => this.confirmDelete(msg));
+        meta.appendChild(deleteBtn);
       }
 
       bubble.appendChild(meta);
@@ -758,6 +764,81 @@ export class ConversationView {
       console.error('Flash execution failed:', err);
       content.innerHTML =
         '<div style="padding: 40px; text-align: center; color: #999;">' + t('post_stage.flash_load_error') + '</div>';
+    });
+  }
+
+  private confirmDelete(msg: Message): void {
+    const unregister = registerModal();
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.5); display: flex;
+      align-items: center; justify-content: center; z-index: 1000;
+    `;
+
+    const dialog = document.createElement('div');
+    dialog.style.cssText = `
+      background: var(--bg-primary); border: 1px solid var(--border);
+      border-radius: 8px; padding: 24px; max-width: 400px; width: 90%;
+    `;
+
+    const title = document.createElement('h3');
+    title.style.cssText = 'margin: 0 0 16px 0; font-size: 18px; color: var(--text-primary);';
+    title.textContent = t('messages.delete_title');
+
+    const message = document.createElement('p');
+    message.style.cssText = 'margin: 0 0 24px 0; color: var(--text-muted); font-size: 14px;';
+    message.textContent = t('messages.delete_message');
+
+    const buttonRow = document.createElement('div');
+    buttonRow.style.cssText = 'display: flex; gap: 12px; justify-content: flex-end;';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = t('common.cancel');
+    cancelBtn.style.cssText =
+      'padding: 8px 16px; background: none; border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); cursor: pointer;';
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.textContent = t('common.delete');
+    deleteBtn.style.cssText =
+      'padding: 8px 16px; background: var(--danger, #e74c3c); border: none; border-radius: 4px; color: #fff; cursor: pointer;';
+
+    buttonRow.appendChild(cancelBtn);
+    buttonRow.appendChild(deleteBtn);
+    dialog.appendChild(title);
+    dialog.appendChild(message);
+    dialog.appendChild(buttonRow);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const destroy = () => {
+      unregister();
+      overlay.remove();
+    };
+
+    cancelBtn.addEventListener('click', destroy);
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) destroy();
+    });
+
+    deleteBtn.addEventListener('click', async () => {
+      destroy();
+      try {
+        const res = await fetch(`/api/dm/conversations/${this.props.conversationId}/messages/${msg.id}`, {
+          method: 'DELETE',
+          credentials: 'include',
+        });
+        if (res.ok) {
+          this.messages = this.messages.filter((m) => m.id !== msg.id);
+          this.renderMessages();
+        } else {
+          const err = (await res.json()) as { error?: string };
+          showToast(err.error || 'Delete failed', true);
+        }
+      } catch {
+        showToast('Delete failed', true);
+      }
     });
   }
 
