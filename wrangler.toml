@@ -16,7 +16,7 @@ database_id = "7c99f35f-69a0-4644-96a1-34c716a3e82d"
 [vars]
 SANDBOX_ORIGIN = "https://flaxia.app"
 BASE_URL = "https://flaxia.app"
-CROWD_ORCHESTRATOR_URL = "https://flaxia-worker.remydre8.workers.dev"
+CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
 CROWD_API_KEY = "fc_live_flaxia_dev_key"
 
 # To set ADMIN_USERNAMES secret for admin features:
