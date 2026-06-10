@@ -2,6 +2,8 @@ import type { ArcadePageHandle } from './components/ArcadePage.js';
 import { BookmarksPage } from './components/BookmarksPage.js';
 import { ConversationView } from './components/ConversationView.js';
 import { ExplorePage } from './components/ExplorePage.js';
+import type { GroupChatView } from './components/GroupChatView.js';
+import type { GroupsPage } from './components/GroupsPage.js';
 import { createLeftNav, LeftNav, updateLeftNavUser } from './components/LeftNav.js';
 import { MessagesPage } from './components/MessagesPage.js';
 import { NotificationsPage } from './components/NotificationsPage.js';
@@ -53,7 +55,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'admin'
       | 'settings'
       | 'arcade'
-      | 'messages' = 'timeline';
+      | 'messages'
+      | 'groups' = 'timeline';
     let currentPostId: string | null = null;
     let _currentUsername: string | null = null;
     let currentTag: string | null = null;
@@ -73,6 +76,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let bookmarksPage: BookmarksPage | null = null;
     let messagesPage: MessagesPage | null = null;
     let conversationView: ConversationView | null = null;
+    let groupsPage: GroupsPage | null = null;
+    let groupChatView: GroupChatView | null = null;
     let cachedContentComponent: { view: string; component: unknown; scrollY: number } | null = null;
     let adminLayout:
       | (PageComponent & { updateMainContent: (el: HTMLElement) => void; setAccessDenied: () => void })
@@ -782,6 +787,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         return true;
       }
 
+      // For /groups, redirect to arcade if not authenticated
+      if (cleanPath === '/groups' || cleanPath.startsWith('/groups/')) {
+        if (!isAuthenticated) {
+          window.history.replaceState({}, '', '/arcade');
+          navigateTo('arcade');
+          return false;
+        }
+        return true;
+      }
+
       // For /notifications, redirect to arcade if not authenticated
       if (cleanPath === '/notifications') {
         if (!isAuthenticated) {
@@ -923,6 +938,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         return { view: 'messages' as const, postId: null, username: null, tag: null };
       }
 
+      // Groups routes - require auth
+      const groupsConvMatch = cleanPath.match(/^\/groups\/([^/]+)$/);
+      if (groupsConvMatch) {
+        console.log('Groups chat route detected, id:', groupsConvMatch[1]);
+        return { view: 'groups' as const, postId: groupsConvMatch[1], username: null, tag: null };
+      }
+
+      if (cleanPath === '/groups') {
+        console.log('Groups route detected');
+        return { view: 'groups' as const, postId: null, username: null, tag: null };
+      }
+
       // Bookmarks route - requires auth
       if (cleanPath === '/bookmarks') {
         console.log('Bookmarks route detected');
@@ -1037,7 +1064,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         | 'admin'
         | 'settings'
         | 'arcade'
-        | 'messages',
+        | 'messages'
+        | 'groups',
       postId?: string,
       username?: string,
       tag?: string,
@@ -1095,6 +1123,14 @@ document.addEventListener('DOMContentLoaded', async () => {
           conversationView.destroy();
           conversationView = null;
         }
+        if (groupsPage) {
+          groupsPage.destroy();
+          groupsPage = null;
+        }
+        if (groupChatView) {
+          groupChatView.destroy();
+          groupChatView = null;
+        }
       } else {
         // Auth guard for protected routes
         const isAuthenticated = await requireAuth();
@@ -1103,7 +1139,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         // Cache current view when navigating to thread, arcade, or messages conversation (for back navigation with preserved content)
-        if ((view === 'thread' || view === 'arcade' || view === 'messages') && currentView !== view) {
+        if (
+          (view === 'thread' || view === 'arcade' || view === 'messages' || view === 'groups') &&
+          currentView !== view
+        ) {
           console.log(`Caching current view for back navigation to ${view}:`, currentView);
           if (currentView === 'timeline' && timeline) {
             cachedContentComponent = { view: 'timeline', component: timeline, scrollY: window.scrollY };
@@ -1126,6 +1165,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           } else if (currentView === 'messages' && messagesPage) {
             cachedContentComponent = { view: 'messages', component: messagesPage, scrollY: window.scrollY };
             messagesPage = null;
+          } else if (currentView === 'groups' && groupsPage) {
+            cachedContentComponent = { view: 'groups', component: groupsPage, scrollY: window.scrollY };
+            groupsPage = null;
           }
         }
 
@@ -1186,6 +1228,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (conversationView) {
           conversationView.destroy();
           conversationView = null;
+        }
+        if (groupsPage) {
+          groupsPage.destroy();
+          groupsPage = null;
+        }
+        if (groupChatView) {
+          groupChatView.destroy();
+          groupChatView = null;
         }
       }
 
@@ -2139,6 +2189,126 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
+        // Handle groups page (within 3-column layout)
+        if (view === 'groups') {
+          currentView = 'groups';
+          currentPostId = postId || null;
+          _currentUsername = null;
+          currentTag = null;
+
+          if (!currentUser) {
+            window.history.pushState({}, '', '/explore');
+            navigateTo('explore');
+            return;
+          }
+
+          // Create main container for 3-column layout
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          const leftNav = createLeftNav({
+            activeItem: 'groups',
+            unreadCount: unreadNotificationCount,
+            unreadDmCount,
+            currentUser: currentUser || undefined,
+            onNavigate: async (item) => {
+              if (item === 'home') {
+                window.history.pushState({}, '', '/home');
+                navigateTo('timeline');
+              } else if (item === 'explore') {
+                window.history.pushState({}, '', '/explore');
+                navigateTo('explore');
+              } else if (item === 'arcade') {
+                window.history.pushState({}, '', '/arcade');
+                navigateTo('arcade');
+              } else if (item === 'notifications') {
+                window.history.pushState({}, '', '/notifications');
+                navigateTo('notifications');
+              } else if (item === 'bookmarks') {
+                window.history.pushState({}, '', '/bookmarks');
+                navigateTo('bookmarks');
+              } else if (item === 'messages') {
+                window.history.pushState({}, '', '/messages');
+                navigateTo('messages');
+              } else if (item === 'groups') {
+                window.history.pushState({}, '', '/groups');
+                navigateTo('groups');
+              } else if (item === 'settings') {
+                window.history.pushState({}, '', '/settings');
+                navigateTo('settings');
+              } else if (item === 'profile') {
+                if (!currentUser) {
+                  window.history.pushState({}, '', '/arcade');
+                  navigateTo('arcade');
+                  return;
+                }
+                window.history.pushState({}, '', `/profile/${currentUser.username}`);
+                navigateTo('profile', undefined, currentUser.username);
+              }
+            },
+            onSignIn: () => {
+              window.history.pushState({}, '', '/login');
+              navigateTo('login');
+            },
+            onSignUp: () => {
+              window.history.pushState({}, '', '/register');
+              navigateTo('register');
+            },
+          });
+
+          leftNavInstances.add(leftNav);
+
+          if (postId) {
+            if (cachedContentComponent?.view === 'groups' && groupsPage) {
+              groupsPage = null;
+            }
+
+            const { createGroupChatView } = await import('./components/GroupChatView.js');
+            groupChatView = createGroupChatView({
+              groupId: postId,
+              currentUser,
+              onBack: () => {
+                window.history.pushState({}, '', '/groups');
+                navigateTo('groups');
+              },
+            });
+
+            mainContainer.appendChild(leftNav.getElement());
+            mainContainer.appendChild(groupChatView.getElement());
+          } else {
+            if (cachedContentComponent?.view === 'groups') {
+              groupsPage = cachedContentComponent.component as GroupsPage;
+              cachedContentComponent = null;
+              groupsPage.refresh();
+            } else {
+              const { createGroupsPage } = await import('./components/GroupsPage.js');
+              groupsPage = createGroupsPage({
+                currentUser,
+                onNavigateToGroup: (groupId) => {
+                  window.history.pushState({}, '', `/groups/${groupId}`);
+                  navigateTo('groups', groupId);
+                },
+              });
+            }
+
+            const rightPanel = createRightPanel({
+              onSearch: (query) => {},
+              onFollowUser: (userId) => {},
+            });
+
+            mainContainer.appendChild(leftNav.getElement());
+            mainContainer.appendChild(groupsPage.getElement());
+            mainContainer.appendChild(rightPanel.getElement());
+          }
+
+          app.appendChild(mainContainer);
+          hidePageLoader();
+
+          setupMobileLeftNav(leftNav.getElement());
+
+          return;
+        }
+
         // Handle settings page (within 3-column layout)
         if (view === 'settings') {
           currentView = 'settings';
@@ -2488,7 +2658,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             | 'admin'
             | 'settings'
             | 'arcade'
-            | 'messages',
+            | 'messages'
+            | 'groups',
           postId,
           username,
           tag,

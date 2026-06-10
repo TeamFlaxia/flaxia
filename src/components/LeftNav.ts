@@ -75,6 +75,7 @@ export class LeftNav {
         { id: 'explore', label: t('nav.explore'), icon: '🔍' },
         { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
         { id: 'messages', label: t('nav.messages'), icon: '💬' },
+        { id: 'groups', label: t('nav.groups'), icon: '👥' },
       ] as const;
 
       items.forEach((item) => {
@@ -643,6 +644,7 @@ export function updateLeftNavUser(
         { id: 'explore', label: t('nav.explore'), icon: '🔍' },
         { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
         { id: 'messages', label: t('nav.messages'), icon: '💬' },
+        { id: 'groups', label: t('nav.groups'), icon: '👥' },
       ] as const;
 
       items.forEach((item) => {
