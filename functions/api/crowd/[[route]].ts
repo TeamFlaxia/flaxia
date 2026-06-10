@@ -61,7 +61,11 @@ export async function onRequest(context: {
                 | { upsert(vectors: Array<{ id: string; values: number[] }>): Promise<unknown> }
                 | undefined;
               if (vectorize) {
-                await vectorize.upsert([{ id: postId, values: vector }]);
+                try {
+                  await vectorize.upsert([{ id: postId, values: vector }]);
+                } catch (ve) {
+                  console.error('Vectorize upsert failed:', ve);
+                }
               }
               await db
                 .prepare(
