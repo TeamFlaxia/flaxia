@@ -1,5 +1,6 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import type { Plugin, ResolvedConfig } from 'vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
@@ -60,6 +61,23 @@ export default defineConfig({
     noExternal: ['hono'],
   },
   plugins: [
+    {
+      name: 'modulepreload',
+      enforce: 'post',
+      apply: 'build',
+      generateBundle(_opts, bundle) {
+        const entries = Object.entries(bundle)
+          .filter(([, info]) => info.type === 'chunk' && info.isEntry)
+          .map(([file]) => basename(file));
+        if (entries.length === 0) return;
+        const links = entries.map((f) => `<link rel="modulepreload" crossorigin href="/assets/${f}">`).join('\n  ');
+        for (const [file, info] of Object.entries(bundle)) {
+          if (info.type === 'asset' && file.endsWith('.html') && 'source' in info) {
+            info.source = (info.source as string).replace('</head>', `  ${links}\n</head>`);
+          }
+        }
+      },
+    },
     {
       name: 'copy-jsdos',
       writeBundle() {

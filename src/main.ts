@@ -22,6 +22,9 @@ console.log('Flaxia initialized');
 // Initialize performance monitoring
 initPerformanceMonitoring();
 
+// Start i18n loading early (parallelizes the network fetch with script parsing/css loading)
+initI18n();
+
 // Basic app initialization
 document.addEventListener('DOMContentLoaded', async () => {
   const app = document.getElementById('app');
@@ -365,13 +368,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       await registerPushToken();
     };
 
-    // Initialize Tauri native notifications (OS-level, no-op in browser/Capacitor)
-    await initTauriNotifications();
-    // Initialize Tauri dock/taskbar badge + tray icon badge (independent of notification plugin)
-    await initTauriBadge();
-    // Initialize Capacitor native notifications + FCM push registration (mobile only)
-    await initCapacitorNotifications();
-    await initCapacitorPushRegistration();
     // Capacitor ライフサイクル: アプリ復帰時に WebSocket 再接続
     if (isCapacitorNative) {
       try {
@@ -387,8 +383,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.log('[push] @capacitor/app not available');
       }
     }
-    // Register Service Worker for Web Push (browser only, no-op in Tauri/Capacitor)
-    initializeWebPush();
 
     const refreshNotificationBadges = async () => {
       console.log('[poll] refreshNotificationBadges called');
@@ -1058,15 +1052,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Close mobile nav if open
       closeLeftNav();
-
-      // Always check auth state on navigation to ensure session is up-to-date
-      // This will trigger session extension via /api/me call
-      await checkAuth();
-
-      // Refresh notification count for authenticated routes
-      if (view !== 'login' && view !== 'register') {
-        await fetchNotifications();
-      }
 
       // For auth routes, proceed directly
       if (view === 'login' || view === 'register') {
@@ -2598,7 +2583,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     };
 
+    // Register Service Worker for Web Push (browser) — non-blocking
+    initializeWebPush().catch(() => {});
+
     deferInit(async () => {
+      // Defer platform-specific notification init (not critical for first paint)
+      initTauriNotifications().catch(() => {});
+      initTauriBadge().catch(() => {});
+      initCapacitorNotifications().catch(() => {});
+      initCapacitorPushRegistration().catch(() => {});
+
       // @ts-expect-error - dynamic import of local path
       const { initFlaxiaNode } = await import('/api/crowd/index.js');
       initFlaxiaNode({
