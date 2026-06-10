@@ -27,13 +27,12 @@ export async function onRequest(context: {
         const resultObj = result as Record<string, unknown> | undefined;
         const output = resultObj?.output;
 
-        if (!output) {
-          return new Response(JSON.stringify({ received: true }), {
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-
         if (callbackType === 'translation') {
+          if (!output) {
+            return new Response(JSON.stringify({ received: true }), {
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
           const postId = url.searchParams.get('postId');
           const lang = url.searchParams.get('lang');
           if (postId && lang) {
@@ -50,11 +49,13 @@ export async function onRequest(context: {
           }
         } else if (callbackType === 'vector-embed') {
           const postId = url.searchParams.get('postId');
-          if (postId && typeof output === 'object' && output !== null) {
-            const result = output as Record<string, unknown>;
-            const vector = result.vector as number[] | undefined;
-            const model = (result.model as string) || 'Qwen/Qwen3-Embedding-0.6B';
-            const dimensions = (result.dimensions as number) || 1024;
+          const vectorResult = (output && typeof output === 'object' ? output : resultObj) as
+            | Record<string, unknown>
+            | undefined;
+          if (postId && vectorResult) {
+            const vector = vectorResult.vector as number[] | undefined;
+            const model = (vectorResult.model as string) || 'Qwen/Qwen3-Embedding-0.6B';
+            const dimensions = (vectorResult.dimensions as number) || 1024;
             if (vector && Array.isArray(vector)) {
               const vectorize = (context.env as Record<string, unknown>).VECTORIZE as
                 | { upsert(vectors: Array<{ id: string; values: number[] }>): Promise<unknown> }
