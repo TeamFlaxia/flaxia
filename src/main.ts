@@ -1463,6 +1463,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
+              } else if (item === 'groups') {
+                window.history.pushState({}, '', '/groups');
+                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -1569,6 +1572,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
+              } else if (item === 'groups') {
+                window.history.pushState({}, '', '/groups');
+                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -1672,6 +1678,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
+              } else if (item === 'groups') {
+                window.history.pushState({}, '', '/groups');
+                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -1784,6 +1793,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
+              } else if (item === 'groups') {
+                window.history.pushState({}, '', '/groups');
+                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -1895,6 +1907,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
+              } else if (item === 'groups') {
+                window.history.pushState({}, '', '/groups');
+                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -1989,6 +2004,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
+              } else if (item === 'groups') {
+                window.history.pushState({}, '', '/groups');
+                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -2106,6 +2124,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
+              } else if (item === 'groups') {
+                window.history.pushState({}, '', '/groups');
+                navigateTo('groups');
               } else if (item === 'notifications') {
                 window.history.pushState({}, '', '/notifications');
                 navigateTo('notifications');
@@ -2347,6 +2368,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
+              } else if (item === 'groups') {
+                window.history.pushState({}, '', '/groups');
+                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -2521,6 +2545,9 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
+              } else if (item === 'groups') {
+                window.history.pushState({}, '', '/groups');
+                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
