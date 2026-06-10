@@ -1,7 +1,7 @@
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
 import { showToast } from '../lib/toast.js';
-import { executeUniversalZip } from '../lib/zip-manager.js';
+import { executeZipAuto } from '../lib/zip-manager.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { executeFlash } from './FlashPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
@@ -688,7 +688,7 @@ export class ConversationView {
     });
 
     // Execute ZIP in the modal content (force legacy mode — sandbox WVFS doesn't support DM-prefixed keys)
-    executeUniversalZip(msg.id, content, 'legacy').catch((err) => {
+    executeZipAuto(msg.id, content).catch((err) => {
       console.error('ZIP execution failed:', err);
       content.innerHTML =
         '<div style="padding: 40px; text-align: center; color: #666;">' + t('post_stage.zip_load_error') + '</div>';

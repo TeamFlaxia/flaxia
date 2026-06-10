@@ -62,7 +62,13 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
     }
 
     if (!zipKey) {
-      const keysToTry = [`zip/${postId}.zip`, `dos/${postId}.zip`, `jsdos/${postId}.jsdos`];
+      const keysToTry = [
+        `zip/${postId}.zip`,
+        `dos/${postId}.zip`,
+        `jsdos/${postId}.jsdos`,
+        `dm/zip/${postId}.zip`,
+        `dm/dos/${postId}.zip`,
+      ];
       for (const key of keysToTry) {
         const obj = await c.env.BUCKET.head(key);
         if (obj) {
