@@ -2599,13 +2599,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       // @ts-expect-error - dynamic import of local path
       const { initFlaxiaNode } = await import('/api/crowd/index.js');
       initFlaxiaNode({
-        orchestratorUrl: 'https://flaxia-worker.remydre8.workers.dev',
+        orchestratorUrl: 'https://crowd.flaxia.app',
         siteId: 'flaxia',
         consent: {
           brandName: 'Flaxia',
           position: 'bottom-right',
         },
-        capabilities: ['ai-inference'],
+        capabilities: ['ai-inference', 'vector-embed'],
         maxCpuLoad: 0.15,
       });
     });
