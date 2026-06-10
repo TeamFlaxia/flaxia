@@ -127,13 +127,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     /** Dock/taskbar badge + tray icon badge — independent of the notification plugin. */
     const initTauriBadge = async () => {
+      const isTauriEnv = typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__);
+
+      if (!isTauriEnv) {
+        console.log('[badge] Not in Tauri environment — skipping badge init');
+        return;
+      }
+
       // Dock/taskbar badge count (macOS, Windows, some Linux DEs)
       try {
         const { getCurrentWindow } = await import('@tauri-apps/api/window');
         tauriBadge = async (count: number) => {
           try {
             await getCurrentWindow().setBadgeCount(count);
-            console.log('[badge] setBadgeCount:', count);
           } catch (err) {
             console.log('[badge] setBadgeCount failed:', err);
           }
@@ -148,15 +154,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           const { invoke } = await import('@tauri-apps/api/core');
           tauriSetNotificationCount = async (count: number) => {
             try {
-              console.log('[badge] invoking set_notification_count with', count);
               await invoke('set_notification_count', { count });
-              console.log('[badge] invoke succeeded');
             } catch (err) {
               console.log('[badge] invoke error:', err);
             }
           };
-          // Test: force an initial update so we can see if the Rust side responds
-          console.log('[badge] Tauri badge functions initialized');
         } catch {
           console.log('[badge] @tauri-apps/api/core not available');
         }
