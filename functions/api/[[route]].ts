@@ -613,7 +613,7 @@ app.get('/api/dos-player/:postId', async (c) => {
   }
 });
 
-// GET /api/zip/:postId - serve ZIP files from R2 (supports zip/ and dos/ prefixes)
+// GET /api/zip/:postId - serve ZIP files from R2 (supports zip/, dos/, and dm/ prefixes)
 app.get('/api/zip/:postId', async (c) => {
   try {
     const postId = c.req.param('postId');
@@ -626,8 +626,14 @@ app.get('/api/zip/:postId', async (c) => {
       return c.json({ error: 'Storage not available' }, 500);
     }
 
-    // Try HTML5 ZIP key first, then DOS ZIP key, then JSDOS key
-    const keysToTry = [`zip/${postId}.zip`, `dos/${postId}.zip`, `jsdos/${postId}.jsdos`];
+    // Try HTML5 ZIP key first, then DOS ZIP key, then JSDOS key, then DM variants
+    const keysToTry = [
+      `zip/${postId}.zip`,
+      `dos/${postId}.zip`,
+      `jsdos/${postId}.jsdos`,
+      `dm/zip/${postId}.zip`,
+      `dm/dos/${postId}.zip`,
+    ];
     let object = null;
 
     for (const zipKey of keysToTry) {
@@ -831,11 +837,14 @@ app.get('/api/swf/:postId', async (c) => {
       return c.json({ error: 'Storage not available' }, 500);
     }
 
-    // Construct the SWF key
-    const swfKey = `swf/${postId}.swf`;
+    // Try standard SWF key first, then DM variant
+    const keysToTry = [`swf/${postId}.swf`, `dm/swf/${postId}.swf`];
+    let object = null;
 
-    // Get object from R2
-    const object = await c.env.BUCKET.get(swfKey);
+    for (const swfKey of keysToTry) {
+      object = await c.env.BUCKET.get(swfKey);
+      if (object) break;
+    }
 
     if (!object) {
       return c.json({ error: 'SWF not found' }, 404);

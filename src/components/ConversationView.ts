@@ -1,5 +1,10 @@
 import { t } from '../lib/i18n.js';
+import { registerModal } from '../lib/modal-state.js';
 import { showToast } from '../lib/toast.js';
+import { executeZipAuto } from '../lib/zip-manager.js';
+import { createAudioPlayer } from './AudioPlayer.js';
+import { executeFlash } from './FlashPlayer.js';
+import { createImagePreview } from './ImagePreview.js';
 
 export interface Message {
   id: string;
@@ -556,82 +561,201 @@ export class ConversationView {
     const swfKey = msg.swf_key;
 
     if (gifKey && gifKey.startsWith('dm/audio/')) {
-      // Audio player
-      const audio = document.createElement('audio');
-      audio.className = 'conv-audio-player';
-      audio.controls = true;
-      audio.preload = 'metadata';
-      audio.style.width = '100%';
-      audio.style.maxWidth = '300px';
-      audio.style.borderRadius = '8px';
-      const audioUrl = `/api/audio/${gifKey}`;
-      audio.src = audioUrl;
-      container.appendChild(audio);
+      const player = createAudioPlayer({
+        gifKey,
+        postId: msg.id,
+      });
+      player.style.maxWidth = '300px';
+      container.appendChild(player);
     } else if (gifKey && gifKey.startsWith('dm/gif/')) {
-      // Image
-      const img = document.createElement('img');
-      img.className = 'conv-image-attachment';
-      img.loading = 'lazy';
-      img.style.cssText = `
-        max-width: 100%;
-        max-height: 300px;
-        border-radius: 12px;
-        cursor: pointer;
-        display: block;
-      `;
-      img.src = `/api/images/${gifKey}`;
-      img.addEventListener('click', () => {
-        const overlay = document.createElement('div');
-        overlay.style.cssText = `
-          position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-          background: rgba(0,0,0,0.85); display: flex;
-          align-items: center; justify-content: center; z-index: 9999;
-          cursor: pointer;
-        `;
-        const fullImg = document.createElement('img');
-        fullImg.src = img.src;
-        fullImg.style.cssText = `
-          max-width: 90%; max-height: 90%; object-fit: contain;
-          border-radius: 8px;
-        `;
-        overlay.appendChild(fullImg);
-        overlay.addEventListener('click', () => overlay.remove());
-        document.body.appendChild(overlay);
+      const preview = createImagePreview({
+        gifKey,
+        postId: msg.id,
       });
-      container.appendChild(img);
+      preview.style.maxWidth = '100%';
+      container.appendChild(preview);
     } else if (payloadKey && payloadKey.startsWith('dm/zip/')) {
-      // ZIP file - show download/execute button
-      const zipBtn = document.createElement('div');
-      zipBtn.className = 'conv-zip-attachment';
-      zipBtn.style.cssText = `
-        display: flex; align-items: center; gap: 8px;
-        padding: 10px 14px; background: var(--bg-secondary);
-        border-radius: 12px; cursor: pointer;
-        color: var(--text-primary); font-size: 14px;
-        max-width: 300px;
-      `;
-      zipBtn.textContent = '📦 ' + t('messages.open_zip');
-      zipBtn.addEventListener('click', () => {
-        window.open(`/api/zip/${payloadKey}`, '_blank');
-      });
-      container.appendChild(zipBtn);
+      this.renderZipAttachment(container, msg);
     } else if (swfKey && swfKey.startsWith('dm/swf/')) {
-      // SWF file - show play button
-      const swfBtn = document.createElement('div');
-      swfBtn.className = 'conv-swf-attachment';
-      swfBtn.style.cssText = `
-        display: flex; align-items: center; gap: 8px;
-        padding: 10px 14px; background: var(--bg-secondary);
-        border-radius: 12px; cursor: pointer;
-        color: var(--text-primary); font-size: 14px;
-        max-width: 300px;
-      `;
-      swfBtn.textContent = '⚡ ' + t('messages.play_flash');
-      swfBtn.addEventListener('click', () => {
-        window.open(`/api/swf/${swfKey}`, '_blank');
-      });
-      container.appendChild(swfBtn);
+      this.renderSwfAttachment(container, msg);
     }
+  }
+
+  private renderZipAttachment(container: HTMLElement, msg: Message): void {
+    const btn = document.createElement('div');
+    btn.className = 'execution-button';
+    btn.style.cssText = `
+      display: flex; align-items: center; justify-content: center;
+      gap: 8px; padding: 16px 24px; cursor: pointer;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white; border-radius: 12px; font-weight: 600; font-size: 15px;
+      max-width: 300px; transition: all 0.2s ease;
+    `;
+    btn.innerHTML = '<span style="font-size:24px">📦</span> ' + t('messages.open_zip');
+    btn.addEventListener('mouseenter', () => {
+      btn.style.transform = 'scale(1.02)';
+      btn.style.boxShadow = '0 4px 20px rgba(102, 126, 234, 0.4)';
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.transform = 'scale(1)';
+      btn.style.boxShadow = 'none';
+    });
+    btn.addEventListener('click', () => this.executeZipModal(msg));
+    container.appendChild(btn);
+  }
+
+  private renderSwfAttachment(container: HTMLElement, msg: Message): void {
+    const btn = document.createElement('div');
+    btn.className = 'execution-button';
+    btn.style.cssText = `
+      display: flex; align-items: center; justify-content: center;
+      gap: 8px; padding: 16px 24px; cursor: pointer;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white; border-radius: 12px; font-weight: 600; font-size: 15px;
+      max-width: 300px; transition: all 0.2s ease;
+    `;
+    btn.innerHTML = '<span style="font-size:24px">⚡</span> ' + t('messages.play_flash');
+    btn.addEventListener('mouseenter', () => {
+      btn.style.transform = 'scale(1.02)';
+      btn.style.boxShadow = '0 4px 20px rgba(102, 126, 234, 0.4)';
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.transform = 'scale(1)';
+      btn.style.boxShadow = 'none';
+    });
+    btn.addEventListener('click', () => this.executeSwfModal(msg));
+    container.appendChild(btn);
+  }
+
+  private executeZipModal(msg: Message): void {
+    const unregister = registerModal();
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.85); display: flex;
+      align-items: center; justify-content: center; z-index: 9999;
+    `;
+
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+      width: 90%; max-width: 800px; height: 80vh;
+      background: #fff; border-radius: 12px; overflow: hidden;
+      position: relative; display: flex; flex-direction: column;
+    `;
+
+    const header = document.createElement('div');
+    header.style.cssText = `
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 16px; background: #f5f5f5;
+    `;
+
+    const title = document.createElement('span');
+    title.style.cssText = 'font-weight: 600; font-size: 14px; color: #333;';
+    title.textContent = t('messages.open_zip');
+
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '✕';
+    closeBtn.style.cssText = `
+      background: none; border: none; font-size: 18px; cursor: pointer;
+      color: #666; padding: 4px 8px;
+    `;
+    closeBtn.addEventListener('click', () => {
+      destroy();
+    });
+
+    header.appendChild(title);
+    header.appendChild(closeBtn);
+
+    const content = document.createElement('div');
+    content.style.cssText = 'flex: 1; position: relative; background: #fff;';
+
+    modal.appendChild(header);
+    modal.appendChild(content);
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const destroy = () => {
+      unregister();
+      overlay.remove();
+    };
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) destroy();
+    });
+
+    // Execute ZIP in the modal content
+    executeZipAuto(msg.id, content).catch((err) => {
+      console.error('ZIP execution failed:', err);
+      content.innerHTML =
+        '<div style="padding: 40px; text-align: center; color: #666;">' + t('post_stage.zip_load_error') + '</div>';
+    });
+  }
+
+  private executeSwfModal(msg: Message): void {
+    const unregister = registerModal();
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.85); display: flex;
+      align-items: center; justify-content: center; z-index: 9999;
+    `;
+
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+      width: 90%; max-width: 800px; height: 80vh;
+      background: #fff; border-radius: 12px; overflow: hidden;
+      position: relative; display: flex; flex-direction: column;
+    `;
+
+    const header = document.createElement('div');
+    header.style.cssText = `
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 16px; background: #f5f5f5;
+    `;
+
+    const title = document.createElement('span');
+    title.style.cssText = 'font-weight: 600; font-size: 14px; color: #333;';
+    title.textContent = t('messages.play_flash');
+
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '✕';
+    closeBtn.style.cssText = `
+      background: none; border: none; font-size: 18px; cursor: pointer;
+      color: #666; padding: 4px 8px;
+    `;
+    closeBtn.addEventListener('click', () => {
+      destroy();
+    });
+
+    header.appendChild(title);
+    header.appendChild(closeBtn);
+
+    const content = document.createElement('div');
+    content.style.cssText =
+      'flex: 1; position: relative; background: #000; display: flex; align-items: center; justify-content: center;';
+
+    modal.appendChild(header);
+    modal.appendChild(content);
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const destroy = () => {
+      unregister();
+      overlay.remove();
+    };
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) destroy();
+    });
+
+    // Execute Flash in the modal content
+    executeFlash(msg.id, content).catch((err) => {
+      console.error('Flash execution failed:', err);
+      content.innerHTML =
+        '<div style="padding: 40px; text-align: center; color: #999;">' + t('post_stage.flash_load_error') + '</div>';
+    });
   }
 
   private formatTime(createdAt: string, _idx: number, _msg: Message): string {
