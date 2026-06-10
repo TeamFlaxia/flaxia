@@ -8319,11 +8319,12 @@ app.post('/api/dm/conversations/:id/messages', requireAuth, async (c) => {
   try {
     const senderId = c.get('user')?.id || '';
     const convId = c.req.param('id');
-    const { content, gifKey, payloadKey, swfKey } = (await c.req.json()) as {
+    const { content, gifKey, payloadKey, swfKey, messageId } = (await c.req.json()) as {
       content?: string;
       gifKey?: string;
       payloadKey?: string;
       swfKey?: string;
+      messageId?: string;
     };
 
     const trimmed = content?.trim() || '';
@@ -8346,7 +8347,8 @@ app.post('/api/dm/conversations/:id/messages', requireAuth, async (c) => {
       return c.json({ error: 'Conversation not found' }, 404);
     }
 
-    const msgId = nanoid();
+    // Use prepare-provided messageId if given (so storage key matches message ID)
+    const msgId = messageId || nanoid();
     const now = new Date().toISOString();
 
     // Insert message with optional attachment keys

@@ -1,7 +1,7 @@
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
 import { showToast } from '../lib/toast.js';
-import { executeZipAuto } from '../lib/zip-manager.js';
+import { executeUniversalZip } from '../lib/zip-manager.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { executeFlash } from './FlashPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
@@ -397,6 +397,7 @@ export class ConversationView {
       let gifKey: string | undefined;
       let payloadKey: string | undefined;
       let swfKey: string | undefined;
+      let messageId: string | undefined;
 
       // Upload file if selected
       if (this.selectedFile) {
@@ -422,6 +423,7 @@ export class ConversationView {
           swfKey?: string;
         };
 
+        messageId = prepareData.msgId;
         gifKey = prepareData.gifKey;
         payloadKey = prepareData.payloadKey;
         swfKey = prepareData.swfKey;
@@ -445,6 +447,7 @@ export class ConversationView {
       if (gifKey) body.gifKey = gifKey;
       if (payloadKey) body.payloadKey = payloadKey;
       if (swfKey) body.swfKey = swfKey;
+      if (messageId) body.messageId = messageId;
 
       const res = await fetch(`/api/dm/conversations/${this.props.conversationId}/messages`, {
         method: 'POST',
@@ -684,8 +687,8 @@ export class ConversationView {
       if (e.target === overlay) destroy();
     });
 
-    // Execute ZIP in the modal content
-    executeZipAuto(msg.id, content).catch((err) => {
+    // Execute ZIP in the modal content (force legacy mode — sandbox WVFS doesn't support DM-prefixed keys)
+    executeUniversalZip(msg.id, content, 'legacy').catch((err) => {
       console.error('ZIP execution failed:', err);
       content.innerHTML =
         '<div style="padding: 40px; text-align: center; color: #666;">' + t('post_stage.zip_load_error') + '</div>';
