@@ -9806,7 +9806,7 @@ app.post('/api/calls/:id/end', requireAuth, async (c) => {
     await c.env.DB.prepare("UPDATE calls SET status = 'ended', ended_at = ? WHERE id = ?").bind(now, callId).run();
 
     // Notify DO to end the call
-    if (c.env.CALL_STREAM) {
+    if (c.env.CALL_STREAM && callId) {
       try {
         const doId = c.env.CALL_STREAM.idFromName(callId);
         const stub = c.env.CALL_STREAM.get(doId);

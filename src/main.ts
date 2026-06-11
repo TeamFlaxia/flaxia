@@ -2520,7 +2520,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           timeline = createTimeline({
             sandboxOrigin: import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app',
             currentUser,
-            onReply: () => {},
           });
 
           const rightPanel = createRightPanel({
@@ -2870,7 +2869,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ conversationId, type: 'audio' }),
           });
-          const data = await res.json();
+          const data: any = await res.json();
           if (data.error) {
             console.error('Failed to start call:', data.error);
             return;
@@ -2909,7 +2908,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ groupId, type: 'audio' }),
           });
-          const data = await res.json();
+          const data: any = await res.json();
           if (data.error) {
             console.error('Failed to start group call:', data.error);
             return;
