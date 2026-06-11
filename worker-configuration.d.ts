@@ -11,7 +11,10 @@ interface __BaseEnv_Env {
   ADMIN_USERNAMES: 'remydrescarlet';
 }
 declare namespace Cloudflare {
-  interface Env extends __BaseEnv_Env {}
+interface Env extends __BaseEnv_Env {
+  CALL_STREAM?: DurableObjectNamespace;
+  NOTIFICATION_STREAM?: DurableObjectNamespace;
+}
 }
 interface Env extends __BaseEnv_Env {}
 

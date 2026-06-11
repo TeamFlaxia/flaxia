@@ -56,7 +56,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'settings'
       | 'arcade'
       | 'messages'
-      | 'groups' = 'timeline';
+      | 'groups'
+      | 'call' = 'timeline';
     let currentPostId: string | null = null;
     let _currentUsername: string | null = null;
     let currentTag: string | null = null;
@@ -78,6 +79,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let conversationView: ConversationView | null = null;
     let groupsPage: GroupsPage | null = null;
     let groupChatView: GroupChatView | null = null;
+    let callUI: { element: HTMLElement; destroy: () => void } | null = null;
     let cachedContentComponent: { view: string; component: unknown; scrollY: number } | null = null;
     let adminLayout:
       | (PageComponent & { updateMainContent: (el: HTMLElement) => void; setAccessDenied: () => void })
@@ -201,6 +203,10 @@ document.addEventListener('DOMContentLoaded', async () => {
               }
               if (data.push && typeof capacitorNotify === 'function') {
                 capacitorNotify(data.push.title, data.push.body);
+              }
+              // Handle incoming call notification
+              if (data.push?.type === 'call' && data.push?.postId) {
+                showIncomingCall(data.push.postId, data.push.title || 'Incoming call');
               }
             } else if (data.title) {
               if (typeof tauriNotify === 'function') {
@@ -972,6 +978,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         return { view: 'groups' as const, postId: null, username: null, tag: null };
       }
 
+      // Call route - requires auth
+      const callMatch = cleanPath.match(/^\/call\/([^/]+)$/);
+      if (callMatch) {
+        console.log('Call route detected, id:', callMatch[1]);
+        return { view: 'call' as const, postId: callMatch[1], username: null, tag: null };
+      }
+
       // Bookmarks route - requires auth
       if (cleanPath === '/bookmarks') {
         console.log('Bookmarks route detected');
@@ -1087,7 +1100,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         | 'settings'
         | 'arcade'
         | 'messages'
-        | 'groups',
+        | 'groups'
+        | 'call',
       postId?: string,
       username?: string,
       tag?: string,
@@ -2447,6 +2461,90 @@ document.addEventListener('DOMContentLoaded', async () => {
         const mainContainer = document.createElement('div');
         mainContainer.className = 'main-container';
 
+        if (view === 'call' && postId) {
+          // Call view - render timeline with call overlay
+          currentView = 'timeline';
+          currentPostId = null;
+
+          const leftNav = createLeftNav({
+            activeItem: 'home',
+            unreadCount: unreadNotificationCount,
+            unreadDmCount,
+            unreadGroupCount,
+            currentUser: currentUser || undefined,
+            onNavigate: async (item) => {
+              if (item === 'home') {
+                window.history.pushState({}, '', '/home');
+                navigateTo('timeline');
+              } else if (item === 'explore') {
+                window.history.pushState({}, '', '/explore');
+                navigateTo('explore');
+              } else if (item === 'arcade') {
+                window.history.pushState({}, '', '/arcade');
+                navigateTo('arcade');
+              } else if (item === 'messages') {
+                window.history.pushState({}, '', '/messages');
+                navigateTo('messages');
+              } else if (item === 'notifications') {
+                window.history.pushState({}, '', '/notifications');
+                navigateTo('notifications');
+              } else if (item === 'bookmarks') {
+                window.history.pushState({}, '', '/bookmarks');
+                navigateTo('bookmarks');
+              } else if (item === 'settings') {
+                window.history.pushState({}, '', '/settings');
+                navigateTo('settings');
+              } else if (item === 'profile') {
+                if (!currentUser) {
+                  window.history.pushState({}, '', '/arcade');
+                  navigateTo('arcade');
+                  return;
+                }
+                window.history.pushState({}, '', `/profile/${currentUser.username}`);
+                navigateTo('profile', undefined, currentUser.username);
+              }
+            },
+            onSignIn: () => {
+              window.history.pushState({}, '', '/login');
+              navigateTo('login');
+            },
+            onSignUp: () => {
+              window.history.pushState({}, '', '/register');
+              navigateTo('register');
+            },
+          });
+
+          leftNavInstances.add(leftNav);
+
+          const { createTimeline } = await import('./components/Timeline.js');
+          timeline = createTimeline({
+            sandboxOrigin: import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxia.app',
+            currentUser,
+            onReply: () => {},
+          });
+
+          const rightPanel = createRightPanel({
+            onSearch: () => {},
+            onFollowUser: () => {},
+          });
+
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(timeline.getElement());
+          mainContainer.appendChild(rightPanel.getElement());
+          app.appendChild(mainContainer);
+          hidePageLoader();
+          setupMobileLeftNav(leftNav.getElement());
+
+          // Now open the call UI
+          const callId = postId;
+          fetch('/api/calls/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ conversationId: callId, type: 'audio' }),
+          }).catch(() => {});
+          return;
+        }
+
         if (view === 'thread' && postId) {
           // Thread page view
           console.log('Creating thread page for postId:', postId);
@@ -2729,6 +2827,127 @@ document.addEventListener('DOMContentLoaded', async () => {
         detail.searchType,
       );
     });
+
+    // ─── Call feature event handlers ───────────────────────────────────────────────
+
+    const showIncomingCall = async (callId: string, callerInfo: string) => {
+      try {
+        const { showIncomingCallNotification } = await import('./components/CallUI.js');
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProtocol}//${window.location.host}/api/ws/call?roomId=${callId}&token=`;
+
+        showIncomingCallNotification(
+          callId,
+          callerInfo,
+          null,
+          'audio',
+          currentUser || { id: '', username: '' },
+          async () => {
+            // On answer - join the call
+            const uiModule = await import('./components/CallUI.js');
+            const ui = uiModule.createCallUI({
+              roomId: callId,
+              wsUrl,
+              callType: 'audio',
+              currentUser: currentUser || { id: '', username: '' },
+              isIncoming: true,
+              onEnded: () => {
+                if (callUI) {
+                  callUI.destroy();
+                  callUI = null;
+                }
+              },
+            });
+            callUI = ui;
+            document.body.appendChild(ui.element);
+          },
+          () => {
+            // On decline
+            fetch(`/api/calls/${callId}/end`, { method: 'POST' }).catch(() => {});
+          },
+        );
+      } catch (e) {
+        console.error('Failed to show incoming call:', e);
+      }
+    };
+
+    window.addEventListener('startCall', ((e: CustomEvent) => {
+      const { conversationId } = e.detail;
+      if (!conversationId) return;
+      (async () => {
+        try {
+          const res = await fetch('/api/calls/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ conversationId, type: 'audio' }),
+          });
+          const data = await res.json();
+          if (data.error) {
+            console.error('Failed to start call:', data.error);
+            return;
+          }
+          const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          const wsUrl = `${wsProtocol}//${window.location.host}/api/ws/call?roomId=${data.roomId}&token=`;
+          const { createCallUI } = await import('./components/CallUI.js');
+          const ui = createCallUI({
+            roomId: data.roomId,
+            wsUrl,
+            callType: 'audio',
+            currentUser: currentUser || { id: '', username: '' },
+            isIncoming: false,
+            onEnded: () => {
+              if (callUI) {
+                callUI.destroy();
+                callUI = null;
+              }
+            },
+          });
+          callUI = ui;
+          document.body.appendChild(ui.element);
+        } catch (e) {
+          console.error('Failed to start call:', e);
+        }
+      })();
+    }) as EventListener);
+
+    window.addEventListener('startGroupCall', ((e: CustomEvent) => {
+      const { groupId } = e.detail;
+      if (!groupId) return;
+      (async () => {
+        try {
+          const res = await fetch('/api/calls/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ groupId, type: 'audio' }),
+          });
+          const data = await res.json();
+          if (data.error) {
+            console.error('Failed to start group call:', data.error);
+            return;
+          }
+          const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+          const wsUrl = `${wsProtocol}//${window.location.host}/api/ws/call?roomId=${data.roomId}&token=`;
+          const { createCallUI } = await import('./components/CallUI.js');
+          const ui = createCallUI({
+            roomId: data.roomId,
+            wsUrl,
+            callType: 'audio',
+            currentUser: currentUser || { id: '', username: '' },
+            isIncoming: false,
+            onEnded: () => {
+              if (callUI) {
+                callUI.destroy();
+                callUI = null;
+              }
+            },
+          });
+          callUI = ui;
+          document.body.appendChild(ui.element);
+        } catch (e) {
+          console.error('Failed to start group call:', e);
+        }
+      })();
+    }) as EventListener);
 
     // Initial navigation
     console.log('DOM Content Loaded, starting initial routing...');

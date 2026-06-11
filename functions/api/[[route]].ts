@@ -46,6 +46,7 @@ type Bindings = {
   CF_TEAM_DOMAIN: string;
   CROWD_ORCHESTRATOR?: Fetcher;
   NOTIFICATION_STREAM?: DurableObjectNamespace;
+  CALL_STREAM?: DurableObjectNamespace;
   FCM_SERVER_KEY?: string;
   VECTORIZE?: Vectorize;
 };
@@ -9604,6 +9605,272 @@ app.get('/api/current-topic', async (c) => {
   }
 });
 
+// ─── Call API ──────────────────────────────────────────────────────────────────────
+
+// POST /api/calls/start - Start a voice/video call in a DM conversation or group
+app.post('/api/calls/start', requireAuth, async (c) => {
+  try {
+    const user = c.get('user')!;
+    const { conversationId, groupId, type } = (await c.req.json()) as {
+      conversationId?: string;
+      groupId?: string;
+      type?: 'audio' | 'video';
+    };
+
+    if (!conversationId && !groupId) {
+      return c.json({ error: 'conversationId or groupId is required' }, 400);
+    }
+    if (conversationId && groupId) {
+      return c.json({ error: 'Provide either conversationId or groupId, not both' }, 400);
+    }
+
+    const callType = type === 'video' ? 'video' : 'audio';
+    const callId = nanoid();
+    const roomId = callId; // DO instance key
+
+    // Verify access: user must be a participant of the conversation/group
+    if (conversationId) {
+      const conv = (await c.env.DB.prepare('SELECT user_a_id, user_b_id FROM dm_conversations WHERE id = ?')
+        .bind(conversationId)
+        .first()) as { user_a_id: string; user_b_id: string } | null;
+      if (!conv) return c.json({ error: 'Conversation not found' }, 404);
+      if (conv.user_a_id !== user.id && conv.user_b_id !== user.id) {
+        return c.json({ error: 'Not a participant of this conversation' }, 403);
+      }
+    } else if (groupId) {
+      const member = await c.env.DB.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?')
+        .bind(groupId, user.id)
+        .first();
+      if (!member) return c.json({ error: 'Not a member of this group' }, 403);
+    }
+
+    // Create call record
+    const now = new Date().toISOString();
+    await c.env.DB.prepare(
+      'INSERT INTO calls (id, conversation_id, group_id, initiator_id, status, type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    )
+      .bind(callId, conversationId || null, groupId || null, user.id, 'ringing', callType, now)
+      .run();
+
+    // Add initiator as first participant
+    await c.env.DB.prepare('INSERT INTO call_participants (call_id, user_id, joined_at, muted) VALUES (?, ?, ?, 0)')
+      .bind(callId, user.id, now)
+      .run();
+
+    // Notify other participants via push notification + WebSocket
+    if (conversationId) {
+      const conv = (await c.env.DB.prepare('SELECT user_a_id, user_b_id FROM dm_conversations WHERE id = ?')
+        .bind(conversationId)
+        .first()) as { user_a_id: string; user_b_id: string };
+      const otherUserId = conv.user_a_id === user.id ? conv.user_b_id : conv.user_a_id;
+
+      const otherUser = (await c.env.DB.prepare('SELECT username, display_name FROM users WHERE id = ?')
+        .bind(otherUserId)
+        .first()) as { username: string; display_name: string | null } | null;
+
+      const actorName = user.display_name || user.username || 'Someone';
+      await sendPushToAll(
+        c.env as unknown as Parameters<typeof sendPushToAll>[0],
+        otherUserId,
+        'call',
+        user.username,
+        actorName,
+        `${callType === 'video' ? '📹' : '📞'} Incoming call`,
+        callId,
+      );
+    } else if (groupId) {
+      const members = (await c.env.DB.prepare(
+        'SELECT gm.user_id, u.username, u.display_name FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.group_id = ? AND gm.user_id != ?',
+      )
+        .bind(groupId, user.id)
+        .all()) as { results: { user_id: string; username: string; display_name: string | null }[] };
+
+      const actorName = user.display_name || user.username || 'Someone';
+      for (const member of members.results) {
+        await sendPushToAll(
+          c.env as unknown as Parameters<typeof sendPushToAll>[0],
+          member.user_id,
+          'call',
+          user.username,
+          actorName,
+          `${callType === 'video' ? '📹' : '📞'} Group call`,
+          callId,
+        );
+      }
+    }
+
+    return c.json({ id: callId, roomId, type: callType });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Call start error:', error);
+    return c.json({ error: 'Failed to start call', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// POST /api/calls/:id/join - Join an active call
+app.post('/api/calls/:id/join', requireAuth, async (c) => {
+  try {
+    const user = c.get('user')!;
+    const callId = c.req.param('id');
+
+    const call = (await c.env.DB.prepare('SELECT id, status, type FROM calls WHERE id = ?').bind(callId).first()) as {
+      id: string;
+      status: string;
+      type: string;
+    } | null;
+
+    if (!call) return c.json({ error: 'Call not found' }, 404);
+    if (call.status === 'ended' || call.status === 'missed') {
+      return c.json({ error: 'Call has ended' }, 410);
+    }
+
+    // Verify user is a participant
+    const isMember = await c.env.DB.prepare('SELECT 1 FROM call_participants WHERE call_id = ? AND user_id = ?')
+      .bind(callId, user.id)
+      .first();
+
+    if (!isMember) {
+      // Check DM or group membership
+      const fullCall = (await c.env.DB.prepare('SELECT conversation_id, group_id FROM calls WHERE id = ?')
+        .bind(callId)
+        .first()) as { conversation_id: string | null; group_id: string | null };
+      let authorized = false;
+      if (fullCall.conversation_id) {
+        const conv = await c.env.DB.prepare(
+          'SELECT 1 FROM dm_conversations WHERE id = ? AND (user_a_id = ? OR user_b_id = ?)',
+        )
+          .bind(fullCall.conversation_id, user.id, user.id)
+          .first();
+        authorized = !!conv;
+      } else if (fullCall.group_id) {
+        const member = await c.env.DB.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?')
+          .bind(fullCall.group_id, user.id)
+          .first();
+        authorized = !!member;
+      }
+      if (!authorized) return c.json({ error: 'Not a participant' }, 403);
+    }
+
+    // Update call status to active
+    if (call.status === 'ringing') {
+      await c.env.DB.prepare("UPDATE calls SET status = 'active' WHERE id = ?").bind(callId).run();
+    }
+
+    // Add as participant if not already
+    await c.env.DB.prepare(
+      'INSERT OR IGNORE INTO call_participants (call_id, user_id, joined_at, muted) VALUES (?, ?, ?, 0)',
+    )
+      .bind(callId, user.id, new Date().toISOString())
+      .run();
+
+    // Return WebSocket URL for signaling
+    const wsProtocol = c.req.url.startsWith('https') ? 'wss:' : 'ws:';
+    const wsHost = new URL(c.req.url).host;
+    const baseUrl = c.req.url.startsWith('https') ? 'https:' : 'http:';
+
+    const wsUrl = `${wsProtocol}//${wsHost}/api/ws/call?roomId=${callId}&token=`;
+
+    return c.json({
+      id: call.id,
+      roomId: callId,
+      type: call.type,
+      wsUrl,
+    });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Call join error:', error);
+    return c.json({ error: 'Failed to join call', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// POST /api/calls/:id/end - End a call
+app.post('/api/calls/:id/end', requireAuth, async (c) => {
+  try {
+    const user = c.get('user')!;
+    const callId = c.req.param('id');
+
+    const call = (await c.env.DB.prepare('SELECT id, initiator_id, status FROM calls WHERE id = ?')
+      .bind(callId)
+      .first()) as { id: string; initiator_id: string; status: string } | null;
+
+    if (!call) return c.json({ error: 'Call not found' }, 404);
+
+    // Anyone in the call can end it
+    const participant = await c.env.DB.prepare('SELECT 1 FROM call_participants WHERE call_id = ? AND user_id = ?')
+      .bind(callId, user.id)
+      .first();
+
+    if (!participant) return c.json({ error: 'Not in this call' }, 403);
+
+    const now = new Date().toISOString();
+    await c.env.DB.prepare("UPDATE calls SET status = 'ended', ended_at = ? WHERE id = ?").bind(now, callId).run();
+
+    // Notify DO to end the call
+    if (c.env.CALL_STREAM) {
+      try {
+        const doId = c.env.CALL_STREAM.idFromName(callId);
+        const stub = c.env.CALL_STREAM.get(doId);
+        await stub.fetch('http://internal/end', {
+          method: 'POST',
+          body: JSON.stringify({ action: 'end-call', userId: user.id }),
+        });
+      } catch {
+        // DO might not exist if no WebSocket was connected
+      }
+    }
+
+    return c.json({ success: true });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Call end error:', error);
+    return c.json({ error: 'Failed to end call', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// POST /api/calls/:id/mute - Toggle mute state
+app.post('/api/calls/:id/mute', requireAuth, async (c) => {
+  try {
+    const user = c.get('user')!;
+    const callId = c.req.param('id');
+    const { muted } = (await c.req.json()) as { muted: boolean };
+
+    await c.env.DB.prepare('UPDATE call_participants SET muted = ? WHERE call_id = ? AND user_id = ?')
+      .bind(muted ? 1 : 0, callId, user.id)
+      .run();
+
+    return c.json({ success: true, muted });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Call mute error:', error);
+    return c.json({ error: 'Failed to toggle mute', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
+// GET /api/calls/active - Get user's active calls
+app.get('/api/calls/active', requireAuth, async (c) => {
+  try {
+    const user = c.get('user')!;
+
+    const activeCalls = (await c.env.DB.prepare(`
+      SELECT c.id, c.conversation_id, c.group_id, c.type, c.status, c.created_at,
+             c.initiator_id, u.username as initiator_username, u.display_name as initiator_display_name
+      FROM calls c
+      JOIN call_participants cp ON cp.call_id = c.id
+      JOIN users u ON u.id = c.initiator_id
+      WHERE cp.user_id = ? AND c.status IN ('ringing', 'active')
+      ORDER BY c.created_at DESC
+    `)
+      .bind(user.id)
+      .all()) as { results: Record<string, unknown>[] };
+
+    return c.json({ calls: activeCalls.results || [] });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Active calls error:', error);
+    return c.json({ error: 'Failed to fetch active calls', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
 // GET /api/push/vapid-key - Expose VAPID public key for clients
 app.get('/api/push/vapid-key', async (c) => {
   return c.json({ publicKey: getVapidPublicKey(c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY) });
@@ -9699,6 +9966,33 @@ export async function onRequest(context: Record<string, unknown>) {
     const doId = env.NOTIFICATION_STREAM.idFromName(session.user.id);
     const stub = env.NOTIFICATION_STREAM.get(doId);
     return stub.fetch(request);
+  }
+
+  // WebSocket 通話シグナリングストリーム
+  if (url.pathname === '/api/ws/call' && request.headers.get('Upgrade') === 'websocket') {
+    const roomId = url.searchParams.get('roomId');
+    if (!roomId) return new Response('Missing roomId', { status: 400 });
+
+    const sessionToken = getSessionToken(request) || url.searchParams.get('token');
+    if (!sessionToken) return new Response('Unauthorized', { status: 401 });
+    const session = await getSession(env, sessionToken);
+    if (!session) return new Response('Unauthorized', { status: 401 });
+
+    // Build forward URL with user info for the DO
+    const forwardUrl = new URL(request.url);
+    forwardUrl.searchParams.set('userId', session.user.id);
+    forwardUrl.searchParams.set('username', session.user.username || '');
+    forwardUrl.searchParams.set('display_name', session.user.display_name || '');
+    forwardUrl.searchParams.set('avatar_key', session.user.avatar_key || '');
+
+    const forwardReq = new Request(forwardUrl.toString(), {
+      headers: request.headers,
+    });
+
+    if (!env.CALL_STREAM) return new Response('Calls not available', { status: 503 });
+    const doId = env.CALL_STREAM.idFromName(roomId);
+    const stub = env.CALL_STREAM.get(doId);
+    return stub.fetch(forwardReq);
   }
 
   return app.fetch(request, env as unknown as Record<string, unknown>, context as unknown as ExecutionContext);

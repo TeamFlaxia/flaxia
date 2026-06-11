@@ -13,6 +13,8 @@ export interface PushPayload {
   title: string;
   body: string;
   url?: string;
+  type?: string;
+  postId?: string;
 }
 
 let vapidKeys: { publicKey: string; privateKey: string } | null = null;
@@ -125,23 +127,31 @@ export function getPushPayload(
 
   switch (type) {
     case 'fresh':
-      return { title: 'Flaxia', body: `${name} freshed your post${preview}`, url };
+      return { title: 'Flaxia', body: `${name} freshed your post${preview}`, url, type: 'notification' };
     case 'reply':
-      return { title: 'Flaxia', body: `${name} replied to you${preview}`, url };
+      return { title: 'Flaxia', body: `${name} replied to you${preview}`, url, type: 'notification' };
     case 'mention':
-      return { title: 'Flaxia', body: `${name} mentioned you${preview}`, url };
+      return { title: 'Flaxia', body: `${name} mentioned you${preview}`, url, type: 'notification' };
     case 'ap_follow':
-      return { title: 'Flaxia', body: `${name} followed you`, url: '/notifications' };
+      return { title: 'Flaxia', body: `${name} followed you`, url: '/notifications', type: 'notification' };
     case 'ap_like':
-      return { title: 'Flaxia', body: `${name} liked your post${preview}`, url };
+      return { title: 'Flaxia', body: `${name} liked your post${preview}`, url, type: 'notification' };
     case 'ap_announce':
-      return { title: 'Flaxia', body: `${name} boosted your post${preview}`, url };
+      return { title: 'Flaxia', body: `${name} boosted your post${preview}`, url, type: 'notification' };
     case 'poll_ended':
-      return { title: 'Flaxia', body: `Your poll has ended${preview}`, url };
+      return { title: 'Flaxia', body: `Your poll has ended${preview}`, url, type: 'notification' };
     case 'bookmark':
-      return { title: 'Flaxia', body: `${name} bookmarked your post${preview}`, url };
+      return { title: 'Flaxia', body: `${name} bookmarked your post${preview}`, url, type: 'notification' };
+    case 'call':
+      return {
+        title: postPreview || 'Incoming call',
+        body: `${name} is calling you`,
+        url: `/call/${postId || ''}`,
+        type: 'call',
+        postId,
+      };
     default:
-      return { title: 'Flaxia', body: `New notification${preview}`, url: '/notifications' };
+      return { title: 'Flaxia', body: `New notification${preview}`, url: '/notifications', type: 'notification' };
   }
 }
 

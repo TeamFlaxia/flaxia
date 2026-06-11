@@ -4951,3 +4951,279 @@ html {
     height: calc(100vh - 56px);
   }
 }
+
+/* ── Call UI ──────────────────────────────────────────────────── */
+
+.call-overlay {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.12);
+  padding: 1rem;
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.call-dialog {
+  width: 100%;
+  max-width: 400px;
+}
+
+.call-incoming {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.call-avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg-secondary);
+}
+
+.call-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.call-avatar-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.8rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--bg-secondary);
+}
+
+.call-caller-name {
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.call-type-label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.call-incoming-actions {
+  display: flex;
+  gap: 2rem;
+  margin-top: 0.5rem;
+}
+
+.call-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.75rem;
+  padding: 0.5rem;
+  border-radius: 50%;
+  transition: background 0.2s;
+}
+
+.call-btn:hover {
+  background: var(--bg-secondary);
+}
+
+.call-btn-accept {
+  background: #22c55e;
+  color: #fff;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.call-btn-accept:hover {
+  background: #16a34a;
+}
+
+.call-btn-decline {
+  background: #ef4444;
+  color: #fff;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.call-btn-decline:hover {
+  background: #dc2626;
+}
+
+.call-btn-end {
+  background: #ef4444;
+  color: #fff;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.call-btn-end:hover {
+  background: #dc2626;
+}
+
+.call-btn-mute,
+.call-btn-speaker {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.call-btn-active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.call-btn svg {
+  flex-shrink: 0;
+}
+
+.call-status-bar {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-align: center;
+  margin: 0.5rem 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.call-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  padding: 0.5rem 0;
+}
+
+.call-participants {
+  width: 100%;
+  max-width: 400px;
+}
+
+.call-participants-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.call-participant-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.call-participant-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--bg-primary);
+  flex-shrink: 0;
+}
+
+.call-participant-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.call-participant-avatar-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.call-participant-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.call-participant-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-participant-status {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.call-participant-muted {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* Call buttons in conversation/group headers */
+.conv-call-btn,
+.group-call-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--accent);
+  padding: 0.4rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+  margin-right: 0.25rem;
+}
+
+.conv-call-btn:hover,
+.group-call-btn:hover {
+  background: var(--bg-secondary);
+}
