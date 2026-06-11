@@ -99,6 +99,17 @@ export function createCallClient(
             left_at: null,
             muted: false,
           });
+
+          if (peerConnection && peerConnection.signalingState === 'stable') {
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            sendSignal({
+              type: 'offer',
+              userId: currentUser.id,
+              sdp: offer.sdp!,
+              targetUserId: msg.userId,
+            });
+          }
         }
         break;
 
@@ -194,10 +205,7 @@ export function createCallClient(
 
     await connectSignaling();
     await createPeerConnection();
-
-    const offer = await peerConnection!.createOffer();
-    await peerConnection!.setLocalDescription(offer);
-    sendSignal({ type: 'offer', userId: currentUser.id, sdp: offer.sdp! });
+    // Offer will be created when another participant joins
   }
 
   async function joinCall(): Promise<void> {

@@ -34,4 +34,5 @@ export interface SignalMessage {
   muted?: boolean;
   participants?: CallParticipant[];
   roomId?: string;
+  targetUserId?: string;
 }

@@ -122,11 +122,29 @@ export function createCallUI(config: CallUIConfig): CallUIHandle {
       .join('');
   }
 
+  let remoteAudioEl: HTMLAudioElement | null = null;
+
   const callbacks: CallClientCallbacks = {
-    onRemoteStream: (_stream: MediaStream) => {
-      // Audio only: no video element needed
+    onRemoteStream: (stream: MediaStream) => {
+      if (remoteAudioEl) {
+        remoteAudioEl.pause();
+        remoteAudioEl.srcObject = null;
+        remoteAudioEl.remove();
+      }
+      const audio = document.createElement('audio');
+      audio.srcObject = stream;
+      audio.autoplay = true;
+      audio.play().catch(() => {});
+      remoteAudioEl = audio;
     },
-    onRemoteStreamRemoved: () => {},
+    onRemoteStreamRemoved: () => {
+      if (remoteAudioEl) {
+        remoteAudioEl.pause();
+        remoteAudioEl.srcObject = null;
+        remoteAudioEl.remove();
+        remoteAudioEl = null;
+      }
+    },
     onCallEnded: (_userId: string) => {
       if (!destroyed) {
         showToast('Call ended');
@@ -255,6 +273,12 @@ export function createCallUI(config: CallUIConfig): CallUIHandle {
     if (client) {
       client.destroy();
       client = null;
+    }
+    if (remoteAudioEl) {
+      remoteAudioEl.pause();
+      remoteAudioEl.srcObject = null;
+      remoteAudioEl.remove();
+      remoteAudioEl = null;
     }
     if (durationInterval) {
       clearInterval(durationInterval);
