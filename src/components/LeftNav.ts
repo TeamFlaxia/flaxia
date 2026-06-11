@@ -172,12 +172,7 @@ export class LeftNav {
       nameText.className = 'nav-user-name-text';
       nameText.textContent = this.props.currentUser.display_name || this.props.currentUser.username;
 
-      const badge = document.createElement('span');
-      badge.className = 'nav-user-badge';
-      badge.style.display = 'none';
-
       name.appendChild(nameText);
-      name.appendChild(badge);
 
       const handle = document.createElement('div');
       handle.className = 'nav-user-handle';
@@ -194,11 +189,14 @@ export class LeftNav {
       userArea.appendChild(info);
       userArea.appendChild(caret);
 
-      // Init badge count
+      // Notification badge at bottom-left
+      const bottomBadge = document.createElement('div');
+      bottomBadge.className = 'nav-bottom-badge';
+      bottomBadge.id = 'nav-bottom-badge';
       if (this.props.unreadCount && this.props.unreadCount > 0) {
-        const count = this.props.unreadCount >= 99 ? '99+' : String(this.props.unreadCount);
-        badge.textContent = count;
-        badge.style.display = '';
+        bottomBadge.textContent = this.props.unreadCount >= 99 ? '99+' : String(this.props.unreadCount);
+      } else {
+        bottomBadge.style.display = 'none';
       }
 
       // Popup menu
@@ -252,6 +250,7 @@ export class LeftNav {
       });
 
       nav.appendChild(userArea);
+      nav.appendChild(bottomBadge);
     }
 
     // Add legal links (privacy policy and terms)
@@ -519,14 +518,15 @@ export class LeftNav {
   public setUnreadCount(count: number): void {
     this.props.unreadCount = count;
 
-    // Update user chip badge
-    const userBadge = this.element.querySelector('.nav-user-area .nav-user-badge') as HTMLElement | null;
-    if (userBadge) {
+    // Update bottom-left badge
+    const bottomBadge = this.element.querySelector('#nav-bottom-badge') as HTMLElement | null;
+    if (bottomBadge) {
       if (count > 0) {
-        userBadge.textContent = count >= 99 ? '99+' : formatCount(count);
-        userBadge.style.display = '';
+        bottomBadge.textContent = count >= 99 ? '99+' : formatCount(count);
+        bottomBadge.style.display = '';
       } else {
-        userBadge.style.display = 'none';
+        bottomBadge.textContent = '';
+        bottomBadge.style.display = 'none';
       }
     }
 
@@ -834,12 +834,7 @@ export function updateLeftNavUser(
     nameText.className = 'nav-user-name-text';
     nameText.textContent = currentUser.display_name || currentUser.username;
 
-    const badge = document.createElement('span');
-    badge.className = 'nav-user-badge';
-    badge.style.display = 'none';
-
     name.appendChild(nameText);
-    name.appendChild(badge);
 
     const handle = document.createElement('div');
     handle.className = 'nav-user-handle';
@@ -856,11 +851,14 @@ export function updateLeftNavUser(
     userArea.appendChild(info);
     userArea.appendChild(caret);
 
-    // Init badge count
+    // Notification badge at bottom-left
+    const bottomBadge = document.createElement('div');
+    bottomBadge.className = 'nav-bottom-badge';
+    bottomBadge.id = 'nav-bottom-badge';
     if (leftNav.props.unreadCount && leftNav.props.unreadCount > 0) {
-      const count = leftNav.props.unreadCount >= 99 ? '99+' : String(leftNav.props.unreadCount);
-      badge.textContent = count;
-      badge.style.display = '';
+      bottomBadge.textContent = leftNav.props.unreadCount >= 99 ? '99+' : String(leftNav.props.unreadCount);
+    } else {
+      bottomBadge.style.display = 'none';
     }
 
     // Popup menu
@@ -915,6 +913,7 @@ export function updateLeftNavUser(
     });
 
     leftNav.getElement().insertBefore(userArea, legalLinks);
+    leftNav.getElement().insertBefore(bottomBadge, legalLinks);
   }
 
   if (!currentUser) {
