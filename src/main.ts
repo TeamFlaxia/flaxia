@@ -2832,40 +2832,29 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const showIncomingCall = async (callId: string, callerInfo: string) => {
       try {
-        const { showIncomingCallNotification } = await import('./components/CallUI.js');
+        const { createCallUI } = await import('./components/CallUI.js');
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${wsProtocol}//${window.location.host}/api/ws/call?roomId=${callId}&token=`;
 
-        showIncomingCallNotification(
-          callId,
-          callerInfo,
-          null,
-          'audio',
-          currentUser || { id: '', username: '' },
-          async () => {
-            // On answer - join the call
-            const uiModule = await import('./components/CallUI.js');
-            const ui = uiModule.createCallUI({
-              roomId: callId,
-              wsUrl,
-              callType: 'audio',
-              currentUser: currentUser || { id: '', username: '' },
-              isIncoming: true,
-              onEnded: () => {
-                if (callUI) {
-                  callUI.destroy();
-                  callUI = null;
-                }
-              },
-            });
-            callUI = ui;
-            document.body.appendChild(ui.element);
-          },
-          () => {
-            // On decline
+        const ui = createCallUI({
+          roomId: callId,
+          wsUrl,
+          callType: 'audio',
+          currentUser: currentUser || { id: '', username: '' },
+          targetUser: { display_name: callerInfo, avatar_key: null },
+          isIncoming: true,
+          onDecline: () => {
             fetch(`/api/calls/${callId}/end`, { method: 'POST' }).catch(() => {});
           },
-        );
+          onEnded: () => {
+            if (callUI) {
+              callUI.destroy();
+              callUI = null;
+            }
+          },
+        });
+        callUI = ui;
+        document.body.appendChild(ui.element);
       } catch (e) {
         console.error('Failed to show incoming call:', e);
       }

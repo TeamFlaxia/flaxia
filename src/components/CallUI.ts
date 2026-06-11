@@ -10,6 +10,8 @@ interface CallUIConfig {
   currentUser: { id: string; username?: string; display_name?: string | null; avatar_key?: string | null };
   targetUser?: { username?: string; display_name?: string | null; avatar_key?: string | null };
   isIncoming: boolean;
+  onAccept?: () => void;
+  onDecline?: () => void;
   onEnded: () => void;
 }
 
@@ -239,6 +241,8 @@ export function createCallUI(config: CallUIConfig): CallUIHandle {
       await client.startCall();
     }
 
+    config.onAccept?.();
+
     // Start duration timer
     callDuration = 0;
     durationInterval = setInterval(() => {
@@ -254,6 +258,7 @@ export function createCallUI(config: CallUIConfig): CallUIHandle {
   }
 
   function declineCall(): void {
+    config.onDecline?.();
     cleanup();
     config.onEnded();
   }
@@ -326,24 +331,12 @@ export function showIncomingCallNotification(
     currentUser,
     targetUser: { display_name: callerName, avatar_key: callerAvatar },
     isIncoming: true,
+    onAccept: onAnswer,
+    onDecline,
     onEnded: () => {
       onDecline();
     },
   });
 
   document.body.appendChild(ui.element);
-
-  // Override the accept/decline to fire callbacks
-  const originalAccept = ui.element.querySelector('[data-action="accept"]');
-  if (originalAccept) {
-    originalAccept.addEventListener('click', () => {
-      onAnswer();
-    });
-  }
-  const originalDecline = ui.element.querySelector('[data-action="decline"]');
-  if (originalDecline) {
-    originalDecline.addEventListener('click', () => {
-      onDecline();
-    });
-  }
 }
