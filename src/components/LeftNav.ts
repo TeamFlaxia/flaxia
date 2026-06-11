@@ -6,6 +6,7 @@ export interface LeftNavProps {
   activeItem?: string;
   unreadCount?: number;
   unreadDmCount?: number;
+  unreadGroupCount?: number;
   onNavigate?: (item: string) => void;
   onSignIn?: () => void;
   onSignUp?: () => void;
@@ -75,7 +76,6 @@ export class LeftNav {
         { id: 'explore', label: t('nav.explore'), icon: '🔍' },
         { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
         { id: 'messages', label: t('nav.messages'), icon: '💬' },
-        { id: 'groups', label: t('nav.groups'), icon: '👥' },
       ] as const;
 
       items.forEach((item) => {
@@ -93,23 +93,26 @@ export class LeftNav {
         navItem.appendChild(iconSpan);
         navItem.appendChild(labelSpan);
 
-        // DM unread badge for messages
-        if (item.id === 'messages' && this.props.unreadDmCount && this.props.unreadDmCount > 0) {
-          const badge = document.createElement('span');
-          badge.className = 'nav-dm-badge';
-          badge.style.cssText = `
-            margin-left: auto;
-            background: var(--accent);
-            color: #000;
-            font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            font-size: 0.75rem;
-            padding: 2px 8px;
-            border-radius: 9999px;
-            min-width: 20px;
-            text-align: center;
-          `;
-          badge.textContent = this.props.unreadDmCount >= 99 ? '99+' : String(this.props.unreadDmCount);
-          navItem.appendChild(badge);
+        // Combined unread badge for messages (DM + groups)
+        if (item.id === 'messages') {
+          const totalUnread = (this.props.unreadDmCount || 0) + (this.props.unreadGroupCount || 0);
+          if (totalUnread > 0) {
+            const badge = document.createElement('span');
+            badge.className = 'nav-dm-badge';
+            badge.style.cssText = `
+              margin-left: auto;
+              background: var(--accent);
+              color: #000;
+              font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              font-size: 0.75rem;
+              padding: 2px 8px;
+              border-radius: 9999px;
+              min-width: 20px;
+              text-align: center;
+            `;
+            badge.textContent = totalUnread >= 99 ? '99+' : String(totalUnread);
+            navItem.appendChild(badge);
+          }
         }
 
         navItems.appendChild(navItem);
@@ -463,14 +466,24 @@ export class LeftNav {
 
   public setUnreadDmCount(count: number): void {
     this.props.unreadDmCount = count;
+    this.updateMessageBadge();
+  }
 
+  public setUnreadGroupCount(count: number): void {
+    this.props.unreadGroupCount = count;
+    this.updateMessageBadge();
+  }
+
+  private updateMessageBadge(): void {
     const dmItem = this.element.querySelector('.nav-item[data-nav-id="messages"]') as HTMLElement | null;
     if (!dmItem) return;
 
+    const totalUnread = (this.props.unreadDmCount || 0) + (this.props.unreadGroupCount || 0);
+
     const existingBadge = dmItem.querySelector('.nav-dm-badge') as HTMLElement | null;
-    if (count > 0) {
+    if (totalUnread > 0) {
       if (existingBadge) {
-        existingBadge.textContent = count >= 99 ? '99+' : formatCount(count);
+        existingBadge.textContent = totalUnread >= 99 ? '99+' : formatCount(totalUnread);
       } else {
         const badge = document.createElement('span');
         badge.className = 'nav-dm-badge';
@@ -485,7 +498,7 @@ export class LeftNav {
           min-width: 20px;
           text-align: center;
         `;
-        badge.textContent = count >= 99 ? '99+' : formatCount(count);
+        badge.textContent = totalUnread >= 99 ? '99+' : formatCount(totalUnread);
         dmItem.appendChild(badge);
       }
     } else if (existingBadge) {
@@ -644,7 +657,6 @@ export function updateLeftNavUser(
         { id: 'explore', label: t('nav.explore'), icon: '🔍' },
         { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
         { id: 'messages', label: t('nav.messages'), icon: '💬' },
-        { id: 'groups', label: t('nav.groups'), icon: '👥' },
       ] as const;
 
       items.forEach((item) => {
@@ -653,24 +665,26 @@ export function updateLeftNavUser(
         navItem.setAttribute('data-nav-id', item.id);
         navItem.innerHTML = `<span style="margin-right: 0.75rem;">${item.icon}</span><span>${item.label}</span>`;
 
-        // DM unread badge for messages
-        if (item.id === 'messages' && (leftNav.props.unreadDmCount ?? 0) > 0) {
-          const badge = document.createElement('span');
-          badge.className = 'nav-dm-badge';
-          badge.style.cssText = `
-            margin-left: auto;
-            background: var(--accent);
-            color: #000;
-            font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            font-size: 0.75rem;
-            padding: 2px 8px;
-            border-radius: 9999px;
-            min-width: 20px;
-            text-align: center;
-          `;
-          const dmCount = leftNav.props.unreadDmCount ?? 0;
-          badge.textContent = dmCount >= 99 ? '99+' : String(dmCount);
-          navItem.appendChild(badge);
+        // Combined unread badge for messages (DM + groups)
+        if (item.id === 'messages') {
+          const totalUnread = (leftNav.props.unreadDmCount ?? 0) + (leftNav.props.unreadGroupCount ?? 0);
+          if (totalUnread > 0) {
+            const badge = document.createElement('span');
+            badge.className = 'nav-dm-badge';
+            badge.style.cssText = `
+              margin-left: auto;
+              background: var(--accent);
+              color: #000;
+              font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              font-size: 0.75rem;
+              padding: 2px 8px;
+              border-radius: 9999px;
+              min-width: 20px;
+              text-align: center;
+            `;
+            badge.textContent = totalUnread >= 99 ? '99+' : String(totalUnread);
+            navItem.appendChild(badge);
+          }
         }
 
         navItem.addEventListener('click', () => {

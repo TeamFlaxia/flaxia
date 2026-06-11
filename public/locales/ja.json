@@ -16,6 +16,8 @@
   "messages.new": "新しいメッセージ",
   "messages.send": "送信",
   "messages.placeholder": "メッセージを入力...",
+  "messages.tab_direct": "ダイレクト",
+  "messages.tab_groups": "グループ",
   "messages.no_conversations": "会話がありません。「新しいメッセージ」からメッセージを始めましょう。",
   "messages.load_failed": "メッセージの読み込みに失敗しました",
   "messages.send_failed": "送信に失敗しました",

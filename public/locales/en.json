@@ -16,6 +16,8 @@
   "messages.new": "New message",
   "messages.send": "Send",
   "messages.placeholder": "Type a message...",
+  "messages.tab_direct": "Direct",
+  "messages.tab_groups": "Groups",
   "messages.no_conversations": "No conversations yet. Start one with \"New message\".",
   "messages.load_failed": "Failed to load messages",
   "messages.send_failed": "Failed to send message",

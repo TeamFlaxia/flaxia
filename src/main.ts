@@ -417,6 +417,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.log('[poll] refreshNotificationBadges called');
       const data = await fetchNotifications();
       await fetchDmUnreadCount();
+      await fetchGroupUnreadCount();
       console.log('[poll] unread count:', unreadNotificationCount);
       updateBadgeUI();
 
@@ -566,6 +567,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let lastNotificationFetch = 0;
     const NOTIFICATION_FETCH_TTL = 10000; // 10秒以内の連続fetchはキャッシュ
 
+    let unreadGroupCount = 0;
+
     const fetchDmUnreadCount = async (): Promise<void> => {
       try {
         const res = await fetch('/api/dm/unread-count', { credentials: 'include' });
@@ -575,6 +578,23 @@ document.addEventListener('DOMContentLoaded', async () => {
           leftNavInstances.forEach((ln) => {
             if (typeof ln.setUnreadDmCount === 'function') {
               ln.setUnreadDmCount(unreadDmCount);
+            }
+          });
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    const fetchGroupUnreadCount = async (): Promise<void> => {
+      try {
+        const res = await fetch('/api/groups/unread-count', { credentials: 'include' });
+        if (res.ok) {
+          const data = (await res.json()) as { unread_count: number };
+          unreadGroupCount = data.unread_count || 0;
+          leftNavInstances.forEach((ln) => {
+            if (typeof ln.setUnreadGroupCount === 'function') {
+              ln.setUnreadGroupCount(unreadGroupCount);
             }
           });
         }
@@ -1463,9 +1483,6 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
-              } else if (item === 'groups') {
-                window.history.pushState({}, '', '/groups');
-                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -1572,9 +1589,6 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
-              } else if (item === 'groups') {
-                window.history.pushState({}, '', '/groups');
-                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -1678,9 +1692,6 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
-              } else if (item === 'groups') {
-                window.history.pushState({}, '', '/groups');
-                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -1793,9 +1804,6 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
-              } else if (item === 'groups') {
-                window.history.pushState({}, '', '/groups');
-                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -1907,9 +1915,6 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
-              } else if (item === 'groups') {
-                window.history.pushState({}, '', '/groups');
-                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -2004,9 +2009,6 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
-              } else if (item === 'groups') {
-                window.history.pushState({}, '', '/groups');
-                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -2110,6 +2112,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             activeItem: 'messages',
             unreadCount: unreadNotificationCount,
             unreadDmCount,
+            unreadGroupCount,
             currentUser: currentUser || undefined,
             onNavigate: async (item) => {
               if (item === 'home') {
@@ -2124,9 +2127,6 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
-              } else if (item === 'groups') {
-                window.history.pushState({}, '', '/groups');
-                navigateTo('groups');
               } else if (item === 'notifications') {
                 window.history.pushState({}, '', '/notifications');
                 navigateTo('notifications');
@@ -2177,7 +2177,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             mainContainer.appendChild(leftNav.getElement());
             mainContainer.appendChild(conversationView.getElement());
           } else {
-            // Messages list view
+            // Combined messages + groups list view
             if (cachedContentComponent?.view === 'messages') {
               messagesPage = cachedContentComponent.component as MessagesPage;
               cachedContentComponent = null;
@@ -2189,6 +2189,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 onNavigateToConversation: (convId) => {
                   window.history.pushState({}, '', `/messages/${convId}`);
                   navigateTo('messages', convId);
+                },
+                onNavigateToGroup: (groupId) => {
+                  window.history.pushState({}, '', `/groups/${groupId}`);
+                  navigateTo('groups', groupId);
                 },
               });
             }
@@ -2212,8 +2216,15 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
-        // Handle groups page (within 3-column layout)
+        // Handle groups page - only for specific group chat view
         if (view === 'groups') {
+          if (!postId) {
+            // No group ID: redirect to combined messages page
+            window.history.pushState({}, '', '/messages');
+            navigateTo('messages');
+            return;
+          }
+
           currentView = 'groups';
           currentPostId = postId || null;
           _currentUsername = null;
@@ -2225,14 +2236,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
           }
 
-          // Create main container for 3-column layout
           const mainContainer = document.createElement('div');
           mainContainer.className = 'main-container';
 
           const leftNav = createLeftNav({
-            activeItem: 'groups',
+            activeItem: 'messages',
             unreadCount: unreadNotificationCount,
             unreadDmCount,
+            unreadGroupCount,
             currentUser: currentUser || undefined,
             onNavigate: async (item) => {
               if (item === 'home') {
@@ -2253,9 +2264,6 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
-              } else if (item === 'groups') {
-                window.history.pushState({}, '', '/groups');
-                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -2281,48 +2289,22 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           leftNavInstances.add(leftNav);
 
-          if (postId) {
-            if (cachedContentComponent?.view === 'groups' && groupsPage) {
-              groupsPage = null;
-            }
-
-            const { createGroupChatView } = await import('./components/GroupChatView.js');
-            groupChatView = createGroupChatView({
-              groupId: postId,
-              currentUser,
-              onBack: () => {
-                window.history.pushState({}, '', '/groups');
-                navigateTo('groups');
-              },
-            });
-
-            mainContainer.appendChild(leftNav.getElement());
-            mainContainer.appendChild(groupChatView.getElement());
-          } else {
-            if (cachedContentComponent?.view === 'groups') {
-              groupsPage = cachedContentComponent.component as GroupsPage;
-              cachedContentComponent = null;
-              groupsPage.refresh();
-            } else {
-              const { createGroupsPage } = await import('./components/GroupsPage.js');
-              groupsPage = createGroupsPage({
-                currentUser,
-                onNavigateToGroup: (groupId) => {
-                  window.history.pushState({}, '', `/groups/${groupId}`);
-                  navigateTo('groups', groupId);
-                },
-              });
-            }
-
-            const rightPanel = createRightPanel({
-              onSearch: (query) => {},
-              onFollowUser: (userId) => {},
-            });
-
-            mainContainer.appendChild(leftNav.getElement());
-            mainContainer.appendChild(groupsPage.getElement());
-            mainContainer.appendChild(rightPanel.getElement());
+          if (cachedContentComponent?.view === 'groups' && groupsPage) {
+            groupsPage = null;
           }
+
+          const { createGroupChatView } = await import('./components/GroupChatView.js');
+          groupChatView = createGroupChatView({
+            groupId: postId,
+            currentUser,
+            onBack: () => {
+              window.history.pushState({}, '', '/messages');
+              navigateTo('messages');
+            },
+          });
+
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(groupChatView.getElement());
 
           app.appendChild(mainContainer);
           hidePageLoader();
@@ -2368,9 +2350,6 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
-              } else if (item === 'groups') {
-                window.history.pushState({}, '', '/groups');
-                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
@@ -2545,9 +2524,6 @@ document.addEventListener('DOMContentLoaded', async () => {
               } else if (item === 'messages') {
                 window.history.pushState({}, '', '/messages');
                 navigateTo('messages');
-              } else if (item === 'groups') {
-                window.history.pushState({}, '', '/groups');
-                navigateTo('groups');
               } else if (item === 'settings') {
                 window.history.pushState({}, '', '/settings');
                 navigateTo('settings');
