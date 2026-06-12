@@ -3986,7 +3986,17 @@ app.get('/api/posts/recommended', async (c) => {
   try {
     const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
     const cursor = c.req.query('cursor');
-    const [cursorScore, cursorCreatedAt] = cursor ? cursor.split(',') : [null, null];
+    let cursorScore: string | null = null;
+    let cursorCreatedAt: string | null = null;
+    if (cursor) {
+      const parts = cursor.split(',');
+      if (parts.length >= 2) {
+        cursorScore = parts[0];
+        cursorCreatedAt = parts.slice(1).join(','); // Rejoin in case created_at contains commas
+      } else {
+        cursorCreatedAt = parts[0]; // Bare created_at (backward compat)
+      }
+    }
     let numericCursor = cursorScore !== null ? parseFloat(cursorScore) : null;
     if (Number.isNaN(numericCursor!)) numericCursor = null;
 
@@ -4049,8 +4059,12 @@ app.get('/api/posts/recommended', async (c) => {
       const result = await c.env.DB.prepare(query)
         .bind(...params)
         .all();
-      const posts = enrichRecommendedPosts(result.results || [], c.env.DB, currentUserId, c);
-      return c.json({ posts });
+      const enrichedPosts = await enrichRecommendedPosts(result.results || [], c.env.DB, currentUserId, c);
+      const nextCursor =
+        enrichedPosts.length > 0
+          ? `${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).score},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).created_at}`
+          : null;
+      return c.json({ posts: enrichedPosts, next_cursor: nextCursor });
     }
 
     // Hybrid: query Vectorize then re-rank with engagement
@@ -4138,8 +4152,12 @@ app.get('/api/posts/recommended', async (c) => {
       return p;
     });
 
-    const result = await enrichRecommendedPosts(posts, c.env.DB, currentUserId, c);
-    return c.json({ posts: result });
+    const enrichedPosts = await enrichRecommendedPosts(posts, c.env.DB, currentUserId, c);
+    const nextCursor =
+      enrichedPosts.length > 0
+        ? `${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).score},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).created_at}`
+        : null;
+    return c.json({ posts: enrichedPosts, next_cursor: nextCursor });
   } catch (error: unknown) {
     const err = error as { message?: string };
     console.error('Recommended posts error:', error);

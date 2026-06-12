@@ -443,7 +443,7 @@ export class Timeline {
         throw new Error('Failed to fetch posts');
       }
 
-      const data = (await response.json()) as { posts?: Post[] };
+      const data = (await response.json()) as { posts?: Post[]; next_cursor?: string };
 
       // Ensure posts is an array (handle unexpected API responses)
       const postsArray = Array.isArray(data.posts) ? data.posts : [];
@@ -453,7 +453,7 @@ export class Timeline {
       this.state.posts = postsWithAds;
 
       if (postsArray.length > 0) {
-        this.state.cursor = postsArray[postsArray.length - 1].created_at;
+        this.state.cursor = data.next_cursor || postsArray[postsArray.length - 1].created_at;
       }
 
       this.state.hasMore = postsArray.length === 20;
@@ -500,7 +500,7 @@ export class Timeline {
         throw new Error('Failed to fetch more posts');
       }
 
-      const data = (await response.json()) as { posts?: Post[] };
+      const data = (await response.json()) as { posts?: Post[]; next_cursor?: string };
 
       // Ensure posts is an array (handle unexpected API responses)
       const postsArray = Array.isArray(data.posts) ? data.posts : [];
@@ -510,7 +510,7 @@ export class Timeline {
       this.state.posts = [...this.state.posts, ...postsWithAds];
 
       if (postsArray.length > 0) {
-        this.state.cursor = postsArray[postsArray.length - 1].created_at;
+        this.state.cursor = data.next_cursor || postsArray[postsArray.length - 1].created_at;
       }
 
       this.state.hasMore = postsArray.length === 20;
