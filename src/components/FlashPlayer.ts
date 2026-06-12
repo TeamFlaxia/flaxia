@@ -4,6 +4,8 @@ export interface FlashPlayerHandle {
   destroy: () => void;
 }
 
+const LOADING_TIMEOUT = 30000;
+
 let activeHandle: FlashPlayerHandle | null = null;
 
 export async function executeFlash(
@@ -19,9 +21,14 @@ export async function executeFlash(
   }
 
   try {
+    containerEl.innerHTML = '';
+    containerEl.style.position = 'relative';
+
+    const loadingEl = createFlashLoadingIndicator();
+    containerEl.appendChild(loadingEl);
+
     const swfUrl = url || `/api/swf/${postId}`;
 
-    // Use preloaded data if available, otherwise fetch
     const swfPromise = preloadedData
       ? Promise.resolve(preloadedData)
       : fetch(swfUrl).then((r) => {
@@ -38,7 +45,6 @@ export async function executeFlash(
       bottom: 0;
       display: flex;
       flex-direction: column;
-      background: #ffffff;
     `;
 
     const loadFailedText = t('flash_player.load_failed');
@@ -55,7 +61,6 @@ export async function executeFlash(
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #ffffff;
     }
     #player {
       width: 100%;
@@ -64,7 +69,6 @@ export async function executeFlash(
       display: flex;
       align-items: center;
       justify-content: center;
-      background: #000;
     }
     #flash-player {
       width: 100% !important;
@@ -99,7 +103,7 @@ export async function executeFlash(
     };
     script.onerror = function() {
       document.getElementById('player').innerHTML =
-        '<div style="color:white;text-align:center;padding:20px;">Failed to load Ruffle runtime.</div>';
+        '<div style="color:#666;text-align:center;padding:20px;">Failed to load Ruffle runtime.</div>';
     };
     document.head.appendChild(script);
 
@@ -114,7 +118,6 @@ export async function executeFlash(
         autoplay: 'on',
         unmuteOverlay: 'visible',
         letterbox: 'on',
-        backgroundColor: '#ffffff',
         allowScriptAccess: 'never',
         allowNetworking: 'none',
         maxExecutionDuration: 15,
@@ -129,7 +132,7 @@ export async function executeFlash(
 
       player.load({ data: new Uint8Array(swfData) }).catch(function(error) {
         console.error('Failed to load SWF:', error);
-        container.innerHTML = '<div style="color:white;text-align:center;padding:20px;">${loadFailedText}</div>';
+        container.innerHTML = '<div style="color:#666;text-align:center;padding:20px;">${loadFailedText}</div>';
       });
     }
   </script>
@@ -150,7 +153,8 @@ export async function executeFlash(
       width: 100%;
       height: 100%;
       border: none;
-      background: #ffffff;
+      opacity: 0;
+      transition: opacity 0.3s ease;
     `;
 
     const fullscreenBtn = document.createElement('button');
@@ -190,7 +194,6 @@ export async function executeFlash(
       }
     };
 
-    // Set up iframe-ready listener BEFORE adding iframe to DOM (avoid race)
     let iframeReady = false;
     const readyHandler = (e: MessageEvent) => {
       if (e.data === 'FLASH_IFRAME_READY') {
@@ -199,21 +202,27 @@ export async function executeFlash(
     };
     window.addEventListener('message', readyHandler);
 
-    containerEl.innerHTML = '';
     containerEl.appendChild(iframeContainer);
     iframeContainer.appendChild(iframe);
     if (!hideFullscreen) {
       iframeContainer.appendChild(fullscreenBtn);
     }
 
-    // Wait for SWF data (fetched in parallel with iframe setup)
     const swfData = await swfPromise;
 
-    // Wait for iframe to signal readiness
     if (!iframeReady) {
-      await new Promise<void>((resolve) => {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          window.removeEventListener('message', readyHandler);
+          reject(new Error('Flash iframe ready timeout'));
+        }, LOADING_TIMEOUT);
+
         const check = () => {
-          if (iframeReady) return resolve();
+          if (iframeReady) {
+            clearTimeout(timeout);
+            window.removeEventListener('message', readyHandler);
+            return resolve();
+          }
           setTimeout(check, 10);
         };
         check();
@@ -222,6 +231,14 @@ export async function executeFlash(
     window.removeEventListener('message', readyHandler);
 
     iframe.contentWindow?.postMessage({ type: 'SWF_DATA', data: swfData }, '*', [swfData]);
+
+    iframe.style.opacity = '1';
+    if (loadingEl.parentNode) {
+      loadingEl.style.opacity = '0';
+      setTimeout(() => {
+        if (loadingEl.parentNode) loadingEl.remove();
+      }, 300);
+    }
 
     const handle: FlashPlayerHandle = {
       destroy: () => {
@@ -264,6 +281,60 @@ export async function executeFlash(
     `;
 
     throw error;
+  }
+}
+
+function createFlashLoadingIndicator(): HTMLElement {
+  ensureSpinKeyframe();
+
+  const loading = document.createElement('div');
+  loading.className = 'flash-loading';
+  loading.style.cssText = `
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-primary, #ffffff);
+    z-index: 10;
+    transition: opacity 0.3s ease;
+    border-radius: 8px;
+  `;
+
+  const spinner = document.createElement('div');
+  spinner.style.cssText = `
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border, #e2e8f0);
+    border-top-color: var(--accent, #22c55e);
+    border-radius: 50%;
+    animation: wvfs-spin 0.8s linear infinite;
+    margin-bottom: 12px;
+  `;
+
+  const text = document.createElement('div');
+  text.style.cssText = `
+    color: var(--text-muted, #64748b);
+    font-size: 0.875rem;
+    font-weight: 500;
+  `;
+  text.textContent = t('post_stage.loading_flash').replace(/<[^>]+>/g, '');
+
+  loading.appendChild(spinner);
+  loading.appendChild(text);
+  return loading;
+}
+
+function ensureSpinKeyframe(): void {
+  if (!document.querySelector('#wvfs-spin-style')) {
+    const style = document.createElement('style');
+    style.id = 'wvfs-spin-style';
+    style.textContent = `@keyframes wvfs-spin { to { transform: rotate(360deg); } }`;
+    document.head.appendChild(style);
   }
 }
 

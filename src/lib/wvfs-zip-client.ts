@@ -5,40 +5,63 @@ export interface WvfsZipExecutorHandle {
   postId: string;
 }
 
-// Global execution manager
+const LOADING_TIMEOUT = 30000;
+
 let activeHandle: WvfsZipExecutorHandle | null = null;
 
 export async function executeWvfsZip(
   postId: string,
   containerEl: HTMLElement,
-  workerUrl?: string, // custom worker URL for testing
+  workerUrl?: string,
   hideFullscreen: boolean = false,
+  showLoading: boolean = true,
 ): Promise<WvfsZipExecutorHandle> {
-  // Clean up any existing execution
   if (activeHandle) {
     activeHandle.destroy();
     activeHandle = null;
   }
 
   try {
-    // Create iframe pointing directly to WVFS sandbox worker (bypass 301 redirect)
+    containerEl.innerHTML = '';
+    containerEl.style.position = 'relative';
+
+    let loadingEl: HTMLElement | null = null;
+    if (showLoading) {
+      loadingEl = createLoadingIndicator();
+      containerEl.appendChild(loadingEl);
+    }
+
     const sandboxOrigin = workerUrl || import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
     const zipUrl = `${sandboxOrigin}/api/wvfs-zip/${postId}`;
 
-    const { cleanup } = await createWvfsIframe(postId, containerEl, zipUrl, hideFullscreen);
+    const { iframe, cleanup } = createWvfsIframe(postId, containerEl, zipUrl, hideFullscreen);
 
-    // Create handle with cleanup
+    const loaded = await waitForLoad(iframe, loadingEl);
+
+    if (loaded) {
+      iframe.style.opacity = '1';
+      if (loadingEl?.parentNode) {
+        loadingEl.style.opacity = '0';
+        setTimeout(() => {
+          if (loadingEl?.parentNode) loadingEl.remove();
+        }, 300);
+      }
+    } else {
+      if (loadingEl?.parentNode) {
+        loadingEl.innerHTML = `<div style="color: var(--text-muted, #64748b); text-align: center; padding: 20px; font-size: 0.875rem;">読み込みに時間がかかっています…</div>`;
+      }
+      iframe.style.opacity = '1';
+    }
+
     const handle: WvfsZipExecutorHandle = {
       postId,
       destroy: () => {
+        clearTimeout((iframe as HTMLIFrameElement & { _wvfsTimeout?: number })._wvfsTimeout);
         cleanup();
-
-        // Remove fullscreen button if it exists
         const fullscreenBtn = containerEl.querySelector('.wvfs-fullscreen-btn');
         if (fullscreenBtn) {
           fullscreenBtn.parentNode?.removeChild(fullscreenBtn);
         }
-
         if (activeHandle?.postId === postId) {
           activeHandle = null;
         }
@@ -48,7 +71,6 @@ export async function executeWvfsZip(
     activeHandle = handle;
     return handle;
   } catch (error) {
-    // Clean up on error
     if (activeHandle) {
       activeHandle.destroy();
       activeHandle = null;
@@ -57,13 +79,57 @@ export async function executeWvfsZip(
   }
 }
 
-async function createWvfsIframe(
+function createLoadingIndicator(): HTMLElement {
+  ensureSpinKeyframe();
+
+  const loading = document.createElement('div');
+  loading.className = 'wvfs-loading';
+  loading.style.cssText = `
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-primary, #ffffff);
+    z-index: 10;
+    transition: opacity 0.3s ease;
+    border-radius: 8px;
+  `;
+
+  const spinner = document.createElement('div');
+  spinner.style.cssText = `
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border, #e2e8f0);
+    border-top-color: var(--accent, #22c55e);
+    border-radius: 50%;
+    animation: wvfs-spin 0.8s linear infinite;
+    margin-bottom: 12px;
+  `;
+
+  const text = document.createElement('div');
+  text.style.cssText = `
+    color: var(--text-muted, #64748b);
+    font-size: 0.875rem;
+    font-weight: 500;
+  `;
+  text.textContent = t('post_stage.loading_zip').replace(/<[^>]+>/g, '');
+
+  loading.appendChild(spinner);
+  loading.appendChild(text);
+  return loading;
+}
+
+function createWvfsIframe(
   postId: string,
   containerEl: HTMLElement,
   zipUrl: string,
-  hideFullscreen: boolean = false,
-): Promise<{ iframe: HTMLIFrameElement; cleanup: () => void }> {
-  // Create iframe container
+  hideFullscreen: boolean,
+): { iframe: HTMLIFrameElement; cleanup: () => void } {
   const iframeContainer = document.createElement('div');
   iframeContainer.style.cssText = `
     position: absolute;
@@ -75,7 +141,6 @@ async function createWvfsIframe(
     flex-direction: column;
   `;
 
-  // Create iframe pointing to WVFS worker endpoint
   const iframe = document.createElement('iframe');
   iframe.src = zipUrl;
   iframe.setAttribute('allow', 'fullscreen');
@@ -85,10 +150,10 @@ async function createWvfsIframe(
     width: 100%;
     height: 100%;
     border: none;
-    background: white;
+    opacity: 0;
+    transition: opacity 0.3s ease;
   `;
 
-  // Add fullscreen button
   const fullscreenBtn = document.createElement('button');
   fullscreenBtn.textContent = t('fullscreen.button');
   fullscreenBtn.className = 'wvfs-fullscreen-btn';
@@ -126,8 +191,6 @@ async function createWvfsIframe(
     }
   };
 
-  // Clear container and add iframe container
-  containerEl.innerHTML = '';
   containerEl.appendChild(iframeContainer);
   iframeContainer.appendChild(iframe);
   if (!hideFullscreen) {
@@ -141,4 +204,37 @@ async function createWvfsIframe(
   };
 
   return { iframe, cleanup };
+}
+
+function waitForLoad(iframe: HTMLIFrameElement, loadingEl: HTMLElement | null): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (iframe.contentWindow?.location?.href && iframe.contentWindow.location.href !== 'about:blank') {
+      iframe.style.opacity = '1';
+      resolve(true);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      iframe.removeEventListener('load', onLoad);
+      resolve(false);
+    }, LOADING_TIMEOUT);
+
+    (iframe as HTMLIFrameElement & { _wvfsTimeout?: number })._wvfsTimeout = timeoutId;
+
+    function onLoad() {
+      clearTimeout(timeoutId);
+      resolve(true);
+    }
+
+    iframe.addEventListener('load', onLoad, { once: true });
+  });
+}
+
+function ensureSpinKeyframe(): void {
+  if (!document.querySelector('#wvfs-spin-style')) {
+    const style = document.createElement('style');
+    style.id = 'wvfs-spin-style';
+    style.textContent = `@keyframes wvfs-spin { to { transform: rotate(360deg); } }`;
+    document.head.appendChild(style);
+  }
 }

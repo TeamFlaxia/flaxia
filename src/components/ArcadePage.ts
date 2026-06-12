@@ -1271,7 +1271,7 @@ export class ArcadePage {
         this.preloadCache.delete(game.postId);
       } else if (game.type === 'zip' && game.payloadKey) {
         // Use WVFS for ZIP execution
-        const handle = await executeWvfsZip(game.postId, container, undefined, true);
+        const handle = await executeWvfsZip(game.postId, container, undefined, true, false);
         this.currentGameHandle = handle;
       } else if (game.type === 'dos' && game.payloadKey) {
         const handle = await executeDos(game.postId, container, `/api/zip/${game.postId}`, true);
