@@ -1669,7 +1669,7 @@ app.get('/api/users/suggestions', async (c) => {
             return shuffled.slice(0, 3);
           })();
 
-    return c.json({ users: suggestions.results || [] });
+    return c.json({ users: suggestions });
   } catch (error: unknown) {
     console.error('User suggestions error:', error);
     return c.json({ users: [] });
