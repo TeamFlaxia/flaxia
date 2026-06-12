@@ -266,32 +266,36 @@ async function handleCreateActivity(
   // Create mention notifications for mentioned users
   if (mentionedUsernames.length > 0) {
     try {
-      for (const mentionedUsername of mentionedUsernames) {
-        // Don't notify if mentioning yourself
-        if (mentionedUsername.toLowerCase() === username.toLowerCase()) {
-          continue;
-        }
+      const filteredUsernames = mentionedUsernames.filter((mu) => mu.toLowerCase() !== username.toLowerCase());
 
-        // Look up the mentioned user
-        const mentionedUser = (await env.DB.prepare(
-          'SELECT id, username, display_name, avatar_key FROM users WHERE username = ? COLLATE NOCASE',
+      if (filteredUsernames.length > 0) {
+        // Batch lookup all mentioned users
+        const placeholders = filteredUsernames.map(() => '?').join(',');
+        const mentionedUsers = (await env.DB.prepare(
+          `SELECT id, username, display_name, avatar_key FROM users WHERE username IN (${placeholders}) COLLATE NOCASE`,
         )
-          .bind(mentionedUsername)
-          .first()) as { id: string; username: string; display_name: string; avatar_key: string | null } | null;
+          .bind(...filteredUsernames)
+          .all<{ id: string; username: string; display_name: string; avatar_key: string | null }>()) as D1Result<{
+          id: string;
+          username: string;
+          display_name: string;
+          avatar_key: string | null;
+        }>;
 
-        if (mentionedUser) {
-          // Create mention notification with actor_data for external actor
-          const actorData = JSON.stringify({
-            username: username,
-            display_name: username,
-            domain: new URL(actorId).hostname,
-          });
+        const actorData = JSON.stringify({
+          username: username,
+          display_name: username,
+          domain: new URL(actorId).hostname,
+        });
 
-          await env.DB.prepare(
+        const stmts = (mentionedUsers.results || []).map((mentionedUser) =>
+          env.DB.prepare(
             'INSERT INTO notifications (id, user_id, type, post_id, actor_id, actor_data) VALUES (?, ?, ?, ?, ?, ?)',
-          )
-            .bind(generateId(), mentionedUser.id, 'mention', postId, actorId, actorData)
-            .run();
+          ).bind(generateId(), mentionedUser.id, 'mention', postId, actorId, actorData),
+        );
+
+        if (stmts.length > 0) {
+          await env.DB.batch(stmts);
         }
       }
     } catch (e) {
