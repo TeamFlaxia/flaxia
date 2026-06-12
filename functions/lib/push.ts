@@ -91,22 +91,29 @@ export async function sendPushToUser(
     .bind(userId)
     .all()) as { results: { type: string; endpoint: string; auth_key: string; p256dh_key: string }[] };
 
-  for (const row of results) {
-    if (row.type === 'fcm') {
-      const ok = await sendPushToDevice(row.endpoint, payload, env?.FCM_SERVER_KEY || '');
-      if (!ok) {
-        await db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(row.endpoint).run();
+  // Send all pushes in parallel, collect stale subscriptions
+  const staleEndpoints: string[] = [];
+  await Promise.allSettled(
+    results.map(async (row) => {
+      if (row.type === 'fcm') {
+        const ok = await sendPushToDevice(row.endpoint, payload, env?.FCM_SERVER_KEY || '');
+        if (!ok) staleEndpoints.push(row.endpoint);
+      } else {
+        const subscription: PushSubscription = {
+          endpoint: row.endpoint,
+          keys: { p256dh: row.p256dh_key, auth: row.auth_key },
+        };
+        const ok = await sendPushToSubscription(subscription, payload, vapidPublicKey, vapidPrivateKey);
+        if (!ok) staleEndpoints.push(row.endpoint);
       }
-    } else {
-      const subscription: PushSubscription = {
-        endpoint: row.endpoint,
-        keys: { p256dh: row.p256dh_key, auth: row.auth_key },
-      };
-      const ok = await sendPushToSubscription(subscription, payload, vapidPublicKey, vapidPrivateKey);
-      if (!ok) {
-        await db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(row.endpoint).run();
-      }
-    }
+    }),
+  );
+
+  // Batch-delete stale subscriptions
+  if (staleEndpoints.length > 0) {
+    await db.batch(
+      staleEndpoints.map((ep) => db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(ep)),
+    );
   }
 }
 

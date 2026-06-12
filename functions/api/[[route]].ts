@@ -1642,19 +1642,32 @@ app.get('/api/users/suggestions', async (c) => {
 
     const currentUserId = sessionData.user.id;
 
-    // Get suggestions: users not followed by current user and not self
-    const suggestions = await c.env.DB.prepare(`
+    // Get suggestions: pick 3 random from first 100 eligible users (avoids full scan)
+    const pool = await c.env.DB.prepare(`
       SELECT id, username, display_name, avatar_key
       FROM users
       WHERE id != ?
       AND id NOT IN (
         SELECT followee_id FROM follows WHERE follower_id = ?
       )
-      ORDER BY RANDOM()
-      LIMIT 3
+      ORDER BY id
+      LIMIT 100
     `)
       .bind(currentUserId, currentUserId)
       .all();
+
+    const poolArr = pool.results || [];
+    const suggestions =
+      poolArr.length <= 3
+        ? poolArr
+        : (() => {
+            const shuffled = [...poolArr];
+            for (let i = shuffled.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+            }
+            return shuffled.slice(0, 3);
+          })();
 
     return c.json({ users: suggestions.results || [] });
   } catch (error: unknown) {
@@ -4058,9 +4071,11 @@ app.get('/api/posts/recommended', async (c) => {
       }
     }
 
-    // Fallback: compute cosine similarity from D1 post_embeddings
+    // Fallback: compute cosine similarity from D1 post_embeddings (latest 5000 only)
     if (vectorMatches.length === 0) {
-      const allEmbedRows = await c.env.DB.prepare('SELECT post_id, embedding FROM post_embeddings').all<{
+      const allEmbedRows = await c.env.DB.prepare(
+        'SELECT post_id, embedding FROM post_embeddings ORDER BY created_at DESC LIMIT 5000',
+      ).all<{
         post_id: string;
         embedding: string;
       }>();
@@ -5341,16 +5356,16 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
           .run();
 
         const optionIds: string[] = [];
-        for (const label of pollData.options) {
+        const optionStmts = pollData.options.map((label: string) => {
           const optId = crypto.randomUUID();
           optionIds.push(optId);
-          await c.env.DB.prepare(`
-            INSERT INTO poll_options (id, poll_id, label)
-            VALUES (?, ?, ?)
-          `)
-            .bind(optId, pollId, label)
-            .run();
-        }
+          return c.env.DB.prepare('INSERT INTO poll_options (id, poll_id, label) VALUES (?, ?, ?)').bind(
+            optId,
+            pollId,
+            label,
+          );
+        });
+        await c.env.DB.batch(optionStmts);
       } catch (e) {
         console.error('Failed to create poll:', e);
         // Don't fail post creation if poll creation fails
@@ -5361,15 +5376,19 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
     if (mentionedUsernames.length > 0) {
       try {
         const mentionData = JSON.parse(mentionsJson) as Array<{ username: string; user_id: string }>;
+        const mentionStmts = mentionData
+          .filter((m) => m.user_id !== userId)
+          .map((m) =>
+            c.env.DB.prepare(
+              'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
+            ).bind(nanoid(), m.user_id, 'mention', postId, userId),
+          );
+        if (mentionStmts.length > 0) {
+          await c.env.DB.batch(mentionStmts);
+        }
         for (const mention of mentionData) {
           if (mention.user_id === userId) continue;
-          await c.env.DB.prepare(
-            'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
-          )
-            .bind(nanoid(), mention.user_id, 'mention', postId, userId)
-            .run();
           const actor = c.get('user');
-
           await sendPushToAll(
             c.env,
             mention.user_id,
@@ -5567,20 +5586,31 @@ app.post('/api/polls/:pollId/vote', requireAuth, async (c) => {
       if ((existingVote.option_id as string) === optionId) {
         return c.json({ error: 'Already voted for this option' }, 409);
       }
-      // Change vote: remove old vote, decrement old option, add new vote, increment new option
-      await c.env.DB.prepare('DELETE FROM poll_votes WHERE id = ?')
-        .bind(existingVote.id as string)
-        .run();
-      await c.env.DB.prepare('UPDATE poll_options SET votes_count = MAX(0, votes_count - 1) WHERE id = ?')
-        .bind(existingVote.option_id as string)
-        .run();
+      // Change vote: batch all operations
+      await c.env.DB.batch([
+        c.env.DB.prepare('DELETE FROM poll_votes WHERE id = ?').bind(existingVote.id as string),
+        c.env.DB.prepare('UPDATE poll_options SET votes_count = MAX(0, votes_count - 1) WHERE id = ?').bind(
+          existingVote.option_id as string,
+        ),
+        c.env.DB.prepare('INSERT INTO poll_votes (id, poll_id, option_id, user_id) VALUES (?, ?, ?, ?)').bind(
+          crypto.randomUUID(),
+          pollId,
+          optionId,
+          userId,
+        ),
+        c.env.DB.prepare('UPDATE poll_options SET votes_count = votes_count + 1 WHERE id = ?').bind(optionId),
+      ]);
+    } else {
+      await c.env.DB.batch([
+        c.env.DB.prepare('INSERT INTO poll_votes (id, poll_id, option_id, user_id) VALUES (?, ?, ?, ?)').bind(
+          crypto.randomUUID(),
+          pollId,
+          optionId,
+          userId,
+        ),
+        c.env.DB.prepare('UPDATE poll_options SET votes_count = votes_count + 1 WHERE id = ?').bind(optionId),
+      ]);
     }
-
-    await c.env.DB.prepare('INSERT INTO poll_votes (id, poll_id, option_id, user_id) VALUES (?, ?, ?, ?)')
-      .bind(crypto.randomUUID(), pollId, optionId, userId)
-      .run();
-
-    await c.env.DB.prepare('UPDATE poll_options SET votes_count = votes_count + 1 WHERE id = ?').bind(optionId).run();
 
     const { results: options } = await c.env.DB.prepare('SELECT * FROM poll_options WHERE poll_id = ? ORDER BY rowid')
       .bind(pollId)
@@ -6642,18 +6672,20 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
     if (mentionedUsernames.length > 0) {
       try {
         const mentionData = JSON.parse(mentionsJson) as Array<{ username: string; user_id: string }>;
+        const mentionStmts = mentionData
+          .filter((m) => m.user_id !== replyUserId)
+          .map((m) =>
+            c.env.DB.prepare(
+              'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
+            ).bind(nanoid(), m.user_id, 'mention', replyId, replyUserId),
+          );
+        if (mentionStmts.length > 0) {
+          await c.env.DB.batch(mentionStmts);
+        }
         for (const mention of mentionData) {
           if (mention.user_id === replyUserId) continue;
-          await c.env.DB.prepare(
-            'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
-          )
-            .bind(nanoid(), mention.user_id, 'mention', replyId, replyUserId)
-            .run();
-          {
-            const actor = c.get('user');
-
-            await sendPushToAll(c.env, mention.user_id, 'mention', actor?.username, actor?.display_name, text, postId);
-          }
+          const actor = c.get('user');
+          await sendPushToAll(c.env, mention.user_id, 'mention', actor?.username, actor?.display_name, text, postId);
         }
       } catch (e) {
         // Don't fail the reply creation if mention notifications fail
@@ -6682,39 +6714,44 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
 
         const allReplies = allRepliesResult.results || [];
 
+        const refUpdateStmts: D1PreparedStatement[] = [];
+        const refNotifyStmts: D1PreparedStatement[] = [];
+        const refNotifyTargets: Array<{ userId: string; user_id: string }> = [];
         for (const refIndex of referencedIndices) {
           const arrayIndex = refIndex - 1;
           if (arrayIndex >= 0 && arrayIndex < allReplies.length) {
             const referencedPost = allReplies[arrayIndex] as Record<string, unknown>;
-            // Increment reply_count for the referenced post (skip if it's the direct parent to avoid double-count)
             if (referencedPost.id !== postId) {
-              await c.env.DB.prepare('UPDATE posts SET reply_count = COALESCE(reply_count, 0) + 1 WHERE id = ?')
-                .bind(referencedPost.id as string)
-                .run();
+              refUpdateStmts.push(
+                c.env.DB.prepare('UPDATE posts SET reply_count = COALESCE(reply_count, 0) + 1 WHERE id = ?').bind(
+                  referencedPost.id as string,
+                ),
+              );
             }
             if (
               referencedPost.user_id &&
               (referencedPost.user_id as string) !== replyUserId &&
               !notifiedUserIds.has(referencedPost.user_id as string)
             ) {
-              await c.env.DB.prepare(
-                'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
-              )
-                .bind(nanoid(), referencedPost.user_id as string, 'reply', replyId, replyUserId)
-                .run();
-              const actor = c.get('user');
-
-              await sendPushToAll(
-                c.env,
-                referencedPost.user_id as string,
-                'reply',
-                actor?.username,
-                actor?.display_name,
-                text || '',
-                replyId,
+              refNotifyStmts.push(
+                c.env.DB.prepare(
+                  'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
+                ).bind(nanoid(), referencedPost.user_id as string, 'reply', replyId, replyUserId),
               );
+              refNotifyTargets.push({
+                userId: referencedPost.user_id as string,
+                user_id: referencedPost.user_id as string,
+              });
             }
           }
+        }
+        const allRefStmts = [...refUpdateStmts, ...refNotifyStmts];
+        if (allRefStmts.length > 0) {
+          await c.env.DB.batch(allRefStmts);
+        }
+        for (const target of refNotifyTargets) {
+          const actor = c.get('user');
+          await sendPushToAll(c.env, target.userId, 'reply', actor?.username, actor?.display_name, text || '', replyId);
         }
       }
     } catch (e) {
@@ -6932,21 +6969,24 @@ app.delete('/api/posts/:id', requireAuth, async (c) => {
       }
     }
 
-    // Delete all replies (and their replies) to this post
-    const deleteReplies = async (id: string) => {
-      const replies = (await c.env.DB.prepare('SELECT id FROM posts WHERE parent_id = ?').bind(id).all()) as {
-        results: { id: string }[];
-      };
-      for (const reply of replies.results) {
-        await deleteReplies(reply.id);
-        // Decrement parent's reply count before deleting the reply
-        await c.env.DB.prepare('UPDATE posts SET reply_count = COALESCE(reply_count, 0) - 1 WHERE id = ?')
-          .bind(id)
-          .run();
-        await c.env.DB.prepare('DELETE FROM posts WHERE id = ?').bind(reply.id).run();
-      }
-    };
-    await deleteReplies(postId ?? '');
+    // Delete all replies (and their replies) to this post using recursive CTE
+    const descendantResult = await c.env.DB.prepare(`
+      WITH RECURSIVE tree AS (
+        SELECT id FROM posts WHERE parent_id = ?
+        UNION ALL
+        SELECT p.id FROM posts p INNER JOIN tree t ON p.parent_id = t.id
+      )
+      SELECT id FROM tree
+    `)
+      .bind(postId)
+      .all<{ id: string }>();
+    const descendantIds = descendantResult.results?.map((r) => r.id) || [];
+    if (descendantIds.length > 0) {
+      const placeholders = descendantIds.map(() => '?').join(',');
+      await c.env.DB.prepare(`DELETE FROM posts WHERE id IN (${placeholders})`)
+        .bind(...descendantIds)
+        .run();
+    }
 
     // Delete the post
     const result = await c.env.DB.prepare('DELETE FROM posts WHERE id = ?').bind(postId).run();
@@ -7225,17 +7265,21 @@ function getPriority(category: ReportCategory): 'critical' | 'high' | 'normal' {
 
 // Helper function to resolve mentioned usernames to {username, user_id} objects
 async function resolveMentions(db: D1Database, mentionedUsernames: string[], currentUsername: string): Promise<string> {
-  const mentionData: Array<{ username: string; user_id: string }> = [];
-  for (const mentionedUsername of mentionedUsernames) {
-    const user = (await db
-      .prepare('SELECT id, username FROM users WHERE username = ? COLLATE NOCASE')
-      .bind(mentionedUsername)
-      .first()) as { id: string; username: string } | null;
-    if (user) {
-      mentionData.push({ username: user.username, user_id: user.id });
-    }
-  }
-  return JSON.stringify(mentionData);
+  if (mentionedUsernames.length === 0) return '[]';
+  const placeholders = mentionedUsernames.map(() => '?').join(',');
+  const rows = await db
+    .prepare(`SELECT id, username FROM users WHERE LOWER(username) IN (${placeholders})`)
+    .bind(...mentionedUsernames.map((u) => u.toLowerCase()))
+    .all<{ id: string; username: string }>();
+  const userMap = new Map(rows.results?.map((r) => [r.username.toLowerCase(), r]) || []);
+  return JSON.stringify(
+    mentionedUsernames
+      .map((u) => {
+        const user = userMap.get(u.toLowerCase());
+        return user ? { username: user.username, user_id: user.id } : null;
+      })
+      .filter(Boolean),
+  );
 }
 
 // Helper function to insert notification
@@ -8823,12 +8867,15 @@ app.post('/api/groups', requireAuth, async (c) => {
       .bind(groupId, userId, now)
       .run();
 
-    // Insert initial members
-    const memberStmt = c.env.DB.prepare(
-      "INSERT OR IGNORE INTO group_members (group_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)",
-    );
-    for (const memberId of memberIds) {
-      await memberStmt.bind(groupId, memberId, now).run();
+    // Insert initial members (batched)
+    if (memberIds.length > 0) {
+      await c.env.DB.batch(
+        memberIds.map((mid: string) =>
+          c.env.DB.prepare(
+            "INSERT OR IGNORE INTO group_members (group_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)",
+          ).bind(groupId, mid, now),
+        ),
+      );
     }
 
     return c.json({ id: groupId });
@@ -9002,12 +9049,15 @@ app.post('/api/groups/:id/members', requireAuth, async (c) => {
     }
 
     const now = new Date().toISOString();
-    const stmt = c.env.DB.prepare(
-      "INSERT OR IGNORE INTO group_members (group_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)",
-    );
 
-    for (const mid of memberIds) {
-      await stmt.bind(groupId, mid, now).run();
+    if (memberIds.length > 0) {
+      await c.env.DB.batch(
+        memberIds.map((mid: string) =>
+          c.env.DB.prepare(
+            "INSERT OR IGNORE INTO group_members (group_id, user_id, role, joined_at) VALUES (?, ?, 'member', ?)",
+          ).bind(groupId, mid, now),
+        ),
+      );
     }
 
     return c.json({ success: true });
@@ -9198,19 +9248,21 @@ app.post('/api/groups/:id/messages', requireAuth, async (c) => {
       .bind(senderId, groupId, msgId)
       .run();
 
-    // Increment unread for other members (insert or update)
+    // Increment unread for other members (insert or update) — batched
     const otherMembers = await c.env.DB.prepare('SELECT user_id FROM group_members WHERE group_id = ? AND user_id != ?')
       .bind(groupId, senderId)
       .all();
 
-    for (const m of (otherMembers.results || []) as Array<{ user_id: string }>) {
-      await c.env.DB.prepare(`
-        INSERT INTO group_read_states (user_id, group_id, last_read_message_id, unread_count)
-        VALUES (?, ?, NULL, 1)
-        ON CONFLICT(user_id, group_id) DO UPDATE SET unread_count = unread_count + 1
-      `)
-        .bind(m.user_id, groupId)
-        .run();
+    const otherIds = (otherMembers.results || []) as Array<{ user_id: string }>;
+    if (otherIds.length > 0) {
+      const stmts = otherIds.map((m) =>
+        c.env.DB.prepare(`
+          INSERT INTO group_read_states (user_id, group_id, last_read_message_id, unread_count)
+          VALUES (?, ?, NULL, 1)
+          ON CONFLICT(user_id, group_id) DO UPDATE SET unread_count = unread_count + 1
+        `).bind(m.user_id, groupId),
+      );
+      await c.env.DB.batch(stmts);
     }
 
     const sender = c.get('user');
@@ -9538,9 +9590,22 @@ app.get('/api/current-topic', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    // Get a random Flash/HTML post
-    // Use a seed based on current hour to keep the same post for 1 hour
-    const _currentHour = new Date().getHours();
+    // Get a random Flash/HTML post — sample 50 candidate IDs, pick one randomly
+    const candidates = await c.env.DB.prepare(`
+      SELECT id FROM posts
+      WHERE (swf_key IS NOT NULL OR payload_key IS NOT NULL)
+        AND status = 'published'
+        AND hidden = 0
+        AND parent_id IS NULL
+      ORDER BY id
+      LIMIT 50
+    `).all<{ id: string }>();
+
+    if (!candidates.results?.length) {
+      return c.json({ error: 'No Flash/HTML posts found' }, 404);
+    }
+
+    const pick = candidates.results[Math.floor(Math.random() * candidates.results.length)];
     const result = await c.env.DB.prepare(`
       SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.created_at,
              u.display_name, u.avatar_key, u.language as author_language,
@@ -9549,13 +9614,10 @@ app.get('/api/current-topic', async (c) => {
              p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count
       FROM posts p
       LEFT JOIN users u ON p.user_id = u.id
-      WHERE (p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL)
-        AND p.status = 'published'
-        AND p.hidden = 0
-        AND p.parent_id IS NULL
-      ORDER BY RANDOM()
-      LIMIT 1
-    `).first();
+      WHERE p.id = ?
+    `)
+      .bind(pick.id)
+      .first();
 
     if (!result) {
       return c.json({ error: 'No Flash/HTML posts found' }, 404);

@@ -38,6 +38,13 @@ bucket_name = "flaxia-content"
 binding = "RATE_LIMIT"
 id = "96ea8717c5cf419ab93640bbaa2b93c2"
 
+[[kv_namespaces]]
+binding = "CACHE"
+id = "YOUR_CACHE_KV_ID"
+# TODO: Create this KV namespace in the Cloudflare Dashboard:
+#   npx wrangler kv namespace create "CACHE"
+# Then replace YOUR_CACHE_KV_ID above with the returned ID.
+
 [[queues.producers]]
 queue = "activitypub-delivery"
 binding = "AP_DELIVERY_QUEUE"
