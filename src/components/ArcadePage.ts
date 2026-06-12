@@ -1,5 +1,6 @@
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { impressionTracker } from '../lib/impression-tracker.js';
 import { registerModal } from '../lib/modal-state.js';
 import { getReplyStyle } from '../lib/settings.js';
 import { buildTree } from '../lib/thread.js';
@@ -655,6 +656,9 @@ export class ArcadePage {
     if (this.currentIndex >= this.games.length) return;
 
     const game = this.games[this.currentIndex];
+
+    // Track impression
+    impressionTracker.trackImpression(game.postId);
 
     // Clear previous game
     this.clearCurrentGame();
