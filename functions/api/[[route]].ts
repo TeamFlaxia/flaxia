@@ -3764,7 +3764,7 @@ app.get('/api/posts', async (c) => {
       c.env.FCM_SERVER_KEY,
     );
 
-    // Trigger vector embedding for at most one unprocessed post in background per request
+    // Trigger vector embedding for unprocessed posts in background
     for (const p of posts as PostRow[]) {
       if (p.text) {
         const existing = await c.env.DB.prepare('SELECT 1 FROM post_embeddings WHERE post_id = ?').bind(p.id).first();
@@ -3772,7 +3772,6 @@ app.get('/api/posts', async (c) => {
           embedPost(c.env.CROWD_ORCHESTRATOR_URL, c.env.CROWD_API_KEY, c.env.BASE_URL, p.id, p.text).catch((e) =>
             console.error('Background embed failed:', e),
           );
-          break;
         }
       }
     }
