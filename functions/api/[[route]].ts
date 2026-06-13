@@ -7137,12 +7137,38 @@ app.put('/api/posts/:id', async (c) => {
       return c.json({ error: 'Text must be between 1 and 200 characters' }, 422);
     }
 
+    // Extract hashtags from text
+    const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu;
+    const hashtagSet = new Set<string>();
+    let match: RegExpExecArray | null;
+    while ((match = hashtagRegex.exec(trimmed)) !== null) {
+      hashtagSet.add(match[1]);
+    }
+    const hashtags = Array.from(hashtagSet);
+    if (hashtags.length > 5) {
+      return c.json({ error: 'Maximum 5 hashtags allowed' }, 422);
+    }
+
+    // Extract mentions from text
+    const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g;
+    const mentionSet = new Set<string>();
+    let mentionMatch: RegExpExecArray | null;
+    while ((mentionMatch = mentionRegex.exec(trimmed)) !== null) {
+      mentionSet.add(mentionMatch[1]);
+    }
+    const mentionedUsernames = Array.from(mentionSet);
+    const mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, post.username);
+
     const now = new Date().toISOString();
-    await c.env.DB.prepare('UPDATE posts SET text = ?, edited_at = ? WHERE id = ?').bind(trimmed, now, postId).run();
+    await c.env.DB.prepare('UPDATE posts SET text = ?, hashtags = ?, mentions = ?, edited_at = ? WHERE id = ?')
+      .bind(trimmed, JSON.stringify(hashtags), mentionsJson, now, postId)
+      .run();
 
     return c.json({
       id: postId,
       text: trimmed,
+      hashtags: JSON.stringify(hashtags),
+      mentions: mentionsJson,
       edited_at: now,
     });
   } catch (error: unknown) {
