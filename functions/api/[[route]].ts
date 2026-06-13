@@ -7100,10 +7100,12 @@ app.delete('/api/posts/:id', requireAuth, async (c) => {
 });
 
 // PUT /api/posts/:id - edit post (protected)
-app.put('/api/posts/:id', requireAuth, async (c) => {
+app.put('/api/posts/:id', async (c) => {
   try {
+    const user = c.get('user');
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const userId = user.id;
     const postId = c.req.param('id');
-    const userId = c.get('user')?.id || '';
 
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);
@@ -7125,54 +7127,28 @@ app.put('/api/posts/:id', requireAuth, async (c) => {
       return c.json({ error: 'Cannot edit this post' }, 400);
     }
 
-    const { text } = await c.req.json<{ text: string }>();
-    if (!text || typeof text !== 'string') {
+    const body = (await c.req.json()) as { text?: string };
+    if (!body || typeof body.text !== 'string') {
       return c.json({ error: 'Text is required' }, 400);
     }
 
-    const trimmed = text.trim();
+    const trimmed = body.text.trim();
     if (trimmed.length < 1 || trimmed.length > 200) {
       return c.json({ error: 'Text must be between 1 and 200 characters' }, 422);
     }
 
-    // Extract hashtags from text
-    const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu;
-    const hashtagSet = new Set<string>();
-    let match: RegExpExecArray | null;
-    while ((match = hashtagRegex.exec(trimmed)) !== null) {
-      hashtagSet.add(match[1]);
-    }
-    const hashtags = Array.from(hashtagSet);
-    if (hashtags.length > 5) {
-      return c.json({ error: 'Maximum 5 hashtags allowed' }, 422);
-    }
-
-    // Extract mentions from text
-    const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g;
-    const mentionSet = new Set<string>();
-    let mentionMatch: RegExpExecArray | null;
-    while ((mentionMatch = mentionRegex.exec(trimmed)) !== null) {
-      mentionSet.add(mentionMatch[1]);
-    }
-    const mentionedUsernames = Array.from(mentionSet);
-    const mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, post.username);
-
     const now = new Date().toISOString();
-    await c.env.DB.prepare('UPDATE posts SET text = ?, hashtags = ?, mentions = ?, edited_at = ? WHERE id = ?')
-      .bind(trimmed, JSON.stringify(hashtags), mentionsJson, now, postId)
-      .run();
+    await c.env.DB.prepare('UPDATE posts SET text = ?, edited_at = ? WHERE id = ?').bind(trimmed, now, postId).run();
 
     return c.json({
       id: postId,
       text: trimmed,
-      hashtags: JSON.stringify(hashtags),
-      mentions: mentionsJson,
       edited_at: now,
     });
   } catch (error: unknown) {
-    const err = error as { message?: string };
+    const err = error as { message?: string; stack?: string };
     console.error('Edit post error:', error);
-    return c.json({ error: 'Failed to edit post', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to edit post', details: err.message || String(error), stack: err.stack }, 500);
   }
 });
 
