@@ -3721,74 +3721,68 @@ app.get('/api/posts', async (c) => {
 
     const posts = result.results || [];
 
-    // Add fresh and bookmark status for current user if logged in
-    if (currentUserId && posts.length > 0) {
-      const postIds = posts.map((p: Record<string, unknown>) => String(p.id));
-      const placeholders = postIds.map(() => '?').join(',');
-
-      const freshResult = await c.env.DB.prepare(
-        `SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${placeholders})`,
-      )
-        .bind(currentUserId, ...postIds)
-        .all();
-
-      if (freshResult.success) {
-        const freshedPostIds = new Set(
-          (freshResult.results || []).map((f: Record<string, unknown>) => f.post_id as string),
-        );
-
-        // Add is_freshed field to each post
-        posts.forEach((post: Record<string, unknown>) => {
-          post.is_freshed = freshedPostIds.has(post.id as string);
-        });
-      }
-
-      // Add is_bookmarked field to each post
-      const bookmarkResult = await c.env.DB.prepare(
-        `SELECT post_id FROM bookmarks WHERE user_id = ? AND post_id IN (${placeholders})`,
-      )
-        .bind(currentUserId, ...postIds)
-        .all();
-
-      if (bookmarkResult.success) {
-        const bookmarkedPostIds = new Set(
-          (bookmarkResult.results || []).map((b: Record<string, unknown>) => b.post_id as string),
-        );
-        posts.forEach((post: Record<string, unknown>) => {
-          post.is_bookmarked = bookmarkedPostIds.has(post.id as string);
-        });
-      }
-    }
-
-    // Batch fetch poll data for posts with polls
-    await enrichPostsWithPolls(
-      posts as PostRow[],
-      c.env.DB,
-      currentUserId,
-      c.env.VAPID_PUBLIC_KEY,
-      c.env.VAPID_PRIVATE_KEY,
-      c.env.FCM_SERVER_KEY,
-    );
-
-    // Trigger vector embedding for unprocessed posts in background
-    const textPosts = (posts as PostRow[]).filter((p) => p.text);
-    if (textPosts.length > 0) {
-      const textPostIds = textPosts.map((p) => p.id);
-      const textPlaceholders = textPostIds.map(() => '?').join(',');
-      const embeddedResult = await c.env.DB.prepare(
-        `SELECT post_id FROM post_embeddings WHERE post_id IN (${textPlaceholders})`,
-      )
-        .bind(...textPostIds)
-        .all<{ post_id: string }>();
-      const embeddedIds = new Set((embeddedResult.success ? embeddedResult.results : []).map((r) => r.post_id));
-      for (const p of textPosts) {
-        if (!embeddedIds.has(p.id)) {
-          embedPost(c.env.CROWD_ORCHESTRATOR_URL, c.env.CROWD_API_KEY, c.env.BASE_URL, p.id, p.text).catch((e) =>
-            console.error('Background embed failed:', e),
+    // Parallel: fresh/bookmark status, poll enrichment, vector embedding check
+    await Promise.all([
+      // Fresh and bookmark status for current user
+      (async () => {
+        if (!currentUserId || posts.length === 0) return;
+        const postIds = posts.map((p: Record<string, unknown>) => String(p.id));
+        const placeholders = postIds.map(() => '?').join(',');
+        const [freshResult, bookmarkResult] = await Promise.all([
+          c.env.DB.prepare(`SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${placeholders})`)
+            .bind(currentUserId, ...postIds)
+            .all(),
+          c.env.DB.prepare(`SELECT post_id FROM bookmarks WHERE user_id = ? AND post_id IN (${placeholders})`)
+            .bind(currentUserId, ...postIds)
+            .all(),
+        ]);
+        if (freshResult.success) {
+          const freshedPostIds = new Set(
+            (freshResult.results || []).map((f: Record<string, unknown>) => f.post_id as string),
           );
+          posts.forEach((post: Record<string, unknown>) => {
+            post.is_freshed = freshedPostIds.has(post.id as string);
+          });
         }
-      }
-    }
+        if (bookmarkResult.success) {
+          const bookmarkedPostIds = new Set(
+            (bookmarkResult.results || []).map((b: Record<string, unknown>) => b.post_id as string),
+          );
+          posts.forEach((post: Record<string, unknown>) => {
+            post.is_bookmarked = bookmarkedPostIds.has(post.id as string);
+          });
+        }
+      })(),
+      // Poll enrichment
+      enrichPostsWithPolls(
+        posts as PostRow[],
+        c.env.DB,
+        currentUserId,
+        c.env.VAPID_PUBLIC_KEY,
+        c.env.VAPID_PRIVATE_KEY,
+        c.env.FCM_SERVER_KEY,
+      ),
+      // Vector embedding check for unprocessed posts
+      (async () => {
+        const textPosts = (posts as PostRow[]).filter((p) => p.text);
+        if (textPosts.length === 0) return;
+        const textPostIds = textPosts.map((p) => p.id);
+        const textPlaceholders = textPostIds.map(() => '?').join(',');
+        const embeddedResult = await c.env.DB.prepare(
+          `SELECT post_id FROM post_embeddings WHERE post_id IN (${textPlaceholders})`,
+        )
+          .bind(...textPostIds)
+          .all<{ post_id: string }>();
+        const embeddedIds = new Set((embeddedResult.success ? embeddedResult.results : []).map((r) => r.post_id));
+        for (const p of textPosts) {
+          if (!embeddedIds.has(p.id)) {
+            embedPost(c.env.CROWD_ORCHESTRATOR_URL, c.env.CROWD_API_KEY, c.env.BASE_URL, p.id, p.text).catch((e) =>
+              console.error('Background embed failed:', e),
+            );
+          }
+        }
+      })(),
+    ]);
 
     // Return total count when filtering by hashtag
     if (hashtag) {
@@ -7451,7 +7445,7 @@ async function enrichPostsWithPolls(
             .prepare('INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)')
             .bind(nanoid(), post.user_id, 'poll_ended', post.id, '')
             .run();
-          await sendPushToAll(
+          sendPushToAll(
             {
               DB: db,
               VAPID_PUBLIC_KEY: vapidPublicKey,
@@ -7460,7 +7454,7 @@ async function enrichPostsWithPolls(
             } as any,
             post.user_id,
             'poll_ended',
-          );
+          ).catch((e) => console.error('Failed to send poll ended push:', e));
           await db.prepare('UPDATE polls SET ended_notified = 1 WHERE id = ?').bind(poll.id).run();
         } catch (e) {
           console.error('Failed to create poll ended notification:', e);
