@@ -3771,10 +3771,18 @@ app.get('/api/posts', async (c) => {
     );
 
     // Trigger vector embedding for unprocessed posts in background
-    for (const p of posts as PostRow[]) {
-      if (p.text) {
-        const existing = await c.env.DB.prepare('SELECT 1 FROM post_embeddings WHERE post_id = ?').bind(p.id).first();
-        if (!existing) {
+    const textPosts = (posts as PostRow[]).filter((p) => p.text);
+    if (textPosts.length > 0) {
+      const textPostIds = textPosts.map((p) => p.id);
+      const textPlaceholders = textPostIds.map(() => '?').join(',');
+      const embeddedResult = await c.env.DB.prepare(
+        `SELECT post_id FROM post_embeddings WHERE post_id IN (${textPlaceholders})`,
+      )
+        .bind(...textPostIds)
+        .all<{ post_id: string }>();
+      const embeddedIds = new Set((embeddedResult.success ? embeddedResult.results : []).map((r) => r.post_id));
+      for (const p of textPosts) {
+        if (!embeddedIds.has(p.id)) {
           embedPost(c.env.CROWD_ORCHESTRATOR_URL, c.env.CROWD_API_KEY, c.env.BASE_URL, p.id, p.text).catch((e) =>
             console.error('Background embed failed:', e),
           );
