@@ -1089,7 +1089,13 @@ app.get('/api/link-preview', async (c) => {
     });
 
     if (!response.ok) {
-      return c.json({ error: `Failed to fetch URL: ${response.statusText}` }, 400);
+      return c.json({
+        title: targetUrl.hostname,
+        description: '',
+        image: '',
+        siteName: targetUrl.hostname,
+        url: targetUrl.toString(),
+      });
     }
 
     const contentType = response.headers.get('content-type') || '';
