@@ -1696,8 +1696,11 @@ export class PostCard {
     }
 
     fetch(`/api/link-preview?url=${encodeURIComponent(url)}`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Preview fetch failed');
+      .then(async (res) => {
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          throw new Error((errorData as { error?: string })?.error || `Preview fetch failed (${res.status})`);
+        }
         return res.json();
       })
       .then((data: unknown) => {
