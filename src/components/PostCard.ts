@@ -33,6 +33,9 @@ export class PostCard {
   private translatedText: string | null = null;
   private showingOriginal: boolean = true;
   private originalText: string;
+  private isEditing: boolean = false;
+  private editContainer: HTMLElement | null = null;
+  private postTextContainer: HTMLElement | null = null;
 
   constructor(props: PostCardProps) {
     this.originalText = props.post.text;
@@ -87,6 +90,7 @@ export class PostCard {
       display_name: this.props.post.display_name,
       avatar_key: this.props.post.avatar_key,
       createdAt: this.props.post.created_at,
+      editedAt: this.props.post.edited_at,
     });
     headerContainer.appendChild(header);
 
@@ -104,8 +108,8 @@ export class PostCard {
       : this.props.post.text;
     this.originalText = displayText;
 
-    const postTextContainer = document.createElement('div');
-    postTextContainer.style.cssText = 'margin-bottom: 1rem;';
+    this.postTextContainer = document.createElement('div');
+    this.postTextContainer.style.cssText = 'margin-bottom: 1rem;';
 
     const textElement = document.createElement('div');
     textElement.className = 'post-text';
@@ -117,7 +121,7 @@ export class PostCard {
       word-break: break-word;
     `;
     textElement.textContent = displayText;
-    postTextContainer.appendChild(textElement);
+    this.postTextContainer.appendChild(textElement);
 
     // Translate button
     const authorLang = this.props.post.author_language;
@@ -197,7 +201,7 @@ export class PostCard {
       });
 
       translateBar.appendChild(translateBtn);
-      postTextContainer.appendChild(translateBar);
+      this.postTextContainer.appendChild(translateBar);
 
       // Listen for locale changes
       const onLocaleChange = (e: Event) => {
@@ -209,7 +213,7 @@ export class PostCard {
       window.addEventListener('localechange', onLocaleChange);
     }
 
-    container.appendChild(postTextContainer);
+    container.appendChild(this.postTextContainer);
 
     if ('requestIdleCallback' in window) {
       window.requestIdleCallback?.(
@@ -789,6 +793,34 @@ export class PostCard {
         });
         dropdown.appendChild(counterItem);
       }
+
+      const editItem = document.createElement('button');
+      editItem.style.cssText = `
+        display: block;
+        width: 100%;
+        padding: 10px 16px;
+        background: none;
+        border: none;
+        color: var(--text-primary);
+        text-align: left;
+        cursor: pointer;
+        font-size: 14px;
+        transition: background 0.2s;
+      `;
+      editItem.textContent = t('post.menu_edit');
+      editItem.addEventListener('mouseenter', () => {
+        editItem.style.background = 'var(--bg-secondary)';
+      });
+      editItem.addEventListener('mouseleave', () => {
+        editItem.style.background = 'none';
+      });
+      editItem.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.remove();
+        this.menuDropdown = undefined;
+        this.startEditing();
+      });
+      dropdown.appendChild(editItem);
 
       const deleteItem = document.createElement('button');
       deleteItem.style.cssText = `
@@ -1721,6 +1753,143 @@ export class PostCard {
       .catch((err) => {
         console.warn('Failed to load link preview:', err);
       });
+  }
+
+  private startEditing(): void {
+    if (this.isEditing || !this.postTextContainer) return;
+    this.isEditing = true;
+
+    const textElement = this.postTextContainer.querySelector('.post-text');
+    if (!textElement) return;
+
+    const currentText = this.originalText;
+
+    this.editContainer = document.createElement('div');
+    this.editContainer.style.cssText = 'margin-bottom: 1rem;';
+
+    const textarea = document.createElement('textarea');
+    textarea.className = 'edit-textarea';
+    textarea.value = currentText;
+    textarea.maxLength = 200;
+    textarea.style.cssText = `
+      width: 100%;
+      min-height: 60px;
+      padding: 8px;
+      font-size: 0.9rem;
+      font-family: inherit;
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      resize: vertical;
+      outline: none;
+      box-sizing: border-box;
+    `;
+
+    const buttonRow = document.createElement('div');
+    buttonRow.style.cssText = `
+      display: flex;
+      gap: 0.5rem;
+      justify-content: flex-end;
+      margin-top: 0.5rem;
+    `;
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = t('post.edit_cancel');
+    cancelBtn.style.cssText = `
+      padding: 6px 16px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      cursor: pointer;
+      font-size: 0.85rem;
+    `;
+
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = t('post.edit_save');
+    saveBtn.style.cssText = `
+      padding: 6px 16px;
+      border: none;
+      border-radius: 6px;
+      background: var(--accent);
+      color: white;
+      cursor: pointer;
+      font-size: 0.85rem;
+      font-weight: 600;
+    `;
+
+    let saving = false;
+    saveBtn.addEventListener('click', async () => {
+      if (saving) return;
+      const newText = textarea.value.trim();
+      if (!newText || newText === currentText) {
+        this.cancelEdit();
+        return;
+      }
+      saving = true;
+      saveBtn.disabled = true;
+      saveBtn.textContent = '...';
+      try {
+        const res = await fetch(`/api/posts/${this.props.post.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ text: newText }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error((err as { error?: string })?.error || 'Edit failed');
+        }
+        const data = (await res.json()) as { text: string; edited_at: string };
+        this.originalText = data.text;
+        this.props.post.text = data.text;
+        this.props.post.edited_at = data.edited_at;
+        this.cancelEdit();
+        this.showToast(t('post.edit_saved'));
+      } catch (err) {
+        this.showToast(t('post.edit_failed'), true);
+      } finally {
+        saving = false;
+        saveBtn.disabled = false;
+        saveBtn.textContent = t('post.edit_save');
+      }
+    });
+
+    cancelBtn.addEventListener('click', () => this.cancelEdit());
+
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') this.cancelEdit();
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveBtn.click();
+    });
+
+    buttonRow.appendChild(cancelBtn);
+    buttonRow.appendChild(saveBtn);
+    this.editContainer.appendChild(textarea);
+    this.editContainer.appendChild(buttonRow);
+
+    textElement.replaceWith(this.editContainer);
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  }
+
+  private cancelEdit(): void {
+    if (!this.isEditing || !this.editContainer || !this.postTextContainer) return;
+    this.isEditing = false;
+
+    const textElement = document.createElement('div');
+    textElement.className = 'post-text';
+    textElement.style.cssText = `
+      line-height: 1.6;
+      font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: var(--text-primary);
+      white-space: pre-wrap;
+      word-break: break-word;
+    `;
+    textElement.textContent = this.originalText;
+
+    this.editContainer.replaceWith(textElement);
+    this.editContainer = null;
   }
 
   private createLinkPreviewCard(data: {

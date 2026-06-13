@@ -35,6 +35,7 @@ export interface Post {
   status: string;
   hidden: number;
   created_at: string;
+  edited_at?: string;
   author_language?: string;
   is_freshed?: boolean; // Whether current user has freshed this post
   is_bookmarked?: boolean; // Whether current user has bookmarked this post
@@ -73,6 +74,7 @@ export interface PostHeaderProps {
   display_name?: string;
   avatar_key?: string;
   createdAt: string;
+  editedAt?: string;
 }
 
 export interface PostTextProps {

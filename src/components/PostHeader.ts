@@ -1,7 +1,7 @@
 import { t } from '../lib/i18n.js';
 import { PostHeaderProps } from '../types/post.js';
 
-export function createPostHeader(props: PostHeaderProps): HTMLElement {
+export function createPostHeader(props: PostHeaderProps & { editedAt?: string }): HTMLElement {
   const header = document.createElement('div');
   header.className = 'post-header';
 
@@ -56,6 +56,17 @@ export function createPostHeader(props: PostHeaderProps): HTMLElement {
   const timestamp = document.createElement('span');
   timestamp.className = 'post-timestamp';
   timestamp.textContent = formatTimestamp(props.createdAt);
+  if (props.editedAt) {
+    const editedBadge = document.createElement('span');
+    editedBadge.className = 'post-edited-badge';
+    editedBadge.textContent = ` (${t('post.edited')})`;
+    editedBadge.style.cssText = `
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-left: 0.25rem;
+    `;
+    timestamp.appendChild(editedBadge);
+  }
 
   header.appendChild(avatar);
   header.appendChild(displayName);
