@@ -3754,14 +3754,7 @@ app.get('/api/posts', async (c) => {
         }
       })(),
       // Poll enrichment
-      enrichPostsWithPolls(
-        posts as PostRow[],
-        c.env.DB,
-        currentUserId,
-        c.env.VAPID_PUBLIC_KEY,
-        c.env.VAPID_PRIVATE_KEY,
-        c.env.FCM_SERVER_KEY,
-      ),
+      enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId),
       // Vector embedding check for unprocessed posts
       (async () => {
         const textPosts = (posts as PostRow[]).filter((p) => p.text);
@@ -3875,14 +3868,7 @@ app.get('/api/posts/trending', async (c) => {
       });
     }
 
-    await enrichPostsWithPolls(
-      posts as PostRow[],
-      c.env.DB,
-      currentUserId,
-      c.env.VAPID_PUBLIC_KEY,
-      c.env.VAPID_PRIVATE_KEY,
-      c.env.FCM_SERVER_KEY,
-    );
+    await enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId);
 
     return c.json({ posts });
   } catch (error: unknown) {
@@ -4010,9 +3996,7 @@ app.get('/api/posts/recommended', async (c) => {
 
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
 
-    const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getSession(c.env, token) : null;
-    const currentUserId = sessionData?.user?.id;
+    const currentUserId = c.get('user')?.id;
 
     // Build user interest vector from recent Fresh history
     let interestVector: number[] | null = null;
@@ -4053,7 +4037,7 @@ app.get('/api/posts/recommended', async (c) => {
 
     // Fallback: pure engagement-based for anonymous / no interest data
     if (!interestVector) {
-      const scoreFormula = `((p.fresh_count * 2.0 + p.impressions * 0.1 + 1.0) / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))`;
+      const scoreFormula = `(p.engagement_hotness / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))`;
       const cursorClause = numericCursor !== null ? 'AND p.created_at < ?' : '';
       let query: string;
       let params: Array<unknown> = [];
@@ -4095,7 +4079,7 @@ app.get('/api/posts/recommended', async (c) => {
     // Fallback: compute cosine similarity from D1 post_embeddings (latest 5000 only)
     if (vectorMatches.length === 0) {
       const allEmbedRows = await c.env.DB.prepare(
-        'SELECT post_id, embedding FROM post_embeddings ORDER BY created_at DESC LIMIT 1000',
+        'SELECT post_id, embedding FROM post_embeddings ORDER BY created_at DESC LIMIT 100',
       ).all<{
         post_id: string;
         embedding: string;
@@ -4112,13 +4096,12 @@ app.get('/api/posts/recommended', async (c) => {
         }
       }
       vectorMatches.sort((a, b) => b.score - a.score);
-      vectorMatches = vectorMatches.slice(0, 100);
     }
 
     if (vectorMatches.length === 0) return c.json({ posts: [] });
 
     const candidateIds = vectorMatches.map((m) => m.id);
-    const engFormula = `((p.fresh_count * 2.0 + p.impressions * 0.1 + 1.0) / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))`;
+    const engFormula = `(p.engagement_hotness / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))`;
     const candidateQuery = `${RECOMMENDED_SELECT}, ${engFormula} as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id IN (${candidateIds.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL`;
     const candResult = await c.env.DB.prepare(candidateQuery)
       .bind(...candidateIds)
@@ -4201,14 +4184,7 @@ async function enrichRecommendedPosts(
       p.is_bookmarked = bookmarkedIds.has(p.id as string);
     });
   }
-  await enrichPostsWithPolls(
-    posts as PostRow[],
-    db,
-    currentUserId,
-    c.env.VAPID_PUBLIC_KEY,
-    c.env.VAPID_PRIVATE_KEY,
-    c.env.FCM_SERVER_KEY,
-  );
+  await enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId);
   return posts;
 }
 
@@ -4219,9 +4195,7 @@ app.get('/api/posts/:id/similar', async (c) => {
     const limit = Math.min(Number(c.req.query('limit') || '5'), 20);
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
 
-    const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getSession(c.env, token) : null;
-    const currentUserId = sessionData?.user?.id;
+    const currentUserId = c.get('user')?.id;
 
     // Get the post's embedding
     const embedRow = await c.env.DB.prepare('SELECT embedding FROM post_embeddings WHERE post_id = ?')
@@ -4255,7 +4229,7 @@ app.get('/api/posts/:id/similar', async (c) => {
     // Fallback: D1 cosine similarity
     if (similarIds.length === 0) {
       const allRows = await c.env.DB.prepare(
-        'SELECT post_id, embedding FROM post_embeddings ORDER BY created_at DESC LIMIT 1000',
+        'SELECT post_id, embedding FROM post_embeddings ORDER BY created_at DESC LIMIT 100',
       ).all<{
         post_id: string;
         embedding: string;
@@ -4305,14 +4279,7 @@ app.get('/api/posts/:id/similar', async (c) => {
       });
     }
 
-    await enrichPostsWithPolls(
-      posts as PostRow[],
-      c.env.DB,
-      currentUserId,
-      c.env.VAPID_PUBLIC_KEY,
-      c.env.VAPID_PRIVATE_KEY,
-      c.env.FCM_SERVER_KEY,
-    );
+    await enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId);
 
     return c.json({ posts });
   } catch (error: unknown) {
@@ -4435,7 +4402,9 @@ app.post('/api/posts/:id/impression', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    const result = await c.env.DB.prepare('UPDATE posts SET impressions = impressions + 1 WHERE id = ?')
+    const result = await c.env.DB.prepare(
+      'UPDATE posts SET impressions = impressions + 1, engagement_hotness = engagement_hotness + 0.1 WHERE id = ?',
+    )
       .bind(postId)
       .run();
 
@@ -4498,7 +4467,7 @@ app.post('/api/posts/impressions/batch', async (c) => {
     // Create placeholders for batch update
     const placeholders = body.post_ids.map(() => '?').join(',');
     const result = await c.env.DB.prepare(
-      `UPDATE posts SET impressions = impressions + 1 WHERE id IN (${placeholders})`,
+      `UPDATE posts SET impressions = impressions + 1, engagement_hotness = engagement_hotness + 0.1 WHERE id IN (${placeholders})`,
     )
       .bind(...body.post_ids)
       .run();
@@ -5204,8 +5173,8 @@ app.post('/api/posts/prepare', requireAuth, async (c) => {
     }
 
     const result = await c.env.DB.prepare(`
-      INSERT INTO posts (id, user_id, username, text, hashtags, ${keyColumn}, status)
-      VALUES (?, ?, ?, ?, ?, ?, 'pending')
+      INSERT INTO posts (id, user_id, username, text, hashtags, ${keyColumn}, engagement_hotness, status)
+      VALUES (?, ?, ?, ?, ?, ?, 1.0, 'pending')
     `)
       .bind(postId, c.get('user')?.id || '', c.get('user')?.username || 'anonymous', '', '[]', storageKey)
       .run();
@@ -5340,8 +5309,8 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
     }
 
     const result = await c.env.DB.prepare(`
-      INSERT INTO posts (id, user_id, username, text, hashtags, mentions, payload_key, gif_key, swf_key, thumbnail_key, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published')
+      INSERT INTO posts (id, user_id, username, text, hashtags, mentions, payload_key, gif_key, swf_key, thumbnail_key, engagement_hotness, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1.0, 'published')
       ON CONFLICT(id) DO UPDATE SET
         text = excluded.text,
         hashtags = excluded.hashtags,
@@ -5494,13 +5463,7 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
 
     if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
       try {
-        await enrichPostsWithPolls(
-          [fullPost],
-          c.env.DB,
-          c.get('user')?.id,
-          c.env.VAPID_PUBLIC_KEY,
-          c.env.VAPID_PRIVATE_KEY,
-        );
+        await enrichPostsWithPolls([fullPost], c.env.DB, c.get('user')?.id);
       } catch (e) {
         console.error('Failed to enrich post with poll:', e);
       }
@@ -5678,7 +5641,7 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
     await c.env.DB.prepare('DELETE FROM freshs WHERE post_id = ? AND user_id = ?').bind(postId, userId).run();
 
     const result = await c.env.DB.prepare(
-      'UPDATE posts SET fresh_count = fresh_count - 1 WHERE id = ? RETURNING fresh_count',
+      'UPDATE posts SET fresh_count = fresh_count - 1, engagement_hotness = engagement_hotness - 2.0 WHERE id = ? RETURNING fresh_count',
     )
       .bind(postId)
       .first<{ fresh_count: number }>();
@@ -5689,7 +5652,7 @@ app.post('/api/posts/:id/fresh', requireAuth, async (c) => {
     await c.env.DB.prepare('INSERT INTO freshs (post_id, user_id) VALUES (?, ?)').bind(postId, userId).run();
 
     const result = await c.env.DB.prepare(
-      'UPDATE posts SET fresh_count = fresh_count + 1 WHERE id = ? RETURNING fresh_count',
+      'UPDATE posts SET fresh_count = fresh_count + 1, engagement_hotness = engagement_hotness + 2.0 WHERE id = ? RETURNING fresh_count',
     )
       .bind(postId)
       .first<{ fresh_count: number }>();
@@ -5932,7 +5895,7 @@ app.post('/api/posts/fresh/batch', requireAuth, async (c) => {
 
         // Batch update fresh counts
         await c.env.DB.prepare(`
-          UPDATE posts SET fresh_count = fresh_count + 1 WHERE id IN (${toFresh.map(() => '?').join(',')})
+          UPDATE posts SET fresh_count = fresh_count + 1, engagement_hotness = engagement_hotness + 2.0 WHERE id IN (${toFresh.map(() => '?').join(',')})
         `)
           .bind(...toFresh)
           .run();
@@ -6006,7 +5969,7 @@ app.post('/api/posts/fresh/batch', requireAuth, async (c) => {
 
       // Batch update fresh counts
       await c.env.DB.prepare(`
-        UPDATE posts SET fresh_count = fresh_count - 1 WHERE id IN (${post_ids.map(() => '?').join(',')})
+        UPDATE posts SET fresh_count = fresh_count - 1, engagement_hotness = engagement_hotness - 2.0 WHERE id IN (${post_ids.map(() => '?').join(',')})
       `)
         .bind(...post_ids)
         .run();
@@ -6157,32 +6120,11 @@ app.get('/api/posts/:id/replies', async (c) => {
     const replies = result.results || [];
     const _nextCursor = replies.length === limit ? replies[replies.length - 1].created_at : null;
 
-    await enrichPostsWithPolls(
-      replies as PostRow[],
-      c.env.DB,
-      currentUserId,
-      c.env.VAPID_PUBLIC_KEY,
-      c.env.VAPID_PRIVATE_KEY,
-      c.env.FCM_SERVER_KEY,
-    );
+    await enrichPostsWithPolls(replies as PostRow[], c.env.DB, currentUserId);
 
     // Add poll data
-    await enrichPostsWithPolls(
-      [parentPost as PostRow],
-      c.env.DB,
-      currentUserId,
-      c.env.VAPID_PUBLIC_KEY,
-      c.env.VAPID_PRIVATE_KEY,
-      c.env.FCM_SERVER_KEY,
-    );
-    await enrichPostsWithPolls(
-      replies as PostRow[],
-      c.env.DB,
-      currentUserId,
-      c.env.VAPID_PUBLIC_KEY,
-      c.env.VAPID_PRIVATE_KEY,
-      c.env.FCM_SERVER_KEY,
-    );
+    await enrichPostsWithPolls([parentPost as PostRow], c.env.DB, currentUserId);
+    await enrichPostsWithPolls(replies as PostRow[], c.env.DB, currentUserId);
 
     // Trigger vector embedding for unprocessed posts in background
     const allPosts = [parentPost as Record<string, unknown>, ...(replies as Array<Record<string, unknown>>)];
@@ -6315,22 +6257,8 @@ app.get('/api/posts/:id/thread', async (c) => {
       }
     }
 
-    await enrichPostsWithPolls(
-      [rootPost as PostRow],
-      c.env.DB,
-      currentUserId,
-      c.env.VAPID_PUBLIC_KEY,
-      c.env.VAPID_PRIVATE_KEY,
-      c.env.FCM_SERVER_KEY,
-    );
-    await enrichPostsWithPolls(
-      replies as PostRow[],
-      c.env.DB,
-      currentUserId,
-      c.env.VAPID_PUBLIC_KEY,
-      c.env.VAPID_PRIVATE_KEY,
-      c.env.FCM_SERVER_KEY,
-    );
+    await enrichPostsWithPolls([rootPost as PostRow], c.env.DB, currentUserId);
+    await enrichPostsWithPolls(replies as PostRow[], c.env.DB, currentUserId);
 
     const allPosts2 = [rootPost as Record<string, unknown>, ...(replies as Array<Record<string, unknown>>)];
     const toEmbed2 = allPosts2.filter((p) => p.text);
@@ -6441,8 +6369,8 @@ app.post('/api/posts/:id/replies/prepare', requireAuth, async (c) => {
 
     // Store pending reply in D1
     const result = await c.env.DB.prepare(`
-      INSERT INTO posts (id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, status, parent_id, root_id, depth, reply_count)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'pending', ?, ?, ?, 0)
+      INSERT INTO posts (id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, engagement_hotness, status, parent_id, root_id, depth, reply_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1.0, 'pending', ?, ?, ?, 0)
     `)
       .bind(
         replyId,
@@ -6593,8 +6521,8 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
 
       try {
         const result = await c.env.DB.prepare(`
-          INSERT INTO posts (id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, status, parent_id, root_id, depth, reply_count)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'published', ?, ?, ?, 0)
+          INSERT INTO posts (id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, engagement_hotness, status, parent_id, root_id, depth, reply_count)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1.0, 'published', ?, ?, ?, 0)
         `)
           .bind(
             replyId,
@@ -7450,14 +7378,7 @@ async function autoRestoreIfEligible(db: D1Database, postId: string): Promise<vo
   }
 }
 
-async function enrichPostsWithPolls(
-  posts: PostRow[],
-  db: D1Database,
-  currentUserId?: string | null,
-  vapidPublicKey?: string,
-  vapidPrivateKey?: string,
-  fcmServerKey?: string,
-): Promise<void> {
+async function enrichPostsWithPolls(posts: PostRow[], db: D1Database, currentUserId?: string | null): Promise<void> {
   if (posts.length === 0) return;
   const postIds = posts.map((p) => p.id);
   const placeholders = postIds.map(() => '?').join(',');
@@ -7517,28 +7438,6 @@ async function enrichPostsWithPolls(
         userVote: userVotes.get(poll.id) || null,
         expired,
       };
-
-      if (expired && !poll.ended_notified) {
-        try {
-          await db
-            .prepare('INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)')
-            .bind(nanoid(), post.user_id, 'poll_ended', post.id, '')
-            .run();
-          sendPushToAll(
-            {
-              DB: db,
-              VAPID_PUBLIC_KEY: vapidPublicKey,
-              VAPID_PRIVATE_KEY: vapidPrivateKey,
-              FCM_SERVER_KEY: fcmServerKey,
-            } as any,
-            post.user_id,
-            'poll_ended',
-          ).catch((e) => console.error('Failed to send poll ended push:', e));
-          await db.prepare('UPDATE polls SET ended_notified = 1 WHERE id = ?').bind(poll.id).run();
-        } catch (e) {
-          console.error('Failed to create poll ended notification:', e);
-        }
-      }
     }
   }
 }
