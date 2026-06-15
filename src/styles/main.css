@@ -4131,6 +4131,15 @@ html {
   word-wrap: break-word;
 }
 
+.conv-bubble-text p {
+  margin: 0 0 0.5rem 0;
+  color: inherit;
+}
+
+.conv-bubble-text p:last-child {
+  margin-bottom: 0;
+}
+
 .conv-bubble-text.mine {
   background: var(--accent);
   color: #000;
@@ -4666,6 +4675,15 @@ html {
   font-size: 15px;
   line-height: 1.4;
   word-wrap: break-word;
+}
+
+.group-bubble-text p {
+  margin: 0 0 0.5rem 0;
+  color: inherit;
+}
+
+.group-bubble-text p:last-child {
+  margin-bottom: 0;
 }
 
 .group-bubble-text.mine {
