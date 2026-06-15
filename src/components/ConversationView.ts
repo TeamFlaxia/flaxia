@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js';
+import { loadLinkPreview } from '../lib/link-preview.js';
 import { registerModal } from '../lib/modal-state.js';
 import { showToast } from '../lib/toast.js';
 import { executeZipAuto } from '../lib/zip-manager.js';
@@ -542,6 +543,12 @@ export class ConversationView {
         text.textContent = msg.content;
         bubble.appendChild(text);
         this.enrichText(text, msg.content);
+
+        const previewContainer = document.createElement('div');
+        previewContainer.className = 'post-link-preview-container';
+        previewContainer.style.cssText = 'overflow: hidden;';
+        bubble.appendChild(previewContainer);
+        loadLinkPreview(msg.content, previewContainer);
       }
 
       // Time + edited indicator + edit button
