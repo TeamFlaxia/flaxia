@@ -5,6 +5,7 @@ import { executeZipAuto } from '../lib/zip-manager.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { executeFlash } from './FlashPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
+import { linkifyHashtags, linkifyUrls, processText } from './PostText.js';
 
 export interface Message {
   id: string;
@@ -534,12 +535,13 @@ export class ConversationView {
         bubble.appendChild(attachment);
       }
 
-      // Text content
+      // Text content (rendered as Markdown, like timeline posts)
       if (msg.content) {
         const text = document.createElement('div');
         text.className = `conv-bubble-text ${msg.is_mine ? 'mine' : 'other'}`;
         text.textContent = msg.content;
         bubble.appendChild(text);
+        this.enrichText(text, msg.content);
       }
 
       // Time + edited indicator + edit button
@@ -576,6 +578,17 @@ export class ConversationView {
       bubble.appendChild(meta);
       area.appendChild(bubble);
     });
+  }
+
+  private async enrichText(el: HTMLElement, content: string): Promise<void> {
+    try {
+      const html = await processText(content);
+      el.innerHTML = html;
+      linkifyUrls(el);
+      linkifyHashtags(el);
+    } catch (err) {
+      console.error('Failed to enrich message text:', err);
+    }
   }
 
   private renderAttachment(container: HTMLElement, msg: Message): void {
