@@ -5,7 +5,7 @@ import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { injectAds } from '../lib/inject-ads.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
-import { Ad, isAd, Post, PostCardMode, TimelineProps, TimelineState } from '../types/post.js';
+import { Ad, isAd, Post, PostCardMode, TimelineItem, TimelineProps, TimelineState } from '../types/post.js';
 import { createAdCard } from './AdCard.js';
 import { createPostCard } from './PostCard.js';
 import { createPostComposer, PostComposer } from './PostComposer.js';
@@ -464,13 +464,46 @@ export class Timeline {
       }
 
       this.state.hasMore = postsArray.length === 20;
-      this.renderPostList();
+      this.appendPosts(postsWithAds);
     } catch (error) {
       console.error('Failed to load more posts:', error);
     } finally {
       this.state.loading = false;
       this.updateLoadingSpinner();
     }
+  }
+
+  private appendPosts(newItems: TimelineItem[]): void {
+    const postList = this.element.querySelector('.post-list') as HTMLElement;
+    if (!postList || newItems.length === 0) return;
+
+    const fragment = document.createDocumentFragment();
+
+    newItems.forEach((item) => {
+      if (isAd(item)) {
+        fragment.appendChild(createAdCard(item));
+      } else {
+        const postCard = createPostCard({
+          post: item,
+          currentUser: this.props.currentUser,
+          sandboxOrigin: this.props.sandboxOrigin,
+          initialMode: PostCardMode.PREVIEW,
+          depth: item.depth,
+          onDelete: (postId) => {
+            this.state.posts = this.state.posts.filter((p) => !isAd(p) && p.id !== postId);
+            const card = this.postCards.get(postId);
+            if (card) {
+              card.destroy();
+              this.postCards.delete(postId);
+            }
+          },
+        });
+        this.postCards.set(item.id, postCard);
+        fragment.appendChild(postCard.getElement());
+      }
+    });
+
+    postList.appendChild(fragment);
   }
 
   private buildApiUrl(cursor?: string): string {
@@ -542,8 +575,11 @@ export class Timeline {
           depth: item.depth,
           onDelete: (postId) => {
             this.state.posts = this.state.posts.filter((p) => !isAd(p) && p.id !== postId);
-            this.postCards.delete(postId);
-            this.renderPostList();
+            const card = this.postCards.get(postId);
+            if (card) {
+              card.destroy();
+              this.postCards.delete(postId);
+            }
           },
         });
 
