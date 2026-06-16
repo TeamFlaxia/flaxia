@@ -62,7 +62,6 @@ export function createUserPostList(props: {
         depth: post.depth,
         enablePostRefs: true,
         onDelete: (postId) => {
-          // Remove post from local state
           posts = posts.filter((p) => p.id !== postId);
           postCards.delete(postId);
           renderPosts();
@@ -159,6 +158,7 @@ export function createUserPostList(props: {
     onLoadMore: loadMorePosts,
     canLoadMore: () => !loading && hasMore && !!cursor,
   });
+  loadMoreContainer.appendChild(loadingSpinner);
   loadMoreContainer.insertBefore(infiniteScroll.sentinel, loadingSpinner);
 
   // Listen for postUpdated events (fresh, bookmark, reply count changes)
