@@ -3,13 +3,13 @@ import { createFabButton } from '../lib/fab-button.js';
 import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { injectAds } from '../lib/inject-ads.js';
+import { createLoadingSpinner, createSkeletonCards } from '../lib/loading-ui.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { Ad, isAd, Post, PostCardMode, TimelineItem, TimelineProps, TimelineState } from '../types/post.js';
 import { createAdCard } from './AdCard.js';
 import { createPostCard } from './PostCard.js';
 import { createPostComposer, PostComposer } from './PostComposer.js';
-import { createSkeletonCard } from './SkeletonCard.js';
 
 export class Timeline {
   private element: HTMLElement;
@@ -181,9 +181,7 @@ export class Timeline {
 
     // Show skeleton cards while loading initial posts
     if (this.state.loading && this.state.posts.length === 0) {
-      for (let i = 0; i < 3; i++) {
-        list.appendChild(createSkeletonCard());
-      }
+      list.appendChild(createSkeletonCards(3));
     }
 
     return list;
@@ -197,17 +195,8 @@ export class Timeline {
     container.appendChild(this.infiniteScroll.sentinel);
 
     // Add loading spinner (hidden by default)
-    const loadingSpinner = document.createElement('div');
-    loadingSpinner.className = 'loading-spinner';
-
-    const spinner = document.createElement('div');
-    spinner.className = 'spinner';
-    const spinnerLabel = document.createElement('span');
-    spinnerLabel.textContent = t('common.loading');
-    loadingSpinner.appendChild(spinner);
-    loadingSpinner.appendChild(spinnerLabel);
+    const loadingSpinner = createLoadingSpinner();
     loadingSpinner.style.cssText = `
-      display: none;
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 0.875rem;
       color: var(--text-muted);
@@ -217,10 +206,7 @@ export class Timeline {
     const skeletonContainer = document.createElement('div');
     skeletonContainer.className = 'skeleton-more';
     skeletonContainer.style.display = 'none';
-
-    for (let i = 0; i < 2; i++) {
-      skeletonContainer.appendChild(createSkeletonCard());
-    }
+    skeletonContainer.appendChild(createSkeletonCards(2));
 
     container.appendChild(loadingSpinner);
     container.appendChild(skeletonContainer);

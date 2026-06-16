@@ -1,5 +1,5 @@
-import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
+import { createLoadingSpinner } from '../lib/loading-ui.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
@@ -37,15 +37,7 @@ export function createUserPostList(props: {
   loadMoreContainer.className = 'load-more-container';
 
   // Loading spinner (hidden by default, appended after sentinel)
-  const loadingSpinner = document.createElement('div');
-  loadingSpinner.className = 'loading-spinner';
-  const spinner = document.createElement('div');
-  spinner.className = 'spinner';
-  const spinnerLabel = document.createElement('span');
-  spinnerLabel.textContent = t('common.loading');
-  loadingSpinner.appendChild(spinner);
-  loadingSpinner.appendChild(spinnerLabel);
-  loadingSpinner.style.display = 'none';
+  const loadingSpinner = createLoadingSpinner();
   loadingSpinner.style.textAlign = 'center';
   loadingSpinner.style.padding = '1rem';
 

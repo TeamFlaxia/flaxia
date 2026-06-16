@@ -2,12 +2,12 @@ import { createFabButton } from '../lib/fab-button.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
+import { createSkeletonCards } from '../lib/loading-ui.js';
 import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
-import { createSkeletonCard } from './SkeletonCard.js';
 
 export interface ExplorePageProps {
   tag?: string;
@@ -628,11 +628,8 @@ export class ExplorePage {
     if (loadingElement) {
       loadingElement.style.display = isLoading ? 'block' : 'none';
       if (isLoading) {
-        // Show skeleton cards while loading more posts
         loadingElement.innerHTML = '';
-        for (let i = 0; i < 2; i++) {
-          loadingElement.appendChild(createSkeletonCard());
-        }
+        loadingElement.appendChild(createSkeletonCards(2));
       }
     }
   }
