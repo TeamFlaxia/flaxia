@@ -7,6 +7,7 @@ import { createAudioPlayer } from './AudioPlayer.js';
 import { executeFlash } from './FlashPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
 import { linkifyHashtags, linkifyUrls, processText } from './PostText.js';
+import { createVideoPlayer } from './VideoPlayer.js';
 
 export interface Message {
   id: string;
@@ -609,6 +610,13 @@ export class ConversationView {
         postId: msg.id,
       });
       player.style.maxWidth = '300px';
+      container.appendChild(player);
+    } else if (gifKey && gifKey.startsWith('dm/video/')) {
+      const player = createVideoPlayer({
+        gifKey,
+        postId: msg.id,
+      });
+      player.style.maxWidth = '100%';
       container.appendChild(player);
     } else if (gifKey && gifKey.startsWith('dm/gif/')) {
       const preview = createImagePreview({

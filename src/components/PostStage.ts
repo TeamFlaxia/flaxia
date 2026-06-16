@@ -5,6 +5,7 @@ import { createAudioPlayer } from './AudioPlayer.js';
 import { executeDos } from './DosPlayer.js';
 import { executeFlash } from './FlashPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
+import { createVideoPlayer } from './VideoPlayer.js';
 
 // Create SWF execution button (similar to ZIP but for Flash)
 function createSwfExecutionButton(props: {
@@ -381,6 +382,12 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
     } else if (props.post.gif_key && props.post.gif_key.startsWith('audio/')) {
       container.classList.add('post-stage--audio');
       mediaElement = createAudioPlayer({
+        gifKey: props.post.gif_key,
+        postId: props.post.id,
+      });
+    } else if (props.post.gif_key && props.post.gif_key.startsWith('video/')) {
+      container.classList.add('post-stage--video');
+      mediaElement = createVideoPlayer({
         gifKey: props.post.gif_key,
         postId: props.post.id,
       });

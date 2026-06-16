@@ -1207,6 +1207,11 @@ h1 {
   min-height: 180px;
 }
 
+.post-stage--video {
+  overflow: visible;
+  min-height: 180px;
+}
+
 .post-stage--image-thumb {
   padding-bottom: 75%; /* 4:3 aspect ratio */
 }

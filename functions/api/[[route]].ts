@@ -126,6 +126,7 @@ app.use('/api/*', async (c, next) => {
   if (
     (c.req.method === 'GET' && c.req.path.startsWith('/api/images/')) ||
     (c.req.method === 'GET' && c.req.path.startsWith('/api/audio/')) ||
+    (c.req.method === 'GET' && c.req.path.startsWith('/api/video/')) ||
     (c.req.method === 'GET' && c.req.path.startsWith('/api/zip/')) ||
     (c.req.method === 'GET' && c.req.path.startsWith('/api/swf/')) ||
     (c.req.method === 'GET' && c.req.path === '/api/link-preview') ||
@@ -454,6 +455,61 @@ app.get('/api/audio/*', async (c) => {
     console.error('Audio proxy error:', error);
     return c.json(
       { error: 'Failed to fetch audio', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
+  }
+});
+
+// GET /api/video/* - serve video files from R2
+app.get('/api/video/*', async (c) => {
+  try {
+    const key = c.req.path.replace('/api/video/', '');
+
+    if (!key) {
+      return c.json({ error: 'Missing video key' }, 400);
+    }
+
+    if (!c.env.BUCKET) {
+      return c.json({ error: 'Storage not available' }, 500);
+    }
+
+    const object = await c.env.BUCKET.get(key);
+
+    if (!object) {
+      return c.json({ error: 'Video not found' }, 404);
+    }
+
+    let contentType = object.httpMetadata?.contentType;
+    if (!contentType) {
+      const extension = key.split('.').pop()?.toLowerCase();
+      switch (extension) {
+        case 'mp4':
+          contentType = 'video/mp4';
+          break;
+        case 'webm':
+          contentType = 'video/webm';
+          break;
+        case 'mov':
+          contentType = 'video/quicktime';
+          break;
+        default:
+          contentType = 'video/mp4';
+      }
+    }
+
+    return new Response(object.body, {
+      headers: {
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=31536000',
+        'Access-Control-Allow-Origin': '*',
+        'Accept-Ranges': 'bytes',
+        'Content-Length': object.size?.toString() || '0',
+      },
+    });
+  } catch (error: unknown) {
+    console.error('Video proxy error:', error);
+    return c.json(
+      { error: 'Failed to fetch video', details: (error as { message?: string })?.message || 'Unknown error' },
       500,
     );
   }
@@ -5144,6 +5200,13 @@ app.post('/api/posts/prepare', requireAuth, async (c) => {
       keyColumn = 'gif_key';
       responseType = 'gif';
     }
+    // Video files by extension
+    else if (ext && ['mp4', 'webm', 'mov'].includes(ext)) {
+      const extMap: Record<string, string> = { mp4: '.mp4', webm: '.webm', mov: '.mov' };
+      storageKey = `video/${postId}${extMap[ext]}`;
+      keyColumn = 'gif_key';
+      responseType = 'gif';
+    }
     // Image files by extension
     else if (ext && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) {
       const extMap: Record<string, string> = {
@@ -8409,7 +8472,9 @@ app.post('/api/dm/conversations/:id/messages', requireAuth, async (c) => {
       .run();
 
     // Update conversation last_message and updated_at
-    const displayContent = trimmed || (gifKey ? '[Image]' : payloadKey ? '[File]' : swfKey ? '[Flash]' : '');
+    const displayContent =
+      trimmed ||
+      (gifKey?.includes('/video/') ? '[Video]' : gifKey ? '[Image]' : payloadKey ? '[File]' : swfKey ? '[Flash]' : '');
     await c.env.DB.prepare(`
       UPDATE dm_conversations
       SET last_message_id = ?, last_message_content = ?, last_message_sender_id = ?,
@@ -8528,6 +8593,10 @@ app.post('/api/dm/conversations/:id/messages/prepare', requireAuth, async (c) =>
     } else if (ext && ['mp3', 'wav', 'ogg', 'm4a', 'webm'].includes(ext)) {
       const extMap: Record<string, string> = { mp3: '.mp3', wav: '.wav', ogg: '.ogg', m4a: '.m4a', webm: '.webm' };
       storageKey = `dm/audio/${msgId}${extMap[ext]}`;
+      responseType = 'gif';
+    } else if (ext && ['mp4', 'webm', 'mov'].includes(ext)) {
+      const extMap: Record<string, string> = { mp4: '.mp4', webm: '.webm', mov: '.mov' };
+      storageKey = `dm/video/${msgId}${extMap[ext]}`;
       responseType = 'gif';
     } else if (ext && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) {
       const extMap: Record<string, string> = {
@@ -9332,6 +9401,10 @@ app.post('/api/groups/:id/messages/prepare', requireAuth, async (c) => {
     } else if (ext && ['mp3', 'wav', 'ogg', 'm4a', 'webm'].includes(ext)) {
       const extMap: Record<string, string> = { mp3: '.mp3', wav: '.wav', ogg: '.ogg', m4a: '.m4a', webm: '.webm' };
       storageKey = `group/audio/${msgId}${extMap[ext]}`;
+      responseType = 'gif';
+    } else if (ext && ['mp4', 'webm', 'mov'].includes(ext)) {
+      const extMap: Record<string, string> = { mp4: '.mp4', webm: '.webm', mov: '.mov' };
+      storageKey = `group/video/${msgId}${extMap[ext]}`;
       responseType = 'gif';
     } else if (ext && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) {
       const extMap: Record<string, string> = {

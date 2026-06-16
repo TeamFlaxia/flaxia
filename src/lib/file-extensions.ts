@@ -32,6 +32,7 @@ export const ALLOWED_EXTENSIONS: Record<string, string> = {
   // Video
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
 
   // WebAssembly and binary
   '.wasm': 'application/wasm',

@@ -7,6 +7,7 @@ import { createAudioPlayer } from './AudioPlayer.js';
 import { executeFlash } from './FlashPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
 import { linkifyHashtags, linkifyUrls, processText } from './PostText.js';
+import { createVideoPlayer } from './VideoPlayer.js';
 
 export interface GroupMessage {
   id: string;
@@ -660,6 +661,10 @@ export class GroupChatView {
     if (gifKey && gifKey.startsWith('group/audio/')) {
       const player = createAudioPlayer({ gifKey, postId: msg.id });
       player.style.maxWidth = '300px';
+      container.appendChild(player);
+    } else if (gifKey && gifKey.startsWith('group/video/')) {
+      const player = createVideoPlayer({ gifKey, postId: msg.id });
+      player.style.maxWidth = '100%';
       container.appendChild(player);
     } else if (gifKey && gifKey.startsWith('group/gif/')) {
       const preview = createImagePreview({ gifKey, postId: msg.id });

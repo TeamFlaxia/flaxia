@@ -108,7 +108,7 @@ export class PostComposer {
         <div class="composer-divider"></div>
         <div class="composer-footer">
           <div class="composer-actions">
-            <input type="file" class="composer-file-input" accept=".js,.wasm,.html,.gif,.png,.jpg,.jpeg,.mp3,.wav,.ogg,.m4a,.webm,.zip,.swf,.jsdos" />
+            <input type="file" class="composer-file-input" accept=".js,.wasm,.html,.gif,.png,.jpg,.jpeg,.mp3,.wav,.ogg,.m4a,.webm,.mp4,.mov,.zip,.swf,.jsdos" />
             <button class="composer-file-button" type="button">
               📎
             </button>
@@ -762,6 +762,9 @@ export class PostComposer {
       'audio/ogg',
       'audio/mp4',
       'audio/webm',
+      'video/mp4',
+      'video/webm',
+      'video/quicktime',
       'application/zip',
       'application/x-shockwave-flash',
       'application/javascript',
@@ -779,7 +782,10 @@ export class PostComposer {
       file.name.toLowerCase().endsWith('.wasm') ||
       file.name.toLowerCase().endsWith('.zip') ||
       file.name.toLowerCase().endsWith('.rsp') ||
-      file.name.toLowerCase().endsWith('.jsdos');
+      file.name.toLowerCase().endsWith('.jsdos') ||
+      file.name.toLowerCase().endsWith('.mp4') ||
+      file.name.toLowerCase().endsWith('.webm') ||
+      file.name.toLowerCase().endsWith('.mov');
 
     if (!isValidType) {
       this.clearFileSelection();
