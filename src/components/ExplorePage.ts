@@ -1,6 +1,10 @@
+import { createFabButton } from '../lib/fab-button.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { createInfiniteScroll } from '../lib/infinite-scroll.js';
+import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';
+import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 import { createSkeletonCard } from './SkeletonCard.js';
@@ -18,8 +22,7 @@ export class ExplorePage {
   private cursor?: string;
   private loading = false;
   private hasMore = true;
-  private intersectionObserver: IntersectionObserver | null = null;
-  private loadMoreSentinel: HTMLElement | null = null;
+  private infiniteScroll: ReturnType<typeof createInfiniteScroll>;
   private searchFilter: 'posts' | 'users' | 'arcade' = 'posts';
   private fabButton: HTMLElement | null = null;
   private tagCountEl: HTMLElement | null = null;
@@ -28,10 +31,14 @@ export class ExplorePage {
   private static readonly SEARCH_HISTORY_KEY = 'flaxia_search_history';
   private static readonly MAX_HISTORY = 10;
   private postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
-  private boundPostUpdatedHandler?: (e: Event) => void;
+  private postUpdatedHandler?: (e: Event) => void;
 
   constructor(props: ExplorePageProps) {
     this.props = props;
+    this.infiniteScroll = createInfiniteScroll({
+      onLoadMore: () => this.loadMorePosts(),
+      canLoadMore: () => !this.loading && this.hasMore,
+    });
     this.element = this.createElement();
     this.setupEventListeners();
     this.setupPostUpdatedListener();
@@ -47,70 +54,16 @@ export class ExplorePage {
     container.appendChild(searchSection);
 
     if (this.props.tag) {
-      // Tag view
-      const tagHeader = document.createElement('div');
-      tagHeader.className = 'explore-header explore-tag-header';
-      tagHeader.style.cssText = `
-        display: flex;
-        align-items: center;
-        gap: 1rem;
-        padding: 1rem;
-        border-bottom: 1px solid var(--border);
-        position: sticky;
-        top: 0;
-        z-index: 10;
-        background: var(--bg-primary);
-      `;
-
-      const backBtn = document.createElement('button');
-      backBtn.className = 'explore-tag-back';
-      backBtn.textContent = '←';
-      backBtn.style.cssText = `
-        background: none;
-        border: none;
-        font-size: 1.25rem;
-        cursor: pointer;
-        color: var(--text-primary);
-        padding: 0.25rem 0.5rem;
-        border-radius: 4px;
-        transition: background 0.2s;
-      `;
-      backBtn.addEventListener('mouseenter', () => {
-        backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))';
-      });
-      backBtn.addEventListener('mouseleave', () => {
-        backBtn.style.background = 'none';
-      });
-      backBtn.addEventListener('click', () => {
-        window.history.back();
-      });
-
-      const tagInfo = document.createElement('div');
-      tagInfo.style.cssText = 'display: flex; flex-direction: column;';
-
-      const tagTitle = document.createElement('span');
-      tagTitle.className = 'explore-title';
-      tagTitle.textContent = `# ${this.props.tag}`;
-      tagTitle.style.cssText = `
-        font-size: 1.25rem;
-        font-weight: 700;
-        color: var(--text-primary);
-        line-height: 1.3;
-      `;
-
-      this.tagCountEl = document.createElement('span');
-      this.tagCountEl.className = 'explore-tag-count';
-      this.tagCountEl.textContent = t('explore.tag_count', { count: formatCount(0) });
-      this.tagCountEl.style.cssText = `
-        font-size: 0.8rem;
-        color: var(--text-muted);
-      `;
-
-      tagInfo.appendChild(tagTitle);
-      tagInfo.appendChild(this.tagCountEl);
-      tagHeader.appendChild(backBtn);
-      tagHeader.appendChild(tagInfo);
-      container.appendChild(tagHeader);
+      container.appendChild(
+        createPageHeader({
+          title: `# ${this.props.tag}`,
+          subtitle: t('explore.tag_count', { count: formatCount(0) }),
+          subtitleRef: (el) => {
+            this.tagCountEl = el;
+          },
+          onBack: () => window.history.back(),
+        }),
+      );
 
       const postsContainer = document.createElement('div');
       postsContainer.className = 'explore-posts';
@@ -136,29 +89,16 @@ export class ExplorePage {
     loadingContainer.style.cssText = 'display: none;';
     container.appendChild(loadingContainer);
 
-    // Add sentinel for intersection observer
-    this.loadMoreSentinel = document.createElement('div');
-    this.loadMoreSentinel.className = 'explore-sentinel';
-    this.loadMoreSentinel.style.cssText = `
-      height: 100px;
-      width: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-top: 1rem;
-    `;
-    container.appendChild(this.loadMoreSentinel);
+    container.appendChild(this.infiniteScroll.sentinel);
+    this.infiniteScroll.sentinel.style.marginTop = '1rem';
 
     if (this.props.currentUser) {
-      this.fabButton = document.createElement('button');
-      this.fabButton.className = 'timeline-fab visible';
-      this.fabButton.textContent = '+';
-      this.fabButton.addEventListener('click', () => {
+      this.fabButton = createFabButton(() => {
         openPostModal({
           currentUser: this.props.currentUser,
           onPostCreated: (post) => this.handleNewPost(post as unknown as Post),
         });
-      });
+      }, true);
       container.appendChild(this.fabButton);
     }
 
@@ -342,8 +282,6 @@ export class ExplorePage {
         }
       });
     }
-
-    this.setupIntersectionObserver();
   }
 
   private renderSuggestions(
@@ -624,21 +562,8 @@ export class ExplorePage {
   }
 
   private setupPostUpdatedListener(): void {
-    this.boundPostUpdatedHandler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (!detail?.postId) return;
-      const card = this.postCards.get(detail.postId);
-      if (card) {
-        const update: Partial<Post> = {};
-        if (detail.isFreshed !== undefined) update.is_freshed = detail.isFreshed;
-        if (detail.freshCount !== undefined) update.fresh_count = detail.freshCount;
-        if (detail.isBookmarked !== undefined) update.is_bookmarked = detail.isBookmarked;
-        if (detail.bookmarkCount !== undefined) update.bookmark_count = detail.bookmarkCount;
-        if (detail.replyCount !== undefined) update.reply_count = detail.replyCount;
-        card.updatePost(update);
-      }
-    };
-    window.addEventListener('postUpdated', this.boundPostUpdatedHandler);
+    this.postUpdatedHandler = createPostUpdatedHandler(this.postCards);
+    window.addEventListener('postUpdated', this.postUpdatedHandler);
   }
 
   private renderPosts(): void {
@@ -772,34 +697,6 @@ export class ExplorePage {
     }
   }
 
-  private setupIntersectionObserver(): void {
-    if (!this.loadMoreSentinel) return;
-
-    // Disconnect existing observer if any
-    if (this.intersectionObserver) {
-      this.intersectionObserver.disconnect();
-    }
-
-    // Create new intersection observer optimized for mobile
-    this.intersectionObserver = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (entry.isIntersecting && !this.loading && this.hasMore) {
-          // Immediate loading for better mobile performance
-          this.loadMorePosts();
-        }
-      },
-      {
-        root: null, // Use viewport as root
-        rootMargin: '300px', // Start loading 300px before sentinel comes into view (better for mobile)
-        threshold: 0.1, // Trigger when 10% is visible (more reliable than 0.01)
-      },
-    );
-
-    // Start observing sentinel
-    this.intersectionObserver.observe(this.loadMoreSentinel);
-  }
-
   private handleNewPost(post: Post): void {
     this.posts = [post, ...this.posts];
     const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
@@ -828,16 +725,12 @@ export class ExplorePage {
   }
 
   public destroy(): void {
-    if (this.boundPostUpdatedHandler) {
-      window.removeEventListener('postUpdated', this.boundPostUpdatedHandler);
-      this.boundPostUpdatedHandler = undefined;
+    if (this.postUpdatedHandler) {
+      window.removeEventListener('postUpdated', this.postUpdatedHandler);
     }
     this.postCards.forEach((card) => void card.destroy());
     this.postCards.clear();
-    if (this.intersectionObserver) {
-      this.intersectionObserver.disconnect();
-      this.intersectionObserver = null;
-    }
+    this.infiniteScroll.disconnect();
   }
 }
 

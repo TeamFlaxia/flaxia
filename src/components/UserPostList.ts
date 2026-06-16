@@ -1,4 +1,6 @@
 import { t } from '../lib/i18n.js';
+import { createInfiniteScroll } from '../lib/infinite-scroll.js';
+import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
@@ -20,8 +22,6 @@ export function createUserPostList(props: {
   let hasMore = true;
   let loading = false;
   const postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
-  let intersectionObserver: IntersectionObserver | null = null;
-  let loadMoreSentinel: HTMLElement | null = null;
 
   // Create main container
   const container = document.createElement('div');
@@ -36,13 +36,7 @@ export function createUserPostList(props: {
   const loadMoreContainer = document.createElement('div');
   loadMoreContainer.className = 'load-more-container';
 
-  // Create sentinel element for intersection observer
-  loadMoreSentinel = document.createElement('div');
-  loadMoreSentinel.className = 'load-more-sentinel';
-  loadMoreSentinel.style.height = '100px';
-  loadMoreSentinel.style.width = '100%';
-
-  // Add loading spinner (hidden by default)
+  // Loading spinner (hidden by default, appended after sentinel)
   const loadingSpinner = document.createElement('div');
   loadingSpinner.className = 'loading-spinner';
   const spinner = document.createElement('div');
@@ -55,8 +49,6 @@ export function createUserPostList(props: {
   loadingSpinner.style.textAlign = 'center';
   loadingSpinner.style.padding = '1rem';
 
-  loadMoreContainer.appendChild(loadMoreSentinel);
-  loadMoreContainer.appendChild(loadingSpinner);
   container.appendChild(loadMoreContainer);
 
   // Render posts
@@ -90,46 +82,10 @@ export function createUserPostList(props: {
     });
   };
 
-  // Setup intersection observer for infinite scroll
-  const setupIntersectionObserver = () => {
-    if (!loadMoreSentinel) return;
-
-    // Disconnect existing observer if any
-    if (intersectionObserver) {
-      intersectionObserver.disconnect();
-    }
-
-    // Create new intersection observer optimized for mobile
-    intersectionObserver = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (entry.isIntersecting && !loading && hasMore) {
-          loadMorePosts();
-        }
-      },
-      {
-        root: null, // Use viewport as root
-        rootMargin: '300px', // Start loading 300px before sentinel comes into view (better for mobile)
-        threshold: 0.1, // Trigger when 10% is visible (more reliable than 0.1)
-      },
-    );
-
-    // Start observing the sentinel
-    intersectionObserver.observe(loadMoreSentinel);
-  };
-
   // Update loading spinner visibility
   const updateLoadingSpinner = () => {
-    if (loading) {
-      loadingSpinner.style.display = 'block';
-    } else {
-      loadingSpinner.style.display = 'none';
-    }
-
-    // Hide sentinel when no more posts
-    if (loadMoreSentinel) {
-      loadMoreSentinel.style.display = hasMore ? 'block' : 'none';
-    }
+    loadingSpinner.style.display = loading ? 'block' : 'none';
+    infiniteScroll.sentinel.style.display = hasMore ? 'block' : 'none';
   };
 
   // Load initial posts
@@ -207,25 +163,17 @@ export function createUserPostList(props: {
     }
   };
 
-  // Listen for postUpdated events (fresh, bookmark, reply count changes)
-  const handlePostUpdated = (e: Event): void => {
-    const detail = (e as CustomEvent).detail;
-    if (!detail?.postId) return;
-    const card = postCards.get(detail.postId);
-    if (card) {
-      const update: Partial<Post> = {};
-      if (detail.isFreshed !== undefined) update.is_freshed = detail.isFreshed;
-      if (detail.freshCount !== undefined) update.fresh_count = detail.freshCount;
-      if (detail.isBookmarked !== undefined) update.is_bookmarked = detail.isBookmarked;
-      if (detail.bookmarkCount !== undefined) update.bookmark_count = detail.bookmarkCount;
-      if (detail.replyCount !== undefined) update.reply_count = detail.replyCount;
-      card.updatePost(update);
-    }
-  };
-  window.addEventListener('postUpdated', handlePostUpdated);
+  const infiniteScroll = createInfiniteScroll({
+    onLoadMore: loadMorePosts,
+    canLoadMore: () => !loading && hasMore && !!cursor,
+  });
+  loadMoreContainer.insertBefore(infiniteScroll.sentinel, loadingSpinner);
 
-  // Setup intersection observer and load initial posts
-  setupIntersectionObserver();
+  // Listen for postUpdated events (fresh, bookmark, reply count changes)
+  const postUpdatedHandler = createPostUpdatedHandler(postCards);
+  window.addEventListener('postUpdated', postUpdatedHandler);
+
+  // Load initial posts
   loadInitialPosts();
 
   return {
@@ -269,12 +217,8 @@ export function createUserPostList(props: {
       }
     },
     destroy: () => {
-      window.removeEventListener('postUpdated', handlePostUpdated);
-      if (intersectionObserver) {
-        intersectionObserver.disconnect();
-        intersectionObserver = null;
-      }
-
+      window.removeEventListener('postUpdated', postUpdatedHandler);
+      infiniteScroll.disconnect();
       postCards.forEach((card) => void card.destroy());
       postCards.clear();
       container.remove();

@@ -1,5 +1,6 @@
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { createPageHeader } from '../lib/page-header.js';
 
 export interface Notification {
   id: string;
@@ -57,52 +58,7 @@ export class NotificationsPage {
     `;
 
     // Header
-    const header = document.createElement('div');
-    header.style.cssText = `
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-      padding: 1rem;
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      background: var(--bg-primary);
-    `;
-
-    const backBtn = document.createElement('button');
-    backBtn.textContent = '←';
-    backBtn.style.cssText = `
-      background: none;
-      border: none;
-      font-size: 1.25rem;
-      cursor: pointer;
-      color: var(--text-primary);
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-      transition: background 0.2s;
-    `;
-    backBtn.addEventListener('mouseenter', () => {
-      backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))';
-    });
-    backBtn.addEventListener('mouseleave', () => {
-      backBtn.style.background = 'none';
-    });
-    backBtn.addEventListener('click', () => {
-      window.history.back();
-    });
-
-    const title = document.createElement('h1');
-    title.textContent = t('notifications.title');
-    title.style.cssText = `
-      margin: 0;
-      font-size: 24px;
-      color: var(--text-primary);
-    `;
-
-    header.appendChild(backBtn);
-    header.appendChild(title);
+    const actions: HTMLElement[] = [];
 
     // Mark all read button (only show if there are unread)
     if (this.props.unreadCount > 0) {
@@ -132,10 +88,17 @@ export class NotificationsPage {
         await this.props.onMarkAllRead();
         this.updateAllAsRead();
       });
-      header.appendChild(markAllBtn);
+      actions.push(markAllBtn);
     }
 
-    container.appendChild(header);
+    container.appendChild(
+      createPageHeader({
+        title: t('notifications.title'),
+        titleSize: '24px',
+        onBack: () => window.history.back(),
+        actions,
+      }),
+    );
 
     // Notifications list
     if (this.props.notifications.length === 0) {

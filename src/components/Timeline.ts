@@ -1,7 +1,10 @@
 import { getMe } from '../lib/auth-cache.js';
+import { createFabButton } from '../lib/fab-button.js';
 import { t } from '../lib/i18n.js';
+import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { injectAds } from '../lib/inject-ads.js';
 import { openPostModal } from '../lib/post-modal.js';
+import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { Ad, isAd, Post, PostCardMode, TimelineProps, TimelineState } from '../types/post.js';
 import { createAdCard } from './AdCard.js';
 import { createPostCard } from './PostCard.js';
@@ -16,13 +19,12 @@ export class Timeline {
   private composer!: PostComposer;
   private fabButton?: HTMLElement;
   private composerObserver: IntersectionObserver | null = null;
-  private intersectionObserver: IntersectionObserver | null = null;
-  private loadMoreSentinel: HTMLElement | null = null;
+  private infiniteScroll: ReturnType<typeof createInfiniteScroll>;
+  private postUpdatedHandler?: (e: Event) => void;
 
   // Store bound event handlers for proper cleanup
   private boundHandleProfileUpdate: () => void;
   private boundHandleResize: () => void;
-  private boundHandlePostUpdated: (e: Event) => void;
 
   constructor(props: TimelineProps) {
     this.props = props;
@@ -43,7 +45,11 @@ export class Timeline {
     // Initialize bound event handlers for proper cleanup
     this.boundHandleProfileUpdate = this.handleProfileUpdate.bind(this);
     this.boundHandleResize = this.updateSwipeHint.bind(this);
-    this.boundHandlePostUpdated = this.handlePostUpdated.bind(this);
+
+    this.infiniteScroll = createInfiniteScroll({
+      onLoadMore: () => this.loadMorePosts(),
+      canLoadMore: () => !this.state.loading && this.state.hasMore && !!this.state.cursor,
+    });
 
     this.element = this.createElement();
     this.setupEventListeners();
@@ -91,10 +97,7 @@ export class Timeline {
 
     // FAB button for new post (only for logged-in users)
     if (this.props.currentUser) {
-      this.fabButton = document.createElement('button');
-      this.fabButton.className = 'timeline-fab';
-      this.fabButton.textContent = '+';
-      this.fabButton.addEventListener('click', () => this.openPostModal());
+      this.fabButton = createFabButton(() => this.openPostModal());
       container.appendChild(this.fabButton);
     }
 
@@ -190,16 +193,8 @@ export class Timeline {
     const container = document.createElement('div');
     container.className = 'load-more-container';
 
-    // Create sentinel element for intersection observer
-    this.loadMoreSentinel = document.createElement('div');
-    this.loadMoreSentinel.className = 'load-more-sentinel';
-    this.loadMoreSentinel.style.cssText = `
-      height: 100px;
-      width: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    `;
+    // Use sentinel from shared infinite scroll utility
+    container.appendChild(this.infiniteScroll.sentinel);
 
     // Add loading spinner (hidden by default)
     const loadingSpinner = document.createElement('div');
@@ -227,7 +222,6 @@ export class Timeline {
       skeletonContainer.appendChild(createSkeletonCard());
     }
 
-    container.appendChild(this.loadMoreSentinel);
     container.appendChild(loadingSpinner);
     container.appendChild(skeletonContainer);
 
@@ -291,14 +285,12 @@ export class Timeline {
       }
     });
 
-    // Setup intersection observer for infinite scroll
-    this.setupIntersectionObserver();
-
     // Listen for profile updates to refresh composer avatar
     window.addEventListener('profileUpdated', this.boundHandleProfileUpdate);
 
     // Listen for post updates (e.g. fresh/like toggles from other views)
-    window.addEventListener('postUpdated', this.boundHandlePostUpdated);
+    this.postUpdatedHandler = createPostUpdatedHandler(this.postCards);
+    window.addEventListener('postUpdated', this.postUpdatedHandler);
 
     // Setup swipe detection for mobile left nav
     this.setupSwipeDetection();
@@ -348,20 +340,6 @@ export class Timeline {
     }
   }
 
-  private handlePostUpdated(e: Event): void {
-    const detail = (e as CustomEvent).detail;
-    const postCard = this.postCards.get(detail.postId);
-    if (postCard) {
-      const update: Partial<Post> = {};
-      if (detail.isFreshed !== undefined) update.is_freshed = detail.isFreshed;
-      if (detail.freshCount !== undefined) update.fresh_count = detail.freshCount;
-      if (detail.isBookmarked !== undefined) update.is_bookmarked = detail.isBookmarked;
-      if (detail.bookmarkCount !== undefined) update.bookmark_count = detail.bookmarkCount;
-      if (detail.replyCount !== undefined) update.reply_count = detail.replyCount;
-      postCard.updatePost(update);
-    }
-  }
-
   private switchMode(mode: 'following' | 'foryou' | 'global'): void {
     if (mode === this.state.mode) return;
 
@@ -384,34 +362,6 @@ export class Timeline {
     this.resetAndLoadPosts();
   }
 
-  private setupIntersectionObserver(): void {
-    if (!this.loadMoreSentinel) return;
-
-    // Disconnect existing observer if any
-    if (this.intersectionObserver) {
-      this.intersectionObserver.disconnect();
-    }
-
-    // Create new intersection observer optimized for mobile
-    this.intersectionObserver = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (entry.isIntersecting && !this.state.loading && this.state.hasMore) {
-          // Immediate loading for better mobile performance
-          this.loadMorePosts();
-        }
-      },
-      {
-        root: null, // Use viewport as root
-        rootMargin: '300px', // Start loading 300px before sentinel comes into view (better for mobile)
-        threshold: 0.1, // Trigger when 10% is visible (more reliable than 0.01)
-      },
-    );
-
-    // Start observing sentinel
-    this.intersectionObserver.observe(this.loadMoreSentinel);
-  }
-
   private resetAndLoadPosts(): void {
     this.state.posts = [];
     this.state.ads = [];
@@ -421,7 +371,7 @@ export class Timeline {
     this.renderPostList();
 
     // Re-setup intersection observer for new content
-    this.setupIntersectionObserver();
+    this.infiniteScroll.reconnect();
 
     // Load ads and posts in parallel
     Promise.all([this.loadInitialPosts(), this.loadAdConfig()]);
@@ -654,9 +604,7 @@ export class Timeline {
     }
 
     // Hide sentinel when no more posts
-    if (this.loadMoreSentinel) {
-      this.loadMoreSentinel.style.display = this.state.hasMore ? 'flex' : 'none';
-    }
+    this.infiniteScroll.sentinel.style.display = this.state.hasMore ? 'flex' : 'none';
   }
 
   public getElement(): HTMLElement {
@@ -683,11 +631,8 @@ export class Timeline {
   }
 
   public destroy(): void {
-    // Clean up intersection observer
-    if (this.intersectionObserver) {
-      this.intersectionObserver.disconnect();
-      this.intersectionObserver = null;
-    }
+    // Clean up infinite scroll observer
+    this.infiniteScroll.disconnect();
 
     if (this.composerObserver) {
       this.composerObserver.disconnect();
@@ -696,7 +641,9 @@ export class Timeline {
 
     // Clean up window event listeners
     window.removeEventListener('profileUpdated', this.boundHandleProfileUpdate);
-    window.removeEventListener('postUpdated', this.boundHandlePostUpdated);
+    if (this.postUpdatedHandler) {
+      window.removeEventListener('postUpdated', this.postUpdatedHandler);
+    }
     window.removeEventListener('resize', this.boundHandleResize);
 
     if (this.composer) {

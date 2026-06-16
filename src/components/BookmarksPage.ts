@@ -1,5 +1,9 @@
+import { createFabButton } from '../lib/fab-button.js';
 import { t } from '../lib/i18n.js';
+import { createInfiniteScroll } from '../lib/infinite-scroll.js';
+import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';
+import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 import { createSkeletonCard } from './SkeletonCard.js';
@@ -17,14 +21,17 @@ export class BookmarksPage {
   private loading = false;
   private hasMore = true;
   private error: string | null = null;
-  private intersectionObserver: IntersectionObserver | null = null;
-  private loadMoreSentinel: HTMLElement | null = null;
+  private infiniteScroll: ReturnType<typeof createInfiniteScroll>;
   private fabButton: HTMLElement | null = null;
   private postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
-  private boundPostUpdatedHandler?: (e: Event) => void;
+  private postUpdatedHandler?: (e: Event) => void;
 
   constructor(props: BookmarksPageProps) {
     this.props = props;
+    this.infiniteScroll = createInfiniteScroll({
+      onLoadMore: () => this.loadContent(),
+      canLoadMore: () => !this.loading && this.hasMore,
+    });
     this.element = this.createElement();
     this.setupPostUpdatedListener();
     this.loadContent();
@@ -34,51 +41,12 @@ export class BookmarksPage {
     const container = document.createElement('div');
     container.className = 'bookmarks-page';
 
-    const header = document.createElement('div');
-    header.style.cssText = `
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 1rem;
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      background: var(--bg-primary);
-    `;
-
-    const backBtn = document.createElement('button');
-    backBtn.textContent = '←';
-    backBtn.style.cssText = `
-      background: none;
-      border: none;
-      font-size: 1.25rem;
-      cursor: pointer;
-      color: var(--text-primary);
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-      transition: background 0.2s;
-    `;
-    backBtn.addEventListener('mouseenter', () => {
-      backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))';
-    });
-    backBtn.addEventListener('mouseleave', () => {
-      backBtn.style.background = 'none';
-    });
-    backBtn.addEventListener('click', () => window.history.back());
-
-    const title = document.createElement('h1');
-    title.textContent = t('nav.bookmarks');
-    title.style.cssText = `
-      margin: 0;
-      font-size: 1.25rem;
-      font-weight: 700;
-      color: var(--text-primary);
-    `;
-
-    header.appendChild(backBtn);
-    header.appendChild(title);
-    container.appendChild(header);
+    container.appendChild(
+      createPageHeader({
+        title: t('nav.bookmarks'),
+        onBack: () => window.history.back(),
+      }),
+    );
 
     const postsContainer = document.createElement('div');
     postsContainer.className = 'bookmarks-posts';
@@ -90,21 +58,15 @@ export class BookmarksPage {
     loadingContainer.style.display = 'none';
     container.appendChild(loadingContainer);
 
-    this.loadMoreSentinel = document.createElement('div');
-    this.loadMoreSentinel.className = 'bookmarks-sentinel';
-    this.loadMoreSentinel.style.cssText = 'height: 100px; width: 100%;';
-    container.appendChild(this.loadMoreSentinel);
+    container.appendChild(this.infiniteScroll.sentinel);
 
     if (this.props.currentUser) {
-      this.fabButton = document.createElement('button');
-      this.fabButton.className = 'timeline-fab visible';
-      this.fabButton.textContent = '+';
-      this.fabButton.addEventListener('click', () => {
+      this.fabButton = createFabButton(() => {
         openPostModal({
           currentUser: this.props.currentUser,
           onPostCreated: () => {},
         });
-      });
+      }, true);
       container.appendChild(this.fabButton);
     }
 
@@ -133,7 +95,6 @@ export class BookmarksPage {
         this.cursor = newPosts[newPosts.length - 1].created_at;
         this.hasMore = newPosts.length === 10;
         this.renderPosts();
-        if (!this.intersectionObserver) this.setupIntersectionObserver();
       } else {
         this.hasMore = false;
         if (this.posts.length === 0) this.showEmpty();
@@ -149,21 +110,8 @@ export class BookmarksPage {
   }
 
   private setupPostUpdatedListener(): void {
-    this.boundPostUpdatedHandler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (!detail?.postId) return;
-      const card = this.postCards.get(detail.postId);
-      if (card) {
-        const update: Partial<Post> = {};
-        if (detail.isFreshed !== undefined) update.is_freshed = detail.isFreshed;
-        if (detail.freshCount !== undefined) update.fresh_count = detail.freshCount;
-        if (detail.isBookmarked !== undefined) update.is_bookmarked = detail.isBookmarked;
-        if (detail.bookmarkCount !== undefined) update.bookmark_count = detail.bookmarkCount;
-        if (detail.replyCount !== undefined) update.reply_count = detail.replyCount;
-        card.updatePost(update);
-      }
-    };
-    window.addEventListener('postUpdated', this.boundPostUpdatedHandler);
+    this.postUpdatedHandler = createPostUpdatedHandler(this.postCards);
+    window.addEventListener('postUpdated', this.postUpdatedHandler);
   }
 
   private renderPosts(): void {
@@ -272,37 +220,17 @@ export class BookmarksPage {
     }
   }
 
-  private setupIntersectionObserver(): void {
-    if (!this.loadMoreSentinel) return;
-    if (this.intersectionObserver) this.intersectionObserver.disconnect();
-
-    this.intersectionObserver = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && !this.loading && this.hasMore) {
-          this.loadContent();
-        }
-      },
-      { rootMargin: '300px', threshold: 0.1 },
-    );
-
-    this.intersectionObserver.observe(this.loadMoreSentinel);
-  }
-
   public getElement(): HTMLElement {
     return this.element;
   }
 
   public destroy(): void {
-    if (this.boundPostUpdatedHandler) {
-      window.removeEventListener('postUpdated', this.boundPostUpdatedHandler);
-      this.boundPostUpdatedHandler = undefined;
+    if (this.postUpdatedHandler) {
+      window.removeEventListener('postUpdated', this.postUpdatedHandler);
     }
     this.postCards.forEach((card) => void card.destroy());
     this.postCards.clear();
-    if (this.intersectionObserver) {
-      this.intersectionObserver.disconnect();
-      this.intersectionObserver = null;
-    }
+    this.infiniteScroll.disconnect();
   }
 }
 
