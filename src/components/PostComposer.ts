@@ -698,6 +698,8 @@ export class PostComposer {
       'ogg',
       'm4a',
       'webm',
+      'mp4',
+      'mov',
     ];
 
     if (!ext || !allowedExts.includes(ext)) {

@@ -231,6 +231,8 @@ const MAGIC_TYPES: { offset: number; bytes: number[]; mime: string }[] = [
   { offset: 0, bytes: [0xff, 0xe2], mime: 'audio/mpeg' }, // MP3 MPEG2 Layer3 no CRC
   { offset: 8, bytes: [0x57, 0x41, 0x56, 0x45], mime: 'audio/wav' }, // WAV (RIFF....WAVE)
   { offset: 0, bytes: [0x4f, 0x67, 0x67, 0x53], mime: 'audio/ogg' }, // OGG
+  { offset: 0, bytes: [0x1a, 0x45, 0xdf, 0xa3], mime: 'video/webm' }, // WebM (EBML header)
+  { offset: 4, bytes: [0x66, 0x74, 0x79, 0x70], mime: 'video/mp4' }, // MP4/MOV (ftyp box)
 ];
 
 function detectMimeType(data: ArrayBuffer): string | null {
@@ -310,6 +312,7 @@ app.put('/api/upload/*', requireAuth, async (c) => {
     if (
       !isAllowedImageMime(detectedMime) &&
       !detectedMime.startsWith('audio/') &&
+      !detectedMime.startsWith('video/') &&
       detectedMime !== 'application/zip' &&
       detectedMime !== 'application/x-shockwave-flash'
     ) {
@@ -8669,6 +8672,7 @@ app.put('/api/dm/upload/*', requireAuth, async (c) => {
     if (
       !isAllowedImageMime(detectedMime) &&
       !detectedMime.startsWith('audio/') &&
+      !detectedMime.startsWith('video/') &&
       detectedMime !== 'application/zip' &&
       detectedMime !== 'application/x-shockwave-flash'
     ) {
@@ -9474,6 +9478,7 @@ app.put('/api/groups/upload/*', requireAuth, async (c) => {
     if (
       !isAllowedImageMime(detectedMime) &&
       !detectedMime.startsWith('audio/') &&
+      !detectedMime.startsWith('video/') &&
       detectedMime !== 'application/zip' &&
       detectedMime !== 'application/x-shockwave-flash'
     ) {

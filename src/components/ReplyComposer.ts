@@ -490,8 +490,15 @@ export class ReplyComposer {
       'audio/ogg',
       'audio/mp4',
       'audio/webm',
+      'video/mp4',
+      'video/webm',
+      'video/quicktime',
     ];
-    if (!allowedTypes.includes(file.type)) {
+    const isVideoByExtension =
+      file.name.toLowerCase().endsWith('.mp4') ||
+      file.name.toLowerCase().endsWith('.webm') ||
+      file.name.toLowerCase().endsWith('.mov');
+    if (!allowedTypes.includes(file.type) && !isVideoByExtension) {
       showToast(t('reply_composer.error_file_type'), true);
       this.clearFileSelection();
       return;

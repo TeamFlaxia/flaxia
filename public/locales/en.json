@@ -556,7 +556,7 @@
   "reply_composer.reply": "Reply",
   "reply_composer.replying": "Replying...",
   "reply_composer.error_file_size": "File size must be less than 25MB",
-  "reply_composer.error_file_type": "Only image files (GIF, PNG, JPG) and audio files (MP3, WAV, OGG, M4A, WebM) are supported",
+  "reply_composer.error_file_type": "Only image files (GIF, PNG, JPG), audio files (MP3, WAV, OGG, M4A, WebM), and video files (MP4, WebM, MOV) are supported",
   "reply_composer.error_auth_required": "Please sign in to reply",
   "reply_composer.error_session_expired": "Session expired. Please reload and sign in again",
   "reply_composer.error_general": "{error}",

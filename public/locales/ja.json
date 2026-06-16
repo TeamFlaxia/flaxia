@@ -556,7 +556,7 @@
   "reply_composer.reply": "返信",
   "reply_composer.replying": "送信中...",
   "reply_composer.error_file_size": "ファイルサイズは25MB未満である必要があります",
-  "reply_composer.error_file_type": "画像ファイル（GIF, PNG, JPG）と音声ファイル（MP3, WAV, OGG, M4A, WebM）のみサポートされています",
+  "reply_composer.error_file_type": "画像ファイル（GIF, PNG, JPG）、音声ファイル（MP3, WAV, OGG, M4A, WebM）、動画ファイル（MP4, WebM, MOV）のみサポートされています",
   "reply_composer.error_auth_required": "返信するにはログインしてください",
   "reply_composer.error_session_expired": "セッションの有効期限が切れました。再読み込みしてログインし直してください",
   "reply_composer.error_general": "{error}",
