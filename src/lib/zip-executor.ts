@@ -1,6 +1,6 @@
 import type JSZipType from 'jszip';
-import { validateFileType } from './file-extensions';
-import { t } from './i18n.js';
+import { validateFileType } from './file-extensions.ts';
+import { t } from './i18n.ts';
 
 export interface ZipExecutorHandle {
   destroy: () => void;
