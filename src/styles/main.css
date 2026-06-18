@@ -832,22 +832,6 @@ h1 {
   flex-shrink: 0;
 }
 
-/* Bottom-left notification badge */
-.nav-bottom-badge {
-  margin-top: 0.5rem;
-  margin-left: 0.25rem;
-  background: var(--accent);
-  color: #000;
-  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 0.75rem;
-  padding: 2px 8px;
-  border-radius: 9999px;
-  min-width: 20px;
-  text-align: center;
-  font-weight: 600;
-  align-self: flex-start;
-}
-
 /* User popup menu */
 .nav-user-popup {
   position: absolute;
