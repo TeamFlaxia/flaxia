@@ -4036,6 +4036,24 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return denom === 0 ? 0 : dot / denom;
 }
 
+function diversifyPosts(
+  items: Array<{ post: Record<string, unknown>; score: number }>,
+  maxCount: number,
+  maxPerUser: number,
+): Array<{ post: Record<string, unknown>; score: number }> {
+  const userCounts = new Map<string, number>();
+  const result: Array<{ post: Record<string, unknown>; score: number }> = [];
+  for (const item of items) {
+    if (result.length >= maxCount) break;
+    const userId = String(item.post.user_id || '');
+    const count = userCounts.get(userId) || 0;
+    if (count >= maxPerUser) continue;
+    userCounts.set(userId, count + 1);
+    result.push(item);
+  }
+  return result;
+}
+
 const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
   COALESCE(p.reply_count, 0) as reply_count, 
   COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at`;
@@ -4100,119 +4118,135 @@ app.get('/api/posts/recommended', async (c) => {
       }
     }
 
-    // Fallback: pure engagement-based for anonymous / no interest data
-    if (!interestVector) {
+    // Try hybrid vector-based recommendations if we have an interest vector
+    let enrichedPosts: Record<string, unknown>[] = [];
+    let nextCursor: string | null = null;
+
+    if (interestVector) {
+      let vectorMatches: Array<{ id: string; score: number }> = [];
+      const vectorize = c.env.VECTORIZE;
+
+      if (vectorize) {
+        try {
+          const queryResult = await vectorize.query(interestVector, {
+            topK: 100,
+            returnValues: false,
+            returnMetadata: false,
+          });
+          vectorMatches = (queryResult.matches || []).map((m) => ({ id: m.id, score: m.score }));
+        } catch (e) {
+          console.error('Vectorize query failed, falling back to D1:', e);
+        }
+      }
+
+      // Fallback: compute cosine similarity from D1 post_embeddings
+      if (vectorMatches.length === 0) {
+        const allEmbedRows = await c.env.DB.prepare(
+          'SELECT post_id, embedding FROM post_embeddings ORDER BY created_at DESC LIMIT 1000',
+        ).all<{
+          post_id: string;
+          embedding: string;
+        }>();
+        for (const row of allEmbedRows.results || []) {
+          try {
+            const v = JSON.parse(row.embedding);
+            if (Array.isArray(v)) {
+              const sim = cosineSimilarity(interestVector, v);
+              vectorMatches.push({ id: row.post_id, score: sim });
+            }
+          } catch {
+            /* skip */
+          }
+        }
+        vectorMatches.sort((a, b) => b.score - a.score);
+      }
+
+      if (vectorMatches.length > 0) {
+        const candidateIds = vectorMatches.map((m) => m.id);
+        const engFormula = `(p.engagement_hotness / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))`;
+        const candidateQuery = `${RECOMMENDED_SELECT}, ${engFormula} as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id IN (${candidateIds.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL`;
+        const candResult = await c.env.DB.prepare(candidateQuery)
+          .bind(...candidateIds)
+          .all();
+        const candidatePosts = (candResult.results || []) as Array<Record<string, unknown>>;
+
+        if (candidatePosts.length > 0) {
+          const engScores = candidatePosts.map((p) => Number(p.eng_score) || 0);
+          const maxEng = Math.max(...engScores, 1);
+          const vecScoreMap = new Map(vectorMatches.map((m) => [m.id, m.score]));
+          const maxVec = Math.max(...vectorMatches.map((m) => m.score), 1);
+
+          const hybrid = candidatePosts.map((p) => {
+            const vecSim = (vecScoreMap.get(p.id as string) || 0) / maxVec;
+            const engNorm = (Number(p.eng_score) || 0) / maxEng;
+            return { post: p, score: 0.7 * vecSim + 0.3 * engNorm };
+          });
+
+          hybrid.sort((a, b) => {
+            const diff = b.score - a.score;
+            if (diff !== 0) return diff;
+            return String(b.post.created_at || '').localeCompare(String(a.post.created_at || ''));
+          });
+
+          let filtered = hybrid;
+          if (numericCursor !== null && cursorCreatedAt) {
+            filtered = hybrid.filter((h) => {
+              const s = h.score;
+              const ca = String(h.post.created_at || '');
+              return s < numericCursor! || (s === numericCursor && ca < cursorCreatedAt);
+            });
+          }
+
+          const page = diversifyPosts(filtered, limit, 3);
+          const posts = page.map((h) => {
+            const p = h.post;
+            p.score = h.score;
+            return p;
+          });
+
+          enrichedPosts = await enrichRecommendedPosts(posts, c.env.DB, currentUserId, c);
+          if (enrichedPosts.length > 0) {
+            nextCursor = `${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).score},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).created_at}`;
+          }
+        }
+      }
+    }
+
+    // Fallback: pure engagement-based when no interest vector OR hybrid returned nothing
+    if (enrichedPosts.length === 0) {
       const scoreFormula = `(p.engagement_hotness / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))`;
       const cursorClause = numericCursor !== null ? 'AND p.created_at < ?' : '';
+      const fetchLimit = limit * 5;
       let query: string;
       let params: Array<unknown> = [];
       if (currentUserId) {
         query = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.user_id != ? ${cursorClause} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
-        params = numericCursor !== null ? [currentUserId, cursorCreatedAt!, limit] : [currentUserId, limit];
+        params = numericCursor !== null ? [currentUserId, cursorCreatedAt!, fetchLimit] : [currentUserId, fetchLimit];
       } else {
         query = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${cursorClause} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
-        params = numericCursor !== null ? [cursorCreatedAt!, limit] : [limit];
+        params = numericCursor !== null ? [cursorCreatedAt!, fetchLimit] : [fetchLimit];
       }
       const result = await c.env.DB.prepare(query)
         .bind(...params)
         .all();
-      const enrichedPosts = await enrichRecommendedPosts(result.results || [], c.env.DB, currentUserId, c);
-      const nextCursor =
+      const scoredPosts = (result.results || []) as Record<string, unknown>[];
+      const diverse = diversifyPosts(
+        scoredPosts.map((p) => ({ post: p, score: Number(p.score) || 0 })),
+        limit,
+        3,
+      );
+      enrichedPosts = await enrichRecommendedPosts(
+        diverse.map((d) => d.post),
+        c.env.DB,
+        currentUserId,
+        c,
+      );
+      nextCursor =
         enrichedPosts.length > 0
           ? `${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).score},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).created_at}`
           : null;
-      return c.json({ posts: enrichedPosts, next_cursor: nextCursor });
     }
 
-    // Hybrid: query Vectorize then re-rank with engagement
-    let vectorMatches: Array<{ id: string; score: number }> = [];
-    const vectorize = c.env.VECTORIZE;
-
-    if (vectorize) {
-      try {
-        const queryResult = await vectorize.query(interestVector, {
-          topK: 100,
-          returnValues: false,
-          returnMetadata: false,
-        });
-        vectorMatches = (queryResult.matches || []).map((m) => ({ id: m.id, score: m.score }));
-      } catch (e) {
-        console.error('Vectorize query failed, falling back to D1:', e);
-      }
-    }
-
-    // Fallback: compute cosine similarity from D1 post_embeddings (latest 5000 only)
-    if (vectorMatches.length === 0) {
-      const allEmbedRows = await c.env.DB.prepare(
-        'SELECT post_id, embedding FROM post_embeddings ORDER BY created_at DESC LIMIT 100',
-      ).all<{
-        post_id: string;
-        embedding: string;
-      }>();
-      for (const row of allEmbedRows.results || []) {
-        try {
-          const v = JSON.parse(row.embedding);
-          if (Array.isArray(v)) {
-            const sim = cosineSimilarity(interestVector, v);
-            vectorMatches.push({ id: row.post_id, score: sim });
-          }
-        } catch {
-          /* skip */
-        }
-      }
-      vectorMatches.sort((a, b) => b.score - a.score);
-    }
-
-    if (vectorMatches.length === 0) return c.json({ posts: [] });
-
-    const candidateIds = vectorMatches.map((m) => m.id);
-    const engFormula = `(p.engagement_hotness / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))`;
-    const candidateQuery = `${RECOMMENDED_SELECT}, ${engFormula} as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id IN (${candidateIds.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL`;
-    const candResult = await c.env.DB.prepare(candidateQuery)
-      .bind(...candidateIds)
-      .all();
-    const candidatePosts = (candResult.results || []) as Array<Record<string, unknown>>;
-
-    // Normalize engagement scores and compute hybrid
-    const engScores = candidatePosts.map((p) => Number(p.eng_score) || 0);
-    const maxEng = Math.max(...engScores, 1);
-    const vecScoreMap = new Map(vectorMatches.map((m) => [m.id, m.score]));
-    const maxVec = Math.max(...vectorMatches.map((m) => m.score), 1);
-
-    const hybrid = candidatePosts.map((p) => {
-      const vecSim = (vecScoreMap.get(p.id as string) || 0) / maxVec;
-      const engNorm = (Number(p.eng_score) || 0) / maxEng;
-      return { post: p, score: 0.7 * vecSim + 0.3 * engNorm };
-    });
-
-    hybrid.sort((a, b) => {
-      const diff = b.score - a.score;
-      if (diff !== 0) return diff;
-      return String(b.post.created_at || '').localeCompare(String(a.post.created_at || ''));
-    });
-
-    // Apply cursor
-    let filtered = hybrid;
-    if (numericCursor !== null && cursorCreatedAt) {
-      filtered = hybrid.filter((h) => {
-        const s = h.score;
-        const ca = String(h.post.created_at || '');
-        return s < numericCursor! || (s === numericCursor && ca < cursorCreatedAt);
-      });
-    }
-
-    const page = filtered.slice(0, limit);
-    const posts = page.map((h) => {
-      const p = h.post;
-      p.score = h.score;
-      return p;
-    });
-
-    const enrichedPosts = await enrichRecommendedPosts(posts, c.env.DB, currentUserId, c);
-    const nextCursor =
-      enrichedPosts.length > 0
-        ? `${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).score},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).created_at}`
-        : null;
     return c.json({ posts: enrichedPosts, next_cursor: nextCursor });
   } catch (error: unknown) {
     const err = error as { message?: string };
