@@ -76,6 +76,7 @@ export class LeftNav {
         { id: 'explore', label: t('nav.explore'), icon: '🔍' },
         { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
         { id: 'messages', label: t('nav.messages'), icon: '💬' },
+        { id: 'notifications', label: t('nav.notifications'), icon: '🔔' },
       ] as const;
 
       items.forEach((item) => {
@@ -111,6 +112,28 @@ export class LeftNav {
               text-align: center;
             `;
             badge.textContent = totalUnread >= 99 ? '99+' : String(totalUnread);
+            navItem.appendChild(badge);
+          }
+        }
+
+        // Unread badge for notifications
+        if (item.id === 'notifications') {
+          const count = this.props.unreadCount || 0;
+          if (count > 0) {
+            const badge = document.createElement('span');
+            badge.className = 'nav-dm-badge';
+            badge.style.cssText = `
+              margin-left: auto;
+              background: var(--accent);
+              color: #000;
+              font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              font-size: 0.75rem;
+              padding: 2px 8px;
+              border-radius: 9999px;
+              min-width: 20px;
+              text-align: center;
+            `;
+            badge.textContent = count >= 99 ? '99+' : String(count);
             navItem.appendChild(badge);
           }
         }
@@ -189,23 +212,12 @@ export class LeftNav {
       userArea.appendChild(info);
       userArea.appendChild(caret);
 
-      // Notification badge at bottom-left
-      const bottomBadge = document.createElement('div');
-      bottomBadge.className = 'nav-bottom-badge';
-      bottomBadge.id = 'nav-bottom-badge';
-      if (this.props.unreadCount && this.props.unreadCount > 0) {
-        bottomBadge.textContent = this.props.unreadCount >= 99 ? '99+' : String(this.props.unreadCount);
-      } else {
-        bottomBadge.style.display = 'none';
-      }
-
       // Popup menu
       const popup = document.createElement('div');
       popup.className = 'nav-user-popup';
 
       const menuItems = [
         { id: 'profile', label: t('nav.profile'), icon: '👤' },
-        { id: 'notifications', label: t('nav.notifications'), icon: '🔔' },
         { id: 'bookmarks', label: t('nav.bookmarks'), icon: '🔖' },
         { id: 'settings', label: t('nav.settings'), icon: '⚙️' },
       ];
@@ -215,24 +227,6 @@ export class LeftNav {
         popupItem.className = 'nav-user-popup-item';
         popupItem.setAttribute('data-nav-id', item.id);
         popupItem.innerHTML = `<span>${item.icon}</span><span>${item.label}</span>`;
-
-        // Unread badge for notifications in popup
-        if (item.id === 'notifications' && this.props.unreadCount && this.props.unreadCount > 0) {
-          const notifBadge = document.createElement('span');
-          notifBadge.className = 'nav-badge';
-          notifBadge.style.cssText = `
-            margin-left: auto;
-            background: var(--accent);
-            font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            font-size: 0.75rem;
-            padding: 2px 8px;
-            border-radius: 9999px;
-            min-width: 20px;
-            text-align: center;
-          `;
-          notifBadge.textContent = this.props.unreadCount >= 99 ? '99+' : String(this.props.unreadCount);
-          popupItem.appendChild(notifBadge);
-        }
 
         popupItem.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -250,7 +244,6 @@ export class LeftNav {
       });
 
       nav.appendChild(userArea);
-      nav.appendChild(bottomBadge);
     }
 
     // Add legal links (privacy policy and terms)
@@ -518,34 +511,21 @@ export class LeftNav {
   public setUnreadCount(count: number): void {
     this.props.unreadCount = count;
 
-    // Update bottom-left badge
-    const bottomBadge = this.element.querySelector('#nav-bottom-badge') as HTMLElement | null;
-    if (bottomBadge) {
-      if (count > 0) {
-        bottomBadge.textContent = count >= 99 ? '99+' : formatCount(count);
-        bottomBadge.style.display = '';
-      } else {
-        bottomBadge.textContent = '';
-        bottomBadge.style.display = 'none';
-      }
-    }
-
-    // Update popup notifications item badge
-    const notifItem = this.element.querySelector(
-      '.nav-user-popup-item[data-nav-id="notifications"]',
-    ) as HTMLElement | null;
+    // Update notifications nav item badge
+    const notifItem = this.element.querySelector('.nav-item[data-nav-id="notifications"]') as HTMLElement | null;
     if (!notifItem) return;
 
-    const existingBadge = notifItem.querySelector('.nav-badge') as HTMLElement | null;
+    const existingBadge = notifItem.querySelector('.nav-dm-badge') as HTMLElement | null;
     if (count > 0) {
       if (existingBadge) {
         existingBadge.textContent = count >= 99 ? '99+' : formatCount(count);
       } else {
         const badge = document.createElement('span');
-        badge.className = 'nav-badge';
+        badge.className = 'nav-dm-badge';
         badge.style.cssText = `
           margin-left: auto;
           background: var(--accent);
+          color: #000;
           font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           font-size: 0.75rem;
           padding: 2px 8px;
@@ -657,6 +637,7 @@ export function updateLeftNavUser(
         { id: 'explore', label: t('nav.explore'), icon: '🔍' },
         { id: 'arcade', label: t('nav.arcade'), icon: '🕹️' },
         { id: 'messages', label: t('nav.messages'), icon: '💬' },
+        { id: 'notifications', label: t('nav.notifications'), icon: '🔔' },
       ] as const;
 
       items.forEach((item) => {
@@ -683,6 +664,28 @@ export function updateLeftNavUser(
               text-align: center;
             `;
             badge.textContent = totalUnread >= 99 ? '99+' : String(totalUnread);
+            navItem.appendChild(badge);
+          }
+        }
+
+        // Unread badge for notifications
+        if (item.id === 'notifications') {
+          const count = leftNav.props.unreadCount ?? 0;
+          if (count > 0) {
+            const badge = document.createElement('span');
+            badge.className = 'nav-dm-badge';
+            badge.style.cssText = `
+              margin-left: auto;
+              background: var(--accent);
+              color: #000;
+              font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+              font-size: 0.75rem;
+              padding: 2px 8px;
+              border-radius: 9999px;
+              min-width: 20px;
+              text-align: center;
+            `;
+            badge.textContent = count >= 99 ? '99+' : String(count);
             navItem.appendChild(badge);
           }
         }
@@ -851,23 +854,12 @@ export function updateLeftNavUser(
     userArea.appendChild(info);
     userArea.appendChild(caret);
 
-    // Notification badge at bottom-left
-    const bottomBadge = document.createElement('div');
-    bottomBadge.className = 'nav-bottom-badge';
-    bottomBadge.id = 'nav-bottom-badge';
-    if (leftNav.props.unreadCount && leftNav.props.unreadCount > 0) {
-      bottomBadge.textContent = leftNav.props.unreadCount >= 99 ? '99+' : String(leftNav.props.unreadCount);
-    } else {
-      bottomBadge.style.display = 'none';
-    }
-
     // Popup menu
     const popup = document.createElement('div');
     popup.className = 'nav-user-popup';
 
     const menuItems = [
       { id: 'profile', label: t('nav.profile'), icon: '👤' },
-      { id: 'notifications', label: t('nav.notifications'), icon: '🔔' },
       { id: 'bookmarks', label: t('nav.bookmarks'), icon: '🔖' },
       { id: 'settings', label: t('nav.settings'), icon: '⚙️' },
     ];
@@ -877,25 +869,6 @@ export function updateLeftNavUser(
       popupItem.className = 'nav-user-popup-item';
       popupItem.setAttribute('data-nav-id', item.id);
       popupItem.innerHTML = `<span>${item.icon}</span><span>${item.label}</span>`;
-
-      // Unread badge for notifications in popup
-      if (item.id === 'notifications' && (leftNav.props.unreadCount ?? 0) > 0) {
-        const notifBadge = document.createElement('span');
-        notifBadge.className = 'nav-badge';
-        notifBadge.style.cssText = `
-          margin-left: auto;
-          background: var(--accent);
-          font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-          font-size: 0.75rem;
-          padding: 2px 8px;
-          border-radius: 9999px;
-          min-width: 20px;
-          text-align: center;
-        `;
-        const count = leftNav.props.unreadCount ?? 0;
-        notifBadge.textContent = count >= 99 ? '99+' : String(count);
-        popupItem.appendChild(notifBadge);
-      }
 
       popupItem.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -913,7 +886,6 @@ export function updateLeftNavUser(
     });
 
     leftNav.getElement().insertBefore(userArea, legalLinks);
-    leftNav.getElement().insertBefore(bottomBadge, legalLinks);
   }
 
   if (!currentUser) {
