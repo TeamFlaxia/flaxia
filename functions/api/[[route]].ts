@@ -4159,6 +4159,7 @@ app.get('/api/posts/recommended', async (c) => {
           }
         }
         vectorMatches.sort((a, b) => b.score - a.score);
+        vectorMatches = vectorMatches.slice(0, 200);
       }
 
       if (vectorMatches.length > 0) {
