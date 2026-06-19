@@ -4134,6 +4134,7 @@ app.get('/api/posts/recommended', async (c) => {
             returnMetadata: false,
           });
           vectorMatches = (queryResult.matches || []).map((m) => ({ id: m.id, score: m.score }));
+          vectorMatches = vectorMatches.slice(0, 80);
         } catch (e) {
           console.error('Vectorize query failed, falling back to D1:', e);
         }
@@ -4159,7 +4160,7 @@ app.get('/api/posts/recommended', async (c) => {
           }
         }
         vectorMatches.sort((a, b) => b.score - a.score);
-        vectorMatches = vectorMatches.slice(0, 200);
+        vectorMatches = vectorMatches.slice(0, 80);
       }
 
       if (vectorMatches.length > 0) {
