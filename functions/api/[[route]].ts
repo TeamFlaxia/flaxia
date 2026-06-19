@@ -184,6 +184,8 @@ function getCrowdClient(c: Context<{ Bindings: Bindings; Variables: Variables }>
 }
 
 const embeddingPosts = new Set<string>();
+let lastEmbedTime = 0;
+const EMBED_RATE_LIMIT_MS = 10_000;
 async function embedPost(
   orchestratorUrl: string,
   apiKey: string,
@@ -191,6 +193,10 @@ async function embedPost(
   postId: string,
   text: string,
 ): Promise<void> {
+  const now = Date.now();
+  if (now - lastEmbedTime < EMBED_RATE_LIMIT_MS) return;
+  lastEmbedTime = now;
+
   if (embeddingPosts.has(postId)) return;
   embeddingPosts.add(postId);
   try {
