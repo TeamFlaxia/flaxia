@@ -97,6 +97,33 @@ const generateSitemap = async (env: Bindings): Promise<string> => {
     } catch (error) {
       console.error('Error fetching posts for sitemap:', error);
     }
+
+    // Add game posts (for arcade pages, limit to 5000)
+    try {
+      const games = (await env.DB.prepare(`
+        SELECT id, created_at
+        FROM posts
+        WHERE (swf_key IS NOT NULL OR payload_key IS NOT NULL)
+          AND status = 'published'
+          AND hidden = 0
+          AND parent_id IS NULL
+        ORDER BY created_at DESC
+        LIMIT 5000
+      `).all()) as { results: Array<{ id: string; created_at: string }> };
+
+      games.results.forEach((game) => {
+        const gameUrl = `${baseUrl}/arcade/${escapeXml(game.id)}`;
+        xml += `
+  <url>
+    <loc>${gameUrl}</loc>
+    <lastmod>${formatDate(game.created_at)}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>`;
+      });
+    } catch (error) {
+      console.error('Error fetching games for sitemap:', error);
+    }
   }
 
   xml += `

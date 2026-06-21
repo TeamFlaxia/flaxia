@@ -87,6 +87,14 @@ export class ArcadePage {
     this.setupLeftNavSwipeDetection();
     this.setupPostUpdatedListener();
     window.addEventListener('spaNavigate', this.boundHandleSpaNavigate);
+
+    // Set default arcade page metadata
+    document.title = 'Flaxia Arcade - ゲームを遊べるSNS';
+    const canonical = document.querySelector('link[rel="canonical"]');
+    if (canonical) {
+      canonical.setAttribute('href', `${window.location.origin}/arcade`);
+    }
+
     this.loadGames();
 
     if (!localStorage.getItem(ArcadePage.TUTORIAL_SEEN_KEY)) {
@@ -742,9 +750,36 @@ export class ArcadePage {
       viewport.style.opacity = '1';
     });
 
+    // Update browser metadata for SEO / link sharing
+    this.updateMetadata(game);
+
     // Preload next game if available
     if (this.currentIndex < this.games.length - 1) {
       this.preloadNextGame();
+    }
+  }
+
+  private updateMetadata(game: Game): void {
+    const title = game.title || `Game by ${game.username}`;
+    document.title = `Flaxia Arcade - ${title}`;
+
+    // Update OG meta tags for link sharing
+    const ogTitle = document.querySelector('meta[property="og:title"]');
+    const ogDescription = document.querySelector('meta[property="og:description"]');
+    const twitterTitle = document.querySelector('meta[name="twitter:title"]');
+    const twitterDescription = document.querySelector('meta[name="twitter:description"]');
+    const canonical = document.querySelector('link[rel="canonical"]');
+
+    const description = `Play ${title} by ${game.username} on Flaxia Arcade`;
+
+    if (ogTitle) ogTitle.setAttribute('content', title);
+    if (ogDescription) ogDescription.setAttribute('content', description);
+    if (twitterTitle) twitterTitle.setAttribute('content', title);
+    if (twitterDescription) twitterDescription.setAttribute('content', description);
+
+    // Update canonical URL to point to the specific game
+    if (canonical) {
+      canonical.setAttribute('href', `${window.location.origin}/arcade/${game.id}`);
     }
   }
 

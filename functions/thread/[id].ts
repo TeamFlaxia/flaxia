@@ -149,7 +149,7 @@ export async function onRequest(context: {
 
     return new Response(
       renderHtmlShell(content, {
-        title: `${post.display_name || post.username} on Flaxia`,
+        title: `Flaxia - ${post.display_name || post.username}`,
         description: post.text.slice(0, 200),
         canonicalUrl,
         image: ogImage,
