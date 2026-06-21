@@ -403,6 +403,9 @@ export class ThreadPage {
       // Sync post card reply count with actual thread data
       this.rootPostCard.updatePost({ reply_count: data.replies.length });
 
+      // Update browser metadata for SEO / link sharing
+      this.updateMetadata(data.root);
+
       // Root reply composer (hidden by default)
       this.rootReplyComposer = createReplyComposer({
         postId: data.root.id,
@@ -694,6 +697,38 @@ export class ThreadPage {
     }
 
     this.element.remove();
+  }
+
+  private updateMetadata(post: Post): void {
+    const name = post.display_name || post.username;
+    document.title = `Flaxia - ${name}`;
+
+    const description = post.text.slice(0, 200);
+    const ogImage =
+      post.gif_key && !post.gif_key.startsWith('audio/')
+        ? `${window.location.origin}/api/images/${post.gif_key}`
+        : post.thumbnail_key
+          ? `${window.location.origin}/api/images/${post.thumbnail_key}`
+          : 'https://flaxia.app/og-default-v2.png';
+
+    const setMeta = (selector: string, attr: string, value: string) => {
+      const el = document.querySelector(selector);
+      if (el) el.setAttribute(attr, value);
+    };
+
+    setMeta('meta[property="og:title"]', 'content', `Flaxia - ${name}`);
+    setMeta('meta[property="og:description"]', 'content', description);
+    setMeta('meta[property="og:url"]', 'content', `${window.location.origin}/thread/${post.id}`);
+    setMeta('meta[property="og:image"]', 'content', ogImage);
+    setMeta('meta[name="description"]', 'content', description);
+    setMeta('meta[name="twitter:title"]', 'content', `Flaxia - ${name}`);
+    setMeta('meta[name="twitter:description"]', 'content', description);
+    setMeta('meta[name="twitter:image"]', 'content', ogImage);
+
+    const canonical = document.querySelector('link[rel="canonical"]');
+    if (canonical) {
+      canonical.setAttribute('href', `${window.location.origin}/thread/${post.id}`);
+    }
   }
 }
 

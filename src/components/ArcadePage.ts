@@ -764,21 +764,27 @@ export class ArcadePage {
     const title = game.title || `Game by ${game.username}`;
     document.title = `Flaxia Arcade - ${title}`;
 
-    // Update OG meta tags for link sharing
-    const ogTitle = document.querySelector('meta[property="og:title"]');
-    const ogDescription = document.querySelector('meta[property="og:description"]');
-    const twitterTitle = document.querySelector('meta[name="twitter:title"]');
-    const twitterDescription = document.querySelector('meta[name="twitter:description"]');
-    const canonical = document.querySelector('link[rel="canonical"]');
+    const ogImage = game.thumbnailKey
+      ? `${window.location.origin}/api/images/${game.thumbnailKey}`
+      : 'https://flaxia.app/og-default-v2.png';
 
     const description = `Play ${title} by ${game.username} on Flaxia Arcade`;
 
-    if (ogTitle) ogTitle.setAttribute('content', title);
-    if (ogDescription) ogDescription.setAttribute('content', description);
-    if (twitterTitle) twitterTitle.setAttribute('content', title);
-    if (twitterDescription) twitterDescription.setAttribute('content', description);
+    const setMeta = (selector: string, attr: string, value: string) => {
+      const el = document.querySelector(selector);
+      if (el) el.setAttribute(attr, value);
+    };
 
-    // Update canonical URL to point to the specific game
+    setMeta('meta[property="og:title"]', 'content', `Flaxia Arcade - ${title}`);
+    setMeta('meta[property="og:description"]', 'content', description);
+    setMeta('meta[property="og:url"]', 'content', `${window.location.origin}/arcade/${game.id}`);
+    setMeta('meta[property="og:image"]', 'content', ogImage);
+    setMeta('meta[name="description"]', 'content', description);
+    setMeta('meta[name="twitter:title"]', 'content', `Flaxia Arcade - ${title}`);
+    setMeta('meta[name="twitter:description"]', 'content', description);
+    setMeta('meta[name="twitter:image"]', 'content', ogImage);
+
+    const canonical = document.querySelector('link[rel="canonical"]');
     if (canonical) {
       canonical.setAttribute('href', `${window.location.origin}/arcade/${game.id}`);
     }
@@ -832,7 +838,7 @@ export class ArcadePage {
     const game = this.games[this.currentIndex];
     if (!game) return;
 
-    const arcadeUrl = `${window.location.origin}/arcade/${game.postId}`;
+    const arcadeUrl = `${window.location.origin}/arcade/${game.id}`;
 
     createShareModal({
       post: {
