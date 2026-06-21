@@ -110,7 +110,7 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
   <meta name="twitter:image" content="${escapeHtml(image)}">`
     : '';
 
-  return `<!DOCTYPE html>
+  const head = `<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
@@ -135,15 +135,58 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
   ${jsonLd ? `\n  ${jsonLd}` : ''}
   ${additionalHead ? `\n  ${additionalHead}` : ''}
 
+  <link rel="preconnect" href="https://flaxia.app">
+  <link rel="dns-prefetch" href="/api">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all';this.onload=null">
+
+  <meta name="google-adsense-account" content="ca-pub-8703789531673358">
+
   <style>
-    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --bg-primary:    #ffffff;
+      --bg-secondary:  #f0fdf4;
+      --bg-input:      #f1f5f9;
+      --border:        #e2e8f0;
+      --text-primary:  #0f172a;
+      --text-muted:    #64748b;
+      --accent:        #22c55e;
+      --accent-dark:   #16a34a;
+      --danger:        #ef4444;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
+      font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.6;
+    }
+    #app {
+      display: flex;
+      min-height: 100vh;
+      min-height: 100dvh;
       margin: 0;
       padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', sans-serif;
-      background: #f8f9fa;
-      color: #1a1a1a;
-      line-height: 1.5;
+    }
+    .main-container {
+      display: flex;
+      width: 100%;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .left-nav {
+      width: 240px; flex-shrink: 0; padding: 1rem;
+      border-right: 1px solid var(--border); background: white;
+      position: sticky; top: 0; height: 100vh; overflow-y: auto;
+    }
+    .main-content {
+      flex: 1; max-width: 600px; padding: 1rem;
+      border-right: 1px solid var(--border);
+    }
+    .right-panel {
+      width: 350px; flex-shrink: 0; padding: 1rem;
+      position: sticky; top: 0; height: 100vh; overflow-y: auto;
     }
     .ssr-container {
       max-width: 640px;
@@ -155,7 +198,7 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       align-items: center;
       justify-content: space-between;
       padding: 12px 0;
-      border-bottom: 1px solid #e0e0e0;
+      border-bottom: 1px solid var(--border);
       margin-bottom: 16px;
     }
     .ssr-logo {
@@ -194,12 +237,12 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
     }
     .ssr-display-name {
       font-weight: 600;
-      color: #1a1a1a;
+      color: var(--text-primary);
       text-decoration: none;
     }
     .ssr-display-name:hover { text-decoration: underline; }
     .ssr-username {
-      color: #666;
+      color: var(--text-muted);
       font-size: 14px;
     }
     .ssr-post-body {
@@ -218,16 +261,16 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       display: flex;
       gap: 16px;
       font-size: 13px;
-      color: #888;
+      color: var(--text-muted);
     }
-    .ssr-post-meta time { color: #888; }
-    .ssr-post-stats { display: flex; gap: 12px; font-size: 13px; color: #888; margin-top: 8px; }
+    .ssr-post-meta time { color: var(--text-muted); }
+    .ssr-post-stats { display: flex; gap: 12px; font-size: 13px; color: var(--text-muted); margin-top: 8px; }
     .ssr-replies { margin-top: 24px; }
     .ssr-replies h2 {
       font-size: 16px;
       font-weight: 600;
-      color: #333;
-      border-bottom: 1px solid #e0e0e0;
+      color: var(--text-primary);
+      border-bottom: 1px solid var(--border);
       padding-bottom: 8px;
     }
     .ssr-reply { margin-left: 24px; }
@@ -240,20 +283,20 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       margin-bottom: 16px;
     }
     .ssr-profile-header h1 { margin: 12px 0 4px 0; font-size: 22px; }
-    .ssr-bio { color: #555; font-size: 14px; margin: 8px 0; }
+    .ssr-bio { color: var(--text-muted); font-size: 14px; margin: 8px 0; }
     .ssr-stats {
       display: flex;
       justify-content: center;
       gap: 24px;
       font-size: 14px;
-      color: #666;
+      color: var(--text-muted);
       margin-top: 12px;
     }
     .ssr-stats span { display: inline-block; }
     .ssr-footer {
       text-align: center;
       padding: 24px 0;
-      color: #888;
+      color: var(--text-muted);
       font-size: 13px;
     }
     .ssr-footer a { color: #007bff; text-decoration: none; }
@@ -262,20 +305,43 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
     .ssr-section-title {
       font-size: 16px;
       font-weight: 600;
-      color: #333;
-      border-bottom: 1px solid #e0e0e0;
+      color: var(--text-primary);
+      border-bottom: 1px solid var(--border);
       padding-bottom: 8px;
       margin-bottom: 16px;
     }
-    .ssr-empty { color: #888; text-align: center; padding: 32px; }
+    .ssr-empty { color: var(--text-muted); text-align: center; padding: 32px; }
+    @media (max-width: 1024px) {
+      .right-panel { display: none; }
+      .main-container { max-width: 840px; }
+    }
+    @media (max-width: 768px) {
+      .left-nav { display: none; }
+      .main-content { max-width: 100%; border-right: none; }
+    }
   </style>
 </head>
 <body>
-  <div class="ssr-container">
-    ${content}
+  <div id="app">
+    <div class="main-container">
+      <div class="ssr-container">
+        ${content}
+      </div>
+    </div>
   </div>
+  <script type="module" src="/src/main.ts"></script>
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8703789531673358" crossorigin="anonymous"></script>
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-JZWZ08QFCW"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-JZWZ08QFCW');
+  </script>
 </body>
 </html>`;
+
+  return head;
 }
 
 function formatDate(iso: string): string {

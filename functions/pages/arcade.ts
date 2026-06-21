@@ -1,4 +1,3 @@
-import { isCrawler } from '../../src/lib/is-crawler';
 import { escapeHtml, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
 
 type Env = {
@@ -95,20 +94,11 @@ function renderGameCard(game: GameRow, baseUrl: string): string {
     </a>`;
 }
 
-export async function onRequest(context: {
-  request: Request;
-  env: Env;
-  next: () => Promise<Response>;
-}): Promise<Response> {
-  const { request, env, next } = context;
-  const userAgent = request.headers.get('user-agent') || '';
+export async function onRequest(context: { request: Request; env: Env }): Promise<Response> {
+  const { env } = context;
   const baseUrl = env.BASE_URL ?? 'https://flaxia.app';
   const canonicalUrl = `${baseUrl}/arcade`;
   const defaultImage = `${baseUrl}/og-default-v2.png`;
-
-  if (!isCrawler(userAgent)) {
-    return next();
-  }
 
   try {
     let games: GameRow[] = [];

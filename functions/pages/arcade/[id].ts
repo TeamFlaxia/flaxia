@@ -1,4 +1,3 @@
-import { isCrawler } from '../../../src/lib/is-crawler';
 import { escapeHtml, renderHtmlShell, renderJsonLd } from '../../../src/lib/render-html';
 
 type Env = {
@@ -68,21 +67,11 @@ function formatDate(iso: string): string {
   }
 }
 
-export async function onRequest(context: {
-  request: Request;
-  env: Env;
-  params: { id: string };
-  next: () => Promise<Response>;
-}): Promise<Response> {
-  const { request, env, params, next } = context;
-  const userAgent = request.headers.get('user-agent') || '';
+export async function onRequest(context: { request: Request; env: Env; params: { id: string } }): Promise<Response> {
+  const { env, params } = context;
   const baseUrl = env.BASE_URL ?? 'https://flaxia.app';
   const sandboxOrigin = env.SANDBOX_ORIGIN ?? 'https://sandbox.flaxia.app';
   const defaultImage = `${baseUrl}/og-default-v2.png`;
-
-  if (!isCrawler(userAgent)) {
-    return next();
-  }
 
   const gameId = params.id;
   const canonicalUrl = `${baseUrl}/arcade/${gameId || ''}`;

@@ -1,7 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { isCrawler } from '../../src/lib/is-crawler';
 import {
   type PostRow,
   renderHtmlShell,
@@ -78,7 +77,6 @@ app.get('/', async (c) => {
     const url = new URL(c.req.url);
     const username = url.pathname.split('/users/')[1]?.split('/')[0] ?? '';
     const acceptHeader = c.req.header('Accept') || '';
-    const userAgent = c.req.header('user-agent') || '';
     const baseUrl = c.env.BASE_URL ?? 'https://flaxia.app';
 
     if (!username) {
@@ -87,6 +85,19 @@ app.get('/', async (c) => {
 
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);
+    }
+
+    // If ActivityPub client, redirect to canonical actor URL
+    if (acceptHeader.includes('application/activity+json')) {
+      const verification = await c.env.DB.prepare(`
+        SELECT id FROM users WHERE username = ? COLLATE NOCASE
+      `)
+        .bind(username)
+        .first();
+      if (!verification) {
+        return c.json({ error: 'User not found' }, 404);
+      }
+      return c.redirect(`${c.env.BASE_URL}/api/actors/${username}`, 301);
     }
 
     const user = (await c.env.DB.prepare(`
@@ -98,76 +109,60 @@ app.get('/', async (c) => {
       .first()) as RawUser | null;
 
     if (!user) {
-      if (isCrawler(userAgent)) {
-        const canonicalUrl = `${baseUrl}/users/${username}`;
-        return c.html(
-          renderHtmlShell(
-            `<div class="ssr-empty"><h1>User not found</h1><p>The requested user does not exist.</p></div>`,
-            { title: 'User not found', description: 'User not found', canonicalUrl },
-          ),
-          404,
-        );
-      }
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    // Crawler check - serve SSR profile HTML
-    if (isCrawler(userAgent)) {
-      const canonicalUrl = `${baseUrl}/users/${user.username}`;
-      const defaultImage = user.avatar_key
-        ? `${baseUrl}/api/images/${user.avatar_key}`
-        : `${baseUrl}/og-default-v2.png`;
-
-      // Query recent posts
-      const { results: postRows } = await c.env.DB.prepare(
-        `${POST_SELECT} WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ORDER BY p.created_at DESC LIMIT 20`,
-      )
-        .bind(username)
-        .all<RawPost>();
-
-      const posts = (postRows || []).map(toPost);
-
-      // Query follower count
-      const followerCount = (await c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE followee_id = ?')
-        .bind(user.id)
-        .first()) as { count: number };
-      const postCount = (await c.env.DB.prepare(
-        "SELECT COUNT(*) as count FROM posts WHERE user_id = ? AND status = 'published' AND hidden = 0",
-      )
-        .bind(user.id)
-        .first()) as { count: number };
-
-      const jsonLd = renderPersonJsonLd(user as UserRow, canonicalUrl);
-
-      const content = `
-        ${renderProfileHeader(user as UserRow, baseUrl, postCount?.count || 0, followerCount?.count || 0)}
-        <section>
-          <h2 class="ssr-section-title">Posts</h2>
-          ${renderPostList(posts, baseUrl)}
-        </section>
-        <footer class="ssr-footer">
-          <a href="${baseUrl}">← Back to Flaxia</a>
-        </footer>
-      `;
-
+      const canonicalUrl = `${baseUrl}/users/${username}`;
       return c.html(
-        renderHtmlShell(content, {
-          title: `${user.display_name} (@${user.username}) - Flaxia`,
-          description: user.bio ? user.bio.slice(0, 200) : `@${user.username}'s profile on Flaxia`,
-          canonicalUrl,
-          image: defaultImage,
-          jsonLd,
-        }),
+        renderHtmlShell(
+          `<div class="ssr-empty"><h1>User not found</h1><p>The requested user does not exist.</p></div>`,
+          { title: 'User not found', description: 'User not found', canonicalUrl },
+        ),
+        404,
       );
     }
 
-    // If ActivityPub client, redirect to canonical actor URL
-    if (acceptHeader.includes('application/activity+json')) {
-      return c.redirect(`${c.env.BASE_URL}/api/actors/${username}`, 301);
-    }
+    const canonicalUrl = `${baseUrl}/users/${user.username}`;
+    const defaultImage = user.avatar_key ? `${baseUrl}/api/images/${user.avatar_key}` : `${baseUrl}/og-default-v2.png`;
 
-    // Browser request - redirect to web profile page
-    return c.redirect(`/users/${username}`);
+    // Query recent posts
+    const { results: postRows } = await c.env.DB.prepare(
+      `${POST_SELECT} WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ORDER BY p.created_at DESC LIMIT 20`,
+    )
+      .bind(username)
+      .all<RawPost>();
+
+    const posts = (postRows || []).map(toPost);
+
+    // Query follower count
+    const followerCount = (await c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE followee_id = ?')
+      .bind(user.id)
+      .first()) as { count: number };
+    const postCount = (await c.env.DB.prepare(
+      "SELECT COUNT(*) as count FROM posts WHERE user_id = ? AND status = 'published' AND hidden = 0",
+    )
+      .bind(user.id)
+      .first()) as { count: number };
+
+    const jsonLd = renderPersonJsonLd(user as UserRow, canonicalUrl);
+
+    const content = `
+      ${renderProfileHeader(user as UserRow, baseUrl, postCount?.count || 0, followerCount?.count || 0)}
+      <section>
+        <h2 class="ssr-section-title">Posts</h2>
+        ${renderPostList(posts, baseUrl)}
+      </section>
+      <footer class="ssr-footer">
+        <a href="${baseUrl}">← Back to Flaxia</a>
+      </footer>
+    `;
+
+    return c.html(
+      renderHtmlShell(content, {
+        title: `${user.display_name} (@${user.username}) - Flaxia`,
+        description: user.bio ? user.bio.slice(0, 200) : `@${user.username}'s profile on Flaxia`,
+        canonicalUrl,
+        image: defaultImage,
+        jsonLd,
+      }),
+    );
   } catch (error: unknown) {
     console.error('Get user error:', error);
     return c.json(

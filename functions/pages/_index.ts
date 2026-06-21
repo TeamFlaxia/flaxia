@@ -1,4 +1,3 @@
-import { isCrawler } from '../../src/lib/is-crawler';
 import { type PostRow, renderHtmlShell, renderPostList, renderWebSiteJsonLd } from '../../src/lib/render-html';
 
 type Env = {
@@ -52,13 +51,13 @@ export async function onRequest(context: {
   env: Env;
   next: () => Promise<Response>;
 }): Promise<Response> {
-  const { request, env, next } = context;
-  const userAgent = request.headers.get('user-agent') || '';
+  const { request, env } = context;
   const baseUrl = env.BASE_URL ?? 'https://flaxia.app';
   const defaultImage = `${baseUrl}/og-default-v2.png`;
 
-  if (!isCrawler(userAgent)) {
-    return next();
+  const acceptHeader = request.headers.get('accept') || '';
+  if (acceptHeader.includes('application/activity+json')) {
+    return context.next();
   }
 
   try {
@@ -78,7 +77,7 @@ export async function onRequest(context: {
         <a href="${baseUrl}/explore" style="color:#007bff;text-decoration:none;font-size:14px">Explore</a>
       </header>
       <main>
-        <h1 style="font-size:18px;font-weight:600;margin:0 0 16px 0;color:#333">Latest Posts</h1>
+        <h1 style="font-size:18px;font-weight:600;margin:0 0 16px 0;color:var(--text-primary)">Latest Posts</h1>
         ${renderPostList(posts, baseUrl)}
       </main>
       <footer class="ssr-footer">
