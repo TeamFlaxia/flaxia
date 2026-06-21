@@ -141,13 +141,7 @@ export async function onRequest(context: {
         ? assetUrl(baseUrl, post.gif_key)
         : defaultImage;
 
-    // twitter:player card for game embed
-    const playerUrl = `${baseUrl}/api/ogp-player/${gameId}`;
     const additionalHead = `
-    <meta name="twitter:card" content="player">
-    <meta name="twitter:player" content="${escapeHtml(playerUrl)}">
-    <meta name="twitter:player:width" content="600">
-    <meta name="twitter:player:height" content="400">
     <style>
       .ssr-game-detail { max-width: 600px; margin: 0 auto; }
       .ssr-game-embed {
@@ -220,7 +214,7 @@ export async function onRequest(context: {
         </header>
         <main>
           <div class="ssr-game-embed">
-            <iframe src="${escapeHtml(playerUrl)}"
+            <iframe src="${escapeHtml(baseUrl)}/api/ogp-player/${gameId}"
               sandbox="allow-scripts allow-pointer-lock allow-fullscreen allow-same-origin"
               allow="fullscreen"
               referrerpolicy="no-referrer"
@@ -258,7 +252,6 @@ export async function onRequest(context: {
         canonicalUrl,
         image: ogImage,
         type: 'article',
-        twitterCard: 'player',
         jsonLd,
         additionalHead,
       }),

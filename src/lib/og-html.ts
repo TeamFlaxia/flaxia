@@ -5,11 +5,10 @@ export interface OgHtmlOptions {
   url: string;
   type: string;
   twitterCard?: string;
-  playerUrl?: string;
 }
 
 export function renderOgHtml(options: OgHtmlOptions, baseUrl: string): string {
-  const { title, description, image, url, type, twitterCard = 'summary_large_image', playerUrl } = options;
+  const { title, description, image, url, type, twitterCard = 'summary_large_image' } = options;
 
   return `<!DOCTYPE html>
 <html lang="ja">
@@ -32,14 +31,6 @@ export function renderOgHtml(options: OgHtmlOptions, baseUrl: string): string {
   <meta name="twitter:title" content="${escapeHtml(title)}">
   <meta name="twitter:description" content="${escapeHtml(description)}">
   <meta name="twitter:image" content="${escapeHtml(image)}">
-  ${
-    playerUrl
-      ? `
-  <meta name="twitter:player" content="${escapeHtml(playerUrl)}">
-  <meta name="twitter:player:width" content="600">
-  <meta name="twitter:player:height" content="400">`
-      : ''
-  }
   
   <!-- Basic meta -->
   <meta name="robots" content="index, follow">

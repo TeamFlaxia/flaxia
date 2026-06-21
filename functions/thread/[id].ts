@@ -121,12 +121,7 @@ export async function onRequest(context: {
         ? assetUrl(baseUrl, post.thumbnail_key)
         : defaultImage;
 
-    const hasGame = post.payload_key || post.swf_key;
-    const playerUrl = hasGame ? `${baseUrl}/api/ogp-player/${id}` : undefined;
-    const twitterCard = hasGame ? 'player' : 'summary_large_image';
-    const additionalHead = playerUrl
-      ? `<meta name="twitter:player" content="${escapeHtml(playerUrl)}"><meta name="twitter:player:width" content="600"><meta name="twitter:player:height" content="400">`
-      : '';
+    const additionalHead = '';
 
     // Build JSON-LD
     const profileUrl = `${baseUrl}/users/${post.username}`;
@@ -154,7 +149,6 @@ export async function onRequest(context: {
         canonicalUrl,
         image: ogImage,
         type: 'article',
-        twitterCard,
         jsonLd,
         additionalHead,
       }),
