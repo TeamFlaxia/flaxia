@@ -1,4 +1,5 @@
 import { type PostRow, renderHtmlShell, renderPostList, renderWebSiteJsonLd } from '../../src/lib/render-html';
+import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 
 type Env = {
   DB: D1Database;
@@ -93,6 +94,7 @@ export async function onRequest(context: {
         canonicalUrl: baseUrl,
         image: defaultImage,
         jsonLd,
+        spaHeadTags: SPA_HEAD_TAGS,
       }),
       { headers: { 'Content-Type': 'text/html' } },
     );
@@ -104,6 +106,7 @@ export async function onRequest(context: {
         description: 'Creative post platform',
         canonicalUrl: baseUrl,
         image: defaultImage,
+        spaHeadTags: SPA_HEAD_TAGS,
       }),
       { headers: { 'Content-Type': 'text/html' } },
     );

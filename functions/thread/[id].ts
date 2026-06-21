@@ -6,6 +6,7 @@ import {
   renderJsonLd,
   renderPostArticle,
 } from '../../src/lib/render-html';
+import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 
 const assetUrl = (baseUrl: string, key: string) => `${baseUrl}/api/images/${key}`;
 
@@ -71,6 +72,7 @@ export async function onRequest(context: { request: Request; env: Env }): Promis
         description: 'Post not found',
         canonicalUrl,
         image: defaultImage,
+        spaHeadTags: SPA_HEAD_TAGS,
       }),
       { status: 404, headers: { 'Content-Type': 'text/html' } },
     );
@@ -85,7 +87,13 @@ export async function onRequest(context: { request: Request; env: Env }): Promis
       return new Response(
         renderHtmlShell(
           `<div class="ssr-empty"><h1>Post not found</h1><p>The requested post does not exist.</p></div>`,
-          { title: 'Post not found', description: 'Post not found', canonicalUrl, image: defaultImage },
+          {
+            title: 'Post not found',
+            description: 'Post not found',
+            canonicalUrl,
+            image: defaultImage,
+            spaHeadTags: SPA_HEAD_TAGS,
+          },
         ),
         { status: 404, headers: { 'Content-Type': 'text/html' } },
       );
@@ -141,6 +149,7 @@ export async function onRequest(context: { request: Request; env: Env }): Promis
 
         jsonLd,
         additionalHead,
+        spaHeadTags: SPA_HEAD_TAGS,
       }),
       { headers: { 'Content-Type': 'text/html' } },
     );
@@ -152,6 +161,7 @@ export async function onRequest(context: { request: Request; env: Env }): Promis
         description: 'Failed to load post',
         canonicalUrl,
         image: defaultImage,
+        spaHeadTags: SPA_HEAD_TAGS,
       }),
       { status: 500, headers: { 'Content-Type': 'text/html' } },
     );

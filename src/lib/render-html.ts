@@ -48,6 +48,7 @@ export interface HtmlShellOptions {
   twitterCard?: string;
   jsonLd?: string;
   additionalHead?: string;
+  spaHeadTags?: string;
 }
 
 export function assetUrl(baseUrl: string, key: string): string {
@@ -103,6 +104,7 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
     twitterCard = 'summary_large_image',
     jsonLd,
     additionalHead,
+    spaHeadTags,
   } = options;
 
   const ogImage = image
@@ -134,6 +136,7 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
   <link rel="canonical" href="${escapeHtml(canonicalUrl)}">
   ${jsonLd ? `\n  ${jsonLd}` : ''}
   ${additionalHead ? `\n  ${additionalHead}` : ''}
+  ${spaHeadTags || '<script type="module" src="/src/main.ts"></script>'}
 
   <link rel="preconnect" href="https://flaxia.app">
   <link rel="dns-prefetch" href="/api">
@@ -329,7 +332,6 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       </div>
     </div>
   </div>
-  <script type="module" src="/src/main.ts"></script>
   <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8703789531673358" crossorigin="anonymous"></script>
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-JZWZ08QFCW"></script>
   <script>

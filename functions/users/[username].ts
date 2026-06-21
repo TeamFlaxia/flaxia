@@ -10,6 +10,7 @@ import {
   type UserRow,
 } from '../../src/lib/render-html';
 import { fetchActorPublicKey, verifyDigest, verifyHttpSignature } from '../lib/activitypub/signature';
+import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 
 type Bindings = {
   DB: D1Database;
@@ -113,7 +114,7 @@ app.get('/', async (c) => {
       return c.html(
         renderHtmlShell(
           `<div class="ssr-empty"><h1>User not found</h1><p>The requested user does not exist.</p></div>`,
-          { title: 'User not found', description: 'User not found', canonicalUrl },
+          { title: 'User not found', description: 'User not found', canonicalUrl, spaHeadTags: SPA_HEAD_TAGS },
         ),
         404,
       );
@@ -161,6 +162,7 @@ app.get('/', async (c) => {
         canonicalUrl,
         image: defaultImage,
         jsonLd,
+        spaHeadTags: SPA_HEAD_TAGS,
       }),
     );
   } catch (error: unknown) {

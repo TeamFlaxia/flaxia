@@ -1,4 +1,5 @@
 import { escapeHtml, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
+import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 
 type Env = {
   DB: D1Database;
@@ -250,6 +251,7 @@ export async function onRequest(context: { request: Request; env: Env }): Promis
         image: defaultImage,
         jsonLd,
         additionalHead,
+        spaHeadTags: SPA_HEAD_TAGS,
       }),
       { headers: { 'Content-Type': 'text/html' } },
     );
@@ -261,6 +263,7 @@ export async function onRequest(context: { request: Request; env: Env }): Promis
         description: 'Play games on Flaxia',
         canonicalUrl,
         image: defaultImage,
+        spaHeadTags: SPA_HEAD_TAGS,
       }),
       { headers: { 'Content-Type': 'text/html' } },
     );
