@@ -832,6 +832,8 @@ export class ArcadePage {
     const game = this.games[this.currentIndex];
     if (!game) return;
 
+    const arcadeUrl = `${window.location.origin}/arcade/${game.postId}`;
+
     createShareModal({
       post: {
         id: game.postId,
@@ -839,6 +841,7 @@ export class ArcadePage {
         username: game.username,
         display_name: game.displayName,
       },
+      url: arcadeUrl,
       onClose: () => {},
     });
   }

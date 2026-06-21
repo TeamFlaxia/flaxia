@@ -9,10 +9,11 @@ export interface ShareModalProps {
     username: string;
     display_name?: string;
   };
+  url?: string;
   onClose: () => void;
 }
 
-export function createShareModal({ post, onClose }: ShareModalProps): HTMLElement {
+export function createShareModal({ post, url: customUrl, onClose }: ShareModalProps): HTMLElement {
   const unregister = registerModal();
   const overlay = document.createElement('div');
   overlay.className = 'share-modal-overlay';
@@ -53,6 +54,9 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
   const getPlatformName = (name: string) => t(platformNameKey[name] || name);
 
   const shareData = createShareData(post);
+  if (customUrl) {
+    shareData.url = customUrl;
+  }
   const shareUrl = shareData.url;
   const _shareText = shareData.text;
 
