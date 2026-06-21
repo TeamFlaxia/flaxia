@@ -12,6 +12,7 @@ import { executeFlash } from './FlashPlayer.js';
 import { createPostCard } from './PostCard.js';
 import { createReplyComposer, ReplyComposer } from './ReplyComposer.js';
 import { createReplyNode } from './ReplyNode.js';
+import { createShareModal } from './ShareModal.js';
 import { showSignInPrompt } from './SignInPrompt.js';
 
 export interface ArcadePageHandle {
@@ -811,15 +812,35 @@ export class ArcadePage {
     const fullscreenBtn = this.createActionButton('⛶', t('arcade.fullscreen'), () => this.handleFullscreen());
     fullscreenBtn.dataset.tutorial = 'fullscreen';
 
+    // Share button
+    const shareBtn = this.createActionButton('🔗', '', () => this.handleShare());
+    shareBtn.dataset.tutorial = 'share';
+
     // Comments button
     const commentsBtn = this.createActionButton('💬', formatCount(game.replyCount || 0), () => this.handleComments());
     commentsBtn.dataset.tutorial = 'comments';
 
     container.appendChild(freshBtn);
     container.appendChild(fullscreenBtn);
+    container.appendChild(shareBtn);
     container.appendChild(commentsBtn);
 
     return container;
+  }
+
+  private handleShare(): void {
+    const game = this.games[this.currentIndex];
+    if (!game) return;
+
+    createShareModal({
+      post: {
+        id: game.postId,
+        text: game.title,
+        username: game.username,
+        display_name: game.displayName,
+      },
+      onClose: () => {},
+    });
   }
 
   private commentPanel: HTMLElement | null = null;
