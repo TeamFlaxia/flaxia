@@ -45,7 +45,6 @@ export interface HtmlShellOptions {
   description: string;
   canonicalUrl: string;
   image?: string;
-  type?: string;
   twitterCard?: string;
   jsonLd?: string;
   additionalHead?: string;
@@ -101,7 +100,6 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
     description,
     canonicalUrl,
     image,
-    type = 'website',
     twitterCard = 'summary_large_image',
     jsonLd,
     additionalHead,
@@ -123,11 +121,12 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
   <meta property="og:title" content="${escapeHtml(title)}">
   <meta property="og:description" content="${escapeHtml(description)}">
   <meta property="og:url" content="${escapeHtml(canonicalUrl)}">
-  <meta property="og:type" content="${escapeHtml(type)}">
+  <meta property="og:type" content="website">
   <meta property="og:site_name" content="Flaxia">
   ${ogImage}
 
   <meta name="twitter:card" content="${escapeHtml(twitterCard)}">
+  <meta name="twitter:site" content="@flaxia_app">
   <meta name="twitter:title" content="${escapeHtml(title)}">
   <meta name="twitter:description" content="${escapeHtml(description)}">
 

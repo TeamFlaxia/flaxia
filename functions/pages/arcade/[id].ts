@@ -251,7 +251,7 @@ export async function onRequest(context: {
         description,
         canonicalUrl,
         image: ogImage,
-        type: 'article',
+
         jsonLd,
         additionalHead,
       }),

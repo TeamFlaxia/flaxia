@@ -93,7 +93,6 @@ export async function onRequest(context: {
           'Flaxiaは、クリエイティブな投稿を共有できるプラットフォームです。テキスト、画像、音声、ZIPファイルなど、様々な形式のコンテンツを投稿して、コミュニティと繋がりましょう。',
         canonicalUrl: baseUrl,
         image: defaultImage,
-        type: 'website',
         jsonLd,
       }),
       { headers: { 'Content-Type': 'text/html' } },

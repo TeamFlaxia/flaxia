@@ -3,12 +3,11 @@ export interface OgHtmlOptions {
   description: string;
   image: string;
   url: string;
-  type: string;
   twitterCard?: string;
 }
 
 export function renderOgHtml(options: OgHtmlOptions, baseUrl: string): string {
-  const { title, description, image, url, type, twitterCard = 'summary_large_image' } = options;
+  const { title, description, image, url, twitterCard = 'summary_large_image' } = options;
 
   return `<!DOCTYPE html>
 <html lang="ja">
@@ -23,11 +22,12 @@ export function renderOgHtml(options: OgHtmlOptions, baseUrl: string): string {
   <meta property="og:description" content="${escapeHtml(description)}">
   <meta property="og:image" content="${escapeHtml(image)}">
   <meta property="og:url" content="${escapeHtml(url)}">
-  <meta property="og:type" content="${escapeHtml(type)}">
+  <meta property="og:type" content="website">
   <meta property="og:site_name" content="Flaxia">
   
   <!-- Twitter Card -->
   <meta name="twitter:card" content="${escapeHtml(twitterCard)}">
+  <meta name="twitter:site" content="@flaxia_app">
   <meta name="twitter:title" content="${escapeHtml(title)}">
   <meta name="twitter:description" content="${escapeHtml(description)}">
   <meta name="twitter:image" content="${escapeHtml(image)}">

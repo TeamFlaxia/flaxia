@@ -258,7 +258,6 @@ export async function onRequest(context: {
           'Flaxia Arcadeで、コミュニティが投稿したFlash、DOS、ZIP、HTML5ゲームをブラウザで直接遊ぼう。スワイプしてどんどん新しいゲームを発見。',
         canonicalUrl,
         image: defaultImage,
-        type: 'website',
         jsonLd,
         additionalHead,
       }),

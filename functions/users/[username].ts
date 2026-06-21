@@ -156,7 +156,6 @@ app.get('/', async (c) => {
           description: user.bio ? user.bio.slice(0, 200) : `@${user.username}'s profile on Flaxia`,
           canonicalUrl,
           image: defaultImage,
-          type: 'profile',
           jsonLd,
         }),
       );

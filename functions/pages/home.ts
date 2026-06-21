@@ -94,7 +94,6 @@ export async function onRequest(context: {
           'Flaxiaのホームページ。最新の投稿や、コミュニティの活動をチェックして、新しいクリエイティブなコンテンツを発見しましょう。',
         canonicalUrl,
         image: defaultImage,
-        type: 'website',
         jsonLd,
       }),
       { headers: { 'Content-Type': 'text/html' } },

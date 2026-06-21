@@ -89,13 +89,6 @@ export class ArcadePage {
     this.setupPostUpdatedListener();
     window.addEventListener('spaNavigate', this.boundHandleSpaNavigate);
 
-    // Set default arcade page metadata
-    document.title = 'Flaxia Arcade - ゲームを遊べるSNS';
-    const canonical = document.querySelector('link[rel="canonical"]');
-    if (canonical) {
-      canonical.setAttribute('href', `${window.location.origin}/arcade`);
-    }
-
     this.loadGames();
 
     if (!localStorage.getItem(ArcadePage.TUTORIAL_SEEN_KEY)) {
@@ -751,42 +744,9 @@ export class ArcadePage {
       viewport.style.opacity = '1';
     });
 
-    // Update browser metadata for SEO / link sharing
-    this.updateMetadata(game);
-
     // Preload next game if available
     if (this.currentIndex < this.games.length - 1) {
       this.preloadNextGame();
-    }
-  }
-
-  private updateMetadata(game: Game): void {
-    const title = game.title || `Game by ${game.username}`;
-    document.title = `Flaxia Arcade - ${title}`;
-
-    const ogImage = game.thumbnailKey
-      ? `${window.location.origin}/api/images/${game.thumbnailKey}`
-      : 'https://flaxia.app/og-default-v2.png';
-
-    const description = `Play ${title} by ${game.username} on Flaxia Arcade`;
-
-    const setMeta = (selector: string, attr: string, value: string) => {
-      const el = document.querySelector(selector);
-      if (el) el.setAttribute(attr, value);
-    };
-
-    setMeta('meta[property="og:title"]', 'content', `Flaxia Arcade - ${title}`);
-    setMeta('meta[property="og:description"]', 'content', description);
-    setMeta('meta[property="og:url"]', 'content', `${window.location.origin}/arcade/${game.id}`);
-    setMeta('meta[property="og:image"]', 'content', ogImage);
-    setMeta('meta[name="description"]', 'content', description);
-    setMeta('meta[name="twitter:title"]', 'content', `Flaxia Arcade - ${title}`);
-    setMeta('meta[name="twitter:description"]', 'content', description);
-    setMeta('meta[name="twitter:image"]', 'content', ogImage);
-
-    const canonical = document.querySelector('link[rel="canonical"]');
-    if (canonical) {
-      canonical.setAttribute('href', `${window.location.origin}/arcade/${game.id}`);
     }
   }
 

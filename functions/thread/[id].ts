@@ -148,7 +148,7 @@ export async function onRequest(context: {
         description: post.text.slice(0, 200),
         canonicalUrl,
         image: ogImage,
-        type: 'article',
+
         jsonLd,
         additionalHead,
       }),
