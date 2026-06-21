@@ -1,4 +1,4 @@
-import { escapeHtml, renderHtmlShell, renderJsonLd } from '../../../src/lib/render-html';
+import { escapeHtml, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
 
 type Env = {
   DB: D1Database;
