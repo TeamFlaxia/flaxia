@@ -1,5 +1,6 @@
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { updateMetaTags } from '../lib/seo-meta.js';
 import { getReplyStyle } from '../lib/settings.js';
 import { buildTree } from '../lib/thread.js';
 import { Post } from '../types/post.js';
@@ -403,6 +404,9 @@ export class ThreadPage {
       // Sync post card reply count with actual thread data
       this.rootPostCard.updatePost({ reply_count: data.replies.length });
 
+      // Update page metadata for accurate OGP regardless of client-side navigation
+      this.updateMetaTags(data.root);
+
       // Root reply composer (hidden by default)
       this.rootReplyComposer = createReplyComposer({
         postId: data.root.id,
@@ -694,6 +698,23 @@ export class ThreadPage {
     }
 
     this.element.remove();
+  }
+
+  private updateMetaTags(post: Post): void {
+    const name = post.display_name || post.username;
+    const ogImage =
+      post.gif_key && !post.gif_key.startsWith('audio/')
+        ? `${window.location.origin}/api/images/${post.gif_key}`
+        : post.thumbnail_key
+          ? `${window.location.origin}/api/images/${post.thumbnail_key}`
+          : undefined;
+
+    updateMetaTags({
+      title: `Flaxia - ${name}`,
+      description: post.text.slice(0, 200),
+      url: `${window.location.origin}/thread/${post.id}`,
+      image: ogImage,
+    });
   }
 }
 
