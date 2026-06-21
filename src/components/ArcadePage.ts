@@ -1606,6 +1606,19 @@ export class ArcadePage {
     if (infoOverlay) {
       infoOverlay.style.display = isFullscreen ? 'none' : '';
     }
+
+    // Hide floating actions except fullscreen button
+    if (this.floatingActions) {
+      const buttons = this.floatingActions.children;
+      for (let i = 0; i < buttons.length; i++) {
+        const btn = buttons[i] as HTMLElement;
+        if (btn.dataset.tutorial === 'fullscreen') {
+          btn.style.display = '';
+        } else {
+          btn.style.display = isFullscreen ? 'none' : '';
+        }
+      }
+    }
   }
 
   public getElement(): HTMLElement {
