@@ -1,3 +1,4 @@
+import { isCrawler } from '../../src/lib/is-crawler';
 import { type PostRow, renderHtmlShell, renderPostList, renderWebSiteJsonLd } from '../../src/lib/render-html';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 
@@ -52,7 +53,12 @@ export async function onRequest(context: {
   env: Env;
   next: () => Promise<Response>;
 }): Promise<Response> {
-  const { env } = context;
+  const { request, env } = context;
+
+  const userAgent = request.headers.get('User-Agent') || '';
+  if (!isCrawler(userAgent)) {
+    return context.next();
+  }
   const baseUrl = env.BASE_URL ?? 'https://flaxia.app';
   const defaultImage = `${baseUrl}/og-default-v2.png`;
   const canonicalUrl = `${baseUrl}/home`;

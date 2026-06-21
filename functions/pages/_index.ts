@@ -1,3 +1,4 @@
+import { isCrawler } from '../../src/lib/is-crawler';
 import { type PostRow, renderHtmlShell, renderPostList, renderWebSiteJsonLd } from '../../src/lib/render-html';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 
@@ -58,6 +59,11 @@ export async function onRequest(context: {
 
   const acceptHeader = request.headers.get('accept') || '';
   if (acceptHeader.includes('application/activity+json')) {
+    return context.next();
+  }
+
+  const userAgent = request.headers.get('User-Agent') || '';
+  if (!isCrawler(userAgent)) {
     return context.next();
   }
 

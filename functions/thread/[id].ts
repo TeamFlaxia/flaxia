@@ -1,3 +1,4 @@
+import { isCrawler } from '../../src/lib/is-crawler';
 import {
   escapeHtml,
   type PostRow,
@@ -56,8 +57,18 @@ const POST_SELECT = `
   LEFT JOIN users u ON p.user_id = u.id
 `;
 
-export async function onRequest(context: { request: Request; env: Env }): Promise<Response> {
+export async function onRequest(context: {
+  request: Request;
+  env: Env;
+  next: () => Promise<Response>;
+}): Promise<Response> {
   const { request, env } = context;
+
+  const userAgent = request.headers.get('User-Agent') || '';
+  if (!isCrawler(userAgent)) {
+    return context.next();
+  }
+
   const baseUrl = env.BASE_URL ?? 'https://flaxia.app';
 
   const url = new URL(request.url);

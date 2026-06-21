@@ -1,6 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { isCrawler } from '../../src/lib/is-crawler';
 import {
   type PostRow,
   renderHtmlShell,
@@ -269,4 +270,24 @@ app.post('/inbox', async (c) => {
   }
 });
 
-export default app;
+export async function onRequest(context: {
+  request: Request;
+  env: Bindings;
+  next: () => Promise<Response>;
+}): Promise<Response> {
+  const { request } = context;
+
+  if (request.method === 'GET') {
+    const acceptHeader = request.headers.get('Accept') || '';
+    if (acceptHeader.includes('application/activity+json')) {
+      return await app.fetch(request, context.env);
+    }
+
+    const userAgent = request.headers.get('User-Agent') || '';
+    if (!isCrawler(userAgent)) {
+      return await context.next();
+    }
+  }
+
+  return await app.fetch(request, context.env);
+}

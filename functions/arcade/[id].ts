@@ -1,3 +1,4 @@
+import { isCrawler } from '../../src/lib/is-crawler';
 import { escapeHtml, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 
@@ -68,8 +69,19 @@ function formatDate(iso: string): string {
   }
 }
 
-export async function onRequest(context: { request: Request; env: Env; params: { id: string } }): Promise<Response> {
-  const { env, params } = context;
+export async function onRequest(context: {
+  request: Request;
+  env: Env;
+  params: { id: string };
+  next: () => Promise<Response>;
+}): Promise<Response> {
+  const { request, env, params } = context;
+
+  const userAgent = request.headers.get('User-Agent') || '';
+  if (!isCrawler(userAgent)) {
+    return context.next();
+  }
+
   const baseUrl = env.BASE_URL ?? 'https://flaxia.app';
   const sandboxOrigin = env.SANDBOX_ORIGIN ?? 'https://sandbox.flaxia.app';
   const defaultImage = `${baseUrl}/og-default-v2.png`;

@@ -1,3 +1,4 @@
+import { isCrawler } from '../../src/lib/is-crawler';
 import { escapeHtml, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 
@@ -95,8 +96,18 @@ function renderGameCard(game: GameRow, baseUrl: string): string {
     </a>`;
 }
 
-export async function onRequest(context: { request: Request; env: Env }): Promise<Response> {
-  const { env } = context;
+export async function onRequest(context: {
+  request: Request;
+  env: Env;
+  next: () => Promise<Response>;
+}): Promise<Response> {
+  const { request, env } = context;
+
+  const userAgent = request.headers.get('User-Agent') || '';
+  if (!isCrawler(userAgent)) {
+    return context.next();
+  }
+
   const baseUrl = env.BASE_URL ?? 'https://flaxia.app';
   const canonicalUrl = `${baseUrl}/arcade`;
   const defaultImage = `${baseUrl}/og-default-v2.png`;
