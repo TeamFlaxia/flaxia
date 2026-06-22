@@ -1288,10 +1288,14 @@ app.get('/api/games', async (c) => {
       let currentToken = shuffleToken;
 
       if (currentToken) {
-        const cached = await c.env.CACHE?.get(`games:shuffle:${currentToken}`);
-        if (cached) {
-          shuffledIds = JSON.parse(cached);
-        } else {
+        try {
+          const cached = await c.env.CACHE?.get(`games:shuffle:${currentToken}`);
+          if (cached) {
+            shuffledIds = JSON.parse(cached);
+          } else {
+            currentToken = undefined;
+          }
+        } catch {
           currentToken = undefined;
         }
       }
@@ -1336,9 +1340,13 @@ app.get('/api/games', async (c) => {
 
         currentToken = crypto.randomUUID();
 
-        await c.env.CACHE?.put(`games:shuffle:${currentToken}`, JSON.stringify(shuffledIds), {
-          expirationTtl: 300,
-        });
+        try {
+          await c.env.CACHE?.put(`games:shuffle:${currentToken}`, JSON.stringify(shuffledIds), {
+            expirationTtl: 300,
+          });
+        } catch (cacheError) {
+          console.warn('Failed to cache shuffle order:', cacheError);
+        }
       }
 
       const pageIds = shuffledIds.slice(offset, offset + limit);
