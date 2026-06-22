@@ -61,7 +61,6 @@ Flaxia uses a **two-origin model** to securely execute untrusted user content.
 |---|---|---|---|
 | `DB` | D1 database | `flaxia` | All persistent data |
 | `BUCKET` | R2 bucket | `flaxia-content` | Post payloads, images, audio, avatars |
-| `RATE_LIMIT` | KV namespace | Rate limit counters | Per-IP rate limiting |
 | `AP_DELIVERY_QUEUE` | Queue | `activitypub-delivery` | ActivityPub inbox delivery |
 
 ## postMessage Bridge

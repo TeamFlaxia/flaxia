@@ -11,7 +11,7 @@ Chronological SNS where posts are living, interactive applications. "Twitter wit
 | Frontend | Vanilla TypeScript SPA (Vite build) |
 | Database | Cloudflare D1 (SQLite) |
 | Storage | Cloudflare R2 |
-| KV | Cloudflare KV (rate limiting, game cache) |
+| KV | Cloudflare KV (game cache) |
 | Auth | Custom session-based (cookie + D1 sessions) |
 | Queues | Cloudflare Queues (ActivityPub delivery) |
 | Languages | TypeScript strict mode (ES2022) |
@@ -53,7 +53,7 @@ Chronological SNS where posts are living, interactive applications. "Twitter wit
 - Functions only (no class components)
 - File naming: `kebab-case` for files, `PascalCase` for exported components/types
 - Prepared statements always for D1 queries
-- Shared modules for sandbox rendering, R2 uploads, rate limiting — no duplication
+- Shared modules for sandbox rendering, R2 uploads — no duplication
 
 ## Important Constraints
 - Post text: ≤ 200 characters

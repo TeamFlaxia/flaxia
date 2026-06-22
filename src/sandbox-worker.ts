@@ -1,11 +1,9 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { checkRateLimit } from './lib/rate-limit';
 import { ensureFileInWvfs, extractZipToWvfs, serveFileFromWvfs } from './lib/wvfs-zip-server';
 
 type Bindings = {
   BUCKET: R2Bucket;
-  RATE_LIMIT: KVNamespace;
   DB: D1Database;
 };
 
@@ -14,20 +12,6 @@ const app = new Hono<{ Bindings: Bindings }>();
 app.use('/*', cors());
 
 app.get('/api/wvfs-zip/:postId/*', async (c) => {
-  const ip = c.req.header('CF-Connecting-IP') ?? 'unknown';
-  try {
-    const rl = await checkRateLimit(c.env.RATE_LIMIT, {
-      key: `wvfs:${ip}`,
-      limit: 100,
-      windowSeconds: 60,
-    });
-    if (!rl.allowed) {
-      return c.json({ error: 'Rate limit exceeded' }, 429);
-    }
-  } catch {
-    // proceed without rate limit on KV failure
-  }
-
   try {
     const postId = c.req.param('postId');
     const fullPath = c.req.path;

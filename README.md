@@ -562,7 +562,6 @@ npm run test:posts
 npm run test:users
 npm run test:notifications
 npm run test:tags
-npm run test:rate-limit
 ```
 
 ### テストファイルの場所
@@ -574,7 +573,6 @@ tests/
 ├── auth.test.ts           # 認証テスト
 ├── notifications.test.ts  # 通知テスト
 ├── posts.test.ts          # 投稿 CRUD テスト
-├── rate-limit.test.ts     # レート制限テスト
 ├── signature.test.ts      # HTTP Signature テスト
 ├── tags.test.ts           # ハッシュタグテスト
 ├── users.test.ts          # ユーザー管理テスト
@@ -839,7 +837,6 @@ src/
 │   ├── is-crawler.ts          # クローラー検出
 │   ├── og-html.ts             # OGP HTML 生成
 │   ├── performance.ts         # パフォーマンス監視
-│   ├── rate-limit.ts          # レート制限クライアント
 │   ├── render-html.ts         # HTML レンダリング（サニタイズ）
 │   ├── zip-manager.ts         # ZIP 実行管理
 │   ├── zip-executor.ts        # ZIP 実行（レガシー）

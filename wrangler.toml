@@ -35,10 +35,6 @@ binding = "BUCKET"
 bucket_name = "flaxia-content"
 
 [[kv_namespaces]]
-binding = "RATE_LIMIT"
-id = "96ea8717c5cf419ab93640bbaa2b93c2"
-
-[[kv_namespaces]]
 binding = "CACHE"
 id = "c78f7711cd9d45738678474d884734c1"
 

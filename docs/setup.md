@@ -83,7 +83,6 @@ pnpm test:posts
 pnpm test:users
 pnpm test:notifications
 pnpm test:tags
-pnpm test:rate-limit
 ```
 
 ## Local Test Accounts

@@ -9,7 +9,7 @@ Flaxia is a chronological SNS where posts are living, interactive applications. 
 - **Frontend**: Vanilla TypeScript SPA (Vite 5, no React)
 - **Database**: Cloudflare D1 (SQLite)
 - **Storage**: Cloudflare R2 (post payloads, images, audio)
-- **Cache**: Cloudflare KV (rate limiting, game cache)
+- **Cache**: Cloudflare KV (game cache)
 - **Auth**: Custom session-based auth (email/password, cookies, D1 sessions)
 - **Queues**: Cloudflare Queues (ActivityPub delivery)
 - **Package Manager**: pnpm
@@ -55,14 +55,12 @@ docs/                       # Developer documentation
 ## Security
 - ZIP validation: client-side (JSZip) + server-side (file count, path traversal, forbidden types)
 - Sandbox CSP: `default-src 'none'; script-src 'self'; connect-src 'none'; frame-ancestors https://flaxia.com`
-- Rate limiting via KV for all mutation endpoints
 
 ## Testing
 ```bash
 pnpm test                    # All tests
 pnpm test:auth               # Auth tests
 pnpm test:posts              # Posts tests
-pnpm test:rate-limit         # Rate limit tests
 ```
 
 ## Common Commands

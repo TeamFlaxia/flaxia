@@ -60,7 +60,6 @@ Flaxia operates on a modern edge computing stack designed for global scalability
 - User context injection for protected routes
 
 **Rate Limiting**:
-- Cloudflare KV-based distributed rate limiting
 - Per-endpoint limits (e.g., 3 registrations/hour, 20 logins/hour)
 - IP-based tracking with CF-Connecting-IP header
 
@@ -423,7 +422,6 @@ ads (id, title, body_text, click_url, payload_key,
 - Database query optimization
 - Indexed lookups for common patterns
 - Session caching with JOIN queries
-- KV-based rate limit caching
 
 **WVFS Optimization**:
 - In-memory file serving
