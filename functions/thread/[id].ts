@@ -4,7 +4,6 @@ import {
   type PostRow,
   renderBlogPostingJsonLd,
   renderHtmlShell,
-  renderJsonLd,
   renderPostArticle,
 } from '../../src/lib/render-html';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';

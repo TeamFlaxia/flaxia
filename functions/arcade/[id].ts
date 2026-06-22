@@ -83,7 +83,7 @@ export async function onRequest(context: {
   }
 
   const baseUrl = env.BASE_URL ?? 'https://flaxia.app';
-  const sandboxOrigin = env.SANDBOX_ORIGIN ?? 'https://sandbox.flaxia.app';
+  const _sandboxOrigin = env.SANDBOX_ORIGIN ?? 'https://sandbox.flaxia.app';
   const defaultImage = `${baseUrl}/og-default-v2.png`;
 
   const gameId = params.id;

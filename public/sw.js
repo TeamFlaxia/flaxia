@@ -1,5 +1,5 @@
 const CACHE_NAME = 'flaxia-v1';
-const STATIC_ASSETS = ['/', '/assets/', '/fonts/', '/icons/'];
+const _STATIC_ASSETS = ['/', '/assets/', '/fonts/', '/icons/'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

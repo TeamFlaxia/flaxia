@@ -1788,7 +1788,7 @@ export class PostCard {
         this.props.post.edited_at = data.edited_at;
         this.cancelEdit();
         this.showToast(t('post.edit_saved'));
-      } catch (err) {
+      } catch (_err) {
         this.showToast(t('post.edit_failed'), true);
       } finally {
         saving = false;

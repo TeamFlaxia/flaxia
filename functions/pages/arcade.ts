@@ -59,7 +59,7 @@ function assetUrl(baseUrl: string, key: string): string {
 
 function renderGameCard(game: GameRow, baseUrl: string): string {
   const gameUrl = `${baseUrl}/arcade/${game.id}`;
-  const profileUrl = `${baseUrl}/users/${game.username}`;
+  const _profileUrl = `${baseUrl}/users/${game.username}`;
   const thumbnailSrc = game.thumbnail_key
     ? assetUrl(baseUrl, game.thumbnail_key)
     : game.gif_key && !game.gif_key.startsWith('audio/')

@@ -9851,7 +9851,7 @@ app.post('/api/calls/start', requireAuth, async (c) => {
         .first()) as { user_a_id: string; user_b_id: string };
       const otherUserId = conv.user_a_id === user.id ? conv.user_b_id : conv.user_a_id;
 
-      const otherUser = (await c.env.DB.prepare('SELECT username, display_name FROM users WHERE id = ?')
+      const _otherUser = (await c.env.DB.prepare('SELECT username, display_name FROM users WHERE id = ?')
         .bind(otherUserId)
         .first()) as { username: string; display_name: string | null } | null;
 
@@ -9953,7 +9953,7 @@ app.post('/api/calls/:id/join', requireAuth, async (c) => {
     // Return WebSocket URL for signaling
     const wsProtocol = c.req.url.startsWith('https') ? 'wss:' : 'ws:';
     const wsHost = new URL(c.req.url).host;
-    const baseUrl = c.req.url.startsWith('https') ? 'https:' : 'http:';
+    const _baseUrl = c.req.url.startsWith('https') ? 'https:' : 'http:';
 
     const wsUrl = `${wsProtocol}//${wsHost}/api/ws/call?roomId=${callId}&token=`;
 

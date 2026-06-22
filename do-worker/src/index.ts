@@ -65,11 +65,9 @@ interface SignalMessage {
 export class CallStream {
   private ctx: DurableObjectState;
   private participants: Map<string, ParticipantInfo> = new Map();
-  private roomId: string;
 
   constructor(ctx: DurableObjectState, _env: unknown) {
     this.ctx = ctx;
-    this.roomId = ctx.id.name || 'unknown';
   }
 
   async fetch(request: Request): Promise<Response> {

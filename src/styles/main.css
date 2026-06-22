@@ -3579,11 +3579,12 @@ html {
 }
 
 /* Messages */
-.chat-message {
+.chat-message-actions {
   display: flex;
-  gap: 12px;
-  padding: 4px 0;
-  position: relative;
+  gap: 4px;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
 }
 
 .chat-message:hover .chat-message-actions {
@@ -3662,15 +3663,6 @@ html {
   line-height: 1.5;
   word-break: break-word;
   white-space: pre-wrap;
-}
-
-/* Message actions (hover reveal) */
-.chat-message-actions {
-  display: flex;
-  gap: 4px;
-  margin-top: 4px;
-  opacity: 0;
-  transition: opacity 0.15s;
 }
 
 .chat-msg-action {
