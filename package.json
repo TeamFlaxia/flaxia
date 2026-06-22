@@ -7,7 +7,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node -e \"try{require('fs').accessSync('functions/lib/ssr-head.generated.ts')}catch(e){require('fs').mkdirSync('functions/lib',{recursive:true});require('fs').writeFileSync('functions/lib/ssr-head.generated.ts','export const SPA_HEAD_TAGS: string = \\\"\\\";\\n')}\" && tsc --noEmit",
     "dev": "npm run migrate:local && vite build && wrangler pages dev dist --port 8787 --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000 --do NOTIFICATION_STREAM=NotificationStream@do-worker",
     "dev:hot": "npm run migrate:local && (trap 'kill 0 2>/dev/null' EXIT; vite build --watch & wrangler pages dev dist --port 8787 --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000 --do NOTIFICATION_STREAM=NotificationStream@do-worker & wait)",
     "dev:api": "npm run migrate:local && wrangler pages dev dist --port 8787 --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000 --do NOTIFICATION_STREAM=NotificationStream@do-worker",
