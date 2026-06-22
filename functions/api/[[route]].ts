@@ -1246,7 +1246,12 @@ app.get('/api/games', async (c) => {
 
     // Try cache only for non-shuffle requests
     if (!shuffle) {
-      const cachedData = await c.env.CACHE?.get(cacheKey);
+      let cachedData: string | null | undefined;
+      try {
+        cachedData = await c.env.CACHE?.get(cacheKey);
+      } catch {
+        // proceed without cache on KV failure
+      }
       if (cachedData && !cursor) {
         const parsed = JSON.parse(cachedData);
 
