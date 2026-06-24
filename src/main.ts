@@ -798,6 +798,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         cleanPath === '/whitepaper' ||
         cleanPath.startsWith('/users/') ||
         cleanPath.startsWith('/profile/') ||
+        cleanPath.startsWith('/arcade/') ||
         cleanPath.startsWith('/thread/');
 
       // Allow public routes for everyone
