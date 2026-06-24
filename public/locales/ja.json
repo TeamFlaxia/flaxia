@@ -214,6 +214,13 @@
   "time.hours_ago": "{n}h",
   "time.days_ago": "{n}d",
 
+  "settings.blocked_users": "ブロックしているユーザー",
+  "settings.blocked_empty": "ブロックしているユーザーはいません",
+  "settings.blocked_unblock": "ブロック解除",
+  "settings.blocked_unblock_confirm": "@{username} のブロックを解除しますか？",
+  "settings.blocked_unblocked": "ブロックを解除しました",
+  "settings.blocked_unblock_failed": "ブロック解除に失敗しました",
+  "settings.blocked_load_failed": "ブロックユーザー一覧の読み込みに失敗しました",
   "settings.title": "設定",
   "settings.account": "アカウント",
   "settings.display": "表示設定",

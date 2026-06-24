@@ -178,6 +178,155 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     container.appendChild(accountSection);
   }
 
+  // Blocked Users Section
+  if (currentUser) {
+    const blockSection = document.createElement('div');
+    blockSection.className = 'settings-section';
+    blockSection.style.cssText = `
+      margin-bottom: 2rem;
+      padding: 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg-primary);
+    `;
+
+    const blockTitle = document.createElement('h2');
+    blockTitle.textContent = t('settings.blocked_users');
+    blockTitle.style.cssText = `
+      font-size: 1.125rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--text-primary);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.5rem;
+    `;
+    blockSection.appendChild(blockTitle);
+
+    const blockList = document.createElement('div');
+    blockList.style.cssText = 'display: flex; flex-direction: column; gap: 0.75rem;';
+    blockSection.appendChild(blockList);
+
+    const blockMessage = document.createElement('div');
+    blockMessage.style.cssText = `
+      margin-top: 0.5rem;
+      font-size: 0.875rem;
+      min-height: 1.25rem;
+    `;
+    blockSection.appendChild(blockMessage);
+
+    (async () => {
+      try {
+        const res = await fetch('/api/users/me/blocked', { credentials: 'include' });
+        if (!res.ok) {
+          blockMessage.textContent = t('settings.blocked_load_failed');
+          blockMessage.style.color = 'var(--danger)';
+          return;
+        }
+        const data = (await res.json()) as {
+          users: Array<{ id: string; username: string; display_name?: string; avatar_key?: string }>;
+        };
+        if (data.users.length === 0) {
+          blockList.textContent = t('settings.blocked_empty');
+          blockList.style.color = 'var(--text-muted)';
+          blockList.style.fontSize = '0.875rem';
+          return;
+        }
+        data.users.forEach((u) => {
+          const row = document.createElement('div');
+          row.style.cssText = `
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.5rem;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+          `;
+
+          const avatarUrl = u.avatar_key ? `/api/images/${u.avatar_key}` : '/api/images/default-avatar';
+          const img = document.createElement('img');
+          img.src = avatarUrl;
+          img.alt = '';
+          img.style.cssText = 'width: 40px; height: 40px; border-radius: 50%; object-fit: cover;';
+          img.onerror = () => {
+            img.src = '/api/images/default-avatar';
+          };
+          row.appendChild(img);
+
+          const info = document.createElement('div');
+          info.style.cssText = 'flex: 1; min-width: 0;';
+          const name = document.createElement('div');
+          name.style.cssText =
+            'font-weight: 600; color: var(--text-primary); font-size: 0.9375rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+          name.textContent = u.display_name || u.username;
+          const uname = document.createElement('div');
+          uname.style.cssText =
+            'color: var(--text-muted); font-size: 0.8125rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+          uname.textContent = `@${u.username}`;
+          info.appendChild(name);
+          info.appendChild(uname);
+          row.appendChild(info);
+
+          const unblockBtn = document.createElement('button');
+          unblockBtn.textContent = t('settings.blocked_unblock');
+          unblockBtn.style.cssText = `
+            padding: 0.5rem 1rem;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: none;
+            color: var(--text-primary);
+            cursor: pointer;
+            font-size: 0.8125rem;
+            white-space: nowrap;
+            transition: background 0.2s;
+          `;
+          unblockBtn.addEventListener('mouseenter', () => {
+            unblockBtn.style.background = 'var(--bg-secondary)';
+          });
+          unblockBtn.addEventListener('mouseleave', () => {
+            unblockBtn.style.background = 'none';
+          });
+          unblockBtn.addEventListener('click', async () => {
+            const confirmed = await createConfirmDialog(
+              t('settings.blocked_unblock_confirm', { username: `@${u.username}` }),
+            );
+            if (!confirmed) return;
+            unblockBtn.disabled = true;
+            unblockBtn.style.opacity = '0.5';
+            try {
+              const unr = await fetch(`/api/users/${u.username}/block`, {
+                method: 'DELETE',
+                credentials: 'include',
+              });
+              if (unr.ok) {
+                row.style.transition = 'opacity 0.3s, transform 0.3s';
+                row.style.opacity = '0';
+                row.style.transform = 'translateX(-100%)';
+                setTimeout(() => row.remove(), 300);
+                blockMessage.textContent = t('settings.blocked_unblocked');
+                blockMessage.style.color = 'var(--success, #10b981)';
+              } else {
+                throw new Error('Failed to unblock');
+              }
+            } catch {
+              blockMessage.textContent = t('settings.blocked_unblock_failed');
+              blockMessage.style.color = 'var(--danger)';
+              unblockBtn.disabled = false;
+              unblockBtn.style.opacity = '1';
+            }
+          });
+          row.appendChild(unblockBtn);
+
+          blockList.appendChild(row);
+        });
+      } catch {
+        blockMessage.textContent = t('settings.blocked_load_failed');
+        blockMessage.style.color = 'var(--danger)';
+      }
+    })();
+
+    container.appendChild(blockSection);
+  }
+
   // Display Section
   const displaySection = document.createElement('div');
   displaySection.className = 'settings-section';

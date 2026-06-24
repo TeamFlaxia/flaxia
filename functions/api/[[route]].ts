@@ -3754,6 +3754,32 @@ app.delete('/api/users/:username/block', requireAuth, async (c) => {
   }
 });
 
+// GET /api/users/me/blocked - get list of blocked users (protected)
+app.get('/api/users/me/blocked', requireAuth, async (c) => {
+  try {
+    const userId = c.get('user')!.id;
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const result = await c.env.DB.prepare(
+      `SELECT u.id, u.username, u.display_name, u.avatar_key
+       FROM blocks b
+       JOIN users u ON u.id = b.blocked_id
+       WHERE b.blocker_id = ?
+       ORDER BY b.created_at DESC`,
+    )
+      .bind(userId)
+      .all();
+
+    return c.json({ users: result.results || [] });
+  } catch (error: unknown) {
+    console.error('Get blocked users error:', error);
+    return c.json({ error: 'Failed to get blocked users' }, 500);
+  }
+});
+
 // GET /api/posts - timeline
 app.get('/api/posts', async (c) => {
   try {

@@ -214,6 +214,13 @@
   "time.hours_ago": "{n}hr ago",
   "time.days_ago": "{n}d ago",
 
+  "settings.blocked_users": "Blocked users",
+  "settings.blocked_empty": "No blocked users",
+  "settings.blocked_unblock": "Unblock",
+  "settings.blocked_unblock_confirm": "Unblock {username}?",
+  "settings.blocked_unblocked": "User unblocked",
+  "settings.blocked_unblock_failed": "Failed to unblock user",
+  "settings.blocked_load_failed": "Failed to load blocked users",
   "settings.title": "Settings",
   "settings.account": "Account",
   "settings.display": "Display",
