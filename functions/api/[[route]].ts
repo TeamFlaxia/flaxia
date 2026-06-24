@@ -3659,6 +3659,101 @@ app.delete('/api/users/:username/follow', requireAuth, async (c) => {
   }
 });
 
+// POST /api/users/:username/block - block a user (protected)
+app.post('/api/users/:username/block', requireAuth, async (c) => {
+  try {
+    const username = c.req.param('username');
+
+    if (!username) {
+      return c.json({ error: 'Username required' }, 400);
+    }
+
+    const blockerId = c.get('user')!.id;
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    // Get target user ID
+    const targetUser = await c.env.DB.prepare('SELECT id FROM users WHERE username = ?')
+      .bind(username)
+      .first<{ id: string }>();
+
+    if (!targetUser) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const blockedId = targetUser.id;
+
+    // Can't block yourself
+    if (blockerId === blockedId) {
+      return c.json({ error: 'Cannot block yourself' }, 400);
+    }
+
+    // Insert block relationship (idempotent)
+    await c.env.DB.prepare('INSERT OR IGNORE INTO blocks (blocker_id, blocked_id) VALUES (?, ?)')
+      .bind(blockerId, blockedId)
+      .run();
+
+    // Also unfollow the blocked user if following
+    await c.env.DB.prepare('DELETE FROM follows WHERE follower_id = ? AND followee_id = ?')
+      .bind(blockerId, blockedId)
+      .run();
+    await c.env.DB.prepare('DELETE FROM follows WHERE follower_id = ? AND followee_id = ?')
+      .bind(blockedId, blockerId)
+      .run();
+
+    return c.json({ blocking: true });
+  } catch (error: unknown) {
+    console.error('Block error:', error);
+    return c.json(
+      { error: 'Failed to block user', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
+  }
+});
+
+// DELETE /api/users/:username/block - unblock a user (protected)
+app.delete('/api/users/:username/block', requireAuth, async (c) => {
+  try {
+    const username = c.req.param('username');
+
+    if (!username) {
+      return c.json({ error: 'Username required' }, 400);
+    }
+
+    const blockerId = c.get('user')!.id;
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    // Get target user ID
+    const targetUser = await c.env.DB.prepare('SELECT id FROM users WHERE username = ?')
+      .bind(username)
+      .first<{ id: string }>();
+
+    if (!targetUser) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    const blockedId = targetUser.id;
+
+    // Delete block relationship
+    await c.env.DB.prepare('DELETE FROM blocks WHERE blocker_id = ? AND blocked_id = ?')
+      .bind(blockerId, blockedId)
+      .run();
+
+    return c.json({ blocking: false });
+  } catch (error: unknown) {
+    console.error('Unblock error:', error);
+    return c.json(
+      { error: 'Failed to unblock user', details: (error as { message?: string })?.message || 'Unknown error' },
+      500,
+    );
+  }
+});
+
 // GET /api/posts - timeline
 app.get('/api/posts', async (c) => {
   try {
@@ -3690,16 +3785,20 @@ app.get('/api/posts', async (c) => {
     let query: string;
     let params: Array<string | number> = [];
 
+    // Helper: exclude posts from users blocked by current user
+    const blockFilter = currentUserId
+      ? 'AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
+      : '';
+    const blockParam = currentUserId ? [currentUserId] : [];
+
     if (hashtag) {
       // Filter by hashtag using json_each
       if (cursor) {
-        query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
-        params = [hashtag, cursor, limit];
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        params = [hashtag, cursor, ...blockParam, limit];
       } else {
-        query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ORDER BY p.created_at DESC LIMIT ?";
-        params = [hashtag, limit];
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        params = [hashtag, ...blockParam, limit];
       }
     } else if (following && currentUserId) {
       // Following tab - show posts from followed users and current user's own posts
@@ -3715,9 +3814,9 @@ app.get('/api/posts', async (c) => {
             )
             OR p.user_id = ?
           )
-          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? 
+          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${blockFilter}
           ORDER BY p.created_at DESC LIMIT ?`;
-        params = [currentUserId, currentUserId, cursor, limit];
+        params = [currentUserId, currentUserId, cursor, ...blockParam, limit];
       } else {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
           COALESCE(p.reply_count, 0) as reply_count, 
@@ -3730,9 +3829,9 @@ app.get('/api/posts', async (c) => {
             )
             OR p.user_id = ?
           )
-          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL 
+          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${blockFilter}
           ORDER BY p.created_at DESC LIMIT ?`;
-        params = [currentUserId, currentUserId, limit];
+        params = [currentUserId, currentUserId, ...blockParam, limit];
       }
     } else if (username) {
       // Username filter - show posts from specific user
@@ -3748,13 +3847,11 @@ app.get('/api/posts', async (c) => {
     } else {
       // Regular timeline query (For You tab)
       if (cursor) {
-        query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
-        params = [cursor, limit];
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        params = [cursor, ...blockParam, limit];
       } else {
-        query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ORDER BY p.created_at DESC LIMIT ?";
-        params = [limit];
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        params = [...blockParam, limit];
       }
     }
 
@@ -3866,6 +3963,10 @@ app.get('/api/posts/trending', async (c) => {
 
     // Trending algorithm: (fresh_count * 2 + reply_count * 3 + impressions * 0.1 + 1) / (hours_since_creation + 2)^1.5
     // SQLite doesn't have POW, so we use (hours + 2) * (hours + 2) as a simpler decay
+    const blockFilterTrending = currentUserId
+      ? 'AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
+      : '';
+    const blockParamTrending = currentUserId ? [currentUserId] : [];
     const query = `
       SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
       COALESCE(p.reply_count, 0) as reply_count, 
@@ -3876,11 +3977,14 @@ app.get('/api/posts/trending', async (c) => {
       LEFT JOIN users u ON p.user_id = u.id 
       WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at > datetime('now', '-7 days')
       ${numericScore !== null ? 'AND (score < ? OR (score = ? AND p.created_at < ?))' : ''}
+      ${blockFilterTrending}
       ORDER BY score DESC, p.created_at DESC
       LIMIT ?
     `;
     const params: Array<unknown> =
-      numericScore !== null ? [numericScore, numericScore, cursorCreatedAt, limit] : [limit];
+      numericScore !== null
+        ? [numericScore, numericScore, cursorCreatedAt, ...blockParamTrending, limit]
+        : [...blockParamTrending, limit];
 
     const result = await c.env.DB.prepare(query)
       .bind(...params)
@@ -4156,6 +4260,20 @@ app.get('/api/posts/recommended', async (c) => {
         const candidatePosts = (candResult.results || []) as Array<Record<string, unknown>>;
 
         if (candidatePosts.length > 0) {
+          // Filter out posts from blocked users
+          if (currentUserId) {
+            const blockedIds = await c.env.DB.prepare('SELECT blocked_id FROM blocks WHERE blocker_id = ?')
+              .bind(currentUserId)
+              .all<{ blocked_id: string }>();
+            if (blockedIds.success && blockedIds.results.length > 0) {
+              const blockedSet = new Set(blockedIds.results.map((r) => r.blocked_id));
+              const filteredPosts = candidatePosts.filter((p) => !blockedSet.has(p.user_id as string));
+              if (filteredPosts.length < candidatePosts.length) {
+                candidatePosts.length = 0;
+                candidatePosts.push(...filteredPosts);
+              }
+            }
+          }
           const engScores = candidatePosts.map((p) => Number(p.eng_score) || 0);
           const maxEng = Math.max(...engScores, 1);
           const vecScoreMap = new Map(vectorMatches.map((m) => [m.id, m.score]));
@@ -4202,14 +4320,24 @@ app.get('/api/posts/recommended', async (c) => {
       const scoreFormula = `(p.engagement_hotness / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))`;
       const cursorClause = numericCursor !== null ? 'AND p.created_at < ?' : '';
       const fetchLimit = limit * 5;
+      const blockFilterRecommended = currentUserId
+        ? 'AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
+        : '';
+      const blockParamRecommended = currentUserId ? [currentUserId] : [];
       let query: string;
       let params: Array<unknown> = [];
       if (currentUserId) {
-        query = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.user_id != ? ${cursorClause} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
-        params = numericCursor !== null ? [currentUserId, cursorCreatedAt!, fetchLimit] : [currentUserId, fetchLimit];
+        query = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.user_id != ? ${cursorClause} ${blockFilterRecommended} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
+        params =
+          numericCursor !== null
+            ? [currentUserId, cursorCreatedAt!, ...blockParamRecommended, fetchLimit]
+            : [currentUserId, ...blockParamRecommended, fetchLimit];
       } else {
-        query = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${cursorClause} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
-        params = numericCursor !== null ? [cursorCreatedAt!, fetchLimit] : [fetchLimit];
+        query = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${cursorClause} ${blockFilterRecommended} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
+        params =
+          numericCursor !== null
+            ? [cursorCreatedAt!, ...blockParamRecommended, fetchLimit]
+            : [...blockParamRecommended, fetchLimit];
       }
       const result = await c.env.DB.prepare(query)
         .bind(...params)

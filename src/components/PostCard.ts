@@ -851,6 +851,48 @@ export class PostCard {
       });
       dropdown.appendChild(deleteItem);
     } else {
+      const blockItem = document.createElement('button');
+      blockItem.style.cssText = `
+        display: block;
+        width: 100%;
+        padding: 10px 16px;
+        background: none;
+        border: none;
+        color: var(--danger, #e74c3c);
+        text-align: left;
+        cursor: pointer;
+        font-size: 14px;
+        transition: background 0.2s;
+      `;
+      blockItem.textContent = t('post.menu_block');
+      blockItem.addEventListener('mouseenter', () => {
+        blockItem.style.background = 'var(--bg-secondary)';
+      });
+      blockItem.addEventListener('mouseleave', () => {
+        blockItem.style.background = 'none';
+      });
+      blockItem.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.remove();
+        this.menuDropdown = undefined;
+        if (!this.props.currentUser) {
+          showSignInPrompt(
+            'block',
+            () => {
+              window.history.pushState({}, '', '/login');
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            },
+            () => {
+              window.history.pushState({}, '', '/register');
+              window.dispatchEvent(new PopStateEvent('popstate'));
+            },
+          );
+          return;
+        }
+        this.blockUser();
+      });
+      dropdown.appendChild(blockItem);
+
       const reportItem = document.createElement('button');
       reportItem.style.cssText = `
         display: block;
@@ -1015,6 +1057,33 @@ export class PostCard {
     } catch (error) {
       console.error('Delete post error:', error);
       this.showToast(t('post.delete_failed'), true);
+    }
+  }
+
+  private async blockUser(): Promise<void> {
+    const username = this.props.post.username;
+    try {
+      const response = await fetch(`/api/users/${username}/block`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const data = (await response.json()) as { error?: string };
+        throw new Error(data?.error || 'Failed to block user');
+      }
+
+      this.showToast(t('post.blocked', { username }));
+
+      this.element.style.transition = 'opacity 0.3s, transform 0.3s';
+      this.element.style.opacity = '0';
+      this.element.style.transform = 'translateX(-100%)';
+      setTimeout(() => {
+        this.destroy();
+      }, 300);
+    } catch (error) {
+      console.error('Block user error:', error);
+      this.showToast(t('post.block_failed'), true);
     }
   }
 
