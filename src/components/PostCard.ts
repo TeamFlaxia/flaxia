@@ -4,6 +4,7 @@ import { impressionTracker } from '../lib/impression-tracker.js';
 import { loadLinkPreview } from '../lib/link-preview.js';
 import { registerModal } from '../lib/modal-state.js';
 import { useSandboxBridge } from '../lib/sandbox-bridge.js';
+import { getShowNsfw } from '../lib/settings.js';
 import { PostCardMode, PostCardProps } from '../types/post.js';
 import { createPostActions } from './PostActions.js';
 import { createPostHeader } from './PostHeader.js';
@@ -316,6 +317,74 @@ export class PostCard {
       });
       this.replyComposer.getElement().style.display = 'none';
       container.appendChild(this.replyComposer.getElement());
+    }
+
+    // NSFW blur overlay
+    const nsfwTags = this.parseHashtags(this.props.post.hashtags);
+    const isNsfw = nsfwTags.some((tag) => tag.toLowerCase() === 'nsfw' || tag.toLowerCase() === 'r18');
+    if (isNsfw && !getShowNsfw()) {
+      container.style.position = 'relative';
+      const overlay = document.createElement('div');
+      overlay.style.cssText = `
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.25);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 5;
+        border-radius: 8px;
+      `;
+
+      const warning = document.createElement('div');
+      warning.style.cssText = 'text-align: center; padding: 1rem;';
+
+      const icon = document.createElement('div');
+      icon.textContent = '⚠️';
+      icon.style.cssText = 'font-size: 1.5rem; margin-bottom: 6px;';
+
+      const warningText = document.createElement('p');
+      warningText.textContent = t('post.nsfw_warning');
+      warningText.style.cssText = `
+        color: var(--text-muted);
+        font-size: 0.8125rem;
+        margin: 0 0 10px 0;
+      `;
+
+      const showButton = document.createElement('button');
+      showButton.textContent = t('post.nsfw_show');
+      showButton.style.cssText = `
+        padding: 6px 14px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        cursor: pointer;
+        font-size: 0.8rem;
+        transition: background 0.2s;
+      `;
+      showButton.addEventListener('mouseenter', () => {
+        showButton.style.background = 'var(--bg-secondary)';
+      });
+      showButton.addEventListener('mouseleave', () => {
+        showButton.style.background = 'var(--bg-primary)';
+      });
+      showButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        overlay.remove();
+      });
+
+      warning.appendChild(icon);
+      warning.appendChild(warningText);
+      warning.appendChild(showButton);
+      overlay.appendChild(warning);
+      container.appendChild(overlay);
     }
 
     return container;

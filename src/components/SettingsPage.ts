@@ -1,7 +1,7 @@
 import { clearMeCache } from '../lib/auth-cache';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { getLocale, setLocale, t } from '../lib/i18n.js';
-import { getReplyStyle, ReplyStyle, setReplyStyle } from '../lib/settings.js';
+import { getReplyStyle, getShowNsfw, ReplyStyle, setReplyStyle, setShowNsfw } from '../lib/settings.js';
 
 interface SettingsPageProps {
   currentUser?: {
@@ -415,6 +415,47 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     });
   });
 
+  // NSFW toggle
+  const nsfwLabel = document.createElement('label');
+  nsfwLabel.style.cssText = `
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    margin-bottom: 1rem;
+  `;
+
+  const nsfwCheckbox = document.createElement('input');
+  nsfwCheckbox.type = 'checkbox';
+  nsfwCheckbox.checked = getShowNsfw();
+  nsfwCheckbox.style.cssText = 'accent-color: var(--accent); width: 18px; height: 18px; cursor: pointer;';
+
+  const nsfwTextDiv = document.createElement('div');
+  nsfwTextDiv.style.cssText = 'display: flex; flex-direction: column;';
+
+  const nsfwNameSpan = document.createElement('span');
+  nsfwNameSpan.style.cssText = 'font-weight: 600; color: var(--text-primary); font-size: 0.9375rem;';
+  nsfwNameSpan.textContent = t('settings.nsfw');
+
+  const nsfwDescSpan = document.createElement('span');
+  nsfwDescSpan.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem;';
+  nsfwDescSpan.textContent = t('settings.nsfw_desc');
+
+  nsfwTextDiv.appendChild(nsfwNameSpan);
+  nsfwTextDiv.appendChild(nsfwDescSpan);
+  nsfwLabel.appendChild(nsfwCheckbox);
+  nsfwLabel.appendChild(nsfwTextDiv);
+
+  nsfwCheckbox.addEventListener('change', () => {
+    setShowNsfw(nsfwCheckbox.checked);
+    displayMessage.textContent = t('settings.display_saved');
+    displayMessage.style.color = 'var(--success, #10b981)';
+  });
+
   const displayMessage = document.createElement('div');
   displayMessage.style.cssText = `
     margin-top: 0.5rem;
@@ -424,6 +465,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
   displaySection.appendChild(displayTitle);
   displaySection.appendChild(radioGroup);
+  displaySection.appendChild(nsfwLabel);
   displaySection.appendChild(displayMessage);
 
   container.appendChild(displaySection);
