@@ -55,6 +55,15 @@ export class PostCard {
   }
 
   private createElement(): HTMLElement {
+    // If NSFW and not opted-in, hide the post entirely
+    const nsfwTags = this.parseHashtags(this.props.post.hashtags);
+    const isNsfw = nsfwTags.some((tag) => tag.toLowerCase() === 'nsfw' || tag.toLowerCase() === 'r18');
+    if (isNsfw && !getShowNsfw()) {
+      const hidden = document.createElement('div');
+      hidden.style.display = 'none';
+      return hidden;
+    }
+
     const container = document.createElement('article');
     container.className = 'post-card';
     container.setAttribute('data-post-id', this.props.post.id);
@@ -319,10 +328,8 @@ export class PostCard {
       container.appendChild(this.replyComposer.getElement());
     }
 
-    // NSFW blur overlay
-    const nsfwTags = this.parseHashtags(this.props.post.hashtags);
-    const isNsfw = nsfwTags.some((tag) => tag.toLowerCase() === 'nsfw' || tag.toLowerCase() === 'r18');
-    if (isNsfw && !getShowNsfw()) {
+    // NSFW blur overlay (only when opted-in via settings)
+    if (isNsfw && getShowNsfw()) {
       container.style.position = 'relative';
       const overlay = document.createElement('div');
       overlay.style.cssText = `
