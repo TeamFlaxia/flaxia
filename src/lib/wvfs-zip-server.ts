@@ -168,7 +168,7 @@ function findFileInMap(fileMap: Map<string, Uint8Array>, filePath: string): Uint
     if (fileData) return fileData;
   }
 
-  const fallbacks = [filePath + '/index.html', 'index.html', filePath.replace(/\/$/, '')];
+  const fallbacks = [filePath + '/index.html', filePath.replace(/\/$/, '')];
 
   for (const fallback of fallbacks) {
     fileData = fileMap.get(fallback);
@@ -198,7 +198,7 @@ function findFileInIndex(index: Map<string, ZipIndexEntry>, filePath: string): Z
     if (entry) return entry;
   }
 
-  const fallbacks = [filePath + '/index.html', 'index.html', filePath.replace(/\/$/, '')];
+  const fallbacks = [filePath + '/index.html', filePath.replace(/\/$/, '')];
 
   for (const fallback of fallbacks) {
     entry = index.get(fallback);
