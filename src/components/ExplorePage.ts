@@ -6,6 +6,7 @@ import { createSkeletonCards } from '../lib/loading-ui.js';
 import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
+import { updateMetaTags } from '../lib/seo-meta.js';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
@@ -43,6 +44,14 @@ export class ExplorePage {
     this.setupEventListeners();
     this.setupPostUpdatedListener();
     this.loadContent();
+
+    if (props.tag) {
+      updateMetaTags({
+        title: `Flaxia - #${props.tag}`,
+        description: `Explore posts tagged #${props.tag} on Flaxia`,
+        url: `${window.location.origin}/explore?tag=${encodeURIComponent(props.tag)}`,
+      });
+    }
   }
 
   private createElement(): HTMLElement {

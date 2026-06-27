@@ -90,12 +90,13 @@ export class ArcadePage {
     this.setupPostUpdatedListener();
     window.addEventListener('spaNavigate', this.boundHandleSpaNavigate);
 
-    // Set default arcade metadata until games load
-    updateMetaTags({
-      title: 'Flaxia Arcade - ゲームを遊べるSNS',
-      description: 'コミュニティが投稿したFlash、DOS、ZIP、HTML5ゲームをブラウザで直接遊ぼう。',
-      url: `${window.location.origin}/arcade`,
-    });
+    if (this.initialGameId) {
+      updateMetaTags({
+        title: 'Flaxia Arcade - ゲームを遊べるSNS',
+        description: 'コミュニティが投稿したFlash、DOS、ZIP、HTML5ゲームをブラウザで直接遊ぼう。',
+        url: `${window.location.origin}/arcade/${this.initialGameId}`,
+      });
+    }
 
     this.loadGames();
 
