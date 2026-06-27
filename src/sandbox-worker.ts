@@ -7,6 +7,23 @@ type Bindings = {
   DB: D1Database;
 };
 
+const SANDBOX_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "worker-src 'self' blob:",
+  'frame-ancestors https://flaxia.app',
+].join('; ');
+
+function withCsp(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set('Content-Security-Policy', SANDBOX_CSP);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use('/*', cors());
@@ -24,7 +41,7 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
 
     // 1. Try serving from in-memory cache first
     let response = await serveFileFromWvfs(postId, filePath);
-    if (response) return response;
+    if (response) return withCsp(response);
 
     // 2. Find the ZIP key in R2
     let zipKey: string | null = null;
@@ -85,7 +102,7 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
             }
           })(),
         );
-        return response;
+        return withCsp(response);
       }
     }
 
@@ -99,7 +116,7 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
     await extractZipToWvfs(zipData, postId);
 
     response = await serveFileFromWvfs(postId, filePath);
-    if (response) return response;
+    if (response) return withCsp(response);
 
     return c.json({ error: 'File not found in ZIP', path: filePath }, 404);
   } catch (error: unknown) {
