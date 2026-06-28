@@ -137,7 +137,15 @@ export class PostCard {
     // Translate button
     const authorLang = this.props.post.author_language;
     const currentLocale = getLocale();
-    if (authorLang && authorLang !== currentLocale) {
+    const detectedLang = (text: string): string => {
+      const cjkRegex = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/g;
+      const cjkCount = (text.match(cjkRegex) || []).length;
+      const totalChars = text.replace(/\s/g, '').length;
+      if (totalChars === 0) return 'en';
+      return cjkCount / totalChars > 0.2 ? 'ja' : 'en';
+    };
+    const postLang = detectedLang(this.props.post.text);
+    if (authorLang && authorLang !== currentLocale && postLang !== currentLocale) {
       const translateBar = document.createElement('div');
       translateBar.style.cssText = 'margin-top: 0.5rem;';
 
