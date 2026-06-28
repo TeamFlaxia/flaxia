@@ -7268,6 +7268,14 @@ app.get('/api/posts/:id', async (c) => {
   }
 });
 
+function detectLanguage(text: string): string {
+  const cjkRegex = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/g;
+  const cjkCount = (text.match(cjkRegex) || []).length;
+  const totalChars = text.replace(/\s/g, '').length;
+  if (totalChars === 0) return 'en';
+  return cjkCount / totalChars > 0.2 ? 'ja' : 'en';
+}
+
 // POST /api/posts/:id/translate - submit translation task
 app.post('/api/posts/:id/translate', requireAuth, async (c) => {
   try {
@@ -7282,7 +7290,9 @@ app.post('/api/posts/:id/translate', requireAuth, async (c) => {
       .first()) as { id: string; user_id: string; text: string; author_language: string | null } | null;
     if (!post) return c.json({ error: 'Not found' }, 404);
     if (!post.author_language) return c.json({ error: 'Author language not set' }, 400);
-    if (post.author_language === targetLang) {
+
+    const srcLang = detectLanguage(post.text);
+    if (srcLang === targetLang) {
       return c.json({ status: 'done', translated_text: post.text });
     }
 
@@ -7310,7 +7320,7 @@ app.post('/api/posts/:id/translate', requireAuth, async (c) => {
         model: 'Xenova/m2m100_418M',
         input: post.text,
         options: {
-          src_lang: post.author_language,
+          src_lang: srcLang,
           tgt_lang: targetLang,
           dtype: 'q4f16',
           max_new_tokens: 256,

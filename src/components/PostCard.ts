@@ -156,8 +156,13 @@ export class PostCard {
       translateBtn.addEventListener('click', async () => {
         translateBtn.disabled = true;
         translateBtn.textContent = 'Translating...';
+        const targetLocale = getLocale();
+        if (targetLocale === authorLang) {
+          translateBtn.remove();
+          return;
+        }
         try {
-          const res = await fetch(`/api/posts/${this.props.post.id}/translate?target=${currentLocale}`, {
+          const res = await fetch(`/api/posts/${this.props.post.id}/translate?target=${targetLocale}`, {
             method: 'POST',
           });
           if (!res.ok) {
@@ -166,7 +171,7 @@ export class PostCard {
           }
 
           const poll = async (): Promise<void> => {
-            const pollRes = await fetch(`/api/posts/${this.props.post.id}/translate?target=${currentLocale}`);
+            const pollRes = await fetch(`/api/posts/${this.props.post.id}/translate?target=${targetLocale}`);
             if (!pollRes.ok) {
               translateBtn.remove();
               return;
@@ -219,6 +224,9 @@ export class PostCard {
         const detail = (e as CustomEvent).detail;
         if (detail.locale !== authorLang) {
           translateBtn.textContent = `Translate to ${detail.locale.toUpperCase()}`;
+          translateBar.style.display = '';
+        } else {
+          translateBar.style.display = 'none';
         }
       };
       window.addEventListener('localechange', onLocaleChange);
