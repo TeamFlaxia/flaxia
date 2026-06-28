@@ -343,7 +343,8 @@ export async function serveFileFromWvfs(postId: string, filePath: string): Promi
 
     if (ext === 'html') {
       const htmlContent = new TextDecoder().decode(fileData);
-      const modifiedHtml = injectBaseTag(htmlContent, postId);
+      const withoutCsp = htmlContent.replace(/<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*\/?>/gi, '');
+      const modifiedHtml = injectBaseTag(withoutCsp, postId);
       fileData = new TextEncoder().encode(modifiedHtml);
     }
 
