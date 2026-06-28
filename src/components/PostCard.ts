@@ -135,7 +135,6 @@ export class PostCard {
     this.postTextContainer.appendChild(textElement);
 
     // Translate button
-    const authorLang = this.props.post.author_language;
     const currentLocale = getLocale();
     const detectedLang = (text: string): string => {
       const cjkRegex = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/g;
@@ -145,7 +144,7 @@ export class PostCard {
       return cjkCount / totalChars > 0.2 ? 'ja' : 'en';
     };
     const postLang = detectedLang(this.props.post.text);
-    if (authorLang && authorLang !== currentLocale && postLang !== currentLocale) {
+    if (postLang !== currentLocale) {
       const translateBar = document.createElement('div');
       translateBar.style.cssText = 'margin-top: 0.5rem;';
 
@@ -165,7 +164,7 @@ export class PostCard {
         translateBtn.disabled = true;
         translateBtn.textContent = 'Translating...';
         const targetLocale = getLocale();
-        if (targetLocale === authorLang) {
+        if (targetLocale === postLang) {
           translateBtn.remove();
           return;
         }
@@ -230,7 +229,7 @@ export class PostCard {
       // Listen for locale changes
       const onLocaleChange = (e: Event) => {
         const detail = (e as CustomEvent).detail;
-        if (detail.locale !== authorLang) {
+        if (detail.locale !== postLang) {
           translateBtn.textContent = `Translate to ${detail.locale.toUpperCase()}`;
           translateBar.style.display = '';
         } else {
