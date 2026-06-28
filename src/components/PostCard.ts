@@ -168,6 +168,7 @@ export class PostCard {
           translateBtn.remove();
           return;
         }
+        console.log('[Translate] Source text:', this.props.post.text);
         try {
           const res = await fetch(`/api/posts/${this.props.post.id}/translate?target=${targetLocale}`, {
             method: 'POST',
@@ -185,6 +186,7 @@ export class PostCard {
             }
             const data = (await pollRes.json()) as { status: string; translated_text?: string };
             if (data.status === 'done' && data.translated_text) {
+              console.log('[Translate] Returned text:', data.translated_text);
               this.translatedText = data.translated_text;
               this.showingOriginal = false;
               textElement.textContent = data.translated_text;
