@@ -559,6 +559,56 @@ describe('POST /api/report', () => {
     const notifications = notifData.notifications || notifData;
     assert.ok(notifications.length > 0);
   });
+
+  it('2nd nsfw_untagged report adds nsfw tag without hiding post', async () => {
+    const { cookie: cookie1 } = await seedUserAndLogin('1');
+    const { cookie: cookie2 } = await seedUserAndLogin('2');
+    const { cookie: cookie3 } = await seedUserAndLogin('3');
+
+    const createRes = await fetch(`${BASE_URL}/api/posts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie1,
+      },
+      body: JSON.stringify({ text: 'NSFW content without tag' }),
+    });
+    const createData = await createRes.json();
+    const postId = createData.id;
+
+    // 1st report
+    const r1 = await fetch(`${BASE_URL}/api/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie2 },
+      body: JSON.stringify({ post_id: postId, category: 'nsfw_untagged' }),
+    });
+    assert.equal(r1.status, 200);
+
+    // 2nd report → threshold reached, nsfw tag should be added
+    const r2 = await fetch(`${BASE_URL}/api/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie3 },
+      body: JSON.stringify({ post_id: postId, category: 'nsfw_untagged' }),
+    });
+    assert.equal(r2.status, 200);
+
+    // Verify post is NOT hidden (still accessible)
+    const getRes = await fetch(`${BASE_URL}/api/posts/${postId}`);
+    assert.equal(getRes.status, 200);
+
+    // Verify post has #nsfw in hashtags
+    const postData = await getRes.json();
+    const hashtags = JSON.parse(postData.hashtags || '[]');
+    assert.ok(hashtags.some((t: string) => t.toLowerCase() === 'nsfw'));
+
+    // Verify notification was created for the post owner
+    const notifRes = await fetch(`${BASE_URL}/api/notifications`, {
+      headers: { Cookie: cookie1 },
+    });
+    const notifData = await notifRes.json();
+    const notifications = notifData.notifications || notifData;
+    assert.ok(notifications.length > 0);
+  });
 });
 
 describe('DELETE /api/posts/:id', () => {

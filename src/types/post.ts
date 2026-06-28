@@ -8,7 +8,8 @@ export type ReportCategory =
   | 'copyright'
   | 'csam'
   | 'malware'
-  | 'privacy';
+  | 'privacy'
+  | 'nsfw_untagged';
 
 export type NotificationType = 'fresh' | 'reported' | 'warned' | 'hidden';
 

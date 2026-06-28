@@ -95,6 +95,7 @@
   "post.report_category_copyright": "Copyright infringement (DMCA)",
   "post.report_category_malware": "Malware / malicious content",
   "post.report_category_csam": "CSAM",
+  "post.report_category_nsfw_untagged": "Missing NSFW tag",
   "post.report_category_other": "Other",
   "post.report_dmca_title": "DMCA Information",
   "post.report_dmca_work_label": "Describe the copyrighted work:",

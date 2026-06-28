@@ -1224,6 +1224,7 @@ export class PostCard {
       { value: 'copyright', label: t('post.report_category_copyright') },
       { value: 'malware', label: t('post.report_category_malware') },
       { value: 'csam', label: t('post.report_category_csam') },
+      { value: 'nsfw_untagged', label: t('post.report_category_nsfw_untagged') },
       { value: 'other', label: t('post.report_category_other') },
     ];
 

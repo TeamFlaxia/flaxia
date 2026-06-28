@@ -7385,6 +7385,7 @@ function getThreshold(category: ReportCategory): number {
     csam: 1,
     malware: 1,
     privacy: 3,
+    nsfw_untagged: 2,
   };
   return thresholds[category];
 }
@@ -7572,6 +7573,7 @@ app.post('/api/report', requireAuth, async (c) => {
       'csam',
       'malware',
       'privacy',
+      'nsfw_untagged',
     ];
     if (!category || !validCategories.includes(category)) {
       return c.json({ error: 'Invalid category' }, 400);
@@ -7647,6 +7649,33 @@ app.post('/api/report', requireAuth, async (c) => {
       await c.env.DB.prepare('UPDATE posts SET hidden = 1 WHERE id = ?').bind(post_id).run();
       await insertNotification(c.env.DB, post.user_id, 'hidden', post_id);
       await insertAdminAlert(c.env.DB, post_id, category, 'critical');
+    } else if (category === 'nsfw_untagged') {
+      const threshold = getThreshold(category);
+      const { count } = (await c.env.DB.prepare(
+        'SELECT COUNT(*) as count FROM reports WHERE post_id = ? AND category = ?',
+      )
+        .bind(post_id, category)
+        .first()) as { count: number };
+
+      if (count >= threshold) {
+        await c.env.DB.prepare('UPDATE reports SET status = ? WHERE post_id = ?').bind('warned', post_id).run();
+        await insertNotification(c.env.DB, post.user_id, 'warned', post_id);
+
+        // Add #nsfw tag to post if not already present (no hiding)
+        const postRow = (await c.env.DB.prepare('SELECT hashtags FROM posts WHERE id = ?').bind(post_id).first()) as {
+          hashtags: string;
+        } | null;
+
+        if (postRow) {
+          const hashtags: string[] = JSON.parse(postRow.hashtags);
+          if (!hashtags.some((t: string) => t.toLowerCase() === 'nsfw' || t.toLowerCase() === 'r18')) {
+            hashtags.push('nsfw');
+            await c.env.DB.prepare('UPDATE posts SET hashtags = ? WHERE id = ?')
+              .bind(JSON.stringify(hashtags), post_id)
+              .run();
+          }
+        }
+      }
     } else {
       const threshold = getThreshold(category);
       const { count } = (await c.env.DB.prepare(

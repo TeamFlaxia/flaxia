@@ -95,6 +95,7 @@
   "post.report_category_copyright": "著作権侵害（DMCA）",
   "post.report_category_malware": "マルウェア／悪意のある内容",
   "post.report_category_csam": "CSAM（児童の性的虐待コンテンツ）",
+  "post.report_category_nsfw_untagged": "NSFWタグ不足",
   "post.report_category_other": "その他",
   "post.report_dmca_title": "DMCA情報",
   "post.report_dmca_work_label": "著作権で保護された作品の説明：",
