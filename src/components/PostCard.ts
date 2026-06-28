@@ -189,7 +189,10 @@ export class PostCard {
               console.log('[Translate] Returned text:', data.translated_text);
               this.translatedText = data.translated_text;
               this.showingOriginal = false;
-              textElement.textContent = data.translated_text;
+              const currentTextEl = this.postTextContainer?.querySelector('.post-text');
+              if (currentTextEl) {
+                currentTextEl.textContent = data.translated_text;
+              }
               translateBar.innerHTML = '';
               const showOriginal = document.createElement('button');
               showOriginal.textContent = 'Show original';
@@ -203,11 +206,13 @@ export class PostCard {
                 text-decoration: underline;
               `;
               showOriginal.addEventListener('click', () => {
+                const currentTextEl = this.postTextContainer?.querySelector('.post-text');
+                if (!currentTextEl) return;
                 if (this.showingOriginal) {
-                  textElement.textContent = this.translatedText!;
+                  currentTextEl.textContent = this.translatedText!;
                   showOriginal.textContent = 'Show original';
                 } else {
-                  textElement.textContent = this.originalText;
+                  currentTextEl.textContent = this.originalText;
                   showOriginal.textContent = 'Show translation';
                 }
                 this.showingOriginal = !this.showingOriginal;
