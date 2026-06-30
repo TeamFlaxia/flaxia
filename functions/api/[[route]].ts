@@ -284,15 +284,35 @@ app.put('/api/upload/*', requireAuth, async (c) => {
       return c.json({ error: 'File too large. Maximum size is 25MB' }, 413);
     }
 
-    // Verify the user owns a pending post with this storage key
-    const pending = (await c.env.DB.prepare(
+    // Verify the user owns a pending or published post with this storage key
+    // For published posts, extract the postId from the key path to verify ownership
+    const ownedPost = (await c.env.DB.prepare(
       'SELECT id FROM posts WHERE user_id = ? AND (gif_key = ? OR payload_key = ? OR swf_key = ?) AND status = ?',
     )
       .bind(user.id, key, key, key, 'pending')
       .first()) as { id: string } | null;
 
-    if (!pending) {
-      return c.json({ error: 'No pending post found for this key' }, 403);
+    if (!ownedPost) {
+      // Check if user owns a published post (for editing attachments)
+      const slashIndex = key.indexOf('/');
+      if (slashIndex !== -1) {
+        const afterSlash = key.substring(slashIndex + 1);
+        const keyPostId = afterSlash.split('.')[0];
+        if (keyPostId) {
+          const publishedPost = (await c.env.DB.prepare(
+            'SELECT id FROM posts WHERE id = ? AND user_id = ? AND status = ?',
+          )
+            .bind(keyPostId, user.id, 'published')
+            .first()) as { id: string } | null;
+          if (!publishedPost) {
+            return c.json({ error: 'No pending post found for this key' }, 403);
+          }
+        } else {
+          return c.json({ error: 'Invalid key' }, 400);
+        }
+      } else {
+        return c.json({ error: 'Invalid key' }, 400);
+      }
     }
 
     // Get the file data from request body
@@ -5454,6 +5474,77 @@ app.delete('/api/admin/ads/:id', requireAuth, async (c) => {
   }
 });
 
+// POST /api/posts/:id/prepare-attachment — generate upload URL for editing existing post attachments (protected)
+app.post('/api/posts/:id/prepare-attachment', requireAuth, async (c) => {
+  try {
+    const user = c.get('user');
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const postId = c.req.param('id');
+    const { filename, payloadType } = await c.req.json();
+
+    if (!filename) return c.json({ error: 'Missing filename' }, 400);
+
+    if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
+
+    const post = await c.env.DB.prepare('SELECT id, user_id, status FROM posts WHERE id = ?')
+      .bind(postId)
+      .first<{ id: string; user_id: string; status: string } | null>();
+
+    if (!post) return c.json({ error: 'Post not found' }, 404);
+    if (post.user_id !== user.id) return c.json({ error: 'Forbidden' }, 403);
+    if (post.status !== 'published') return c.json({ error: 'Cannot edit this post' }, 400);
+
+    const name = filename.toLowerCase();
+    const ext = name.match(/\.(\w+)$/)?.[1];
+
+    let storageKey: string;
+    let keyType: string;
+
+    if (name.endsWith('.swf') || ext === 'swf') {
+      storageKey = `swf/${postId}.swf`;
+      keyType = 'swf';
+    } else if (name.endsWith('.zip') || name.endsWith('.jsdos') || name.endsWith('.dosz')) {
+      const isDos = payloadType === 'dos' || name.endsWith('.jsdos');
+      storageKey = isDos ? `dos/${postId}.zip` : `zip/${postId}.zip`;
+      keyType = 'payload';
+    } else if (ext && ['mp3', 'wav', 'ogg', 'm4a', 'webm'].includes(ext)) {
+      const extMap: Record<string, string> = { mp3: '.mp3', wav: '.wav', ogg: '.ogg', m4a: '.m4a', webm: '.webm' };
+      storageKey = `audio/${postId}${extMap[ext]}`;
+      keyType = 'gif';
+    } else if (ext && ['mp4', 'webm', 'mov'].includes(ext)) {
+      const extMap: Record<string, string> = { mp4: '.mp4', webm: '.webm', mov: '.mov' };
+      storageKey = `video/${postId}${extMap[ext]}`;
+      keyType = 'gif';
+    } else if (ext && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico'].includes(ext)) {
+      const extMap: Record<string, string> = {
+        png: '.png',
+        jpg: '.jpg',
+        jpeg: '.jpg',
+        gif: '.gif',
+        webp: '.webp',
+        svg: '.svg',
+        bmp: '.bmp',
+        ico: '.ico',
+      };
+      storageKey = `gif/${postId}${extMap[ext]}`;
+      keyType = 'gif';
+    } else {
+      const safeExt = ext ? `.${ext}` : '';
+      storageKey = `payload/${postId}${safeExt}`;
+      keyType = 'payload';
+    }
+
+    const origin = new URL(c.req.url).origin;
+    const uploadUrl = `${origin}/api/upload/${storageKey}`;
+
+    return c.json({ uploadUrl, key: storageKey, keyType });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Prepare attachment error:', error);
+    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
 // Step 1 — POST /api/posts/prepare (protected)
 app.post('/api/posts/prepare', requireAuth, async (c) => {
   try {
@@ -7393,9 +7484,24 @@ app.put('/api/posts/:id', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    const post = await c.env.DB.prepare('SELECT id, user_id, username, text, status FROM posts WHERE id = ?')
+    const post = await c.env.DB.prepare(
+      'SELECT id, user_id, username, text, hashtags, mentions, status, gif_key, payload_key, swf_key, thumbnail_key, edited_at FROM posts WHERE id = ?',
+    )
       .bind(postId)
-      .first<{ id: string; user_id: string; username: string; text: string; status: string } | null>();
+      .first<{
+        id: string;
+        user_id: string;
+        username: string;
+        text: string;
+        hashtags: string | null;
+        mentions: string | null;
+        status: string;
+        gif_key: string | null;
+        payload_key: string | null;
+        swf_key: string | null;
+        thumbnail_key: string | null;
+        edited_at: string | null;
+      } | null>();
 
     if (!post) {
       return c.json({ error: 'Post not found' }, 404);
@@ -7409,50 +7515,101 @@ app.put('/api/posts/:id', async (c) => {
       return c.json({ error: 'Cannot edit this post' }, 400);
     }
 
-    const body = (await c.req.json()) as { text?: string };
-    if (!body || typeof body.text !== 'string') {
-      return c.json({ error: 'Text is required' }, 400);
-    }
-
-    const trimmed = body.text.trim();
-    if (trimmed.length < 1 || trimmed.length > 200) {
-      return c.json({ error: 'Text must be between 1 and 200 characters' }, 422);
-    }
-
-    // Extract hashtags from text
-    const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu;
-    const hashtagSet = new Set<string>();
-    let match: RegExpExecArray | null;
-    while ((match = hashtagRegex.exec(trimmed)) !== null) {
-      hashtagSet.add(match[1]);
-    }
-    const hashtags = Array.from(hashtagSet);
-    if (hashtags.length > 5) {
-      return c.json({ error: 'Maximum 5 hashtags allowed' }, 422);
-    }
-
-    // Extract mentions from text
-    const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g;
-    const mentionSet = new Set<string>();
-    let mentionMatch: RegExpExecArray | null;
-    while ((mentionMatch = mentionRegex.exec(trimmed)) !== null) {
-      mentionSet.add(mentionMatch[1]);
-    }
-    const mentionedUsernames = Array.from(mentionSet);
-    const mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, post.username);
+    const body = (await c.req.json()) as {
+      text?: string;
+      gif_key?: string | null;
+      payload_key?: string | null;
+      swf_key?: string | null;
+      thumbnail_key?: string | null;
+    };
 
     const now = new Date().toISOString();
-    await c.env.DB.prepare('UPDATE posts SET text = ?, hashtags = ?, mentions = ?, edited_at = ? WHERE id = ?')
-      .bind(trimmed, JSON.stringify(hashtags), mentionsJson, now, postId)
+    let trimmed = post.text;
+    let hashtagsJson = post.hashtags;
+    let mentionsJson = post.mentions;
+    let textChanged = false;
+
+    // Update text if provided
+    if (body.text !== undefined && typeof body.text === 'string') {
+      trimmed = body.text.trim();
+      if (trimmed.length < 1 || trimmed.length > 200) {
+        return c.json({ error: 'Text must be between 1 and 200 characters' }, 422);
+      }
+      textChanged = true;
+
+      // Extract hashtags from text
+      const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu;
+      const hashtagSet = new Set<string>();
+      let match: RegExpExecArray | null;
+      while ((match = hashtagRegex.exec(trimmed)) !== null) {
+        hashtagSet.add(match[1]);
+      }
+      const hashtags = Array.from(hashtagSet);
+      if (hashtags.length > 5) {
+        return c.json({ error: 'Maximum 5 hashtags allowed' }, 422);
+      }
+      hashtagsJson = JSON.stringify(hashtags);
+
+      // Extract mentions from text
+      const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g;
+      const mentionSet = new Set<string>();
+      let mentionMatch: RegExpExecArray | null;
+      while ((mentionMatch = mentionRegex.exec(trimmed)) !== null) {
+        mentionSet.add(mentionMatch[1]);
+      }
+      const mentionedUsernames = Array.from(mentionSet);
+      mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, post.username);
+    }
+
+    // Handle attachment key updates and cleanup old files
+    const updatedGifKey = body.gif_key !== undefined ? body.gif_key : post.gif_key;
+    const updatedPayloadKey = body.payload_key !== undefined ? body.payload_key : post.payload_key;
+    const updatedSwfKey = body.swf_key !== undefined ? body.swf_key : post.swf_key;
+    const updatedThumbnailKey = body.thumbnail_key !== undefined ? body.thumbnail_key : post.thumbnail_key;
+
+    // Delete old files from R2 when keys change
+    const keysToDelete: string[] = [];
+    if (body.gif_key !== undefined && post.gif_key && post.gif_key !== body.gif_key) {
+      keysToDelete.push(post.gif_key);
+    }
+    if (body.payload_key !== undefined && post.payload_key && post.payload_key !== body.payload_key) {
+      keysToDelete.push(post.payload_key);
+    }
+    if (body.swf_key !== undefined && post.swf_key && post.swf_key !== body.swf_key) {
+      keysToDelete.push(post.swf_key);
+    }
+    if (body.thumbnail_key !== undefined && post.thumbnail_key && post.thumbnail_key !== body.thumbnail_key) {
+      keysToDelete.push(post.thumbnail_key);
+    }
+
+    if (keysToDelete.length > 0 && c.env.BUCKET) {
+      Promise.all(keysToDelete.map((k) => c.env.BUCKET.delete(k).catch(() => {}))).catch(() => {});
+    }
+
+    await c.env.DB.prepare(
+      'UPDATE posts SET text = ?, hashtags = ?, mentions = ?, gif_key = ?, payload_key = ?, swf_key = ?, thumbnail_key = ?, edited_at = ? WHERE id = ?',
+    )
+      .bind(
+        trimmed,
+        hashtagsJson || '[]',
+        mentionsJson || '[]',
+        updatedGifKey || null,
+        updatedPayloadKey || null,
+        updatedSwfKey || null,
+        updatedThumbnailKey || null,
+        textChanged || keysToDelete.length > 0 ? now : post.edited_at || null,
+        postId,
+      )
       .run();
 
-    return c.json({
-      id: postId,
-      text: trimmed,
-      hashtags: JSON.stringify(hashtags),
-      mentions: mentionsJson,
-      edited_at: now,
-    });
+    // Fetch updated post
+    const updated = (await c.env.DB.prepare(
+      "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key as payloadKey, p.swf_key as swfKey, p.thumbnail_key as thumbnailKey, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.edited_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?",
+    )
+      .bind(postId)
+      .first()) as Record<string, unknown> | null;
+
+    return c.json({ post: updated });
   } catch (error: unknown) {
     const err = error as { message?: string; stack?: string };
     console.error('Edit post error:', error);

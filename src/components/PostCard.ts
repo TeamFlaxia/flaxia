@@ -38,6 +38,9 @@ export class PostCard {
   private isEditing: boolean = false;
   private editContainer: HTMLElement | null = null;
   private postTextContainer: HTMLElement | null = null;
+  private editAttachmentFile: File | null = null;
+  private editNewAttachmentKey: string | null = null;
+  private editRemoveAttachment: boolean = false;
 
   constructor(props: PostCardProps) {
     this.originalText = props.post.text;
@@ -1895,6 +1898,89 @@ export class PostCard {
       box-sizing: border-box;
     `;
 
+    // Attachment section (shown when post has attachments)
+    const post = this.props.post;
+    const attachmentSection = document.createElement('div');
+    attachmentSection.style.cssText = `
+      margin: 0.5rem 0;
+      padding: 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg-secondary);
+      font-size: 0.85rem;
+    `;
+
+    const currentAttachmentKey = post.gif_key || post.payload_key || post.swf_key;
+    const attachmentType = post.gif_key ? 'Image/Audio' : post.payload_key ? 'ZIP' : post.swf_key ? 'SWF' : null;
+    const attachmentFileName = currentAttachmentKey
+      ? currentAttachmentKey.split('/').pop() || currentAttachmentKey
+      : null;
+
+    const attachmentLabel = document.createElement('span');
+    attachmentLabel.style.cssText = 'color: var(--text-muted); margin-right: 0.5rem;';
+    attachmentLabel.textContent = attachmentFileName
+      ? `📎 ${attachmentType}: ${attachmentFileName}`
+      : t('post.edit_attachment_none');
+    attachmentSection.appendChild(attachmentLabel);
+
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.style.display = 'none';
+    fileInput.accept = '.gif,.png,.jpg,.jpeg,.swf,.zip,.jsdos,.mp3,.wav,.ogg,.m4a,.webm,.mp4,.mov';
+    attachmentSection.appendChild(fileInput);
+
+    const changeBtn = document.createElement('button');
+    changeBtn.textContent = t('post.edit_attachment_change');
+    changeBtn.style.cssText = `
+      padding: 4px 10px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      cursor: pointer;
+      font-size: 0.8rem;
+      margin-right: 0.25rem;
+    `;
+    changeBtn.addEventListener('click', () => fileInput.click());
+
+    const removeBtn = document.createElement('button');
+    removeBtn.textContent = t('post.edit_attachment_remove');
+    removeBtn.style.cssText = `
+      padding: 4px 10px;
+      border: 1px solid var(--danger, #e74c3c);
+      border-radius: 4px;
+      background: transparent;
+      color: var(--danger, #e74c3c);
+      cursor: pointer;
+      font-size: 0.8rem;
+    `;
+    removeBtn.addEventListener('click', () => {
+      this.editRemoveAttachment = true;
+      this.editAttachmentFile = null;
+      this.editNewAttachmentKey = null;
+      attachmentLabel.textContent = t('post.edit_attachment_removed');
+      changeBtn.disabled = true;
+      removeBtn.disabled = true;
+      changeBtn.style.opacity = '0.5';
+      removeBtn.style.opacity = '0.5';
+    });
+
+    if (currentAttachmentKey) {
+      attachmentSection.appendChild(changeBtn);
+      attachmentSection.appendChild(removeBtn);
+    } else {
+      attachmentSection.appendChild(changeBtn);
+    }
+
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files?.[0];
+      if (!file) return;
+      this.editAttachmentFile = file;
+      this.editRemoveAttachment = false;
+      attachmentLabel.textContent = `📎 ${file.name}`;
+      changeBtn.textContent = t('post.edit_attachment_change');
+    });
+
     const buttonRow = document.createElement('div');
     buttonRow.style.cssText = `
       display: flex;
@@ -1932,7 +2018,8 @@ export class PostCard {
     saveBtn.addEventListener('click', async () => {
       if (saving) return;
       const newText = textarea.value.trim();
-      if (!newText || newText === currentText) {
+      const hasAttachmentChanges = this.editAttachmentFile || this.editRemoveAttachment;
+      if ((!newText || newText === currentText) && !hasAttachmentChanges) {
         this.cancelEdit();
         return;
       }
@@ -1940,20 +2027,72 @@ export class PostCard {
       saveBtn.disabled = true;
       saveBtn.textContent = '...';
       try {
-        const res = await fetch(`/api/posts/${this.props.post.id}`, {
+        // Upload new attachment if selected
+        let newGifKey: string | undefined;
+        let newPayloadKey: string | undefined;
+        let newSwfKey: string | undefined;
+
+        if (this.editAttachmentFile) {
+          const file = this.editAttachmentFile;
+          const prepareRes = await fetch(`/api/posts/${post.id}/prepare-attachment`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ filename: file.name }),
+          });
+          if (!prepareRes.ok) throw new Error('Failed to prepare attachment upload');
+          const prepareData = (await prepareRes.json()) as {
+            uploadUrl: string;
+            key: string;
+            keyType: string;
+          };
+
+          const uploadRes = await fetch(prepareData.uploadUrl, {
+            method: 'PUT',
+            body: file,
+            headers: { 'Content-Type': file.type },
+            credentials: 'include',
+          });
+          if (!uploadRes.ok) throw new Error('Failed to upload attachment');
+
+          this.editNewAttachmentKey = prepareData.key;
+          if (prepareData.keyType === 'gif') newGifKey = prepareData.key;
+          else if (prepareData.keyType === 'payload') newPayloadKey = prepareData.key;
+          else if (prepareData.keyType === 'swf') newSwfKey = prepareData.key;
+        }
+
+        const body: Record<string, unknown> = {};
+        if (newText && newText !== currentText) body.text = newText;
+        if (this.editNewAttachmentKey) {
+          if (newGifKey) body.gif_key = newGifKey;
+          else if (newPayloadKey) body.payload_key = newPayloadKey;
+          else if (newSwfKey) body.swf_key = newSwfKey;
+        }
+        if (this.editRemoveAttachment) {
+          if (post.gif_key) body.gif_key = null;
+          if (post.payload_key) body.payload_key = null;
+          if (post.swf_key) body.swf_key = null;
+        }
+
+        const res = await fetch(`/api/posts/${post.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify({ text: newText }),
+          body: JSON.stringify(body),
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           throw new Error((err as { error?: string })?.error || 'Edit failed');
         }
-        const data = (await res.json()) as { text: string; edited_at: string };
-        this.originalText = data.text;
-        this.props.post.text = data.text;
-        this.props.post.edited_at = data.edited_at;
+        const data = (await res.json()) as {
+          post: { text: string; edited_at: string; gif_key?: string; payload_key?: string; swf_key?: string };
+        };
+        this.originalText = data.post.text;
+        this.props.post.text = data.post.text;
+        this.props.post.edited_at = data.post.edited_at;
+        if (data.post.gif_key !== undefined) this.props.post.gif_key = data.post.gif_key;
+        if (data.post.payload_key !== undefined) this.props.post.payload_key = data.post.payload_key;
+        if (data.post.swf_key !== undefined) this.props.post.swf_key = data.post.swf_key;
         this.cancelEdit();
         this.showToast(t('post.edit_saved'));
       } catch (_err) {
@@ -1962,6 +2101,9 @@ export class PostCard {
         saving = false;
         saveBtn.disabled = false;
         saveBtn.textContent = t('post.edit_save');
+        this.editAttachmentFile = null;
+        this.editNewAttachmentKey = null;
+        this.editRemoveAttachment = false;
       }
     });
 
@@ -1975,6 +2117,7 @@ export class PostCard {
     buttonRow.appendChild(cancelBtn);
     buttonRow.appendChild(saveBtn);
     this.editContainer.appendChild(textarea);
+    this.editContainer.appendChild(attachmentSection);
     this.editContainer.appendChild(buttonRow);
 
     textElement.replaceWith(this.editContainer);
@@ -1985,6 +2128,9 @@ export class PostCard {
   private cancelEdit(): void {
     if (!this.isEditing || !this.editContainer || !this.postTextContainer) return;
     this.isEditing = false;
+    this.editAttachmentFile = null;
+    this.editNewAttachmentKey = null;
+    this.editRemoveAttachment = false;
 
     const textElement = document.createElement('div');
     textElement.className = 'post-text';
