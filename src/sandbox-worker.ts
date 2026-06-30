@@ -9,7 +9,7 @@ type Bindings = {
 
 const SANDBOX_CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' data:",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:",
   "style-src 'self' 'unsafe-inline'",
   "worker-src 'self' blob:",
   "img-src 'self' data: blob:",
