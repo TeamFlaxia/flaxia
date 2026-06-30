@@ -1443,6 +1443,217 @@ app.get('/api/games', async (c) => {
       });
     }
 
+    // Recommended mode: personalized scoring based on interest vector + dwell time
+    const recommended = c.req.query('recommended') === 'true';
+    if (recommended && currentUserId) {
+      const initialId = c.req.query('initialId');
+
+      // Build interest vector from Fresh history + significant dwell plays
+      let interestVector: number[] | null = null;
+      const dim = 1024;
+
+      const freshRows = await c.env.DB.prepare(
+        `SELECT f.post_id FROM freshs f JOIN posts p ON p.id = f.post_id
+         WHERE f.user_id = ? ORDER BY p.created_at DESC LIMIT 50`,
+      )
+        .bind(currentUserId)
+        .all<{ post_id: string }>();
+      const freshIds = (freshRows.results || []).map((r) => r.post_id);
+
+      const gamePlayRows = await c.env.DB.prepare(
+        `SELECT post_id, dwell_ms FROM user_game_plays
+         WHERE user_id = ? AND dwell_ms > 5000
+         ORDER BY created_at DESC LIMIT 50`,
+      )
+        .bind(currentUserId)
+        .all<{ post_id: string; dwell_ms: number }>();
+      const gamePlays = gamePlayRows.results || [];
+
+      const allSourceIds = [...freshIds, ...gamePlays.map((r) => r.post_id)];
+      const dwellMap = new Map(gamePlays.map((r) => [r.post_id, r.dwell_ms]));
+
+      if (allSourceIds.length > 0) {
+        const embedRows = await c.env.DB.prepare(
+          `SELECT post_id, embedding FROM post_embeddings WHERE post_id IN (${allSourceIds.map(() => '?').join(',')})`,
+        )
+          .bind(...allSourceIds)
+          .all<{ post_id: string; embedding: string }>();
+        const weightedEmbeds: Array<{ vec: number[]; weight: number }> = [];
+        for (const row of embedRows.results || []) {
+          try {
+            const v = JSON.parse(row.embedding);
+            if (!Array.isArray(v)) continue;
+            const dwellW = dwellMap.get(row.post_id);
+            // Fresh = weight 1.0, game play with dwell = weight min(dwell_ms / 30000, 1.0)
+            const w = dwellW ? Math.min(dwellW / 30000, 1.0) : 1.0;
+            weightedEmbeds.push({ vec: v, weight: w });
+          } catch {
+            /* skip malformed */
+          }
+        }
+        if (weightedEmbeds.length > 0) {
+          const totalWeight = weightedEmbeds.reduce((s, e) => s + e.weight, 0);
+          interestVector = new Array(dim).fill(0);
+          for (const { vec, weight } of weightedEmbeds) {
+            for (let i = 0; i < dim; i++) interestVector[i] += (vec[i] || 0) * weight;
+          }
+          for (let i = 0; i < dim; i++) interestVector[i] /= totalWeight;
+        }
+      }
+
+      // Get dwell stats for all games from other users
+      const dwellStats = new Map<string, { avgDwell: number; playCount: number }>();
+      const dwellResult = await c.env.DB.prepare(
+        `SELECT post_id, AVG(dwell_ms) as avg_dwell, COUNT(*) as play_count
+         FROM user_game_plays
+         WHERE dwell_ms > 2000 AND user_id != ?
+         GROUP BY post_id`,
+      )
+        .bind(currentUserId)
+        .all<{ post_id: string; avg_dwell: number; play_count: number }>();
+      for (const row of dwellResult.results || []) {
+        dwellStats.set(row.post_id, { avgDwell: Number(row.avg_dwell) || 0, playCount: row.play_count });
+      }
+      const maxAvgDwell = Math.max(...Array.from(dwellStats.values()).map((d) => d.avgDwell), 1);
+
+      // Get games the user has already played
+      const playedSet = new Set<string>();
+      const playedResult = await c.env.DB.prepare(`SELECT DISTINCT post_id FROM user_game_plays WHERE user_id = ?`)
+        .bind(currentUserId)
+        .all<{ post_id: string }>();
+      for (const row of playedResult.results || []) {
+        playedSet.add(row.post_id);
+      }
+
+      // Query candidate game posts
+      const candidateQuery = `
+        SELECT p.id as postId, p.user_id, p.text, p.swf_key, p.payload_key,
+               p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count,
+               p.impressions, p.created_at,
+               u.username, u.display_name, u.avatar_key
+        FROM posts p
+        JOIN users u ON p.user_id = u.id
+        WHERE (p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL)
+          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
+        ORDER BY p.created_at DESC
+        LIMIT 200
+      `;
+      const candidates = await c.env.DB.prepare(candidateQuery).all<{
+        postId: string;
+        user_id: string;
+        text: string;
+        swf_key: string | null;
+        payload_key: string | null;
+        thumbnail_key: string | null;
+        fresh_count: number;
+        reply_count: number;
+        impressions: number;
+        created_at: string;
+        username: string;
+        display_name: string | null;
+        avatar_key: string | null;
+      }>();
+      const candidateRows = candidates.results || [];
+
+      // Get embeddings for candidates
+      const candEmbeds = new Map<string, number[]>();
+      if (candidateRows.length > 0) {
+        const cIds = candidateRows.map((r) => r.postId);
+        const eRows = await c.env.DB.prepare(
+          `SELECT post_id, embedding FROM post_embeddings WHERE post_id IN (${cIds.map(() => '?').join(',')})`,
+        )
+          .bind(...cIds)
+          .all<{ post_id: string; embedding: string }>();
+        for (const row of eRows.results || []) {
+          try {
+            const v = JSON.parse(row.embedding);
+            if (Array.isArray(v)) candEmbeds.set(row.post_id, v);
+          } catch {
+            /* skip */
+          }
+        }
+      }
+
+      // Score candidates
+      const now = Date.now();
+      const dayMs = 86400000;
+      const scored = candidateRows.map((row) => {
+        const emb = candEmbeds.get(row.postId);
+        let vecSim = 0;
+        if (interestVector && emb) {
+          vecSim = cosineSimilarity(interestVector, emb);
+        }
+
+        const dwellInfo = dwellStats.get(row.postId);
+        const expectedDwellNorm = dwellInfo ? dwellInfo.avgDwell / maxAvgDwell : 0;
+
+        const hasPlayed = playedSet.has(row.postId);
+        const explorationBonus = hasPlayed ? 0 : 0.2;
+
+        const age = now - new Date(row.created_at).getTime();
+        const freshnessBonus = age < dayMs ? 0.1 : 0;
+
+        const score = 0.35 * vecSim + 0.35 * expectedDwellNorm + 0.2 * explorationBonus + 0.1 * freshnessBonus;
+
+        return { row, score };
+      });
+
+      // Sort by score descending
+      scored.sort((a, b) => b.score - a.score);
+
+      // If initialGameId, promote it to front
+      if (initialId) {
+        const idx = scored.findIndex((s) => s.row.postId === initialId);
+        if (idx !== -1) {
+          const item = scored.splice(idx, 1)[0];
+          scored.unshift(item);
+        }
+      }
+
+      // Paginate
+      const offset = Math.max(0, Number(c.req.query('offset') || '0'));
+      const page = scored.slice(offset, offset + limit);
+      const hasMore = offset + limit < scored.length;
+
+      // Check fresh status
+      let freshedPostIds: Set<string> = new Set();
+      if (page.length > 0) {
+        const pageIds = page.map((s) => s.row.postId);
+        const freshResult = await c.env.DB.prepare(
+          `SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${pageIds.map(() => '?').join(',')})`,
+        )
+          .bind(currentUserId, ...pageIds)
+          .all<{ post_id: string }>();
+        freshedPostIds = new Set((freshResult.results || []).map((r) => r.post_id));
+      }
+
+      const games = page.map(({ row }) => {
+        let type: string;
+        if (row.swf_key) type = 'flash';
+        else if (row.payload_key && row.payload_key.startsWith('dos/')) type = 'dos';
+        else type = 'zip';
+        return {
+          id: row.postId,
+          postId: row.postId,
+          title: row.text?.substring(0, 100) || `Game by @${row.username}`,
+          username: row.username,
+          displayName: row.display_name || undefined,
+          avatarKey: row.avatar_key || undefined,
+          type,
+          swfKey: row.swf_key || undefined,
+          payloadKey: row.payload_key || undefined,
+          thumbnailKey: row.thumbnail_key || undefined,
+          freshCount: row.fresh_count,
+          replyCount: row.reply_count,
+          impressions: row.impressions,
+          isFreshed: freshedPostIds.has(row.postId),
+          createdAt: row.created_at,
+        };
+      });
+
+      return c.json({ games, hasMore, offset: offset + limit });
+    }
+
     let sql = `
       SELECT
         p.id as postId,
@@ -1572,6 +1783,38 @@ app.get('/api/games', async (c) => {
   } catch (error: unknown) {
     console.error('Games fetch error:', error);
     return c.json({ error: 'Failed to fetch games', details: (error as { message?: string })?.message }, 500);
+  }
+});
+
+// POST /api/games/dwell - record game play dwell time
+app.post('/api/games/dwell', async (c) => {
+  try {
+    const currentUserId = c.get('user')?.id;
+    if (!currentUserId) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const { plays } = await c.req.json<{
+      plays: Array<{ postId: string; dwellMs: number; isFullscreen: number; gameType: string }>;
+    }>();
+    if (!plays || plays.length === 0) {
+      return c.json({ error: 'No plays' }, 400);
+    }
+
+    const stmt = c.env.DB.prepare(
+      `INSERT INTO user_game_plays (id, user_id, post_id, dwell_ms, is_fullscreen, game_type, source)
+       VALUES (?, ?, ?, ?, ?, ?, 'arcade')`,
+    );
+
+    for (const play of plays) {
+      const id = crypto.randomUUID();
+      await stmt.bind(id, currentUserId, play.postId, play.dwellMs, play.isFullscreen, play.gameType).run();
+    }
+
+    return c.json({ ok: true });
+  } catch (error: unknown) {
+    console.error('Dwell record error:', error);
+    return c.json({ error: 'Failed to record dwell' }, 500);
   }
 });
 
@@ -4194,7 +4437,7 @@ app.get('/api/posts/recommended', async (c) => {
 
     const currentUserId = c.get('user')?.id;
 
-    // Build user interest vector from recent Fresh history
+    // Build user interest vector from Fresh history + game dwell signals
     let interestVector: number[] | null = null;
     if (currentUserId) {
       // Get recent 50 fresh post IDs for this user
@@ -4205,28 +4448,46 @@ app.get('/api/posts/recommended', async (c) => {
         .all<{ post_id: string }>();
       const freshIds = (freshRows.results || []).map((r) => r.post_id);
 
-      if (freshIds.length > 0) {
+      // Get recent game plays with significant dwell time
+      const dwellRows = await c.env.DB.prepare(
+        `SELECT post_id, dwell_ms FROM user_game_plays
+         WHERE user_id = ? AND dwell_ms > 5000
+         ORDER BY created_at DESC LIMIT 50`,
+      )
+        .bind(currentUserId)
+        .all<{ post_id: string; dwell_ms: number }>();
+      const dwellItems = dwellRows.results || [];
+
+      // Combine: fresh posts (weight 1.0) + dwell plays (weight by time)
+      const allIds = [...freshIds, ...dwellItems.map((r) => r.post_id)];
+      const dwellWeightMap = new Map(dwellItems.map((r) => [r.post_id, r.dwell_ms]));
+
+      if (allIds.length > 0) {
         const embedRows = await c.env.DB.prepare(
-          `SELECT embedding FROM post_embeddings WHERE post_id IN (${freshIds.map(() => '?').join(',')})`,
+          `SELECT post_id, embedding FROM post_embeddings WHERE post_id IN (${allIds.map(() => '?').join(',')})`,
         )
-          .bind(...freshIds)
-          .all<{ embedding: string }>();
-        const vectors: number[][] = [];
+          .bind(...allIds)
+          .all<{ post_id: string; embedding: string }>();
+        const weightedEmbeds: Array<{ vec: number[]; weight: number }> = [];
         for (const row of embedRows.results || []) {
           try {
             const v = JSON.parse(row.embedding);
-            if (Array.isArray(v)) vectors.push(v);
+            if (!Array.isArray(v)) continue;
+            const dwellMs = dwellWeightMap.get(row.post_id);
+            const weight = dwellMs ? Math.min(dwellMs / 30000, 1.0) : 1.0;
+            weightedEmbeds.push({ vec: v, weight });
           } catch {
             /* skip malformed */
           }
         }
-        if (vectors.length > 0) {
-          const dim = vectors[0].length;
+        if (weightedEmbeds.length > 0) {
+          const dim = weightedEmbeds[0].vec.length;
+          const totalWeight = weightedEmbeds.reduce((s, e) => s + e.weight, 0);
           interestVector = new Array(dim).fill(0);
-          for (const v of vectors) {
-            for (let i = 0; i < dim; i++) interestVector[i] += v[i];
+          for (const { vec, weight } of weightedEmbeds) {
+            for (let i = 0; i < dim; i++) interestVector[i] += (vec[i] || 0) * weight;
           }
-          for (let i = 0; i < dim; i++) interestVector[i] /= vectors.length;
+          for (let i = 0; i < dim; i++) interestVector[i] /= totalWeight;
         }
       }
     }

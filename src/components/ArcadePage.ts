@@ -30,8 +30,8 @@ export class ArcadePage {
   private hasMore: boolean = true;
   private shuffleToken: string | null = null;
   private shuffleOffset: number = 0;
-  private hasMoreShuffle: boolean = true;
   private isLoadingMore: boolean = false;
+  private recommendedOffset: number = 0;
   private gameContainer: HTMLElement;
   private floatingActions: HTMLElement | null = null;
   private currentGameHandle: { destroy: () => void } | null = null;
@@ -56,6 +56,13 @@ export class ArcadePage {
   private preloadedIds = new Set<string>();
 
   private static TUTORIAL_SEEN_KEY = 'flaxia_tutorial_seen';
+
+  // Dwell time tracking
+  private gameEntryTime: number = 0;
+  private gameEntryFullscreen: boolean = false;
+  private pendingDwell: Array<{ postId: string; dwellMs: number; isFullscreen: number; gameType: string }> = [];
+  private dwellFlushTimer: number | null = null;
+  private boundFlushDwell: () => void;
 
   // Store bound event handlers for proper cleanup
   private boundHandleTouchStart: (e: TouchEvent) => void;
@@ -84,6 +91,7 @@ export class ArcadePage {
     this.boundHandleMouseLeave = this.handleMouseUp.bind(this);
     this.boundHandleFullscreenChange = this.handleFullscreenChange.bind(this);
     this.boundHandleSpaNavigate = this.handleSpaNavigate.bind(this);
+    this.boundFlushDwell = () => this.flushDwell();
 
     this.setupEventListeners();
     this.setupLeftNavSwipeDetection();
@@ -99,6 +107,9 @@ export class ArcadePage {
     }
 
     this.loadGames();
+
+    // Flush dwell data on page unload
+    window.addEventListener('beforeunload', this.boundFlushDwell);
 
     if (!localStorage.getItem(ArcadePage.TUTORIAL_SEEN_KEY)) {
       this.showTutorial();
@@ -596,18 +607,24 @@ export class ArcadePage {
     loadingIndicator.style.display = 'flex';
 
     try {
-      let url = '/api/games?shuffle=true';
+      let url = this.props.currentUser ? '/api/games?recommended=true' : '/api/games?shuffle=true';
       if (this.initialGameId) {
         url += `&initialId=${encodeURIComponent(this.initialGameId)}`;
       }
       const response = await fetch(url, { credentials: 'include' });
       if (response.ok) {
-        const data = (await response.json()) as { games: Game[]; hasMore?: boolean; token?: string; offset?: number };
+        const data = (await response.json()) as {
+          games: Game[];
+          hasMore?: boolean;
+          token?: string;
+          offset?: number;
+          cursor?: string;
+        };
         this.games = data.games || [];
         this.hasMore = data.hasMore || false;
         this.shuffleToken = data.token || null;
-        this.shuffleOffset = data.offset || 0;
-        this.hasMoreShuffle = data.hasMore || false;
+        this.shuffleOffset = data.token ? data.offset || 0 : 0;
+        this.recommendedOffset = !data.token ? (typeof data.offset === 'number' ? data.offset : 0) : 0;
 
         if (this.games.length > 0) {
           if (this.initialGameId) {
@@ -635,21 +652,32 @@ export class ArcadePage {
   }
 
   private async loadMoreGames(): Promise<void> {
-    if (this.isLoadingMore || !this.hasMoreShuffle) return;
+    if (this.isLoadingMore || !this.hasMore) return;
     this.isLoadingMore = true;
 
     try {
-      const response = await fetch(`/api/games?shuffle=true&token=${this.shuffleToken}&offset=${this.shuffleOffset}`, {
-        credentials: 'include',
-      });
+      const useRecommended = this.props.currentUser && !this.shuffleToken;
+      let url: string;
+      if (useRecommended) {
+        url = `/api/games?recommended=true&offset=${this.recommendedOffset}`;
+      } else if (this.shuffleToken) {
+        url = `/api/games?shuffle=true&token=${this.shuffleToken}&offset=${this.shuffleOffset}`;
+      } else {
+        url = '/api/games?shuffle=true';
+      }
+      const response = await fetch(url, { credentials: 'include' });
       if (response.ok) {
         const data = (await response.json()) as { games: Game[]; hasMore?: boolean; token?: string; offset?: number };
         if (data.games && data.games.length > 0) {
           this.games.push(...data.games);
         }
         this.shuffleToken = data.token || null;
-        this.shuffleOffset = data.offset || 0;
-        this.hasMoreShuffle = data.hasMore || false;
+        this.hasMore = data.hasMore || false;
+        if (data.token) {
+          this.shuffleOffset = data.offset || 0;
+        } else {
+          this.recommendedOffset = typeof data.offset === 'number' ? data.offset : 0;
+        }
       }
     } catch (error) {
       console.error('Failed to load more games:', error);
@@ -670,6 +698,10 @@ export class ArcadePage {
 
     // Track impression
     impressionTracker.trackImpression(game.postId);
+
+    // Record dwell entry time
+    this.gameEntryTime = performance.now();
+    this.gameEntryFullscreen = this.isFullscreen;
 
     // Clear previous game
     this.clearCurrentGame();
@@ -1367,6 +1399,7 @@ export class ArcadePage {
   }
 
   private clearCurrentGame(): void {
+    this.recordDwell();
     this.hideLoading();
     // Remove current game viewport
     const viewport = this.gameContainer.querySelector('.arcade-viewport') as HTMLElement;
@@ -1389,6 +1422,44 @@ export class ArcadePage {
     this.floatingActions = null;
     this.commentPanel = null;
     this.currentViewport = null;
+  }
+
+  private recordDwell(): void {
+    if (this.gameEntryTime === 0 || !this.games[this.currentIndex]) return;
+    const dwellMs = Math.round(performance.now() - this.gameEntryTime);
+    const game = this.games[this.currentIndex];
+    if (dwellMs > 2000) {
+      this.pendingDwell.push({
+        postId: game.postId,
+        dwellMs,
+        isFullscreen: this.gameEntryFullscreen ? 1 : 0,
+        gameType: game.type,
+      });
+      this.scheduleDwellFlush();
+    }
+    this.gameEntryTime = 0;
+  }
+
+  private scheduleDwellFlush(): void {
+    if (this.dwellFlushTimer) return;
+    this.dwellFlushTimer = window.setTimeout(() => this.flushDwell(), 5000);
+  }
+
+  private async flushDwell(): Promise<void> {
+    if (this.pendingDwell.length === 0) return;
+    const batch = this.pendingDwell.splice(0);
+    this.dwellFlushTimer = null;
+    try {
+      await fetch('/api/games/dwell', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        keepalive: true,
+        body: JSON.stringify({ plays: batch }),
+      });
+    } catch {
+      // Silently fail — dwell data is non-critical
+    }
   }
 
   private preloadNextGame(): void {
@@ -1461,7 +1532,7 @@ export class ArcadePage {
 
   private animateToNext(): void {
     if (this.currentIndex >= this.games.length - 1) {
-      if (this.hasMoreShuffle && !this.isLoadingMore) {
+      if (this.hasMore && !this.isLoadingMore) {
         this.loadMoreGames();
       }
       if (this.currentViewport) {
@@ -1485,7 +1556,7 @@ export class ArcadePage {
 
     setTimeout(() => {
       this.currentIndex++;
-      if (this.currentIndex >= this.games.length - 5 && this.hasMoreShuffle && !this.isLoadingMore) {
+      if (this.currentIndex >= this.games.length - 5 && this.hasMore && !this.isLoadingMore) {
         this.loadMoreGames();
       }
       this.renderCurrentGame();
@@ -1536,8 +1607,10 @@ export class ArcadePage {
   private navigateToNext(): void {
     if (this.isTransitioning) return;
 
+    this.recordDwell();
+
     if (this.currentIndex >= this.games.length - 1) {
-      if (this.hasMoreShuffle && !this.isLoadingMore) {
+      if (this.hasMore && !this.isLoadingMore) {
         this.loadMoreGames();
       }
       return;
@@ -1547,7 +1620,7 @@ export class ArcadePage {
     this.currentIndex++;
     this.renderCurrentGame();
 
-    if (this.currentIndex >= this.games.length - 5 && this.hasMoreShuffle && !this.isLoadingMore) {
+    if (this.currentIndex >= this.games.length - 5 && this.hasMore && !this.isLoadingMore) {
       this.loadMoreGames();
     }
 
@@ -1559,6 +1632,7 @@ export class ArcadePage {
   private navigateToPrevious(): void {
     if (this.isTransitioning || this.currentIndex <= 0) return;
 
+    this.recordDwell();
     this.isTransitioning = true;
     this.currentIndex--;
     this.renderCurrentGame();
@@ -2252,6 +2326,8 @@ export class ArcadePage {
   }
 
   public destroy(): void {
+    this.recordDwell();
+    this.flushDwell();
     this.closeCommentPanel();
     if (this.tutorialEl) {
       this.tutorialEl.remove();
@@ -2268,6 +2344,11 @@ export class ArcadePage {
     document.removeEventListener('fullscreenchange', this.boundHandleFullscreenChange);
     document.removeEventListener('webkitfullscreenchange', this.boundHandleFullscreenChange);
     window.removeEventListener('spaNavigate', this.boundHandleSpaNavigate);
+    window.removeEventListener('beforeunload', this.boundFlushDwell);
+    if (this.dwellFlushTimer) {
+      clearTimeout(this.dwellFlushTimer);
+      this.dwellFlushTimer = null;
+    }
     if (this.boundPostUpdatedHandler) {
       window.removeEventListener('postUpdated', this.boundPostUpdatedHandler);
       this.boundPostUpdatedHandler = undefined;
