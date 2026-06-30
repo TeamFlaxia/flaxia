@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-Flaxia is an innovative chronological social networking service (SNS) that reimagines social media posts as living, interactive applications. Unlike traditional platforms where posts are static text and media, Flaxia enables users to create and share fully interactive content packaged as ZIP files, which can contain HTML5 applications, Unity WebGL games, Flash animations, and other dynamic experiences.
+Flaxia is an innovative social networking service (SNS) that reimagines social media posts as living, interactive applications. Unlike traditional platforms where posts are static text and media, Flaxia enables users to create and share fully interactive content packaged as ZIP files, which can contain HTML5 applications, Unity WebGL games, Flash animations, and other dynamic experiences.
 
 Built on Cloudflare's edge computing infrastructure, Flaxia leverages serverless architecture to deliver a highly scalable, secure, and performant platform. The system integrates with the Fediverse through ActivityPub protocol (WIP), enabling decentralized social networking while maintaining unique interactive content capabilities.
 
@@ -96,7 +96,7 @@ ads (id, title, body_text, click_url, payload_key, payload_type, impressions, cl
 ad_interactions (id, ad_id, interaction_type, created_at)
 ```
 
-**Indexes**: Optimized for common query patterns including chronological feeds, user profiles, and social graph traversal.
+**Indexes**: Optimized for common query patterns including feeds, user profiles, and social graph traversal.
 
 ## Interactive Content System
 
@@ -229,7 +229,7 @@ FreshBridge.onMessage(callback)   // Listen for parent messages
 - User suggestions based on non-followed users
 
 **Activity Feed**:
-- Chronological post ordering
+- Post ordering
 - Support for hashtags and tagging
 - Fresh vote counting for engagement metrics
 - Reply threading for conversations
@@ -245,7 +245,7 @@ FreshBridge.onMessage(callback)   // Listen for parent messages
 **Reply System**:
 - Threaded conversations
 - Reply-to-reply support
-- Chronological ordering within threads
+- Ordering within threads
 - User attribution and timestamps
 
 **Notifications**:

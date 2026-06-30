@@ -34,7 +34,7 @@ All API endpoints are served from `functions/api/[[route]].ts` via Hono framewor
 
 ### Get Timeline
 `GET /api/posts?cursor=<created_at>&limit=20`
-- Returns chronological posts from followed users
+- Returns posts from followed users
 - Cursor-based pagination
 
 ### Get Post Thread

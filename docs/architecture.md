@@ -109,7 +109,7 @@ All cross-origin communication between main and sandbox uses a typed bridge (`sr
 ## SPA Routing
 
 The client-side SPA (`src/main.ts`) manages routing with the following views:
-- **Timeline** — Chronological post feed with ad injection
+- **Timeline** — Post feed with ad injection
 - **Thread** — Post detail with replies
 - **Profile** — User profile with their posts
 - **Arcade** — Browse playable game posts

@@ -1,7 +1,7 @@
 {
   "name": "flaxia",
   "version": "0.1.0",
-  "description": "Chronological SNS where posts are living, interactive applications",
+  "description": "SNS where posts are living, interactive applications",
   "type": "module",
   "scripts": {
     "lint": "biome check .",

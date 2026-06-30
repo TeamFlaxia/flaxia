@@ -1,7 +1,7 @@
 # Flaxia — Project Guide for Claude
 
 ## Project Identity
-Flaxia is a chronological SNS where posts are living, interactive applications. Concept: "Twitter with Flash inside" — spiritual successor to Adobe Flash.
+Flaxia is an SNS where posts are living, interactive applications. Concept: "Twitter with Flash inside" — spiritual successor to Adobe Flash.
 
 ## Tech Stack
 - **Runtime**: Cloudflare Pages + Workers (edge-first)
@@ -46,7 +46,7 @@ docs/                       # Developer documentation
 
 ## Constraints (NON-NEGOTIABLE)
 - Post text ≤ 200 chars, payload ≤ 10MB
-- Timeline: chronological only (`ORDER BY created_at DESC`)
+- Timeline: only (`ORDER BY created_at DESC`)
 - `allow-same-origin` banned on all iframes
 - `Sponsored` label mandatory on all ad cards
 - `click_url` with `javascript:` scheme must be rejected

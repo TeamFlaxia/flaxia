@@ -1,6 +1,6 @@
 # Flaxia
 
-Chronological SNS where posts are living, interactive applications. "Twitter with Flash inside" — spiritual successor to Adobe Flash.
+SNS where posts are living, interactive applications. "Twitter with Flash inside" — spiritual successor to Adobe Flash.
 
 ## Tech Stack
 
@@ -58,7 +58,7 @@ Chronological SNS where posts are living, interactive applications. "Twitter wit
 ## Important Constraints
 - Post text: ≤ 200 characters
 - Payload size: ≤ 10MB (post), ≤ 200MB (ads)
-- Timeline: chronological only, no algorithmic sorting
+- Timeline: only, no algorithmic sorting
 - `allow-same-origin` banned on all iframes
 - CSP enforced via HTTP headers (not `<meta>`)
 - 3-column layout (240px / 600px / 350px)

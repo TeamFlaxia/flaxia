@@ -4,7 +4,7 @@
 [![Deploy](https://github.com/RemydreScarlet/flaxia/actions/workflows/deploy.yml/badge.svg)](https://github.com/RemydreScarlet/flaxia/actions/workflows/deploy.yml)
 [![Release](https://github.com/RemydreScarlet/flaxia/actions/workflows/release.yml/badge.svg)](https://github.com/RemydreScarlet/flaxia/actions/workflows/release.yml)
 
-Chronological SNS where posts are living, interactive applications.
+SNS where posts are living, interactive applications.
 
 ZIP (HTML5 ゲーム), SWF (Flash), 画像, 音声を投稿に添付でき、サンドボックス環境で安全に実行できます。
 
