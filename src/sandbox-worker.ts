@@ -9,13 +9,13 @@ type Bindings = {
 
 const SANDBOX_CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' data:",
   "style-src 'self' 'unsafe-inline'",
   "worker-src 'self' blob:",
   "img-src 'self' data: blob:",
   "media-src 'self' blob:",
   "font-src 'self' data:",
-  "connect-src 'self'",
+  "connect-src 'self' data: blob:",
   'frame-ancestors https://flaxia.app',
 ].join('; ');
 
