@@ -47,10 +47,10 @@ app.get('/:postId', async (c) => {
     default-src 'none';
     script-src 'self' data: 'unsafe-inline';
     connect-src 'self' data: blob: https:;
-    style-src 'self';
-    img-src 'self' data: blob:;
-    media-src 'self' blob:;
-    font-src 'self';
+    style-src 'self' https:;
+    img-src 'self' data: blob: https:;
+    media-src 'self' blob: https:;
+    font-src 'self' https:;
     frame-src 'none';
     object-src 'none';
     base-uri 'self';
