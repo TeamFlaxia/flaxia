@@ -1,6 +1,12 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { ensureFileInWvfs, extractZipToWvfs, serveFileFromWvfs } from './lib/wvfs-zip-server';
+import {
+  ensureFileInWvfs,
+  extractZipToR2,
+  extractZipToWvfs,
+  serveFileFromR2,
+  serveFileFromWvfs,
+} from './lib/wvfs-zip-server';
 
 type Bindings = {
   BUCKET: R2Bucket;
@@ -29,6 +35,14 @@ function withCsp(response: Response): Response {
   });
 }
 
+async function persistExtractionToR2(bucket: R2Bucket, zipKey: string, postId: string): Promise<void> {
+  try {
+    await extractZipToR2(bucket, zipKey, postId);
+  } catch (e) {
+    console.error('Background R2 extraction failed:', e);
+  }
+}
+
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use('/*', cors());
@@ -44,11 +58,15 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
       return c.json({ error: 'Storage not available' }, 500);
     }
 
-    // 1. Try serving from in-memory cache first
-    let response = await serveFileFromWvfs(postId, filePath);
+    // 1. Try pre-extracted R2 files (fast path — persists across workers, CDN-cacheable)
+    let response = await serveFileFromR2(c.env.BUCKET, postId, filePath);
     if (response) return withCsp(response);
 
-    // 2. Find the ZIP key in R2
+    // 2. Try in-memory cache (second fast path)
+    response = await serveFileFromWvfs(postId, filePath);
+    if (response) return withCsp(response);
+
+    // 3. Find the ZIP key in R2
     let zipKey: string | null = null;
 
     if (c.env.DB) {
@@ -88,30 +106,18 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
       return c.json({ error: 'ZIP not found' }, 404);
     }
 
-    // 3. Try progressive extraction: parse central dir + extract just this file
+    // 4. Try progressive extraction: parse central dir + extract just this file
     const loaded = await ensureFileInWvfs(c.env.BUCKET, zipKey, postId, filePath);
     if (loaded) {
       response = await serveFileFromWvfs(postId, filePath);
       if (response) {
-        // Kick off full extraction in background for subsequent requests
-        c.executionCtx.waitUntil(
-          (async () => {
-            try {
-              const obj = await c.env.BUCKET.get(zipKey!);
-              if (obj) {
-                const buf = await obj.arrayBuffer();
-                await extractZipToWvfs(buf, postId);
-              }
-            } catch (e) {
-              console.error('Background full extraction failed:', e);
-            }
-          })(),
-        );
+        // Persist to R2 so subsequent requests skip extraction entirely
+        c.executionCtx.waitUntil(persistExtractionToR2(c.env.BUCKET, zipKey, postId));
         return withCsp(response);
       }
     }
 
-    // 4. Fallback: full extraction
+    // 5. Fallback: full extraction
     const obj = await c.env.BUCKET.get(zipKey);
     if (!obj) {
       return c.json({ error: 'ZIP not found' }, 404);
@@ -121,7 +127,10 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
     await extractZipToWvfs(zipData, postId);
 
     response = await serveFileFromWvfs(postId, filePath);
-    if (response) return withCsp(response);
+    if (response) {
+      c.executionCtx.waitUntil(persistExtractionToR2(c.env.BUCKET, zipKey, postId));
+      return withCsp(response);
+    }
 
     return c.json({ error: 'File not found in ZIP', path: filePath }, 404);
   } catch (error: unknown) {

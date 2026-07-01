@@ -1,7 +1,8 @@
 import { getMimeType } from './file-extensions';
 import { validateZipLegacy } from './zip-executor';
 
-const WVFS_TTL = 5 * 60 * 1000; // 5 minutes
+const WVFS_TTL = 5 * 60 * 1000;
+const WVFS_R2_PREFIX = 'wvfs/';
 
 interface ZipIndexEntry {
   fileName: string;
@@ -384,5 +385,102 @@ export async function cleanupWvfsZip(postId: string): Promise<void> {
     wvfsStorage.delete(postId);
   } catch (error) {
     console.error('Error cleaning up WVFS:', error);
+  }
+}
+
+// Extract all files from ZIP and store them individually in R2 for persistent caching.
+// Called after post commit or on first access as a background task.
+export async function extractZipToR2(bucket: R2Bucket, zipKey: string, postId: string): Promise<void> {
+  try {
+    const obj = await bucket.get(zipKey);
+    if (!obj) {
+      console.error(`extractZipToR2: ZIP not found at ${zipKey}`);
+      return;
+    }
+    const zipData = await obj.arrayBuffer();
+    await validateZipLegacy(zipData);
+
+    const fflate = await import('fflate');
+    const zip = fflate.unzipSync(new Uint8Array(zipData));
+
+    const files: string[] = [];
+    const puts: Promise<void>[] = [];
+
+    for (const [filename, fileData] of Object.entries(zip)) {
+      if (filename.endsWith('/')) continue;
+      const normalizedName = filename.replace(/^(\.\/)+/, '');
+      if (!normalizedName) continue;
+
+      const r2Key = `${WVFS_R2_PREFIX}${postId}/${normalizedName}`;
+      const contentType = getMimeType(normalizedName);
+
+      puts.push(
+        bucket
+          .put(r2Key, fileData, {
+            httpMetadata: { contentType },
+          })
+          .then(() => {}),
+      );
+      files.push(normalizedName);
+    }
+
+    await Promise.all(puts);
+
+    await bucket.put(`${WVFS_R2_PREFIX}${postId}/.wvfs-manifest`, JSON.stringify({ files }), {
+      httpMetadata: { contentType: 'application/json' },
+    });
+
+    console.log(`extractZipToR2: Extracted ${files.length} files for post ${postId}`);
+  } catch (error) {
+    console.error(`extractZipToR2: Failed for post ${postId}:`, error);
+  }
+}
+
+// Serve a file from the pre-extracted R2 cache.
+// Returns null if the file is not yet extracted (caller should fall back to on-the-fly).
+export async function serveFileFromR2(bucket: R2Bucket, postId: string, filePath: string): Promise<Response | null> {
+  try {
+    const normalizedPath = normalizePath(filePath);
+    const baseKey = `${WVFS_R2_PREFIX}${postId}/`;
+
+    const r2Key = baseKey + normalizedPath;
+    let obj = await bucket.get(r2Key);
+
+    if (!obj && !normalizedPath.endsWith('/')) {
+      obj = await bucket.get(baseKey + normalizedPath + '/index.html');
+    }
+
+    if (!obj) {
+      obj = await bucket.get(baseKey + './' + normalizedPath);
+    }
+
+    if (!obj) return null;
+
+    const contentType = getMimeType(normalizedPath);
+    const ext = normalizedPath.split('.').pop()?.toLowerCase();
+
+    if (ext === 'html') {
+      const htmlContent = await obj.text();
+      const withoutCsp = htmlContent.replace(/<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*\/?>/gi, '');
+      const modifiedHtml = injectBaseTag(withoutCsp, postId);
+      return new Response(modifiedHtml, {
+        headers: {
+          'Content-Type': contentType,
+          'Cache-Control': 'public, max-age=31536000, immutable',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
+    }
+
+    return new Response(obj.body, {
+      headers: {
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=31536000, immutable',
+        'Access-Control-Allow-Origin': '*',
+      },
+    });
+  } catch (error) {
+    console.error(`serveFileFromR2: Error for post ${postId}, path ${filePath}:`, error);
+    return null;
   }
 }

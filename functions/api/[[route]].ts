@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { nanoid } from 'nanoid';
 import { isAdmin } from '../../src/lib/admin';
+import { extractZipToR2 } from '../../src/lib/wvfs-zip-server';
 import type { ReportCategory } from '../../src/types/post';
 import { exportPrivateKey, exportPublicKey, generateKeyPair } from '../lib/activitypub/crypto';
 import { buildCreateActivity, buildDeleteActivity, buildNoteObject } from '../lib/activitypub/note';
@@ -5917,6 +5918,22 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
     embedPost(c.env.CROWD_ORCHESTRATOR_URL, c.env.CROWD_API_KEY, c.env.BASE_URL, fullPost.id, fullPost.text).catch(
       (e) => console.error('Background embed failed:', e),
     );
+
+    // Pre-extract ZIP to R2 for WVFS persistent caching
+    if (payloadKey && (payloadKey.endsWith('.zip') || payloadKey.endsWith('.jsdos'))) {
+      const execCtx = (c as any).executionCtx;
+      if (execCtx?.waitUntil) {
+        execCtx.waitUntil(
+          (async () => {
+            try {
+              await extractZipToR2(c.env.BUCKET, payloadKey!, postId!);
+            } catch (e) {
+              console.error('Background ZIP extraction failed:', e);
+            }
+          })(),
+        );
+      }
+    }
 
     return c.json({ post: fullPost });
   } catch (error: unknown) {
