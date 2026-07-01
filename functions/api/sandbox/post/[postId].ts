@@ -46,7 +46,7 @@ app.get('/:postId', async (c) => {
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'none';
     script-src 'self' data: 'unsafe-inline';
-    connect-src 'self' data: blob: /api/zip/* /api/wvfs-zip/* /api/wvfs/* https://sandbox.flaxia.app;
+    connect-src 'self' data: blob: https:;
     style-src 'self';
     img-src 'self' data: blob:;
     media-src 'self' blob:;

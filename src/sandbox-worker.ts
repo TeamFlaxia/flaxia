@@ -21,7 +21,7 @@ const SANDBOX_CSP = [
   "img-src 'self' data: blob:",
   "media-src 'self' blob:",
   "font-src 'self' data:",
-  "connect-src 'self' data: blob:",
+  "connect-src 'self' data: blob: https:",
   'frame-ancestors https://flaxia.app',
 ].join('; ');
 
