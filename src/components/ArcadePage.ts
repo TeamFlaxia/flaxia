@@ -74,6 +74,7 @@ export class ArcadePage {
   private boundHandleMouseLeave: (e: MouseEvent) => void;
   private boundHandleFullscreenChange: () => void;
   private boundHandleSpaNavigate: (e: Event) => void;
+  private boundHandleKeyDown: (e: KeyboardEvent) => void;
 
   constructor(props: ArcadePageProps) {
     this.props = props;
@@ -92,6 +93,17 @@ export class ArcadePage {
     this.boundHandleFullscreenChange = this.handleFullscreenChange.bind(this);
     this.boundHandleSpaNavigate = this.handleSpaNavigate.bind(this);
     this.boundFlushDwell = () => this.flushDwell();
+    this.boundHandleKeyDown = (e: KeyboardEvent) => {
+      if (this.tutorialEl) return;
+      if (this.isFullscreen) return;
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        this.navigateToPrevious();
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        this.navigateToNext();
+      }
+    };
 
     this.setupEventListeners();
     this.setupLeftNavSwipeDetection();
@@ -383,17 +395,7 @@ export class ArcadePage {
     document.addEventListener('webkitfullscreenchange', this.boundHandleFullscreenChange);
 
     // Keyboard navigation
-    document.addEventListener('keydown', (e) => {
-      if (this.tutorialEl) return;
-      if (this.isFullscreen) return;
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        this.navigateToPrevious();
-      } else if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        this.navigateToNext();
-      }
-    });
+    document.addEventListener('keydown', this.boundHandleKeyDown);
 
     // Wheel/trackpad support with debouncing
     let wheelTimeout: number | null = null;
@@ -2343,6 +2345,7 @@ export class ArcadePage {
     document.removeEventListener('mouseleave', this.boundHandleMouseLeave);
     document.removeEventListener('fullscreenchange', this.boundHandleFullscreenChange);
     document.removeEventListener('webkitfullscreenchange', this.boundHandleFullscreenChange);
+    document.removeEventListener('keydown', this.boundHandleKeyDown);
     window.removeEventListener('spaNavigate', this.boundHandleSpaNavigate);
     window.removeEventListener('beforeunload', this.boundFlushDwell);
     if (this.dwellFlushTimer) {
