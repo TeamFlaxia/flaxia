@@ -115,6 +115,28 @@ describe('POST /api/calls/start', () => {
     assert.equal(res.status, 403);
   });
 
+  it('rejects starting a second call while already in one → 409', async () => {
+    const u1 = await authUserAndGetId('1');
+    const u2 = await authUserAndGetId('2');
+    const u3 = await authUserAndGetId('3');
+    const conv12 = await createDmConversation(u1.cookie, u2.userId);
+    const conv13 = await createDmConversation(u1.cookie, u3.userId);
+    // Start first call
+    const firstRes = await fetch(`${BASE_URL}/api/calls/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: u1.cookie },
+      body: JSON.stringify({ conversationId: conv12, type: 'audio' }),
+    });
+    assert.equal(firstRes.status, 200);
+    // Try starting a second call
+    const secondRes = await fetch(`${BASE_URL}/api/calls/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: u1.cookie },
+      body: JSON.stringify({ conversationId: conv13, type: 'audio' }),
+    });
+    assert.equal(secondRes.status, 409);
+  });
+
   it('rejects unauthenticated → 401', async () => {
     const res = await fetch(`${BASE_URL}/api/calls/start`, {
       method: 'POST',
@@ -177,6 +199,26 @@ describe('POST /api/calls/:id/join', () => {
       headers: { Cookie: user3.cookie },
     });
     assert.equal(res.status, 403);
+  });
+
+  it('rejects joining another call while already in one → 409', async () => {
+    const user3 = await authUserAndGetId('3');
+    const user4 = await authUserAndGetId('4');
+    const conv34 = await createDmConversation(user3.cookie, user4.userId);
+    // user3 starts a call with user4 (separate call)
+    const otherRes = await fetch(`${BASE_URL}/api/calls/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: user3.cookie },
+      body: JSON.stringify({ conversationId: conv34, type: 'audio' }),
+    });
+    assert.equal(otherRes.status, 200);
+    const otherCall = (await otherRes.json()) as { id: string };
+    // user1 (already in callId with user2) tries to join user3's call → 409
+    const joinRes = await fetch(`${BASE_URL}/api/calls/${otherCall.id}/join`, {
+      method: 'POST',
+      headers: { Cookie: user1.cookie },
+    });
+    assert.equal(joinRes.status, 409);
   });
 });
 

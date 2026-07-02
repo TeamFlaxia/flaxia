@@ -10496,6 +10496,17 @@ app.post('/api/calls/start', requireAuth, async (c) => {
       return c.json({ error: 'Provide either conversationId or groupId, not both' }, 400);
     }
 
+    // Check the user is not already in another active/ringing call
+    const existingActive = await c.env.DB.prepare(
+      `SELECT 1 FROM calls c JOIN call_participants cp ON cp.call_id = c.id
+       WHERE cp.user_id = ? AND c.status IN ('ringing', 'active') LIMIT 1`,
+    )
+      .bind(user.id)
+      .first();
+    if (existingActive) {
+      return c.json({ error: 'You are already in an active call' }, 409);
+    }
+
     const callType = type === 'video' ? 'video' : 'audio';
     const callId = nanoid();
     const roomId = callId; // DO instance key
@@ -10594,6 +10605,17 @@ app.post('/api/calls/:id/join', requireAuth, async (c) => {
     if (!call) return c.json({ error: 'Call not found' }, 404);
     if (call.status === 'ended' || call.status === 'missed') {
       return c.json({ error: 'Call has ended' }, 410);
+    }
+
+    // Check the user is not already in another active/ringing call
+    const existingActive = await c.env.DB.prepare(
+      `SELECT 1 FROM calls c JOIN call_participants cp ON cp.call_id = c.id
+       WHERE cp.user_id = ? AND c.status IN ('ringing', 'active') LIMIT 1`,
+    )
+      .bind(user.id)
+      .first();
+    if (existingActive) {
+      return c.json({ error: 'You are already in an active call' }, 409);
     }
 
     // Verify user is a participant
