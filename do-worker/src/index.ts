@@ -65,6 +65,7 @@ interface SignalMessage {
 export class CallStream {
   private ctx: DurableObjectState;
   private participants: Map<string, ParticipantInfo> = new Map();
+  private ringingTimeout = 30_000; // 30 seconds before auto-miss
 
   constructor(ctx: DurableObjectState, _env: unknown) {
     this.ctx = ctx;
@@ -82,6 +83,8 @@ export class CallStream {
         return new Response('Missing userId', { status: 400 });
       }
 
+      const isFirstParticipant = this.participants.size === 0;
+
       const pair = new WebSocketPair();
       const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
 
@@ -96,6 +99,13 @@ export class CallStream {
         muted: false,
       };
       this.participants.set(userId, info);
+
+      // Ringing timeout: first participant sets alarm, second participant cancels it
+      if (isFirstParticipant) {
+        await this.ctx.storage.setAlarm(Date.now() + this.ringingTimeout);
+      } else {
+        await this.ctx.storage.deleteAlarm();
+      }
 
       // Notify others about new participant
       const joinMsg: SignalMessage = {
@@ -135,6 +145,7 @@ export class CallStream {
         const msg: SignalMessage = { type: 'end-call', userId: body.userId };
         this.broadcast(msg);
         this.participants.clear();
+        await this.ctx.storage.deleteAlarm();
       }
       return new Response('OK');
     }
@@ -177,11 +188,16 @@ export class CallStream {
       case 'leave':
         this.participants.delete(data.userId);
         this.broadcast(data, data.userId);
+        // Cancel alarm if only one participant left (the other disconnected)
+        if (this.participants.size <= 1) {
+          await this.ctx.storage.deleteAlarm();
+        }
         break;
 
       case 'end-call':
         this.participants.clear();
         this.broadcast(data);
+        await this.ctx.storage.deleteAlarm();
         break;
     }
   }
@@ -201,11 +217,25 @@ export class CallStream {
       const msg: SignalMessage = { type: 'leave', userId: disconnectedUserId };
       this.broadcast(msg);
 
-      // If no participants left, the call effectively ends
-      if (this.participants.size === 0) {
-        // DO will be garbage collected
+      // Cancel alarm when participants drop to ≤1 (no longer ringing)
+      if (this.participants.size <= 1) {
+        await this.ctx.storage.deleteAlarm();
       }
     }
+  }
+
+  async alarm(): Promise<void> {
+    // Ringing timeout fired — no one answered
+    const msg: SignalMessage = { type: 'end-call', userId: '' };
+    this.broadcast(msg);
+    for (const [, info] of this.participants) {
+      try {
+        info.ws.close(1000, 'Call timed out');
+      } catch {
+        // ignore
+      }
+    }
+    this.participants.clear();
   }
 
   async webSocketError(ws: WebSocket, _error: unknown): Promise<void> {

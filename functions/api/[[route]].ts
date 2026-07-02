@@ -486,6 +486,32 @@ async function handleRangeRequest(c: any, object: any, contentType: string): Pro
   });
 }
 
+// KV cache helpers for API response caching
+async function kvCacheGet<T>(c: any, key: string): Promise<T | null> {
+  try {
+    const raw = await c.env.CACHE?.get(key);
+    if (raw) return JSON.parse(raw) as T;
+  } catch {
+    // proceed without cache on KV failure
+  }
+  return null;
+}
+
+async function kvCacheSet(c: any, key: string, data: unknown, ttl: number): Promise<void> {
+  try {
+    await c.env.CACHE?.put(key, JSON.stringify(data), { expirationTtl: ttl });
+  } catch (e) {
+    console.warn('KV cache write failed:', e);
+  }
+}
+
+function makeCacheKey(prefix: string, c: any, extra?: string): string {
+  const token = getSessionToken(c.req.raw);
+  const userId = token ? token.substring(0, 12) : 'anon';
+  const query = c.req.raw.url.split('?')[1] || '';
+  return `${prefix}:${userId}:${query}${extra ? ':' + extra : ''}`;
+}
+
 app.get('/api/audio/*', async (c) => {
   try {
     const key = c.req.path.replace('/api/audio/', '');
@@ -3245,19 +3271,13 @@ app.get('/api/users/:username/followers', async (c) => {
     let query = `
       SELECT 
         u.id, u.username, u.display_name, u.avatar_key, u.language as author_language,
-        u.created_at,
-        (SELECT COUNT(*) FROM follows WHERE followee_id = u.id) as followers_count,
-        (SELECT COUNT(*) FROM follows WHERE follower_id = u.id) as following_count,
-        CASE WHEN ? IS NOT NULL AND EXISTS (
-          SELECT 1 FROM follows f2 
-          WHERE f2.follower_id = ? AND f2.followee_id = u.id
-        ) THEN 1 ELSE 0 END as is_following
+        u.created_at
       FROM follows f
       JOIN users u ON f.follower_id = u.id
       WHERE f.followee_id = ?
     `;
 
-    const params: Array<string | null> = [currentUserId, currentUserId, user.id as string];
+    const params: Array<string | null> = [user.id as string];
 
     if (cursor) {
       query += ` AND u.username > ?`;
@@ -3265,23 +3285,58 @@ app.get('/api/users/:username/followers', async (c) => {
     }
 
     query += ` ORDER BY u.username ASC LIMIT ?`;
-    params.push(String(limit + 1)); // Get one extra to check if there are more
+    params.push(String(limit + 1));
 
     const results = await c.env.DB.prepare(query)
       .bind(...params)
       .all();
 
     if (!results.results) {
-      return c.json({
-        users: [],
-        next_cursor: null,
-        has_more: false,
-      });
+      return c.json({ users: [], next_cursor: null, has_more: false });
     }
 
-    const users = results.results.slice(0, limit);
+    const userRows = results.results.slice(0, limit);
     const hasMore = results.results.length > limit;
-    const nextCursor = hasMore ? (users[users.length - 1] as { username: string }).username : null;
+    const nextCursor = hasMore ? (userRows[userRows.length - 1] as { username: string }).username : null;
+
+    // Batch-load follow counts for all users
+    const userIds = userRows.map((u: Record<string, unknown>) => u.id as string);
+    const placeholders = userIds.map(() => '?').join(',');
+    const [followersCounts, followingCounts] = await Promise.all([
+      c.env.DB.prepare(
+        `SELECT followee_id, COUNT(*) as cnt FROM follows WHERE followee_id IN (${placeholders}) GROUP BY followee_id`,
+      )
+        .bind(...userIds)
+        .all<{ followee_id: string; cnt: number }>(),
+      c.env.DB.prepare(
+        `SELECT follower_id, COUNT(*) as cnt FROM follows WHERE follower_id IN (${placeholders}) GROUP BY follower_id`,
+      )
+        .bind(...userIds)
+        .all<{ follower_id: string; cnt: number }>(),
+    ]);
+
+    const followersMap = new Map((followersCounts.results || []).map((r) => [r.followee_id, r.cnt]));
+    const followingMap = new Map((followingCounts.results || []).map((r) => [r.follower_id, r.cnt]));
+
+    const users = userRows.map((u: Record<string, unknown>) => ({
+      ...u,
+      followers_count: followersMap.get(u.id as string) || 0,
+      following_count: followingMap.get(u.id as string) || 0,
+      is_following: currentUserId ? (u.id === currentUserId ? false : null) : false,
+    }));
+
+    // Batch-check follow status if authenticated
+    if (currentUserId) {
+      const followCheck = await c.env.DB.prepare(
+        `SELECT followee_id FROM follows WHERE follower_id = ? AND followee_id IN (${placeholders})`,
+      )
+        .bind(currentUserId, ...userIds)
+        .all<{ followee_id: string }>();
+      const followingSet = new Set((followCheck.results || []).map((r) => r.followee_id));
+      users.forEach((u: Record<string, unknown>) => {
+        u.is_following = followingSet.has(u.id as string);
+      });
+    }
 
     return c.json({
       users,
@@ -3337,19 +3392,13 @@ app.get('/api/users/:username/following', async (c) => {
     let query = `
       SELECT 
         u.id, u.username, u.display_name, u.avatar_key, u.language as author_language,
-        u.created_at,
-        (SELECT COUNT(*) FROM follows WHERE followee_id = u.id) as followers_count,
-        (SELECT COUNT(*) FROM follows WHERE follower_id = u.id) as following_count,
-        CASE WHEN ? IS NOT NULL AND EXISTS (
-          SELECT 1 FROM follows f2 
-          WHERE f2.follower_id = ? AND f2.followee_id = u.id
-        ) THEN 1 ELSE 0 END as is_following
+        u.created_at
       FROM follows f
       JOIN users u ON f.followee_id = u.id
       WHERE f.follower_id = ?
     `;
 
-    const params: Array<string | null> = [currentUserId, currentUserId, user.id as string];
+    const params: Array<string | null> = [user.id as string];
 
     if (cursor) {
       query += ` AND u.username > ?`;
@@ -3357,23 +3406,58 @@ app.get('/api/users/:username/following', async (c) => {
     }
 
     query += ` ORDER BY u.username ASC LIMIT ?`;
-    params.push(String(limit + 1)); // Get one extra to check if there are more
+    params.push(String(limit + 1));
 
     const results = await c.env.DB.prepare(query)
       .bind(...params)
       .all();
 
     if (!results.results) {
-      return c.json({
-        users: [],
-        next_cursor: null,
-        has_more: false,
-      });
+      return c.json({ users: [], next_cursor: null, has_more: false });
     }
 
-    const users = results.results.slice(0, limit);
+    const userRows = results.results.slice(0, limit);
     const hasMore = results.results.length > limit;
-    const nextCursor = hasMore ? (users[users.length - 1] as { username: string }).username : null;
+    const nextCursor = hasMore ? (userRows[userRows.length - 1] as { username: string }).username : null;
+
+    // Batch-load follow counts
+    const userIds = userRows.map((u: Record<string, unknown>) => u.id as string);
+    const placeholders = userIds.map(() => '?').join(',');
+    const [followersCounts, followingCounts] = await Promise.all([
+      c.env.DB.prepare(
+        `SELECT followee_id, COUNT(*) as cnt FROM follows WHERE followee_id IN (${placeholders}) GROUP BY followee_id`,
+      )
+        .bind(...userIds)
+        .all<{ followee_id: string; cnt: number }>(),
+      c.env.DB.prepare(
+        `SELECT follower_id, COUNT(*) as cnt FROM follows WHERE follower_id IN (${placeholders}) GROUP BY follower_id`,
+      )
+        .bind(...userIds)
+        .all<{ follower_id: string; cnt: number }>(),
+    ]);
+
+    const followersMap = new Map((followersCounts.results || []).map((r) => [r.followee_id, r.cnt]));
+    const followingMap = new Map((followingCounts.results || []).map((r) => [r.follower_id, r.cnt]));
+
+    const users = userRows.map((u: Record<string, unknown>) => ({
+      ...u,
+      followers_count: followersMap.get(u.id as string) || 0,
+      following_count: followingMap.get(u.id as string) || 0,
+      is_following: false,
+    }));
+
+    // Batch-check follow status if authenticated
+    if (currentUserId) {
+      const followCheck = await c.env.DB.prepare(
+        `SELECT followee_id FROM follows WHERE follower_id = ? AND followee_id IN (${placeholders})`,
+      )
+        .bind(currentUserId, ...userIds)
+        .all<{ followee_id: string }>();
+      const followingSet = new Set((followCheck.results || []).map((r) => r.followee_id));
+      users.forEach((u: Record<string, unknown>) => {
+        u.is_following = followingSet.has(u.id as string);
+      });
+    }
 
     return c.json({
       users,
@@ -4113,6 +4197,46 @@ app.get('/api/posts', async (c) => {
       return c.json({ error: 'Authentication required for Following tab' }, 401);
     }
 
+    // Try cache hit (first page only)
+    if (!cursor) {
+      const cacheKey = makeCacheKey(
+        'timeline',
+        c,
+        `${limit}:${hashtag || ''}:${following ? 'following' : ''}:${username || ''}`,
+      );
+      const cached = await kvCacheGet<{ posts: Record<string, unknown>[] }>(c, cacheKey);
+      if (cached) {
+        const posts = cached.posts;
+        if (currentUserId && posts.length > 0) {
+          const postIds = posts.map((p) => String(p.id));
+          const [freshResult, bookmarkResult] = await Promise.all([
+            c.env.DB.prepare(
+              `SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`,
+            )
+              .bind(currentUserId, ...postIds)
+              .all(),
+            c.env.DB.prepare(
+              `SELECT post_id FROM bookmarks WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`,
+            )
+              .bind(currentUserId, ...postIds)
+              .all(),
+          ]);
+          const freshedPostIds = new Set(
+            (freshResult.results || []).map((f: Record<string, unknown>) => f.post_id as string),
+          );
+          const bookmarkedPostIds = new Set(
+            (bookmarkResult.results || []).map((b: Record<string, unknown>) => b.post_id as string),
+          );
+          posts.forEach((post: Record<string, unknown>) => {
+            post.is_freshed = freshedPostIds.has(post.id as string);
+            post.is_bookmarked = bookmarkedPostIds.has(post.id as string);
+          });
+        }
+        await enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId);
+        return c.json({ posts });
+      }
+    }
+
     let query: string;
     let params: Array<string | number> = [];
 
@@ -4253,6 +4377,19 @@ app.get('/api/posts', async (c) => {
       })(),
     ]);
 
+    // Write to KV cache (first page only)
+    if (!cursor && c.env.CACHE) {
+      const cacheKey = makeCacheKey(
+        'timeline',
+        c,
+        `${limit}:${hashtag || ''}:${following ? 'following' : ''}:${username || ''}`,
+      );
+      const cacheData = {
+        posts: (posts as Record<string, unknown>[]).map((p) => ({ ...p, is_freshed: false, is_bookmarked: false })),
+      };
+      await kvCacheSet(c, cacheKey, cacheData, 15);
+    }
+
     // Return total count when filtering by hashtag
     if (hashtag) {
       const countResult = await c.env.DB.prepare(`
@@ -4290,6 +4427,43 @@ app.get('/api/posts/trending', async (c) => {
     const sessionData = token ? await getSession(c.env, token) : null;
     if (sessionData) {
       currentUserId = sessionData.user.id;
+    }
+
+    // Try cache hit (only for non-cursor requests)
+    if (!cursor) {
+      const cacheKey = makeCacheKey('trending', c, `${limit}`);
+      const cached = await kvCacheGet<{ posts: Record<string, unknown>[] }>(c, cacheKey);
+      if (cached) {
+        const posts = cached.posts;
+        if (currentUserId && posts.length > 0) {
+          const postIds = posts.map((p) => String(p.id));
+          const freshResult = await c.env.DB.prepare(
+            `SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`,
+          )
+            .bind(currentUserId, ...postIds)
+            .all();
+          const freshedPostIds = new Set(
+            (freshResult.results || []).map((f: Record<string, unknown>) => f.post_id as string),
+          );
+          posts.forEach((post) => {
+            post.is_freshed = freshedPostIds.has(post.id as string);
+          });
+
+          const bookmarkResult = await c.env.DB.prepare(
+            `SELECT post_id FROM bookmarks WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`,
+          )
+            .bind(currentUserId, ...postIds)
+            .all();
+          const bookmarkedPostIds = new Set(
+            (bookmarkResult.results || []).map((b: Record<string, unknown>) => b.post_id as string),
+          );
+          posts.forEach((post) => {
+            post.is_bookmarked = bookmarkedPostIds.has(post.id as string);
+          });
+        }
+        await enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId);
+        return c.json({ posts });
+      }
     }
 
     // Trending algorithm: (fresh_count * 2 + reply_count * 3 + impressions * 0.1 + 1) / (hours_since_creation + 2)^1.5
@@ -4352,6 +4526,15 @@ app.get('/api/posts/trending', async (c) => {
     }
 
     await enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId);
+
+    // Write to cache (non-cursor only)
+    if (!cursor && c.env.CACHE) {
+      const cacheKey = makeCacheKey('trending', c, `${limit}`);
+      const cacheData = {
+        posts: posts.map((p: Record<string, unknown>) => ({ ...p, is_freshed: false, is_bookmarked: false })),
+      };
+      await kvCacheSet(c, cacheKey, cacheData, 30);
+    }
 
     return c.json({ posts });
   } catch (error: unknown) {
@@ -7247,6 +7430,18 @@ app.get('/api/search', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
+    // Try cache hit
+    const cacheKey = makeCacheKey('search', c, `${type}:${limit}:${query.trim().toLowerCase().slice(0, 100)}`);
+    const cached = await kvCacheGet<{
+      type: string;
+      query: string;
+      results: Record<string, unknown>[];
+      users: Record<string, unknown>[];
+    }>(c, cacheKey);
+    if (cached) {
+      return c.json(cached);
+    }
+
     const tokens = query.trim().split(/\s+/).filter(Boolean);
 
     if (type === 'users') {
@@ -7346,12 +7541,14 @@ app.get('/api/search', async (c) => {
       }));
     }
 
-    return c.json({
+    const responseData = {
       type,
       query,
       results: posts.results || [],
       users: usersResult,
-    });
+    };
+    await kvCacheSet(c, cacheKey, responseData, 30);
+    return c.json(responseData);
   } catch (error: unknown) {
     const err = error as { message?: string };
     console.error('Search error:', error);

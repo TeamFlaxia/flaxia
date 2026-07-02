@@ -25,6 +25,7 @@ export function createCallUI(config: CallUIConfig): CallUIHandle {
   let destroyed = false;
   let callDuration = 0;
   let durationInterval: ReturnType<typeof setInterval> | null = null;
+  let participants: CallParticipant[] = [];
 
   const unregisterModal = registerModal();
 
@@ -155,40 +156,19 @@ export function createCallUI(config: CallUIConfig): CallUIHandle {
       }
     },
     onParticipantJoined: (participant: CallParticipant) => {
-      const items = participantSection.querySelector('.call-participants-list');
-      if (items) {
-        const existingParticipants = Array.from(items.children).length;
-        updateParticipantsList(
-          Array.from({ length: existingParticipants + 1 }, (_, i) =>
-            i === existingParticipants ? participant : ({ user_id: '' } as CallParticipant),
-          ),
-        );
-      }
+      participants = [...participants.filter((p) => p.user_id !== participant.user_id), participant];
+      updateParticipantsList(participants);
     },
-    onParticipantLeft: (_userId: string) => {},
+    onParticipantLeft: (userId: string) => {
+      participants = participants.filter((p) => p.user_id !== userId);
+      updateParticipantsList(participants);
+    },
     onMuteChanged: (userId: string, muted: boolean) => {
-      const items = participantSection.querySelectorAll('.call-participant-item');
-      for (const item of items) {
-        const nameEl = item.querySelector('.call-participant-name');
-        if (nameEl && nameEl.textContent) {
-          // Approximate matching
-          const statusEl = item.querySelector('.call-participant-status');
-          if (statusEl) {
-            statusEl.textContent = muted ? 'Muted' : 'Connected';
-          }
-          const muteIcon = item.querySelector('.call-participant-muted');
-          if (muted && !muteIcon) {
-            item.insertAdjacentHTML(
-              'beforeend',
-              '<div class="call-participant-muted"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg></div>',
-            );
-          } else if (!muted && muteIcon) {
-            muteIcon.remove();
-          }
-        }
-      }
+      participants = participants.map((p) => (p.user_id === userId ? { ...p, muted } : p));
+      updateParticipantsList(participants);
     },
-    onParticipantsList: (participants: CallParticipant[]) => {
+    onParticipantsList: (incoming: CallParticipant[]) => {
+      participants = incoming;
       updateParticipantsList(participants);
     },
     onError: (error: string) => {
@@ -219,6 +199,9 @@ export function createCallUI(config: CallUIConfig): CallUIHandle {
         if (client) {
           const on = client.toggleSpeaker();
           actionBtn.classList.toggle('call-btn-active', on);
+          if (remoteAudioEl) {
+            remoteAudioEl.volume = on ? 1.0 : 0.3;
+          }
         }
         break;
       case 'end':

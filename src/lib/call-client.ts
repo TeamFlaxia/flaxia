@@ -231,7 +231,7 @@ export function createCallClient(
       });
       localStream = null;
     }
-    sendSignal({ type: 'leave', userId: currentUser.id });
+    sendSignal({ type: 'end-call', userId: currentUser.id });
     if (signalingWs) {
       signalingWs.close();
       signalingWs = null;
@@ -263,14 +263,6 @@ export function createCallClient(
 
   function toggleSpeaker(): boolean {
     isSpeakerOn = !isSpeakerOn;
-    if (localStream) {
-      const audioCtx = new AudioContext();
-      const source = audioCtx.createMediaStreamSource(localStream);
-      const gain = audioCtx.createGain();
-      gain.gain.value = isSpeakerOn ? 1.0 : 0.5;
-      source.connect(gain);
-      gain.connect(audioCtx.destination);
-    }
     return isSpeakerOn;
   }
 
