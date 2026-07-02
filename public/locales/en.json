@@ -663,5 +663,17 @@
   "poll.click_to_change": "Click to change",
 
   "common.cancel": "Cancel",
-  "common.confirm": "OK"
+  "common.confirm": "OK",
+
+  "video_player.play": "Play",
+  "video_player.pause": "Pause",
+  "video_player.mute": "Mute",
+  "video_player.unmute": "Unmute",
+  "video_player.fullscreen": "Fullscreen",
+  "video_player.exit_fullscreen": "Exit fullscreen",
+  "video_player.speed": "Speed",
+  "video_player.loading": "Loading...",
+  "video_player.load_failed": "Video failed to load",
+  "video_player.retry": "Retry",
+  "video_player.no_video": "No video"
 }

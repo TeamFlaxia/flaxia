@@ -423,6 +423,69 @@ app.get('/api/images/*', async (c) => {
   }
 });
 
+function parseRange(rangeHeader: string, fileSize: number): { start: number; end: number } | null {
+  const match = rangeHeader.match(/^bytes=(\d*)-(\d*)$/);
+  if (!match) return null;
+
+  let start = match[1] ? parseInt(match[1], 10) : undefined;
+  let end = match[2] ? parseInt(match[2], 10) : undefined;
+
+  if (start === undefined && end === undefined) return null;
+
+  if (start === undefined) {
+    start = Math.max(0, fileSize - end!);
+    end = fileSize - 1;
+  } else if (end === undefined) {
+    end = fileSize - 1;
+  }
+
+  if (start > end || start < 0 || end >= fileSize) return null;
+
+  return { start, end };
+}
+
+async function handleRangeRequest(c: any, object: any, contentType: string): Promise<Response> {
+  const fileSize = object.size || 0;
+  const rangeHeader = c.req.header('Range');
+
+  if (!rangeHeader) {
+    return new Response(object.body, {
+      headers: {
+        'Content-Type': contentType,
+        'Cache-Control': 'public, max-age=31536000',
+        'Access-Control-Allow-Origin': '*',
+        'Accept-Ranges': 'bytes',
+        'Content-Length': fileSize.toString(),
+      },
+    });
+  }
+
+  const range = parseRange(rangeHeader, fileSize);
+  if (!range) {
+    return new Response(null, {
+      status: 416,
+      headers: {
+        'Content-Range': `bytes */${fileSize}`,
+      },
+    });
+  }
+
+  const chunkSize = range.end - range.start + 1;
+  const ranged = await object.range(range.start, chunkSize);
+
+  return new Response(ranged.body, {
+    status: 206,
+    headers: {
+      'Content-Type': contentType,
+      'Content-Range': `bytes ${range.start}-${range.end}/${fileSize}`,
+      'Content-Length': chunkSize.toString(),
+      'Cache-Control': 'public, max-age=31536000',
+      'Access-Control-Allow-Origin': '*',
+      'Accept-Ranges': 'bytes',
+    },
+  });
+}
+
 app.get('/api/audio/*', async (c) => {
   try {
     const key = c.req.path.replace('/api/audio/', '');
@@ -435,18 +498,14 @@ app.get('/api/audio/*', async (c) => {
       return c.json({ error: 'Storage not available' }, 500);
     }
 
-    // Get object from R2
     const object = await c.env.BUCKET.get(key);
 
     if (!object) {
       return c.json({ error: 'Audio not found' }, 404);
     }
 
-    // Get content type from object metadata or detect from file extension
     let contentType = object.httpMetadata?.contentType;
     if (!contentType) {
-      // Detect content type from file extension
-      const key = c.req.path.replace('/api/audio/', '');
       const extension = key.split('.').pop()?.toLowerCase();
       switch (extension) {
         case 'mp3':
@@ -469,16 +528,7 @@ app.get('/api/audio/*', async (c) => {
       }
     }
 
-    // Return the audio with proper headers
-    return new Response(object.body, {
-      headers: {
-        'Content-Type': contentType,
-        'Cache-Control': 'public, max-age=31536000', // Cache for 1 year
-        'Access-Control-Allow-Origin': '*',
-        'Accept-Ranges': 'bytes',
-        'Content-Length': object.size?.toString() || '0',
-      },
-    });
+    return handleRangeRequest(c, object, contentType);
   } catch (error: unknown) {
     console.error('Audio proxy error:', error);
     return c.json(
@@ -488,7 +538,6 @@ app.get('/api/audio/*', async (c) => {
   }
 });
 
-// GET /api/video/* - serve video files from R2
 app.get('/api/video/*', async (c) => {
   try {
     const key = c.req.path.replace('/api/video/', '');
@@ -525,15 +574,7 @@ app.get('/api/video/*', async (c) => {
       }
     }
 
-    return new Response(object.body, {
-      headers: {
-        'Content-Type': contentType,
-        'Cache-Control': 'public, max-age=31536000',
-        'Access-Control-Allow-Origin': '*',
-        'Accept-Ranges': 'bytes',
-        'Content-Length': object.size?.toString() || '0',
-      },
-    });
+    return handleRangeRequest(c, object, contentType);
   } catch (error: unknown) {
     console.error('Video proxy error:', error);
     return c.json(

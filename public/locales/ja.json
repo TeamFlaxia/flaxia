@@ -663,5 +663,17 @@
   "poll.click_to_change": "クリックして変更",
 
   "common.cancel": "キャンセル",
-  "common.confirm": "OK"
+  "common.confirm": "OK",
+
+  "video_player.play": "再生",
+  "video_player.pause": "一時停止",
+  "video_player.mute": "ミュート",
+  "video_player.unmute": "ミュート解除",
+  "video_player.fullscreen": "全画面",
+  "video_player.exit_fullscreen": "全画面終了",
+  "video_player.speed": "再生速度",
+  "video_player.loading": "読み込み中...",
+  "video_player.load_failed": "動画の読み込みに失敗しました",
+  "video_player.retry": "リトライ",
+  "video_player.no_video": "動画がありません"
 }
