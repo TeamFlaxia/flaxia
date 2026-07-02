@@ -284,10 +284,15 @@ export function createPostStage(props: PostStageProps): HTMLElement {
   container.className = 'post-stage';
 
   // Click handler to toggle between preview and execution modes
-  // Only for non-ZIP files - ZIP files have their own button
+  // Only for post types that have execution modes (ZIP/SWF/DOS)
   container.addEventListener('click', (e) => {
     // Don't toggle mode if clicking on execution button (ZIP or SWF)
     if ((e.target as HTMLElement).closest('.zip-execution-button')) {
+      return;
+    }
+
+    // Don't toggle mode for media players (image, audio, video)
+    if ((e.target as HTMLElement).closest('.video-player, .audio-player, .image-preview')) {
       return;
     }
 
