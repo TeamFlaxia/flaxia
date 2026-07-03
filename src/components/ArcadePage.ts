@@ -126,7 +126,11 @@ export class ArcadePage {
     window.addEventListener('beforeunload', this.boundFlushDwell);
 
     if (!localStorage.getItem(ArcadePage.TUTORIAL_SEEN_KEY)) {
-      this.showTutorial();
+      try {
+        this.showTutorial();
+      } catch (e) {
+        console.error('ArcadePage tutorial failed:', e);
+      }
     }
 
     // Preconnect to emulator CDNs and sandbox
@@ -1842,7 +1846,8 @@ export class ArcadePage {
     };
 
     const startDemoGame = (canvas: HTMLCanvasElement): void => {
-      const ctx = canvas.getContext('2d')!;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
       const w = canvas.width;
       const h = canvas.height;
 
