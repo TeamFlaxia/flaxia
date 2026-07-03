@@ -1194,6 +1194,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             cachedContentComponent = { view: 'search', component: searchPage, scrollY: window.scrollY };
             searchPage = null;
           } else if (currentView === 'arcade' && arcadePage) {
+            arcadePage.suspend();
             cachedContentComponent = { view: 'arcade', component: arcadePage, scrollY: window.scrollY };
             arcadePage = null;
           } else if (currentView === 'bookmarks' && bookmarksPage) {
@@ -1737,6 +1738,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (cachedContentComponent?.view === 'arcade') {
             console.log('Restoring cached arcade page');
             arcadePage = cachedContentComponent.component as ArcadePageHandle;
+            arcadePage.resume();
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
 

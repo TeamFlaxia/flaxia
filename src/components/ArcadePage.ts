@@ -19,6 +19,8 @@ import { showSignInPrompt } from './SignInPrompt.js';
 export interface ArcadePageHandle {
   destroy: () => void;
   getElement: () => HTMLElement;
+  suspend: () => void;
+  resume: () => void;
 }
 
 export class ArcadePage {
@@ -2327,15 +2329,7 @@ export class ArcadePage {
     return btn;
   }
 
-  public destroy(): void {
-    this.recordDwell();
-    this.flushDwell();
-    this.closeCommentPanel();
-    if (this.tutorialEl) {
-      this.tutorialEl.remove();
-      this.tutorialEl = null;
-    }
-    // Clean up document event listeners using stored bound functions
+  public suspend(): void {
     document.removeEventListener('touchstart', this.boundHandleTouchStart);
     document.removeEventListener('touchmove', this.boundHandleTouchMove);
     document.removeEventListener('touchend', this.boundHandleTouchEnd);
@@ -2348,12 +2342,43 @@ export class ArcadePage {
     document.removeEventListener('keydown', this.boundHandleKeyDown);
     window.removeEventListener('spaNavigate', this.boundHandleSpaNavigate);
     window.removeEventListener('beforeunload', this.boundFlushDwell);
+    if (this.boundPostUpdatedHandler) {
+      window.removeEventListener('postUpdated', this.boundPostUpdatedHandler);
+    }
+  }
+
+  public resume(): void {
+    document.addEventListener('touchstart', this.boundHandleTouchStart, { passive: true });
+    document.addEventListener('touchmove', this.boundHandleTouchMove, { passive: false });
+    document.addEventListener('touchend', this.boundHandleTouchEnd, { passive: true });
+    document.addEventListener('mousedown', this.boundHandleMouseDown, { passive: true });
+    document.addEventListener('mousemove', this.boundHandleMouseMove, { passive: false });
+    document.addEventListener('mouseup', this.boundHandleMouseUp, { passive: true });
+    document.addEventListener('mouseleave', this.boundHandleMouseLeave, { passive: true });
+    document.addEventListener('fullscreenchange', this.boundHandleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', this.boundHandleFullscreenChange);
+    document.addEventListener('keydown', this.boundHandleKeyDown);
+    window.addEventListener('spaNavigate', this.boundHandleSpaNavigate);
+    window.addEventListener('beforeunload', this.boundFlushDwell);
+    if (this.boundPostUpdatedHandler) {
+      window.addEventListener('postUpdated', this.boundPostUpdatedHandler);
+    }
+  }
+
+  public destroy(): void {
+    this.recordDwell();
+    this.flushDwell();
+    this.closeCommentPanel();
+    if (this.tutorialEl) {
+      this.tutorialEl.remove();
+      this.tutorialEl = null;
+    }
+    this.suspend();
     if (this.dwellFlushTimer) {
       clearTimeout(this.dwellFlushTimer);
       this.dwellFlushTimer = null;
     }
     if (this.boundPostUpdatedHandler) {
-      window.removeEventListener('postUpdated', this.boundPostUpdatedHandler);
       this.boundPostUpdatedHandler = undefined;
     }
 
@@ -2368,5 +2393,7 @@ export function createArcadePage(props: ArcadePageProps): ArcadePageHandle {
   return {
     getElement: () => page.getElement(),
     destroy: () => page.destroy(),
+    suspend: () => page.suspend(),
+    resume: () => page.resume(),
   };
 }
