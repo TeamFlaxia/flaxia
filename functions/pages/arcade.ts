@@ -121,7 +121,7 @@ export async function onRequest(context: {
           p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, p.created_at
         FROM posts p
         LEFT JOIN users u ON p.user_id = u.id
-        WHERE (p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL)
+        WHERE p.payload_key IS NOT NULL AND p.swf_key IS NULL
           AND p.status = 'published'
           AND p.hidden = 0
           AND p.parent_id IS NULL
@@ -136,7 +136,7 @@ export async function onRequest(context: {
       '@type': 'CollectionPage',
       name: 'Flaxia Arcade',
       description:
-        'ゲームやアプリをそのまま投稿できるSNS、Flaxiaのアーケード。Flash、DOS、ZIP、HTML5ゲームをブラウザで遊べます。',
+        'ゲームやアプリをそのまま投稿できるSNS、Flaxiaのアーケード。DOS、ZIP、HTML5ゲームをブラウザで遊べます。',
       url: canonicalUrl,
       mainEntity: {
         '@type': 'ItemList',
@@ -257,7 +257,7 @@ export async function onRequest(context: {
       renderHtmlShell(content, {
         title: 'Flaxia Arcade - ゲームを遊べるSNS',
         description:
-          'Flaxia Arcadeで、コミュニティが投稿したFlash、DOS、ZIP、HTML5ゲームをブラウザで直接遊ぼう。スワイプしてどんどん新しいゲームを発見。',
+          'Flaxia Arcadeで、コミュニティが投稿したDOS、ZIP、HTML5ゲームをブラウザで直接遊ぼう。スワイプしてどんどん新しいゲームを発見。',
         canonicalUrl,
         image: defaultImage,
         jsonLd,

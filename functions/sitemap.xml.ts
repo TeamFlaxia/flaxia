@@ -104,7 +104,7 @@ const generateSitemap = async (env: Bindings): Promise<string> => {
       const games = (await env.DB.prepare(`
         SELECT id, created_at
         FROM posts
-        WHERE (swf_key IS NOT NULL OR payload_key IS NOT NULL)
+        WHERE payload_key IS NOT NULL AND swf_key IS NULL
           AND status = 'published'
           AND hidden = 0
           AND parent_id IS NULL

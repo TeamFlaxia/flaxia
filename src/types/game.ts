@@ -1,4 +1,4 @@
-export type GameType = 'flash' | 'html5' | 'zip' | 'dos';
+export type GameType = 'html5' | 'zip' | 'dos';
 
 export interface Game {
   id: string;

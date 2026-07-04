@@ -611,7 +611,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
           font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
           line-height: 1.2;
         `;
-        badge.textContent = post.swf_key ? 'SWF' : post.payload_key?.startsWith('dos/') ? 'DOS' : 'GAME';
+        badge.textContent = post.payload_key?.startsWith('dos/') ? 'DOS' : 'GAME';
         thumb.appendChild(badge);
 
         // Details
@@ -741,7 +741,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
           font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
           line-height: 1.2;
         `;
-        badge.textContent = post.swf_key ? 'SWF' : post.payload_key?.startsWith('dos/') ? 'DOS' : 'GAME';
+        badge.textContent = post.payload_key?.startsWith('dos/') ? 'DOS' : 'GAME';
         thumb.appendChild(badge);
 
         // Info

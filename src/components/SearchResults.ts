@@ -227,15 +227,11 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
       postText.textContent = post.text;
 
       // If arcade, show a small badge
-      if (props.type === 'arcade' || post.swf_key || post.payload_key) {
+      if (props.type === 'arcade' || post.payload_key) {
         const badge = document.createElement('span');
         badge.style.cssText =
           'margin-left: 0.5rem; padding: 0.1rem 0.4rem; background: var(--accent); color: white; border-radius: 4px; font-size: 0.7rem; vertical-align: middle;';
-        badge.textContent = post.swf_key
-          ? t('search.media_flash')
-          : post.payload_key?.startsWith('dos/')
-            ? t('search.media_dos')
-            : t('search.media_game');
+        badge.textContent = post.payload_key?.startsWith('dos/') ? t('search.media_dos') : t('search.media_game');
         postHeader.appendChild(badge);
       }
 

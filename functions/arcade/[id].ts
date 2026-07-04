@@ -112,7 +112,7 @@ export async function onRequest(context: {
       FROM posts p
       LEFT JOIN users u ON p.user_id = u.id
       WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0
-        AND (p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL)
+        AND p.payload_key IS NOT NULL AND p.swf_key IS NULL
     `)
       .bind(gameId)
       .first()) as RawPost | null;

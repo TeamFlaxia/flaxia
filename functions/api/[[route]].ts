@@ -1396,7 +1396,7 @@ app.get('/api/games', async (c) => {
       if (!currentToken) {
         const idResults = await c.env.DB.prepare(`
           SELECT p.id FROM posts p
-          WHERE (p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL)
+          WHERE p.payload_key IS NOT NULL AND p.swf_key IS NULL
             AND p.status = 'published'
             AND p.hidden = 0
             AND p.parent_id IS NULL
@@ -1420,7 +1420,7 @@ app.get('/api/games', async (c) => {
             // Check if the initialId exists and is actually a game post
             const check = await c.env.DB.prepare(`
               SELECT id FROM posts 
-              WHERE id = ? AND (swf_key IS NOT NULL OR payload_key IS NOT NULL)
+              WHERE id = ? AND payload_key IS NOT NULL AND swf_key IS NULL
                 AND status = 'published' AND hidden = 0
             `)
               .bind(initialId)
@@ -1498,8 +1498,7 @@ app.get('/api/games', async (c) => {
             const row = gameMap.get(id);
             if (!row) return null;
             let type: string;
-            if (row.swf_key) type = 'flash';
-            else if (row.payload_key && row.payload_key.startsWith('dos/')) type = 'dos';
+            if (row.payload_key && row.payload_key.startsWith('dos/')) type = 'dos';
             else type = 'zip';
             const game: Record<string, unknown> = {
               id: row.postId,
@@ -1621,7 +1620,7 @@ app.get('/api/games', async (c) => {
                u.username, u.display_name, u.avatar_key
         FROM posts p
         JOIN users u ON p.user_id = u.id
-        WHERE (p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL)
+        WHERE p.payload_key IS NOT NULL AND p.swf_key IS NULL
           AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
         ORDER BY p.created_at DESC
         LIMIT 200
@@ -1717,8 +1716,7 @@ app.get('/api/games', async (c) => {
 
       const games = page.map(({ row }) => {
         let type: string;
-        if (row.swf_key) type = 'flash';
-        else if (row.payload_key && row.payload_key.startsWith('dos/')) type = 'dos';
+        if (row.payload_key && row.payload_key.startsWith('dos/')) type = 'dos';
         else type = 'zip';
         return {
           id: row.postId,
@@ -1759,7 +1757,7 @@ app.get('/api/games', async (c) => {
         u.avatar_key
       FROM posts p
       JOIN users u ON p.user_id = u.id
-      WHERE (p.swf_key IS NOT NULL OR p.payload_key IS NOT NULL)
+      WHERE p.payload_key IS NOT NULL AND p.swf_key IS NULL
         AND p.status = 'published'
         AND p.hidden = 0
         AND p.parent_id IS NULL
@@ -1813,9 +1811,7 @@ app.get('/api/games', async (c) => {
 
     const games = (results || []).map((row) => {
       let type: string;
-      if (row.swf_key) {
-        type = 'flash';
-      } else if (row.payload_key && row.payload_key.startsWith('dos/')) {
+      if (row.payload_key && row.payload_key.startsWith('dos/')) {
         type = 'dos';
       } else {
         type = 'zip';
@@ -7469,9 +7465,7 @@ app.get('/api/search', async (c) => {
     const params: Array<unknown> = [];
 
     if (type === 'arcade') {
-      conditions.push(
-        "((p.swf_key IS NOT NULL AND p.swf_key != '') OR (p.payload_key IS NOT NULL AND p.payload_key != ''))",
-      );
+      conditions.push("(p.payload_key IS NOT NULL AND p.payload_key != '' AND (p.swf_key IS NULL OR p.swf_key = ''))");
     }
 
     for (const token of tokens) {

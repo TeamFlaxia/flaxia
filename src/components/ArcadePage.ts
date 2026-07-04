@@ -9,7 +9,6 @@ import { executeWvfsZip } from '../lib/wvfs-zip-client.js';
 import type { ArcadePageProps, Game, GameType } from '../types/game.js';
 import type { Post } from '../types/post.js';
 import { executeDos } from './DosPlayer.js';
-import { executeFlash } from './FlashPlayer.js';
 import { createPostCard } from './PostCard.js';
 import { createReplyComposer, ReplyComposer } from './ReplyComposer.js';
 import { createReplyNode } from './ReplyNode.js';
@@ -54,7 +53,6 @@ export class ArcadePage {
   private tutorialEl: HTMLElement | null = null;
   private isFullscreen: boolean = false;
   private loadingEl: HTMLElement | null = null;
-  private preloadCache = new Map<string, ArrayBuffer>();
   private preloadedIds = new Set<string>();
 
   private static TUTORIAL_SEEN_KEY = 'flaxia_tutorial_seen';
@@ -115,7 +113,7 @@ export class ArcadePage {
     if (this.initialGameId) {
       updateMetaTags({
         title: 'Flaxia Arcade - ゲームを遊べるSNS',
-        description: 'コミュニティが投稿したFlash、DOS、ZIP、HTML5ゲームをブラウザで直接遊ぼう。',
+        description: 'コミュニティが投稿したDOS、ZIP、HTML5ゲームをブラウザで直接遊ぼう。',
         url: `${window.location.origin}/arcade/${this.initialGameId}`,
       });
     }
@@ -1293,8 +1291,6 @@ export class ArcadePage {
 
   private getLoadingText(type: GameType): string {
     switch (type) {
-      case 'flash':
-        return t('arcade.loading_flash');
       case 'zip':
         return t('arcade.loading_zip');
       case 'dos':
@@ -1356,13 +1352,7 @@ export class ArcadePage {
   private async executeGame(game: Game, container: HTMLElement): Promise<void> {
     this.showLoading(container, game.type);
     try {
-      if (game.type === 'flash' && game.swfKey) {
-        const preloaded = this.preloadCache.get(game.postId);
-        const handle = await executeFlash(game.postId, container, `/api/swf/${game.postId}`, true, preloaded);
-        this.currentGameHandle = handle;
-        // Free cached data after use
-        this.preloadCache.delete(game.postId);
-      } else if (game.type === 'zip' && game.payloadKey) {
+      if (game.type === 'zip' && game.payloadKey) {
         // Use WVFS for ZIP execution
         const handle = await executeWvfsZip(game.postId, container, undefined, true, false);
         this.currentGameHandle = handle;
@@ -1494,14 +1484,7 @@ export class ArcadePage {
     this.preloadedIds.add(game.postId);
 
     try {
-      if (game.type === 'flash') {
-        const url = `/api/swf/${game.postId}`;
-        this.prefetchLink(url);
-        const resp = await fetch(url, { credentials: 'include' });
-        if (resp.ok) {
-          this.preloadCache.set(game.postId, await resp.arrayBuffer());
-        }
-      } else if (game.type === 'dos') {
+      if (game.type === 'dos') {
         const url = `/api/zip/${game.postId}`;
         this.prefetchLink(url);
         const resp = await fetch(url, { credentials: 'include' });
