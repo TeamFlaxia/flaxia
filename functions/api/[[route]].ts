@@ -10492,13 +10492,21 @@ app.post('/api/calls/start', requireAuth, async (c) => {
 
     // Check the user is not already in another active/ringing call
     const existingActive = await c.env.DB.prepare(
-      `SELECT 1 FROM calls c JOIN call_participants cp ON cp.call_id = c.id
+      `SELECT c.id FROM calls c JOIN call_participants cp ON cp.call_id = c.id
        WHERE cp.user_id = ? AND c.status IN ('ringing', 'active') LIMIT 1`,
     )
       .bind(user.id)
-      .first();
+      .first<{ id: string }>();
     if (existingActive) {
-      return c.json({ error: 'You are already in an active call' }, 409);
+      const stillActive = await verifyCallActive(c, existingActive.id, user.id);
+      if (stillActive) {
+        return c.json({ error: 'You are already in an active call' }, 409);
+      }
+      // Stale entry — auto-cleanup and allow the new call
+      const now = new Date().toISOString();
+      await c.env.DB.prepare("UPDATE calls SET status = 'ended', ended_at = ? WHERE id = ?")
+        .bind(now, existingActive.id)
+        .run();
     }
 
     const callType = type === 'video' ? 'video' : 'audio';
@@ -10603,13 +10611,21 @@ app.post('/api/calls/:id/join', requireAuth, async (c) => {
 
     // Check the user is not already in another active/ringing call
     const existingActive = await c.env.DB.prepare(
-      `SELECT 1 FROM calls c JOIN call_participants cp ON cp.call_id = c.id
+      `SELECT c.id FROM calls c JOIN call_participants cp ON cp.call_id = c.id
        WHERE cp.user_id = ? AND c.status IN ('ringing', 'active') LIMIT 1`,
     )
       .bind(user.id)
-      .first();
+      .first<{ id: string }>();
     if (existingActive) {
-      return c.json({ error: 'You are already in an active call' }, 409);
+      const stillActive = await verifyCallActive(c, existingActive.id, user.id);
+      if (stillActive) {
+        return c.json({ error: 'You are already in an active call' }, 409);
+      }
+      // Stale entry — auto-cleanup
+      const now = new Date().toISOString();
+      await c.env.DB.prepare("UPDATE calls SET status = 'ended', ended_at = ? WHERE id = ?")
+        .bind(now, existingActive.id)
+        .run();
     }
 
     // Verify user is a participant
@@ -10837,6 +10853,24 @@ app.post('/api/push/unregister', requireAuth, async (c) => {
     return c.json({ error: 'Failed to unregister push subscription' }, 500);
   }
 });
+
+async function verifyCallActive(
+  c: Context<{ Bindings: Bindings; Variables: Variables }>,
+  callId: string,
+  userId: string,
+): Promise<boolean> {
+  try {
+    if (!c.env.CALL_STREAM) return false;
+    const doId = c.env.CALL_STREAM.idFromName(callId);
+    const stub = c.env.CALL_STREAM.get(doId);
+    const resp = await stub.fetch('http://internal/');
+    if (!resp.ok) return false;
+    const data = (await resp.json()) as { participants: Array<{ userId: string }> };
+    return data.participants.some((p) => p.userId === userId);
+  } catch {
+    return false;
+  }
+}
 
 export async function onRequest(context: Record<string, unknown>) {
   const request = context.request as Request;

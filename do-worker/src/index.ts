@@ -150,6 +150,19 @@ export class CallStream {
       return new Response('OK');
     }
 
+    if (request.method === 'GET') {
+      const participantList = Array.from(this.participants.values()).map((p) => ({
+        userId: p.userId,
+        username: p.username,
+        displayName: p.displayName,
+        avatarKey: p.avatarKey,
+        muted: p.muted,
+      }));
+      return new Response(JSON.stringify({ participants: participantList }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     return new Response('CallStream DO', { status: 200 });
   }
 
