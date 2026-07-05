@@ -144,6 +144,62 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
 
 app.get('/favicon.ico', (c) => c.body(null, 204));
 
+// Catch-all: serve root-level assets from ZIP context using Referer header.
+// Vite-built apps in ZIPs use absolute paths like /assets/index-xxx.js
+// which bypass the <base> tag. We extract postId from the Referer.
+app.get('/*', async (c) => {
+  const path = c.req.path;
+  if (path.startsWith('/api/') || path === '/favicon.ico') {
+    return c.notFound();
+  }
+
+  const referer = c.req.header('Referer');
+  if (!referer) return c.notFound();
+
+  const match = referer.match(/\/api\/wvfs-zip\/([^\/\?]+)/);
+  if (!match) return c.notFound();
+
+  const postId = match[1];
+  const filePath = path.replace(/^\//, '');
+
+  if (!c.env.BUCKET) return c.notFound();
+
+  let response = await serveFileFromR2(c.env.BUCKET, postId, filePath);
+  if (response) return withCsp(response);
+
+  response = await serveFileFromWvfs(postId, filePath);
+  if (response) return withCsp(response);
+
+  let zipKey: string | null = null;
+  const keysToTry = [
+    `zip/${postId}.zip`,
+    `dos/${postId}.zip`,
+    `jsdos/${postId}.jsdos`,
+    `dm/zip/${postId}.zip`,
+    `dm/dos/${postId}.zip`,
+  ];
+  for (const key of keysToTry) {
+    const obj = await c.env.BUCKET.head(key);
+    if (obj) {
+      zipKey = key;
+      break;
+    }
+  }
+
+  if (!zipKey) return c.notFound();
+
+  const loaded = await ensureFileInWvfs(c.env.BUCKET, zipKey, postId, filePath);
+  if (loaded) {
+    response = await serveFileFromWvfs(postId, filePath);
+    if (response) {
+      c.executionCtx.waitUntil(persistExtractionToR2(c.env.BUCKET, zipKey, postId));
+      return withCsp(response);
+    }
+  }
+
+  return c.notFound();
+});
+
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 
 export default {
