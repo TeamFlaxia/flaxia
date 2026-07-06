@@ -389,51 +389,46 @@ export async function cleanupWvfsZip(postId: string): Promise<void> {
 }
 
 // Extract all files from ZIP and store them individually in R2 for persistent caching.
-// Called after post commit or on first access as a background task.
+// Called during post commit — errors propagate so the commit fails if extraction fails.
 export async function extractZipToR2(bucket: R2Bucket, zipKey: string, postId: string): Promise<void> {
-  try {
-    const obj = await bucket.get(zipKey);
-    if (!obj) {
-      console.error(`extractZipToR2: ZIP not found at ${zipKey}`);
-      return;
-    }
-    const zipData = await obj.arrayBuffer();
-    await validateZipLegacy(zipData);
-
-    const fflate = await import('fflate');
-    const zip = fflate.unzipSync(new Uint8Array(zipData));
-
-    const files: string[] = [];
-    const puts: Promise<void>[] = [];
-
-    for (const [filename, fileData] of Object.entries(zip)) {
-      if (filename.endsWith('/')) continue;
-      const normalizedName = filename.replace(/^(\.\/)+/, '');
-      if (!normalizedName) continue;
-
-      const r2Key = `${WVFS_R2_PREFIX}${postId}/${normalizedName}`;
-      const contentType = getMimeType(normalizedName);
-
-      puts.push(
-        bucket
-          .put(r2Key, fileData, {
-            httpMetadata: { contentType },
-          })
-          .then(() => {}),
-      );
-      files.push(normalizedName);
-    }
-
-    await Promise.all(puts);
-
-    await bucket.put(`${WVFS_R2_PREFIX}${postId}/.wvfs-manifest`, JSON.stringify({ files }), {
-      httpMetadata: { contentType: 'application/json' },
-    });
-
-    console.log(`extractZipToR2: Extracted ${files.length} files for post ${postId}`);
-  } catch (error) {
-    console.error(`extractZipToR2: Failed for post ${postId}:`, error);
+  const obj = await bucket.get(zipKey);
+  if (!obj) {
+    throw new Error(`extractZipToR2: ZIP not found at ${zipKey}`);
   }
+  const zipData = await obj.arrayBuffer();
+  await validateZipLegacy(zipData);
+
+  const fflate = await import('fflate');
+  const zip = fflate.unzipSync(new Uint8Array(zipData));
+
+  const files: string[] = [];
+  const puts: Promise<void>[] = [];
+
+  for (const [filename, fileData] of Object.entries(zip)) {
+    if (filename.endsWith('/')) continue;
+    const normalizedName = filename.replace(/^(\.\/)+/, '');
+    if (!normalizedName) continue;
+
+    const r2Key = `${WVFS_R2_PREFIX}${postId}/${normalizedName}`;
+    const contentType = getMimeType(normalizedName);
+
+    puts.push(
+      bucket
+        .put(r2Key, fileData, {
+          httpMetadata: { contentType },
+        })
+        .then(() => {}),
+    );
+    files.push(normalizedName);
+  }
+
+  await Promise.all(puts);
+
+  await bucket.put(`${WVFS_R2_PREFIX}${postId}/.wvfs-manifest`, JSON.stringify({ files }), {
+    httpMetadata: { contentType: 'application/json' },
+  });
+
+  console.log(`extractZipToR2: Extracted ${files.length} files for post ${postId}`);
 }
 
 // Serve a file from the pre-extracted R2 cache.

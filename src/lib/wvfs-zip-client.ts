@@ -6,6 +6,8 @@ export interface WvfsZipExecutorHandle {
 }
 
 const LOADING_TIMEOUT = 30000;
+const MAX_RETRIES = 2;
+const RETRY_DELAY = 3000;
 
 let activeHandle: WvfsZipExecutorHandle | null = null;
 
@@ -32,44 +34,65 @@ export async function executeWvfsZip(
     }
 
     const sandboxOrigin = workerUrl || import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
-    const zipUrl = `${sandboxOrigin}/api/wvfs-zip/${postId}`;
 
-    const { iframe, cleanup } = createWvfsIframe(postId, containerEl, zipUrl, hideFullscreen);
-
-    const loaded = await waitForLoad(iframe, loadingEl);
-
-    if (loaded) {
-      iframe.style.opacity = '1';
-      if (loadingEl?.parentNode) {
-        loadingEl.style.opacity = '0';
-        setTimeout(() => {
-          if (loadingEl?.parentNode) loadingEl.remove();
-        }, 300);
+    let lastError: unknown;
+    let iframeContainer: HTMLElement | null = null;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      // Remove old container on retry
+      if (iframeContainer?.parentNode) {
+        iframeContainer.parentNode.removeChild(iframeContainer);
       }
-    } else {
-      if (loadingEl?.parentNode) {
-        loadingEl.innerHTML = `<div style="color: var(--text-muted, #64748b); text-align: center; padding: 20px; font-size: 0.875rem;">読み込みに時間がかかっています…</div>`;
+
+      const zipUrl = `${sandboxOrigin}/api/wvfs-zip/${postId}${attempt > 0 ? `?retry=${attempt}` : ''}`;
+
+      const result = createWvfsIframe(containerEl, zipUrl, hideFullscreen);
+      iframeContainer = result.container;
+
+      const loaded = await waitForLoad(result.iframe, loadingEl);
+
+      if (loaded) {
+        result.iframe.style.opacity = '1';
+        if (loadingEl?.parentNode) {
+          loadingEl.style.opacity = '0';
+          setTimeout(() => {
+            if (loadingEl?.parentNode) loadingEl.remove();
+          }, 300);
+        }
+
+        const handle: WvfsZipExecutorHandle = {
+          postId,
+          destroy: () => {
+            clearTimeout((result.iframe as HTMLIFrameElement & { _wvfsTimeout?: number })._wvfsTimeout);
+            result.cleanup();
+            const fullscreenBtn = containerEl.querySelector('.wvfs-fullscreen-btn');
+            if (fullscreenBtn) {
+              fullscreenBtn.parentNode?.removeChild(fullscreenBtn);
+            }
+            if (activeHandle?.postId === postId) {
+              activeHandle = null;
+            }
+          },
+        };
+
+        activeHandle = handle;
+        return handle;
       }
-      iframe.style.opacity = '1';
+
+      // Timed out or failed — clean up this attempt and retry
+      lastError = new Error('WVFS iframe load timed out');
+      result.cleanup();
+      clearTimeout((result.iframe as HTMLIFrameElement & { _wvfsTimeout?: number })._wvfsTimeout);
+
+      if (attempt < MAX_RETRIES) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAY));
+      }
     }
 
-    const handle: WvfsZipExecutorHandle = {
-      postId,
-      destroy: () => {
-        clearTimeout((iframe as HTMLIFrameElement & { _wvfsTimeout?: number })._wvfsTimeout);
-        cleanup();
-        const fullscreenBtn = containerEl.querySelector('.wvfs-fullscreen-btn');
-        if (fullscreenBtn) {
-          fullscreenBtn.parentNode?.removeChild(fullscreenBtn);
-        }
-        if (activeHandle?.postId === postId) {
-          activeHandle = null;
-        }
-      },
-    };
-
-    activeHandle = handle;
-    return handle;
+    // All retries exhausted — clean up and let the caller show the error
+    if (loadingEl?.parentNode) {
+      loadingEl.remove();
+    }
+    throw lastError;
   } catch (error) {
     if (activeHandle) {
       activeHandle.destroy();
@@ -125,11 +148,10 @@ function createLoadingIndicator(): HTMLElement {
 }
 
 function createWvfsIframe(
-  postId: string,
   containerEl: HTMLElement,
   zipUrl: string,
   hideFullscreen: boolean,
-): { iframe: HTMLIFrameElement; cleanup: () => void } {
+): { iframe: HTMLIFrameElement; container: HTMLElement; cleanup: () => void } {
   const iframeContainer = document.createElement('div');
   iframeContainer.style.cssText = `
     position: absolute;
@@ -203,7 +225,7 @@ function createWvfsIframe(
     }
   };
 
-  return { iframe, cleanup };
+  return { iframe, container: iframeContainer, cleanup };
 }
 
 function waitForLoad(iframe: HTMLIFrameElement, loadingEl: HTMLElement | null): Promise<boolean> {
