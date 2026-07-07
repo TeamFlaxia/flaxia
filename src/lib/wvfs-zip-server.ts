@@ -367,8 +367,63 @@ export async function serveFileFromWvfs(postId: string, filePath: string): Promi
   }
 }
 
+function rewriteLocalAbsolutePaths(htmlContent: string): string {
+  htmlContent = htmlContent.replace(/(?:(?:src|href)\s*=\s*['"])(\/[^'"]+)(['"])/gi, (match, path, quote) => {
+    if (
+      path.startsWith('/') &&
+      !path.startsWith('//') &&
+      !path.startsWith('/https:') &&
+      !path.startsWith('/http:') &&
+      !path.startsWith('/data:') &&
+      !path.startsWith('/blob:') &&
+      !path.startsWith('/mailto:') &&
+      !path.startsWith('/tel:')
+    ) {
+      return match.replace(path, path.substring(1));
+    }
+    return match;
+  });
+
+  htmlContent = htmlContent.replace(/srcset\s*=\s*['"]([^'"]+)['"]/gi, (match, value) => {
+    const newValue = value.split(',').map((part: string) => {
+      const trimmed = part.trim();
+      const [url, ...descriptor] = trimmed.split(/\s+/);
+      if (
+        url.startsWith('/') &&
+        !url.startsWith('//') &&
+        !url.startsWith('/https:') &&
+        !url.startsWith('/http:') &&
+        !url.startsWith('/data:') &&
+        !url.startsWith('/blob:')
+      ) {
+        return [url.substring(1), ...descriptor].join(' ');
+      }
+      return trimmed;
+    });
+    return `srcset="${newValue}"`;
+  });
+
+  htmlContent = htmlContent.replace(/url\(\s*['"]?\/([^'")\s]+)['"]?\s*\)/gi, (match, path) => {
+    if (
+      !path.startsWith('/') &&
+      !path.startsWith('//') &&
+      !path.startsWith('https:') &&
+      !path.startsWith('http:') &&
+      !path.startsWith('data:') &&
+      !path.startsWith('blob:')
+    ) {
+      return `url("${path}")`;
+    }
+    return match;
+  });
+
+  return htmlContent;
+}
+
 function injectBaseTag(htmlContent: string, postId: string): string {
   const baseUrl = `/api/wvfs-zip/${postId}/`;
+
+  htmlContent = rewriteLocalAbsolutePaths(htmlContent);
 
   if (htmlContent.includes('<head>')) {
     return htmlContent.replace(/<head>/i, `<head>\n  <base href="${baseUrl}">`);
