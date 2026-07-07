@@ -1,6 +1,12 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { extractZipToR2, serveFileFromR2 } from './lib/wvfs-zip-server';
+import {
+  ensureFileInWvfs,
+  extractZipToR2,
+  extractZipToWvfs,
+  serveFileFromR2,
+  serveFileFromWvfs,
+} from './lib/wvfs-zip-server';
 
 type Bindings = {
   BUCKET: R2Bucket;
@@ -29,35 +35,12 @@ function withCsp(response: Response): Response {
   });
 }
 
-async function findZipKey(bucket: R2Bucket, db: D1Database | undefined, postId: string): Promise<string | null> {
-  if (db) {
-    try {
-      const adResult = (await db
-        .prepare("SELECT payload_key FROM ads WHERE id = ? AND payload_type = 'zip' AND active = 1")
-        .bind(postId)
-        .first()) as { payload_key: string } | null;
-      if (adResult?.payload_key) {
-        const obj = await bucket.head(adResult.payload_key);
-        if (obj) return adResult.payload_key;
-      }
-    } catch {
-      // proceed without ad lookup on DB failure
-    }
+async function persistExtractionToR2(bucket: R2Bucket, zipKey: string, postId: string): Promise<void> {
+  try {
+    await extractZipToR2(bucket, zipKey, postId);
+  } catch (e) {
+    console.error('Background R2 extraction failed:', e);
   }
-
-  const keysToTry = [
-    `zip/${postId}.zip`,
-    `dos/${postId}.zip`,
-    `jsdos/${postId}.jsdos`,
-    `dm/zip/${postId}.zip`,
-    `dm/dos/${postId}.zip`,
-  ];
-  for (const key of keysToTry) {
-    const obj = await bucket.head(key);
-    if (obj) return key;
-  }
-
-  return null;
 }
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -75,27 +58,79 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
       return c.json({ error: 'Storage not available' }, 500);
     }
 
-    // 1. Try pre-extracted R2 files — fast path
+    // 1. Try pre-extracted R2 files (fast path — persists across workers, CDN-cacheable)
     let response = await serveFileFromR2(c.env.BUCKET, postId, filePath);
     if (response) return withCsp(response);
 
-    // 2. Not in R2 yet — for new posts this shouldn't happen (commit-time extraction),
-    //    but for old posts we do a one-time full extraction to R2.
-    const zipKey = await findZipKey(c.env.BUCKET, c.env.DB, postId);
+    // 2. Try in-memory cache (second fast path)
+    response = await serveFileFromWvfs(postId, filePath);
+    if (response) return withCsp(response);
+
+    // 3. Find the ZIP key in R2
+    let zipKey: string | null = null;
+
+    if (c.env.DB) {
+      try {
+        const adResult = (await c.env.DB.prepare(
+          "SELECT payload_key FROM ads WHERE id = ? AND payload_type = 'zip' AND active = 1",
+        )
+          .bind(postId)
+          .first()) as { payload_key: string } | null;
+        if (adResult?.payload_key) {
+          const obj = await c.env.BUCKET.head(adResult.payload_key);
+          if (obj) zipKey = adResult.payload_key;
+        }
+      } catch {
+        // proceed without ad lookup on DB failure
+      }
+    }
+
+    if (!zipKey) {
+      const keysToTry = [
+        `zip/${postId}.zip`,
+        `dos/${postId}.zip`,
+        `jsdos/${postId}.jsdos`,
+        `dm/zip/${postId}.zip`,
+        `dm/dos/${postId}.zip`,
+      ];
+      for (const key of keysToTry) {
+        const obj = await c.env.BUCKET.head(key);
+        if (obj) {
+          zipKey = key;
+          break;
+        }
+      }
+    }
+
     if (!zipKey) {
       return c.json({ error: 'ZIP not found' }, 404);
     }
 
+    // 4. Try progressive extraction: parse central dir + extract just this file
+    const loaded = await ensureFileInWvfs(c.env.BUCKET, zipKey, postId, filePath);
+    if (loaded) {
+      response = await serveFileFromWvfs(postId, filePath);
+      if (response) {
+        // Persist to R2 so subsequent requests skip extraction entirely
+        c.executionCtx.waitUntil(persistExtractionToR2(c.env.BUCKET, zipKey, postId));
+        return withCsp(response);
+      }
+    }
+
+    // 5. Fallback: full extraction
     const obj = await c.env.BUCKET.get(zipKey);
     if (!obj) {
       return c.json({ error: 'ZIP not found' }, 404);
     }
 
-    // Extract the full ZIP to R2 synchronously, then serve the requested file
-    await extractZipToR2(c.env.BUCKET, zipKey, postId);
+    const zipData = await obj.arrayBuffer();
+    await extractZipToWvfs(zipData, postId);
 
-    response = await serveFileFromR2(c.env.BUCKET, postId, filePath);
-    if (response) return withCsp(response);
+    response = await serveFileFromWvfs(postId, filePath);
+    if (response) {
+      c.executionCtx.waitUntil(persistExtractionToR2(c.env.BUCKET, zipKey, postId));
+      return withCsp(response);
+    }
 
     return c.json({ error: 'File not found in ZIP', path: filePath }, 404);
   } catch (error: unknown) {
@@ -108,62 +143,6 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
 });
 
 app.get('/favicon.ico', (c) => c.body(null, 204));
-
-// Catch-all: serve root-level assets from ZIP context using Referer header.
-// Vite-built apps in ZIPs use absolute paths like /assets/index-xxx.js
-// which bypass the <base> tag. We extract postId from the Referer.
-app.get('/*', async (c) => {
-  const path = c.req.path;
-  if (path.startsWith('/api/') || path === '/favicon.ico') {
-    return c.notFound();
-  }
-
-  const referer = c.req.header('Referer');
-  if (!referer) return c.notFound();
-
-  const match = referer.match(/\/api\/wvfs-zip\/([^\/\?]+)/);
-  if (!match) return c.notFound();
-
-  const postId = match[1];
-  const filePath = path.replace(/^\//, '');
-
-  if (!c.env.BUCKET) return c.notFound();
-
-  let response = await serveFileFromR2(c.env.BUCKET, postId, filePath);
-  if (response) return withCsp(response);
-
-  response = await serveFileFromWvfs(postId, filePath);
-  if (response) return withCsp(response);
-
-  let zipKey: string | null = null;
-  const keysToTry = [
-    `zip/${postId}.zip`,
-    `dos/${postId}.zip`,
-    `jsdos/${postId}.jsdos`,
-    `dm/zip/${postId}.zip`,
-    `dm/dos/${postId}.zip`,
-  ];
-  for (const key of keysToTry) {
-    const obj = await c.env.BUCKET.head(key);
-    if (obj) {
-      zipKey = key;
-      break;
-    }
-  }
-
-  if (!zipKey) return c.notFound();
-
-  const loaded = await ensureFileInWvfs(c.env.BUCKET, zipKey, postId, filePath);
-  if (loaded) {
-    response = await serveFileFromWvfs(postId, filePath);
-    if (response) {
-      c.executionCtx.waitUntil(persistExtractionToR2(c.env.BUCKET, zipKey, postId));
-      return withCsp(response);
-    }
-  }
-
-  return c.notFound();
-});
 
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 

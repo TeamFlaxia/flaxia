@@ -5440,10 +5440,6 @@ app.post('/api/admin/ads', requireAuth, async (c) => {
       if (payload_type === 'zip') {
         const fileBuffer = await payloadFile.arrayBuffer();
         await c.env.BUCKET.put(r2Key, fileBuffer);
-        // Pre-extract to R2 for WVFS
-        await extractZipToR2(c.env.BUCKET, r2Key, adId).catch((e) => {
-          console.error('Ad ZIP extraction failed:', e);
-        });
       } else {
         const fileBuffer = await payloadFile.arrayBuffer();
         await c.env.BUCKET.put(r2Key, fileBuffer, {
@@ -6143,9 +6139,20 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
       (e) => console.error('Background embed failed:', e),
     );
 
-    // Pre-extract ZIP to R2 synchronously so assets are ready before the post is published
+    // Pre-extract ZIP to R2 for WVFS persistent caching
     if (payloadKey && (payloadKey.endsWith('.zip') || payloadKey.endsWith('.jsdos'))) {
-      await extractZipToR2(c.env.BUCKET, payloadKey, postId!);
+      const execCtx = (c as any).executionCtx;
+      if (execCtx?.waitUntil) {
+        execCtx.waitUntil(
+          (async () => {
+            try {
+              await extractZipToR2(c.env.BUCKET, payloadKey!, postId!);
+            } catch (e) {
+              console.error('Background ZIP extraction failed:', e);
+            }
+          })(),
+        );
+      }
     }
 
     return c.json({ post: fullPost });
@@ -7826,18 +7833,6 @@ app.put('/api/posts/:id', async (c) => {
 
     if (keysToDelete.length > 0 && c.env.BUCKET) {
       Promise.all(keysToDelete.map((k) => c.env.BUCKET.delete(k).catch(() => {}))).catch(() => {});
-    }
-
-    // Extract new ZIP payload to R2 synchronously for WVFS
-    if (
-      body.payload_key !== undefined &&
-      body.payload_key !== post.payload_key &&
-      body.payload_key &&
-      (body.payload_key.endsWith('.zip') || body.payload_key.endsWith('.jsdos'))
-    ) {
-      await extractZipToR2(c.env.BUCKET, body.payload_key, postId).catch((e) => {
-        console.error('Edit post ZIP extraction failed:', e);
-      });
     }
 
     await c.env.DB.prepare(
