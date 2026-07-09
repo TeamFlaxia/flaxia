@@ -196,7 +196,11 @@ function createSandboxIframe(
     event.stopPropagation();
 
     try {
-      if (iframeContainer.requestFullscreen) {
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch((err) => {
+          console.warn('Exit fullscreen failed:', err);
+        });
+      } else if (iframeContainer.requestFullscreen) {
         iframeContainer.requestFullscreen().catch((err) => {
           console.warn('Container fullscreen failed:', err);
           if (iframe.requestFullscreen) {
