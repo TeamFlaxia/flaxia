@@ -16,11 +16,28 @@ export interface ExplorePageProps {
   currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null;
 }
 
+interface ArcadeGame {
+  id: string;
+  postId: string;
+  title: string;
+  username: string;
+  displayName?: string;
+  avatarKey?: string;
+  type: string;
+  swfKey?: string;
+  payloadKey?: string;
+  thumbnailKey?: string;
+  freshCount: number;
+  replyCount: number;
+  impressions: number;
+  isFreshed: boolean;
+  createdAt: string;
+}
 export class ExplorePage {
   private element: HTMLElement;
   private props: ExplorePageProps;
   private posts: Post[] = [];
-  private arcadePosts: Post[] = [];
+  private arcadePosts: ArcadeGame[] = [];
   private userSuggestions: Array<{
     id: string;
     username: string;
@@ -477,10 +494,14 @@ export class ExplorePage {
       }
 
       if (this.cursor) {
-        if (!this.props.tag && this.activeFilter !== 'arcade' && !this.cursor.includes(',')) {
-          this.cursor = undefined;
-        } else {
+        if (this.props.tag) {
           url += `&cursor=${encodeURIComponent(this.cursor)}`;
+        } else if (this.activeFilter === 'arcade') {
+          url += `&cursor=${encodeURIComponent(this.cursor)}`;
+        } else if (this.cursor.includes(',')) {
+          url += `&cursor=${encodeURIComponent(this.cursor)}`;
+        } else {
+          this.cursor = undefined;
         }
       }
 
@@ -488,12 +509,12 @@ export class ExplorePage {
       if (!response.ok) throw new Error('Failed to load more posts');
 
       if (this.activeFilter === 'arcade') {
-        const data = (await response.json()) as { games: Post[] };
+        const data = (await response.json()) as { games: ArcadeGame[]; hasMore: boolean; cursor?: string | null };
         const newPosts = data.games || [];
         if (newPosts.length > 0) {
           this.arcadePosts.push(...newPosts);
-          this.cursor = newPosts[newPosts.length - 1].created_at;
-          this.hasMore = newPosts.length === 10;
+          this.cursor = data.cursor ?? undefined;
+          this.hasMore = data.hasMore;
           this.renderArcadePosts();
         } else {
           this.hasMore = false;
@@ -559,10 +580,10 @@ export class ExplorePage {
   private async loadArcadeContent(): Promise<void> {
     const res = await fetch('/api/games?limit=10');
     if (res.ok) {
-      const data = (await res.json()) as { games: Post[] };
+      const data = (await res.json()) as { games: ArcadeGame[]; hasMore: boolean; cursor?: string | null };
       this.arcadePosts = data.games || [];
-      this.cursor = this.arcadePosts.length > 0 ? this.arcadePosts[this.arcadePosts.length - 1].created_at : undefined;
-      this.hasMore = (data.games || []).length === 10;
+      this.cursor = data.cursor ?? undefined;
+      this.hasMore = data.hasMore;
       this.renderArcadePosts();
     }
   }
@@ -785,14 +806,20 @@ export class ExplorePage {
     const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
     if (!postsContainer) return;
 
-    if (this.arcadePosts.length <= 10 && postsContainer.children.length > 0 && !this.cursor) {
-      postsContainer.innerHTML = '';
+    if (this.arcadePosts.length === postsContainer.children.length && postsContainer.children.length > 0) {
+      return;
+    }
+
+    if (postsContainer.children.length === 0 || this.arcadePosts.length <= postsContainer.children.length) {
+      if (this.arcadePosts.length <= 10) {
+        postsContainer.innerHTML = '';
+      }
     }
 
     const fragment = document.createDocumentFragment();
     const startIndex = postsContainer.children.length;
 
-    this.arcadePosts.slice(startIndex).forEach((post) => {
+    this.arcadePosts.slice(startIndex).forEach((game) => {
       const row = document.createElement('div');
       row.style.cssText = `
         display: flex;
@@ -810,8 +837,8 @@ export class ExplorePage {
         row.style.background = 'transparent';
       });
       row.onclick = () => {
-        window.history.pushState({ postId: post.id }, '', `/arcade/${post.id}`);
-        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: post.id } }));
+        window.history.pushState({ postId: game.postId }, '', `/arcade/${game.postId}`);
+        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: game.postId } }));
       };
 
       const thumb = document.createElement('div');
@@ -825,9 +852,9 @@ export class ExplorePage {
         background: var(--bg-secondary);
       `;
 
-      if (post.thumbnail_key) {
+      if (game.thumbnailKey) {
         const img = document.createElement('img');
-        img.src = `/api/thumbnail/${post.thumbnail_key}`;
+        img.src = `/api/thumbnail/${game.thumbnailKey}`;
         img.alt = '';
         img.style.cssText = 'width: 100%; height: 100%; object-fit: cover;';
         thumb.appendChild(img);
@@ -845,17 +872,18 @@ export class ExplorePage {
       const title = document.createElement('div');
       title.style.cssText =
         'font-weight: 600; color: var(--text-primary); margin-bottom: 0.25rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
-      title.textContent = post.text;
+      title.textContent = game.title;
 
       const meta = document.createElement('div');
       meta.style.cssText =
         'font-size: 0.8rem; color: var(--text-muted); display: flex; gap: 0.5rem; align-items: center;';
 
       const author = document.createElement('span');
-      author.textContent = `@${post.username}`;
+      author.textContent = `@${game.username}`;
 
       const engagement = document.createElement('span');
-      engagement.textContent = `${formatCount(post.fresh_count)} 💚`;
+      const freshStr = Number.isNaN(game.freshCount) ? '0' : formatCount(game.freshCount);
+      engagement.textContent = `${freshStr} 💚`;
 
       meta.appendChild(author);
       meta.appendChild(engagement);
