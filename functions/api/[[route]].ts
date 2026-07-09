@@ -4173,7 +4173,6 @@ app.get('/api/posts', async (c) => {
     const hashtag = c.req.query('hashtag');
     const following = c.req.query('following') === 'true';
     const username = c.req.query('username');
-    const mediaType = c.req.query('media_type');
 
     // Check if database is available
     if (!c.env.DB) {
@@ -4245,19 +4244,11 @@ app.get('/api/posts', async (c) => {
 
     if (hashtag) {
       // Filter by hashtag using json_each
-      const mediaFilter =
-        mediaType && ['flash', 'html', 'image', 'audio', 'video'].includes(mediaType)
-          ? mediaType === 'flash'
-            ? 'AND p.swf_key IS NOT NULL'
-            : mediaType === 'html'
-              ? "AND p.payload_key IS NOT NULL AND (p.swf_key IS NULL OR p.swf_key = '')"
-              : `AND p.gif_key LIKE '${mediaType}/%'`
-          : '';
       if (cursor) {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ${mediaFilter} ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [hashtag, cursor, ...blockParam, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${mediaFilter} ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [hashtag, ...blockParam, limit];
       }
     } else if (following && currentUserId) {
@@ -4418,7 +4409,6 @@ app.get('/api/posts/trending', async (c) => {
   try {
     const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
     const cursor = c.req.query('cursor');
-    const mediaType = c.req.query('media_type');
     const [cursorScore, cursorCreatedAt] = cursor ? cursor.split(',') : [null, null];
     let numericScore = cursorScore !== null ? parseFloat(cursorScore) : null;
     if (Number.isNaN(numericScore!)) numericScore = null;
@@ -4437,7 +4427,7 @@ app.get('/api/posts/trending', async (c) => {
 
     // Try cache hit (only for non-cursor requests)
     if (!cursor) {
-      const cacheKey = makeCacheKey('trending', c, `${limit}:${mediaType || ''}`);
+      const cacheKey = makeCacheKey('trending', c, `${limit}`);
       const cached = await kvCacheGet<{ posts: Record<string, unknown>[] }>(c, cacheKey);
       if (cached) {
         const posts = cached.posts;
@@ -4478,14 +4468,6 @@ app.get('/api/posts/trending', async (c) => {
       ? 'AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
       : '';
     const blockParamTrending = currentUserId ? [currentUserId] : [];
-    const mediaFilterTrending =
-      mediaType && ['flash', 'html', 'image', 'audio', 'video'].includes(mediaType)
-        ? mediaType === 'flash'
-          ? 'AND p.swf_key IS NOT NULL'
-          : mediaType === 'html'
-            ? "AND p.payload_key IS NOT NULL AND (p.swf_key IS NULL OR p.swf_key = '')"
-            : `AND p.gif_key LIKE '${mediaType}/%'`
-        : '';
     const query = `
       SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
       COALESCE(p.reply_count, 0) as reply_count, 
@@ -4495,7 +4477,6 @@ app.get('/api/posts/trending', async (c) => {
       FROM posts p 
       LEFT JOIN users u ON p.user_id = u.id 
       WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at > datetime('now', '-7 days')
-      ${mediaFilterTrending}
       ${numericScore !== null ? 'AND (score < ? OR (score = ? AND p.created_at < ?))' : ''}
       ${blockFilterTrending}
       ORDER BY score DESC, p.created_at DESC
@@ -4544,7 +4525,7 @@ app.get('/api/posts/trending', async (c) => {
 
     // Write to cache (non-cursor only)
     if (!cursor && c.env.CACHE) {
-      const cacheKey = makeCacheKey('trending', c, `${limit}:${mediaType || ''}`);
+      const cacheKey = makeCacheKey('trending', c, `${limit}`);
       const cacheData = {
         posts: posts.map((p: Record<string, unknown>) => ({ ...p, is_freshed: false, is_bookmarked: false })),
       };

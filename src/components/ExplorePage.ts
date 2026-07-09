@@ -10,8 +10,6 @@ import { updateMetaTags } from '../lib/seo-meta.js';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
-export type MediaFilter = 'all' | 'flash' | 'html' | 'image' | 'audio' | 'video';
-
 export interface ExplorePageProps {
   tag?: string;
   sandboxOrigin: string;
@@ -22,12 +20,20 @@ export class ExplorePage {
   private element: HTMLElement;
   private props: ExplorePageProps;
   private posts: Post[] = [];
+  private arcadePosts: Post[] = [];
+  private userSuggestions: Array<{
+    id: string;
+    username: string;
+    display_name?: string;
+    avatar_key?: string;
+    bio?: string;
+  }> = [];
   private cursor?: string;
   private loading = false;
   private hasMore = true;
   private infiniteScroll: ReturnType<typeof createInfiniteScroll>;
+  private activeFilter: 'posts' | 'arcade' | 'users' = 'posts';
   private searchFilter: 'posts' | 'users' | 'arcade' = 'posts';
-  private activeMediaFilter: MediaFilter = 'all';
   private fabButton: HTMLElement | null = null;
   private tagCountEl: HTMLElement | null = null;
   private totalTagCount: number = 0;
@@ -61,8 +67,14 @@ export class ExplorePage {
     const container = document.createElement('div');
     container.className = 'explore-page';
 
+    // Add search section
     const searchSection = this.createSearchSection();
     container.appendChild(searchSection);
+
+    // Initialize filter UI to 'posts'
+    requestAnimationFrame(() => {
+      this.switchFilter('posts');
+    });
 
     if (this.props.tag) {
       container.appendChild(
@@ -121,7 +133,6 @@ export class ExplorePage {
     section.className = 'explore-search-section';
     section.style.cssText = `
       padding: 1rem;
-      padding-bottom: 0;
       border-bottom: 1px solid var(--border);
       position: sticky;
       top: 0;
@@ -169,69 +180,44 @@ export class ExplorePage {
     searchBox.appendChild(suggestDropdown);
 
     section.appendChild(searchBox);
-    section.appendChild(this.createMediaFilterBar());
 
-    return section;
-  }
-
-  private createMediaFilterBar(): HTMLElement {
-    const bar = document.createElement('div');
-    bar.className = 'explore-media-filter';
-    bar.style.cssText = `
+    // Filter bar
+    const filterBar = document.createElement('div');
+    filterBar.className = 'explore-filter-bar';
+    filterBar.style.cssText = `
       display: flex;
       gap: 0.5rem;
-      padding: 0.75rem 0;
       overflow-x: auto;
-      scrollbar-width: none;
     `;
 
-    const filters: { key: MediaFilter; labelKey: string }[] = [
-      { key: 'all', labelKey: 'explore.filter_all' },
-      { key: 'flash', labelKey: 'explore.filter_flash' },
-      { key: 'html', labelKey: 'explore.filter_html' },
-      { key: 'image', labelKey: 'explore.filter_image' },
-      { key: 'audio', labelKey: 'explore.filter_audio' },
-      { key: 'video', labelKey: 'explore.filter_video' },
+    const filters: { key: 'posts' | 'arcade' | 'users'; label: string }[] = [
+      { key: 'posts', label: t('explore.filter_posts') },
+      { key: 'arcade', label: t('explore.filter_arcade') },
+      { key: 'users', label: t('explore.filter_users') },
     ];
 
     for (const f of filters) {
       const btn = document.createElement('button');
-      btn.dataset.mediaFilter = f.key;
-      btn.textContent = t(f.labelKey);
+      btn.className = 'explore-filter-btn';
+      btn.dataset.filter = f.key;
+      btn.textContent = f.label;
       btn.style.cssText = `
-        padding: 0.3rem 0.85rem;
-        border-radius: 9999px;
-        border: 1px solid var(--border);
-        background: ${f.key === this.activeMediaFilter ? 'var(--accent)' : 'var(--bg-input)'};
-        color: ${f.key === this.activeMediaFilter ? 'var(--bg-primary)' : 'var(--text-primary)'};
+        padding: 0.4rem 1rem;
+        border-radius: 999px;
+        border: none;
+        cursor: pointer;
         font-family: inherit;
         font-size: 0.8rem;
-        font-weight: 600;
-        cursor: pointer;
         white-space: nowrap;
-        transition: all 0.15s ease;
-        flex-shrink: 0;
+        transition: all 0.2s ease;
       `;
-      btn.addEventListener('click', () => {
-        if (this.activeMediaFilter === f.key) return;
-        this.activeMediaFilter = f.key;
-        this.updateFilterButtons(bar);
-        void this.loadContent();
-      });
-      bar.appendChild(btn);
+      btn.onclick = () => this.switchFilter(f.key);
+      filterBar.appendChild(btn);
     }
 
-    return bar;
-  }
+    section.appendChild(filterBar);
 
-  private updateFilterButtons(bar: HTMLElement): void {
-    const buttons = bar.querySelectorAll('button');
-    const isActive = (key: string) => key === this.activeMediaFilter;
-    buttons.forEach((btn) => {
-      const key = btn.dataset.mediaFilter || '';
-      btn.style.background = isActive(key) ? 'var(--accent)' : 'var(--bg-input)';
-      btn.style.color = isActive(key) ? 'var(--bg-primary)' : 'var(--text-primary)';
-    });
+    return section;
   }
 
   private setupEventListeners(): void {
@@ -451,11 +437,20 @@ export class ExplorePage {
     this.updateLoadingState(true);
 
     try {
-      this.resetPostsContainer();
       if (this.props.tag) {
         await this.loadTagPosts();
       } else {
-        await this.loadTrendingContent();
+        switch (this.activeFilter) {
+          case 'posts':
+            await this.loadTrendingContent();
+            break;
+          case 'arcade':
+            await this.loadArcadeContent();
+            break;
+          case 'users':
+            await this.loadUsersContent();
+            break;
+        }
       }
     } catch (error) {
       console.error('Failed to load explore content:', error);
@@ -463,20 +458,6 @@ export class ExplorePage {
       this.loading = false;
       this.updateLoadingState(false);
     }
-  }
-
-  private getMediaFilterQuery(): string {
-    if (this.activeMediaFilter === 'all') return '';
-    return `&media_type=${this.activeMediaFilter}`;
-  }
-
-  private resetPostsContainer(): void {
-    this.posts = [];
-    this.cursor = undefined;
-    this.hasMore = true;
-    this.postCards.clear();
-    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
-    if (postsContainer) postsContainer.innerHTML = '';
   }
 
   private async loadMorePosts(): Promise<void> {
@@ -489,14 +470,14 @@ export class ExplorePage {
       let url = '';
       if (this.props.tag) {
         url = `/api/posts?hashtag=${encodeURIComponent(this.props.tag)}&limit=10`;
+      } else if (this.activeFilter === 'arcade') {
+        url = `/api/games?limit=10`;
       } else {
         url = `/api/posts/trending?limit=10`;
       }
 
-      url += this.getMediaFilterQuery();
-
       if (this.cursor) {
-        if (!this.props.tag && !this.cursor.includes(',')) {
+        if (!this.props.tag && this.activeFilter !== 'arcade' && !this.cursor.includes(',')) {
           this.cursor = undefined;
         } else {
           url += `&cursor=${encodeURIComponent(this.cursor)}`;
@@ -506,22 +487,36 @@ export class ExplorePage {
       const response = await fetch(url);
       if (!response.ok) throw new Error('Failed to load more posts');
 
-      const data = (await response.json()) as { posts: Post[] };
-      const newPosts = data.posts || [];
-
-      if (newPosts.length > 0) {
-        this.posts.push(...newPosts);
-        if (!this.props.tag) {
-          const lastPost = newPosts[newPosts.length - 1] as Post & { score: number };
-          this.cursor = `${lastPost.score},${lastPost.created_at}`;
-        } else {
+      if (this.activeFilter === 'arcade') {
+        const data = (await response.json()) as { games: Post[] };
+        const newPosts = data.games || [];
+        if (newPosts.length > 0) {
+          this.arcadePosts.push(...newPosts);
           this.cursor = newPosts[newPosts.length - 1].created_at;
+          this.hasMore = newPosts.length === 10;
+          this.renderArcadePosts();
+        } else {
+          this.hasMore = false;
+          this.showEndOfPosts();
         }
-        this.hasMore = newPosts.length === 10;
-        this.renderPosts();
       } else {
-        this.hasMore = false;
-        this.showEndOfPosts();
+        const data = (await response.json()) as { posts: Post[] };
+        const newPosts = data.posts || [];
+
+        if (newPosts.length > 0) {
+          this.posts.push(...newPosts);
+          if (!this.props.tag) {
+            const lastPost = newPosts[newPosts.length - 1] as Post & { score: number };
+            this.cursor = `${lastPost.score},${lastPost.created_at}`;
+          } else {
+            this.cursor = newPosts[newPosts.length - 1].created_at;
+          }
+          this.hasMore = newPosts.length === 10;
+          this.renderPosts();
+        } else {
+          this.hasMore = false;
+          this.showEndOfPosts();
+        }
       }
     } catch (error) {
       console.error('Failed to load more posts:', error);
@@ -534,7 +529,6 @@ export class ExplorePage {
 
   private async loadTagPosts(): Promise<void> {
     let url = `/api/posts?hashtag=${encodeURIComponent(this.props.tag!)}&limit=10`;
-    url += this.getMediaFilterQuery();
     if (this.cursor) {
       url += `&cursor=${encodeURIComponent(this.cursor)}`;
     }
@@ -548,8 +542,8 @@ export class ExplorePage {
   }
 
   private async loadTrendingContent(): Promise<void> {
-    const trendingUrl = `/api/posts/trending?limit=10${this.getMediaFilterQuery()}`;
-    const [tagsRes, postsRes] = await Promise.all([fetch('/api/tags/trending'), fetch(trendingUrl)]);
+    // Load both trending tags and trending posts
+    const [tagsRes, postsRes] = await Promise.all([fetch('/api/tags/trending'), fetch('/api/posts/trending?limit=10')]);
 
     if (tagsRes.ok) {
       const tagsData = (await tagsRes.json()) as { tags: Array<{ tag: string; percentage: string }> };
@@ -559,6 +553,29 @@ export class ExplorePage {
     if (postsRes.ok) {
       const postsData = (await postsRes.json()) as { posts: Post[] };
       this.handleNewPosts(postsData.posts || []);
+    }
+  }
+
+  private async loadArcadeContent(): Promise<void> {
+    const res = await fetch('/api/games?limit=10');
+    if (res.ok) {
+      const data = (await res.json()) as { games: Post[] };
+      this.arcadePosts = data.games || [];
+      this.cursor = this.arcadePosts.length > 0 ? this.arcadePosts[this.arcadePosts.length - 1].created_at : undefined;
+      this.hasMore = (data.games || []).length === 10;
+      this.renderArcadePosts();
+    }
+  }
+
+  private async loadUsersContent(): Promise<void> {
+    const res = await fetch('/api/users/suggestions');
+    if (res.ok) {
+      const data = (await res.json()) as {
+        users: Array<{ id: string; username: string; display_name?: string; avatar_key?: string; bio?: string }>;
+      };
+      this.userSuggestions = data.users || [];
+      this.hasMore = false;
+      this.renderUserSuggestions();
     }
   }
 
@@ -583,6 +600,56 @@ export class ExplorePage {
         detail: { view: 'search', searchQuery: query, searchType: this.searchFilter },
       }),
     );
+  }
+
+  private switchFilter(filter: 'posts' | 'arcade' | 'users'): void {
+    if (this.activeFilter === filter) return;
+    this.activeFilter = filter;
+
+    // Update filter UI
+    const filterBtns = this.element.querySelectorAll('.explore-filter-btn') as NodeListOf<HTMLElement>;
+    filterBtns.forEach((btn) => {
+      const isActive = btn.dataset.filter === filter;
+      btn.style.border = `1px solid ${isActive ? 'var(--accent)' : 'var(--border)'}`;
+      btn.style.background = isActive ? 'var(--accent)' : 'transparent';
+      btn.style.color = isActive ? 'white' : 'var(--text-muted)';
+    });
+
+    // Show/hide trending tags container
+    const trendingTags = this.element.querySelector('.explore-trending-tags') as HTMLElement;
+    if (trendingTags) {
+      trendingTags.style.display = filter === 'posts' ? 'block' : 'none';
+    }
+
+    // Reset and load content for the new filter
+    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
+    if (postsContainer) {
+      postsContainer.innerHTML = '';
+    }
+
+    // If in tag view, tag view only shows posts
+    if (this.props.tag && filter !== 'posts') {
+      const loadingElement = this.element.querySelector('.explore-loading') as HTMLElement;
+      if (loadingElement) {
+        loadingElement.style.display = 'block';
+        loadingElement.innerHTML = '';
+        const msg = document.createElement('div');
+        msg.style.cssText =
+          "text-align: center; padding: 3rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;";
+        msg.textContent = t('explore.tag_filter_unavailable');
+        loadingElement.appendChild(msg);
+      }
+      return;
+    }
+
+    this.posts = [];
+    this.arcadePosts = [];
+    this.userSuggestions = [];
+    this.cursor = undefined;
+    this.hasMore = true;
+    this.postCards.clear();
+
+    void this.loadContent();
   }
 
   private getSearchHistory(): string[] {
@@ -711,6 +778,165 @@ export class ExplorePage {
         window.location.reload();
       };
       container.appendChild(item);
+    });
+  }
+
+  private renderArcadePosts(): void {
+    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
+    if (!postsContainer) return;
+
+    if (this.arcadePosts.length <= 10 && postsContainer.children.length > 0 && !this.cursor) {
+      postsContainer.innerHTML = '';
+    }
+
+    const fragment = document.createDocumentFragment();
+    const startIndex = postsContainer.children.length;
+
+    this.arcadePosts.slice(startIndex).forEach((post) => {
+      const row = document.createElement('div');
+      row.style.cssText = `
+        display: flex;
+        gap: 1rem;
+        padding: 0.75rem;
+        border-radius: 0.5rem;
+        cursor: pointer;
+        transition: background 0.2s;
+        margin-bottom: 0.25rem;
+      `;
+      row.addEventListener('mouseenter', () => {
+        row.style.background = 'var(--bg-secondary)';
+      });
+      row.addEventListener('mouseleave', () => {
+        row.style.background = 'transparent';
+      });
+      row.onclick = () => {
+        window.history.pushState({ postId: post.id }, '', `/arcade/${post.id}`);
+        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: post.id } }));
+      };
+
+      const thumb = document.createElement('div');
+      thumb.style.cssText = `
+        width: 180px;
+        flex-shrink: 0;
+        aspect-ratio: 16 / 9;
+        border-radius: 0.5rem;
+        overflow: hidden;
+        position: relative;
+        background: var(--bg-secondary);
+      `;
+
+      if (post.thumbnail_key) {
+        const img = document.createElement('img');
+        img.src = `/api/thumbnail/${post.thumbnail_key}`;
+        img.alt = '';
+        img.style.cssText = 'width: 100%; height: 100%; object-fit: cover;';
+        thumb.appendChild(img);
+      } else {
+        const fallback = document.createElement('div');
+        fallback.style.cssText =
+          'width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 2rem;';
+        fallback.textContent = '🎮';
+        thumb.appendChild(fallback);
+      }
+
+      const info = document.createElement('div');
+      info.style.cssText = 'flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center;';
+
+      const title = document.createElement('div');
+      title.style.cssText =
+        'font-weight: 600; color: var(--text-primary); margin-bottom: 0.25rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+      title.textContent = post.text;
+
+      const meta = document.createElement('div');
+      meta.style.cssText =
+        'font-size: 0.8rem; color: var(--text-muted); display: flex; gap: 0.5rem; align-items: center;';
+
+      const author = document.createElement('span');
+      author.textContent = `@${post.username}`;
+
+      const engagement = document.createElement('span');
+      engagement.textContent = `${formatCount(post.fresh_count)} 💚`;
+
+      meta.appendChild(author);
+      meta.appendChild(engagement);
+      info.appendChild(title);
+      info.appendChild(meta);
+
+      row.appendChild(thumb);
+      row.appendChild(info);
+      fragment.appendChild(row);
+    });
+
+    postsContainer.appendChild(fragment);
+  }
+
+  private renderUserSuggestions(): void {
+    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
+    if (!postsContainer) return;
+    postsContainer.innerHTML = '';
+
+    if (this.userSuggestions.length === 0) {
+      const msg = document.createElement('div');
+      msg.style.cssText =
+        "text-align: center; padding: 3rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;";
+      msg.textContent = t('explore.no_users');
+      postsContainer.appendChild(msg);
+      return;
+    }
+
+    this.userSuggestions.forEach((user) => {
+      const item = document.createElement('div');
+      item.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.75rem;
+        border-radius: 0.25rem;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+      `;
+      item.addEventListener('mouseenter', () => {
+        item.style.background = 'var(--bg-secondary)';
+      });
+      item.addEventListener('mouseleave', () => {
+        item.style.background = 'transparent';
+      });
+      item.onclick = () => {
+        window.history.pushState({ username: user.username }, '', `/profile/${user.username}`);
+        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'profile', username: user.username } }));
+      };
+
+      const avatar = document.createElement('div');
+      avatar.style.cssText = `
+        width: 40px; height: 40px; border-radius: 50%;
+        background: ${user.avatar_key ? `url('/api/images/${user.avatar_key}')` : 'var(--accent)'};
+        background-size: cover;
+        background-position: center;
+        color: var(--bg-primary);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        font-size: 0.875rem;
+        flex-shrink: 0;
+      `;
+      if (!user.avatar_key) {
+        avatar.textContent = user.display_name?.[0]?.toUpperCase() || user.username[0].toUpperCase();
+      }
+
+      const userInfo = document.createElement('div');
+      const usernameEl = document.createElement('div');
+      usernameEl.style.cssText = 'font-weight: 600; color: var(--text-primary);';
+      usernameEl.textContent = `@${user.username}`;
+      const displayNameEl = document.createElement('div');
+      displayNameEl.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);';
+      displayNameEl.textContent = user.display_name || '';
+
+      userInfo.appendChild(usernameEl);
+      userInfo.appendChild(displayNameEl);
+      item.appendChild(avatar);
+      item.appendChild(userInfo);
+      postsContainer.appendChild(item);
     });
   }
 
