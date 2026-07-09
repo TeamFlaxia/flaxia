@@ -71,10 +71,7 @@ export class ExplorePage {
     const searchSection = this.createSearchSection();
     container.appendChild(searchSection);
 
-    // Initialize filter UI to 'posts'
-    requestAnimationFrame(() => {
-      this.switchFilter('posts');
-    });
+    // 'posts' button is set as active by default in createSearchSection
 
     if (this.props.tag) {
       container.appendChild(
@@ -201,10 +198,13 @@ export class ExplorePage {
       btn.className = 'explore-filter-btn';
       btn.dataset.filter = f.key;
       btn.textContent = f.label;
+      const isActive = f.key === 'posts';
       btn.style.cssText = `
         padding: 0.4rem 1rem;
         border-radius: 999px;
-        border: none;
+        border: 1px solid ${isActive ? 'var(--accent)' : 'var(--border)'};
+        background: ${isActive ? 'var(--accent)' : 'transparent'};
+        color: ${isActive ? 'white' : 'var(--text-muted)'};
         cursor: pointer;
         font-family: inherit;
         font-size: 0.8rem;
