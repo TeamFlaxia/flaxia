@@ -854,7 +854,7 @@ export class ExplorePage {
 
       if (game.thumbnailKey) {
         const img = document.createElement('img');
-        img.src = `/api/thumbnail/${game.thumbnailKey}`;
+        img.src = `/api/thumbnail/${game.postId}`;
         img.alt = '';
         img.style.cssText = 'width: 100%; height: 100%; object-fit: cover;';
         thumb.appendChild(img);
