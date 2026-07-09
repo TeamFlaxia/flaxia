@@ -1983,6 +1983,10 @@ h1 {
   width: 100%;
 }
 
+.explore-media-filter button:hover {
+  opacity: 0.85;
+}
+
 .feed-toggle {
   display: flex;
   border-bottom: 1px solid var(--border);

@@ -10,6 +10,8 @@ import { updateMetaTags } from '../lib/seo-meta.js';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
+export type MediaFilter = 'all' | 'flash' | 'html' | 'image' | 'audio' | 'video';
+
 export interface ExplorePageProps {
   tag?: string;
   sandboxOrigin: string;
@@ -25,6 +27,7 @@ export class ExplorePage {
   private hasMore = true;
   private infiniteScroll: ReturnType<typeof createInfiniteScroll>;
   private searchFilter: 'posts' | 'users' | 'arcade' = 'posts';
+  private activeMediaFilter: MediaFilter = 'all';
   private fabButton: HTMLElement | null = null;
   private tagCountEl: HTMLElement | null = null;
   private totalTagCount: number = 0;
@@ -58,7 +61,6 @@ export class ExplorePage {
     const container = document.createElement('div');
     container.className = 'explore-page';
 
-    // Add search section
     const searchSection = this.createSearchSection();
     container.appendChild(searchSection);
 
@@ -119,6 +121,7 @@ export class ExplorePage {
     section.className = 'explore-search-section';
     section.style.cssText = `
       padding: 1rem;
+      padding-bottom: 0;
       border-bottom: 1px solid var(--border);
       position: sticky;
       top: 0;
@@ -166,8 +169,69 @@ export class ExplorePage {
     searchBox.appendChild(suggestDropdown);
 
     section.appendChild(searchBox);
+    section.appendChild(this.createMediaFilterBar());
 
     return section;
+  }
+
+  private createMediaFilterBar(): HTMLElement {
+    const bar = document.createElement('div');
+    bar.className = 'explore-media-filter';
+    bar.style.cssText = `
+      display: flex;
+      gap: 0.5rem;
+      padding: 0.75rem 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+    `;
+
+    const filters: { key: MediaFilter; labelKey: string }[] = [
+      { key: 'all', labelKey: 'explore.filter_all' },
+      { key: 'flash', labelKey: 'explore.filter_flash' },
+      { key: 'html', labelKey: 'explore.filter_html' },
+      { key: 'image', labelKey: 'explore.filter_image' },
+      { key: 'audio', labelKey: 'explore.filter_audio' },
+      { key: 'video', labelKey: 'explore.filter_video' },
+    ];
+
+    for (const f of filters) {
+      const btn = document.createElement('button');
+      btn.dataset.mediaFilter = f.key;
+      btn.textContent = t(f.labelKey);
+      btn.style.cssText = `
+        padding: 0.3rem 0.85rem;
+        border-radius: 9999px;
+        border: 1px solid var(--border);
+        background: ${f.key === this.activeMediaFilter ? 'var(--accent)' : 'var(--bg-input)'};
+        color: ${f.key === this.activeMediaFilter ? 'var(--bg-primary)' : 'var(--text-primary)'};
+        font-family: inherit;
+        font-size: 0.8rem;
+        font-weight: 600;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all 0.15s ease;
+        flex-shrink: 0;
+      `;
+      btn.addEventListener('click', () => {
+        if (this.activeMediaFilter === f.key) return;
+        this.activeMediaFilter = f.key;
+        this.updateFilterButtons(bar);
+        void this.loadContent();
+      });
+      bar.appendChild(btn);
+    }
+
+    return bar;
+  }
+
+  private updateFilterButtons(bar: HTMLElement): void {
+    const buttons = bar.querySelectorAll('button');
+    const isActive = (key: string) => key === this.activeMediaFilter;
+    buttons.forEach((btn) => {
+      const key = btn.dataset.mediaFilter || '';
+      btn.style.background = isActive(key) ? 'var(--accent)' : 'var(--bg-input)';
+      btn.style.color = isActive(key) ? 'var(--bg-primary)' : 'var(--text-primary)';
+    });
   }
 
   private setupEventListeners(): void {
@@ -387,6 +451,7 @@ export class ExplorePage {
     this.updateLoadingState(true);
 
     try {
+      this.resetPostsContainer();
       if (this.props.tag) {
         await this.loadTagPosts();
       } else {
@@ -398,6 +463,20 @@ export class ExplorePage {
       this.loading = false;
       this.updateLoadingState(false);
     }
+  }
+
+  private getMediaFilterQuery(): string {
+    if (this.activeMediaFilter === 'all') return '';
+    return `&media_type=${this.activeMediaFilter}`;
+  }
+
+  private resetPostsContainer(): void {
+    this.posts = [];
+    this.cursor = undefined;
+    this.hasMore = true;
+    this.postCards.clear();
+    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
+    if (postsContainer) postsContainer.innerHTML = '';
   }
 
   private async loadMorePosts(): Promise<void> {
@@ -413,6 +492,8 @@ export class ExplorePage {
       } else {
         url = `/api/posts/trending?limit=10`;
       }
+
+      url += this.getMediaFilterQuery();
 
       if (this.cursor) {
         if (!this.props.tag && !this.cursor.includes(',')) {
@@ -453,6 +534,7 @@ export class ExplorePage {
 
   private async loadTagPosts(): Promise<void> {
     let url = `/api/posts?hashtag=${encodeURIComponent(this.props.tag!)}&limit=10`;
+    url += this.getMediaFilterQuery();
     if (this.cursor) {
       url += `&cursor=${encodeURIComponent(this.cursor)}`;
     }
@@ -466,8 +548,8 @@ export class ExplorePage {
   }
 
   private async loadTrendingContent(): Promise<void> {
-    // Load both trending tags and trending posts
-    const [tagsRes, postsRes] = await Promise.all([fetch('/api/tags/trending'), fetch('/api/posts/trending?limit=10')]);
+    const trendingUrl = `/api/posts/trending?limit=10${this.getMediaFilterQuery()}`;
+    const [tagsRes, postsRes] = await Promise.all([fetch('/api/tags/trending'), fetch(trendingUrl)]);
 
     if (tagsRes.ok) {
       const tagsData = (await tagsRes.json()) as { tags: Array<{ tag: string; percentage: string }> };
