@@ -316,7 +316,8 @@ function validateZip(zip: JSZipType): void {
       throw new Error(`Absolute paths are not allowed: ${path}`);
     }
 
-    if (path === 'index.html') {
+    const fileName = path.split('/').pop()?.toLowerCase();
+    if (fileName === 'index.html' || fileName === 'index.htm') {
       hasIndexHtml = true;
     }
 
@@ -327,7 +328,7 @@ function validateZip(zip: JSZipType): void {
   }
 
   if (!hasIndexHtml) {
-    throw new Error('index.html not found at root');
+    throw new Error('index.html not found in zip');
   }
 }
 
@@ -363,22 +364,47 @@ async function generateBlobUrlMap(zip: JSZipType): Promise<Map<string, string>> 
 }
 
 async function rewriteIndexHtml(zip: JSZipType, blobUrlMap: Map<string, string>): Promise<string> {
-  const indexFile = zip.files['index.html'];
-  if (!indexFile || indexFile.dir) {
-    throw new Error('index.html not found at root');
+  interface IndexEntry {
+    path: string;
+    depth: number;
   }
 
+  const indexEntries: IndexEntry[] = [];
+  for (const [path, file] of Object.entries(zip.files)) {
+    if (file.dir) continue;
+    const lower = path.toLowerCase();
+    if (lower.endsWith('index.html') || lower.endsWith('index.htm')) {
+      const depth = (path.match(/\//g) || []).length;
+      indexEntries.push({ path, depth });
+    }
+  }
+
+  if (indexEntries.length === 0) {
+    throw new Error('No index.html found in zip');
+  }
+
+  indexEntries.sort((a, b) => a.depth - b.depth || a.path.localeCompare(b.path));
+  const best = indexEntries[0];
+
+  const indexFile = zip.files[best.path];
+  if (!indexFile || indexFile.dir) {
+    throw new Error('No index.html found in zip');
+  }
+
+  const basePath = best.depth > 0 ? best.path.substring(0, best.path.lastIndexOf('/') + 1) : '';
+
   let htmlContent = await indexFile.async('string');
-  htmlContent = rewriteHtmlString(htmlContent, blobUrlMap);
+  htmlContent = rewriteHtmlString(htmlContent, blobUrlMap, basePath);
 
   return htmlContent;
 }
 
-function rewriteHtmlString(htmlContent: string, blobUrlMap: Map<string, string>): string {
+function rewriteHtmlString(htmlContent: string, blobUrlMap: Map<string, string>, basePath: string = ''): string {
   htmlContent = htmlContent.replace(/<(?!script)([^>]+)\s+src\s*=\s*['"]([^'"]+)['"]/gi, (match, tagAttrs, src) => {
     if (shouldRewritePath(src)) {
       const normalizedPath = src.replace(/^\.\//, '');
-      const blobUrl = blobUrlMap.get(normalizedPath);
+      const fullPath = basePath + normalizedPath;
+      const blobUrl = blobUrlMap.get(fullPath);
       if (blobUrl) {
         return `<${tagAttrs} src="${blobUrl}"`;
       }
@@ -389,7 +415,8 @@ function rewriteHtmlString(htmlContent: string, blobUrlMap: Map<string, string>)
   htmlContent = htmlContent.replace(/<([^>]+)\s+href\s*=\s*['"]([^'"]+)['"]/gi, (match, tagAttrs, href) => {
     if (shouldRewritePath(href)) {
       const normalizedPath = href.replace(/^\.\//, '');
-      const blobUrl = blobUrlMap.get(normalizedPath);
+      const fullPath = basePath + normalizedPath;
+      const blobUrl = blobUrlMap.get(fullPath);
       if (blobUrl) {
         return `<${tagAttrs} href="${blobUrl}"`;
       }
@@ -398,23 +425,24 @@ function rewriteHtmlString(htmlContent: string, blobUrlMap: Map<string, string>)
   });
 
   htmlContent = htmlContent.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (match, cssContent) => {
-    const rewrittenCss = rewriteCssUrls(cssContent, blobUrlMap);
+    const rewrittenCss = rewriteCssUrls(cssContent, blobUrlMap, basePath);
     return match.replace(cssContent, rewrittenCss);
   });
 
   htmlContent = htmlContent.replace(/style\s*=\s*['"]([^'"]+)['"]/gi, (match, styleContent) => {
-    const rewrittenStyle = rewriteCssUrls(styleContent, blobUrlMap);
+    const rewrittenStyle = rewriteCssUrls(styleContent, blobUrlMap, basePath);
     return `style="${rewrittenStyle}"`;
   });
 
   return htmlContent;
 }
 
-function rewriteCssUrls(cssText: string, blobUrlMap: Map<string, string>): string {
+function rewriteCssUrls(cssText: string, blobUrlMap: Map<string, string>, basePath: string = ''): string {
   return cssText.replace(/url\s*\(\s*['"]?([^'")\s]+)['"]?\s*\)/g, (match, path) => {
     if (shouldRewritePath(path)) {
       const normalizedPath = path.replace(/^\.\//, '');
-      const blobUrl = blobUrlMap.get(normalizedPath);
+      const fullPath = basePath + normalizedPath;
+      const blobUrl = blobUrlMap.get(fullPath);
       if (blobUrl) {
         return `url("${blobUrl}")`;
       }

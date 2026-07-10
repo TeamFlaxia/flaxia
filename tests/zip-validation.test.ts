@@ -33,12 +33,12 @@ describe('validateZipLegacy', () => {
 
   it('rejects zip without index.html', async () => {
     const zipData = await createZip({ 'other.html': '<html></html>' });
-    await assert.rejects(() => validateZipLegacy(zipData), /index.html not found at root/);
+    await assert.rejects(() => validateZipLegacy(zipData), /index.html not found in zip/);
   });
 
-  it('rejects zip when index.html is in a subdirectory instead of root', async () => {
+  it('accepts zip when index.html is in a subdirectory instead of root', async () => {
     const zipData = await createZip({ 'subdir/index.html': '<html></html>' });
-    await assert.rejects(() => validateZipLegacy(zipData), /index.html not found at root/);
+    await assert.doesNotReject(() => validateZipLegacy(zipData));
   });
 
   it('rejects zip with too many files (> 255)', async () => {
