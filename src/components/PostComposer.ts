@@ -35,8 +35,9 @@ async function detectZipType(file: File): Promise<'html5' | 'dos' | null> {
       let name = '';
       for (let j = 0; j < nameLen; j++) name += String.fromCharCode(view.getUint8(offset + 46 + j));
       const lower = name.toLowerCase();
-      if (lower.endsWith('index.html') || lower.endsWith('index.htm')) hasIndexHtml = true;
-      if (lower.endsWith('.exe') || lower.endsWith('.bat') || lower.endsWith('.com')) hasExe = true;
+      const fileName = lower.split('/').pop() || '';
+      if (fileName === 'index.html' || fileName === 'index.htm') hasIndexHtml = true;
+      if (fileName.endsWith('.exe') || fileName.endsWith('.bat') || fileName.endsWith('.com')) hasExe = true;
       offset += 46 + nameLen + extraLen + commentLen;
     }
     if (hasIndexHtml) return 'html5';

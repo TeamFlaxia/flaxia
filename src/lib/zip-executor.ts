@@ -372,8 +372,8 @@ async function rewriteIndexHtml(zip: JSZipType, blobUrlMap: Map<string, string>)
   const indexEntries: IndexEntry[] = [];
   for (const [path, file] of Object.entries(zip.files)) {
     if (file.dir) continue;
-    const lower = path.toLowerCase();
-    if (lower.endsWith('index.html') || lower.endsWith('index.htm')) {
+    const fileName = path.split('/').pop()?.toLowerCase();
+    if (fileName === 'index.html' || fileName === 'index.htm') {
       const depth = (path.match(/\//g) || []).length;
       indexEntries.push({ path, depth });
     }
