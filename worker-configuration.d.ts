@@ -13,6 +13,8 @@ declare namespace Cloudflare {
 interface Env extends __BaseEnv_Env {
   CALL_STREAM?: DurableObjectNamespace;
   NOTIFICATION_STREAM?: DurableObjectNamespace;
+  MULTIPLAYER_ROOM?: DurableObjectNamespace;
+  MATCHMAKER?: DurableObjectNamespace;
 }
 }
 interface Env extends __BaseEnv_Env {}

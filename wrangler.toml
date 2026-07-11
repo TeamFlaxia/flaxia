@@ -13,6 +13,16 @@ name = "CALL_STREAM"
 class_name = "CallStream"
 script_name = "notif-stream"
 
+[[durable_objects.bindings]]
+name = "MULTIPLAYER_ROOM"
+class_name = "MultiplayerRoom"
+script_name = "multiplayer-worker"
+
+[[durable_objects.bindings]]
+name = "MATCHMAKER"
+class_name = "Matchmaker"
+script_name = "multiplayer-worker"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "flaxia"

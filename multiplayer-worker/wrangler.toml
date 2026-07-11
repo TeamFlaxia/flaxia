@@ -1,0 +1,16 @@
+name = "multiplayer-worker"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+[[durable_objects.bindings]]
+name = "MULTIPLAYER_ROOM"
+class_name = "MultiplayerRoom"
+
+[[durable_objects.bindings]]
+name = "MATCHMAKER"
+class_name = "Matchmaker"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MultiplayerRoom", "Matchmaker"]
