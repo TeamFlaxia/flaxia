@@ -1,5 +1,5 @@
-export type { MultiplayerClientOptions } from './multiplayer-client';
-export { MultiplayerClient } from './multiplayer-client';
+export type { MultiplayerClientOptions } from './multiplayer-client.ts';
+export { MultiplayerClient } from './multiplayer-client.ts';
 export type {
   ChatEvent,
   GameOverEvent,
@@ -11,4 +11,4 @@ export type {
   RoomInfo,
   RoomState,
   RoomStatus,
-} from './types';
+} from './types.ts';

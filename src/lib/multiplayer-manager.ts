@@ -27,7 +27,7 @@ export class MultiplayerManager {
   connect(): void {
     if (this.connected) return;
 
-    const wsUrl = new URL(this.config.wsUrl, window.location.origin);
+    const wsUrl = new URL(this.config.wsUrl, globalThis.location.origin);
     wsUrl.searchParams.set('gameId', this.config.gameId);
     wsUrl.searchParams.set('roomId', this.config.roomId);
 

@@ -8,7 +8,7 @@ import type {
   PlayerInputEvent,
   RoomInfo,
   RoomState,
-} from './types';
+} from './types.ts';
 
 export interface MultiplayerClientOptions {
   gameId: string;
