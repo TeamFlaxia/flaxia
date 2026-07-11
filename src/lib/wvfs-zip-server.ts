@@ -185,6 +185,40 @@ function findFileInMap(fileMap: Map<string, Uint8Array>, filePath: string): Uint
   return null;
 }
 
+function findSubdirIndexInMap(fileMap: Map<string, Uint8Array>): string | null {
+  let bestKey: string | null = null;
+  let bestDepth = Infinity;
+  for (const key of fileMap.keys()) {
+    const parts = key.split('/');
+    const fileName = parts.pop()?.toLowerCase();
+    if (fileName === 'index.html' || fileName === 'index.htm') {
+      const depth = parts.length;
+      if (depth < bestDepth) {
+        bestDepth = depth;
+        bestKey = key;
+      }
+    }
+  }
+  return bestKey;
+}
+
+function findSubdirIndexInIndex(index: Map<string, ZipIndexEntry>): string | null {
+  let bestKey: string | null = null;
+  let bestDepth = Infinity;
+  for (const key of index.keys()) {
+    const parts = key.split('/');
+    const fileName = parts.pop()?.toLowerCase();
+    if (fileName === 'index.html' || fileName === 'index.htm') {
+      const depth = parts.length;
+      if (depth < bestDepth) {
+        bestDepth = depth;
+        bestKey = key;
+      }
+    }
+  }
+  return bestKey;
+}
+
 function findFileInIndex(index: Map<string, ZipIndexEntry>, filePath: string): ZipIndexEntry | null {
   let entry = index.get(filePath);
   if (entry) return entry;
@@ -237,16 +271,32 @@ export async function ensureFileInWvfs(
   // Already have the index but file not yet extracted
   if (entry && entry.index && entry.zipKey === zipKey) {
     const normalizedPath = normalizePath(filePath);
-    const indexEntry = findFileInIndex(entry.index, normalizedPath);
+    let indexEntry = findFileInIndex(entry.index, normalizedPath);
+    let resolvedIndexPath = normalizedPath;
+
+    if (!indexEntry) {
+      const fileName = normalizedPath.split('/').pop()?.toLowerCase();
+      if (fileName === 'index.html' || fileName === 'index.htm') {
+        const foundPath = findSubdirIndexInIndex(entry.index);
+        if (foundPath) {
+          const found = entry.index.get(foundPath);
+          if (found) {
+            indexEntry = found;
+            resolvedIndexPath = foundPath;
+          }
+        }
+      }
+    }
+
     if (!indexEntry) return false;
 
-    const existing = findFileInMap(entry.data, normalizedPath);
+    const existing = findFileInMap(entry.data, resolvedIndexPath);
     if (existing) return true;
 
     const fileData = await extractFileFromR2(bucket, zipKey, indexEntry);
     if (!fileData) return false;
 
-    entry.data.set(normalizedPath, fileData);
+    entry.data.set(resolvedIndexPath, fileData);
     return true;
   }
 
@@ -269,14 +319,30 @@ export async function ensureFileInWvfs(
 
   const index = parseCentralDirectory(cdData);
   const normalizedPath = normalizePath(filePath);
-  const indexEntry = findFileInIndex(index, normalizedPath);
+  let indexEntry = findFileInIndex(index, normalizedPath);
+  let resolvedIndexPath = normalizedPath;
+
+  if (!indexEntry) {
+    const fileName = normalizedPath.split('/').pop()?.toLowerCase();
+    if (fileName === 'index.html' || fileName === 'index.htm') {
+      const foundPath = findSubdirIndexInIndex(index);
+      if (foundPath) {
+        const found = index.get(foundPath);
+        if (found) {
+          indexEntry = found;
+          resolvedIndexPath = foundPath;
+        }
+      }
+    }
+  }
+
   if (!indexEntry) return false;
 
   const fileData = await extractFileFromR2(bucket, zipKey, indexEntry);
   if (!fileData) return false;
 
   const fileMap = new Map<string, Uint8Array>();
-  fileMap.set(normalizedPath, fileData);
+  fileMap.set(resolvedIndexPath, fileData);
 
   wvfsStorage.set(postId, {
     data: fileMap,
@@ -333,6 +399,22 @@ export async function serveFileFromWvfs(postId: string, filePath: string): Promi
     console.log(`WVFS: Serving ${filePath} -> normalized to ${normalizedPath}`);
 
     let fileData = findFileInMap(fileMap, normalizedPath);
+    let resolvedPath = normalizedPath;
+
+    if (!fileData) {
+      const fileName = normalizedPath.split('/').pop()?.toLowerCase();
+      if (fileName === 'index.html' || fileName === 'index.htm') {
+        const foundPath = findSubdirIndexInMap(fileMap);
+        if (foundPath) {
+          const found = fileMap.get(foundPath);
+          if (found) {
+            fileData = found;
+            resolvedPath = foundPath;
+          }
+        }
+      }
+    }
+
     if (!fileData) {
       console.log(`WVFS: File not found: ${normalizedPath} (original: ${filePath})`);
       const availableFiles = Array.from(fileMap.keys()).slice(0, 10);
@@ -340,12 +422,15 @@ export async function serveFileFromWvfs(postId: string, filePath: string): Promi
       return null;
     }
 
-    const ext = normalizedPath.split('.').pop()?.toLowerCase();
+    const ext = resolvedPath.split('.').pop()?.toLowerCase();
 
     if (ext === 'html') {
       const htmlContent = new TextDecoder().decode(fileData);
       const withoutCsp = htmlContent.replace(/<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*\/?>/gi, '');
-      const modifiedHtml = injectBaseTag(withoutCsp, postId);
+      const baseSubPath = resolvedPath.includes('/')
+        ? resolvedPath.substring(0, resolvedPath.lastIndexOf('/') + 1)
+        : '';
+      const modifiedHtml = injectBaseTag(withoutCsp, postId, baseSubPath);
       fileData = new TextEncoder().encode(modifiedHtml);
     }
 
@@ -420,8 +505,8 @@ function rewriteLocalAbsolutePaths(htmlContent: string): string {
   return htmlContent;
 }
 
-function injectBaseTag(htmlContent: string, postId: string): string {
-  const baseUrl = `/api/wvfs-zip/${postId}/`;
+function injectBaseTag(htmlContent: string, postId: string, subPath: string = ''): string {
+  const baseUrl = `/api/wvfs-zip/${postId}/${subPath}`;
 
   htmlContent = rewriteLocalAbsolutePaths(htmlContent);
 
@@ -509,15 +594,47 @@ export async function serveFileFromR2(bucket: R2Bucket, postId: string, filePath
       obj = await bucket.get(baseKey + './' + normalizedPath);
     }
 
+    let resolvedPath = normalizedPath;
+
+    if (!obj) {
+      const fileName = normalizedPath.split('/').pop()?.toLowerCase();
+      if (fileName === 'index.html' || fileName === 'index.htm') {
+        const manifestObj = await bucket.get(baseKey + '.wvfs-manifest');
+        if (manifestObj) {
+          try {
+            const manifest = JSON.parse(await manifestObj.text()) as { files: string[] };
+            const indexFiles = manifest.files.filter((f: string) => {
+              const name = f.split('/').pop()?.toLowerCase();
+              return name === 'index.html' || name === 'index.htm';
+            });
+            indexFiles.sort((a: string, b: string) => {
+              const depthA = (a.match(/\//g) || []).length;
+              const depthB = (b.match(/\//g) || []).length;
+              return depthA - depthB;
+            });
+            if (indexFiles.length > 0) {
+              obj = await bucket.get(baseKey + indexFiles[0]);
+              resolvedPath = indexFiles[0];
+            }
+          } catch {
+            // manifest parse failed, fall through
+          }
+        }
+      }
+    }
+
     if (!obj) return null;
 
-    const contentType = getMimeType(normalizedPath);
-    const ext = normalizedPath.split('.').pop()?.toLowerCase();
+    const contentType = getMimeType(resolvedPath);
+    const ext = resolvedPath.split('.').pop()?.toLowerCase();
 
     if (ext === 'html') {
       const htmlContent = await obj.text();
       const withoutCsp = htmlContent.replace(/<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*\/?>/gi, '');
-      const modifiedHtml = injectBaseTag(withoutCsp, postId);
+      const baseSubPath = resolvedPath.includes('/')
+        ? resolvedPath.substring(0, resolvedPath.lastIndexOf('/') + 1)
+        : '';
+      const modifiedHtml = injectBaseTag(withoutCsp, postId, baseSubPath);
       return new Response(modifiedHtml, {
         headers: {
           'Content-Type': contentType,
