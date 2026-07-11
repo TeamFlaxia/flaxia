@@ -1633,16 +1633,29 @@ export class ArcadePage {
     }, 300);
   }
 
+  private focusGameIframe(viewport: HTMLElement): void {
+    const gameArea = viewport.querySelector('.arcade-game-area') as HTMLElement | null;
+    if (!gameArea) return;
+    const iframe = gameArea.querySelector('iframe') as HTMLElement | null;
+    if (iframe) iframe.focus();
+  }
+
   private handleFullscreen(): void {
     const viewport = this.gameContainer.querySelector('.arcade-viewport') as HTMLElement;
     if (!viewport) return;
 
     if (document.fullscreenElement) {
-      document.exitFullscreen();
+      document
+        .exitFullscreen()
+        .then(() => this.focusGameIframe(viewport))
+        .catch(() => {});
     } else if (viewport.requestFullscreen) {
-      viewport.requestFullscreen().catch(() => {
-        // Fullscreen not supported (e.g. iOS Safari)
-      });
+      viewport
+        .requestFullscreen()
+        .then(() => this.focusGameIframe(viewport))
+        .catch(() => {
+          // Fullscreen not supported (e.g. iOS Safari)
+        });
     }
   }
 
@@ -1656,6 +1669,8 @@ export class ArcadePage {
 
     const viewport = this.gameContainer.querySelector('.arcade-viewport') as HTMLElement;
     if (!viewport) return;
+
+    this.focusGameIframe(viewport);
 
     const infoOverlay = viewport.querySelector('.arcade-game-info') as HTMLElement;
     if (infoOverlay) {
