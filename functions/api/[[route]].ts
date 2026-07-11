@@ -7623,15 +7623,57 @@ app.delete('/api/posts/:id', requireAuth, async (c) => {
     // Delete all replies (and their replies) to this post using recursive CTE
     const descendantResult = await c.env.DB.prepare(`
       WITH RECURSIVE tree AS (
-        SELECT id FROM posts WHERE parent_id = ?
+        SELECT id, gif_key, payload_key, swf_key, thumbnail_key FROM posts WHERE parent_id = ?
         UNION ALL
-        SELECT p.id FROM posts p INNER JOIN tree t ON p.parent_id = t.id
+        SELECT p.id, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key FROM posts p INNER JOIN tree t ON p.parent_id = t.id
       )
-      SELECT id FROM tree
+      SELECT id, gif_key, payload_key, swf_key, thumbnail_key FROM tree
     `)
       .bind(postId)
-      .all<{ id: string }>();
-    const descendantIds = descendantResult.results?.map((r) => r.id) || [];
+      .all<{
+        id: string;
+        gif_key: string | null;
+        payload_key: string | null;
+        swf_key: string | null;
+        thumbnail_key: string | null;
+      }>();
+    const descendants = descendantResult.results || [];
+
+    // Delete descendant reply files from R2
+    if (c.env.BUCKET) {
+      for (const desc of descendants) {
+        if (desc.gif_key) {
+          try {
+            await c.env.BUCKET.delete(desc.gif_key);
+          } catch (e) {
+            console.error('Failed to delete descendant gif file:', e);
+          }
+        }
+        if (desc.payload_key) {
+          try {
+            await c.env.BUCKET.delete(desc.payload_key);
+          } catch (e) {
+            console.error('Failed to delete descendant payload file:', e);
+          }
+        }
+        if (desc.swf_key) {
+          try {
+            await c.env.BUCKET.delete(desc.swf_key);
+          } catch (e) {
+            console.error('Failed to delete descendant SWF file:', e);
+          }
+        }
+        if (desc.thumbnail_key) {
+          try {
+            await c.env.BUCKET.delete(desc.thumbnail_key);
+          } catch (e) {
+            console.error('Failed to delete descendant thumbnail file:', e);
+          }
+        }
+      }
+    }
+
+    const descendantIds = descendants.map((r) => r.id);
     if (descendantIds.length > 0) {
       const placeholders = descendantIds.map(() => '?').join(',');
       await c.env.DB.prepare(`DELETE FROM posts WHERE id IN (${placeholders})`)
