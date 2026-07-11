@@ -451,4 +451,54 @@ describe('MultiplayerClient', () => {
       assert.ok(!client.isConnected);
     });
   });
+
+  describe('sendPeerData()', () => {
+    it('sends MULTIPLAYER_SEND_PEER_DATA when connected', () => {
+      client = new FlaxiaMultiplayer.MultiplayerClient({ gameId: 'game1', autoConnect: true });
+      mockWindow.postedMessages.length = 0;
+      client.sendPeerData({ hello: 'world' });
+      assert.equal(mockWindow.postedMessages.length, 1);
+      const msg = mockWindow.postedMessages[0].msg as Record<string, unknown>;
+      assert.equal(msg.type, 'MULTIPLAYER_SEND_PEER_DATA');
+      assert.deepStrictEqual(msg.data, { hello: 'world' });
+    });
+
+    it('does nothing when not connected', () => {
+      client = new FlaxiaMultiplayer.MultiplayerClient({ gameId: 'game1', autoConnect: false });
+      client.sendPeerData({ x: 1 });
+      assert.equal(mockWindow.postedMessages.length, 0);
+    });
+  });
+
+  describe('P2P event handlers', () => {
+    it('fires onP2PState on MULTIPLAYER_P2P_STATE message', () => {
+      let state: unknown = null;
+      client = new FlaxiaMultiplayer.MultiplayerClient({ gameId: 'game1', autoConnect: true });
+      client.on('onP2PState', (s) => {
+        state = s;
+      });
+
+      mockWindow.messageHandlers[0]({
+        data: { type: 'MULTIPLAYER_P2P_STATE', state: 'connected' },
+        origin: 'https://flaxia.app',
+      });
+      const s = state as Record<string, unknown>;
+      assert.equal(s.state, 'connected');
+    });
+
+    it('fires onPeerData on MULTIPLAYER_PEER_DATA message', () => {
+      let data: unknown = null;
+      client = new FlaxiaMultiplayer.MultiplayerClient({ gameId: 'game1', autoConnect: true });
+      client.on('onPeerData', (d) => {
+        data = d;
+      });
+
+      mockWindow.messageHandlers[0]({
+        data: { type: 'MULTIPLAYER_PEER_DATA', data: { score: 42 } },
+        origin: 'https://flaxia.app',
+      });
+      const d = data as Record<string, unknown>;
+      assert.deepStrictEqual(d.data, { score: 42 });
+    });
+  });
 });

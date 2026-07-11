@@ -31,7 +31,9 @@ export type ParentMessage =
   | { type: 'MULTIPLAYER_PLAYER_INPUT'; userId: string; input: unknown }
   | { type: 'MULTIPLAYER_HOST_CHANGED'; newHostId: string }
   | { type: 'MULTIPLAYER_CHAT'; userId: string; username: string; message: string }
-  | { type: 'MULTIPLAYER_ERROR'; code: string; message: string };
+  | { type: 'MULTIPLAYER_ERROR'; code: string; message: string }
+  | { type: 'MULTIPLAYER_P2P_STATE'; state: 'connected' | 'disconnected' | 'failed'; peerId?: string }
+  | { type: 'MULTIPLAYER_PEER_DATA'; data: unknown };
 
 export type SandboxMessage =
   | { type: 'FULLSCREEN_GRANTED' }
@@ -45,7 +47,8 @@ export type SandboxMessage =
   | { type: 'MULTIPLAYER_START_GAME' }
   | { type: 'MULTIPLAYER_SET_READY'; ready: boolean }
   | { type: 'MULTIPLAYER_CHAT'; message: string }
-  | { type: 'MULTIPLAYER_REQUEST_STATE' };
+  | { type: 'MULTIPLAYER_REQUEST_STATE' }
+  | { type: 'MULTIPLAYER_SEND_PEER_DATA'; data: unknown };
 
 function isRecord(msg: unknown): msg is Record<string, unknown> {
   return typeof msg === 'object' && msg !== null;
@@ -74,6 +77,8 @@ export function isParentMessage(msg: unknown): msg is ParentMessage {
     case 'MULTIPLAYER_HOST_CHANGED':
     case 'MULTIPLAYER_CHAT':
     case 'MULTIPLAYER_ERROR':
+    case 'MULTIPLAYER_P2P_STATE':
+    case 'MULTIPLAYER_PEER_DATA':
       return true;
     default:
       return false;
@@ -99,6 +104,7 @@ export function isSandboxMessage(msg: unknown): msg is SandboxMessage {
     case 'MULTIPLAYER_SET_READY':
     case 'MULTIPLAYER_CHAT':
     case 'MULTIPLAYER_REQUEST_STATE':
+    case 'MULTIPLAYER_SEND_PEER_DATA':
       return true;
     default:
       return false;

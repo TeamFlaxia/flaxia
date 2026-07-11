@@ -234,4 +234,26 @@ describe('isSandboxMessage', () => {
   it('rejects unknown type', () => {
     assert.ok(!isSandboxMessage({ type: 'INVALID' }));
   });
+
+  it('accepts MULTIPLAYER_SEND_PEER_DATA', () => {
+    assert.ok(isSandboxMessage({ type: 'MULTIPLAYER_SEND_PEER_DATA', data: { key: 'val' } }));
+  });
+});
+
+describe('isParentMessage (P2P types)', () => {
+  it('accepts MULTIPLAYER_P2P_STATE connected', () => {
+    assert.ok(isParentMessage({ type: 'MULTIPLAYER_P2P_STATE', state: 'connected' }));
+  });
+
+  it('accepts MULTIPLAYER_P2P_STATE disconnected', () => {
+    assert.ok(isParentMessage({ type: 'MULTIPLAYER_P2P_STATE', state: 'disconnected' }));
+  });
+
+  it('accepts MULTIPLAYER_P2P_STATE failed', () => {
+    assert.ok(isParentMessage({ type: 'MULTIPLAYER_P2P_STATE', state: 'failed', peerId: 'u2' }));
+  });
+
+  it('accepts MULTIPLAYER_PEER_DATA', () => {
+    assert.ok(isParentMessage({ type: 'MULTIPLAYER_PEER_DATA', data: { score: 100 } }));
+  });
 });

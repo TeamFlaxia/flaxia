@@ -38,7 +38,9 @@ type ClientMessage =
   | { type: 'leave' }
   | { type: 'input'; input: unknown; timestamp: number }
   | { type: 'chat'; message: string }
-  | { type: 'request_state' };
+  | { type: 'request_state' }
+  | { type: 'signal'; targetUserId: string; signal: { type: string; payload: unknown } }
+  | { type: 'peer_data'; data: unknown };
 
 type ServerMessage =
   | { type: 'room_state'; room: RoomMetadata; players: PlayerSummary[] }
@@ -51,7 +53,9 @@ type ServerMessage =
   | { type: 'game_over'; winner?: string; scores?: Record<string, number> }
   | { type: 'error'; code: string; message: string }
   | { type: 'chat'; userId: string; username: string; message: string }
-  | { type: 'host_changed'; newHostId: string };
+  | { type: 'host_changed'; newHostId: string }
+  | { type: 'signal'; userId: string; signal: { type: string; payload: unknown } }
+  | { type: 'peer_data'; userId: string; data: unknown };
 
 const INACTIVITY_TIMEOUT_MS = 300_000;
 const LOBBY_TIMEOUT_MS = 1_800_000;
@@ -296,6 +300,14 @@ export class MultiplayerRoom {
 
       case 'leave':
         this.removePlayer(player.userId);
+        break;
+
+      case 'signal':
+        this.sendTo(data.targetUserId, { type: 'signal', userId: player.userId, signal: data.signal });
+        break;
+
+      case 'peer_data':
+        this.broadcast({ type: 'peer_data', userId: player.userId, data: data.data }, player.userId);
         break;
     }
   }

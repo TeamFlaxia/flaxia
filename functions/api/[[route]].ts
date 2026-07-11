@@ -11016,6 +11016,7 @@ app.post('/api/multiplayer/rooms/:id/join', requireAuth, async (c) => {
     return c.json({
       success: true,
       roomId,
+      userId: user.id,
       wsUrl: `/api/ws/multiplayer?roomId=${roomId}&gameId=${room.game_id as string}`,
     });
   } catch (error: unknown) {

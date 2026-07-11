@@ -6,6 +6,8 @@ export type {
   GameStateEvent,
   MultiplayerError,
   MultiplayerEvents,
+  P2PStateEvent,
+  PeerDataEvent,
   PlayerInfo,
   PlayerInputEvent,
   RoomInfo,

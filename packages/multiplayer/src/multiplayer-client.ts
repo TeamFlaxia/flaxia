@@ -4,6 +4,8 @@ import type {
   GameStateEvent,
   MultiplayerError,
   MultiplayerEvents,
+  P2PStateEvent,
+  PeerDataEvent,
   PlayerInfo,
   PlayerInputEvent,
   RoomInfo,
@@ -24,7 +26,8 @@ type SandboxMessage =
   | { type: 'MULTIPLAYER_START_GAME' }
   | { type: 'MULTIPLAYER_SET_READY'; ready: boolean }
   | { type: 'MULTIPLAYER_CHAT'; message: string }
-  | { type: 'MULTIPLAYER_REQUEST_STATE' };
+  | { type: 'MULTIPLAYER_REQUEST_STATE' }
+  | { type: 'MULTIPLAYER_SEND_PEER_DATA'; data: unknown };
 
 type ParentMessage =
   | { type: 'MULTIPLAYER_STATE'; gameId: string; state: unknown; timestamp: number }
@@ -37,7 +40,9 @@ type ParentMessage =
   | { type: 'MULTIPLAYER_PLAYER_INPUT'; userId: string; input: unknown }
   | { type: 'MULTIPLAYER_HOST_CHANGED'; newHostId: string }
   | { type: 'MULTIPLAYER_CHAT'; userId: string; username: string; message: string }
-  | { type: 'MULTIPLAYER_ERROR'; code: string; message: string };
+  | { type: 'MULTIPLAYER_ERROR'; code: string; message: string }
+  | { type: 'MULTIPLAYER_P2P_STATE'; state: 'connected' | 'disconnected' | 'failed'; peerId?: string }
+  | { type: 'MULTIPLAYER_PEER_DATA'; data: unknown };
 
 export class MultiplayerClient {
   private gameId: string;
@@ -59,6 +64,8 @@ export class MultiplayerClient {
   private onChat: ((event: ChatEvent) => void) | null = null;
   private onError: ((error: MultiplayerError) => void) | null = null;
   private onDisconnect: (() => void) | null = null;
+  private onP2PState: ((event: P2PStateEvent) => void) | null = null;
+  private onPeerData: ((event: PeerDataEvent) => void) | null = null;
 
   constructor(options: MultiplayerClientOptions) {
     this.gameId = options.gameId;
@@ -145,6 +152,13 @@ export class MultiplayerClient {
     this.postMessage(msg);
   }
 
+  sendPeerData(data: unknown): void {
+    if (!this.connected) return;
+
+    const msg: SandboxMessage = { type: 'MULTIPLAYER_SEND_PEER_DATA', data };
+    this.postMessage(msg);
+  }
+
   on<K extends keyof MultiplayerEvents>(event: K, handler: MultiplayerEvents[K]): void {
     switch (event) {
       case 'onRoomState':
@@ -182,6 +196,12 @@ export class MultiplayerClient {
         break;
       case 'onDisconnect':
         this.onDisconnect = handler as typeof this.onDisconnect;
+        break;
+      case 'onP2PState':
+        this.onP2PState = handler as typeof this.onP2PState;
+        break;
+      case 'onPeerData':
+        this.onPeerData = handler as typeof this.onPeerData;
         break;
     }
   }
@@ -244,6 +264,14 @@ export class MultiplayerClient {
 
       case 'MULTIPLAYER_ERROR':
         this.onError?.({ code: data.code, message: data.message });
+        break;
+
+      case 'MULTIPLAYER_P2P_STATE':
+        this.onP2PState?.({ state: data.state, peerId: data.peerId });
+        break;
+
+      case 'MULTIPLAYER_PEER_DATA':
+        this.onPeerData?.({ data: data.data });
         break;
     }
   }

@@ -96,6 +96,7 @@ function handleMultiplayerConnect(
       const manager = new MultiplayerManager({
         gameId,
         roomId: result.roomId,
+        userId: result.userId,
         wsUrl: result.wsUrl,
         iframe,
         sandboxOrigin: props.sandboxOrigin,
@@ -119,7 +120,7 @@ async function joinOrCreateRoom(
   gameId: string,
   roomId: string | undefined,
   postId: string,
-): Promise<{ roomId: string; wsUrl: string } | null> {
+): Promise<{ roomId: string; userId: string; wsUrl: string } | null> {
   try {
     if (roomId) {
       const joinResp = await fetch(`/api/multiplayer/rooms/${roomId}/join`, { method: 'POST' });

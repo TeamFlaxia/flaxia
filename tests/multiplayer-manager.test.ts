@@ -57,6 +57,32 @@ describe('MultiplayerManager', () => {
     mockIframe = createMockIframe();
     mockWs = createMockWebSocket();
 
+    globalThis.RTCPeerConnection = class {
+      createDataChannel() {
+        return { send() {}, close() {}, onopen: null, onclose: null, onmessage: null, readyState: 'closed' };
+      }
+      createOffer() {
+        return Promise.resolve({ type: 'offer', sdp: '' });
+      }
+      createAnswer() {
+        return Promise.resolve({ type: 'answer', sdp: '' });
+      }
+      setLocalDescription() {
+        return Promise.resolve();
+      }
+      setRemoteDescription() {
+        return Promise.resolve();
+      }
+      addIceCandidate() {
+        return Promise.resolve();
+      }
+      close() {}
+      onicecandidate: ((event: { candidate?: unknown }) => void) | null = null;
+      oniceconnectionstatechange: (() => void) | null = null;
+      ondatachannel: ((event: { channel: unknown }) => void) | null = null;
+      iceConnectionState = 'new';
+    } as unknown as typeof globalThis.RTCPeerConnection;
+
     originalWebSocket = globalThis.WebSocket;
     class MockWebSocketClass extends EventEmitter {
       static OPEN = 1;
@@ -89,6 +115,7 @@ describe('MultiplayerManager', () => {
 
   afterEach(() => {
     globalThis.WebSocket = originalWebSocket;
+    delete (globalThis as Record<string, unknown>).RTCPeerConnection;
   });
 
   describe('connect()', () => {
@@ -96,6 +123,7 @@ describe('MultiplayerManager', () => {
       manager = new MultiplayerManager({
         gameId: 'game1',
         roomId: 'room1',
+        userId: 'u1',
         wsUrl: '/api/ws/multiplayer',
         iframe: mockIframe as unknown as HTMLIFrameElement,
         sandboxOrigin: 'https://sandbox.flaxia.app',
@@ -110,6 +138,7 @@ describe('MultiplayerManager', () => {
       manager = new MultiplayerManager({
         gameId: 'game1',
         roomId: 'room1',
+        userId: 'u1',
         wsUrl: '/api/ws/multiplayer',
         iframe: mockIframe as unknown as HTMLIFrameElement,
         sandboxOrigin: 'https://sandbox.flaxia.app',
@@ -125,6 +154,7 @@ describe('MultiplayerManager', () => {
       manager = new MultiplayerManager({
         gameId: 'game1',
         roomId: 'room1',
+        userId: 'u1',
         wsUrl: '/api/ws/multiplayer',
         iframe: mockIframe as unknown as HTMLIFrameElement,
         sandboxOrigin: 'https://sandbox.flaxia.app',
@@ -190,6 +220,7 @@ describe('MultiplayerManager', () => {
       manager = new MultiplayerManager({
         gameId: 'game1',
         roomId: 'room1',
+        userId: 'u1',
         wsUrl: '/api/ws/multiplayer',
         iframe: mockIframe as unknown as HTMLIFrameElement,
         sandboxOrigin: 'https://sandbox.flaxia.app',
@@ -292,6 +323,7 @@ describe('MultiplayerManager', () => {
       manager = new MultiplayerManager({
         gameId: 'game1',
         roomId: 'room1',
+        userId: 'u1',
         wsUrl: '/api/ws/multiplayer',
         iframe: mockIframe as unknown as HTMLIFrameElement,
         sandboxOrigin: 'https://sandbox.flaxia.app',
@@ -299,6 +331,66 @@ describe('MultiplayerManager', () => {
       manager.connect();
       manager.destroy();
       assert.equal(mockWs.readyState, 0);
+    });
+  });
+
+  describe('P2P fallback (peer_data via WS)', () => {
+    beforeEach(() => {
+      manager = new MultiplayerManager({
+        gameId: 'game1',
+        roomId: 'room1',
+        userId: 'u1',
+        wsUrl: '/api/ws/multiplayer',
+        iframe: mockIframe as unknown as HTMLIFrameElement,
+        sandboxOrigin: 'https://sandbox.flaxia.app',
+      });
+      manager.connect();
+      mockWs.emit('open');
+      mockWs.sentMessages.length = 0;
+    });
+
+    it('sends peer_data via WebSocket when P2P not connected', () => {
+      manager.handleGameMessage({ type: 'MULTIPLAYER_SEND_PEER_DATA', data: { hello: 'world' } });
+      assert.equal(mockWs.sentMessages.length, 1);
+      const msg = JSON.parse(mockWs.sentMessages[0]);
+      assert.equal(msg.type, 'peer_data');
+      assert.deepStrictEqual(msg.data, { hello: 'world' });
+    });
+
+    it('does not send when WS is not open', () => {
+      mockWs.readyState = 0;
+      manager.handleGameMessage({ type: 'MULTIPLAYER_SEND_PEER_DATA', data: { x: 1 } });
+      assert.equal(mockWs.sentMessages.length, 0);
+    });
+  });
+
+  describe('WebSocket → postMessage relay (P2P types)', () => {
+    beforeEach(() => {
+      manager = new MultiplayerManager({
+        gameId: 'game1',
+        roomId: 'room1',
+        userId: 'u1',
+        wsUrl: '/api/ws/multiplayer',
+        iframe: mockIframe as unknown as HTMLIFrameElement,
+        sandboxOrigin: 'https://sandbox.flaxia.app',
+      });
+      manager.connect();
+      mockIframe.postedMessages.length = 0;
+    });
+
+    it('relays peer_data → MULTIPLAYER_PEER_DATA', () => {
+      mockWs.emit('message', { data: JSON.stringify({ type: 'peer_data', data: { score: 100 } }) });
+      assert.equal(mockIframe.postedMessages.length, 1);
+      const msg = mockIframe.postedMessages[0].msg as Record<string, unknown>;
+      assert.equal(msg.type, 'MULTIPLAYER_PEER_DATA');
+      assert.deepStrictEqual(msg.data, { score: 100 });
+    });
+
+    it('does not relay signal messages to iframe', () => {
+      mockWs.emit('message', {
+        data: JSON.stringify({ type: 'signal', userId: 'u2', signal: { type: 'offer', payload: {} } }),
+      });
+      assert.equal(mockIframe.postedMessages.length, 0);
     });
   });
 });

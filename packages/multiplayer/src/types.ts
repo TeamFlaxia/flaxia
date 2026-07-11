@@ -51,6 +51,15 @@ export interface MultiplayerError {
 
 export type RoomStatus = 'lobby' | 'playing' | 'finished';
 
+export interface P2PStateEvent {
+  state: 'connected' | 'disconnected' | 'failed';
+  peerId?: string;
+}
+
+export interface PeerDataEvent {
+  data: unknown;
+}
+
 export interface MultiplayerEvents {
   onRoomState: (state: RoomState) => void;
   onPlayerJoined: (player: PlayerInfo) => void;
@@ -64,6 +73,8 @@ export interface MultiplayerEvents {
   onChat: (event: ChatEvent) => void;
   onError: (error: MultiplayerError) => void;
   onDisconnect: () => void;
+  onP2PState: (event: P2PStateEvent) => void;
+  onPeerData: (event: PeerDataEvent) => void;
 }
 
 export interface MultiplayerClientOptions {
