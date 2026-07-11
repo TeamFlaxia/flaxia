@@ -1,0 +1,32 @@
+name: Publish @flaxia/multiplayer
+
+on:
+  push:
+    tags:
+      - "multiplayer-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/multiplayer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+      - run: npm ci
+        working-directory: .
+      - run: npm run build
+      - run: npm test
+      - run: npm publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
