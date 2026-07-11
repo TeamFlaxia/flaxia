@@ -1,0 +1,22 @@
+{
+  "name": "@flaxia/multiplayer",
+  "version": "0.1.0",
+  "description": "Flaxia multiplayer SDK for sandbox games",
+  "type": "module",
+  "main": "dist/multiplayer-sdk.js",
+  "module": "dist/multiplayer-sdk.js",
+  "types": "src/index.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "vite": "^5.0.0",
+    "typescript": "^5.0.0"
+  }
+}

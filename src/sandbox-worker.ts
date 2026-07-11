@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { MULTIPLAYER_SDK_IIFE } from './lib/multiplayer-sdk.generated';
 import {
   ensureFileInWvfs,
   extractZipToR2,
@@ -143,6 +144,13 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
 });
 
 app.get('/favicon.ico', (c) => c.body(null, 204));
+
+app.get('/sdk/multiplayer.js', (c) => {
+  return c.body(MULTIPLAYER_SDK_IIFE, 200, {
+    'Content-Type': 'application/javascript; charset=utf-8',
+    'Cache-Control': 'public, max-age=86400',
+  });
+});
 
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 
