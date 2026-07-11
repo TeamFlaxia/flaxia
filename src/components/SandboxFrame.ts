@@ -125,7 +125,7 @@ async function joinOrCreateRoom(
     if (roomId) {
       const joinResp = await fetch(`/api/multiplayer/rooms/${roomId}/join`, { method: 'POST' });
       if (!joinResp.ok) return null;
-      const joinData = (await joinResp.json()) as { roomId: string; wsUrl: string };
+      const joinData = (await joinResp.json()) as { roomId: string; userId: string; wsUrl: string };
       return joinData;
     }
 
@@ -139,7 +139,7 @@ async function joinOrCreateRoom(
 
     const joinResp = await fetch(`/api/multiplayer/rooms/${createData.roomId}/join`, { method: 'POST' });
     if (!joinResp.ok) return null;
-    const joinData = (await joinResp.json()) as { roomId: string; wsUrl: string };
+    const joinData = (await joinResp.json()) as { roomId: string; userId: string; wsUrl: string };
     return joinData;
   } catch {
     return null;
