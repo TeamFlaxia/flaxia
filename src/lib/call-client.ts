@@ -16,8 +16,7 @@ export interface CallClientCallbacks {
 }
 
 export interface CallClient {
-  startCall(): Promise<void>;
-  joinCall(): Promise<void>;
+  connect(): Promise<void>;
   endCall(): void;
   toggleMute(): boolean;
   setMuted(muted: boolean): void;
@@ -195,20 +194,7 @@ export function createCallClient(
     }
   }
 
-  async function startCall(): Promise<void> {
-    try {
-      localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    } catch {
-      callbacks.onError('Microphone access denied');
-      return;
-    }
-
-    await connectSignaling();
-    await createPeerConnection();
-    // Offer will be created when another participant joins
-  }
-
-  async function joinCall(): Promise<void> {
+  async function connect(): Promise<void> {
     try {
       localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
     } catch {
@@ -276,8 +262,7 @@ export function createCallClient(
   }
 
   return {
-    startCall,
-    joinCall,
+    connect,
     endCall,
     toggleMute,
     setMuted,

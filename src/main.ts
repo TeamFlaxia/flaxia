@@ -206,7 +206,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               }
               // Handle incoming call notification
               if (data.push?.type === 'call' && data.push?.postId) {
-                showIncomingCall(data.push.postId, data.push.title || 'Incoming call');
+                showIncomingCall(data.push.postId);
               }
             } else if (data.title) {
               if (typeof tauriNotify === 'function') {
@@ -2537,13 +2537,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           hidePageLoader();
           setupMobileLeftNav(leftNav.getElement());
 
-          // Now open the call UI
-          const callId = postId;
-          fetch('/api/calls/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ conversationId: callId, type: 'audio' }),
-          }).catch(() => {});
           return;
         }
 
@@ -2833,7 +2826,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // ─── Call feature event handlers ───────────────────────────────────────────────
 
-    const showIncomingCall = async (callId: string, callerInfo: string) => {
+    const showIncomingCall = async (callId: string) => {
       try {
         const { createCallUI } = await import('./components/CallUI.js');
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -2842,13 +2835,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const ui = createCallUI({
           roomId: callId,
           wsUrl,
-          callType: 'audio',
           currentUser: currentUser || { id: '', username: '' },
-          targetUser: { display_name: callerInfo, avatar_key: null },
-          isIncoming: true,
-          onDecline: () => {
-            fetch(`/api/calls/${callId}/end`, { method: 'POST' }).catch(() => {});
-          },
           onEnded: () => {
             if (callUI) {
               callUI.destroy();
@@ -2862,45 +2849,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.error('Failed to show incoming call:', e);
       }
     };
-
-    window.addEventListener('startCall', ((e: CustomEvent) => {
-      const { conversationId } = e.detail;
-      if (!conversationId) return;
-      (async () => {
-        try {
-          const res = await fetch('/api/calls/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ conversationId, type: 'audio' }),
-          });
-          const data: any = await res.json();
-          if (data.error) {
-            console.error('Failed to start call:', data.error);
-            return;
-          }
-          const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-          const wsUrl = `${wsProtocol}//${window.location.host}/api/ws/call?roomId=${data.roomId}&token=`;
-          const { createCallUI } = await import('./components/CallUI.js');
-          const ui = createCallUI({
-            roomId: data.roomId,
-            wsUrl,
-            callType: 'audio',
-            currentUser: currentUser || { id: '', username: '' },
-            isIncoming: false,
-            onEnded: () => {
-              if (callUI) {
-                callUI.destroy();
-                callUI = null;
-              }
-            },
-          });
-          callUI = ui;
-          document.body.appendChild(ui.element);
-        } catch (e) {
-          console.error('Failed to start call:', e);
-        }
-      })();
-    }) as EventListener);
 
     window.addEventListener('startGroupCall', ((e: CustomEvent) => {
       const { groupId } = e.detail;
@@ -2923,9 +2871,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const ui = createCallUI({
             roomId: data.roomId,
             wsUrl,
-            callType: 'audio',
             currentUser: currentUser || { id: '', username: '' },
-            isIncoming: false,
             onEnded: () => {
               if (callUI) {
                 callUI.destroy();

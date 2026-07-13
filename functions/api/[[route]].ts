@@ -10517,27 +10517,23 @@ app.get('/api/current-topic', async (c) => {
 
 // ─── Call API ──────────────────────────────────────────────────────────────────────
 
-// POST /api/calls/start - Start a voice/video call in a DM conversation or group
+// POST /api/calls/start - Start a voice/video call in a group
 app.post('/api/calls/start', requireAuth, async (c) => {
   try {
     const user = c.get('user')!;
-    const { conversationId, groupId, type } = (await c.req.json()) as {
-      conversationId?: string;
+    const { groupId, type } = (await c.req.json()) as {
       groupId?: string;
       type?: 'audio' | 'video';
     };
 
-    if (!conversationId && !groupId) {
-      return c.json({ error: 'conversationId or groupId is required' }, 400);
-    }
-    if (conversationId && groupId) {
-      return c.json({ error: 'Provide either conversationId or groupId, not both' }, 400);
+    if (!groupId) {
+      return c.json({ error: 'groupId is required' }, 400);
     }
 
-    // Check the user is not already in another active/ringing call
+    // Check the user is not already in another active call
     const existingActive = await c.env.DB.prepare(
       `SELECT c.id FROM calls c JOIN call_participants cp ON cp.call_id = c.id
-       WHERE cp.user_id = ? AND c.status IN ('ringing', 'active') LIMIT 1`,
+       WHERE cp.user_id = ? AND c.status = 'active' LIMIT 1`,
     )
       .bind(user.id)
       .first<{ id: string }>();
@@ -10546,7 +10542,7 @@ app.post('/api/calls/start', requireAuth, async (c) => {
       if (stillActive) {
         return c.json({ error: 'You are already in an active call' }, 409);
       }
-      // Stale entry — auto-cleanup and allow the new call
+      // Stale entry — auto-cleanup
       const now = new Date().toISOString();
       await c.env.DB.prepare("UPDATE calls SET status = 'ended', ended_at = ? WHERE id = ?")
         .bind(now, existingActive.id)
@@ -10555,30 +10551,19 @@ app.post('/api/calls/start', requireAuth, async (c) => {
 
     const callType = type === 'video' ? 'video' : 'audio';
     const callId = nanoid();
-    const roomId = callId; // DO instance key
 
-    // Verify access: user must be a participant of the conversation/group
-    if (conversationId) {
-      const conv = (await c.env.DB.prepare('SELECT user_a_id, user_b_id FROM dm_conversations WHERE id = ?')
-        .bind(conversationId)
-        .first()) as { user_a_id: string; user_b_id: string } | null;
-      if (!conv) return c.json({ error: 'Conversation not found' }, 404);
-      if (conv.user_a_id !== user.id && conv.user_b_id !== user.id) {
-        return c.json({ error: 'Not a participant of this conversation' }, 403);
-      }
-    } else if (groupId) {
-      const member = await c.env.DB.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?')
-        .bind(groupId, user.id)
-        .first();
-      if (!member) return c.json({ error: 'Not a member of this group' }, 403);
-    }
+    // Verify group membership
+    const member = await c.env.DB.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?')
+      .bind(groupId, user.id)
+      .first();
+    if (!member) return c.json({ error: 'Not a member of this group' }, 403);
 
-    // Create call record
+    // Create call record — immediately active
     const now = new Date().toISOString();
     await c.env.DB.prepare(
-      'INSERT INTO calls (id, conversation_id, group_id, initiator_id, status, type, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO calls (id, group_id, initiator_id, status, type, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     )
-      .bind(callId, conversationId || null, groupId || null, user.id, 'ringing', callType, now)
+      .bind(callId, groupId, user.id, 'active', callType, now)
       .run();
 
     // Add initiator as first participant
@@ -10586,49 +10571,27 @@ app.post('/api/calls/start', requireAuth, async (c) => {
       .bind(callId, user.id, now)
       .run();
 
-    // Notify other participants via push notification + WebSocket
-    if (conversationId) {
-      const conv = (await c.env.DB.prepare('SELECT user_a_id, user_b_id FROM dm_conversations WHERE id = ?')
-        .bind(conversationId)
-        .first()) as { user_a_id: string; user_b_id: string };
-      const otherUserId = conv.user_a_id === user.id ? conv.user_b_id : conv.user_a_id;
+    // Notify other group members
+    const members = (await c.env.DB.prepare(
+      'SELECT gm.user_id FROM group_members gm WHERE gm.group_id = ? AND gm.user_id != ?',
+    )
+      .bind(groupId, user.id)
+      .all()) as { results: { user_id: string }[] };
 
-      const _otherUser = (await c.env.DB.prepare('SELECT username, display_name FROM users WHERE id = ?')
-        .bind(otherUserId)
-        .first()) as { username: string; display_name: string | null } | null;
-
-      const actorName = user.display_name || user.username || 'Someone';
+    const actorName = user.display_name || user.username || 'Someone';
+    for (const m of members.results) {
       await sendPushToAll(
         c.env as unknown as Parameters<typeof sendPushToAll>[0],
-        otherUserId,
+        m.user_id,
         'call',
         user.username,
         actorName,
-        `${callType === 'video' ? '📹' : '📞'} Incoming call`,
+        `${callType === 'video' ? '📹' : '📞'} Group call in progress`,
         callId,
       );
-    } else if (groupId) {
-      const members = (await c.env.DB.prepare(
-        'SELECT gm.user_id, u.username, u.display_name FROM group_members gm JOIN users u ON u.id = gm.user_id WHERE gm.group_id = ? AND gm.user_id != ?',
-      )
-        .bind(groupId, user.id)
-        .all()) as { results: { user_id: string; username: string; display_name: string | null }[] };
-
-      const actorName = user.display_name || user.username || 'Someone';
-      for (const member of members.results) {
-        await sendPushToAll(
-          c.env as unknown as Parameters<typeof sendPushToAll>[0],
-          member.user_id,
-          'call',
-          user.username,
-          actorName,
-          `${callType === 'video' ? '📹' : '📞'} Group call`,
-          callId,
-        );
-      }
     }
 
-    return c.json({ id: callId, roomId, type: callType });
+    return c.json({ id: callId, roomId: callId, type: callType });
   } catch (error: unknown) {
     const err = error as { message?: string };
     console.error('Call start error:', error);

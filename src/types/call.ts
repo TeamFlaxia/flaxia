@@ -3,8 +3,7 @@ export type CallStatus = 'ringing' | 'active' | 'ended' | 'missed';
 
 export interface Call {
   id: string;
-  conversation_id: string | null;
-  group_id: string | null;
+  group_id: string;
   initiator_id: string;
   status: CallStatus;
   type: CallType;

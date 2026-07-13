@@ -2,14 +2,14 @@ import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
 import { BASE_URL, loginUser, resetDb } from './helpers/setup.ts';
 
-async function createDmConversation(cookie: string, otherUserId: string): Promise<string> {
-  const res = await fetch(`${BASE_URL}/api/dm/conversations`, {
+async function createGroup(cookie: string, name: string, memberIds: string[]): Promise<string> {
+  const res = await fetch(`${BASE_URL}/api/groups`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({ userId: otherUserId }),
+    body: JSON.stringify({ name, memberIds }),
   });
   const data = (await res.json()) as { id?: string; error?: string };
-  if (!data.id) throw new Error(`Failed to create DM conversation: ${JSON.stringify(data)}`);
+  if (!data.id) throw new Error(`Failed to create group: ${JSON.stringify(data)}`);
   return data.id;
 }
 
@@ -37,15 +37,15 @@ async function authUserAndGetId(suffix: string): Promise<{ cookie: string; userI
 describe('POST /api/calls/start', () => {
   beforeEach(resetDb);
 
-  it('starts a call in a DM conversation → 200', async () => {
+  it('starts a group call → 200', async () => {
     const u1 = await authUserAndGetId('1');
     const u2 = await authUserAndGetId('2');
-    const convId = await createDmConversation(u1.cookie, u2.userId);
+    const groupId = await createGroup(u1.cookie, 'Test Group', [u2.userId]);
 
     const res = await fetch(`${BASE_URL}/api/calls/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: u1.cookie },
-      body: JSON.stringify({ conversationId: convId, type: 'audio' }),
+      body: JSON.stringify({ groupId, type: 'audio' }),
     });
     assert.equal(res.status, 200);
     const data = (await res.json()) as { id: string; roomId: string; type: string };
@@ -57,19 +57,19 @@ describe('POST /api/calls/start', () => {
   it('starts a video call → 200', async () => {
     const u1 = await authUserAndGetId('1');
     const u2 = await authUserAndGetId('2');
-    const convId = await createDmConversation(u1.cookie, u2.userId);
+    const groupId = await createGroup(u1.cookie, 'Test Group', [u2.userId]);
 
     const res = await fetch(`${BASE_URL}/api/calls/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: u1.cookie },
-      body: JSON.stringify({ conversationId: convId, type: 'video' }),
+      body: JSON.stringify({ groupId, type: 'video' }),
     });
     assert.equal(res.status, 200);
     const data = (await res.json()) as { type: string };
     assert.equal(data.type, 'video');
   });
 
-  it('rejects missing conversationId and groupId → 400', async () => {
+  it('rejects missing groupId → 400', async () => {
     const u1 = await authUserAndGetId('1');
     const res = await fetch(`${BASE_URL}/api/calls/start`, {
       method: 'POST',
@@ -81,36 +81,26 @@ describe('POST /api/calls/start', () => {
     assert.ok(data.error);
   });
 
-  it('rejects both conversationId and groupId → 400', async () => {
+  it('rejects non-existent group → 403', async () => {
     const u1 = await authUserAndGetId('1');
     const res = await fetch(`${BASE_URL}/api/calls/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: u1.cookie },
-      body: JSON.stringify({ conversationId: 'fake', groupId: 'fake', type: 'audio' }),
+      body: JSON.stringify({ groupId: 'nonexistent-id', type: 'audio' }),
     });
-    assert.equal(res.status, 400);
+    assert.equal(res.status, 403);
   });
 
-  it('rejects non-existent conversation → 404', async () => {
-    const u1 = await authUserAndGetId('1');
-    const res = await fetch(`${BASE_URL}/api/calls/start`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: u1.cookie },
-      body: JSON.stringify({ conversationId: 'nonexistent-id', type: 'audio' }),
-    });
-    assert.equal(res.status, 404);
-  });
-
-  it('rejects when user is not a conversation participant → 403', async () => {
+  it('rejects when user is not a group member → 403', async () => {
     const u1 = await authUserAndGetId('1');
     const u2 = await authUserAndGetId('2');
     const u3 = await authUserAndGetId('3');
-    const convId = await createDmConversation(u1.cookie, u2.userId);
-    // u3 tries to start a call in u1-u2's conversation
+    const groupId = await createGroup(u1.cookie, 'Test Group', [u2.userId]);
+    // u3 tries to start a call in a group they're not in
     const res = await fetch(`${BASE_URL}/api/calls/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: u3.cookie },
-      body: JSON.stringify({ conversationId: convId, type: 'audio' }),
+      body: JSON.stringify({ groupId, type: 'audio' }),
     });
     assert.equal(res.status, 403);
   });
@@ -119,20 +109,20 @@ describe('POST /api/calls/start', () => {
     const u1 = await authUserAndGetId('1');
     const u2 = await authUserAndGetId('2');
     const u3 = await authUserAndGetId('3');
-    const conv12 = await createDmConversation(u1.cookie, u2.userId);
-    const conv13 = await createDmConversation(u1.cookie, u3.userId);
+    const groupA = await createGroup(u1.cookie, 'Group A', [u2.userId]);
+    const groupB = await createGroup(u1.cookie, 'Group B', [u3.userId]);
     // Start first call
     const firstRes = await fetch(`${BASE_URL}/api/calls/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: u1.cookie },
-      body: JSON.stringify({ conversationId: conv12, type: 'audio' }),
+      body: JSON.stringify({ groupId: groupA, type: 'audio' }),
     });
     assert.equal(firstRes.status, 200);
     // Try starting a second call
     const secondRes = await fetch(`${BASE_URL}/api/calls/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: u1.cookie },
-      body: JSON.stringify({ conversationId: conv13, type: 'audio' }),
+      body: JSON.stringify({ groupId: groupB, type: 'audio' }),
     });
     assert.equal(secondRes.status, 409);
   });
@@ -141,7 +131,7 @@ describe('POST /api/calls/start', () => {
     const res = await fetch(`${BASE_URL}/api/calls/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversationId: 'fake', type: 'audio' }),
+      body: JSON.stringify({ groupId: 'fake', type: 'audio' }),
     });
     assert.equal(res.status, 401);
   });
@@ -150,18 +140,18 @@ describe('POST /api/calls/start', () => {
 describe('POST /api/calls/:id/join', () => {
   let user1: { cookie: string; userId: string };
   let user2: { cookie: string; userId: string };
-  let convId: string;
+  let groupId: string;
   let callId: string;
 
   beforeEach(async () => {
     await resetDb();
     user1 = await authUserAndGetId('1');
     user2 = await authUserAndGetId('2');
-    convId = await createDmConversation(user1.cookie, user2.userId);
+    groupId = await createGroup(user1.cookie, 'Test Group', [user2.userId]);
     const res = await fetch(`${BASE_URL}/api/calls/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: user1.cookie },
-      body: JSON.stringify({ conversationId: convId, type: 'audio' }),
+      body: JSON.stringify({ groupId, type: 'audio' }),
     });
     const data = (await res.json()) as { id: string };
     callId = data.id;
@@ -192,7 +182,7 @@ describe('POST /api/calls/:id/join', () => {
     assert.equal(res.status, 401);
   });
 
-  it('rejects user not in conversation → 403', async () => {
+  it('rejects user not in group → 403', async () => {
     const user3 = await authUserAndGetId('3');
     const res = await fetch(`${BASE_URL}/api/calls/${callId}/join`, {
       method: 'POST',
@@ -200,43 +190,23 @@ describe('POST /api/calls/:id/join', () => {
     });
     assert.equal(res.status, 403);
   });
-
-  it('rejects joining another call while already in one → 409', async () => {
-    const user3 = await authUserAndGetId('3');
-    const user4 = await authUserAndGetId('4');
-    const conv34 = await createDmConversation(user3.cookie, user4.userId);
-    // user3 starts a call with user4 (separate call)
-    const otherRes = await fetch(`${BASE_URL}/api/calls/start`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: user3.cookie },
-      body: JSON.stringify({ conversationId: conv34, type: 'audio' }),
-    });
-    assert.equal(otherRes.status, 200);
-    const otherCall = (await otherRes.json()) as { id: string };
-    // user1 (already in callId with user2) tries to join user3's call → 409
-    const joinRes = await fetch(`${BASE_URL}/api/calls/${otherCall.id}/join`, {
-      method: 'POST',
-      headers: { Cookie: user1.cookie },
-    });
-    assert.equal(joinRes.status, 409);
-  });
 });
 
 describe('POST /api/calls/:id/end', () => {
   let user1: { cookie: string; userId: string };
   let user2: { cookie: string; userId: string };
-  let convId: string;
+  let groupId: string;
   let callId: string;
 
   beforeEach(async () => {
     await resetDb();
     user1 = await authUserAndGetId('1');
     user2 = await authUserAndGetId('2');
-    convId = await createDmConversation(user1.cookie, user2.userId);
+    groupId = await createGroup(user1.cookie, 'Test Group', [user2.userId]);
     const res = await fetch(`${BASE_URL}/api/calls/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: user1.cookie },
-      body: JSON.stringify({ conversationId: convId, type: 'audio' }),
+      body: JSON.stringify({ groupId, type: 'audio' }),
     });
     const data = (await res.json()) as { id: string };
     callId = data.id;
@@ -295,11 +265,11 @@ describe('POST /api/calls/:id/mute', () => {
     await resetDb();
     user1 = await authUserAndGetId('1');
     const user2 = await authUserAndGetId('2');
-    const convId = await createDmConversation(user1.cookie, user2.userId);
+    const groupId = await createGroup(user1.cookie, 'Test Group', [user2.userId]);
     const res = await fetch(`${BASE_URL}/api/calls/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: user1.cookie },
-      body: JSON.stringify({ conversationId: convId, type: 'audio' }),
+      body: JSON.stringify({ groupId, type: 'audio' }),
     });
     const data = (await res.json()) as { id: string };
     callId = data.id;
@@ -364,11 +334,11 @@ describe('GET /api/calls/active', () => {
   });
 
   it('returns active calls → 200', async () => {
-    const convId = await createDmConversation(user1.cookie, user2.userId);
+    const groupId = await createGroup(user1.cookie, 'Test Group', [user2.userId]);
     await fetch(`${BASE_URL}/api/calls/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: user1.cookie },
-      body: JSON.stringify({ conversationId: convId, type: 'audio' }),
+      body: JSON.stringify({ groupId, type: 'audio' }),
     });
 
     const res = await fetch(`${BASE_URL}/api/calls/active`, {
@@ -392,13 +362,13 @@ describe('Call lifecycle (start → join → end)', () => {
   it('completes a full call lifecycle', async () => {
     const u1 = await authUserAndGetId('1');
     const u2 = await authUserAndGetId('2');
-    const convId = await createDmConversation(u1.cookie, u2.userId);
+    const groupId = await createGroup(u1.cookie, 'Test Group', [u2.userId]);
 
     // Start
     const startRes = await fetch(`${BASE_URL}/api/calls/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: u1.cookie },
-      body: JSON.stringify({ conversationId: convId, type: 'audio' }),
+      body: JSON.stringify({ groupId, type: 'audio' }),
     });
     assert.equal(startRes.status, 200);
     const { id } = (await startRes.json()) as { id: string };
