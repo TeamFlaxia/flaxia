@@ -196,7 +196,14 @@ export function createCallClient(
 
   async function connect(): Promise<void> {
     try {
-      localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      });
     } catch {
       callbacks.onError('Microphone access denied');
       return;
