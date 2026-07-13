@@ -3,6 +3,8 @@ import { registerModal } from '../lib/modal-state';
 import { showToast } from '../lib/toast';
 import type { CallParticipant } from '../types/call';
 
+let activeCallHandle: CallUIHandle | null = null;
+
 interface CallUIConfig {
   roomId: string;
   wsUrl: string;
@@ -16,6 +18,12 @@ interface CallUIHandle {
 }
 
 export function createCallUI(config: CallUIConfig): CallUIHandle {
+  // Destroy any existing active call UI
+  if (activeCallHandle) {
+    activeCallHandle.destroy();
+    activeCallHandle = null;
+  }
+
   let client: CallClient | null = null;
   let destroyed = false;
   let callDuration = 0;
@@ -238,10 +246,17 @@ export function createCallUI(config: CallUIConfig): CallUIHandle {
   // Connect to signaling
   connect();
 
-  return {
+  const handle: CallUIHandle = {
     element: overlay,
-    destroy: cleanup,
+    destroy: () => {
+      cleanup();
+      if (activeCallHandle === handle) {
+        activeCallHandle = null;
+      }
+    },
   };
+  activeCallHandle = handle;
+  return handle;
 }
 
 export function showIncomingCallNotification(

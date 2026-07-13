@@ -2826,7 +2826,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // ─── Call feature event handlers ───────────────────────────────────────────────
 
+    let currentCallId: string | null = null;
+
     const showIncomingCall = async (callId: string) => {
+      // Skip if already showing a call for this room
+      if (currentCallId === callId) return;
+      // Destroy any existing call UI first
+      if (callUI) {
+        callUI.destroy();
+        callUI = null;
+      }
+      currentCallId = callId;
+
       try {
         const { createCallUI } = await import('./components/CallUI.js');
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -2841,6 +2852,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               callUI.destroy();
               callUI = null;
             }
+            currentCallId = null;
           },
         });
         callUI = ui;
@@ -2854,6 +2866,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       const { groupId } = e.detail;
       if (!groupId) return;
       (async () => {
+        // Destroy any existing call UI first
+        if (callUI) {
+          callUI.destroy();
+          callUI = null;
+        }
+        currentCallId = null;
+
         try {
           const res = await fetch('/api/calls/start', {
             method: 'POST',
@@ -2877,9 +2896,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                 callUI.destroy();
                 callUI = null;
               }
+              currentCallId = null;
             },
           });
           callUI = ui;
+          currentCallId = data.roomId;
           document.body.appendChild(ui.element);
         } catch (e) {
           console.error('Failed to start group call:', e);
