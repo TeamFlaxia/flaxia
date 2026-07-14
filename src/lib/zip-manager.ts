@@ -1,7 +1,8 @@
+import { executeSwZip, SwZipExecutorHandle } from './sw-zip-executor.js';
 import { executeWvfsZip, WvfsZipExecutorHandle } from './wvfs-zip-client.js';
 import { executeZip, ZipExecutorHandle } from './zip-executor.js';
 
-export type ZipExecutionMode = 'legacy' | 'wvfs';
+export type ZipExecutionMode = 'sw' | 'wvfs' | 'legacy';
 
 export interface UniversalZipExecutorHandle {
   destroy: () => void;
@@ -25,9 +26,11 @@ export async function executeUniversalZip(
   }
 
   try {
-    let handle: ZipExecutorHandle | WvfsZipExecutorHandle;
+    let handle: ZipExecutorHandle | WvfsZipExecutorHandle | SwZipExecutorHandle;
 
-    if (mode === 'wvfs') {
+    if (mode === 'sw') {
+      handle = await executeSwZip(postId, containerEl, url);
+    } else if (mode === 'wvfs') {
       handle = await executeWvfsZip(postId, containerEl, url);
     } else {
       handle = await executeZip(postId, containerEl, url);
@@ -59,6 +62,11 @@ export async function executeUniversalZip(
 
 // Helper function to detect best mode based on environment
 export function getOptimalZipMode(): ZipExecutionMode {
+  // ServiceWorker mode: fastest (local extraction, no sandbox Worker round-trip)
+  if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+    return 'sw';
+  }
+
   // Check if running in Cloudflare Workers environment
   if (
     typeof globalThis !== 'undefined' &&
@@ -69,7 +77,7 @@ export function getOptimalZipMode(): ZipExecutionMode {
   }
 
   // Check if browser supports required features for WVFS
-  if (typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.getDirectory === 'function') {
+  if (typeof (navigator as Navigator | undefined)?.storage?.getDirectory === 'function') {
     return 'wvfs';
   }
 
