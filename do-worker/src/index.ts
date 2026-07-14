@@ -189,6 +189,9 @@ export class CallStream {
       case 'leave':
         this.participants.delete(data.userId);
         this.broadcast(data, data.userId);
+        if (this.participants.size === 0) {
+          this.broadcast({ type: 'end-call', userId: '' });
+        }
         break;
 
       case 'end-call':
@@ -211,6 +214,9 @@ export class CallStream {
       this.participants.delete(disconnectedUserId);
       const msg: SignalMessage = { type: 'leave', userId: disconnectedUserId };
       this.broadcast(msg);
+      if (this.participants.size === 0) {
+        this.broadcast({ type: 'end-call', userId: '' });
+      }
     }
   }
 
@@ -228,6 +234,9 @@ export class CallStream {
       this.participants.delete(disconnectedUserId);
       const msg: SignalMessage = { type: 'leave', userId: disconnectedUserId };
       this.broadcast(msg);
+      if (this.participants.size === 0) {
+        this.broadcast({ type: 'end-call', userId: '' });
+      }
     }
   }
 

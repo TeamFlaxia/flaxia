@@ -18,7 +18,6 @@ interface CallUIHandle {
 }
 
 export function createCallUI(config: CallUIConfig): CallUIHandle {
-  // Destroy any existing active call UI
   if (activeCallHandle) {
     activeCallHandle.destroy();
     activeCallHandle = null;
@@ -38,15 +37,12 @@ export function createCallUI(config: CallUIConfig): CallUIHandle {
   const barInner = document.createElement('div');
   barInner.className = 'call-bar-inner';
 
-  // Duration / status
   const statusEl = document.createElement('div');
   statusEl.className = 'call-bar-status';
 
-  // Participant avatars row
   const avatarsEl = document.createElement('div');
   avatarsEl.className = 'call-bar-avatars';
 
-  // Controls
   const controlsEl = document.createElement('div');
   controlsEl.className = 'call-bar-controls';
 
@@ -105,27 +101,28 @@ export function createCallUI(config: CallUIConfig): CallUIHandle {
     }
   }
 
-  let remoteAudioEl: HTMLAudioElement | null = null;
+  const remoteAudioEls = new Map<string, HTMLAudioElement>();
 
   const callbacks: CallClientCallbacks = {
-    onRemoteStream: (stream: MediaStream) => {
-      if (remoteAudioEl) {
-        remoteAudioEl.pause();
-        remoteAudioEl.srcObject = null;
-        remoteAudioEl.remove();
+    onRemoteStream: (userId: string, stream: MediaStream) => {
+      let audio = remoteAudioEls.get(userId);
+      if (audio) {
+        audio.srcObject = null;
+      } else {
+        audio = document.createElement('audio');
+        audio.autoplay = true;
+        remoteAudioEls.set(userId, audio);
       }
-      const audio = document.createElement('audio');
       audio.srcObject = stream;
-      audio.autoplay = true;
       audio.play().catch(() => {});
-      remoteAudioEl = audio;
     },
-    onRemoteStreamRemoved: () => {
-      if (remoteAudioEl) {
-        remoteAudioEl.pause();
-        remoteAudioEl.srcObject = null;
-        remoteAudioEl.remove();
-        remoteAudioEl = null;
+    onRemoteStreamRemoved: (userId: string) => {
+      const audio = remoteAudioEls.get(userId);
+      if (audio) {
+        audio.pause();
+        audio.srcObject = null;
+        audio.remove();
+        remoteAudioEls.delete(userId);
       }
     },
     onCallEnded: (_userId: string) => {
@@ -173,8 +170,9 @@ export function createCallUI(config: CallUIConfig): CallUIHandle {
         if (client) {
           const on = client.toggleSpeaker();
           actionBtn.classList.toggle('call-bar-btn-active', on);
-          if (remoteAudioEl) {
-            remoteAudioEl.volume = on ? 1.0 : 0.3;
+          const vol = on ? 1.0 : 0.3;
+          for (const audio of remoteAudioEls.values()) {
+            audio.volume = vol;
           }
         }
         break;
@@ -204,7 +202,6 @@ export function createCallUI(config: CallUIConfig): CallUIHandle {
     if (client) {
       client.endCall();
     }
-    fetch(`/api/calls/${config.roomId}/end`, { method: 'POST' }).catch(() => {});
     cleanup();
     config.onEnded();
   }
@@ -215,12 +212,12 @@ export function createCallUI(config: CallUIConfig): CallUIHandle {
       client.destroy();
       client = null;
     }
-    if (remoteAudioEl) {
-      remoteAudioEl.pause();
-      remoteAudioEl.srcObject = null;
-      remoteAudioEl.remove();
-      remoteAudioEl = null;
+    for (const audio of remoteAudioEls.values()) {
+      audio.pause();
+      audio.srcObject = null;
+      audio.remove();
     }
+    remoteAudioEls.clear();
     if (durationInterval) {
       clearInterval(durationInterval);
       durationInterval = null;
@@ -231,7 +228,6 @@ export function createCallUI(config: CallUIConfig): CallUIHandle {
     unregisterModal();
   }
 
-  // Build layout
   statusEl.textContent = 'Connecting...';
   renderControls();
   renderAvatars();
@@ -243,7 +239,6 @@ export function createCallUI(config: CallUIConfig): CallUIHandle {
 
   overlay.addEventListener('click', handleButtonClick);
 
-  // Connect to signaling
   connect();
 
   const handle: CallUIHandle = {

@@ -5,8 +5,8 @@ const STUN_SERVERS: RTCConfiguration = {
 };
 
 export interface CallClientCallbacks {
-  onRemoteStream: (stream: MediaStream) => void;
-  onRemoteStreamRemoved: () => void;
+  onRemoteStream: (userId: string, stream: MediaStream) => void;
+  onRemoteStreamRemoved: (userId: string) => void;
   onCallEnded: (userId: string) => void;
   onParticipantJoined: (participant: CallParticipant) => void;
   onParticipantLeft: (userId: string) => void;
@@ -32,7 +32,7 @@ export function createCallClient(
   currentUser: { id: string; username?: string; display_name?: string | null; avatar_key?: string | null },
   callbacks: CallClientCallbacks,
 ): CallClient {
-  let peerConnection: RTCPeerConnection | null = null;
+  const peerConnections = new Map<string, RTCPeerConnection>();
   let localStream: MediaStream | null = null;
   let signalingWs: WebSocket | null = null;
   let isMuted = false;
@@ -78,6 +78,55 @@ export function createCallClient(
     });
   }
 
+  function getOrCreatePC(userId: string): RTCPeerConnection {
+    let pc = peerConnections.get(userId);
+    if (pc) return pc;
+
+    pc = new RTCPeerConnection(STUN_SERVERS);
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        sendSignal({
+          type: 'ice-candidate',
+          userId: currentUser.id,
+          candidate: event.candidate.toJSON(),
+          targetUserId: userId,
+        });
+      }
+    };
+
+    pc.ontrack = (event) => {
+      if (event.streams[0]) {
+        callbacks.onRemoteStream(userId, event.streams[0]);
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc?.connectionState === 'disconnected' || pc?.connectionState === 'failed') {
+        closePeerConnection(userId);
+        callbacks.onParticipantLeft(userId);
+      }
+    };
+
+    if (localStream) {
+      for (const track of localStream.getTracks()) {
+        pc.addTrack(track, localStream);
+      }
+    }
+
+    peerConnections.set(userId, pc);
+    return pc;
+  }
+
+  function closePeerConnection(userId: string): void {
+    const pc = peerConnections.get(userId);
+    if (pc) {
+      pc.close();
+      peerConnections.delete(userId);
+      callbacks.onRemoteStreamRemoved(userId);
+    }
+  }
+
   async function handleSignalMessage(msg: SignalMessage): Promise<void> {
     switch (msg.type) {
       case 'participants':
@@ -87,7 +136,7 @@ export function createCallClient(
         break;
 
       case 'join':
-        if (msg.userId !== currentUser.id) {
+        if (msg.userId && msg.userId !== currentUser.id) {
           callbacks.onParticipantJoined({
             call_id: roomId,
             user_id: msg.userId,
@@ -99,9 +148,10 @@ export function createCallClient(
             muted: false,
           });
 
-          if (peerConnection && peerConnection.signalingState === 'stable') {
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
+          const pc = getOrCreatePC(msg.userId);
+          if (pc.signalingState === 'stable') {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
             sendSignal({
               type: 'offer',
               userId: currentUser.id,
@@ -113,32 +163,40 @@ export function createCallClient(
         break;
 
       case 'leave':
-        if (msg.userId !== currentUser.id) {
+        if (msg.userId && msg.userId !== currentUser.id) {
+          closePeerConnection(msg.userId);
           callbacks.onParticipantLeft(msg.userId);
         }
         break;
 
       case 'offer':
-        if (msg.sdp && peerConnection && msg.userId !== currentUser.id) {
-          await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: msg.sdp }));
-          const answer = await peerConnection.createAnswer();
-          await peerConnection.setLocalDescription(answer);
+        if (msg.sdp && msg.userId && msg.userId !== currentUser.id) {
+          const pc = getOrCreatePC(msg.userId);
+          await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: msg.sdp }));
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
           sendSignal({ type: 'answer', userId: currentUser.id, sdp: answer.sdp!, targetUserId: msg.userId });
         }
         break;
 
       case 'answer':
-        if (msg.sdp && peerConnection) {
-          await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: msg.sdp }));
+        if (msg.sdp && msg.userId) {
+          const pc = peerConnections.get(msg.userId);
+          if (pc) {
+            await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: msg.sdp }));
+          }
         }
         break;
 
       case 'ice-candidate':
-        if (msg.candidate && peerConnection) {
-          try {
-            await peerConnection.addIceCandidate(new RTCIceCandidate(msg.candidate));
-          } catch {
-            // ignore invalid candidates
+        if (msg.candidate && msg.userId) {
+          const pc = peerConnections.get(msg.userId);
+          if (pc) {
+            try {
+              await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+            } catch {
+              // ignore invalid candidates
+            }
           }
         }
         break;
@@ -161,39 +219,6 @@ export function createCallClient(
     }
   }
 
-  async function createPeerConnection(): Promise<void> {
-    peerConnection = new RTCPeerConnection(STUN_SERVERS);
-
-    peerConnection.onicecandidate = (event) => {
-      if (event.candidate) {
-        sendSignal({
-          type: 'ice-candidate',
-          userId: currentUser.id,
-          candidate: event.candidate.toJSON(),
-          targetUserId: '',
-        });
-      }
-    };
-
-    peerConnection.ontrack = (event) => {
-      if (event.streams[0]) {
-        callbacks.onRemoteStream(event.streams[0]);
-      }
-    };
-
-    peerConnection.onconnectionstatechange = () => {
-      if (peerConnection?.connectionState === 'disconnected' || peerConnection?.connectionState === 'failed') {
-        callbacks.onCallEnded('');
-      }
-    };
-
-    if (localStream) {
-      for (const track of localStream.getTracks()) {
-        peerConnection.addTrack(track, localStream);
-      }
-    }
-  }
-
   async function connect(): Promise<void> {
     try {
       localStream = await navigator.mediaDevices.getUserMedia({
@@ -210,26 +235,27 @@ export function createCallClient(
     }
 
     await connectSignaling();
-    await createPeerConnection();
   }
 
   function endCall(): void {
-    if (peerConnection) {
-      peerConnection.close();
-      peerConnection = null;
+    for (const [userId, pc] of peerConnections) {
+      pc.close();
+      callbacks.onRemoteStreamRemoved(userId);
     }
+    peerConnections.clear();
+
     if (localStream) {
       localStream.getTracks().forEach((t) => {
         t.stop();
       });
       localStream = null;
     }
-    sendSignal({ type: 'end-call', userId: currentUser.id });
+
+    sendSignal({ type: 'leave', userId: currentUser.id });
     if (signalingWs) {
       signalingWs.close();
       signalingWs = null;
     }
-    callbacks.onRemoteStreamRemoved();
   }
 
   function toggleMute(): boolean {
