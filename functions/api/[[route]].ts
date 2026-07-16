@@ -25,8 +25,8 @@ import {
   verifyPassword,
 } from '../lib/auth';
 import { sendPushToAll } from '../lib/notify';
-
 import { getVapidPublicKey } from '../lib/push';
+import { computeAuthorQuality, computeQualityScore, getTypeWeights } from '../lib/scoring';
 
 type Bindings = {
   DB: D1Database;
@@ -4411,7 +4411,10 @@ app.get('/api/posts/trending', async (c) => {
   try {
     const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
     const cursor = c.req.query('cursor');
-    const [cursorScore, cursorCreatedAt] = cursor ? cursor.split(',') : [null, null];
+    const parts = cursor ? cursor.split(',') : [];
+    const cursorScore = parts[0] || null;
+    const cursorCreatedAt = parts[1] || null;
+    const cursorId = parts[2] || null;
     let numericScore = cursorScore !== null ? parseFloat(cursorScore) : null;
     if (Number.isNaN(numericScore!)) numericScore = null;
 
@@ -4464,61 +4467,144 @@ app.get('/api/posts/trending', async (c) => {
       }
     }
 
-    // Trending algorithm: (fresh_count * 2 + reply_count * 3 + impressions * 0.1 + 1) / (hours_since_creation + 2)^1.5
-    // SQLite doesn't have POW, so we use (hours + 2) * (hours + 2) as a simpler decay
+    // Trending algorithm:
+    //   base_score = (fresh*2 + reply*3 + impression*0.1 + 1) / (hours+2)^1.5
+    //   adjusted by content type weights and quality score
     const blockFilterTrending = currentUserId
       ? 'AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
       : '';
     const blockParamTrending = currentUserId ? [currentUserId] : [];
+    const trendingFetchLimit = limit * 5;
     const query = `
-      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
-      COALESCE(p.reply_count, 0) as reply_count, 
+      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+      COALESCE(p.reply_count, 0) as reply_count,
       COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
-      ((p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + p.impressions * 0.1 + 1.0) / 
-      ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0) * ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0)) as score
-      FROM posts p 
-      LEFT JOIN users u ON p.user_id = u.id 
+      ((p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + p.impressions * 0.1 + 1.0) /
+      EXP(1.5 * LN((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))) as score
+      FROM posts p
+      LEFT JOIN users u ON p.user_id = u.id
       WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at > datetime('now', '-7 days')
-      ${numericScore !== null ? 'AND (score < ? OR (score = ? AND p.created_at < ?))' : ''}
       ${blockFilterTrending}
       ORDER BY score DESC, p.created_at DESC
       LIMIT ?
     `;
-    const params: Array<unknown> =
-      numericScore !== null
-        ? [numericScore, numericScore, cursorCreatedAt, ...blockParamTrending, limit]
-        : [...blockParamTrending, limit];
+    const params: Array<unknown> = [...blockParamTrending, trendingFetchLimit];
 
     const result = await c.env.DB.prepare(query)
       .bind(...params)
       .all();
-    const posts = result.results || [];
+    const rawPosts = (result.results || []) as Record<string, unknown>[];
+
+    // Compute author quality scores per user
+    const authorQualityMap = new Map<string, number>();
+    const userIds = [...new Set(rawPosts.map((p) => p.user_id as string))].filter(Boolean);
+    if (userIds.length > 0) {
+      const authorRows = await c.env.DB.prepare(
+        `SELECT u.id, u.display_name, u.bio, u.avatar_key, u.created_at,
+          COALESCE(SUM(p.fresh_count), 0) as total_fresh,
+          COALESCE(SUM(p.reply_count), 0) as total_reply,
+          COALESCE(SUM(p.impressions), 0) as total_impressions,
+          COUNT(p.id) as post_count
+         FROM users u
+         LEFT JOIN posts p ON p.user_id = u.id AND p.status = 'published'
+         WHERE u.id IN (${userIds.map(() => '?').join(',')})
+         GROUP BY u.id`,
+      )
+        .bind(...userIds)
+        .all<{
+          id: string;
+          display_name: string | null;
+          bio: string | null;
+          avatar_key: string | null;
+          created_at: string;
+          total_fresh: number;
+          total_reply: number;
+          total_impressions: number;
+          post_count: number;
+        }>();
+      for (const row of authorRows.results || []) {
+        const ageMs = Date.now() - new Date(row.created_at).getTime();
+        const accountAgeDays = ageMs / 86400000;
+        const postCount = row.post_count || 1;
+        const authorQuality = computeAuthorQuality({
+          freshRatio: (row.total_fresh || 0) / postCount / 5,
+          replyRate: (row.total_reply || 0) / Math.max(row.total_impressions || postCount, 1),
+          accountAgeDays: Math.max(accountAgeDays, 1),
+          hasDisplayName: !!row.display_name,
+          hasBio: !!row.bio,
+          hasAvatar: !!row.avatar_key,
+        });
+        // Map from 0-1 range to 0.5-1.5 multiplier range
+        authorQualityMap.set(row.id, 0.5 + authorQuality);
+      }
+    }
+
+    // Compute adjusted score with quality, type weights, and author quality
+    const scored = rawPosts.map((p) => {
+      const qualityScore = computeQualityScore(String(p.text || ''), !!(p.payload_key || p.swf_key), 0);
+      const typeFactor = (() => {
+        const w = getTypeWeights(p.payload_key as string | null, p.swf_key as string | null);
+        return (w.fresh + w.reply + w.impression) / 4.5;
+      })();
+      const authorQuality = authorQualityMap.get(p.user_id as string) || 1.0;
+      const rawScore = Number(p.score) || 0;
+      return { post: p, score: rawScore * qualityScore * typeFactor * authorQuality };
+    });
+
+    // Cursor filtering and sorting
+    let filtered = scored;
+    if (numericScore !== null && cursorCreatedAt) {
+      filtered = scored.filter((s) => {
+        const ca = String(s.post.created_at || '');
+        const id = String(s.post.id || '');
+        return (
+          s.score < numericScore! ||
+          (s.score === numericScore && ca < cursorCreatedAt!) ||
+          (s.score === numericScore && ca === cursorCreatedAt && id < cursorId!)
+        );
+      });
+    }
+
+    filtered.sort((a, b) => {
+      const diff = b.score - a.score;
+      if (diff !== 0) return diff;
+      const ca = String(b.post.created_at || '').localeCompare(String(a.post.created_at || ''));
+      if (ca !== 0) return ca;
+      return String(b.post.id || '').localeCompare(String(a.post.id || ''));
+    });
+
+    const page = filtered.slice(0, limit);
+
+    // Build enriched posts
+    const posts = page.map((s) => {
+      const p = s.post;
+      p.score = s.score;
+      return p;
+    });
 
     // Add fresh and bookmark status for current user if logged in
     if (currentUserId && posts.length > 0) {
       const postIds = posts.map((p: Record<string, unknown>) => String(p.id));
-      const freshResult = await c.env.DB.prepare(
-        `SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`,
-      )
-        .bind(currentUserId, ...postIds)
-        .all();
-
+      const [freshResult, bookmarkResult] = await Promise.all([
+        c.env.DB.prepare(
+          `SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`,
+        )
+          .bind(currentUserId, ...postIds)
+          .all(),
+        c.env.DB.prepare(
+          `SELECT post_id FROM bookmarks WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`,
+        )
+          .bind(currentUserId, ...postIds)
+          .all(),
+      ]);
       const freshedPostIds = new Set(
         (freshResult.results || []).map((f: Record<string, unknown>) => f.post_id as string),
       );
-      posts.forEach((post: Record<string, unknown>) => {
-        post.is_freshed = freshedPostIds.has(post.id as string);
-      });
-
-      const bookmarkResult = await c.env.DB.prepare(
-        `SELECT post_id FROM bookmarks WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`,
-      )
-        .bind(currentUserId, ...postIds)
-        .all();
       const bookmarkedPostIds = new Set(
         (bookmarkResult.results || []).map((b: Record<string, unknown>) => b.post_id as string),
       );
       posts.forEach((post: Record<string, unknown>) => {
+        post.is_freshed = freshedPostIds.has(post.id as string);
         post.is_bookmarked = bookmarkedPostIds.has(post.id as string);
       });
     }
@@ -4530,11 +4616,20 @@ app.get('/api/posts/trending', async (c) => {
       const cacheKey = makeCacheKey('trending', c, `${limit}`);
       const cacheData = {
         posts: posts.map((p: Record<string, unknown>) => ({ ...p, is_freshed: false, is_bookmarked: false })),
+        next_cursor:
+          posts.length > 0
+            ? `${(posts[posts.length - 1] as Record<string, unknown>).score},${(posts[posts.length - 1] as Record<string, unknown>).created_at},${(posts[posts.length - 1] as Record<string, unknown>).id}`
+            : null,
       };
       await kvCacheSet(c, cacheKey, cacheData, 30);
     }
 
-    return c.json({ posts });
+    const nextCursor =
+      posts.length > 0
+        ? `${(posts[posts.length - 1] as Record<string, unknown>).score},${(posts[posts.length - 1] as Record<string, unknown>).created_at},${(posts[posts.length - 1] as Record<string, unknown>).id}`
+        : null;
+
+    return c.json({ posts, next_cursor: nextCursor });
   } catch (error: unknown) {
     console.error('Trending posts error:', error);
     return c.json({ error: 'Internal server error' }, 500);
@@ -4664,14 +4759,12 @@ app.get('/api/posts/recommended', async (c) => {
     const cursor = c.req.query('cursor');
     let cursorScore: string | null = null;
     let cursorCreatedAt: string | null = null;
+    let cursorId: string | null = null;
     if (cursor) {
       const parts = cursor.split(',');
-      if (parts.length >= 2) {
-        cursorScore = parts[0];
-        cursorCreatedAt = parts.slice(1).join(','); // Rejoin in case created_at contains commas
-      } else {
-        cursorCreatedAt = parts[0]; // Bare created_at (backward compat)
-      }
+      cursorScore = parts[0] || null;
+      cursorCreatedAt = parts[1] || null;
+      cursorId = parts[2] || null;
     }
     let numericCursor = cursorScore !== null ? parseFloat(cursorScore) : null;
     if (Number.isNaN(numericCursor!)) numericCursor = null;
@@ -4782,7 +4875,7 @@ app.get('/api/posts/recommended', async (c) => {
 
       if (vectorMatches.length > 0) {
         const candidateIds = vectorMatches.map((m) => m.id);
-        const engFormula = `(p.engagement_hotness / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))`;
+        const engFormula = `(p.engagement_hotness / EXP(1.5 * LN((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0)))`;
         const candidateQuery = `${RECOMMENDED_SELECT}, ${engFormula} as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id IN (${candidateIds.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL`;
         const candResult = await c.env.DB.prepare(candidateQuery)
           .bind(...candidateIds)
@@ -4809,16 +4902,67 @@ app.get('/api/posts/recommended', async (c) => {
           const vecScoreMap = new Map(vectorMatches.map((m) => [m.id, m.score]));
           const maxVec = Math.max(...vectorMatches.map((m) => m.score), 1);
 
+          // Compute author quality scores
+          const authorQualityMap = new Map<string, number>();
+          const authorIds = [...new Set(candidatePosts.map((p) => p.user_id as string))].filter(Boolean);
+          if (authorIds.length > 0) {
+            const authorRows = await c.env.DB.prepare(
+              `SELECT u.id, u.display_name, u.bio, u.avatar_key, u.created_at,
+                COALESCE(SUM(p.fresh_count), 0) as total_fresh,
+                COALESCE(SUM(p.reply_count), 0) as total_reply,
+                COALESCE(SUM(p.impressions), 0) as total_impressions,
+                COUNT(p.id) as post_count
+               FROM users u
+               LEFT JOIN posts p ON p.user_id = u.id AND p.status = 'published'
+               WHERE u.id IN (${authorIds.map(() => '?').join(',')})
+               GROUP BY u.id`,
+            )
+              .bind(...authorIds)
+              .all<{
+                id: string;
+                display_name: string | null;
+                bio: string | null;
+                avatar_key: string | null;
+                created_at: string;
+                total_fresh: number;
+                total_reply: number;
+                total_impressions: number;
+                post_count: number;
+              }>();
+            for (const row of authorRows.results || []) {
+              const ageMs = Date.now() - new Date(row.created_at).getTime();
+              const accountAgeDays = ageMs / 86400000;
+              const postCount = row.post_count || 1;
+              const authorQuality = computeAuthorQuality({
+                freshRatio: (row.total_fresh || 0) / postCount / 5,
+                replyRate: (row.total_reply || 0) / Math.max(row.total_impressions || postCount, 1),
+                accountAgeDays: Math.max(accountAgeDays, 1),
+                hasDisplayName: !!row.display_name,
+                hasBio: !!row.bio,
+                hasAvatar: !!row.avatar_key,
+              });
+              authorQualityMap.set(row.id, 0.5 + authorQuality);
+            }
+          }
+
           const hybrid = candidatePosts.map((p) => {
             const vecSim = (vecScoreMap.get(p.id as string) || 0) / maxVec;
             const engNorm = (Number(p.eng_score) || 0) / maxEng;
-            return { post: p, score: 0.7 * vecSim + 0.3 * engNorm };
+            const qualityScore = computeQualityScore(String(p.text || ''), !!(p.payload_key || p.swf_key), 0);
+            const typeFactor = (() => {
+              const w = getTypeWeights(p.payload_key as string | null, p.swf_key as string | null);
+              return (w.fresh + w.reply + w.impression) / 4.5;
+            })();
+            const authorQuality = authorQualityMap.get(p.user_id as string) || 1.0;
+            return { post: p, score: (0.7 * vecSim + 0.3 * engNorm) * qualityScore * typeFactor * authorQuality };
           });
 
           hybrid.sort((a, b) => {
             const diff = b.score - a.score;
             if (diff !== 0) return diff;
-            return String(b.post.created_at || '').localeCompare(String(a.post.created_at || ''));
+            const ca = String(b.post.created_at || '').localeCompare(String(a.post.created_at || ''));
+            if (ca !== 0) return ca;
+            return String(b.post.id || '').localeCompare(String(a.post.id || ''));
           });
 
           let filtered = hybrid;
@@ -4826,7 +4970,12 @@ app.get('/api/posts/recommended', async (c) => {
             filtered = hybrid.filter((h) => {
               const s = h.score;
               const ca = String(h.post.created_at || '');
-              return s < numericCursor! || (s === numericCursor && ca < cursorCreatedAt);
+              const id = String(h.post.id || '');
+              return (
+                s < numericCursor! ||
+                (s === numericCursor && ca < cursorCreatedAt) ||
+                (s === numericCursor && ca === cursorCreatedAt && id < cursorId!)
+              );
             });
           }
 
@@ -4839,55 +4988,162 @@ app.get('/api/posts/recommended', async (c) => {
 
           enrichedPosts = await enrichRecommendedPosts(posts, c.env.DB, currentUserId, c);
           if (enrichedPosts.length > 0) {
-            nextCursor = `${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).score},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).created_at}`;
+            const last = enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>;
+            nextCursor = `${last.score},${last.created_at},${last.id}`;
           }
         }
       }
     }
 
-    // Fallback: pure engagement-based when no interest vector OR hybrid returned nothing
+    // Fallback: when no interest vector OR hybrid returned nothing
     if (enrichedPosts.length === 0) {
-      const scoreFormula = `(p.engagement_hotness / ((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))`;
-      const cursorClause = numericCursor !== null ? 'AND p.created_at < ?' : '';
+      const scoreFormula = `(p.engagement_hotness / EXP(1.5 * LN((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0)))`;
       const fetchLimit = limit * 5;
       const blockFilterRecommended = currentUserId
         ? 'AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
         : '';
       const blockParamRecommended = currentUserId ? [currentUserId] : [];
-      let query: string;
-      let params: Array<unknown> = [];
-      if (currentUserId) {
-        query = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.user_id != ? ${cursorClause} ${blockFilterRecommended} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
-        params =
-          numericCursor !== null
-            ? [currentUserId, cursorCreatedAt!, ...blockParamRecommended, fetchLimit]
-            : [currentUserId, ...blockParamRecommended, fetchLimit];
+      const orderClause = 'ORDER BY score DESC, p.created_at DESC, p.id DESC';
+
+      // For anonymous users: interleave popular + fresh posts
+      if (!currentUserId && !cursor) {
+        const [popularResult, freshResult] = await Promise.all([
+          c.env.DB.prepare(
+            `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${orderClause} LIMIT ?`,
+          )
+            .bind(fetchLimit)
+            .all(),
+          c.env.DB.prepare(
+            `${RECOMMENDED_SELECT}, 0.0 as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at > datetime('now', '-24 hours') ORDER BY p.created_at DESC LIMIT ?`,
+          )
+            .bind(Math.ceil(fetchLimit / 2))
+            .all(),
+        ]);
+        const popular = (popularResult.results || []) as Record<string, unknown>[];
+        let fresh = (freshResult.results || []) as Record<string, unknown>[];
+
+        // Remove duplicates: fresh that already appear in popular
+        const popularIds = new Set(popular.map((p) => p.id as string));
+        fresh = fresh.filter((p) => !popularIds.has(p.id as string));
+
+        // Interleave: 50% popular + 50% fresh
+        const interleaved: Record<string, unknown>[] = [];
+        let pi = 0,
+          fi = 0;
+        const popularTarget = Math.ceil(limit / 2);
+        const freshTarget = Math.floor(limit / 2);
+        while (interleaved.length < limit && (pi < popular.length || fi < fresh.length)) {
+          if (interleaved.length % 2 === 0 && pi < popular.length && interleaved.length < popularTarget + freshTarget) {
+            interleaved.push(popular[pi++]);
+          } else if (fi < fresh.length) {
+            interleaved.push(fresh[fi++]);
+          } else if (pi < popular.length) {
+            interleaved.push(popular[pi++]);
+          } else {
+            break;
+          }
+        }
+        enrichedPosts = await enrichRecommendedPosts(interleaved, c.env.DB, currentUserId, c);
+        if (enrichedPosts.length > 0) {
+          const last = enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>;
+          nextCursor = `${last.score || 0},${last.created_at},${last.id}`;
+        }
       } else {
-        query = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${cursorClause} ${blockFilterRecommended} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
-        params =
-          numericCursor !== null
-            ? [cursorCreatedAt!, ...blockParamRecommended, fetchLimit]
-            : [...blockParamRecommended, fetchLimit];
+        // Fetch raw engagement-based candidates, then re-rank with quality/type weights
+        const rawQuery = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${currentUserId ? 'AND p.user_id != ?' : ''} ${blockFilterRecommended} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
+        const rawParams: Array<unknown> = currentUserId
+          ? [currentUserId, ...blockParamRecommended, fetchLimit]
+          : [...blockParamRecommended, fetchLimit];
+        const result = await c.env.DB.prepare(rawQuery)
+          .bind(...rawParams)
+          .all();
+        const rawPosts = (result.results || []) as Record<string, unknown>[];
+
+        // Compute author quality scores
+        const authorQualityMap = new Map<string, number>();
+        const authorIds = [...new Set(rawPosts.map((p) => p.user_id as string))].filter(Boolean);
+        if (authorIds.length > 0) {
+          const authorRows = await c.env.DB.prepare(
+            `SELECT u.id, u.display_name, u.bio, u.avatar_key, u.created_at,
+              COALESCE(SUM(p.fresh_count), 0) as total_fresh,
+              COALESCE(SUM(p.reply_count), 0) as total_reply,
+              COALESCE(SUM(p.impressions), 0) as total_impressions,
+              COUNT(p.id) as post_count
+             FROM users u
+             LEFT JOIN posts p ON p.user_id = u.id AND p.status = 'published'
+             WHERE u.id IN (${authorIds.map(() => '?').join(',')})
+             GROUP BY u.id`,
+          )
+            .bind(...authorIds)
+            .all<{
+              id: string;
+              display_name: string | null;
+              bio: string | null;
+              avatar_key: string | null;
+              created_at: string;
+              total_fresh: number;
+              total_reply: number;
+              total_impressions: number;
+              post_count: number;
+            }>();
+          for (const row of authorRows.results || []) {
+            const ageMs = Date.now() - new Date(row.created_at).getTime();
+            const accountAgeDays = ageMs / 86400000;
+            const postCount = row.post_count || 1;
+            const authorQuality = computeAuthorQuality({
+              freshRatio: (row.total_fresh || 0) / postCount / 5,
+              replyRate: (row.total_reply || 0) / Math.max(row.total_impressions || postCount, 1),
+              accountAgeDays: Math.max(accountAgeDays, 1),
+              hasDisplayName: !!row.display_name,
+              hasBio: !!row.bio,
+              hasAvatar: !!row.avatar_key,
+            });
+            authorQualityMap.set(row.id, 0.5 + authorQuality);
+          }
+        }
+
+        // Re-rank with quality score, type weights, and author quality
+        const reranked = rawPosts.map((p) => {
+          const qualityScore = computeQualityScore(String(p.text || ''), !!(p.payload_key || p.swf_key), 0);
+          const typeFactor = (() => {
+            const w = getTypeWeights(p.payload_key as string | null, p.swf_key as string | null);
+            return (w.fresh + w.reply + w.impression) / 4.5;
+          })();
+          const authorQuality = authorQualityMap.get(p.user_id as string) || 1.0;
+          const rawScore = Number(p.score) || 0;
+          return { post: p, score: rawScore * qualityScore * typeFactor * authorQuality };
+        });
+
+        // Cursor filter
+        let filtered = reranked;
+        if (numericCursor !== null && cursorCreatedAt) {
+          filtered = reranked.filter((s) => {
+            const ca = String(s.post.created_at || '');
+            const id = String(s.post.id || '');
+            return (
+              s.score < numericCursor! ||
+              (s.score === numericCursor && ca < cursorCreatedAt!) ||
+              (s.score === numericCursor && ca === cursorCreatedAt && id < cursorId!)
+            );
+          });
+        }
+
+        filtered.sort((a, b) => {
+          const diff = b.score - a.score;
+          if (diff !== 0) return diff;
+          const ca = String(b.post.created_at || '').localeCompare(String(a.post.created_at || ''));
+          if (ca !== 0) return ca;
+          return String(b.post.id || '').localeCompare(String(a.post.id || ''));
+        });
+
+        const diverse = diversifyPosts(filtered, limit, 3);
+        const pagePosts = diverse.map((d) => d.post);
+        enrichedPosts = await enrichRecommendedPosts(pagePosts, c.env.DB, currentUserId, c);
+        nextCursor =
+          enrichedPosts.length > 0
+            ? `${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).score || 0},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).created_at},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).id}`
+            : null;
       }
-      const result = await c.env.DB.prepare(query)
-        .bind(...params)
-        .all();
-      const scoredPosts = (result.results || []) as Record<string, unknown>[];
-      const diverse = diversifyPosts(
-        scoredPosts.map((p) => ({ post: p, score: Number(p.score) || 0 })),
-        limit,
-        3,
-      );
-      enrichedPosts = await enrichRecommendedPosts(
-        diverse.map((d) => d.post),
-        c.env.DB,
-        currentUserId,
-        c,
-      );
-      nextCursor =
-        enrichedPosts.length > 0
-          ? `${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).score},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).created_at}`
-          : null;
     }
 
     return c.json({ posts: enrichedPosts, next_cursor: nextCursor });
@@ -6694,7 +6950,11 @@ app.post('/api/posts/:id/share', requireAuth, async (c) => {
       // Remove share
       await c.env.DB.prepare('DELETE FROM shares WHERE post_id = ? AND user_id = ?').bind(postId, currentUser.id).run();
 
-      await c.env.DB.prepare('UPDATE posts SET reply_count = MAX(0, reply_count - 1) WHERE id = ?').bind(postId).run();
+      await c.env.DB.prepare(
+        'UPDATE posts SET reply_count = MAX(0, reply_count - 1), engagement_hotness = MAX(0.0, engagement_hotness - 3.0) WHERE id = ?',
+      )
+        .bind(postId)
+        .run();
 
       return c.json({ shared: false });
     } else {
@@ -6706,7 +6966,11 @@ app.post('/api/posts/:id/share', requireAuth, async (c) => {
         .bind(shareId, postId, currentUser.id, `${c.env.BASE_URL}/actors/${currentUser.username}`)
         .run();
 
-      await c.env.DB.prepare('UPDATE posts SET reply_count = reply_count + 1 WHERE id = ?').bind(postId).run();
+      await c.env.DB.prepare(
+        'UPDATE posts SET reply_count = reply_count + 1, engagement_hotness = engagement_hotness + 3.0 WHERE id = ?',
+      )
+        .bind(postId)
+        .run();
 
       // Send Announce for remote posts
       if (post.actor_id && c.env.AP_DELIVERY_QUEUE) {
@@ -7249,9 +7513,9 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
       }
     }
 
-    // Increment parent's reply count
+    // Increment parent's reply count and engagement hotness
     const incrementResult = await c.env.DB.prepare(`
-      UPDATE posts SET reply_count = COALESCE(reply_count, 0) + 1 WHERE id = ?
+      UPDATE posts SET reply_count = COALESCE(reply_count, 0) + 1, engagement_hotness = COALESCE(engagement_hotness, 1.0) + 3.0 WHERE id = ?
     `)
       .bind(postId)
       .run();
@@ -7362,9 +7626,9 @@ app.post('/api/posts/:id/replies/commit', requireAuth, async (c) => {
             const referencedPost = allReplies[arrayIndex] as Record<string, unknown>;
             if (referencedPost.id !== postId) {
               refUpdateStmts.push(
-                c.env.DB.prepare('UPDATE posts SET reply_count = COALESCE(reply_count, 0) + 1 WHERE id = ?').bind(
-                  referencedPost.id as string,
-                ),
+                c.env.DB.prepare(
+                  'UPDATE posts SET reply_count = COALESCE(reply_count, 0) + 1, engagement_hotness = COALESCE(engagement_hotness, 1.0) + 3.0 WHERE id = ?',
+                ).bind(referencedPost.id as string),
               );
             }
             if (
@@ -7688,9 +7952,11 @@ app.delete('/api/posts/:id', requireAuth, async (c) => {
       return c.json({ error: 'Failed to delete post' }, 500);
     }
 
-    // Decrement parent's reply count if this post was a reply
+    // Decrement parent's reply count and engagement hotness if this post was a reply
     if (post.parent_id) {
-      await c.env.DB.prepare('UPDATE posts SET reply_count = COALESCE(reply_count, 0) - 1 WHERE id = ?')
+      await c.env.DB.prepare(
+        'UPDATE posts SET reply_count = COALESCE(reply_count, 0) - 1, engagement_hotness = GREATEST(COALESCE(engagement_hotness, 1.0) - 3.0, 0.0) WHERE id = ?',
+      )
         .bind(post.parent_id)
         .run();
     }
