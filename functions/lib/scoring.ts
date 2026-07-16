@@ -39,6 +39,16 @@ export function applyScoringWeights(
   return baseScore * qualityScore * typeFactor;
 }
 
+const FRESHNESS_HALF_LIFE_HOURS = 48;
+const FRESHNESS_BOOST_MAX = 0.8;
+
+export function freshnessBoost(createdAt: string): number {
+  const hoursAgo = (Date.now() - new Date(createdAt).getTime()) / 3600000;
+  if (hoursAgo <= 0) return 1 + FRESHNESS_BOOST_MAX;
+  const decay = Math.pow(0.5, hoursAgo / FRESHNESS_HALF_LIFE_HOURS);
+  return 1 + FRESHNESS_BOOST_MAX * decay;
+}
+
 export function computeAuthorQuality(params: {
   freshRatio: number;
   replyRate: number;

@@ -26,7 +26,7 @@ import {
 } from '../lib/auth';
 import { sendPushToAll } from '../lib/notify';
 import { getVapidPublicKey } from '../lib/push';
-import { computeAuthorQuality, computeQualityScore, getTypeWeights } from '../lib/scoring';
+import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../lib/scoring';
 
 type Bindings = {
   DB: D1Database;
@@ -4548,7 +4548,8 @@ app.get('/api/posts/trending', async (c) => {
       })();
       const authorQuality = authorQualityMap.get(p.user_id as string) || 1.0;
       const rawScore = Number(p.score) || 0;
-      return { post: p, score: rawScore * qualityScore * typeFactor * authorQuality };
+      const fresh = freshnessBoost(p.created_at as string);
+      return { post: p, score: rawScore * qualityScore * typeFactor * authorQuality * fresh };
     });
 
     // Cursor filtering and sorting
@@ -4954,7 +4955,11 @@ app.get('/api/posts/recommended', async (c) => {
               return (w.fresh + w.reply + w.impression) / 4.5;
             })();
             const authorQuality = authorQualityMap.get(p.user_id as string) || 1.0;
-            return { post: p, score: (0.7 * vecSim + 0.3 * engNorm) * qualityScore * typeFactor * authorQuality };
+            const fresh = freshnessBoost(p.created_at as string);
+            return {
+              post: p,
+              score: (0.7 * vecSim + 0.3 * engNorm) * qualityScore * typeFactor * authorQuality * fresh,
+            };
           });
 
           hybrid.sort((a, b) => {
@@ -5067,7 +5072,8 @@ app.get('/api/posts/recommended', async (c) => {
         })();
         const authorQuality = authorQualityMap.get(p.user_id as string) || 1.0;
         const rawScore = Number(p.score) || 0;
-        return { post: p, score: rawScore * qualityScore * typeFactor * authorQuality };
+        const fresh = freshnessBoost(p.created_at as string);
+        return { post: p, score: rawScore * qualityScore * typeFactor * authorQuality * fresh };
       });
 
       // Cursor filter
