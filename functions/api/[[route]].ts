@@ -5043,10 +5043,22 @@ app.get('/api/posts/recommended', async (c) => {
             break;
           }
         }
+        // Assign a proper score to each post (engagement-based) for stable cursor
+        if (interleaved.length > 0) {
+          const maxScore = Math.max(...interleaved.map((p) => Number(p.score) || 0), 1);
+          interleaved.forEach((p, i) => {
+            const eng = Number(p.score) || 0;
+            p.score = eng > 0 ? eng : maxScore * Math.max(0.5 - i * 0.02, 0.01);
+          });
+          interleaved.sort(
+            (a, b) =>
+              Number(b.score) - Number(a.score) || String(b.created_at || '').localeCompare(String(a.created_at || '')),
+          );
+        }
         enrichedPosts = await enrichRecommendedPosts(interleaved, c.env.DB, currentUserId, c);
         if (enrichedPosts.length > 0) {
           const last = enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>;
-          nextCursor = `${last.score || 0},${last.created_at},${last.id}`;
+          nextCursor = `${last.score},${last.created_at},${last.id}`;
         }
       } else {
         // Fetch raw engagement-based candidates, then re-rank with quality/type weights
@@ -5137,11 +5149,14 @@ app.get('/api/posts/recommended', async (c) => {
         });
 
         const diverse = diversifyPosts(filtered, limit, 3);
-        const pagePosts = diverse.map((d) => d.post);
+        const pagePosts = diverse.map((d) => {
+          d.post.score = d.score;
+          return d.post;
+        });
         enrichedPosts = await enrichRecommendedPosts(pagePosts, c.env.DB, currentUserId, c);
         nextCursor =
           enrichedPosts.length > 0
-            ? `${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).score || 0},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).created_at},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).id}`
+            ? `${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).score},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).created_at},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).id}`
             : null;
       }
     }
