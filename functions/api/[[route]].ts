@@ -5005,78 +5005,22 @@ app.get('/api/posts/recommended', async (c) => {
       const blockParamRecommended = currentUserId ? [currentUserId] : [];
       const orderClause = 'ORDER BY score DESC, p.created_at DESC, p.id DESC';
 
-      // For anonymous users: interleave popular + fresh posts
-      if (!currentUserId && !cursor) {
-        const [popularResult, freshResult] = await Promise.all([
-          c.env.DB.prepare(
-            `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${orderClause} LIMIT ?`,
-          )
-            .bind(fetchLimit)
-            .all(),
-          c.env.DB.prepare(
-            `${RECOMMENDED_SELECT}, 0.0 as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at > datetime('now', '-24 hours') ORDER BY p.created_at DESC LIMIT ?`,
-          )
-            .bind(Math.ceil(fetchLimit / 2))
-            .all(),
-        ]);
-        const popular = (popularResult.results || []) as Record<string, unknown>[];
-        let fresh = (freshResult.results || []) as Record<string, unknown>[];
+      // Fetch raw engagement-based candidates, then re-rank with quality/type/author weights
+      const rawQuery = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${currentUserId ? 'AND p.user_id != ?' : ''} ${blockFilterRecommended} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
+      const rawParams: Array<unknown> = currentUserId
+        ? [currentUserId, ...blockParamRecommended, fetchLimit]
+        : [...blockParamRecommended, fetchLimit];
+      const result = await c.env.DB.prepare(rawQuery)
+        .bind(...rawParams)
+        .all();
+      const rawPosts = (result.results || []) as Record<string, unknown>[];
 
-        // Remove duplicates: fresh that already appear in popular
-        const popularIds = new Set(popular.map((p) => p.id as string));
-        fresh = fresh.filter((p) => !popularIds.has(p.id as string));
-
-        // Interleave: 50% popular + 50% fresh
-        const interleaved: Record<string, unknown>[] = [];
-        let pi = 0,
-          fi = 0;
-        const popularTarget = Math.ceil(limit / 2);
-        const freshTarget = Math.floor(limit / 2);
-        while (interleaved.length < limit && (pi < popular.length || fi < fresh.length)) {
-          if (interleaved.length % 2 === 0 && pi < popular.length && interleaved.length < popularTarget + freshTarget) {
-            interleaved.push(popular[pi++]);
-          } else if (fi < fresh.length) {
-            interleaved.push(fresh[fi++]);
-          } else if (pi < popular.length) {
-            interleaved.push(popular[pi++]);
-          } else {
-            break;
-          }
-        }
-        // Assign a proper score to each post (engagement-based) for stable cursor
-        if (interleaved.length > 0) {
-          const maxScore = Math.max(...interleaved.map((p) => Number(p.score) || 0), 1);
-          interleaved.forEach((p, i) => {
-            const eng = Number(p.score) || 0;
-            p.score = eng > 0 ? eng : maxScore * Math.max(0.5 - i * 0.02, 0.01);
-          });
-          interleaved.sort(
-            (a, b) =>
-              Number(b.score) - Number(a.score) || String(b.created_at || '').localeCompare(String(a.created_at || '')),
-          );
-        }
-        enrichedPosts = await enrichRecommendedPosts(interleaved, c.env.DB, currentUserId, c);
-        if (enrichedPosts.length > 0) {
-          const last = enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>;
-          nextCursor = `${last.score},${last.created_at},${last.id}`;
-        }
-      } else {
-        // Fetch raw engagement-based candidates, then re-rank with quality/type weights
-        const rawQuery = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${currentUserId ? 'AND p.user_id != ?' : ''} ${blockFilterRecommended} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
-        const rawParams: Array<unknown> = currentUserId
-          ? [currentUserId, ...blockParamRecommended, fetchLimit]
-          : [...blockParamRecommended, fetchLimit];
-        const result = await c.env.DB.prepare(rawQuery)
-          .bind(...rawParams)
-          .all();
-        const rawPosts = (result.results || []) as Record<string, unknown>[];
-
-        // Compute author quality scores
-        const authorQualityMap = new Map<string, number>();
-        const authorIds = [...new Set(rawPosts.map((p) => p.user_id as string))].filter(Boolean);
-        if (authorIds.length > 0) {
-          const authorRows = await c.env.DB.prepare(
-            `SELECT u.id, u.display_name, u.bio, u.avatar_key, u.created_at,
+      // Compute author quality scores
+      const authorQualityMap = new Map<string, number>();
+      const authorIds = [...new Set(rawPosts.map((p) => p.user_id as string))].filter(Boolean);
+      if (authorIds.length > 0) {
+        const authorRows = await c.env.DB.prepare(
+          `SELECT u.id, u.display_name, u.bio, u.avatar_key, u.created_at,
               COALESCE(SUM(p.fresh_count), 0) as total_fresh,
               COALESCE(SUM(p.reply_count), 0) as total_reply,
               COALESCE(SUM(p.impressions), 0) as total_impressions,
@@ -5085,80 +5029,79 @@ app.get('/api/posts/recommended', async (c) => {
              LEFT JOIN posts p ON p.user_id = u.id AND p.status = 'published'
              WHERE u.id IN (${authorIds.map(() => '?').join(',')})
              GROUP BY u.id`,
-          )
-            .bind(...authorIds)
-            .all<{
-              id: string;
-              display_name: string | null;
-              bio: string | null;
-              avatar_key: string | null;
-              created_at: string;
-              total_fresh: number;
-              total_reply: number;
-              total_impressions: number;
-              post_count: number;
-            }>();
-          for (const row of authorRows.results || []) {
-            const ageMs = Date.now() - new Date(row.created_at).getTime();
-            const accountAgeDays = ageMs / 86400000;
-            const postCount = row.post_count || 1;
-            const authorQuality = computeAuthorQuality({
-              freshRatio: (row.total_fresh || 0) / postCount / 5,
-              replyRate: (row.total_reply || 0) / Math.max(row.total_impressions || postCount, 1),
-              accountAgeDays: Math.max(accountAgeDays, 1),
-              hasDisplayName: !!row.display_name,
-              hasBio: !!row.bio,
-              hasAvatar: !!row.avatar_key,
-            });
-            authorQualityMap.set(row.id, 0.5 + authorQuality);
-          }
-        }
-
-        // Re-rank with quality score, type weights, and author quality
-        const reranked = rawPosts.map((p) => {
-          const qualityScore = computeQualityScore(String(p.text || ''), !!(p.payload_key || p.swf_key), 0);
-          const typeFactor = (() => {
-            const w = getTypeWeights(p.payload_key as string | null, p.swf_key as string | null);
-            return (w.fresh + w.reply + w.impression) / 4.5;
-          })();
-          const authorQuality = authorQualityMap.get(p.user_id as string) || 1.0;
-          const rawScore = Number(p.score) || 0;
-          return { post: p, score: rawScore * qualityScore * typeFactor * authorQuality };
-        });
-
-        // Cursor filter
-        let filtered = reranked;
-        if (numericCursor !== null && cursorCreatedAt) {
-          filtered = reranked.filter((s) => {
-            const ca = String(s.post.created_at || '');
-            const id = String(s.post.id || '');
-            return (
-              s.score < numericCursor! ||
-              (s.score === numericCursor && ca < cursorCreatedAt!) ||
-              (s.score === numericCursor && ca === cursorCreatedAt && id < cursorId!)
-            );
+        )
+          .bind(...authorIds)
+          .all<{
+            id: string;
+            display_name: string | null;
+            bio: string | null;
+            avatar_key: string | null;
+            created_at: string;
+            total_fresh: number;
+            total_reply: number;
+            total_impressions: number;
+            post_count: number;
+          }>();
+        for (const row of authorRows.results || []) {
+          const ageMs = Date.now() - new Date(row.created_at).getTime();
+          const accountAgeDays = ageMs / 86400000;
+          const postCount = row.post_count || 1;
+          const authorQuality = computeAuthorQuality({
+            freshRatio: (row.total_fresh || 0) / postCount / 5,
+            replyRate: (row.total_reply || 0) / Math.max(row.total_impressions || postCount, 1),
+            accountAgeDays: Math.max(accountAgeDays, 1),
+            hasDisplayName: !!row.display_name,
+            hasBio: !!row.bio,
+            hasAvatar: !!row.avatar_key,
           });
+          authorQualityMap.set(row.id, 0.5 + authorQuality);
         }
-
-        filtered.sort((a, b) => {
-          const diff = b.score - a.score;
-          if (diff !== 0) return diff;
-          const ca = String(b.post.created_at || '').localeCompare(String(a.post.created_at || ''));
-          if (ca !== 0) return ca;
-          return String(b.post.id || '').localeCompare(String(a.post.id || ''));
-        });
-
-        const diverse = diversifyPosts(filtered, limit, 3);
-        const pagePosts = diverse.map((d) => {
-          d.post.score = d.score;
-          return d.post;
-        });
-        enrichedPosts = await enrichRecommendedPosts(pagePosts, c.env.DB, currentUserId, c);
-        nextCursor =
-          enrichedPosts.length > 0
-            ? `${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).score},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).created_at},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).id}`
-            : null;
       }
+
+      // Re-rank with quality score, type weights, and author quality
+      const reranked = rawPosts.map((p) => {
+        const qualityScore = computeQualityScore(String(p.text || ''), !!(p.payload_key || p.swf_key), 0);
+        const typeFactor = (() => {
+          const w = getTypeWeights(p.payload_key as string | null, p.swf_key as string | null);
+          return (w.fresh + w.reply + w.impression) / 4.5;
+        })();
+        const authorQuality = authorQualityMap.get(p.user_id as string) || 1.0;
+        const rawScore = Number(p.score) || 0;
+        return { post: p, score: rawScore * qualityScore * typeFactor * authorQuality };
+      });
+
+      // Cursor filter
+      let filtered = reranked;
+      if (numericCursor !== null && cursorCreatedAt) {
+        filtered = reranked.filter((s) => {
+          const ca = String(s.post.created_at || '');
+          const id = String(s.post.id || '');
+          return (
+            s.score < numericCursor! ||
+            (s.score === numericCursor && ca < cursorCreatedAt!) ||
+            (s.score === numericCursor && ca === cursorCreatedAt && id < cursorId!)
+          );
+        });
+      }
+
+      filtered.sort((a, b) => {
+        const diff = b.score - a.score;
+        if (diff !== 0) return diff;
+        const ca = String(b.post.created_at || '').localeCompare(String(a.post.created_at || ''));
+        if (ca !== 0) return ca;
+        return String(b.post.id || '').localeCompare(String(a.post.id || ''));
+      });
+
+      const diverse = diversifyPosts(filtered, limit, 3);
+      const pagePosts = diverse.map((d) => {
+        d.post.score = d.score;
+        return d.post;
+      });
+      enrichedPosts = await enrichRecommendedPosts(pagePosts, c.env.DB, currentUserId, c);
+      nextCursor =
+        enrichedPosts.length > 0
+          ? `${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).score},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).created_at},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).id}`
+          : null;
     }
 
     return c.json({ posts: enrichedPosts, next_cursor: nextCursor });
