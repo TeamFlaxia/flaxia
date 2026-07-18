@@ -299,9 +299,29 @@ export class Timeline {
   }
 
   private handleNewPost(post: Post): void {
-    // Add the new post to the beginning of the timeline
     this.state.posts = [post, ...this.state.posts];
-    this.renderPostList();
+    const postList = this.element.querySelector('.post-list') as HTMLElement;
+    if (!postList) return;
+
+    const postCard = createPostCard({
+      post,
+      currentUser: this.props.currentUser,
+      sandboxOrigin: this.props.sandboxOrigin,
+      initialMode: PostCardMode.PREVIEW,
+      depth: post.depth,
+      onDelete: (postId) => {
+        this.state.posts = this.state.posts.filter((p) => !isAd(p) && p.id !== postId);
+        const card = this.postCards.get(postId);
+        if (card) {
+          card.destroy();
+          this.postCards.delete(postId);
+        }
+      },
+    });
+
+    this.postCards.set(post.id, postCard);
+    postList.insertBefore(postCard.getElement(), postList.firstChild);
+    this.updateLoadMoreButton();
   }
 
   private handleReplyToggle(postId: string): void {
