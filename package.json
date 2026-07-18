@@ -82,7 +82,7 @@
     "web-push": "^3.6.7"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.16",
+    "@biomejs/biome": "2.5.4",
     "@capacitor/assets": "^3.0.5",
     "@capacitor/cli": "^8.3.4",
     "@cloudflare/workers-types": "^4.0.0",
