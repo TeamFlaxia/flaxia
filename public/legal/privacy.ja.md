@@ -85,6 +85,6 @@
 
 
 ## **第13条 お問い合わせ・苦情窓口**
-- メール：[RemydreS@proton.me](mailto:RemydreS@proton.me)
+- メール：[teamflaxia@proton.me](mailto:teamflaxia@proton.me)
 
 GDPRに関する苦情については、お住まいのEU加盟国のデータ保護機関（DPA）に申し立てる権利があります。
