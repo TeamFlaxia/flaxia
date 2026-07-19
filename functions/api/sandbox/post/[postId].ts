@@ -49,7 +49,7 @@ app.get('/:postId', async (c) => {
     connect-src 'self' data: blob: https:;
     style-src 'self' https:;
     img-src 'self' data: blob: https:;
-    media-src 'self' blob: https:;
+    media-src 'self' data: blob: https:;
     font-src 'self' https:;
     frame-src 'none';
     object-src 'none';

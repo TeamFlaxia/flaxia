@@ -62,12 +62,7 @@ export async function executeUniversalZip(
 
 // Helper function to detect best mode based on environment
 export function getOptimalZipMode(): ZipExecutionMode {
-  // ServiceWorker mode: fastest (local extraction, no sandbox Worker round-trip)
-  if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
-    return 'sw';
-  }
-
-  // Check if running in Cloudflare Workers environment
+  // WVFS mode: preferred (no Service Worker dependency)
   if (
     typeof globalThis !== 'undefined' &&
     (globalThis as { WebSocketPair?: unknown }).WebSocketPair &&

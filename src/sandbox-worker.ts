@@ -20,7 +20,7 @@ const SANDBOX_CSP = [
   "style-src 'self' 'unsafe-inline' https:",
   "worker-src 'self' blob:",
   "img-src 'self' data: blob: https:",
-  "media-src 'self' blob: https:",
+  "media-src 'self' data: blob: https:",
   "font-src 'self' data: https:",
   "connect-src 'self' data: blob: https:",
   'frame-ancestors https://flaxia.app',
