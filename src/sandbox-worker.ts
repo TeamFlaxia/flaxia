@@ -17,7 +17,7 @@ type Bindings = {
 const SANDBOX_CSP = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:",
-  "style-src 'self' 'unsafe-inline' https:",
+  "style-src 'self' 'unsafe-inline' data: blob: https:",
   "worker-src 'self' blob:",
   "img-src 'self' data: blob: https:",
   "media-src 'self' data: blob: https:",
@@ -142,6 +142,8 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
     return c.json({ error: 'Failed to process ZIP file' }, 500);
   }
 });
+
+app.get('/', (c) => c.json({ status: 'ok', worker: 'flaxia-sandbox' }, 200));
 
 app.get('/favicon.ico', (c) => c.body(null, 204));
 

@@ -47,7 +47,7 @@ app.get('/:postId', async (c) => {
     default-src 'none';
     script-src 'self' data: 'unsafe-inline';
     connect-src 'self' data: blob: https:;
-    style-src 'self' https:;
+    style-src 'self' data: blob: https:;
     img-src 'self' data: blob: https:;
     media-src 'self' data: blob: https:;
     font-src 'self' https:;

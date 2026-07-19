@@ -9959,6 +9959,28 @@ app.post('/api/groups', requireAuth, async (c) => {
   }
 });
 
+// GET /api/groups/unread-count - get total unread group count
+app.get('/api/groups/unread-count', requireAuth, async (c) => {
+  try {
+    const userId = c.get('user')?.id || '';
+
+    const result = (await c.env.DB.prepare(`
+      SELECT COALESCE(SUM(grs.unread_count), 0) as count
+      FROM group_read_states grs
+      JOIN group_members gm ON gm.group_id = grs.group_id AND gm.user_id = grs.user_id
+      WHERE grs.user_id = ?
+    `)
+      .bind(userId)
+      .first()) as { count: number };
+
+    return c.json({ unread_count: result?.count || 0 });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Group unread count error:', error);
+    return c.json({ error: 'Failed to get unread count', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
 // GET /api/groups/:id - get group details
 app.get('/api/groups/:id', requireAuth, async (c) => {
   try {
@@ -10613,28 +10635,6 @@ app.post('/api/groups/:id/read', requireAuth, async (c) => {
     const err = error as { message?: string };
     console.error('Group mark read error:', error);
     return c.json({ error: 'Failed to mark as read', details: err.message || 'Unknown error' }, 500);
-  }
-});
-
-// GET /api/groups/unread-count - get total unread group count
-app.get('/api/groups/unread-count', requireAuth, async (c) => {
-  try {
-    const userId = c.get('user')?.id || '';
-
-    const result = (await c.env.DB.prepare(`
-      SELECT COALESCE(SUM(grs.unread_count), 0) as count
-      FROM group_read_states grs
-      JOIN group_members gm ON gm.group_id = grs.group_id AND gm.user_id = grs.user_id
-      WHERE grs.user_id = ?
-    `)
-      .bind(userId)
-      .first()) as { count: number };
-
-    return c.json({ unread_count: result?.count || 0 });
-  } catch (error: unknown) {
-    const err = error as { message?: string };
-    console.error('Group unread count error:', error);
-    return c.json({ error: 'Failed to get unread count', details: err.message || 'Unknown error' }, 500);
   }
 });
 
