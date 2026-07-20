@@ -46,7 +46,7 @@ app.get('/:postId', async (c) => {
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'none';
     script-src 'self' data: 'unsafe-inline';
-    connect-src 'self' data: blob: https:;
+    connect-src 'self' data: blob: https: wss:;
     style-src 'self' data: blob: https:;
     img-src 'self' data: blob: https:;
     media-src 'self' data: blob: https:;
