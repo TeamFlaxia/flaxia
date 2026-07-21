@@ -104,7 +104,7 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
     }
 
     if (!zipKey) {
-      return c.json({ error: 'ZIP not found' }, 404);
+      return c.text('ZIP not found', 404);
     }
 
     // 4. Try progressive extraction: parse central dir + extract just this file
@@ -121,7 +121,7 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
     // 5. Fallback: full extraction
     const obj = await c.env.BUCKET.get(zipKey);
     if (!obj) {
-      return c.json({ error: 'ZIP not found' }, 404);
+      return c.text('ZIP not found', 404);
     }
 
     const zipData = await obj.arrayBuffer();
@@ -133,13 +133,13 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
       return withCsp(response);
     }
 
-    return c.json({ error: 'File not found in ZIP', path: filePath }, 404);
+    return c.text('Not found', 404);
   } catch (error: unknown) {
     console.error('WVFS error:', error);
     if (error instanceof Error && error.message.includes('Path traversal')) {
       console.warn('Security violation: Path traversal attempt detected');
     }
-    return c.json({ error: 'Failed to process ZIP file' }, 500);
+    return c.text('Internal server error', 500);
   }
 });
 
@@ -154,7 +154,19 @@ app.get('/sdk/multiplayer.js', (c) => {
   });
 });
 
-app.notFound((c) => c.json({ error: 'Not found' }, 404));
+app.notFound(async (c) => {
+  const referer = c.req.header('Referer') || '';
+  const wvfsMatch = referer.match(/\/api\/wvfs-zip\/([^/?#]+)/);
+  if (wvfsMatch && c.env.BUCKET) {
+    const postId = wvfsMatch[1];
+    const filePath = c.req.path.replace(/^\//, '') || 'index.html';
+    let response = await serveFileFromR2(c.env.BUCKET, postId, filePath);
+    if (response) return withCsp(response);
+    response = await serveFileFromWvfs(postId, filePath);
+    if (response) return withCsp(response);
+  }
+  return c.text('Not found', 404);
+});
 
 export default {
   fetch: (request: Request, env: Bindings, ctx: ExecutionContext) => {
