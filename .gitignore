@@ -31,6 +31,9 @@ build/
 .DS_Store
 Thumbs.db
 
+# Private keys
+*.pem
+
 # Logs
 *.log
 npm-debug.log*

@@ -38,13 +38,22 @@ function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+function isValidUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
 function textToHtml(text: string, baseUrl: string): string {
   const escaped = escapeHtml(text);
   // Convert URLs to links
-  const withLinks = escaped.replace(
-    /(https?:\/\/[^\s<]+)/g,
-    '<a href="$1" target="_blank" rel="nofollow noopener noreferrer">$1</a>',
-  );
+  const withLinks = escaped.replace(/(https?:\/\/[^\s<]+)/g, (match) => {
+    if (!isValidUrl(match)) return match;
+    return '<a href="' + match + '" target="_blank" rel="nofollow noopener noreferrer">' + match + '</a>';
+  });
   // Convert @mentions to links
   const withMentions = withLinks.replace(
     /@([a-zA-Z0-9_]{1,20})/g,

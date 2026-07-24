@@ -7,7 +7,7 @@ interface __BaseEnv_Env {
   AP_DELIVERY_QUEUE: Queue;
   SANDBOX_ORIGIN: 'https://flaxia.app';
   BASE_URL: 'https://flaxia.app';
-  ADMIN_USERNAMES: 'remydrescarlet';
+  ADMIN_USERNAMES: string;
 }
 declare namespace Cloudflare {
 interface Env extends __BaseEnv_Env {

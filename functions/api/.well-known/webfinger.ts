@@ -62,7 +62,7 @@ app.get('/', async (c) => {
     });
   } catch (error: unknown) {
     console.error('WebFinger error:', error);
-    return c.json({ error: 'WebFinger failed', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'WebFinger failed' }, 500);
   }
 });
 

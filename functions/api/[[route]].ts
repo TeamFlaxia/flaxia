@@ -139,7 +139,9 @@ app.use('/api/*', async (c, next) => {
     return;
   }
   const token = getSessionToken(c.req.raw);
-  const sessionData = token ? await getSession(c.env, token) : null;
+  const clientIp = c.req.raw.headers.get('CF-Connecting-IP') || undefined;
+  const clientUa = c.req.raw.headers.get('User-Agent') || undefined;
+  const sessionData = token ? await getSession(c.env, token, clientIp, clientUa) : null;
   c.set('user', sessionData?.user || null);
   await next();
 });
@@ -174,6 +176,39 @@ app.use(
     credentials: true,
   }),
 );
+
+const allowedOrigins = new Set([
+  'http://localhost:8787',
+  'http://localhost:5173',
+  'https://flaxia.app',
+  'https://sandbox.flaxia.app',
+]);
+
+function getBaseOrigin(c: any): string {
+  try {
+    return new URL(c.env.BASE_URL || 'https://flaxia.app').origin;
+  } catch {
+    return 'https://flaxia.app';
+  }
+}
+
+const csrfProtection = async (c: any, next: any) => {
+  const method = c.req.method;
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+    await next();
+    return;
+  }
+  const origin = c.req.header('Origin');
+  if (origin) {
+    const baseOrigin = getBaseOrigin(c);
+    if (!allowedOrigins.has(origin) && origin !== baseOrigin) {
+      return c.json({ error: 'CSRF validation failed' }, 403);
+    }
+  }
+  await next();
+};
+
+app.use('/*', csrfProtection);
 
 function getCrowdClient(c: Context<{ Bindings: Bindings; Variables: Variables }>): FlaxiaClient | null {
   const orchestratorUrl = (c.env.CROWD_ORCHESTRATOR_URL ?? '').replace(/\/+$/, '');
@@ -360,10 +395,7 @@ app.put('/api/upload/*', requireAuth, async (c) => {
     return c.json({ success: true, key });
   } catch (error: unknown) {
     console.error('Upload error:', error);
-    return c.json(
-      { error: 'Upload failed', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Upload failed' }, 500);
   }
 });
 
@@ -397,7 +429,7 @@ app.get('/api/images/*', async (c) => {
           headers: {
             'Content-Type': 'image/svg+xml',
             'Cache-Control': 'public, max-age=31536000',
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': 'https://flaxia.app',
           },
         });
       }
@@ -413,15 +445,12 @@ app.get('/api/images/*', async (c) => {
       headers: {
         'Content-Type': contentType,
         'Cache-Control': 'public, max-age=31536000', // Cache for 1 year
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': 'https://flaxia.app',
       },
     });
   } catch (error: unknown) {
     console.error('Image proxy error:', error);
-    return c.json(
-      { error: 'Failed to fetch image', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to fetch image' }, 500);
   }
 });
 
@@ -455,7 +484,7 @@ async function handleRangeRequest(c: any, object: any, contentType: string): Pro
       headers: {
         'Content-Type': contentType,
         'Cache-Control': 'public, max-age=31536000',
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': 'https://flaxia.app',
         'Accept-Ranges': 'bytes',
         'Content-Length': fileSize.toString(),
       },
@@ -482,7 +511,7 @@ async function handleRangeRequest(c: any, object: any, contentType: string): Pro
       'Content-Range': `bytes ${range.start}-${range.end}/${fileSize}`,
       'Content-Length': chunkSize.toString(),
       'Cache-Control': 'public, max-age=31536000',
-      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Origin': 'https://flaxia.app',
       'Accept-Ranges': 'bytes',
     },
   });
@@ -559,10 +588,7 @@ app.get('/api/audio/*', async (c) => {
     return handleRangeRequest(c, object, contentType);
   } catch (error: unknown) {
     console.error('Audio proxy error:', error);
-    return c.json(
-      { error: 'Failed to fetch audio', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to fetch audio' }, 500);
   }
 });
 
@@ -605,10 +631,7 @@ app.get('/api/video/*', async (c) => {
     return handleRangeRequest(c, object, contentType);
   } catch (error: unknown) {
     console.error('Video proxy error:', error);
-    return c.json(
-      { error: 'Failed to fetch video', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to fetch video' }, 500);
   }
 });
 
@@ -618,7 +641,21 @@ app.get('/api/dos-player/:postId', async (c) => {
     const postId = c.req.param('postId');
     const loadFailed = c.req.query('load_failed') || 'Failed to load game';
     const origin = new URL(c.req.url).origin;
-    const zipUrl = c.req.query('zip_url') || `${origin}/api/zip/${postId}`;
+    let zipUrl = c.req.query('zip_url') || `${origin}/api/zip/${postId}`;
+    // Validate zip_url to prevent reflected XSS
+    try {
+      const parsed = new URL(zipUrl);
+      if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+        zipUrl = `${origin}/api/zip/${postId}`;
+      }
+    } catch {
+      zipUrl = `${origin}/api/zip/${postId}`;
+    }
+    // Escape loadFailed for safe injection
+    const escapedLoadFailed = loadFailed.replace(/[&<>"']/g, (c: string) => {
+      const m: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+      return m[c] || c;
+    });
 
     const html = `<!DOCTYPE html>
 <html>
@@ -642,7 +679,7 @@ app.get('/api/dos-player/:postId', async (c) => {
   <div id="error-overlay" class="error-overlay" style="display:none;"></div>
   <script>
     var zipUrl = '${zipUrl}';
-    var loadFailedMsg = ${JSON.stringify(loadFailed)};
+    var loadFailedMsg = '${escapedLoadFailed}';
     var loadAttempts = 0;
 
     function showError(msg) {
@@ -760,10 +797,7 @@ app.get('/api/dos-player/:postId', async (c) => {
     });
   } catch (error: unknown) {
     console.error('DOS player error:', error);
-    return c.json(
-      { error: 'Failed to serve DOS player', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to serve DOS player' }, 500);
   }
 });
 
@@ -799,23 +833,22 @@ app.get('/api/zip/:postId', async (c) => {
       return c.json({ error: 'ZIP not found' }, 404);
     }
 
-    // Return the ZIP with proper headers (echo origin for sandboxed iframe null-origin support)
+    // Return the ZIP with proper headers (validate origin)
+    const zipOrigin = c.req.header('Origin') || '';
+    const zipAllowed = allowedOrigins.has(zipOrigin) || zipOrigin === getBaseOrigin(c);
     return new Response(object.body, {
       headers: {
         'Content-Type': 'application/zip',
         'Content-Length': String(object.size),
         'Cache-Control': 'public, max-age=31536000, s-maxage=31536000, immutable',
-        'Access-Control-Allow-Origin': c.req.header('Origin') || '*',
+        'Access-Control-Allow-Origin': zipAllowed ? zipOrigin : 'https://flaxia.app',
         'Access-Control-Allow-Credentials': 'true',
         'Cross-Origin-Resource-Policy': 'cross-origin',
       },
     });
   } catch (error: unknown) {
     console.error('ZIP proxy error:', error);
-    return c.json(
-      { error: 'Failed to fetch ZIP', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to fetch ZIP' }, 500);
   }
 });
 
@@ -893,15 +926,12 @@ app.get('/api/ads/:id/payload', async (c) => {
       headers: {
         'Content-Type': contentType,
         'Cache-Control': 'public, max-age=31536000', // Cache for 1 year
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': 'https://flaxia.app',
       },
     });
   } catch (error: unknown) {
     console.error('Ad payload error:', error);
-    return c.json(
-      { error: 'Failed to fetch ad payload', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to fetch ad payload' }, 500);
   }
 });
 
@@ -966,15 +996,12 @@ app.get('/api/thumbnail/:id', async (c) => {
       headers: {
         'Content-Type': contentType,
         'Cache-Control': 'public, max-age=31536000', // Cache for 1 year
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': 'https://flaxia.app',
       },
     });
   } catch (error: unknown) {
     console.error('Thumbnail proxy error:', error);
-    return c.json(
-      { error: 'Failed to fetch thumbnail', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to fetch thumbnail' }, 500);
   }
 });
 
@@ -1004,23 +1031,22 @@ app.get('/api/swf/:postId', async (c) => {
       return c.json({ error: 'SWF not found' }, 404);
     }
 
-    // Return the SWF with proper headers (echo origin for sandboxed iframe null-origin support)
+    // Return the SWF with proper headers (validate origin)
+    const swfOrigin = c.req.header('Origin') || '';
+    const swfAllowed = allowedOrigins.has(swfOrigin) || swfOrigin === getBaseOrigin(c);
     return new Response(object.body, {
       headers: {
         'Content-Type': 'application/x-shockwave-flash',
         'Content-Length': String(object.size),
         'Cache-Control': 'public, max-age=31536000, s-maxage=31536000, immutable',
-        'Access-Control-Allow-Origin': c.req.header('Origin') || '*',
+        'Access-Control-Allow-Origin': swfAllowed ? swfOrigin : 'https://flaxia.app',
         'Access-Control-Allow-Credentials': 'true',
         'Cross-Origin-Resource-Policy': 'cross-origin',
       },
     });
   } catch (error: unknown) {
     console.error('SWF proxy error:', error);
-    return c.json(
-      { error: 'Failed to fetch SWF', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to fetch SWF' }, 500);
   }
 });
 
@@ -1286,10 +1312,7 @@ app.get('/api/link-preview', async (c) => {
     return c.json(previewData);
   } catch (error: unknown) {
     console.error('Link preview error:', error);
-    return c.json(
-      { error: 'Failed to fetch link preview', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to fetch link preview' }, 500);
   }
 });
 
@@ -1945,22 +1968,17 @@ app.post('/api/auth/register', async (c) => {
     });
 
     // Create session and set cookie so user is logged in after registration
-    const session = await createSession(c.env, user.id);
-    const isSecure = c.req.url.startsWith('https');
-    const response = c.json({ user, sessionId: session.id }, 201);
-    setSessionCookie(response, session.id, isSecure);
+    const clientIp = c.req.raw.headers.get('CF-Connecting-IP') || undefined;
+    const clientUa = c.req.raw.headers.get('User-Agent') || undefined;
+    const session = await createSession(c.env, user.id, clientIp, clientUa);
+    const response = c.json({ user }, 201);
+    setSessionCookie(response, session.id);
 
     return response;
   } catch (error: unknown) {
     const message = (error as { message?: string })?.message || 'Unknown error';
     console.error('Registration error:', message);
-    if (message.includes('Email')) {
-      return c.json({ error: message }, 409);
-    }
-    if (message.includes('Username')) {
-      return c.json({ error: message }, 409);
-    }
-    return c.json({ error: message }, 400);
+    return c.json({ error: 'Registration failed. Please try again.' }, 400);
   }
 });
 
@@ -1974,17 +1992,18 @@ app.post('/api/auth/login', async (c) => {
     }
 
     // Login with custom auth
-    const result = await loginUser(c.env, email, password);
+    const clientIp = c.req.raw.headers.get('CF-Connecting-IP') || undefined;
+    const clientUa = c.req.raw.headers.get('User-Agent') || undefined;
+    const result = await loginUser(c.env, email, password, clientIp, clientUa);
 
     // Set session cookie
-    const isSecure = c.req.url.startsWith('https');
-    const response = c.json({ user: result.user, sessionId: result.session.id });
-    setSessionCookie(response, result.session.id, isSecure);
+    const response = c.json({ user: result.user });
+    setSessionCookie(response, result.session.id);
 
     return response;
   } catch (error: unknown) {
     console.error('Login error:', error);
-    return c.json({ error: 'Login failed', details: (error as { message?: string })?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Invalid credentials' }, 401);
   }
 });
 
@@ -1997,17 +2016,13 @@ app.post('/api/auth/logout', requireAuth, async (c) => {
     }
 
     // Clear session cookie
-    const isSecure = c.req.url.startsWith('https');
     const response = c.json({ success: true });
-    clearSessionCookie(response, isSecure);
+    clearSessionCookie(response);
 
     return response;
   } catch (error: unknown) {
     console.error('Logout error:', error);
-    return c.json(
-      { error: 'Logout failed', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Logout failed' }, 500);
   }
 });
 
@@ -2100,10 +2115,7 @@ app.post('/api/follows/:id', requireAuth, async (c) => {
     return c.json({ success: true });
   } catch (error: unknown) {
     console.error('Follow error:', error);
-    return c.json(
-      { error: 'Failed to follow user', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to follow user' }, 500);
   }
 });
 
@@ -2212,10 +2224,7 @@ app.post('/api/remote-follow', requireAuth, async (c) => {
     });
   } catch (error: unknown) {
     console.error('Remote follow error:', error);
-    return c.json(
-      { error: 'Failed to follow remote user', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to follow remote user' }, 500);
   }
 });
 
@@ -2305,10 +2314,7 @@ app.delete('/api/remote-follow', requireAuth, async (c) => {
     });
   } catch (error: unknown) {
     console.error('Remote unfollow error:', error);
-    return c.json(
-      { error: 'Failed to unfollow remote user', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to unfollow remote user' }, 500);
   }
 });
 
@@ -2472,6 +2478,25 @@ app.post('/api/actors/:username/inbox', async (c) => {
       return c.json({ error: 'Invalid actor' }, 400);
     }
 
+    // Validate that the actor origin matches the keyId origin (H-5 fix)
+    const signatureHeader = c.req.header('Signature');
+    let keyIdOrigin: string | null = null;
+    if (signatureHeader) {
+      const keyIdMatch = signatureHeader.match(/keyId="([^"]+)"/);
+      if (keyIdMatch) {
+        try {
+          keyIdOrigin = new URL(keyIdMatch[1]).origin;
+          const actorOrigin = new URL(actorId).origin;
+          if (keyIdOrigin !== actorOrigin) {
+            console.error(`keyId origin ${keyIdOrigin} does not match actor origin ${actorOrigin}`);
+            return c.json({ error: 'Invalid HTTP Signature: keyId/actor origin mismatch' }, 401);
+          }
+        } catch {
+          return c.json({ error: 'Invalid keyId or actor URL' }, 400);
+        }
+      }
+    }
+
     // Try to get local user's keys for signed fetch (authorized fetch support)
     let signKeyPem: string | undefined;
     let signKeyId: string | undefined;
@@ -2520,7 +2545,7 @@ app.post('/api/actors/:username/inbox', async (c) => {
     return c.json({ ok: true }, 202);
   } catch (error: unknown) {
     console.error('Inbox error:', error);
-    return c.json({ error: 'Inbox processing failed', details: (error as { message?: string })?.message }, 500);
+    return c.json({ error: 'Inbox processing failed' }, 500);
   }
 });
 
@@ -2544,6 +2569,24 @@ app.post('/api/inbox', async (c) => {
     const actorId = activity.actor as string;
     if (!actorId || typeof actorId !== 'string') {
       return c.json({ error: 'Invalid actor' }, 400);
+    }
+
+    // Validate that the actor origin matches the keyId origin (H-5 fix)
+    const signatureHeader = c.req.header('Signature');
+    if (signatureHeader) {
+      const keyIdMatch = signatureHeader.match(/keyId="([^"]+)"/);
+      if (keyIdMatch) {
+        try {
+          const keyIdOrigin = new URL(keyIdMatch[1]).origin;
+          const actorOrigin = new URL(actorId).origin;
+          if (keyIdOrigin !== actorOrigin) {
+            console.error(`keyId origin ${keyIdOrigin} does not match actor origin ${actorOrigin}`);
+            return c.json({ error: 'Invalid HTTP Signature: keyId/actor origin mismatch' }, 401);
+          }
+        } catch {
+          return c.json({ error: 'Invalid keyId or actor URL' }, 400);
+        }
+      }
     }
 
     // Determine target username(s) from the activity
@@ -2878,10 +2921,7 @@ app.get('/api/notes/:noteId', async (c) => {
     });
   } catch (error: unknown) {
     console.error('Note endpoint error:', error);
-    return c.json(
-      { error: 'Note endpoint failed', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Note endpoint failed' }, 500);
   }
 });
 
@@ -2986,10 +3026,7 @@ app.get('/api/actors/:username/outbox', async (c) => {
     );
   } catch (error: unknown) {
     console.error('Outbox endpoint error:', error);
-    return c.json(
-      { error: 'Outbox endpoint failed', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Outbox endpoint failed' }, 500);
   }
 });
 
@@ -3057,10 +3094,7 @@ app.get('/notes/:noteId', async (c) => {
     });
   } catch (error: unknown) {
     console.error('Note endpoint error:', error);
-    return c.json(
-      { error: 'Note endpoint failed', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Note endpoint failed' }, 500);
   }
 });
 
@@ -3118,10 +3152,7 @@ app.get('/.well-known/webfinger', async (c) => {
     );
   } catch (error: unknown) {
     console.error('WebFinger error:', error);
-    return c.json(
-      { error: 'WebFinger failed', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'WebFinger failed' }, 500);
   }
 });
 
@@ -3222,10 +3253,7 @@ app.get('/api/users/:username', async (c) => {
     });
   } catch (error: unknown) {
     console.error('Get user error:', error);
-    return c.json(
-      { error: 'Failed to get user', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to get user' }, 500);
   }
 });
 
@@ -3343,10 +3371,7 @@ app.get('/api/users/:username/followers', async (c) => {
     });
   } catch (error: unknown) {
     console.error('Get followers error:', error);
-    return c.json(
-      { error: 'Failed to get followers', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to get followers' }, 500);
   }
 });
 
@@ -3464,10 +3489,7 @@ app.get('/api/users/:username/following', async (c) => {
     });
   } catch (error: unknown) {
     console.error('Get following error:', error);
-    return c.json(
-      { error: 'Failed to get following', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to get following' }, 500);
   }
 });
 
@@ -3658,10 +3680,7 @@ app.patch('/api/users/me', requireAuth, async (c) => {
     });
   } catch (error: unknown) {
     console.error('Update profile error:', error);
-    return c.json(
-      { error: 'Failed to update profile', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to update profile' }, 500);
   }
 });
 
@@ -3728,10 +3747,7 @@ app.patch('/api/users/me/email', requireAuth, async (c) => {
     return c.json({ ok: true });
   } catch (error: unknown) {
     console.error('Update email error:', error);
-    return c.json(
-      { error: 'Failed to update email', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to update email' }, 500);
   }
 });
 
@@ -3793,10 +3809,7 @@ app.patch('/api/users/me/password', requireAuth, async (c) => {
     return c.json({ ok: true });
   } catch (error: unknown) {
     console.error('Update password error:', error);
-    return c.json(
-      { error: 'Failed to update password', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to update password' }, 500);
   }
 });
 
@@ -3830,10 +3843,7 @@ app.delete('/api/users/me', requireAuth, async (c) => {
     return c.json({ success: true });
   } catch (error: unknown) {
     console.error('Delete account error:', error);
-    return c.json(
-      { error: 'Failed to delete account', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to delete account' }, 500);
   }
 });
 
@@ -3924,10 +3934,7 @@ app.post('/api/users/me/avatar', requireAuth, async (c) => {
     return c.json({ success: true, avatar_key: avatarKey });
   } catch (error: unknown) {
     console.error('Avatar upload error:', error);
-    return c.json(
-      { error: 'Avatar upload failed', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Avatar upload failed' }, 500);
   }
 });
 
@@ -3984,10 +3991,7 @@ app.post('/api/users/:username/follow', requireAuth, async (c) => {
     });
   } catch (error: unknown) {
     console.error('Follow error:', error);
-    return c.json(
-      { error: 'Failed to follow user', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to follow user' }, 500);
   }
 });
 
@@ -4039,10 +4043,7 @@ app.delete('/api/users/:username/follow', requireAuth, async (c) => {
     });
   } catch (error: unknown) {
     console.error('Unfollow error:', error);
-    return c.json(
-      { error: 'Failed to unfollow user', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to unfollow user' }, 500);
   }
 });
 
@@ -4093,10 +4094,7 @@ app.post('/api/users/:username/block', requireAuth, async (c) => {
     return c.json({ blocking: true });
   } catch (error: unknown) {
     console.error('Block error:', error);
-    return c.json(
-      { error: 'Failed to block user', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to block user' }, 500);
   }
 });
 
@@ -4134,10 +4132,7 @@ app.delete('/api/users/:username/block', requireAuth, async (c) => {
     return c.json({ blocking: false });
   } catch (error: unknown) {
     console.error('Unblock error:', error);
-    return c.json(
-      { error: 'Failed to unblock user', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Failed to unblock user' }, 500);
   }
 });
 
@@ -9681,10 +9676,7 @@ app.put('/api/dm/upload/*', requireAuth, async (c) => {
     return c.json({ success: true, key });
   } catch (error: unknown) {
     console.error('DM upload error:', error);
-    return c.json(
-      { error: 'Upload failed', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Upload failed' }, 500);
   }
 });
 
@@ -10509,10 +10501,7 @@ app.put('/api/groups/upload/*', requireAuth, async (c) => {
     return c.json({ success: true, key });
   } catch (error: unknown) {
     console.error('Group upload error:', error);
-    return c.json(
-      { error: 'Upload failed', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'Upload failed' }, 500);
   }
 });
 

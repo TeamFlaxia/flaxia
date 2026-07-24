@@ -16,6 +16,8 @@ export interface Session {
   id: string;
   user_id: string;
   expires_at: string;
+  ip_address?: string;
+  user_agent?: string;
 }
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
@@ -75,15 +77,20 @@ function generateSessionToken(): string {
 }
 
 // Create session
-export async function createSession(env: Env, userId: string): Promise<Session> {
+export async function createSession(
+  env: Env,
+  userId: string,
+  ipAddress?: string,
+  userAgent?: string,
+): Promise<Session> {
   const sessionId = generateSessionToken();
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
 
   const result = await env.DB.prepare(`
-    INSERT INTO sessions (id, user_id, expires_at)
-    VALUES (?, ?, ?)
+    INSERT INTO sessions (id, user_id, expires_at, ip_address, user_agent)
+    VALUES (?, ?, ?, ?, ?)
   `)
-    .bind(sessionId, userId, expiresAt)
+    .bind(sessionId, userId, expiresAt, ipAddress || '', userAgent || '')
     .run();
 
   if (!result.success) {
@@ -98,7 +105,12 @@ export async function createSession(env: Env, userId: string): Promise<Session> 
 }
 
 // Get session by token
-export async function getSession(env: Env, token: string): Promise<{ user: User; session: Session } | null> {
+export async function getSession(
+  env: Env,
+  token: string,
+  ipAddress?: string,
+  userAgent?: string,
+): Promise<{ user: User; session: Session } | null> {
   if (!token) return null;
 
   // Get session from database
@@ -109,6 +121,22 @@ export async function getSession(env: Env, token: string): Promise<{ user: User;
     .first()) as Session | undefined;
 
   if (!session) return null;
+
+  // Verify IP and User-Agent if bound
+  if (session.ip_address) {
+    const storedIp = session.ip_address;
+    const clientIp = ipAddress || '';
+    if (storedIp !== clientIp) {
+      return null;
+    }
+  }
+  if (session.user_agent) {
+    const storedUa = session.user_agent;
+    const clientUa = userAgent || '';
+    if (storedUa !== clientUa) {
+      return null;
+    }
+  }
 
   // Get user from database
   const user = (await env.DB.prepare(`
@@ -226,7 +254,13 @@ export async function registerUser(
 }
 
 // Login user
-export async function loginUser(env: Env, email: string, password: string): Promise<{ user: User; session: Session }> {
+export async function loginUser(
+  env: Env,
+  email: string,
+  password: string,
+  ipAddress?: string,
+  userAgent?: string,
+): Promise<{ user: User; session: Session }> {
   // Get user with password hash
   const userWithPassword = (await env.DB.prepare(`
     SELECT id, email, password_hash, username, display_name, bio, avatar_key, created_at
@@ -255,7 +289,7 @@ export async function loginUser(env: Env, email: string, password: string): Prom
   }
 
   // Create session
-  const session = await createSession(env, userWithPassword.id);
+  const session = await createSession(env, userWithPassword.id, ipAddress, userAgent);
 
   // Return user without password hash
   const user: User = {
@@ -284,15 +318,13 @@ export function getSessionToken(request: Request): string | null {
 
 // Set session cookie
 export function setSessionCookie(response: Response, token: string, isSecure = true): void {
-  const secure = isSecure ? '; Secure' : '';
   response.headers.set(
     'Set-Cookie',
-    `session=${token}; HttpOnly${secure}; SameSite=Lax; Path=/; Max-Age=${7 * 24 * 60 * 60}`,
+    `session=${token}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${7 * 24 * 60 * 60}`,
   );
 }
 
 // Clear session cookie
 export function clearSessionCookie(response: Response, isSecure = true): void {
-  const secure = isSecure ? '; Secure' : '';
-  response.headers.set('Set-Cookie', `session=; HttpOnly${secure}; SameSite=Lax; Path=/; Max-Age=0`);
+  response.headers.set('Set-Cookie', 'session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0');
 }

@@ -59,10 +59,7 @@ app.get('/', async (c) => {
     });
   } catch (error: unknown) {
     console.error('NodeInfo error:', error);
-    return c.json(
-      { error: 'NodeInfo failed', details: (error as { message?: string }).message || 'Unknown error' },
-      500,
-    );
+    return c.json({ error: 'NodeInfo failed' }, 500);
   }
 });
 

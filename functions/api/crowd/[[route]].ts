@@ -105,7 +105,7 @@ export async function onRequest(context: {
       status: res.status,
       headers: {
         'Content-Type': MIME[ext] || 'application/javascript',
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': 'https://flaxia.app',
         'Cache-Control': 'public, max-age=31536000, immutable',
         'X-Content-Type-Options': 'nosniff',
       },

@@ -32,13 +32,13 @@ database_id = "7c99f35f-69a0-4644-96a1-34c716a3e82d"
 SANDBOX_ORIGIN = "https://flaxia.app"
 BASE_URL = "https://flaxia.app"
 CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
-CROWD_API_KEY = "fc_live_flaxia_dev_key"
+
+# To set CROWD_API_KEY secret:
+#   npx wrangler secret put CROWD_API_KEY
 
 # To set ADMIN_USERNAMES secret for admin features:
-# npx wrangler secret put ADMIN_USERNAMES
+#   npx wrangler secret put ADMIN_USERNAMES
 # Enter comma-separated usernames (e.g., "admin,moderator")
-
-ADMIN_USERNAMES = "remydrescarlet"
 
 [[r2_buckets]]
 binding = "BUCKET"

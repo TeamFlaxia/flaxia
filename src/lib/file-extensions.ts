@@ -14,7 +14,7 @@ export const ALLOWED_EXTENSIONS: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
+
   '.ico': 'image/x-icon',
 
   // Fonts
