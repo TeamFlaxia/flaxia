@@ -256,7 +256,15 @@ export function createShareModal({ post, url: customUrl, media, onClose }: Share
     }, 2000);
   };
 
+  const handleEscape = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      close();
+    }
+  };
+  document.addEventListener('keydown', handleEscape);
+
   const close = () => {
+    document.removeEventListener('keydown', handleEscape);
     unregister();
     overlay.remove();
     onClose();
@@ -266,12 +274,6 @@ export function createShareModal({ post, url: customUrl, media, onClose }: Share
 
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) {
-      close();
-    }
-  });
-
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
       close();
     }
   });

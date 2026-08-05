@@ -1,4 +1,5 @@
 /// <reference types="@cloudflare/workers-types" />
+import { checkSSRF } from './lib/ssrf.ts';
 
 interface DeliveryMessage {
   type: 'delivery';
@@ -23,6 +24,26 @@ interface Env {
   EXPORT_BUCKET?: R2Bucket;
   HF_TOKEN?: string;
   HF_REPO?: string;
+}
+
+/**
+ * Validate an outbound federation URL (anti-SSRF). Returns an error message
+ * when the URL is malformed, uses a non-http(s) scheme, or targets an internal
+ * host/IP. Returns null when the URL is safe to fetch.
+ */
+function validateOutboundUrl(rawUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return 'Invalid URL';
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return 'Only http(s) URLs are allowed';
+  }
+  const blocked = checkSSRF(url);
+  if (blocked) return blocked;
+  return null;
 }
 
 export default {
@@ -93,6 +114,14 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
     const privateKeyPem = keyResult.private_key_pem as string;
     const publicKeyPem = keyResult.public_key_pem as string;
     const keyId = `${env.BASE_URL}/actors/${senderUsername}#main-key`;
+
+    // Reject internal/private delivery targets (anti-SSRF)
+    const blocked = validateOutboundUrl(inboxUrl);
+    if (blocked) {
+      console.error('ActivityPub delivery blocked:', { inboxUrl, reason: blocked });
+      message.ack();
+      return;
+    }
 
     const { signRequest } = await import('./lib/activitypub/signature');
     const body = JSON.stringify(activity);
@@ -356,19 +385,24 @@ async function handleFollowActivity(
   // Fetch actor's inbox URL and profile information
   let inboxUrl = activity.actor as string;
   let actorData: Record<string, unknown> | null = null;
-  try {
-    const actorResponse = await fetch(actorId, {
-      headers: {
-        Accept: 'application/activity+json, application/ld+json',
-      },
-    });
+  const actorBlocked = validateOutboundUrl(actorId);
+  if (actorBlocked) {
+    console.error('Actor fetch blocked:', { actorId, reason: actorBlocked });
+  } else {
+    try {
+      const actorResponse = await fetch(actorId, {
+        headers: {
+          Accept: 'application/activity+json, application/ld+json',
+        },
+      });
 
-    if (actorResponse.ok) {
-      actorData = (await actorResponse.json()) as Record<string, unknown>;
-      inboxUrl = (actorData.inbox as string) || (activity.actor as string);
+      if (actorResponse.ok) {
+        actorData = (await actorResponse.json()) as Record<string, unknown>;
+        inboxUrl = (actorData.inbox as string) || (activity.actor as string);
+      }
+    } catch (e) {
+      console.error('Failed to fetch actor inbox:', e);
     }
-  } catch (e) {
-    console.error('Failed to fetch actor inbox:', e);
   }
 
   const followerId = generateId();
@@ -478,6 +512,12 @@ async function handleFollowActivity(
 
     const body = JSON.stringify(acceptActivity);
     const headers = await signRequest(inboxUrl, body, privateKeyPem, publicKeyPem, keyId);
+
+    const inboxBlocked = validateOutboundUrl(inboxUrl);
+    if (inboxBlocked) {
+      console.error('Accept delivery blocked:', { inboxUrl, reason: inboxBlocked });
+      return;
+    }
 
     console.log('Sending Accept activity to:', inboxUrl);
     console.log('Headers:', Object.fromEntries(headers.entries()));

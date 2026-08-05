@@ -1,4 +1,5 @@
 import { getLocale, t } from '../lib/i18n.js';
+import { navigate } from '../lib/navigate.js';
 
 interface LegalPageProps {
   type: 'terms' | 'privacy' | 'about' | 'whitepaper';
@@ -150,8 +151,7 @@ export function createLegalPage({ type }: LegalPageProps) {
   wordmark.textContent = t('legal.brand');
   wordmark.addEventListener('click', (e) => {
     e.preventDefault();
-    window.history.pushState({}, '', '/');
-    window.dispatchEvent(new PopStateEvent('popstate'));
+    navigate('/');
   });
 
   header.appendChild(backBtn);
@@ -219,8 +219,7 @@ export function createLegalPage({ type }: LegalPageProps) {
     link.className = 'legal-footer-link';
     link.addEventListener('click', (e) => {
       e.preventDefault();
-      window.history.pushState({}, '', p.path);
-      window.dispatchEvent(new PopStateEvent('popstate'));
+      navigate(p.path);
     });
     footerLinks.appendChild(link);
   });

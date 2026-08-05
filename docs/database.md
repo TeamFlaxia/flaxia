@@ -156,4 +156,5 @@ Flaxia uses Cloudflare D1 (SQLite-compatible) with migrations in `migrations/`.
 - `ng_words` — Filtered words
 - `hidden_posts` — Hidden/moderated posts
 - `post_thumbnails` — Generated thumbnails for ZIP/SWF posts
-- `polls` — Poll options and votes
+- `polls` — Polls with `multiple_choice` flag; `poll_options` holds choices and `poll_votes` records votes
+- `poll_votes` — One row per (poll, option, user); `UNIQUE(poll_id, option_id, user_id)` allows multiple selections for multiple-choice polls (migration `0062`). Single-choice polls are enforced by the vote API.

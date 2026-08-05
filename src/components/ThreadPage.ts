@@ -1,5 +1,6 @@
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { navigate } from '../lib/navigate.js';
 import { updateMetaTags } from '../lib/seo-meta.js';
 import { getReplyStyle } from '../lib/settings.js';
 import { buildTree } from '../lib/thread.js';
@@ -148,12 +149,10 @@ export class ThreadPage {
         }
       },
       onSignIn: () => {
-        window.history.pushState({}, '', '/login');
-        window.dispatchEvent(new PopStateEvent('popstate'));
+        navigate('/login');
       },
       onSignUp: () => {
-        window.history.pushState({}, '', '/register');
-        window.dispatchEvent(new PopStateEvent('popstate'));
+        navigate('/register');
       },
     });
     this.leftNav.getElement().style.cssText = `
@@ -625,12 +624,10 @@ export class ThreadPage {
       showSignInPrompt(
         'reply',
         () => {
-          window.history.pushState({}, '', '/login');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/login');
         },
         () => {
-          window.history.pushState({}, '', '/register');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/register');
         },
       );
       return;

@@ -2,19 +2,23 @@
 
 ## Overview
 
-Flaxia consists of 3 deployable components:
+Flaxia consists of 5 deployable components:
 
 | Component | Config | Deployment Command |
 |---|---|---|
-| Main Pages (SPA + API) | `wrangler.toml` | `pnpm deploy` |
-| Backend Worker (Queue consumer) | `wrangler.toml.worker` | Manual `wrangler deploy` |
-| Sandbox Worker | `wrangler.sandbox.toml` | `pnpm deploy:sandbox` |
+| Main Pages (SPA + API) | `wrangler.toml` | `npm run deploy` |
+| Backend Worker (Queue consumer) | `wrangler.toml.worker` | `wrangler deploy --config wrangler.toml.worker --name flaxia-backend` |
+| Sandbox Worker | `wrangler.sandbox.toml` | `npm run deploy:sandbox` |
+| DO Worker (NotificationStream) | `do-worker/wrangler.toml` | `npm run deploy:do` |
+| Multiplayer Worker (MultiplayerRoom/Matchmaker) | `multiplayer-worker/wrangler.toml` | `npm run deploy:multiplayer` |
+
+All workers use a unified `compatibility_date = "2026-06-02"` with the `nodejs_compat` flag.
 
 ## Main Pages Deployment
 
 ```bash
 # Build and deploy to Cloudflare Pages
-pnpm build && pnpm deploy
+npm run build && npm run deploy
 
 # This runs:
 # CONTENT_ORIGIN=https://sandbox.flaxia.app wrangler pages deploy dist
@@ -24,13 +28,12 @@ The build output is in `dist/`.
 
 ## Backend Worker (flaxia-backend)
 
-This worker hosts Durable Objects and consumes the ActivityPub delivery queue.
+This worker consumes the ActivityPub delivery queue.
 
 ```bash
 npx wrangler deploy functions/queue-worker.ts \
   --config wrangler.toml.worker \
-  --name flaxia-ap-delivery \
-  --compatibility-date 2024-01-01
+  --name flaxia-backend
 ```
 
 The main Pages project binds to this worker via `wrangler.toml`:
@@ -40,10 +43,24 @@ binding = "BACKEND"
 service = "flaxia-backend"
 ```
 
+## DO Worker (NotificationStream)
+
+```bash
+npm run deploy:do
+```
+
+## Multiplayer Worker
+
+```bash
+npm run deploy:multiplayer
+```
+
+Deploys the `MultiplayerRoom` and `Matchmaker` Durable Objects used for real-time multiplayer rooms and matchmaking.
+
 ## Sandbox Worker
 
 ```bash
-pnpm deploy:sandbox
+npm run deploy:sandbox
 
 # This runs:
 # wrangler deploy src/sandbox-worker.ts --config wrangler.sandbox.toml
@@ -55,7 +72,7 @@ The sandbox worker serves ZIP/HTML5 content from R2 at the sandbox origin (`sand
 
 1. **Database Migrations** (production):
    ```bash
-   pnpm migrate:prod
+   npm run migrate:prod
    ```
 
 2. **Verify**:
@@ -74,7 +91,7 @@ wrangler tail --config wrangler.toml.worker
 
 ## Important Notes
 
-- Both `flaxia-backend` and `flaxia` (Pages) must be deployed together for ActivityPub to work
+- The backend, DO, and multiplayer workers must be deployed alongside the Pages project for full functionality
 - The sandbox origin is a separate Worker with its own routes
 - `wrangler.toml` references the backend Worker by script name — ensure the backend Worker is deployed first
 - Environment-specific config is handled via Wrangler secrets/vars, not `.env` files in production

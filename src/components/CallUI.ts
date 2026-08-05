@@ -264,7 +264,7 @@ export function showIncomingCallNotification(
   onDecline: () => void,
 ): void {
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${wsProtocol}//${window.location.host}/api/ws/call?roomId=${callId}&token=`;
+  const wsUrl = `${wsProtocol}//${window.location.host}/api/ws/call?roomId=${callId}`;
 
   const ui = createCallUI({
     roomId: callId,

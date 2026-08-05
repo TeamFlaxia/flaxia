@@ -5,7 +5,7 @@ interface PlayerInfo {
   username: string;
   displayName: string | null;
   avatarKey: string | null;
-  ws: WebSocket;
+  ws: WebSocket | null;
   isReady: boolean;
   isHost: boolean;
   connectedAt: number;
@@ -39,6 +39,7 @@ type ClientMessage =
   | { type: 'input'; input: unknown; timestamp: number }
   | { type: 'chat'; message: string }
   | { type: 'request_state' }
+  | { type: 'set_state'; state: unknown; timestamp: number }
   | { type: 'signal'; targetUserId: string; signal: { type: string; payload: unknown } }
   | { type: 'peer_data'; data: unknown };
 
@@ -59,6 +60,19 @@ type ServerMessage =
 
 const INACTIVITY_TIMEOUT_MS = 300_000;
 const LOBBY_TIMEOUT_MS = 1_800_000;
+const PERSIST_KEY = 'room';
+
+interface StoredRoomState {
+  roomId: string;
+  gameId: string;
+  hostId: string;
+  status: RoomStatus;
+  maxPlayers: number;
+  isPublic: boolean;
+  createdAt: number;
+  gameState: unknown;
+  players: PlayerSummary[];
+}
 
 export class MultiplayerRoom {
   private ctx: DurableObjectState;
@@ -71,6 +85,8 @@ export class MultiplayerRoom {
   private isPublic = true;
   private createdAt = 0;
   private gameState: unknown = null;
+  private restored = false;
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(ctx: DurableObjectState) {
     this.ctx = ctx;
@@ -80,18 +96,69 @@ export class MultiplayerRoom {
     const url = new URL(request.url);
 
     if (request.headers.get('Upgrade') === 'websocket') {
+      await this.restoreState();
       return this.handleWebSocketUpgrade(request, url);
     }
 
     if (request.method === 'POST') {
+      await this.restoreState();
       return this.handleApiPost(request);
     }
 
     if (request.method === 'GET') {
+      await this.restoreState();
       return this.handleApiGet();
     }
 
     return new Response('MultiplayerRoom DO', { status: 200 });
+  }
+
+  private async restoreState(): Promise<void> {
+    if (this.restored) return;
+    this.restored = true;
+    const stored = await this.ctx.storage.get<StoredRoomState>(PERSIST_KEY);
+    if (!stored) return;
+    this.roomId = stored.roomId;
+    this.gameId = stored.gameId;
+    this.hostId = stored.hostId;
+    this.status = stored.status;
+    this.maxPlayers = stored.maxPlayers;
+    this.isPublic = stored.isPublic;
+    this.createdAt = stored.createdAt;
+    this.gameState = stored.gameState ?? null;
+    for (const p of stored.players ?? []) {
+      this.players.set(p.userId, {
+        ...p,
+        ws: null,
+        connectedAt: Date.now(),
+      });
+    }
+    if (this.players.size > 0) {
+      this.ctx.storage.setAlarm(Date.now() + INACTIVITY_TIMEOUT_MS);
+    }
+  }
+
+  private schedulePersist(): void {
+    if (this.persistTimer) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      void this.writeState();
+    }, 500);
+  }
+
+  private async writeState(): Promise<void> {
+    const data: StoredRoomState = {
+      roomId: this.roomId,
+      gameId: this.gameId,
+      hostId: this.hostId,
+      status: this.status,
+      maxPlayers: this.maxPlayers,
+      isPublic: this.isPublic,
+      createdAt: this.createdAt,
+      gameState: this.gameState,
+      players: this.getPlayerSummaries(),
+    };
+    await this.ctx.storage.put(PERSIST_KEY, data);
   }
 
   private async handleWebSocketUpgrade(request: Request, url: URL): Promise<Response> {
@@ -106,6 +173,37 @@ export class MultiplayerRoom {
       return new Response('Missing required params: userId, gameId, roomId', { status: 400 });
     }
 
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
+
+    const existing = this.players.get(userId);
+    if (existing) {
+      if (existing.ws) {
+        return new Response('Already in this room', { status: 409 });
+      }
+      // Rejoin after eviction: reclaim the persisted seat.
+      this.ctx.acceptWebSocket(server);
+      existing.ws = server;
+      existing.isReady = false;
+      existing.connectedAt = Date.now();
+      this.sendTo(userId, {
+        type: 'room_state',
+        room: {
+          roomId: this.roomId,
+          gameId: this.gameId,
+          hostId: this.hostId,
+          status: this.status,
+          maxPlayers: this.maxPlayers,
+          isPublic: this.isPublic,
+          createdAt: this.createdAt,
+        },
+        players: this.getPlayerSummaries(),
+      });
+      this.setInactivityAlarm();
+      this.schedulePersist();
+      return new Response(null, { status: 101, webSocket: client });
+    }
+
     if (this.players.size >= this.maxPlayers) {
       return new Response('Room is full', { status: 403 });
     }
@@ -114,19 +212,12 @@ export class MultiplayerRoom {
       return new Response('Game already in progress', { status: 403 });
     }
 
-    if (this.players.has(userId)) {
-      return new Response('Already in this room', { status: 409 });
-    }
-
     if (this.players.size === 0) {
       this.roomId = roomId;
       this.gameId = gameId;
       this.hostId = userId;
       this.createdAt = Date.now();
     }
-
-    const pair = new WebSocketPair();
-    const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
 
     this.ctx.acceptWebSocket(server);
 
@@ -158,6 +249,7 @@ export class MultiplayerRoom {
       isHost,
     };
     this.broadcast({ type: 'player_joined', player: newPlayer }, userId);
+    this.schedulePersist();
 
     const playerList = this.getPlayerSummaries();
     const roomMeta: RoomMetadata = {
@@ -192,10 +284,12 @@ export class MultiplayerRoom {
       switch (body.action) {
         case 'set_public':
           this.isPublic = body.state as unknown as boolean;
+          this.schedulePersist();
           return new Response('OK', { status: 200 });
 
         case 'set_max_players':
           this.maxPlayers = body.state as unknown as number;
+          this.schedulePersist();
           return new Response('OK', { status: 200 });
 
         case 'end_game':
@@ -259,6 +353,7 @@ export class MultiplayerRoom {
       case 'ready':
         player.isReady = data.ready;
         this.broadcast({ type: 'player_ready', userId: player.userId, ready: data.ready });
+        this.schedulePersist();
         break;
 
       case 'start_game':
@@ -272,6 +367,7 @@ export class MultiplayerRoom {
         }
         this.status = 'playing';
         this.broadcast({ type: 'game_start' });
+        this.schedulePersist();
         break;
 
       case 'input':
@@ -296,6 +392,17 @@ export class MultiplayerRoom {
         if (this.gameState !== null) {
           this.sendTo(player.userId, { type: 'game_state', state: this.gameState, timestamp: Date.now() });
         }
+        break;
+
+      case 'set_state':
+        if (!player.isHost) {
+          this.sendTo(player.userId, { type: 'error', code: 'NOT_HOST', message: 'Only host can set game state' });
+          return;
+        }
+        this.gameState = data.state;
+        this.broadcast({ type: 'game_state', state: this.gameState, timestamp: Date.now() }, player.userId);
+        this.sendTo(player.userId, { type: 'game_state', state: this.gameState, timestamp: Date.now() });
+        this.schedulePersist();
         break;
 
       case 'leave':
@@ -354,6 +461,7 @@ export class MultiplayerRoom {
     }
 
     this.broadcast({ type: 'player_left', userId });
+    this.schedulePersist();
 
     if (userId === this.hostId) {
       const newHost = this.players.values().next().value;
@@ -361,6 +469,7 @@ export class MultiplayerRoom {
         newHost.isHost = true;
         this.hostId = newHost.userId;
         this.broadcast({ type: 'host_changed', newHostId: newHost.userId });
+        this.schedulePersist();
       }
     }
 
@@ -379,13 +488,18 @@ export class MultiplayerRoom {
   private cleanup(): void {
     for (const [, info] of this.players) {
       try {
-        info.ws.close(1000, 'Room closed');
+        info.ws?.close(1000, 'Room closed');
       } catch {
         // ignore
       }
     }
     this.players.clear();
     this.ctx.storage.deleteAlarm();
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
+    void this.ctx.storage.delete(PERSIST_KEY);
   }
 
   private setInactivityAlarm(): void {
@@ -414,6 +528,7 @@ export class MultiplayerRoom {
     const payload = JSON.stringify(msg);
     for (const [id, info] of this.players) {
       if (id === excludeUserId) continue;
+      if (!info.ws) continue;
       try {
         info.ws.send(payload);
       } catch {
@@ -424,7 +539,7 @@ export class MultiplayerRoom {
 
   private sendTo(targetUserId: string, msg: ServerMessage): void {
     const info = this.players.get(targetUserId);
-    if (info) {
+    if (info?.ws) {
       try {
         info.ws.send(JSON.stringify(msg));
       } catch {
@@ -444,12 +559,35 @@ interface MatchmakerEntry {
 export class Matchmaker {
   private ctx: DurableObjectState;
   private queue: Map<string, MatchmakerEntry[]> = new Map();
+  private restored = false;
+  private persistTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(ctx: DurableObjectState) {
     this.ctx = ctx;
   }
 
+  private async restoreState(): Promise<void> {
+    if (this.restored) return;
+    this.restored = true;
+    const stored = await this.ctx.storage.get<Record<string, MatchmakerEntry[]>>('queue');
+    if (stored) {
+      this.queue = new Map(Object.entries(stored));
+    }
+    if (this.queue.size > 0) {
+      this.ctx.storage.setAlarm(Date.now() + 120_000);
+    }
+  }
+
+  private schedulePersist(): void {
+    if (this.persistTimer) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null;
+      void this.ctx.storage.put('queue', Object.fromEntries(this.queue.entries()));
+    }, 250);
+  }
+
   async fetch(request: Request): Promise<Response> {
+    await this.restoreState();
     if (request.method === 'POST') {
       const body = (await request.json()) as {
         action: string;
@@ -502,7 +640,10 @@ export class Matchmaker {
     }
     if (this.queue.size > 0) {
       this.ctx.storage.setAlarm(Date.now() + 120_000);
+    } else {
+      this.ctx.storage.deleteAlarm();
     }
+    await this.ctx.storage.put('queue', Object.fromEntries(this.queue.entries()));
   }
 
   private async joinQueue(userId: string, username: string, gameId: string): Promise<Response> {
@@ -520,6 +661,7 @@ export class Matchmaker {
 
     entries.push({ userId, username, gameId, joinedAt: Date.now() });
     this.ctx.storage.setAlarm(Date.now() + 120_000);
+    this.schedulePersist();
 
     return new Response(JSON.stringify({ status: 'queued', position: entries.length }), {
       headers: { 'Content-Type': 'application/json' },
@@ -545,6 +687,7 @@ export class Matchmaker {
     if (entries.length === 0) {
       this.queue.delete(gameId);
     }
+    this.schedulePersist();
 
     return new Response(JSON.stringify({ status: 'left_queue' }), {
       headers: { 'Content-Type': 'application/json' },
@@ -563,6 +706,7 @@ export class Matchmaker {
     if (entries.length === 0) {
       this.queue.delete(gameId);
     }
+    this.schedulePersist();
 
     return new Response(
       JSON.stringify({

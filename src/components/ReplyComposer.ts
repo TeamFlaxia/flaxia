@@ -1,5 +1,6 @@
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { navigate } from '../lib/navigate.js';
 import { showToast } from '../lib/toast.js';
 import { Post } from '../types/post.js';
 import { showSignInPrompt } from './SignInPrompt.js';
@@ -652,12 +653,10 @@ export class ReplyComposer {
         showSignInPrompt(
           'reply',
           () => {
-            window.history.pushState({}, '', '/login');
-            window.dispatchEvent(new PopStateEvent('popstate'));
+            navigate('/login');
           },
           () => {
-            window.history.pushState({}, '', '/register');
-            window.dispatchEvent(new PopStateEvent('popstate'));
+            navigate('/register');
           },
         );
       }

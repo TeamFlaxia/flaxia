@@ -207,7 +207,7 @@ async function serveFromFS(filePath) {
   }
 
   const data = virtualFS.get(filePath)
-    ?? virtualFS.get(filePath.replace(//$/, '/index.html'))
+    ?? virtualFS.get(filePath.replace(//$/, '') + '/index.html')
 
   if (!data) {
     return new Response('404 Not Found: ' + filePath, {
