@@ -1,4 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
+
+import { checkSSRF } from '../ssrf.ts';
 import { importPublicKey } from './crypto.ts';
 
 /**
@@ -171,6 +173,20 @@ export async function fetchActorPublicKey(
   keyId?: string,
 ): Promise<string | null> {
   try {
+    // Validate the actor URL before any outbound request (anti-SSRF)
+    let actorTarget: URL;
+    try {
+      actorTarget = new URL(actorUrl);
+    } catch {
+      console.error('Invalid actor URL');
+      return null;
+    }
+    const blocked = checkSSRF(actorTarget);
+    if (blocked) {
+      console.error(`SSRF blocked actor fetch: ${blocked}`);
+      return null;
+    }
+
     let response: Response | null = null;
 
     // If signing keys provided, use signed fetch

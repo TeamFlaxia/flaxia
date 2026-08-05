@@ -677,6 +677,8 @@
   "poll.vote_error": "投票に失敗しました",
   "poll.already_voted": "既に投票済みです",
   "poll.click_to_change": "クリックして変更",
+  "poll.vote_btn": "投票",
+  "poll.update_vote": "投票を更新",
 
   "common.cancel": "キャンセル",
   "common.confirm": "OK",
@@ -691,5 +693,8 @@
   "video_player.loading": "読み込み中...",
   "video_player.load_failed": "動画の読み込みに失敗しました",
   "video_player.retry": "リトライ",
-  "video_player.no_video": "動画がありません"
+  "video_player.no_video": "動画がありません",
+
+  "player.loading_timeout": "読み込みに時間がかかっています…",
+  "player.load_failed": "ゲームの読み込みに失敗しました"
 }

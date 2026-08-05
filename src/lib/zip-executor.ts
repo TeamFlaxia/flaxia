@@ -73,7 +73,7 @@ export async function executeZip(
       }
     } else {
       if (loadingEl.parentNode) {
-        loadingEl.innerHTML = `<div style="color: var(--text-muted, #64748b); text-align: center; padding: 20px; font-size: 0.875rem;">読み込みに時間がかかっています…</div>`;
+        loadingEl.innerHTML = `<div style="color: var(--text-muted, #64748b); text-align: center; padding: 20px; font-size: 0.875rem;">${t('player.loading_timeout')}</div>`;
       }
       iframe.style.opacity = '1';
     }

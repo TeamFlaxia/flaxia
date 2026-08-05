@@ -1,5 +1,6 @@
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { navigate } from '../lib/navigate.js';
 import { showSignInPrompt } from './SignInPrompt.js';
 
 interface UserListItem {
@@ -400,12 +401,10 @@ export function createFollowerListModal({
           showSignInPrompt(
             'follow',
             () => {
-              window.history.pushState({}, '', '/login');
-              window.dispatchEvent(new PopStateEvent('popstate'));
+              navigate('/login');
             },
             () => {
-              window.history.pushState({}, '', '/register');
-              window.dispatchEvent(new PopStateEvent('popstate'));
+              navigate('/register');
             },
           );
           return;

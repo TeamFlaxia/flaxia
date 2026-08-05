@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js';
+import { navigate } from '../lib/navigate.js';
 
 interface LoginProps {
   onSuccess: () => void;
@@ -18,8 +19,7 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   backButton.className = 'auth-back';
   backButton.innerHTML = '← ' + t('auth.back');
   backButton.addEventListener('click', () => {
-    window.history.pushState({}, '', '/');
-    window.dispatchEvent(new PopStateEvent('popstate'));
+    navigate('/');
   });
 
   // Logo
@@ -165,8 +165,7 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   if (registerAnchor) {
     registerAnchor.addEventListener('click', (e) => {
       e.preventDefault();
-      window.history.pushState({}, '', '/register');
-      window.dispatchEvent(new PopStateEvent('popstate'));
+      navigate('/register');
     });
   }
 

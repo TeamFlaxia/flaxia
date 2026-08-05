@@ -40,6 +40,7 @@ import {
 import { sendPushToAll } from '../lib/notify';
 import { getVapidPublicKey } from '../lib/push';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../lib/scoring';
+import { checkSSRF, safeFetch } from '../lib/ssrf';
 
 type Bindings = {
   DB: D1Database;
@@ -106,6 +107,7 @@ type PostRow = {
     expired: boolean;
     options: Array<{ id: string; label: string; votes_count: number }>;
     userVote: string | null;
+    userVotes?: string[];
   };
 };
 
@@ -1202,66 +1204,6 @@ function parseMetaTags(html: string, baseUrl: string) {
   return result;
 }
 
-function isPrivateIP(hostname: string): boolean {
-  // IPv4
-  const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4Match) {
-    const octets = [ipv4Match[1], ipv4Match[2], ipv4Match[3], ipv4Match[4]].map(Number);
-    if (octets.some((o) => o > 255)) return true;
-    const [a, b] = octets;
-    // 0.0.0.0/8, 10.0.0.0/8, 127.0.0.0/8, 169.254.0.0/16
-    if (a === 0 || a === 10 || a === 127 || (a === 169 && b === 254)) return true;
-    // 172.16.0.0/12
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    // 192.168.0.0/16
-    if (a === 192 && b === 168) return true;
-    // 100.64.0.0/10 (CGNAT)
-    if (a === 100 && b >= 64 && b <= 127) return true;
-    // 198.18.0.0/15
-    if (a === 198 && (b === 18 || b === 19)) return true;
-    return false;
-  }
-  // IPv6
-  if (hostname.includes(':') && hostname.startsWith('[') && hostname.endsWith(']')) {
-    hostname = hostname.slice(1, -1);
-  }
-  if (hostname.includes(':')) {
-    const normalized = hostname.toLowerCase();
-    if (normalized === '::1' || normalized === '0:0:0:0:0:0:0:1') return true;
-    if (normalized.startsWith('fe80:') || normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
-  }
-  return false;
-}
-
-function isInternalHostname(hostname: string): string | null {
-  const lower = hostname.toLowerCase();
-  // Strip trailing dot for FQDN
-  const name = lower.endsWith('.') ? lower.slice(0, -1) : lower;
-  const internalNames = new Set([
-    'localhost',
-    'localhost.localdomain',
-    'local',
-    'broadcasthost',
-    'metadata.google.internal',
-    'metadata',
-    '169.254.169.254',
-  ]);
-  if (internalNames.has(name)) return name;
-  // Block any hostname ending in .internal, .local, .localhost
-  if (name.endsWith('.internal') || name.endsWith('.local') || name.endsWith('.localhost')) return name;
-  return null;
-}
-
-function checkSSRF(url: URL): string | null {
-  const hostname = url.hostname;
-  // Strip brackets from IPv6
-  const cleanHost = hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
-  if (isPrivateIP(cleanHost)) return 'Requests to private IP addresses are not allowed';
-  const internal = isInternalHostname(hostname);
-  if (internal) return `Requests to ${internal} are not allowed`;
-  return null;
-}
-
 // GET /api/link-preview - Scrape OpenGraph meta tags of a URL
 app.get('/api/link-preview', async (c) => {
   const urlString = c.req.query('url');
@@ -1280,14 +1222,17 @@ app.get('/api/link-preview', async (c) => {
       return c.json({ error: blockedHost }, 400);
     }
 
-    const response = await fetch(targetUrl.toString(), {
+    const response = await safeFetch(targetUrl.toString(), {
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 FlaxiaPreviewBot/1.0',
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
       },
-      redirect: 'follow',
     });
+
+    if (!response) {
+      return c.json({ error: 'Failed to fetch link preview' }, 400);
+    }
 
     if (!response.ok) {
       return c.json({
@@ -2272,6 +2217,18 @@ app.post('/api/remote-follow', requireAuth, async (c) => {
       return c.json({ error: 'Invalid target format. Expected user@domain' }, 400);
     }
 
+    // Validate the target domain before any outbound request (anti-SSRF)
+    let baseUrl: URL;
+    try {
+      baseUrl = new URL(`https://${domain}`);
+    } catch {
+      return c.json({ error: 'Invalid domain' }, 400);
+    }
+    const domainBlocked = checkSSRF(baseUrl);
+    if (domainBlocked) {
+      return c.json({ error: 'Request to this domain is not allowed' }, 400);
+    }
+
     const token = getSessionToken(c.req.raw);
     const sessionData = token ? await getSession(c.env, token) : null;
     if (!sessionData) {
@@ -2298,6 +2255,18 @@ app.post('/api/remote-follow', requireAuth, async (c) => {
 
     const actorUrl = selfLink.href;
 
+    // Validate the actor URL before fetching it
+    let actorTarget: URL;
+    try {
+      actorTarget = new URL(actorUrl);
+    } catch {
+      return c.json({ error: 'Remote actor URL is invalid' }, 400);
+    }
+    const actorBlocked = checkSSRF(actorTarget);
+    if (actorBlocked) {
+      return c.json({ error: 'Request to this actor is not allowed' }, 400);
+    }
+
     // Fetch actor to get inbox URL
     const actorResponse = await fetch(actorUrl, {
       headers: { Accept: 'application/activity+json, application/ld+json' },
@@ -2311,6 +2280,18 @@ app.post('/api/remote-follow', requireAuth, async (c) => {
     const inboxUrl = actorData.inbox;
     if (!inboxUrl) {
       return c.json({ error: 'Remote actor has no inbox' }, 400);
+    }
+
+    // Validate the inbox URL before storing/using it (anti-SSRF)
+    let inboxTarget: URL;
+    try {
+      inboxTarget = new URL(inboxUrl);
+    } catch {
+      return c.json({ error: 'Remote actor inbox URL is invalid' }, 400);
+    }
+    const inboxBlocked = checkSSRF(inboxTarget);
+    if (inboxBlocked) {
+      return c.json({ error: 'Request to this inbox is not allowed' }, 400);
     }
 
     // Check if already following
@@ -2379,6 +2360,17 @@ app.delete('/api/remote-follow', requireAuth, async (c) => {
     const [remoteUsername, domain] = target.split('@');
     if (!remoteUsername || !domain) {
       return c.json({ error: 'Invalid target format. Expected user@domain' }, 400);
+    }
+
+    // Validate the target domain before any outbound request (anti-SSRF)
+    try {
+      const baseUrl = new URL(`https://${domain}`);
+      const domainBlocked = checkSSRF(baseUrl);
+      if (domainBlocked) {
+        return c.json({ error: 'Request to this domain is not allowed' }, 400);
+      }
+    } catch {
+      return c.json({ error: 'Invalid domain' }, 400);
     }
 
     const token = getSessionToken(c.req.raw);
@@ -5349,7 +5341,6 @@ app.get('/api/posts/recommended', async (c) => {
         ? 'AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
         : '';
       const blockParamRecommended = currentUserId ? [currentUserId] : [];
-      const orderClause = 'ORDER BY score DESC, p.created_at DESC, p.id DESC';
 
       // Fetch raw engagement-based candidates, then re-rank with quality/type/author weights
       const rawQuery = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${currentUserId ? 'AND p.user_id != ?' : ''} ${blockFilterRecommended} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
@@ -6522,15 +6513,28 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
         if (thumbnailFile.size > 1024 * 1024) {
           return c.json({ error: 'Thumbnail must be ≤1MB' }, 400);
         }
-        const allowedExts = ['jpg', 'jpeg', 'png', 'gif'];
-        const ext = thumbnailFile.name.toLowerCase().split('.').pop();
-        if (!ext || !allowedExts.includes(ext)) {
-          return c.json({ error: 'Thumbnail must be .jpg, .jpeg, .png, or .gif' }, 400);
-        }
-        const thumbnailR2Key = `payload/${postId || crypto.randomUUID()}.thumb.${ext}`;
         const thumbnailBuffer = await thumbnailFile.arrayBuffer();
+        // Verify magic bytes rather than trusting the declared extension
+        const detectedMime = detectMimeType(thumbnailBuffer);
+        const allowedImageMime =
+          detectedMime === 'image/jpeg' ||
+          detectedMime === 'image/png' ||
+          detectedMime === 'image/gif' ||
+          detectedMime === 'image/webp';
+        if (!allowedImageMime) {
+          return c.json({ error: 'Thumbnail must be a valid JPEG, PNG, GIF, or WebP image' }, 400);
+        }
+        const ext =
+          detectedMime === 'image/jpeg'
+            ? 'jpg'
+            : detectedMime === 'image/png'
+              ? 'png'
+              : detectedMime === 'image/gif'
+                ? 'gif'
+                : 'webp';
+        const thumbnailR2Key = `payload/${postId || crypto.randomUUID()}.thumb.${ext}`;
         await c.env.BUCKET.put(thumbnailR2Key, thumbnailBuffer, {
-          httpMetadata: { contentType: thumbnailFile.type },
+          httpMetadata: { contentType: detectedMime },
         });
         thumbnailKey = thumbnailR2Key;
       }
@@ -6548,6 +6552,18 @@ app.post('/api/posts/commit', requireAuth, async (c) => {
     const payloadKey = zipKey;
     const userId = c.get('user')?.id || '';
     const username = c.get('user')?.username || 'anonymous';
+
+    // If committing to an existing postId, ensure it belongs to the current user.
+    // Prevents IDOR: overwriting another user's published post text/attachments.
+    if (postId) {
+      const existing = (await c.env.DB.prepare('SELECT id, user_id FROM posts WHERE id = ?').bind(postId).first()) as {
+        id: string;
+        user_id: string;
+      } | null;
+      if (existing && existing.user_id !== userId) {
+        return c.json({ error: 'You can only edit your own posts' }, 403);
+      }
+    }
 
     // Validate text
     if (!text || text.length < 1 || text.length > 200) {
@@ -6824,13 +6840,15 @@ app.get('/api/polls/:postId', async (c) => {
       .all();
 
     let userVote: string | null = null;
+    let userVotes: string[] = [];
     const token = getSessionToken(c.req.raw);
     const sessionData = token ? await getSession(c.env, token) : null;
     if (sessionData) {
-      const vote = (await c.env.DB.prepare('SELECT option_id FROM poll_votes WHERE poll_id = ? AND user_id = ?')
+      const votes = (await c.env.DB.prepare('SELECT option_id FROM poll_votes WHERE poll_id = ? AND user_id = ?')
         .bind(poll.id, sessionData.user.id)
-        .first()) as { option_id: string } | null;
-      if (vote) userVote = vote.option_id;
+        .all()) as { results: Array<{ option_id: string }> };
+      userVotes = (votes.results || []).map((v) => v.option_id);
+      userVote = userVotes[0] || null;
     }
 
     const now = new Date();
@@ -6858,7 +6876,7 @@ app.get('/api/polls/:postId', async (c) => {
       }
     }
 
-    return c.json({ poll, options, userVote, expired });
+    return c.json({ poll, options, userVote, userVotes, expired });
   } catch (error: unknown) {
     const err = error as { message?: string };
     console.error('Get poll error:', error);
@@ -6871,10 +6889,9 @@ app.post('/api/polls/:pollId/vote', requireAuth, async (c) => {
   try {
     const pollId = c.req.param('pollId');
     const userId = c.get('user')?.id;
-    const { optionId } = await c.req.json();
+    const body = (await c.req.json()) as { optionId?: string; optionIds?: string[] };
 
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
-    if (!optionId) return c.json({ error: 'optionId is required' }, 400);
 
     const poll = (await c.env.DB.prepare('SELECT * FROM polls WHERE id = ?').bind(pollId).first()) as Record<
       string,
@@ -6887,51 +6904,94 @@ app.post('/api/polls/:pollId/vote', requireAuth, async (c) => {
       return c.json({ error: 'Poll has ended' }, 400);
     }
 
-    const option = (await c.env.DB.prepare('SELECT * FROM poll_options WHERE id = ? AND poll_id = ?')
-      .bind(optionId, pollId)
-      .first()) as Record<string, unknown> | null;
+    const isMultipleChoice = !!poll.multiple_choice;
+    const rawIds = isMultipleChoice ? body.optionIds : body.optionId ? [body.optionId] : null;
+    if (!rawIds || rawIds.length === 0) {
+      return c.json({ error: 'optionId is required' }, 400);
+    }
+    const optionIds = [...new Set(rawIds)];
 
-    if (!option) return c.json({ error: 'Option not found' }, 404);
+    const optionPlaceholders = optionIds.map(() => '?').join(',');
+    const { results: validOptions } = (await c.env.DB.prepare(
+      `SELECT id FROM poll_options WHERE poll_id = ? AND id IN (${optionPlaceholders})`,
+    )
+      .bind(pollId, ...optionIds)
+      .all()) as { results: Array<{ id: string }> };
+    const validIds = new Set(validOptions.map((o) => o.id));
+    if (validIds.size !== optionIds.length) {
+      return c.json({ error: 'One or more options not found' }, 404);
+    }
 
-    const existingVote = (await c.env.DB.prepare('SELECT * FROM poll_votes WHERE poll_id = ? AND user_id = ?')
+    const existingVotes = (await c.env.DB.prepare(
+      'SELECT id, option_id FROM poll_votes WHERE poll_id = ? AND user_id = ?',
+    )
       .bind(pollId, userId)
-      .first()) as Record<string, unknown> | null;
+      .all()) as { results: Array<{ id: string; option_id: string }> };
+    const existing = existingVotes.results || [];
 
-    if (existingVote) {
-      if ((existingVote.option_id as string) === optionId) {
+    if (isMultipleChoice) {
+      const newSet = new Set(optionIds);
+      const toAdd = optionIds.filter((id) => !existing.some((e) => e.option_id === id));
+      const toRemove = existing.filter((e) => !newSet.has(e.option_id));
+
+      if (toAdd.length === 0 && toRemove.length === 0) {
+        return c.json({ error: 'Already voted for these options' }, 409);
+      }
+
+      const stmts: D1PreparedStatement[] = [];
+      for (const e of toRemove) {
+        stmts.push(c.env.DB.prepare('DELETE FROM poll_votes WHERE id = ?').bind(e.id));
+        stmts.push(
+          c.env.DB.prepare('UPDATE poll_options SET votes_count = MAX(0, votes_count - 1) WHERE id = ?').bind(
+            e.option_id,
+          ),
+        );
+      }
+      for (const id of toAdd) {
+        stmts.push(
+          c.env.DB.prepare('INSERT INTO poll_votes (id, poll_id, option_id, user_id) VALUES (?, ?, ?, ?)').bind(
+            crypto.randomUUID(),
+            pollId,
+            id,
+            userId,
+          ),
+        );
+        stmts.push(c.env.DB.prepare('UPDATE poll_options SET votes_count = votes_count + 1 WHERE id = ?').bind(id));
+      }
+      await c.env.DB.batch(stmts);
+    } else {
+      const existingVote = existing[0];
+      if (existingVote && optionIds.includes(existingVote.option_id)) {
         return c.json({ error: 'Already voted for this option' }, 409);
       }
-      // Change vote: batch all operations
-      await c.env.DB.batch([
-        c.env.DB.prepare('DELETE FROM poll_votes WHERE id = ?').bind(existingVote.id as string),
-        c.env.DB.prepare('UPDATE poll_options SET votes_count = MAX(0, votes_count - 1) WHERE id = ?').bind(
-          existingVote.option_id as string,
-        ),
+      const stmts: D1PreparedStatement[] = [];
+      if (existingVote) {
+        stmts.push(c.env.DB.prepare('DELETE FROM poll_votes WHERE id = ?').bind(existingVote.id));
+        stmts.push(
+          c.env.DB.prepare('UPDATE poll_options SET votes_count = MAX(0, votes_count - 1) WHERE id = ?').bind(
+            existingVote.option_id,
+          ),
+        );
+      }
+      stmts.push(
         c.env.DB.prepare('INSERT INTO poll_votes (id, poll_id, option_id, user_id) VALUES (?, ?, ?, ?)').bind(
           crypto.randomUUID(),
           pollId,
-          optionId,
+          optionIds[0],
           userId,
         ),
-        c.env.DB.prepare('UPDATE poll_options SET votes_count = votes_count + 1 WHERE id = ?').bind(optionId),
-      ]);
-    } else {
-      await c.env.DB.batch([
-        c.env.DB.prepare('INSERT INTO poll_votes (id, poll_id, option_id, user_id) VALUES (?, ?, ?, ?)').bind(
-          crypto.randomUUID(),
-          pollId,
-          optionId,
-          userId,
-        ),
-        c.env.DB.prepare('UPDATE poll_options SET votes_count = votes_count + 1 WHERE id = ?').bind(optionId),
-      ]);
+      );
+      stmts.push(
+        c.env.DB.prepare('UPDATE poll_options SET votes_count = votes_count + 1 WHERE id = ?').bind(optionIds[0]),
+      );
+      await c.env.DB.batch(stmts);
     }
 
     const { results: options } = await c.env.DB.prepare('SELECT * FROM poll_options WHERE poll_id = ? ORDER BY rowid')
       .bind(pollId)
       .all();
 
-    return c.json({ options, userVote: optionId });
+    return c.json({ options, userVote: optionIds[0] || null, userVotes: optionIds });
   } catch (error: unknown) {
     const err = error as { message?: string };
     console.error('Vote error:', error);
@@ -8605,12 +8665,14 @@ app.get('/api/posts/:id', async (c) => {
         .bind(poll.id as string)
         .all();
       let userVote: string | null = null;
+      let userVotes: string[] = [];
       const currentUserId = c.get('user')?.id;
       if (currentUserId) {
-        const vote = (await c.env.DB.prepare('SELECT option_id FROM poll_votes WHERE poll_id = ? AND user_id = ?')
+        const votes = (await c.env.DB.prepare('SELECT option_id FROM poll_votes WHERE poll_id = ? AND user_id = ?')
           .bind(poll.id as string, currentUserId)
-          .first()) as { option_id: string } | null;
-        if (vote) userVote = vote.option_id;
+          .all()) as { results: Array<{ option_id: string }> };
+        userVotes = (votes.results || []).map((v) => v.option_id);
+        userVote = userVotes[0] || null;
       }
       post.poll = {
         id: poll.id as string,
@@ -8619,6 +8681,7 @@ app.get('/api/posts/:id', async (c) => {
         endsAt: poll.ends_at as string | undefined,
         options,
         userVote,
+        userVotes,
       };
     }
 
@@ -8876,7 +8939,7 @@ async function enrichPostsWithPolls(posts: PostRow[], db: D1Database, currentUse
     }
   }
 
-  const userVotes = new Map<string, string>();
+  const userVotes = new Map<string, string[]>();
   if (currentUserId) {
     const votesResult = await db
       .prepare(`SELECT poll_id, option_id FROM poll_votes WHERE poll_id IN (${optPlaceholders}) AND user_id = ?`)
@@ -8884,7 +8947,9 @@ async function enrichPostsWithPolls(posts: PostRow[], db: D1Database, currentUse
       .all<{ poll_id: string; option_id: string }>();
     if (votesResult.success) {
       for (const v of votesResult.results) {
-        userVotes.set(v.poll_id, v.option_id);
+        const list = userVotes.get(v.poll_id) || [];
+        list.push(v.option_id);
+        userVotes.set(v.poll_id, list);
       }
     }
   }
@@ -8895,13 +8960,15 @@ async function enrichPostsWithPolls(posts: PostRow[], db: D1Database, currentUse
       const now = new Date();
       const endsAt = poll.ends_at || null;
       const expired = endsAt ? new Date(endsAt) <= now : false;
+      const userVotesForPoll = userVotes.get(poll.id) || [];
       post.poll = {
         id: poll.id,
         question: poll.question,
         multipleChoice: !!poll.multiple_choice,
         endsAt,
         options: optsByPoll.get(poll.id) || [],
-        userVote: userVotes.get(poll.id) || null,
+        userVote: userVotesForPoll[0] || null,
+        userVotes: userVotesForPoll,
         expired,
       };
     }
@@ -11909,7 +11976,7 @@ export async function onRequest(context: Record<string, unknown>) {
   // WebSocket 通知ストリーム — デスクトップアプリからの接続を受け付ける
   const url = new URL(request.url);
   if (url.pathname === '/api/ws/notifications' && request.headers.get('Upgrade') === 'websocket') {
-    const sessionToken = getSessionToken(request) || url.searchParams.get('token');
+    const sessionToken = getSessionToken(request);
     if (!sessionToken) return new Response('Unauthorized', { status: 401 });
     const session = await getSession(env, sessionToken);
     if (!session) return new Response('Unauthorized', { status: 401 });
@@ -11925,7 +11992,7 @@ export async function onRequest(context: Record<string, unknown>) {
     const roomId = url.searchParams.get('roomId');
     if (!roomId) return new Response('Missing roomId', { status: 400 });
 
-    const sessionToken = getSessionToken(request) || url.searchParams.get('token');
+    const sessionToken = getSessionToken(request);
     if (!sessionToken) return new Response('Unauthorized', { status: 401 });
     const session = await getSession(env, sessionToken);
     if (!session) return new Response('Unauthorized', { status: 401 });
@@ -11953,7 +12020,7 @@ export async function onRequest(context: Record<string, unknown>) {
     const gameId = url.searchParams.get('gameId');
     if (!roomId || !gameId) return new Response('Missing roomId or gameId', { status: 400 });
 
-    const sessionToken = getSessionToken(request) || url.searchParams.get('token');
+    const sessionToken = getSessionToken(request);
     if (!sessionToken) return new Response('Unauthorized', { status: 401 });
     const session = await getSession(env, sessionToken);
     if (!session) return new Response('Unauthorized', { status: 401 });

@@ -15,21 +15,25 @@ type Bindings = {
   DB: D1Database;
 };
 
-const SANDBOX_CSP = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:",
-  "style-src 'self' 'unsafe-inline' data: blob: https:",
-  "worker-src 'self' blob:",
-  "img-src 'self' data: blob: https:",
-  "media-src 'self' data: blob: https:",
-  "font-src 'self' data: https:",
-  "connect-src 'self' data: blob: https: wss:",
-  'frame-ancestors https://flaxia.app',
-].join('; ');
+function buildCsp(origin: string): string {
+  return [
+    "default-src 'self'",
+    // Sandboxed (opaque-origin) frames can't match 'self', so also allow the
+    // sandbox origin explicitly so games can still load their relative assets.
+    `script-src 'self' ${origin} 'unsafe-inline' 'unsafe-eval' data: blob:`,
+    `style-src 'self' ${origin} 'unsafe-inline' data: blob: https:`,
+    `worker-src 'self' ${origin} blob:`,
+    `img-src 'self' ${origin} data: blob: https:`,
+    `media-src 'self' ${origin} data: blob: https:`,
+    `font-src 'self' ${origin} data: https:`,
+    `connect-src 'self' ${origin} data: blob: https: wss:`,
+    'frame-ancestors https://flaxia.app',
+  ].join('; ');
+}
 
-function withCsp(response: Response): Response {
+function withCsp(response: Response, origin: string): Response {
   const headers = new Headers(response.headers);
-  headers.set('Content-Security-Policy', SANDBOX_CSP);
+  headers.set('Content-Security-Policy', buildCsp(origin));
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -53,12 +57,13 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
     }
 
     // 1. Try pre-extracted R2 files (fast path — persists across workers, CDN-cacheable)
+    const origin = new URL(c.req.url).origin;
     let response = await serveFileFromR2(c.env.BUCKET, postId, filePath);
-    if (response) return withCsp(response);
+    if (response) return withCsp(response, origin);
 
     // 2. Try in-memory cache (second fast path)
     response = await serveFileFromWvfs(postId, filePath);
-    if (response) return withCsp(response);
+    if (response) return withCsp(response, origin);
 
     // 3. Find the ZIP key in R2
     let zipKey: string | null = null;
@@ -117,6 +122,7 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
               'Access-Control-Allow-Origin': '*',
             },
           }),
+          origin,
         );
       }
     }
@@ -130,7 +136,7 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
         // Deliberately not a full-archive extraction: that would exceed the
         // CPU/subrequest limits on the free plan.
         c.executionCtx.waitUntil(persistFileToWvfsR2(c.env.BUCKET, postId, filePath));
-        return withCsp(response);
+        return withCsp(response, origin);
       }
     }
 
@@ -164,10 +170,11 @@ app.notFound(async (c) => {
   if (wvfsMatch && c.env.BUCKET) {
     const postId = wvfsMatch[1];
     const filePath = c.req.path.replace(/^\//, '') || 'index.html';
+    const origin = new URL(c.req.url).origin;
     let response = await serveFileFromR2(c.env.BUCKET, postId, filePath);
-    if (response) return withCsp(response);
+    if (response) return withCsp(response, origin);
     response = await serveFileFromWvfs(postId, filePath);
-    if (response) return withCsp(response);
+    if (response) return withCsp(response, origin);
   }
   return c.text('Not found', 404);
 });

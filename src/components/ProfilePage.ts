@@ -3,6 +3,7 @@ import { safeRemoveFromBody } from '../lib/dom-utils.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { navigate } from '../lib/navigate.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { Post } from '../types/post.js';
 import { createEditProfileModal } from './EditProfileModal.js';
@@ -436,12 +437,10 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
       showSignInPrompt(
         'follow',
         () => {
-          window.history.pushState({}, '', '/login');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/login');
         },
         () => {
-          window.history.pushState({}, '', '/register');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/register');
         },
       );
       return;

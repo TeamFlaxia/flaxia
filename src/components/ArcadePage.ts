@@ -3,6 +3,7 @@ import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { registerModal } from '../lib/modal-state.js';
+import { navigate } from '../lib/navigate.js';
 import { getReplyStyle } from '../lib/settings.js';
 import { buildTree } from '../lib/thread.js';
 import { showToast } from '../lib/toast.js';
@@ -874,48 +875,6 @@ export class ArcadePage {
     return container;
   }
 
-  private async handleCaptureScreenshot(): Promise<void> {
-    const game = this.games[this.currentIndex];
-    const client = this.captureClient;
-    if (!game || !client || this.captureBusy) return;
-
-    this.captureBusy = true;
-    try {
-      showToast(t('arcade.capture_processing'));
-      const blob = await client.requestFrame();
-      const card = await client.composeScoreCard(blob, {
-        title: game.title,
-        username: game.username,
-        footer: t('arcade.capture_screenshot'),
-      });
-      this.openCaptureShareModal(card, `flaxia-${game.id}-capture.png`, 'image/png');
-    } catch (error) {
-      console.warn('Screenshot capture failed:', error);
-      showToast(t('arcade.capture_screenshot_failed'), true);
-    } finally {
-      this.captureBusy = false;
-    }
-  }
-
-  private async handleCaptureClip(): Promise<void> {
-    const game = this.games[this.currentIndex];
-    const client = this.captureClient;
-    if (!game || !client || this.captureBusy) return;
-
-    this.captureBusy = true;
-    try {
-      showToast(t('arcade.capture_processing'));
-      const frames = await client.requestGif();
-      const gif = client.encodeGif(frames);
-      this.openCaptureShareModal(gif, `flaxia-${game.id}-clip.gif`, 'image/gif');
-    } catch (error) {
-      console.warn('Clip capture failed:', error);
-      showToast(t('arcade.capture_clip_failed'), true);
-    } finally {
-      this.captureBusy = false;
-    }
-  }
-
   private handlePostScore(score: number, label: string): void {
     const game = this.games[this.currentIndex];
     const client = this.captureClient;
@@ -1326,12 +1285,10 @@ export class ArcadePage {
       showSignInPrompt(
         'fresh',
         () => {
-          window.history.pushState({}, '', '/login');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/login');
         },
         () => {
-          window.history.pushState({}, '', '/register');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/register');
         },
       );
       return;
@@ -1375,12 +1332,10 @@ export class ArcadePage {
       showSignInPrompt(
         'bookmark',
         () => {
-          window.history.pushState({}, '', '/login');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/login');
         },
         () => {
-          window.history.pushState({}, '', '/register');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/register');
         },
       );
       return;
@@ -1420,12 +1375,10 @@ export class ArcadePage {
       showSignInPrompt(
         'report',
         () => {
-          window.history.pushState({}, '', '/login');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/login');
         },
         () => {
-          window.history.pushState({}, '', '/register');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/register');
         },
       );
       return;
@@ -1827,21 +1780,9 @@ export class ArcadePage {
       } else if (game.type === 'dos' && game.payloadKey) {
         const handle = await executeDos(game.postId, container, `/api/zip/${game.postId}`, true);
         this.currentGameHandle = handle;
-      } else if (game.type === 'html5') {
-        // HTML5 games would use iframe
-        const iframe = document.createElement('iframe');
-        iframe.src = `/api/games/html5/${game.id}`;
-        iframe.style.cssText = `
-          width: 100%;
-          height: 100%;
-          border: none;
-        `;
-        container.appendChild(iframe);
-        this.currentGameHandle = {
-          destroy: () => {
-            iframe.remove();
-          },
-        };
+      } else {
+        // No known execution path for this game type
+        throw new Error(`Unsupported game type: ${game.type}`);
       }
       this.setupCapture(game, container);
       this.hideLoading();

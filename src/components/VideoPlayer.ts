@@ -334,19 +334,24 @@ export function createVideoPlayer(props: VideoPlayerProps): HTMLElement {
     container.classList.add('video-player--scrubbing');
   });
 
-  document.addEventListener('mousemove', (e) => {
+  const seekAbort = new AbortController();
+
+  const handleSeekMove = (e: MouseEvent) => {
     if (isDragging) {
       seekTo(e.clientX);
     }
-  });
+  };
 
-  document.addEventListener('mouseup', () => {
+  const handleSeekUp = () => {
     if (isDragging) {
       isDragging = false;
       container.classList.remove('video-player--scrubbing');
       resetHideTimer();
     }
-  });
+  };
+
+  document.addEventListener('mousemove', handleSeekMove, { signal: seekAbort.signal });
+  document.addEventListener('mouseup', handleSeekUp, { signal: seekAbort.signal });
 
   seekbarTrack.addEventListener(
     'touchstart',
@@ -406,9 +411,13 @@ export function createVideoPlayer(props: VideoPlayerProps): HTMLElement {
     }
   });
 
-  document.addEventListener('fullscreenchange', () => {
-    fsBtn.innerHTML = document.fullscreenElement ? ICONS.fullscreenExit : ICONS.fullscreen;
-  });
+  document.addEventListener(
+    'fullscreenchange',
+    () => {
+      fsBtn.innerHTML = document.fullscreenElement ? ICONS.fullscreenExit : ICONS.fullscreen;
+    },
+    { signal: seekAbort.signal },
+  );
 
   // --- Controls show/hide ---
   container.addEventListener('mousemove', showControls);
@@ -468,6 +477,16 @@ export function createVideoPlayer(props: VideoPlayerProps): HTMLElement {
 
   updatePlayButton();
   showControls();
+
+  // Abort document-level listeners once the player is removed from the DOM
+  // (otherwise mousemove/mouseup/fullscreenchange handlers leak).
+  const removalObserver = new MutationObserver(() => {
+    if (!document.contains(container)) {
+      seekAbort.abort();
+      removalObserver.disconnect();
+    }
+  });
+  removalObserver.observe(document.body, { childList: true, subtree: true });
 
   return container;
 }
