@@ -1,3 +1,4 @@
+import { navigate } from '../lib/navigate.js';
 import { PostNode } from '../lib/thread.js';
 import { Post } from '../types/post.js';
 import { createPostCard, PostCard as PostCardClass } from './PostCard.js';
@@ -170,12 +171,10 @@ export class ReplyNode {
       showSignInPrompt(
         'reply',
         () => {
-          window.history.pushState({}, '', '/login');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/login');
         },
         () => {
-          window.history.pushState({}, '', '/register');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/register');
         },
       );
       return;

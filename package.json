@@ -10,9 +10,9 @@
     "typecheck": "tsc --noEmit",
     "dev": "npm run migrate:local && vite build && wrangler pages dev dist --port 8787 --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000 --do NOTIFICATION_STREAM=NotificationStream@do-worker --do MULTIPLAYER_ROOM=MultiplayerRoom@multiplayer-worker --do MATCHMAKER=Matchmaker@multiplayer-worker",
     "dev:hot": "npm run migrate:local && (trap 'kill 0 2>/dev/null' EXIT; vite build --watch & wrangler pages dev dist --port 8787 --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000 --do NOTIFICATION_STREAM=NotificationStream@do-worker & wait)",
-    "dev:api": "npm run migrate:local && wrangler pages dev dist --port 8787 --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000 --do NOTIFICATION_STREAM=NotificationStream@do-worker",
+    "dev:api": "npm run migrate:local && wrangler pages dev dist --port 8787 --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000 --do NOTIFICATION_STREAM=NotificationStream@do-worker --do MULTIPLAYER_ROOM=MultiplayerRoom@multiplayer-worker --do MATCHMAKER=Matchmaker@multiplayer-worker",
     "dev:local": "vite --host",
-    "dev:all": "npm run migrate:local && rm -rf dist && mkdir dist && (trap 'kill 0 2>/dev/null' EXIT; vite --host & wrangler pages dev dist --port 8787 --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000 --do NOTIFICATION_STREAM=NotificationStream@do-worker & wait)",
+    "dev:all": "npm run migrate:local && rm -rf dist && mkdir dist && (trap 'kill 0 2>/dev/null' EXIT; vite --host & wrangler pages dev dist --port 8787 --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000 --do NOTIFICATION_STREAM=NotificationStream@do-worker --do MULTIPLAYER_ROOM=MultiplayerRoom@multiplayer-worker --do MATCHMAKER=Matchmaker@multiplayer-worker & wait)",
     "build": "npm run build:sdk && npm run build:capture && vite build",
     "build:sdk": "vite build --config packages/multiplayer/vite.config.ts && node scripts/embed-multiplayer-sdk.mjs",
     "build:capture": "vite build --config packages/capture/vite.config.ts && node scripts/embed-capture-bridge.mjs",
@@ -37,7 +37,7 @@
     "test:zip-validation": "node --test --experimental-strip-types tests/zip-validation.test.ts",
     "test:signature": "node --test --experimental-strip-types tests/signature.test.ts",
     "test:unit": "node --test --experimental-strip-types tests/file-extensions.test.ts tests/zip-validation.test.ts tests/signature.test.ts",
-    "dev:test": "wrangler pages dev dist --d1=DB_TEST --port 8788 --binding BASE_URL=http://localhost:8788 --do NOTIFICATION_STREAM=NotificationStream@do-worker --do MULTIPLAYER_ROOM=MultiplayerRoom@multiplayer-worker --do MATCHMAKER=Matchmaker@multiplayer-worker",
+    "dev:test": "wrangler pages dev dist --d1 DB=DB_TEST --port 8788 --binding BASE_URL=http://localhost:8788 --do NOTIFICATION_STREAM=NotificationStream@do-worker --do MULTIPLAYER_ROOM=MultiplayerRoom@multiplayer-worker --do MATCHMAKER=Matchmaker@multiplayer-worker",
     "tauri": "tauri",
     "tauri:dev": "node scripts/merge-tauri-config.mjs && tauri dev",
     "tauri:build": "node scripts/merge-tauri-config.mjs && tauri build",
@@ -69,7 +69,6 @@
     "@flaxia/sdk": "^0.2.0",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-notification": "^2.3.3",
-    "better-auth": "^1.5.4",
     "dompurify": "^3.0.0",
     "fflate": "^0.8.2",
     "gifenc": "^1.0.3",
@@ -99,7 +98,6 @@
     "vite-plugin-static-copy": "^3.3.0",
     "wrangler": "^4.73.0"
   },
-  "packageManager": "pnpm@8.0.0",
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,html,css,md}": [
       "biome check --write --no-errors-on-unmatched"

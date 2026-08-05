@@ -86,22 +86,36 @@ export function isParentMessage(msg: unknown): msg is ParentMessage {
     case 'CAPTURE_ERROR':
       return typeof msg.requestId === 'string' && typeof msg.message === 'string';
     case 'MULTIPLAYER_STATE':
-      return typeof msg.gameId === 'string';
+      return typeof msg.gameId === 'string' && isRecord(msg.state) && typeof msg.timestamp === 'number';
     case 'MULTIPLAYER_ROOM_STATE':
-      return isRecord(msg.room);
+      return (
+        isRecord(msg.room) &&
+        typeof msg.room.roomId === 'string' &&
+        typeof msg.room.gameId === 'string' &&
+        Array.isArray(msg.players)
+      );
     case 'MULTIPLAYER_PLAYER_JOINED':
-      return isRecord(msg.player);
+      return isRecord(msg.player) && typeof msg.player.userId === 'string';
     case 'MULTIPLAYER_PLAYER_LEFT':
+      return typeof msg.userId === 'string';
     case 'MULTIPLAYER_PLAYER_READY':
+      return typeof msg.userId === 'string' && typeof msg.ready === 'boolean';
     case 'MULTIPLAYER_GAME_START':
-    case 'MULTIPLAYER_GAME_OVER':
-    case 'MULTIPLAYER_PLAYER_INPUT':
-    case 'MULTIPLAYER_HOST_CHANGED':
-    case 'MULTIPLAYER_CHAT':
-    case 'MULTIPLAYER_ERROR':
-    case 'MULTIPLAYER_P2P_STATE':
-    case 'MULTIPLAYER_PEER_DATA':
       return true;
+    case 'MULTIPLAYER_GAME_OVER':
+      return true;
+    case 'MULTIPLAYER_PLAYER_INPUT':
+      return typeof msg.userId === 'string' && 'input' in msg;
+    case 'MULTIPLAYER_HOST_CHANGED':
+      return typeof msg.newHostId === 'string';
+    case 'MULTIPLAYER_CHAT':
+      return typeof msg.userId === 'string' && typeof msg.username === 'string' && typeof msg.message === 'string';
+    case 'MULTIPLAYER_ERROR':
+      return typeof msg.code === 'string' && typeof msg.message === 'string';
+    case 'MULTIPLAYER_P2P_STATE':
+      return msg.state === 'connected' || msg.state === 'disconnected' || msg.state === 'failed';
+    case 'MULTIPLAYER_PEER_DATA':
+      return 'data' in msg;
     default:
       return false;
   }
@@ -124,15 +138,21 @@ export function isSandboxMessage(msg: unknown): msg is SandboxMessage {
     case 'CAPTURE_GIF':
       return typeof msg.requestId === 'string';
     case 'MULTIPLAYER_CONNECT':
-      return typeof msg.gameId === 'string';
+      return typeof msg.gameId === 'string' && (msg.roomId === undefined || typeof msg.roomId === 'string');
     case 'MULTIPLAYER_DISCONNECT':
-    case 'MULTIPLAYER_INPUT':
-    case 'MULTIPLAYER_START_GAME':
-    case 'MULTIPLAYER_SET_READY':
-    case 'MULTIPLAYER_CHAT':
-    case 'MULTIPLAYER_REQUEST_STATE':
-    case 'MULTIPLAYER_SEND_PEER_DATA':
       return true;
+    case 'MULTIPLAYER_INPUT':
+      return 'input' in msg && typeof msg.timestamp === 'number';
+    case 'MULTIPLAYER_START_GAME':
+      return true;
+    case 'MULTIPLAYER_SET_READY':
+      return typeof msg.ready === 'boolean';
+    case 'MULTIPLAYER_CHAT':
+      return typeof msg.message === 'string' && msg.message.length <= 500;
+    case 'MULTIPLAYER_REQUEST_STATE':
+      return true;
+    case 'MULTIPLAYER_SEND_PEER_DATA':
+      return 'data' in msg;
     default:
       return false;
   }

@@ -68,10 +68,10 @@ function resolveCanvasSource(canvas: HTMLCanvasElement): HTMLCanvasElement | Off
   HTMLCanvasElement.prototype.getContext = function (
     this: HTMLCanvasElement,
     contextId: string,
-    options?: any,
+    options?: Record<string, unknown>,
   ): RenderingContext | null {
     if (contextId === 'webgl' || contextId === 'webgl2' || contextId === 'experimental-webgl') {
-      options = { ...(options as Record<string, unknown> | undefined), preserveDrawingBuffer: true };
+      options = { ...options, preserveDrawingBuffer: true };
     }
     const ctx = originalGetContext.call(this, contextId, options);
     if (ctx) trackWebGLContext(ctx);
@@ -94,16 +94,20 @@ function resolveCanvasSource(canvas: HTMLCanvasElement): HTMLCanvasElement | Off
     const originalOffscreenGetContext = OffscreenCanvasCtor.prototype.getContext as (
       this: OffscreenCanvas,
       contextId: string,
-      options?: any,
+      options?: Record<string, unknown>,
     ) =>
       | OffscreenCanvasRenderingContext2D
       | ImageBitmapRenderingContext
       | WebGLRenderingContext
       | WebGL2RenderingContext
       | null;
-    OffscreenCanvasCtor.prototype.getContext = function (this: OffscreenCanvas, contextId: string, options?: any) {
+    OffscreenCanvasCtor.prototype.getContext = function (
+      this: OffscreenCanvas,
+      contextId: string,
+      options?: Record<string, unknown>,
+    ) {
       if (contextId === 'webgl' || contextId === 'webgl2' || contextId === 'experimental-webgl') {
-        options = { ...(options as Record<string, unknown> | undefined), preserveDrawingBuffer: true };
+        options = { ...options, preserveDrawingBuffer: true };
       }
       const ctx = originalOffscreenGetContext.call(this, contextId, options);
       if (ctx) trackWebGLContext(ctx);

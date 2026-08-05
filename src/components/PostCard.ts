@@ -3,6 +3,7 @@ import { getLocale, t } from '../lib/i18n.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { loadLinkPreview } from '../lib/link-preview.js';
 import { registerModal } from '../lib/modal-state.js';
+import { navigate } from '../lib/navigate.js';
 import { useSandboxBridge } from '../lib/sandbox-bridge.js';
 import { getShowNsfw } from '../lib/settings.js';
 import { PostCardMode, PostCardProps } from '../types/post.js';
@@ -540,12 +541,10 @@ export class PostCard {
       showSignInPrompt(
         'fresh',
         () => {
-          window.history.pushState({}, '', '/login');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/login');
         },
         () => {
-          window.history.pushState({}, '', '/register');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/register');
         },
       );
       return;
@@ -604,12 +603,10 @@ export class PostCard {
       showSignInPrompt(
         'bookmark',
         () => {
-          window.history.pushState({}, '', '/login');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/login');
         },
         () => {
-          window.history.pushState({}, '', '/register');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/register');
         },
       );
       return;
@@ -662,12 +659,10 @@ export class PostCard {
       showSignInPrompt(
         'reply',
         () => {
-          window.history.pushState({}, '', '/login');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/login');
         },
         () => {
-          window.history.pushState({}, '', '/register');
-          window.dispatchEvent(new PopStateEvent('popstate'));
+          navigate('/register');
         },
       );
       return;
@@ -980,12 +975,10 @@ export class PostCard {
           showSignInPrompt(
             'block',
             () => {
-              window.history.pushState({}, '', '/login');
-              window.dispatchEvent(new PopStateEvent('popstate'));
+              navigate('/login');
             },
             () => {
-              window.history.pushState({}, '', '/register');
-              window.dispatchEvent(new PopStateEvent('popstate'));
+              navigate('/register');
             },
           );
           return;
@@ -1023,12 +1016,10 @@ export class PostCard {
           showSignInPrompt(
             'report',
             () => {
-              window.history.pushState({}, '', '/login');
-              window.dispatchEvent(new PopStateEvent('popstate'));
+              navigate('/login');
             },
             () => {
-              window.history.pushState({}, '', '/register');
-              window.dispatchEvent(new PopStateEvent('popstate'));
+              navigate('/register');
             },
           );
           return;
@@ -1728,6 +1719,7 @@ export class PostCard {
     id: string;
     question: string;
     userVote: string | null;
+    userVotes?: string[];
     expired: boolean;
     multipleChoice: boolean;
     endsAt?: string | null;
@@ -1737,10 +1729,11 @@ export class PostCard {
       (sum: number, opt: { id: string; label: string; votes_count: number }) => sum + Number(opt.votes_count || 0),
       0,
     );
-    const hasVoted = !!poll.userVote;
+    const userVotes = poll.userVotes?.length ? poll.userVotes : poll.userVote ? [poll.userVote] : [];
+    const hasVoted = userVotes.length > 0;
     const isExpired = poll.expired;
     const showResults = hasVoted || isExpired;
-    const canChangeVote = hasVoted && !isExpired;
+    const canChangeVote = hasVoted && !isExpired && poll.multipleChoice;
 
     const container = document.createElement('div');
     container.className = 'post-poll';
@@ -1759,19 +1752,21 @@ export class PostCard {
       container.appendChild(endedBadge);
     }
 
+    const isOwnVote = (optId: string) => userVotes.includes(optId);
+
     poll.options.forEach((opt: { id: string; label: string; votes_count: number }) => {
       const optEl = document.createElement('div');
       optEl.className = 'poll-option';
       const pct = totalVotes > 0 ? Math.round((opt.votes_count / totalVotes) * 100) : 0;
-      const isOwnVote = opt.id === poll.userVote;
-      const clickable = !isExpired && !isOwnVote;
+      const own = isOwnVote(opt.id);
+      const clickable = !isExpired && !own && !poll.multipleChoice;
       optEl.style.cssText = `
         position: relative; padding: 8px 12px; margin-bottom: 6px; border-radius: 6px;
         cursor: ${clickable ? 'pointer' : 'default'};
         background: var(--bg-primary); overflow: hidden;
         transition: opacity 0.2s; border: 1px solid var(--border);
         ${showResults || opt.votes_count > 0 ? '' : 'opacity: 0.9;'}
-        ${isOwnVote ? 'border-color: var(--accent);' : ''}
+        ${own ? 'border-color: var(--accent);' : ''}
       `;
 
       const bar = document.createElement('div');
@@ -1786,17 +1781,45 @@ export class PostCard {
 
       const label = document.createElement('span');
       label.className = 'poll-option-label';
-      label.style.cssText = `position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center;`;
+      label.style.cssText = `position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center; gap: 8px;`;
+      const selector = document.createElement('span');
       const textSpan = document.createElement('span');
       textSpan.textContent = opt.label;
-      const countSpan = document.createElement('span');
-      countSpan.style.cssText = `font-size: 0.8rem; color: var(--text-muted); margin-left: 8px;`;
-      countSpan.textContent = showResults ? `${pct}%` : '';
+      label.appendChild(selector);
       label.appendChild(textSpan);
-      label.appendChild(countSpan);
+      let countSpan: HTMLSpanElement | null = null;
+      if (showResults) {
+        countSpan = document.createElement('span');
+        countSpan.style.cssText = `font-size: 0.8rem; color: var(--text-muted); margin-left: auto;`;
+        countSpan.textContent = `${pct}%`;
+        label.appendChild(countSpan);
+      }
       optEl.appendChild(label);
 
-      if (clickable) {
+      if (poll.multipleChoice) {
+        optEl.dataset.pollOptionId = opt.id;
+        if (own) optEl.dataset.pollSelected = '1';
+        selector.textContent = own ? '☑' : '☐';
+        selector.style.cssText = `font-size: 1rem; color: ${own ? 'var(--accent)' : 'var(--text-muted)'};`;
+        if (!isExpired) {
+          optEl.style.cursor = 'pointer';
+          optEl.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const currentlyOwn = optEl.dataset.pollSelected === '1';
+            if (currentlyOwn) {
+              delete optEl.dataset.pollSelected;
+              selector.textContent = '☐';
+              selector.style.color = 'var(--text-muted)';
+              optEl.style.borderColor = 'var(--border)';
+            } else {
+              optEl.dataset.pollSelected = '1';
+              selector.textContent = '☑';
+              selector.style.color = 'var(--accent)';
+              optEl.style.borderColor = 'var(--accent)';
+            }
+          });
+        }
+      } else if (clickable) {
         optEl.addEventListener('click', async (e) => {
           e.stopPropagation();
           try {
@@ -1817,22 +1840,81 @@ export class PostCard {
             const data = (await response.json()) as {
               options: Array<{ id: string; label: string; votes_count: number }>;
               userVote: string | null;
+              userVotes: string[];
             };
-            const newPoll = { ...poll, options: data.options, userVote: data.userVote };
+            const newPoll = {
+              ...poll,
+              options: data.options,
+              userVote: data.userVote,
+              userVotes: data.userVotes,
+            };
             container.replaceWith(this.createPollElement(newPoll));
-          } catch (e) {
-            console.error('Vote failed:', e);
+          } catch (err) {
+            console.error('Vote failed:', err);
           }
         });
         optEl.addEventListener('mouseenter', () => {
           optEl.style.borderColor = 'var(--accent)';
         });
         optEl.addEventListener('mouseleave', () => {
-          optEl.style.borderColor = 'var(--border)';
+          optEl.style.borderColor = own ? 'var(--accent)' : 'var(--border)';
         });
       }
       container.appendChild(optEl);
     });
+
+    // Submit button for multiple-choice polls
+    if (poll.multipleChoice && !isExpired) {
+      const submitBtn = document.createElement('button');
+      submitBtn.style.cssText = `
+        margin-top: 6px; padding: 6px 14px; border: none; border-radius: 6px;
+        background: var(--accent); color: #fff; font-size: 0.85rem; cursor: pointer;
+      `;
+      submitBtn.textContent = hasVoted && canChangeVote ? t('poll.update_vote') : t('poll.vote_btn');
+      submitBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        submitBtn.disabled = true;
+        try {
+          const optionIds: string[] = [];
+          container.querySelectorAll('.poll-option').forEach((el) => {
+            if (el instanceof HTMLElement && el.dataset.pollSelected === '1' && el.dataset.pollOptionId) {
+              optionIds.push(el.dataset.pollOptionId);
+            }
+          });
+          if (optionIds.length === 0) {
+            submitBtn.disabled = false;
+            return;
+          }
+          const response = await fetch(`/api/polls/${poll.id}/vote`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ optionIds }),
+          });
+          if (!response.ok) {
+            const errBody = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+            if (errBody?.error) console.error(t('poll.vote_error'), errBody.error);
+            submitBtn.disabled = false;
+            return;
+          }
+          const data = (await response.json()) as {
+            options: Array<{ id: string; label: string; votes_count: number }>;
+            userVotes: string[];
+          };
+          const newPoll = {
+            ...poll,
+            options: data.options,
+            userVotes: data.userVotes,
+            userVote: data.userVotes[0] || null,
+          };
+          container.replaceWith(this.createPollElement(newPoll));
+        } catch (err) {
+          submitBtn.disabled = false;
+          console.error('Vote failed:', err);
+        }
+      });
+      container.appendChild(submitBtn);
+    }
 
     const footer = document.createElement('div');
     footer.style.cssText = `font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;`;
