@@ -181,8 +181,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (pushWs) return;
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const sessionToken = localStorage.getItem('flaxia_session');
-      const url = `${protocol}//${window.location.host}/api/ws/notifications${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`;
+      const url = `${protocol}//${window.location.host}/api/ws/notifications`;
 
       console.log('[push] connecting to', url);
       try {
@@ -1276,6 +1275,17 @@ document.addEventListener('DOMContentLoaded', async () => {
           groupChatView = null;
         }
       }
+
+      // Destroy all LeftNav instances so their window listeners and DOM are
+      // released (prevents the previously-unbounded leftNavInstances leak).
+      leftNavInstances.forEach((ln) => {
+        try {
+          ln.destroy();
+        } catch {
+          // ignore teardown errors for stale instances
+        }
+      });
+      leftNavInstances.clear();
 
       // Clear app content
       showPageLoader();
@@ -2840,7 +2850,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       try {
         const { createCallUI } = await import('./components/CallUI.js');
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${wsProtocol}//${window.location.host}/api/ws/call?roomId=${callId}&token=`;
+        const wsUrl = `${wsProtocol}//${window.location.host}/api/ws/call?roomId=${callId}`;
 
         const ui = createCallUI({
           roomId: callId,
@@ -2878,13 +2888,13 @@ document.addEventListener('DOMContentLoaded', async () => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ groupId, type: 'audio' }),
           });
-          const data: any = await res.json();
-          if (data.error) {
+          const data = (await res.json()) as { error?: string; roomId?: string };
+          if (data.error || !data.roomId) {
             console.error('Failed to start group call:', data.error);
             return;
           }
           const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-          const wsUrl = `${wsProtocol}//${window.location.host}/api/ws/call?roomId=${data.roomId}&token=`;
+          const wsUrl = `${wsProtocol}//${window.location.host}/api/ws/call?roomId=${data.roomId}`;
           const { createCallUI } = await import('./components/CallUI.js');
           const ui = createCallUI({
             roomId: data.roomId,

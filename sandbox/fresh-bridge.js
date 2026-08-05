@@ -1,5 +1,5 @@
 (function () {
-  const O = typeof FRESH_PARENT_ORIGIN !== 'undefined' ? FRESH_PARENT_ORIGIN : 'https://flaxia.com';
+  const O = typeof FRESH_PARENT_ORIGIN !== 'undefined' ? FRESH_PARENT_ORIGIN : 'https://flaxia.app';
   const B = {
     requestFullscreen: function () {
       try {
