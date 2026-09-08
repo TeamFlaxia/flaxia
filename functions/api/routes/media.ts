@@ -1,6 +1,5 @@
 import { Hono } from 'hono';
 import { validateImageDimensions } from '../../lib/image-dimensions';
-import { verifyMediaToken } from '../../lib/media-signing';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import {
   allowedOrigins,
@@ -16,53 +15,11 @@ import type { Bindings, Variables } from '../types';
 const media = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 /**
- * Cache-Control for public media (avatars, headers, icons, stamps).
- * CDN cacheable (`public` + `s-maxage`) since these keys are content-hash
- * based and never require a signed token.
+ * Cache-Control for media responses.
+ * CDN cacheable (`public` + `s-maxage`) since media keys are content-hash
+ * based and do not require a signed token.
  */
-const PUBLIC_MEDIA_CACHE_CONTROL = 'public, max-age=86400, s-maxage=86400';
-
-/**
- * Cache-Control for protected media (post images).
- * `private, no-store` prevents browser caching entirely to avoid serving
- * expired token-authenticated images from cache. Each request requires fresh
- * token verification. `s-maxage=0` ensures CDN/proxy layers also never cache
- * token-authenticated responses.
- */
-const PROTECTED_MEDIA_CACHE_CONTROL = 'private, max-age=0, s-maxage=0, no-store';
-
-/**
- * Check if a media key is a public resource (avatar, header, icon) that
- * does not require a signed token. These are profile-level images that
- * are already visible to all users.
- */
-function isPublicMediaKey(key: string): boolean {
-  return (
-    key === 'default-avatar' ||
-    key.startsWith('avatar/') ||
-    key.startsWith('header/') ||
-    key.startsWith('server/icon/') ||
-    key.startsWith('stamp/')
-  );
-}
-
-/**
- * Verify a signed token from the query string.
- * Returns true if valid, false otherwise.
- * Skips verification if MEDIA_SIGNING_SECRET is not configured (dev mode).
- * Skips verification for public media keys (avatars, headers, icons).
- */
-async function verifyToken(c: any, key: string): Promise<boolean> {
-  // Public media (avatars, headers, icons) do not require signed tokens
-  if (isPublicMediaKey(key)) return true;
-
-  // Skip verification in development if secret is not configured
-  if (!c.env.MEDIA_SIGNING_SECRET) return true;
-
-  const token = c.req.query('token');
-  if (!token) return false;
-  return verifyMediaToken(c.env, key, token);
-}
+const MEDIA_CACHE_CONTROL = 'public, max-age=86400, s-maxage=86400';
 
 // PUT /api/upload/:key — direct file upload endpoint (requires auth + ownership of pending post)
 media.put('/upload/*', requireAuth, async (c) => {
@@ -195,11 +152,6 @@ media.get('/images/*', async (c) => {
       return c.json({ error: 'Rate limit exceeded' }, 429);
     }
 
-    // Verify signed token
-    if (!(await verifyToken(c, key))) {
-      return c.json({ error: 'Invalid or expired token' }, 403);
-    }
-
     if (!c.env.BUCKET) {
       return c.json({ error: 'Storage not available' }, 500);
     }
@@ -219,7 +171,7 @@ media.get('/images/*', async (c) => {
         return new Response(defaultAvatarSvg, {
           headers: {
             'Content-Type': 'image/svg+xml',
-            'Cache-Control': PUBLIC_MEDIA_CACHE_CONTROL,
+            'Cache-Control': MEDIA_CACHE_CONTROL,
             'Access-Control-Allow-Origin': 'https://flaxia.app',
             ...MEDIA_SECURITY_HEADERS,
           },
@@ -232,14 +184,11 @@ media.get('/images/*', async (c) => {
     // Get content type from object metadata or default to image/jpeg
     const contentType = object.httpMetadata?.contentType || 'image/jpeg';
 
-    // Return the image with proper headers.
-    // Public media (avatars, headers, icons, stamps) use CDN-cacheable
-    // headers; protected post images use browser-only cache aligned with
-    // the image token TTL so cached URLs never outlive their token.
+    // Return the image with proper headers
     return new Response(object.body, {
       headers: {
         'Content-Type': contentType,
-        'Cache-Control': isPublicMediaKey(key) ? PUBLIC_MEDIA_CACHE_CONTROL : PROTECTED_MEDIA_CACHE_CONTROL,
+        'Cache-Control': MEDIA_CACHE_CONTROL,
         'Access-Control-Allow-Origin': 'https://flaxia.app',
         'Content-Disposition': 'inline',
         ...MEDIA_SECURITY_HEADERS,
@@ -264,11 +213,6 @@ media.get('/audio/*', async (c) => {
     const clientIp = getClientIp(c.req.raw);
     if (!(await checkRateLimit(c.env.CACHE, `aud:${clientIp}`, { maxRequests: 60, windowSeconds: 60 }))) {
       return c.json({ error: 'Rate limit exceeded' }, 429);
-    }
-
-    // Verify signed token
-    if (!(await verifyToken(c, key))) {
-      return c.json({ error: 'Invalid or expired token' }, 403);
     }
 
     if (!c.env.BUCKET) {
@@ -327,11 +271,6 @@ media.get('/video/*', async (c) => {
       return c.json({ error: 'Rate limit exceeded' }, 429);
     }
 
-    // Verify signed token
-    if (!(await verifyToken(c, key))) {
-      return c.json({ error: 'Invalid or expired token' }, 403);
-    }
-
     if (!c.env.BUCKET) {
       return c.json({ error: 'Storage not available' }, 500);
     }
@@ -380,11 +319,6 @@ media.get('/zip/:postId', async (c) => {
     const clientIp = getClientIp(c.req.raw);
     if (!(await checkRateLimit(c.env.CACHE, `zip:${clientIp}`, { maxRequests: 60, windowSeconds: 60 }))) {
       return c.json({ error: 'Rate limit exceeded' }, 429);
-    }
-
-    // Verify signed token
-    if (!(await verifyToken(c, postId))) {
-      return c.json({ error: 'Invalid or expired token' }, 403);
     }
 
     if (!c.env.BUCKET) {
@@ -487,7 +421,7 @@ media.get('/thumbnail/:id', async (c) => {
     return new Response(object.body, {
       headers: {
         'Content-Type': contentType,
-        'Cache-Control': PUBLIC_MEDIA_CACHE_CONTROL,
+        'Cache-Control': MEDIA_CACHE_CONTROL,
         'Access-Control-Allow-Origin': 'https://flaxia.app',
         ...MEDIA_SECURITY_HEADERS,
       },
@@ -511,11 +445,6 @@ media.get('/swf/:postId', async (c) => {
     const clientIp = getClientIp(c.req.raw);
     if (!(await checkRateLimit(c.env.CACHE, `swf:${clientIp}`, { maxRequests: 60, windowSeconds: 60 }))) {
       return c.json({ error: 'Rate limit exceeded' }, 429);
-    }
-
-    // Verify signed token
-    if (!(await verifyToken(c, postId))) {
-      return c.json({ error: 'Invalid or expired token' }, 403);
     }
 
     if (!c.env.BUCKET) {

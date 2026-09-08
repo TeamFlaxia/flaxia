@@ -1,6 +1,5 @@
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
-import { getSignedMediaUrl } from '../lib/media-token.js';
 import { updateMetaTags } from '../lib/seo-meta.js';
 import { getReplyStyle } from '../lib/settings.js';
 import { buildTree } from '../lib/thread.js';
@@ -703,7 +702,7 @@ export class ThreadPage {
 
     let ogImage: string | undefined;
     if (imageKey) {
-      ogImage = `${window.location.origin}${await getSignedMediaUrl('image', imageKey).catch(() => `/api/images/${imageKey}`)}`;
+      ogImage = `${window.location.origin}/api/images/${imageKey}`;
     }
 
     updateMetaTags({

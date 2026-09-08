@@ -1,6 +1,5 @@
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
-import { getSignedMediaUrl } from '../lib/media-token.js';
 import { Post, PostCardMode } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
@@ -592,9 +591,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         `;
         if (post.thumbnail_key) {
           const img = document.createElement('img');
-          getSignedMediaUrl('image', post.thumbnail_key).then((url) => {
-            img.src = url;
-          });
+          img.src = `/api/images/${post.thumbnail_key}?_=${Date.now()}`;
           img.loading = 'lazy';
           img.width = 180;
           img.height = 101;
@@ -727,9 +724,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         `;
         if (post.thumbnail_key) {
           const img = document.createElement('img');
-          getSignedMediaUrl('image', post.thumbnail_key).then((url) => {
-            img.src = url;
-          });
+          img.src = `/api/images/${post.thumbnail_key}?_=${Date.now()}`;
           img.loading = 'lazy';
           img.width = 150;
           img.height = 200;

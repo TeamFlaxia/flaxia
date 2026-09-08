@@ -13,7 +13,6 @@ import groupsRouter from './routes/groups';
 import linkPreviewRouter from './routes/link-preview';
 import meRouter from './routes/me';
 import mediaRouter from './routes/media';
-import mediaTokenRouter from './routes/media-token';
 import messengerRouter from './routes/messenger';
 import msigRouter from './routes/msig';
 import multiplayerRouter from './routes/multiplayer';
@@ -96,9 +95,6 @@ app.route('/api/admin', adminRouter);
 
 // Media routes (extracted to routes/media.ts)
 app.route('/api', mediaRouter);
-
-// Media token routes (extracted to routes/media-token.ts)
-app.route('/api', mediaTokenRouter);
 
 // User routes (extracted to routes/users.ts)
 app.route('/api', usersRouter);

@@ -1,5 +1,4 @@
 import { t } from '../lib/i18n.js';
-import { getSignedMediaUrl } from '../lib/media-token.js';
 import { GifPreviewProps } from '../types/post.js';
 import { AudioVisualizer } from './AudioVisualizer.js';
 
@@ -30,7 +29,6 @@ export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
   audio.style.pointerEvents = 'none';
 
   const audioUrl = props.src || `/api/audio/${props.gifKey || ''}`;
-  const signedAudioUrl = props.src ? props.src : getSignedMediaUrl('audio', props.gifKey || '').catch(() => audioUrl);
 
   const visualizerCanvas = document.createElement('canvas');
   visualizerCanvas.className = 'audio-visualizer-canvas';
@@ -202,21 +200,10 @@ export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
     if (audio.paused || audio.ended) {
       // Visualizer must be created AFTER the src is set, because
       // createMediaElementSource() severs the media-element→graph connection
-      // when the element's src is assigned afterwards. Wait for the src to be
-      // ready, then create the visualizer and start playback.
-      if (typeof signedAudioUrl === 'string') {
-        ensureVisualizer();
-        audio.play().catch(() => {});
-      } else {
-        signedAudioUrl.then((url) => {
-          if (audio.src !== url) {
-            audio.src = url;
-            audio.load();
-          }
-          ensureVisualizer();
-          audio.play().catch(() => {});
-        });
-      }
+      // when the element's src is assigned afterwards. The src is assigned
+      // synchronously on init, so create the visualizer and start playback.
+      ensureVisualizer();
+      audio.play().catch(() => {});
     } else {
       audio.pause();
     }
@@ -240,19 +227,12 @@ export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
   // --- Initialize source (deferred for Chrome) ---
   initTimer = setTimeout(() => {
     initTimer = null;
-    if (typeof signedAudioUrl === 'string') {
-      audio.src = signedAudioUrl;
-      audio.load();
-    } else {
-      signedAudioUrl.then((url) => {
-        audio.src = url;
-        audio.load();
-        // If the user already started playback before the src was attached,
-        // create the visualizer so the analyser hookup happens after src is set.
-        if (!audio.paused && !visualizer) {
-          ensureVisualizer();
-        }
-      });
+    audio.src = audioUrl;
+    audio.load();
+    // If the user already started playback before the src was attached, make
+    // sure the visualizer is created too.
+    if (!audio.paused && !visualizer) {
+      ensureVisualizer();
     }
   }, 100);
 
@@ -283,14 +263,13 @@ export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
         <button class="audio-player-retry-btn">${t('video_player.retry')}</button>
       </div>
     `;
-    errorEl.querySelector('.audio-player-retry-btn')?.addEventListener('click', async () => {
+    errorEl.querySelector('.audio-player-retry-btn')?.addEventListener('click', () => {
       errorEl.style.display = 'none';
       visualizerCanvas.style.display = 'block';
       controls.style.display = '';
       overlay.style.display = '';
       loadingEl.style.display = '';
-      const freshUrl = await getSignedMediaUrl('audio', props.gifKey || '');
-      audio.src = freshUrl;
+      audio.src = audioUrl + '?_=' + Date.now();
       audio.load();
     });
   };
@@ -535,9 +514,7 @@ export function createGifPreview(props: GifPreviewProps): HTMLElement {
   if (props.src) {
     img.src = props.src;
   } else {
-    getSignedMediaUrl('image', props.gifKey).then((url) => {
-      img.src = url;
-    });
+    img.src = `/api/images/${props.gifKey}?_=${Date.now()}`;
   }
 
   img.onerror = () => {

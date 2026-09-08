@@ -1,5 +1,4 @@
 import { t } from '../../lib/i18n.js';
-import { getSignedMediaUrl } from '../../lib/media-token.js';
 import {
   decryptFileForGroup,
   decryptGroupText,
@@ -284,9 +283,9 @@ export class GroupTransport implements MessageTransport {
     try {
       let signedUrl = '';
       if (key.startsWith('group/audio/')) {
-        signedUrl = await getSignedMediaUrl('audio', key);
+        signedUrl = `/api/audio/${key}`;
       } else {
-        signedUrl = await getSignedMediaUrl('image', key);
+        signedUrl = `/api/images/${key}`;
       }
       const res = await fetch(signedUrl, { credentials: 'include' });
       if (!res.ok) return null;

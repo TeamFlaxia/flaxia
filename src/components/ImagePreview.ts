@@ -1,6 +1,5 @@
 import { safeRemoveFromBody } from '../lib/dom-utils.js';
 import { t } from '../lib/i18n.js';
-import { getSignedMediaUrl } from '../lib/media-token.js';
 import { registerModal } from '../lib/modal-state.js';
 import { GifPreviewProps } from '../types/post.js';
 
@@ -35,9 +34,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   }
 
   const baseImageUrl = props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`;
-  const signedImageUrl = props.isThumbnail
-    ? baseImageUrl
-    : getSignedMediaUrl('image', props.gifKey).catch(() => baseImageUrl + '?_=' + Date.now());
+  const imageUrl = props.isThumbnail ? baseImageUrl : baseImageUrl + '?_=' + Date.now();
 
   const img = document.createElement('img');
   img.className = 'image-preview-img';
@@ -49,11 +46,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   // Add click handler for overlay display
   img.onclick = (e) => {
     e.stopPropagation();
-    if (typeof signedImageUrl === 'string') {
-      createImageOverlay(signedImageUrl, props.postId);
-    } else {
-      signedImageUrl.then((url) => createImageOverlay(url, props.postId));
-    }
+    createImageOverlay(imageUrl, props.postId);
   };
 
   // Forced 16:9 preview: fix the box ratio and center-crop the image into it.
@@ -125,13 +118,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
       container.appendChild(fallback);
     };
 
-    if (typeof signedImageUrl === 'string') {
-      img.src = signedImageUrl;
-    } else {
-      signedImageUrl.then((url) => {
-        img.src = url;
-      });
-    }
+    img.src = imageUrl;
     container.appendChild(placeholder);
     container.appendChild(img);
     return container;
@@ -234,13 +221,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
       container.appendChild(fallback);
     };
 
-    if (typeof signedImageUrl === 'string') {
-      img.src = signedImageUrl;
-    } else {
-      signedImageUrl.then((url) => {
-        img.src = url;
-      });
-    }
+    img.src = imageUrl;
     container.appendChild(placeholder);
     container.appendChild(img);
   }

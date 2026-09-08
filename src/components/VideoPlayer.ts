@@ -1,5 +1,4 @@
 import { t } from '../lib/i18n.js';
-import { getSignedMediaUrl } from '../lib/media-token.js';
 
 export interface VideoPlayerProps {
   gifKey: string;
@@ -59,7 +58,6 @@ export function createVideoPlayer(props: VideoPlayerProps): HTMLElement {
   video.disablePictureInPicture = true;
 
   const videoUrl = props.src || `/api/video/${props.gifKey}`;
-  const signedVideoUrl = props.src ? props.src : getSignedMediaUrl('video', props.gifKey).catch(() => videoUrl);
 
   const errorEl = document.createElement('div');
   errorEl.className = 'video-player-error';
@@ -261,14 +259,13 @@ export function createVideoPlayer(props: VideoPlayerProps): HTMLElement {
         <button class="video-player-retry-btn">${t('video_player.retry')}</button>
       </div>
     `;
-    errorEl.querySelector('.video-player-retry-btn')?.addEventListener('click', async () => {
+    errorEl.querySelector('.video-player-retry-btn')?.addEventListener('click', () => {
       errorEl.style.display = 'none';
       video.style.display = 'block';
       controls.style.display = '';
       overlay.style.display = '';
       loadingEl.style.display = '';
-      const freshUrl = await getSignedMediaUrl('video', props.gifKey);
-      video.src = freshUrl;
+      video.src = videoUrl + '?_=' + Date.now();
       video.load();
     });
   };
@@ -475,15 +472,8 @@ export function createVideoPlayer(props: VideoPlayerProps): HTMLElement {
   });
 
   // --- Init ---
-  if (typeof signedVideoUrl === 'string') {
-    video.src = signedVideoUrl;
-    video.load();
-  } else {
-    signedVideoUrl.then((url) => {
-      video.src = url;
-      video.load();
-    });
-  }
+  video.src = videoUrl;
+  video.load();
 
   updatePlayButton();
   showControls();
