@@ -1,59 +1,3 @@
-const WORKER_CODE = `
-  let ctx = null;
-  let w = 0;
-  let h = 0;
-  let bufferLength = 0;
-
-  self.onmessage = (e) => {
-    const { type, payload } = e.data;
-    if (type === 'init') {
-      ctx = payload.ctx;
-      w = payload.width;
-      h = payload.height;
-      bufferLength = payload.bufferLength;
-    } else if (type === 'resize') {
-      w = payload.width;
-      h = payload.height;
-    } else if (type === 'draw' && ctx) {
-      const { data } = payload;
-      const barWidth = (w / bufferLength) * 2.5;
-      let x = 0;
-
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
-      ctx.fillRect(0, 0, w, h);
-
-      for (let i = 0; i < bufferLength; i++) {
-        const barHeight = (data[i] / 255) * h * 0.8;
-        if (barHeight < 1) {
-          x += barWidth;
-          continue;
-        }
-
-        const gradient = ctx.createLinearGradient(0, h - barHeight, 0, h);
-        gradient.addColorStop(0, 'rgba(34, 197, 94, 0.95)');
-        gradient.addColorStop(0.5, 'rgba(74, 222, 128, 0.9)');
-        gradient.addColorStop(1, 'rgba(22, 101, 52, 0.8)');
-
-        ctx.fillStyle = gradient;
-        ctx.fillRect(x, h - barHeight, barWidth - 2, barHeight);
-
-        x += barWidth;
-      }
-    }
-  };
-`;
-
-const canUseWorker = (() => {
-  try {
-    return (
-      typeof OffscreenCanvas !== 'undefined' &&
-      typeof HTMLCanvasElement.prototype.transferControlToOffscreen === 'function'
-    );
-  } catch {
-    return false;
-  }
-})();
-
 export class AudioVisualizer {
   private audioContext: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
@@ -64,11 +8,7 @@ export class AudioVisualizer {
   private isPlaying: boolean = false;
   private resizeObserver: ResizeObserver | null = null;
 
-  // Worker rendering
-  private worker: Worker | null = null;
-  private useWorker = false;
-
-  // Main-thread fallback state
+  // Main-thread drawing state
   private drawWidth = 0;
   private drawHeight = 0;
   private pixelRatio = 1;
@@ -81,10 +21,6 @@ export class AudioVisualizer {
     this.setupAudioContext();
     this.setupEventListeners();
     this.setupResizeObserver();
-
-    if (canUseWorker) {
-      this.initWorker();
-    }
   }
 
   private setupAudioContext(): void {
@@ -100,6 +36,9 @@ export class AudioVisualizer {
       this.bufferLength = this.analyser.frequencyBinCount;
       this.dataArray = new Uint8Array(this.bufferLength);
 
+      // Connecting a media element to the graph redirects its output. This
+      // must happen AFTER src is assigned — re-assigning src afterwards severs
+      // the element→graph connection on some browsers.
       this.source = this.audioContext.createMediaElementSource(this.audioElement);
       this.source.connect(this.analyser);
       this.analyser.connect(this.audioContext.destination);
@@ -118,55 +57,16 @@ export class AudioVisualizer {
       this.drawWidth = width;
       this.drawHeight = height;
 
-      if (this.useWorker && this.worker) {
-        this.worker.postMessage({
-          type: 'resize',
-          payload: { width, height },
-        });
-      } else {
-        this.pixelRatio = window.devicePixelRatio || 1;
-        this.canvas.width = width * this.pixelRatio;
-        this.canvas.height = height * this.pixelRatio;
+      this.pixelRatio = window.devicePixelRatio || 1;
+      this.canvas.width = width * this.pixelRatio;
+      this.canvas.height = height * this.pixelRatio;
 
-        const ctx = this.canvas.getContext('2d');
-        if (ctx) {
-          ctx.setTransform(this.pixelRatio, 0, 0, this.pixelRatio, 0, 0);
-        }
+      const ctx = this.canvas.getContext('2d');
+      if (ctx) {
+        ctx.setTransform(this.pixelRatio, 0, 0, this.pixelRatio, 0, 0);
       }
     });
     this.resizeObserver.observe(this.canvas);
-  }
-
-  private initWorker(): void {
-    try {
-      const blob = new Blob([WORKER_CODE], { type: 'application/javascript' });
-      this.worker = new Worker(URL.createObjectURL(blob));
-      this.worker.onerror = () => {
-        this.worker?.terminate();
-        this.worker = null;
-        this.useWorker = false;
-      };
-
-      // Transfer canvas to worker
-      const offscreen = this.canvas.transferControlToOffscreen();
-      const ctx = offscreen.getContext('2d');
-
-      const pixelRatio = window.devicePixelRatio || 1;
-      const w = this.drawWidth * pixelRatio;
-      const h = this.drawHeight * pixelRatio;
-
-      this.worker.postMessage(
-        {
-          type: 'init',
-          payload: { ctx, width: w, height: h, bufferLength: this.bufferLength },
-        },
-        [offscreen as unknown as Transferable],
-      );
-
-      this.useWorker = true;
-    } catch {
-      this.useWorker = false;
-    }
   }
 
   private setupEventListeners(): void {
@@ -208,31 +108,6 @@ export class AudioVisualizer {
   private draw(): void {
     if (!this.analyser || !this.dataArray) return;
 
-    if (this.useWorker && this.worker) {
-      this.drawWithWorker();
-    } else {
-      this.drawWithMain();
-    }
-  }
-
-  private drawWithWorker(): void {
-    const drawSpectrum = () => {
-      if (!this.isPlaying || !this.analyser || !this.worker) return;
-
-      this.animationId = requestAnimationFrame(drawSpectrum);
-
-      this.analyser.getByteFrequencyData(this.dataArray!);
-
-      this.worker.postMessage({
-        type: 'draw',
-        payload: { data: this.dataArray },
-      });
-    };
-
-    drawSpectrum();
-  }
-
-  private drawWithMain(): void {
     const ctx = this.canvas.getContext('2d');
     if (!ctx) return;
 
@@ -278,11 +153,6 @@ export class AudioVisualizer {
 
   public cleanup(): void {
     this.stop();
-
-    if (this.worker) {
-      this.worker.terminate();
-      this.worker = null;
-    }
 
     if (this.resizeObserver) {
       this.resizeObserver.disconnect();
