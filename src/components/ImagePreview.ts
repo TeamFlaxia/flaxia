@@ -34,8 +34,10 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     return container;
   }
 
-  const imageUrl = props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`;
-  const signedImageUrl = props.isThumbnail ? imageUrl : getSignedMediaUrl('image', props.gifKey).catch(() => imageUrl);
+  const baseImageUrl = props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`;
+  const signedImageUrl = props.isThumbnail
+    ? baseImageUrl
+    : getSignedMediaUrl('image', props.gifKey).catch(() => baseImageUrl + '?_=' + Date.now());
 
   const img = document.createElement('img');
   img.className = 'image-preview-img';
@@ -78,7 +80,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     `;
 
     if (props.isThumbnail) {
-      img.src = imageUrl;
+      img.src = baseImageUrl + '?_=' + Date.now();
       container.appendChild(img);
       return container;
     }
@@ -187,7 +189,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   if (props.isThumbnail) {
     img.onload = fit;
     if (img.complete) fit();
-    img.src = imageUrl;
+    img.src = baseImageUrl + '?_=' + Date.now();
     container.appendChild(img);
   } else {
     // Show a placeholder with the same styling before load

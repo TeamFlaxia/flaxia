@@ -172,5 +172,5 @@ function buildUrl(type: MediaType, key: string, token: string | null): string {
 
   const path = `${basePaths[type]}${key}`;
   if (!token) return path;
-  return `${path}?token=${encodeURIComponent(token)}`;
+  return `${path}?token=${encodeURIComponent(token)}&_=${Date.now()}`;
 }
