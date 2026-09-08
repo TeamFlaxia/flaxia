@@ -24,10 +24,11 @@ const PUBLIC_MEDIA_CACHE_CONTROL = 'public, max-age=86400, s-maxage=86400';
 
 /**
  * Cache-Control for protected media (post images).
- * `private` (browser only) and capped at the image token TTL (300s) so
- * cached URLs never outlive their token.
+ * `private, no-store` prevents browser caching entirely to avoid serving
+ * expired token-authenticated images from cache. Each request requires fresh
+ * token verification.
  */
-const PROTECTED_MEDIA_CACHE_CONTROL = 'private, max-age=300';
+const PROTECTED_MEDIA_CACHE_CONTROL = 'private, max-age=0, no-store';
 
 /**
  * Check if a media key is a public resource (avatar, header, icon) that
