@@ -22,7 +22,11 @@ const media = new Hono<{ Bindings: Bindings; Variables: Variables }>();
  */
 function isPublicMediaKey(key: string): boolean {
   return (
-    key === 'default-avatar' || key.startsWith('avatar/') || key.startsWith('header/') || key.startsWith('server/icon/')
+    key === 'default-avatar' ||
+    key.startsWith('avatar/') ||
+    key.startsWith('header/') ||
+    key.startsWith('server/icon/') ||
+    key.startsWith('stamp/')
   );
 }
 
