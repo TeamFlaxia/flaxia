@@ -16,6 +16,20 @@ import type { Bindings, Variables } from '../types';
 const media = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 /**
+ * Cache-Control for public media (avatars, headers, icons, stamps).
+ * CDN cacheable (`public` + `s-maxage`) since these keys are content-hash
+ * based and never require a signed token.
+ */
+const PUBLIC_MEDIA_CACHE_CONTROL = 'public, max-age=86400, s-maxage=86400';
+
+/**
+ * Cache-Control for protected media (post images).
+ * `private` (browser only) and capped at the image token TTL (300s) so
+ * cached URLs never outlive their token.
+ */
+const PROTECTED_MEDIA_CACHE_CONTROL = 'private, max-age=300';
+
+/**
  * Check if a media key is a public resource (avatar, header, icon) that
  * does not require a signed token. These are profile-level images that
  * are already visible to all users.
@@ -203,7 +217,7 @@ media.get('/images/*', async (c) => {
         return new Response(defaultAvatarSvg, {
           headers: {
             'Content-Type': 'image/svg+xml',
-            'Cache-Control': 'public, max-age=86400',
+            'Cache-Control': PUBLIC_MEDIA_CACHE_CONTROL,
             'Access-Control-Allow-Origin': 'https://flaxia.app',
             ...MEDIA_SECURITY_HEADERS,
           },
@@ -216,11 +230,14 @@ media.get('/images/*', async (c) => {
     // Get content type from object metadata or default to image/jpeg
     const contentType = object.httpMetadata?.contentType || 'image/jpeg';
 
-    // Return the image with proper headers
+    // Return the image with proper headers.
+    // Public media (avatars, headers, icons, stamps) use CDN-cacheable
+    // headers; protected post images use browser-only cache aligned with
+    // the image token TTL so cached URLs never outlive their token.
     return new Response(object.body, {
       headers: {
         'Content-Type': contentType,
-        'Cache-Control': 'private, max-age=3600',
+        'Cache-Control': isPublicMediaKey(key) ? PUBLIC_MEDIA_CACHE_CONTROL : PROTECTED_MEDIA_CACHE_CONTROL,
         'Access-Control-Allow-Origin': 'https://flaxia.app',
         'Content-Disposition': 'inline',
         ...MEDIA_SECURITY_HEADERS,
@@ -468,7 +485,7 @@ media.get('/thumbnail/:id', async (c) => {
     return new Response(object.body, {
       headers: {
         'Content-Type': contentType,
-        'Cache-Control': 'public, max-age=86400',
+        'Cache-Control': PUBLIC_MEDIA_CACHE_CONTROL,
         'Access-Control-Allow-Origin': 'https://flaxia.app',
         ...MEDIA_SECURITY_HEADERS,
       },

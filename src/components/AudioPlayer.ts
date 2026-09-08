@@ -200,8 +200,23 @@ export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
 
   const togglePlay = () => {
     if (audio.paused || audio.ended) {
-      ensureVisualizer();
-      audio.play().catch(() => {});
+      // Visualizer must be created AFTER the src is set, because
+      // createMediaElementSource() severs the media-element→graph connection
+      // when the element's src is assigned afterwards. Wait for the src to be
+      // ready, then create the visualizer and start playback.
+      if (typeof signedAudioUrl === 'string') {
+        ensureVisualizer();
+        audio.play().catch(() => {});
+      } else {
+        signedAudioUrl.then((url) => {
+          if (audio.src !== url) {
+            audio.src = url;
+            audio.load();
+          }
+          ensureVisualizer();
+          audio.play().catch(() => {});
+        });
+      }
     } else {
       audio.pause();
     }
@@ -232,19 +247,22 @@ export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
       signedAudioUrl.then((url) => {
         audio.src = url;
         audio.load();
+        // If the user already started playback before the src was attached,
+        // create the visualizer so the analyser hookup happens after src is set.
+        if (!audio.paused && !visualizer) {
+          ensureVisualizer();
+        }
       });
-    }
-    // If the user already started playback before the src was attached, make
-    // sure the visualizer is created too.
-    if (!audio.paused && !visualizer) {
-      ensureVisualizer();
     }
   }, 100);
 
   // --- Visualizer is created lazily on first play so idle audio posts don't
   // each reserve an AudioContext (browsers cap how many can stay alive). ---
+  // It must only run AFTER audio.src is assigned: createMediaElementSource()
+  // severs the element→graph connection if the src changes afterwards.
   const ensureVisualizer = () => {
     if (visualizer) return;
+    if (!audio.src) return;
     try {
       visualizer = new AudioVisualizer(audio, visualizerCanvas);
     } catch (error) {

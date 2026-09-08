@@ -114,7 +114,7 @@ export async function handleRangeRequest(c: any, key: string, object: any, conte
     return new Response(object.body, {
       headers: {
         'Content-Type': contentType,
-        'Cache-Control': 'private, max-age=3600',
+        'Cache-Control': 'private, max-age=1800',
         'Access-Control-Allow-Origin': 'https://flaxia.app',
         'Accept-Ranges': 'bytes',
         'Content-Length': fileSize.toString(),
@@ -148,7 +148,7 @@ export async function handleRangeRequest(c: any, key: string, object: any, conte
       'Content-Type': contentType,
       'Content-Range': `bytes ${range.start}-${range.end}/${fileSize}`,
       'Content-Length': chunkSize.toString(),
-      'Cache-Control': 'private, max-age=3600',
+      'Cache-Control': 'private, max-age=1800',
       'Access-Control-Allow-Origin': 'https://flaxia.app',
       'Accept-Ranges': 'bytes',
       ...MEDIA_SECURITY_HEADERS,
