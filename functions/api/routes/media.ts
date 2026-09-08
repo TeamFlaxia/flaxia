@@ -16,11 +16,26 @@ import type { Bindings, Variables } from '../types';
 const media = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 /**
+ * Check if a media key is a public resource (avatar, header, icon) that
+ * does not require a signed token. These are profile-level images that
+ * are already visible to all users.
+ */
+function isPublicMediaKey(key: string): boolean {
+  return (
+    key === 'default-avatar' || key.startsWith('avatar/') || key.startsWith('header/') || key.startsWith('server/icon/')
+  );
+}
+
+/**
  * Verify a signed token from the query string.
  * Returns true if valid, false otherwise.
  * Skips verification if MEDIA_SIGNING_SECRET is not configured (dev mode).
+ * Skips verification for public media keys (avatars, headers, icons).
  */
 async function verifyToken(c: any, key: string): Promise<boolean> {
+  // Public media (avatars, headers, icons) do not require signed tokens
+  if (isPublicMediaKey(key)) return true;
+
   // Skip verification in development if secret is not configured
   if (!c.env.MEDIA_SIGNING_SECRET) return true;
 
