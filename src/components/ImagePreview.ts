@@ -17,6 +17,23 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     return container;
   }
 
+  // If a pre-fetched src is provided (e.g. decrypted blob URL), use it directly
+  if (props.src) {
+    const img = document.createElement('img');
+    img.className = 'image-preview-img';
+    img.alt = t('image_preview.post_preview', { id: props.postId });
+    img.loading = 'lazy';
+    img.draggable = false;
+    img.oncontextmenu = (e) => e.preventDefault();
+    img.src = props.src;
+    img.style.cssText =
+      'width: 100%; height: auto; max-height: 700px; cursor: pointer; display: block; border-radius: 8px;';
+    container.style.cssText =
+      'position: relative; width: 100%; height: auto; display: flex; flex-direction: column; align-items: center; background: var(--bg-input); border-radius: 8px;';
+    container.appendChild(img);
+    return container;
+  }
+
   const imageUrl = props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`;
   const signedImageUrl = props.isThumbnail ? imageUrl : getSignedMediaUrl('image', props.gifKey).catch(() => imageUrl);
 

@@ -1,4 +1,5 @@
 import { t } from '../../lib/i18n.js';
+import { getSignedMediaUrl } from '../../lib/media-token.js';
 import {
   decryptFileForGroup,
   decryptGroupText,
@@ -281,9 +282,13 @@ export class GroupTransport implements MessageTransport {
 
   private async decryptAttachment(msg: ChatMessage, key: string): Promise<{ url: string; data: ArrayBuffer } | null> {
     try {
-      let base = '/api/images/';
-      if (key.startsWith('group/audio/')) base = '/api/audio/';
-      const res = await fetch(base + key, { credentials: 'include' });
+      let signedUrl = '';
+      if (key.startsWith('group/audio/')) {
+        signedUrl = await getSignedMediaUrl('audio', key);
+      } else {
+        signedUrl = await getSignedMediaUrl('image', key);
+      }
+      const res = await fetch(signedUrl, { credentials: 'include' });
       if (!res.ok) return null;
       const data = await res.arrayBuffer();
       const plain = await decryptFileForGroup(this.groupId, msg.key_version || this.keyVersion, key, data);

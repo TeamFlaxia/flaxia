@@ -1,5 +1,6 @@
 import { getStoredSrpSalt, verifyCurrentPassword } from '../../lib/auth-srp.js';
 import { t } from '../../lib/i18n.js';
+import { getSignedMediaUrl } from '../../lib/media-token.js';
 import { unwrapStringWithKek, wrapStringWithKek } from '../../lib/messenger-dm-cache.js';
 import { decryptDmMessageV2, encryptDmMessageV2, resetDmRatchet } from '../../lib/messenger-dm-session.js';
 import {
@@ -583,9 +584,13 @@ export class DmTransport implements MessageTransport {
   private async decryptAttachment(msg: ChatMessage, key: string): Promise<{ url: string; data: ArrayBuffer } | null> {
     if (!this.peerUserId) return null;
     try {
-      let base = '/api/images/';
-      if (key.startsWith('dm/audio/')) base = '/api/audio/';
-      const res = await fetch(base + key, { credentials: 'include' });
+      let signedUrl = '';
+      if (key.startsWith('dm/audio/')) {
+        signedUrl = await getSignedMediaUrl('audio', key);
+      } else {
+        signedUrl = await getSignedMediaUrl('image', key);
+      }
+      const res = await fetch(signedUrl, { credentials: 'include' });
       if (!res.ok) return null;
       const data = await res.arrayBuffer();
       const plain = await decryptFileForDm(

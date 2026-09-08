@@ -514,8 +514,13 @@ export function createGifPreview(props: GifPreviewProps): HTMLElement {
   img.alt = t('image_preview.post_preview', { id: props.postId });
   img.loading = 'lazy';
 
-  const imageUrl = `/api/images/${props.gifKey}`;
-  img.src = imageUrl;
+  if (props.src) {
+    img.src = props.src;
+  } else {
+    getSignedMediaUrl('image', props.gifKey).then((url) => {
+      img.src = url;
+    });
+  }
 
   img.onerror = () => {
     img.style.display = 'none';

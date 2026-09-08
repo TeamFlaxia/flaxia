@@ -1,5 +1,6 @@
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { getSignedMediaUrl } from '../lib/media-token.js';
 import { updateMetaTags } from '../lib/seo-meta.js';
 import { getReplyStyle } from '../lib/settings.js';
 import { buildTree } from '../lib/thread.js';
@@ -691,14 +692,19 @@ export class ThreadPage {
     this.element.remove();
   }
 
-  private updateMetaTags(post: Post): void {
+  private async updateMetaTags(post: Post): Promise<void> {
     const name = post.display_name || post.username;
-    const ogImage =
+    const imageKey =
       post.gif_key && !post.gif_key.startsWith('audio/')
-        ? `${window.location.origin}/api/images/${post.gif_key}`
+        ? post.gif_key
         : post.thumbnail_key
-          ? `${window.location.origin}/api/images/${post.thumbnail_key}`
-          : undefined;
+          ? post.thumbnail_key
+          : null;
+
+    let ogImage: string | undefined;
+    if (imageKey) {
+      ogImage = `${window.location.origin}${await getSignedMediaUrl('image', imageKey).catch(() => `/api/images/${imageKey}`)}`;
+    }
 
     updateMetaTags({
       title: `Flaxia - ${name}`,

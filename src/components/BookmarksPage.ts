@@ -2,6 +2,7 @@ import { createFabButton } from '../lib/fab-button.js';
 import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { createSkeletonCards } from '../lib/loading-ui.js';
+import { getSignedMediaUrl } from '../lib/media-token.js';
 import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
@@ -255,7 +256,9 @@ export class BookmarksPage {
       `;
       if (post.thumbnail_key) {
         const img = document.createElement('img');
-        img.src = `/api/images/${post.thumbnail_key}`;
+        getSignedMediaUrl('image', post.thumbnail_key).then((url) => {
+          img.src = url;
+        });
         img.loading = 'lazy';
         img.width = 150;
         img.height = 200;
