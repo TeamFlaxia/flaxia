@@ -29,8 +29,9 @@ database_name = "flaxia"
 database_id = "7c99f35f-69a0-4644-96a1-34c716a3e82d"
 
 [vars]
-SANDBOX_ORIGIN = "https://flaxia.app"
+SANDBOX_ORIGIN = "https://sandbox.flaxia.app"
 BASE_URL = "https://flaxia.app"
+ENVIRONMENT = "production"
 CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
 ADMIN_USERNAMES = "remydrescarlet"
 

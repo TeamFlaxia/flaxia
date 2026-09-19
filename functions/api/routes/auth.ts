@@ -1,3 +1,4 @@
+import type { Context } from 'hono';
 import { Hono } from 'hono';
 import {
   clearSessionCookie,
@@ -12,14 +13,48 @@ import {
   verifySrpLogin,
   verifySrpPassword,
 } from '../../lib/auth';
+import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
 const auth = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
+type AuthContext = Context<{ Bindings: Bindings; Variables: Variables }>;
+
+/**
+ * Local development and the test dev server must not be rate-limited: the
+ * integration suite registers and logs in many users from a single IP.
+ */
+function isLocalEnvironment(c: AuthContext): boolean {
+  return c.env.ENVIRONMENT === 'test' || (c.env.BASE_URL ?? '').startsWith('http://localhost');
+}
+
+/**
+ * Apply a KV-backed rate limit. Returns a 429 Response when the limit is
+ * exceeded, or null when the request may proceed. Falls through (allows) if KV
+ * is unavailable, matching the behaviour of the shared limiter.
+ */
+async function rateLimit(
+  c: AuthContext,
+  scope: string,
+  id: string,
+  maxRequests: number,
+  windowSeconds: number,
+): Promise<Response | null> {
+  if (isLocalEnvironment(c)) return null;
+  const allowed = await checkRateLimit(c.env.CACHE, `${scope}:${id}`, { maxRequests, windowSeconds });
+  if (!allowed) {
+    return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+  }
+  return null;
+}
+
 // POST /api/auth/register
 auth.post('/register', async (c) => {
   try {
+    const limited = await rateLimit(c, 'auth:register', getClientIp(c.req.raw), 5, 60);
+    if (limited) return limited;
+
     const { email, password, username, display_name, srp_salt, srp_verifier, srp_group } = await c.req.json();
 
     if (!email || !username || !display_name) {
@@ -83,6 +118,12 @@ auth.post('/login', async (c) => {
       return c.json({ error: 'Email and password required' }, 400);
     }
 
+    const ip = getClientIp(c.req.raw);
+    const limitedIp = await rateLimit(c, 'auth:login:ip', ip, 10, 60);
+    if (limitedIp) return limitedIp;
+    const limitedEmail = await rateLimit(c, 'auth:login:email', String(email).toLowerCase(), 5, 60);
+    if (limitedEmail) return limitedEmail;
+
     const result = await loginUser(c.env, email, password);
 
     const response = c.json({ user: result.user });
@@ -101,6 +142,12 @@ auth.post('/login/start', async (c) => {
     const { email } = await c.req.json();
     if (!email) return c.json({ error: 'Email required' }, 400);
 
+    const ip = getClientIp(c.req.raw);
+    const limitedIp = await rateLimit(c, 'auth:srp-start:ip', ip, 10, 60);
+    if (limitedIp) return limitedIp;
+    const limitedEmail = await rateLimit(c, 'auth:srp-start:email', String(email).toLowerCase(), 5, 60);
+    if (limitedEmail) return limitedEmail;
+
     const hs = await startSrpLogin(c.env, email);
     if (!hs) return c.json({ srp: false });
 
@@ -118,6 +165,12 @@ auth.post('/login/verify', async (c) => {
     if (!email || !challenge_id || !A || !M1) {
       return c.json({ error: 'Missing SRP parameters' }, 400);
     }
+
+    const ip = getClientIp(c.req.raw);
+    const limitedIp = await rateLimit(c, 'auth:srp-verify:ip', ip, 10, 60);
+    if (limitedIp) return limitedIp;
+    const limitedEmail = await rateLimit(c, 'auth:srp-verify:email', String(email).toLowerCase(), 5, 60);
+    if (limitedEmail) return limitedEmail;
 
     const result = await verifySrpLogin(c.env, email, challenge_id, A, M1);
     if (!result) return c.json({ error: 'Invalid credentials' }, 401);

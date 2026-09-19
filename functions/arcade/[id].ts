@@ -263,7 +263,7 @@ export async function onRequest(context: {
         <main>
           <div class="ssr-game-embed">
             <iframe src="${escapeHtml(baseUrl)}/api/ogp-player/${gameId}"
-              sandbox="allow-scripts allow-pointer-lock allow-fullscreen allow-same-origin"
+              sandbox="allow-scripts allow-pointer-lock allow-fullscreen"
               allow="fullscreen"
               referrerpolicy="no-referrer"
               title="${escapeHtml(title)}"></iframe>

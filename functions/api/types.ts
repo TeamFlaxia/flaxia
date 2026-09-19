@@ -7,6 +7,8 @@ export type Bindings = {
   CACHE: KVNamespace;
   SANDBOX_ORIGIN: string;
   BASE_URL: string;
+  /** Deployment environment. 'test' enables the /api/test/* helper routes. */
+  ENVIRONMENT?: string;
   ADMIN_USERNAMES: string;
   AP_DELIVERY_QUEUE: Queue;
   CROWD_ORCHESTRATOR_URL: string;

@@ -57,7 +57,7 @@ function serveZipPlayer(postId: string, sandboxOrigin: string): Response {
 </head>
 <body>
   <iframe src="${sandboxOrigin}/api/wvfs-zip/${postId}"
-    sandbox="allow-scripts allow-pointer-lock allow-fullscreen allow-same-origin"
+    sandbox="allow-scripts allow-pointer-lock allow-fullscreen"
     allow="fullscreen"
     referrerpolicy="no-referrer"></iframe>
 </body>

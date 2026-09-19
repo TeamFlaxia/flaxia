@@ -1,3 +1,4 @@
+import type { Context, MiddlewareHandler } from 'hono';
 import { Hono } from 'hono';
 import type { Bindings, Variables } from '../types';
 
@@ -46,14 +47,26 @@ async function ensureReactionsTable(db: D1Database): Promise<void> {
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-// POST /api/test/reset - reset database for testing (only allowed in test environment)
-app.post('/api/test/reset', async (c) => {
-  const isTestEnvironment = c.env.BASE_URL === 'http://localhost:8788' || c.req.url.includes('localhost:8788');
+/**
+ * Test helpers are only reachable from the test dev server. The decision is
+ * based solely on unspoofable bindings — never on request-derived data such as
+ * the URL or query string, which an attacker could control.
+ */
+function isTestEnvironment(c: Context<{ Bindings: Bindings; Variables: Variables }>): boolean {
+  return c.env.ENVIRONMENT === 'test' || c.env.BASE_URL === 'http://localhost:8788';
+}
 
-  if (!isTestEnvironment) {
-    return c.json({ error: 'Forbidden' }, 403);
+// Attached to every /api/test/* route. The whole router is test-only, so a
+// request that reaches these handlers must originate from the test server.
+const requireTestEnvironment: MiddlewareHandler<{ Bindings: Bindings; Variables: Variables }> = async (c, next) => {
+  if (!isTestEnvironment(c)) {
+    return c.json({ error: 'Not found' }, 404);
   }
+  await next();
+};
 
+// POST /api/test/reset - reset database for testing (only allowed in test environment)
+app.post('/api/test/reset', requireTestEnvironment, async (c) => {
   const clears: D1Database[] = [];
   if (c.env.DB_TEST) clears.push(c.env.DB_TEST);
   if (c.env.DB) clears.push(c.env.DB);
@@ -144,12 +157,7 @@ app.post('/api/test/reset', async (c) => {
 
 // GET /api/test/game-plays - inspect user_game_plays rows for integration tests.
 // Gated like /api/test/reset: only reachable from the test dev server.
-app.get('/api/test/game-plays', async (c) => {
-  const isTestEnvironment = c.env.BASE_URL === 'http://localhost:8788' || c.req.url.includes('localhost:8788');
-  if (!isTestEnvironment) {
-    return c.json({ error: 'Forbidden' }, 403);
-  }
-
+app.get('/api/test/game-plays', requireTestEnvironment, async (c) => {
   const userId = c.req.query('userId');
   if (!userId) return c.json({ error: 'Missing userId' }, 400);
 
@@ -167,12 +175,7 @@ app.get('/api/test/game-plays', async (c) => {
 
 // GET /api/test/nsfw-scans - inspect post_nsfw_scans rows for integration tests.
 // Gated like /api/test/reset: only reachable from the test dev server.
-app.get('/api/test/nsfw-scans', async (c) => {
-  const isTestEnvironment = c.env.BASE_URL === 'http://localhost:8788' || c.req.url.includes('localhost:8788');
-  if (!isTestEnvironment) {
-    return c.json({ error: 'Forbidden' }, 403);
-  }
-
+app.get('/api/test/nsfw-scans', requireTestEnvironment, async (c) => {
   const db = c.env.DB;
   const rows = await db
     .prepare(`SELECT post_id, task_id, status, created_at, scanned_at FROM post_nsfw_scans ORDER BY created_at DESC`)
