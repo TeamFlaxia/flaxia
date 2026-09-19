@@ -1,3 +1,4 @@
+import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
@@ -13,6 +14,33 @@ import {
 import type { Bindings, Variables } from '../types';
 
 const media = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+type MediaContext = Context<{ Bindings: Bindings; Variables: Variables }>;
+
+/**
+ * DM media keys (`dm/...`) are private: only participants of the owning
+ * conversation may read them. Non-DM keys are public and always allowed.
+ */
+async function canAccessMediaKey(c: MediaContext, key: string): Promise<boolean> {
+  if (!key.startsWith('dm/')) return true;
+  const user = c.get('user');
+  if (!user) return false;
+  const msgId = key
+    .split('/')
+    .pop()
+    ?.replace(/\.[^.]+$/, '');
+  if (!msgId) return false;
+  const row = (await c.env.DB.prepare(
+    `SELECT c.user_a_id, c.user_b_id
+     FROM dm_messages m
+     JOIN dm_conversations c ON c.id = m.conversation_id
+     WHERE m.id = ?`,
+  )
+    .bind(msgId)
+    .first()) as { user_a_id: string; user_b_id: string } | null;
+  if (!row) return false;
+  return row.user_a_id === user.id || row.user_b_id === user.id;
+}
 
 /**
  * Cache-Control for media responses.
@@ -146,6 +174,10 @@ media.get('/images/*', async (c) => {
       return c.json({ error: 'Missing image key' }, 400);
     }
 
+    if (!(await canAccessMediaKey(c, key))) {
+      return c.json({ error: 'Image not found' }, 404);
+    }
+
     // Rate limit: 100 requests per minute per IP
     const clientIp = getClientIp(c.req.raw);
     if (!(await checkRateLimit(c.env.CACHE, `img:${clientIp}`, { maxRequests: 100, windowSeconds: 60 }))) {
@@ -209,6 +241,10 @@ media.get('/audio/*', async (c) => {
       return c.json({ error: 'Missing audio key' }, 400);
     }
 
+    if (!(await canAccessMediaKey(c, key))) {
+      return c.json({ error: 'Audio not found' }, 404);
+    }
+
     // Rate limit: 60 requests per minute per IP
     const clientIp = getClientIp(c.req.raw);
     if (!(await checkRateLimit(c.env.CACHE, `aud:${clientIp}`, { maxRequests: 60, windowSeconds: 60 }))) {
@@ -263,6 +299,10 @@ media.get('/video/*', async (c) => {
 
     if (!key) {
       return c.json({ error: 'Missing video key' }, 400);
+    }
+
+    if (!(await canAccessMediaKey(c, key))) {
+      return c.json({ error: 'Video not found' }, 404);
     }
 
     // Rate limit: 30 requests per minute per IP
@@ -325,12 +365,17 @@ media.get('/zip/:postId', async (c) => {
       return c.json({ error: 'Storage not available' }, 500);
     }
 
-    const keysToTry = [`zip/${postId}.zip`, `dm/zip/${postId}.zip`];
-    let object = null;
+    const publicKey = `zip/${postId}.zip`;
+    const dmKey = `dm/zip/${postId}.zip`;
 
-    for (const zipKey of keysToTry) {
-      object = await c.env.BUCKET.get(zipKey);
-      if (object) break;
+    // Public post ZIPs are not authenticated; DM ZIPs require the requester to
+    // be a participant of the owning conversation.
+    let object = await c.env.BUCKET.get(publicKey);
+    if (!object) {
+      if (!(await canAccessMediaKey(c, dmKey))) {
+        return c.json({ error: 'ZIP not found' }, 404);
+      }
+      object = await c.env.BUCKET.get(dmKey);
     }
 
     if (!object) {
@@ -452,12 +497,17 @@ media.get('/swf/:postId', async (c) => {
     }
 
     // Try standard SWF key first, then DM variant
-    const keysToTry = [`swf/${postId}.swf`, `dm/swf/${postId}.swf`];
-    let object = null;
+    const publicKey = `swf/${postId}.swf`;
+    const dmKey = `dm/swf/${postId}.swf`;
 
-    for (const swfKey of keysToTry) {
-      object = await c.env.BUCKET.get(swfKey);
-      if (object) break;
+    // Public post SWFs are not authenticated; DM SWFs require the requester to
+    // be a participant of the owning conversation.
+    let object = await c.env.BUCKET.get(publicKey);
+    if (!object) {
+      if (!(await canAccessMediaKey(c, dmKey))) {
+        return c.json({ error: 'SWF not found' }, 404);
+      }
+      object = await c.env.BUCKET.get(dmKey);
     }
 
     if (!object) {

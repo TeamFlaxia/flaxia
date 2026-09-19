@@ -15,17 +15,23 @@ export const MEDIA_SECURITY_HEADERS: Record<string, string> = {
 
 // Auth middleware — sets user context (null if not authenticated)
 export const authMiddleware = async (c: Context<{ Bindings: Bindings; Variables: Variables }>, next: Next) => {
-  if (
-    (c.req.method === 'GET' && c.req.path.startsWith('/api/images/')) ||
-    (c.req.method === 'GET' && c.req.path.startsWith('/api/audio/')) ||
-    (c.req.method === 'GET' && c.req.path.startsWith('/api/video/')) ||
-    (c.req.method === 'GET' && c.req.path.startsWith('/api/zip/')) ||
-    (c.req.method === 'GET' && c.req.path.startsWith('/api/swf/')) ||
-    (c.req.method === 'GET' && c.req.path === '/api/link-preview') ||
-    (c.req.method === 'GET' && c.req.path === '/api/games') ||
-    (c.req.method === 'GET' && c.req.path.startsWith('/api/ads/') && c.req.path.endsWith('/payload')) ||
-    (c.req.method === 'GET' && c.req.path.startsWith('/api/wvfs-zip/'))
-  ) {
+  const method = c.req.method;
+  const path = c.req.path;
+  // DM media keys (`dm/...`) are private and must be authorized, so we resolve
+  // the session for them. Public media is served without a session lookup to
+  // keep the hot path cheap.
+  const isDmMedia = path.includes('/dm/');
+  const skipsSession =
+    method === 'GET' &&
+    !isDmMedia &&
+    (path.startsWith('/api/images/') ||
+      path.startsWith('/api/audio/') ||
+      path.startsWith('/api/video/') ||
+      path === '/api/link-preview' ||
+      path === '/api/games' ||
+      (path.startsWith('/api/ads/') && path.endsWith('/payload')) ||
+      path.startsWith('/api/wvfs-zip/'));
+  if (skipsSession) {
     await next();
     return;
   }

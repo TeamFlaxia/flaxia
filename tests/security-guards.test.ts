@@ -73,4 +73,35 @@ describe('security guards', () => {
       assert.ok(src.includes(scope), `missing rate limit for ${scope}`);
     }
   });
+
+  it('uses ISO-8601 comparisons and constant-time password checks', () => {
+    const src = readFileSync(join(ROOT, 'functions/lib/auth.ts'), 'utf8');
+    assert.ok(!src.includes("expires_at > datetime('now')"), 'session/handshake expiry must compare ISO-8601 strings');
+    assert.ok(src.includes("expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"));
+    assert.ok(!src.includes('hashBytes.every('), 'password verification must be constant-time');
+  });
+
+  it('authorizes DM media before serving it', () => {
+    const media = readFileSync(join(ROOT, 'functions/api/routes/media.ts'), 'utf8');
+    assert.ok(media.includes('canAccessMediaKey'), 'media routes must authorize dm/ keys');
+    assert.ok(media.includes("key.startsWith('dm/')"));
+    const helpers = readFileSync(join(ROOT, 'functions/api/helpers.ts'), 'utf8');
+    assert.ok(helpers.includes("path.includes('/dm/')"), 'auth middleware must resolve a session for DM media');
+
+    const sandbox = readFileSync(join(ROOT, 'src/sandbox-worker.ts'), 'utf8');
+    assert.ok(!sandbox.includes('dm/zip/'), 'sandbox origin must not serve private DM ZIPs');
+    assert.ok(!sandbox.includes('dm/html/'), 'sandbox origin must not serve private DM HTML');
+  });
+
+  it('sets hardening response headers', () => {
+    const headers = readFileSync(join(ROOT, 'public/_headers'), 'utf8');
+    for (const header of [
+      'Strict-Transport-Security',
+      'X-Content-Type-Options: nosniff',
+      "object-src 'none'",
+      "base-uri 'self'",
+    ]) {
+      assert.ok(headers.includes(header), `_headers missing ${header}`);
+    }
+  });
 });

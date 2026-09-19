@@ -122,7 +122,10 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
     }
 
     if (!zipKey) {
-      const keysToTry = [`zip/${postId}.zip`, `dm/zip/${postId}.zip`, `html/${postId}.html`];
+      // DM media is private and must be served by the main origin, which can
+      // authorize the requester. The sandbox origin has no session context, so
+      // it must never serve `dm/` keys.
+      const keysToTry = [`zip/${postId}.zip`, `html/${postId}.html`];
       for (const key of keysToTry) {
         const obj = await c.env.BUCKET.head(key);
         if (obj) {

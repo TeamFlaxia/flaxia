@@ -67,7 +67,15 @@ export async function verifyPassword(password: string, stored: string): Promise<
   )) as ArrayBuffer;
 
   const hashBytes = new Uint8Array(hash as ArrayBuffer);
-  return hashBytes.every((b, i) => b === originalHash[i]);
+  // Constant-time comparison to avoid leaking the hash via timing. The length
+  // is fixed by the algorithm (SHA-256 → 32 bytes), so an early length check
+  // does not leak secret-dependent information.
+  if (hashBytes.length !== originalHash.length) return false;
+  let diff = 0;
+  for (let i = 0; i < hashBytes.length; i++) {
+    diff |= hashBytes[i] ^ originalHash[i];
+  }
+  return diff === 0;
 }
 
 // Generate session token
@@ -104,7 +112,7 @@ export async function getSession(env: Env, token: string): Promise<{ user: User;
 
   // Get session from database
   const session = (await env.DB.prepare(`
-    SELECT * FROM sessions WHERE id = ? AND expires_at > datetime('now')
+    SELECT * FROM sessions WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   `)
     .bind(token)
     .first()) as Session | undefined;
@@ -182,7 +190,7 @@ export async function extendSession(env: Env, token: string): Promise<boolean> {
   const result = await env.DB.prepare(`
     UPDATE sessions 
     SET expires_at = ? 
-    WHERE id = ? AND expires_at > datetime('now')
+    WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   `)
     .bind(newExpiresAt, token)
     .run();
@@ -317,7 +325,9 @@ export async function verifySrpLogin(
   A: string,
   M1: string,
 ): Promise<{ user: User; session: Session; M2: string } | null> {
-  const hs = (await env.DB.prepare("SELECT * FROM srp_handshakes WHERE id = ? AND expires_at > datetime('now')")
+  const hs = (await env.DB.prepare(
+    "SELECT * FROM srp_handshakes WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+  )
     .bind(challengeId)
     .first()) as { user_id: string; b_scalar: string; b_pub: string } | null;
   if (!hs) return null;
@@ -385,7 +395,9 @@ export async function verifySrpPassword(
   A: string,
   M1: string,
 ): Promise<boolean> {
-  const hs = (await env.DB.prepare("SELECT * FROM srp_handshakes WHERE id = ? AND expires_at > datetime('now')")
+  const hs = (await env.DB.prepare(
+    "SELECT * FROM srp_handshakes WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+  )
     .bind(challengeId)
     .first()) as { user_id: string; b_scalar: string; b_pub: string } | null;
   if (!hs || hs.user_id !== userId) return false;

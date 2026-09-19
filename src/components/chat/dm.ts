@@ -687,7 +687,11 @@ export class DmTransport implements MessageTransport {
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) destroy();
     });
-    void executeZipAuto(msg.id, content, url).catch(() => {
+    // DM ZIP/HTML attachments live under `dm/` and are authorized by the main
+    // origin; the sandbox origin cannot see the session, so force the legacy
+    // executor, which fetches from /api/zip (or uses the decrypted blob URL).
+    const isDmAttachment = !!msg.payload_key?.startsWith('dm/');
+    void executeZipAuto(msg.id, content, url, undefined, isDmAttachment ? 'legacy' : undefined).catch(() => {
       content.innerHTML = `<div style="padding: 40px; text-align: center; color: var(--text-muted);">${t('post_stage.zip_load_error')}</div>`;
     });
   }

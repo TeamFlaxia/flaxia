@@ -1,6 +1,9 @@
 /*
   X-Frame-Options: DENY
-  Content-Security-Policy: default-src 'self';worker-src 'self' blob: https://flaxia.app; connect-src 'self' https: wss: ws: blob:; img-src * blob: data:; style-src 'self' 'unsafe-inline' https: blob:; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https: 'https' blob:; media-src 'self' https: 'https' blob:; frame-src 'self' https: blob: https://*.flaxia.app https://googleads.g.doubleclick.net https://www.youtube.com https://ep2.adtrafficquality.google https://www.google.com; frame-ancestors 'self'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Content-Security-Policy: default-src 'self'; object-src 'none'; base-uri 'self'; worker-src 'self' blob: https://flaxia.app; connect-src 'self' https: wss: ws: blob:; img-src * blob: data:; style-src 'self' 'unsafe-inline' https: blob:; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https: 'https' blob:; media-src 'self' https: 'https' blob:; frame-src 'self' https: blob: https://*.flaxia.app https://googleads.g.doubleclick.net https://www.youtube.com https://ep2.adtrafficquality.google https://www.google.com; frame-ancestors 'self'
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
