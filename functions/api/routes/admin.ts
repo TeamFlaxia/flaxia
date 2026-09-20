@@ -1098,25 +1098,27 @@ admin.post('/backfill-embeddings', requireAuth, requireAdmin, async (c) => {
     const drain = url.searchParams.get('drain') !== 'false';
 
     const candidates = (await c.env.DB.prepare(`
-      SELECT p.id, p.text
+      SELECT p.id, p.text, CASE WHEN pe.post_id IS NULL THEN 0 ELSE 1 END AS pending
       FROM posts p
       LEFT JOIN post_embeddings e ON p.id = e.post_id
+      LEFT JOIN pending_embeddings pe ON pe.post_id = p.id
       WHERE p.status = 'published'
         AND p.hidden = 0
         AND p.parent_id IS NULL
         AND p.text IS NOT NULL
         AND p.text != ''
         AND e.post_id IS NULL
-        AND p.id NOT IN (SELECT post_id FROM pending_embeddings)
       ORDER BY p.created_at DESC
       LIMIT ?
     `)
       .bind(limit)
-      .all()) as { results: Array<{ id: string; text: string }> };
+      .all()) as { results: Array<{ id: string; text: string; pending: number }> };
 
     let enqueued = 0;
     for (const post of candidates.results) {
-      await enqueuePendingEmbed(c.env.DB, post.id, post.text);
+      // Posts already in the outbox are counted but not re-enqueued, so failed
+      // retry state (attempts/last_error) is preserved.
+      if (!post.pending) await enqueuePendingEmbed(c.env.DB, post.id, post.text);
       enqueued++;
     }
 

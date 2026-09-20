@@ -25,7 +25,7 @@ interface ActorResult {
 function runActor(env: Record<string, string>): ActorResult {
   const res = spawnSync('node', ['--experimental-strip-types', 'tests/helpers/actor-dm.ts'], {
     cwd: ROOT,
-    env: { ...process.env, ...env },
+    env: { ...process.env, DEVICE_ID: env.DEVICE_ID ?? `device-${env.ROLE ?? 'x'}`, ...env },
     encoding: 'utf8',
   });
   return { ok: res.status === 0, stdout: res.stdout ?? '', stderr: res.stderr ?? '' };

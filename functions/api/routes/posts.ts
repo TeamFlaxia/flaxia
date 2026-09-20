@@ -292,10 +292,56 @@ async function filterBlockedAuthors(
   const blocked = new Set(blockedResult.results.map((r) => r.blocked_id));
   return posts.filter((p) => !blocked.has(String(p.user_id)));
 }
+// POST /api/posts - one-step text post creation (kept for API compatibility;
+// the web client uses prepare + commit for attachment support).
+posts.post('/posts', requireAuth, async (c) => {
+  try {
+    const { text, gifKey, payloadKey } = (await c.req.json()) as {
+      text?: string;
+      gifKey?: string;
+      payloadKey?: string;
+    };
+    if (typeof text !== 'string' || text.length < 1 || text.length > 200) {
+      return c.json({ error: 'Text must be 1-200 characters' }, 400);
+    }
+
+    const userId = c.get('user')?.id || '';
+    const username = c.get('user')?.username || 'anonymous';
+    const postId = crypto.randomUUID();
+    const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu;
+    const hashtags = Array.from(text.matchAll(hashtagRegex), (m) => m[1]);
+    const now = new Date().toISOString();
+
+    const result = await c.env.DB.prepare(
+      `INSERT INTO posts (id, user_id, username, text, hashtags, payload_key, gif_key, engagement_hotness, status, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1.0, 'published', ?)`,
+    )
+      .bind(postId, userId, username, text, JSON.stringify(hashtags), payloadKey || null, gifKey || null, now)
+      .run();
+
+    if (!result.success) {
+      return c.json({ error: 'Failed to create post' }, 500);
+    }
+    return c.json({ id: postId }, 201);
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Post creation error:', error);
+    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
 posts.get('/posts', async (c) => {
   try {
     const cursor = c.req.query('cursor');
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limitRaw = c.req.query('limit');
+    let limit = 20;
+    if (limitRaw !== undefined) {
+      const parsed = Number(limitRaw);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        return c.json({ error: 'limit must be a non-negative integer' }, 400);
+      }
+      limit = Math.min(parsed, 50);
+    }
     const hashtag = c.req.query('hashtag');
     const following = c.req.query('following') === 'true';
     const username = c.req.query('username');
@@ -1596,6 +1642,8 @@ posts.post('/posts/commit', requireAuth, async (c) => {
       }
       quotedPostAuthorId = quoted.user_id;
     }
+
+    if (!postId) postId = crypto.randomUUID();
 
     const result = await c.env.DB.prepare(`
       INSERT INTO posts (id, user_id, username, text, hashtags, mentions, payload_key, gif_key, swf_key, thumbnail_key, quoted_post_id, engagement_hotness, status)
@@ -3759,8 +3807,8 @@ async function insertAdminAlert(
 ) {
   const id = nanoid();
   const result = await db
-    .prepare('INSERT INTO admin_alerts (id, post_id, category, priority, status) VALUES (?, ?, ?, ?, ?)')
-    .bind(id, postId, category, priority, 'open')
+    .prepare('INSERT INTO admin_alerts (id, post_id, category, priority) VALUES (?, ?, ?, ?)')
+    .bind(id, postId, category, priority)
     .run();
   if (!result.success) {
     console.error('Failed to create admin alert');
@@ -4152,7 +4200,6 @@ posts.post('/posts/:id/versions/prepare', requireAuth, async (c) => {
       !(
         post.payload_key.startsWith('zip/') ||
         post.payload_key.startsWith('html/') ||
-        post.payload_key.startsWith('payload/') ||
         post.payload_key.startsWith('versions/')
       )
     ) {
@@ -4210,7 +4257,8 @@ posts.post('/posts/:id/versions/commit', requireAuth, async (c) => {
 
     // Archive the original release as v1 the first time a game is versioned,
     // so players can still roll back to it after an update.
-    if (max === 0 && post.payload_key && post.payload_key !== newKey) {
+    const archiveOriginal = max === 0 && !!post.payload_key && post.payload_key !== newKey;
+    if (archiveOriginal) {
       await c.env.DB.prepare(
         'INSERT INTO game_versions (id, post_id, version_number, payload_key, thumbnail_key, changelog, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       )
@@ -4218,7 +4266,8 @@ posts.post('/posts/:id/versions/commit', requireAuth, async (c) => {
         .run();
     }
 
-    const newVersionNumber = max + 1;
+    // When the original was archived as v1, the new release becomes v2.
+    const newVersionNumber = archiveOriginal ? 2 : max + 1;
     await c.env.DB.prepare(
       'INSERT INTO game_versions (id, post_id, version_number, payload_key, thumbnail_key, changelog, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     )

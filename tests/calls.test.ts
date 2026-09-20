@@ -29,9 +29,9 @@ async function registerTestUser(
 async function authUserAndGetId(suffix: string): Promise<{ cookie: string; userId: string }> {
   await registerTestUser(`calltest${suffix}@test.com`, 'password123', `calluser${suffix}`, `Call User ${suffix}`);
   const { cookie } = await loginUser(`calltest${suffix}@test.com`, 'password123');
-  const meRes = await fetch(`${BASE_URL}/api/auth/me`, { headers: { Cookie: cookie } });
-  const meData = (await meRes.json()) as { id?: string };
-  return { cookie, userId: meData.id || '' };
+  const meRes = await fetch(`${BASE_URL}/api/me`, { headers: { Cookie: cookie } });
+  const meData = (await meRes.json()) as { user?: { id?: string } };
+  return { cookie, userId: meData.user?.id || '' };
 }
 
 describe('POST /api/calls/start', () => {

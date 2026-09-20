@@ -140,15 +140,27 @@ async function loadKekFromSession(): Promise<CryptoKey | null> {
   }
 }
 
+// Resolve the KEK salt: callers that already hold the account (SRP) salt pass
+// it explicitly so login and E2EE share one password; standalone callers may
+// omit it, in which case a random salt is minted and stored server-side as
+// encSalt so a later unlock can still re-derive the same KEK.
+function resolveSalt(salt?: Uint8Array): Uint8Array {
+  if (salt && salt.length > 0) return salt;
+  const s = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(s);
+  return s;
+}
+
 // Generate a fresh identity, publish it, and unlock it in memory.
-export async function generateAndPublishIdentityV2(password: string, salt: Uint8Array): Promise<boolean> {
+export async function generateAndPublishIdentityV2(password: string, salt?: Uint8Array): Promise<boolean> {
   if (cached) return true;
   try {
     const id: IdentityKeyPair = generateIdentityKeyPair();
     const spk: SignedPreKey = generateSignedPreKey(id.signPriv);
     const opks = generateOneTimePreKeys(OPK_COUNT);
 
-    const kek = await deriveKek(password, salt);
+    const effectiveSalt = resolveSalt(salt);
+    const kek = await deriveKek(password, effectiveSalt);
     kekCache = kek;
 
     const signPrivEnc = await wrapBytes(kek, base64ToBuf(id.signPriv));
@@ -176,7 +188,7 @@ export async function generateAndPublishIdentityV2(password: string, salt: Uint8
         spkPrivIv: spkPrivEnc.iv,
         spkSig: spk.signature,
         opks: opkWrapped,
-        encSalt: bufToBase64(salt),
+        encSalt: bufToBase64(effectiveSalt),
       }),
     });
     if (!res.ok) return false;
@@ -206,23 +218,33 @@ export async function unlockIdentityV2FromSession(): Promise<boolean> {
   return applyUnlocked(kek);
 }
 
-async function applyUnlocked(kek: CryptoKey): Promise<boolean> {
+interface IdentityPayload {
+  exists?: boolean;
+  identitySignPub?: string;
+  identitySignPrivEnc?: string;
+  identitySignPrivIv?: string;
+  identityDhPub?: string;
+  identityDhPrivEnc?: string;
+  identityDhPrivIv?: string;
+  spkPub?: string;
+  spkPrivEnc?: string;
+  spkPrivIv?: string;
+  spkSig?: string;
+  encSalt?: string;
+}
+
+async function fetchIdentityPayload(): Promise<IdentityPayload | null> {
   try {
     const res = await fetch('/api/messenger/identity-v2', { credentials: 'include' });
-    if (!res.ok) return false;
-    const data = (await res.json()) as {
-      exists?: boolean;
-      identitySignPub?: string;
-      identitySignPrivEnc?: string;
-      identitySignPrivIv?: string;
-      identityDhPub?: string;
-      identityDhPrivEnc?: string;
-      identityDhPrivIv?: string;
-      spkPub?: string;
-      spkPrivEnc?: string;
-      spkPrivIv?: string;
-      spkSig?: string;
-    };
+    if (!res.ok) return null;
+    return (await res.json()) as IdentityPayload;
+  } catch {
+    return null;
+  }
+}
+
+async function applyUnlockedData(kek: CryptoKey, data: IdentityPayload): Promise<boolean> {
+  try {
     if (!data.exists || !data.identitySignPrivEnc || !data.identitySignPrivIv) return false;
     cached = {
       identitySignPub: data.identitySignPub || '',
@@ -240,17 +262,24 @@ async function applyUnlocked(kek: CryptoKey): Promise<boolean> {
   }
 }
 
-// Unlock an existing identity using the user's password (derives the KEK from
-// the server-stored salt).
+async function applyUnlocked(kek: CryptoKey): Promise<boolean> {
+  const data = await fetchIdentityPayload();
+  if (!data) return false;
+  return applyUnlockedData(kek, data);
+}
+
+// Unlock an existing identity using the user's password. The KEK is always
+// derived from the server-stored `encSalt` — a single authoritative salt — so
+// login and E2EE can never drift apart.
 export async function unlockIdentityV2WithPassword(password: string): Promise<boolean> {
   if (cached) return true;
+  const data = await fetchIdentityPayload();
+  if (!data) return false;
+  if (!data.exists) return false;
+  if (!data.encSalt) return false;
   try {
-    const res = await fetch('/api/messenger/identity-v2', { credentials: 'include' });
-    if (!res.ok) return false;
-    const data = (await res.json()) as { exists?: boolean; encSalt?: string };
-    if (!data.exists || !data.encSalt) return false;
     const kek = await deriveKek(password, base64ToBuf(data.encSalt));
-    if (!(await applyUnlocked(kek))) return false;
+    if (!(await applyUnlockedData(kek, data))) return false;
     kekCache = kek;
     await persistKek(kek);
     return true;
@@ -259,92 +288,33 @@ export async function unlockIdentityV2WithPassword(password: string): Promise<bo
   }
 }
 
-// Ensure an E2EE identity exists and is unlocked, deriving the KEK from the
-// account password + the SRP salt (so a single password protects both login and
-// E2EE). If an identity already exists it is unlocked; otherwise a fresh one is
-// generated and published, wrapped with a KEK derived from (password, salt).
-// The same salt is stored as encSalt so future unlocks stay consistent.
-export async function ensureE2EEIdentityV2(password: string, salt: Uint8Array): Promise<boolean> {
+// Ensure an E2EE identity exists and is unlocked.
+//
+// The KEK is always derived from the server-stored `encSalt` (never the SRP
+// salt), so a single login password unlocks E2EE on any device automatically.
+// An existing identity is NEVER overwritten: if it cannot be decrypted we fail
+// loudly instead of destroying the user's message history.
+export async function ensureE2EEIdentityV2(password: string): Promise<boolean> {
   if (cached) return true;
-  try {
-    const kek = await deriveKek(password, salt);
-    kekCache = kek;
+  const data = await fetchIdentityPayload();
+  if (!data) return false; // network/transient error: do not create or destroy
 
-    const res = await fetch('/api/messenger/identity-v2', { credentials: 'include' });
-    if (!res.ok) return false;
-    const data = (await res.json()) as { exists?: boolean; encSalt?: string };
-    if (data.exists) {
-      const ok = await applyUnlocked(kek);
-      if (ok) {
-        await persistKek(kek);
-        return true;
-      }
-      // SRP-salt KEK didn't work — try the server-stored encSalt (may differ
-      // if the identity was created via generateAndPublishIdentityV2).
-      if (data.encSalt) {
-        const altKek = await deriveKek(password, base64ToBuf(data.encSalt));
-        const ok2 = await applyUnlocked(altKek);
-        if (ok2) {
-          kekCache = altKek;
-          await persistKek(altKek);
-          return true;
-        }
-      }
-      // The existing identity cannot be decrypted (wrong password / lost key).
-      // Overwrite it with a fresh one so the user can send encrypted messages.
-      // Using the caller-supplied salt (SRP salt) keeps the KEK consistent
-      // with the login password, preventing the same lockout on password change.
+  if (data.exists) {
+    if (!data.encSalt) return false;
+    try {
+      const kek = await deriveKek(password, base64ToBuf(data.encSalt));
+      if (!(await applyUnlockedData(kek, data))) return false; // wrong password / corrupt
+      kekCache = kek;
+      await persistKek(kek);
+      return true;
+    } catch {
+      return false;
     }
-
-    // Fresh identity.
-    const id: IdentityKeyPair = generateIdentityKeyPair();
-    const spk: SignedPreKey = generateSignedPreKey(id.signPriv);
-    const opks = generateOneTimePreKeys(OPK_COUNT);
-
-    const signPrivEnc = await wrapBytes(kek, base64ToBuf(id.signPriv));
-    const dhPrivEnc = await wrapBytes(kek, base64ToBuf(id.dhPriv));
-    const spkPrivEnc = await wrapBytes(kek, base64ToBuf(spk.priv));
-    const opkWrapped: Array<{ id: string; pub: string; privEnc: string; privIv: string }> = [];
-    for (const o of opks) {
-      const w = await wrapBytes(kek, base64ToBuf(o.priv));
-      opkWrapped.push({ id: o.id, pub: o.pub, privEnc: w.enc, privIv: w.iv });
-    }
-
-    const pub = await fetch('/api/messenger/identity-v2', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({
-        identitySignPub: id.signPub,
-        identitySignPrivEnc: signPrivEnc.enc,
-        identitySignPrivIv: signPrivEnc.iv,
-        identityDhPub: id.dhPub,
-        identityDhPrivEnc: dhPrivEnc.enc,
-        identityDhPrivIv: dhPrivEnc.iv,
-        spkPub: spk.pub,
-        spkPrivEnc: spkPrivEnc.enc,
-        spkPrivIv: spkPrivEnc.iv,
-        spkSig: spk.signature,
-        opks: opkWrapped,
-        encSalt: bufToBase64(salt),
-      }),
-    });
-    if (!pub.ok) return false;
-
-    cached = {
-      identitySignPub: id.signPub,
-      identitySignPriv: base64ToBuf(id.signPriv),
-      identityDhPub: id.dhPub,
-      identityDhPriv: base64ToBuf(id.dhPriv),
-      spkPub: spk.pub,
-      spkPriv: base64ToBuf(spk.priv),
-      spkSig: spk.signature,
-    };
-    await persistKek(kek);
-    return true;
-  } catch {
-    return false;
   }
+
+  // No identity yet: create one, wrapped with a KEK derived from a random
+  // encSalt that is stored alongside it.
+  return generateAndPublishIdentityV2(password);
 }
 
 // Re-wrap the already-unlocked identity with a new KEK derived from a changed
@@ -395,22 +365,15 @@ export async function rewrapE2EEIdentityV2(password: string, salt: Uint8Array): 
 // exists yet. Returns true once the in-memory identity is usable.
 // Safety: if the server already has an identity, NEVER overwrite it — a failed
 // unlock (network timeout, wrong password, etc.) must not destroy the real key.
-export async function unlockOrCreateIdentityV2(password: string, salt: Uint8Array): Promise<boolean> {
+export async function unlockOrCreateIdentityV2(password: string): Promise<boolean> {
   if (cached) return true;
   if (await unlockIdentityV2WithPassword(password)) return true;
-  // Check whether an identity already exists on the server before creating a
-  // new one. Without this guard a transient unlock failure (e.g. timeout)
-  // would overwrite the existing identity, making all past messages unreadable.
-  try {
-    const res = await fetch('/api/messenger/identity-v2', { credentials: 'include' });
-    if (res.ok) {
-      const data = (await res.json()) as { exists?: boolean };
-      if (data.exists) return false; // existing identity — do NOT overwrite
-    }
-  } catch {
-    /* network error — safe to skip creation */
-  }
-  return generateAndPublishIdentityV2(password, salt);
+  // If an identity already exists but could not be unlocked, fail rather than
+  // overwrite it — a transient failure must never destroy the real key.
+  const data = await fetchIdentityPayload();
+  if (!data) return false;
+  if (data.exists) return false;
+  return generateAndPublishIdentityV2(password);
 }
 
 export function isIdentityV2Unlocked(): boolean {

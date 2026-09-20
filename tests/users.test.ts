@@ -10,7 +10,7 @@ describe('GET /api/users/:username', () => {
     const res = await fetch(`${BASE_URL}/api/users/testuser1`);
     assert.equal(res.status, 200);
     const data = await res.json();
-    assert.equal(data.username, 'testuser1');
+    assert.equal(data.user.username, 'testuser1');
   });
 
   it('returns unknown user → 404', async () => {
@@ -45,7 +45,7 @@ describe('PATCH /api/users/me', () => {
     });
     assert.equal(res.status, 200);
     const data = await res.json();
-    assert.equal(data.display_name, 'New Name');
+    assert.equal(data.user.display_name, 'New Name');
   });
 
   it('updates bio successfully', async () => {
@@ -60,7 +60,7 @@ describe('PATCH /api/users/me', () => {
     });
     assert.equal(res.status, 200);
     const data = await res.json();
-    assert.equal(data.bio, 'My bio');
+    assert.equal(data.user.bio, 'My bio');
   });
 
   it('rejects display_name > 50 chars → 400', async () => {

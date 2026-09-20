@@ -51,7 +51,7 @@ export class GroupTransport implements MessageTransport {
   }
 
   async pollMessages(cursor: string): Promise<ChatMessage[]> {
-    const res = await fetch(`/api/groups/${this.groupId}/messages?limit=10&cursor=${encodeURIComponent(cursor)}`, {
+    const res = await fetch(`/api/groups/${this.groupId}/messages?limit=10&after=${encodeURIComponent(cursor)}`, {
       credentials: 'include',
     });
     if (!res.ok) return [];

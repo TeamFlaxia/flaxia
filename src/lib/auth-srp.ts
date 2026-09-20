@@ -68,7 +68,7 @@ export async function registerWithSrp(
     return { ok: false, error: data.error };
   }
   storeSrpSalt(salt);
-  const e2ee = await ensureE2EEIdentityV2(password, salt);
+  const e2ee = await ensureE2EEIdentityV2(password);
   return { ok: e2ee, error: e2ee ? undefined : 'E2EE setup failed' };
 }
 
@@ -111,7 +111,7 @@ export async function loginWithSrp(email: string, password: string): Promise<boo
   if (!ok) return false;
 
   storeSrpSalt(salt);
-  await ensureE2EEIdentityV2(password, salt);
+  await ensureE2EEIdentityV2(password);
   return true;
 }
 
@@ -130,7 +130,7 @@ async function upgradeSrpAndEnsure(password: string): Promise<void> {
     }),
   });
   storeSrpSalt(salt);
-  await ensureE2EEIdentityV2(password, salt);
+  await ensureE2EEIdentityV2(password);
 }
 
 // Verify the current user's password via SRP without creating a session or

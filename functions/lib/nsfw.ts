@@ -1,4 +1,4 @@
-import { NudeNetDetection } from '@flaxia/sdk';
+import type { NudeNetDetection } from '@flaxia/sdk';
 
 const THRESHOLD = 0.5;
 

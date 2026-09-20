@@ -180,6 +180,7 @@ messenger.get('/dm/conversations/:id/messages', requireAuth, async (c) => {
     const userId = c.get('user')?.id || '';
     const convId = c.req.param('id');
     const cursor = c.req.query('cursor');
+    const after = c.req.query('after');
     const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
 
     // Verify user is participant
@@ -194,7 +195,28 @@ messenger.get('/dm/conversations/:id/messages', requireAuth, async (c) => {
     }
 
     let messages: { results?: Array<Record<string, unknown>> };
-    if (cursor) {
+    if (after) {
+      // Realtime poll: everything at-or-newer than the client's newest message,
+      // oldest-first. `>=` plus client-side id de-duplication avoids missing a
+      // message that shares the boundary millisecond.
+      messages = await c.env.DB.prepare(`
+        SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at,
+               m.gif_key, m.payload_key, m.swf_key, m.edited_at,
+               m.content_iv, m.enc_version, m.key_version,
+               m.ratchet_pub, m.ratchet_pn, m.ratchet_n,
+               m.stamp_id,
+               p.enc as plaintext_enc, p.iv as plaintext_iv,
+               u.username as sender_username, u.display_name as sender_display_name
+        FROM dm_messages m
+        JOIN users u ON m.sender_id = u.id
+        LEFT JOIN dm_message_plaintext p ON p.message_id = m.id AND p.user_id = ?
+        WHERE m.conversation_id = ? AND m.created_at >= ?
+        ORDER BY m.created_at ASC
+        LIMIT ?
+      `)
+        .bind(userId, convId, after, limit)
+        .all();
+    } else if (cursor) {
       messages = await c.env.DB.prepare(`
         SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at,
                m.gif_key, m.payload_key, m.swf_key, m.edited_at,

@@ -265,7 +265,8 @@ export abstract class MessageView {
       const newRaw = await this.transport.pollMessages(latest.created_at);
       if (newRaw.length === 0) return;
       const existingIds = new Set(this.messages.map((m) => m.id));
-      const added = newRaw.filter((m) => !existingIds.has(m.id)).reverse();
+      // The `after` poll returns messages oldest-first, so append in order.
+      const added = newRaw.filter((m) => !existingIds.has(m.id));
       if (added.length > 0) {
         this.messages.push(...added);
         this.renderMessages();

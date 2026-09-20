@@ -105,6 +105,9 @@ auth.post('/register', async (c) => {
   } catch (error: unknown) {
     const message = (error as { message?: string })?.message || 'Unknown error';
     console.error('Registration error:', message);
+    if (message === 'Email already registered' || message === 'Username already taken') {
+      return c.json({ error: message }, 409);
+    }
     return c.json({ error: 'Registration failed. Please try again.' }, 400);
   }
 });

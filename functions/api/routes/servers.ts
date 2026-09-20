@@ -869,11 +869,11 @@ servers.post('/servers/:id/keys', requireAuth, async (c) => {
       return c.json({ error: 'Server not found' }, 404);
     }
 
-    // Any current member may submit wrapped keys for other current members.
-    // A member can only wrap a channel key they already possess (decrypted in
-    // the client); the server never sees plaintext keys. The worst a malicious
-    // member can do is refuse to wrap (or wrap garbage for) another member,
-    // which is the same trust model as the rest of the E2EE group chats.
+    // Any current member may submit wrapped keys, but only server owners/admins
+    // may wrap keys on behalf of OTHER members. A plain member can only submit
+    // their own box, which prevents one member from silently overwriting
+    // another member's wrapped channel key.
+    const isPrivileged = myMember.role === 'owner' || myMember.role === 'admin';
 
     const memberIds = await c.env.DB.prepare(
       'SELECT user_id FROM server_members WHERE server_id = ? AND left_at IS NULL',
@@ -885,6 +885,9 @@ servers.post('/servers/:id/keys', requireAuth, async (c) => {
     for (const b of boxes) {
       if (!currentIds.has(b.userId)) {
         return c.json({ error: 'Key recipient is not a current member' }, 400);
+      }
+      if (!isPrivileged && b.userId !== userId) {
+        return c.json({ error: 'Only server admins may wrap keys for other members' }, 403);
       }
     }
 
@@ -963,6 +966,7 @@ servers.get('/servers/:id/channels/:channelId/messages', requireAuth, async (c) 
     const serverId = c.req.param('id');
     const channelId = c.req.param('channelId');
     const cursor = c.req.query('cursor');
+    const after = c.req.query('after');
     const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
 
     const member = await c.env.DB.prepare(
@@ -984,7 +988,24 @@ servers.get('/servers/:id/channels/:channelId/messages', requireAuth, async (c) 
     }
 
     let messages: { results?: Array<Record<string, unknown>> };
-    if (cursor) {
+    if (after) {
+      // Realtime poll: messages at-or-newer than the client's latest, oldest-first.
+      messages = await c.env.DB.prepare(`
+        SELECT m.id, m.channel_id, m.sender_id, m.content, m.created_at,
+               m.gif_key, m.payload_key, m.swf_key, m.edited_at,
+                m.content_iv, m.enc_version, m.key_version,
+                m.reply_to_id, m.pinned, m.stamp_id,
+               u.username as sender_username, u.display_name as sender_display_name,
+               u.avatar_key as sender_avatar_key
+        FROM server_messages m
+        JOIN users u ON m.sender_id = u.id
+        WHERE m.channel_id = ? AND m.created_at >= ?
+        ORDER BY m.created_at ASC
+        LIMIT ?
+      `)
+        .bind(channelId, after, limit)
+        .all();
+    } else if (cursor) {
       messages = await c.env.DB.prepare(`
         SELECT m.id, m.channel_id, m.sender_id, m.content, m.created_at,
                m.gif_key, m.payload_key, m.swf_key, m.edited_at,

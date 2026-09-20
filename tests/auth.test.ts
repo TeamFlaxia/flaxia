@@ -13,8 +13,9 @@ describe('POST /api/auth/register', () => {
       display_name: 'User A',
     });
     assert.equal(res.status, 201);
-    const body = (await res.json()) as { sessionId?: string };
-    assert.ok(body.sessionId, 'response should include sessionId for WebSocket auth');
+    // The session is delivered as an HttpOnly cookie (never exposed to JS).
+    const cookie = res.headers.get('set-cookie') ?? '';
+    assert.ok(cookie.includes('session='), 'response should set a session cookie');
   });
 
   it('rejects duplicate email → 409', async () => {

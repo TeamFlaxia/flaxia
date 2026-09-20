@@ -11,7 +11,7 @@ const MIME: Record<string, string> = {
   json: 'application/json',
 };
 
-import { NudeNetDetection } from '@flaxia/sdk';
+import type { NudeNetDetection } from '@flaxia/sdk';
 import type { LinUCBConfig } from '../../lib/linucb';
 import { createProjection, parseBanditConfig, projConfigKey, project } from '../../lib/linucb';
 import { applyNsfwTags, resolveNsfwTags } from '../../lib/nsfw';

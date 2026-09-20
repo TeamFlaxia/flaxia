@@ -71,13 +71,17 @@ describe('X3DH OPK endpoint flow', () => {
     const data = (await consume.json()) as { privEnc?: string; privIv?: string };
     assert.ok(data.privEnc && data.privIv, 'consume returns the OPK private material');
 
-    // Consuming again must 404 (one-time use).
+    // Re-consuming must succeed idempotently: the private material is retained
+    // (still KEK-encrypted) so a responder whose ratchet session was lost can
+    // rebuild the identical X3DH ratchet instead of permanently losing history.
     const consume2 = await realFetch(`${BASE_URL}/api/messenger/opks/consume`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: cookie },
       body: JSON.stringify({ opkId: firstOpkId }),
     });
-    assert.equal(consume2.status, 404, 'OPK is single-use (deleted after consume)');
+    assert.equal(consume2.status, 200, 'OPK private stays available for ratchet recovery');
+    const data2 = (await consume2.json()) as { privEnc?: string; privIv?: string };
+    assert.equal(data2.privEnc, data.privEnc, 're-consume returns the same private material');
   });
 
   it('repeated prekey fetches hand out distinct reserved OPKs', async () => {

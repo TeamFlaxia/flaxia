@@ -318,7 +318,7 @@ export async function insertNotification(
   fromUserId?: string,
 ): Promise<void> {
   await db
-    .prepare('INSERT INTO notifications (user_id, type, post_id, from_user_id) VALUES (?, ?, ?, ?)')
+    .prepare('INSERT INTO notifications (user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?)')
     .bind(userId, type, postId, fromUserId ?? null)
     .run();
 }
@@ -328,11 +328,10 @@ export async function insertAdminAlert(
   postId: string,
   category: string,
   priority: string,
-  reason?: string,
 ): Promise<void> {
   await db
-    .prepare('INSERT INTO admin_alerts (post_id, category, priority, reason, status) VALUES (?, ?, ?, ?, ?)')
-    .bind(postId, category, priority, reason ?? '', 'pending')
+    .prepare('INSERT INTO admin_alerts (id, post_id, category, priority) VALUES (?, ?, ?, ?)')
+    .bind(crypto.randomUUID(), postId, category, priority)
     .run();
 }
 

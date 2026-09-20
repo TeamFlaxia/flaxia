@@ -17,6 +17,8 @@ import {
   buildResponderRatchet,
   type DmX3DHBootstrap,
   decryptDmMessageV2,
+  encryptDmMessageV2,
+  resetDmRatchet,
 } from '../src/lib/messenger-dm-session.ts';
 import {
   __seedConsumedOpkForTests,
@@ -195,6 +197,92 @@ describe('DM session recovery (candidate sessions)', () => {
       ),
       /OPK_UNRECOVERABLE/,
     );
+  });
+});
+
+describe('DM ratchet reset', () => {
+  it('never clears the durable decrypted history (the ratchet cannot recompute it)', async () => {
+    __setDmPlaintextStoreForTests(new MemoryDmPlaintextStore());
+    __setIdentityV2ForTests(await fullIdentityNoKeys(), await testKek());
+    await putDmPlaintext('dm-keep:peer:pub:0', 'precious history');
+
+    await resetDmRatchet('dm-keep', 'peer');
+
+    assert.equal(await getDmPlaintext('dm-keep:peer:pub:0'), 'precious history');
+  });
+
+  it('waits for the server delete so the next send re-bootstraps instead of resurrecting the old session', async () => {
+    const A = fullIdentity();
+    const B = fullIdentity();
+    __clearSessionsForTests();
+    __setIdentityV2ForTests(A, await testKek());
+
+    const b = peerBundle(B);
+    const dmId = 'dm-reset-race';
+    const peerId = 'bob';
+
+    // A valid persisted initiator session: the old code would load and reuse it.
+    const aBuilt = buildInitiatorRatchet(A, b.bundle);
+    aBuilt.ratchet.encrypt('stale');
+    const persisted = await wrapStringWithKek(
+      JSON.stringify([{ ratchet: aBuilt.ratchet.serialize(), bootstrap: null }]),
+    );
+
+    let deleted = false;
+    let releaseDelete: () => void = () => {};
+    const deleteGate = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+
+    const realFetch = globalThis.fetch;
+    (globalThis as Record<string, unknown>).fetch = async (input: unknown, init: Record<string, unknown> = {}) => {
+      const url = String(input);
+      const method = String(init.method ?? 'GET').toUpperCase();
+      if (url.includes('/api/messenger/ratchet-session')) {
+        if (method === 'DELETE') {
+          await deleteGate;
+          deleted = true;
+          return new Response(JSON.stringify({ success: true }), { status: 200 });
+        }
+        if (method === 'PUT') return new Response(JSON.stringify({ success: true }), { status: 200 });
+        if (deleted) return new Response(JSON.stringify({ exists: false }), { status: 200 });
+        return new Response(JSON.stringify({ exists: true, session_enc: persisted.enc, session_iv: persisted.iv }), {
+          status: 200,
+        });
+      }
+      if (url.includes('/api/messenger/prekeys')) {
+        return new Response(
+          JSON.stringify({
+            identitySignPub: B.identitySignPub,
+            identityDhPub: B.identityDhPub,
+            signedPreKeyPub: B.spkPub,
+            signedPreKeySignature: B.spkSig,
+            signedPreKeyRotatedAt: new Date().toISOString(),
+            preKeyPub: b.bundle.preKeyPub,
+            preKeyId: b.bundle.preKeyId,
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response('{}', { status: 200 });
+    };
+
+    try {
+      const resetPromise = resetDmRatchet(dmId, peerId);
+      const encPromise = encryptDmMessageV2(dmId, peerId, 'fresh');
+      let settled = false;
+      void encPromise.then(() => {
+        settled = true;
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      assert.equal(settled, false, 'send waits for the pending server reset');
+      releaseDelete();
+      await resetPromise;
+      const env = await encPromise;
+      assert.ok(env.x3dh, 'send re-bootstraps X3DH instead of reusing the deleted session');
+    } finally {
+      (globalThis as Record<string, unknown>).fetch = realFetch;
+    }
   });
 });
 

@@ -1,4 +1,3 @@
-import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { sendPushToAll } from '../../lib/notify';
@@ -7,26 +6,8 @@ import type { Bindings, Variables } from '../types';
 
 const calls = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-async function verifyCallActive(
-  c: Context<{ Bindings: Bindings; Variables: Variables }>,
-  callId: string,
-  userId: string,
-): Promise<boolean> {
-  try {
-    if (!c.env.CALL_STREAM) return false;
-    const doId = c.env.CALL_STREAM.idFromName(callId);
-    const stub = c.env.CALL_STREAM.get(doId);
-    const resp = await stub.fetch('http://internal/');
-    if (!resp.ok) return false;
-    const data = (await resp.json()) as { participants: Array<{ userId: string }> };
-    return data.participants.some((p) => p.userId === userId);
-  } catch {
-    return false;
-  }
-}
-
 // POST /api/calls/start - Start a voice/video call in a group
-calls.post('/start', requireAuth, async (c) => {
+calls.post('/calls/start', requireAuth, async (c) => {
   try {
     const user = c.get('user')!;
     const { groupId, type } = (await c.req.json()) as {
@@ -38,7 +19,10 @@ calls.post('/start', requireAuth, async (c) => {
       return c.json({ error: 'groupId is required' }, 400);
     }
 
-    // Check the user is not already in another active call
+    // The DB is the source of truth for call state: an active call the user is
+    // already a participant of means they cannot start another. (The realtime
+    // Durable Object only reflects participants who have opened a socket, so it
+    // must not be used to consider a freshly created call "stale".)
     const existingActive = await c.env.DB.prepare(
       `SELECT c.id FROM calls c JOIN call_participants cp ON cp.call_id = c.id
        WHERE cp.user_id = ? AND c.status = 'active' LIMIT 1`,
@@ -46,15 +30,7 @@ calls.post('/start', requireAuth, async (c) => {
       .bind(user.id)
       .first<{ id: string }>();
     if (existingActive) {
-      const stillActive = await verifyCallActive(c, existingActive.id, user.id);
-      if (stillActive) {
-        return c.json({ error: 'You are already in an active call' }, 409);
-      }
-      // Stale entry — auto-cleanup
-      const now = new Date().toISOString();
-      await c.env.DB.prepare("UPDATE calls SET status = 'ended', ended_at = ? WHERE id = ?")
-        .bind(now, existingActive.id)
-        .run();
+      return c.json({ error: 'You are already in an active call' }, 409);
     }
 
     const callType = type === 'video' ? 'video' : 'audio';
@@ -139,15 +115,7 @@ calls.post('/servers/:id/channels/:channelId/call', requireAuth, async (c) => {
       .bind(user.id)
       .first<{ id: string }>();
     if (existingActive) {
-      const stillActive = await verifyCallActive(c, existingActive.id, user.id);
-      if (stillActive) {
-        return c.json({ error: 'You are already in an active call' }, 409);
-      }
-      // Stale entry — auto-cleanup
-      const now = new Date().toISOString();
-      await c.env.DB.prepare("UPDATE calls SET status = 'ended', ended_at = ? WHERE id = ?")
-        .bind(now, existingActive.id)
-        .run();
+      return c.json({ error: 'You are already in an active call' }, 409);
     }
 
     // Reuse an active call for this channel, or create one
@@ -185,7 +153,7 @@ calls.post('/servers/:id/channels/:channelId/call', requireAuth, async (c) => {
 });
 
 // POST /api/calls/:id/join - Join an active call
-calls.post('/:id/join', requireAuth, async (c) => {
+calls.post('/calls/:id/join', requireAuth, async (c) => {
   try {
     const user = c.get('user')!;
     const callId = c.req.param('id');
@@ -209,15 +177,7 @@ calls.post('/:id/join', requireAuth, async (c) => {
       .bind(user.id)
       .first<{ id: string }>();
     if (existingActive) {
-      const stillActive = await verifyCallActive(c, existingActive.id, user.id);
-      if (stillActive) {
-        return c.json({ error: 'You are already in an active call' }, 409);
-      }
-      // Stale entry — auto-cleanup
-      const now = new Date().toISOString();
-      await c.env.DB.prepare("UPDATE calls SET status = 'ended', ended_at = ? WHERE id = ?")
-        .bind(now, existingActive.id)
-        .run();
+      return c.json({ error: 'You are already in an active call' }, 409);
     }
 
     // Verify user is a participant
@@ -291,7 +251,7 @@ calls.post('/:id/join', requireAuth, async (c) => {
 });
 
 // POST /api/calls/:id/end - End a call
-calls.post('/:id/end', requireAuth, async (c) => {
+calls.post('/calls/:id/end', requireAuth, async (c) => {
   try {
     const user = c.get('user')!;
     const callId = c.req.param('id');
@@ -335,7 +295,7 @@ calls.post('/:id/end', requireAuth, async (c) => {
 });
 
 // POST /api/calls/:id/mute - Toggle mute state
-calls.post('/:id/mute', requireAuth, async (c) => {
+calls.post('/calls/:id/mute', requireAuth, async (c) => {
   try {
     const user = c.get('user')!;
     const callId = c.req.param('id');
@@ -354,7 +314,7 @@ calls.post('/:id/mute', requireAuth, async (c) => {
 });
 
 // GET /api/calls/active - Get user's active calls
-calls.get('/active', requireAuth, async (c) => {
+calls.get('/calls/active', requireAuth, async (c) => {
   try {
     const user = c.get('user')!;
 

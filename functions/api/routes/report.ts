@@ -26,6 +26,10 @@ report.post('/report', requireAuth, async (c) => {
       };
     };
 
+    if (!post_id) {
+      return c.json({ error: 'post_id is required' }, 400);
+    }
+
     // Validate category
     const validCategories: ReportCategory[] = [
       'spam',

@@ -127,7 +127,7 @@ describe('POST /api/posts/commit — validation', () => {
     assert.equal(res.status, 422);
   });
 
-  it('accepts text of exactly 200 chars → 201', async () => {
+  it('accepts text of exactly 200 chars → 200', async () => {
     const { cookie } = await seedUserAndLogin('1');
     const postId = await createPendingPost(cookie);
     const res = await fetch(`${BASE_URL}/api/posts/commit`, {
@@ -138,7 +138,7 @@ describe('POST /api/posts/commit — validation', () => {
       },
       body: JSON.stringify({ postId, text: 'a'.repeat(200) }),
     });
-    assert.equal(res.status, 201);
+    assert.equal(res.status, 200);
   });
 
   it('rejects unauthenticated commit → 401', async () => {
@@ -178,7 +178,7 @@ describe('POST /api/posts/commit — validation', () => {
     assert.equal(res.status, 422);
   });
 
-  it('accepts valid commit with text and hashtags → 201', async () => {
+  it('accepts valid commit with text and hashtags → 200', async () => {
     const { cookie } = await seedUserAndLogin('1');
     const postId = await createPendingPost(cookie);
     const res = await fetch(`${BASE_URL}/api/posts/commit`, {
@@ -189,10 +189,10 @@ describe('POST /api/posts/commit — validation', () => {
       },
       body: JSON.stringify({ postId, text: 'Hello world', hashtags: ['tag1', 'tag2'] }),
     });
-    assert.equal(res.status, 201);
+    assert.equal(res.status, 200);
   });
 
-  it('commits with Japanese hashtags → 201', async () => {
+  it('commits with Japanese hashtags → 200', async () => {
     const { cookie } = await seedUserAndLogin('1');
     const postId = await createPendingPost(cookie);
     const res = await fetch(`${BASE_URL}/api/posts/commit`, {
@@ -203,7 +203,7 @@ describe('POST /api/posts/commit — validation', () => {
       },
       body: JSON.stringify({ postId, text: '日本語の投稿', hashtags: ['日本語'] }),
     });
-    assert.equal(res.status, 201);
+    assert.equal(res.status, 200);
   });
 });
 
@@ -901,16 +901,16 @@ describe('DELETE /api/posts/:id', () => {
   });
 
   it("rejects deleting other's post → 403", async () => {
-    await seedUserAndLogin('1');
+    const { cookie: cookie1 } = await seedUserAndLogin('1');
     const { cookie: cookie2 } = await seedUserAndLogin('2');
 
     const createRes = await fetch(`${BASE_URL}/api/posts`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Cookie: cookie2,
+        Cookie: cookie1,
       },
-      body: JSON.stringify({ text: 'User 2 post' }),
+      body: JSON.stringify({ text: 'User 1 post' }),
     });
     const createData = await createRes.json();
     const postId = createData.id;

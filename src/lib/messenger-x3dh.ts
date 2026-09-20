@@ -135,6 +135,22 @@ export function x3dhInitiate(
   identityDhPubB64: string,
   peerBundle: PreKeyBundle,
 ): X3DHInitiatorResult {
+  // Authenticate the signed prekey before doing any DH. Without this a
+  // malicious/compromised server could substitute its own SPK and MITM the
+  // handshake. The signature binds the SPK to the peer's identity sign key.
+  const spkPubBytes = base64ToBuf(peerBundle.signedPreKeyPub);
+  let signatureValid = false;
+  try {
+    signatureValid = ed25519.verify(
+      base64ToBuf(peerBundle.signedPreKeySignature),
+      spkPubBytes,
+      base64ToBuf(peerBundle.identitySignPub),
+    );
+  } catch {
+    signatureValid = false;
+  }
+  if (!signatureValid) throw new Error('Invalid signed prekey signature');
+
   const ek = x25519.keygen();
   const ekPriv = ek.secretKey;
   const ekPub = x25519.getPublicKey(ek.secretKey);

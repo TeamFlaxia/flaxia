@@ -60,21 +60,21 @@ describe('extractZipToR2 (subrequest budget + resume)', () => {
     bucket.store.set('zip/game.zip', await createZipFileCount(12));
     const manifestKey = 'wvfs/post1/.wvfs-manifest';
 
-    const first = await extractZipToR2(bucket as unknown as R2Bucket, 'zip/game.zip', 'post1', 5);
+    const first = await extractZipToR2(bucket as unknown as R2Bucket, 'zip/game.zip', 'post1', null, 5);
     assert.strictEqual(first, 5);
     let manifest = JSON.parse(await (await bucket.get(manifestKey))!.text()) as { files: string[] };
     assert.strictEqual(manifest.files.length, 5);
     assert.ok(bucket.subrequests <= 50, `first call used ${bucket.subrequests} subrequests`);
 
     bucket.subrequests = 0;
-    const second = await extractZipToR2(bucket as unknown as R2Bucket, 'zip/game.zip', 'post1', 5);
+    const second = await extractZipToR2(bucket as unknown as R2Bucket, 'zip/game.zip', 'post1', null, 5);
     assert.strictEqual(second, 5);
     manifest = JSON.parse(await (await bucket.get(manifestKey))!.text()) as { files: string[] };
     assert.strictEqual(manifest.files.length, 10);
     assert.ok(bucket.subrequests <= 50, `second call used ${bucket.subrequests} subrequests`);
 
     bucket.subrequests = 0;
-    const third = await extractZipToR2(bucket as unknown as R2Bucket, 'zip/game.zip', 'post1', 5);
+    const third = await extractZipToR2(bucket as unknown as R2Bucket, 'zip/game.zip', 'post1', null, 5);
     assert.strictEqual(third, 2);
     manifest = JSON.parse(await (await bucket.get(manifestKey))!.text()) as { files: string[] };
     assert.strictEqual(manifest.files.length, 12);
@@ -85,16 +85,16 @@ describe('extractZipToR2 (subrequest budget + resume)', () => {
     const bucket = new MockR2Bucket();
     bucket.store.set('zip/game.zip', await createZipFileCount(3));
 
-    await extractZipToR2(bucket as unknown as R2Bucket, 'zip/game.zip', 'post2', 5);
+    await extractZipToR2(bucket as unknown as R2Bucket, 'zip/game.zip', 'post2', null, 5);
     bucket.subrequests = 0;
-    const result = await extractZipToR2(bucket as unknown as R2Bucket, 'zip/game.zip', 'post2', 5);
+    const result = await extractZipToR2(bucket as unknown as R2Bucket, 'zip/game.zip', 'post2', null, 5);
     assert.strictEqual(result, 0);
     assert.ok(bucket.subrequests <= 50, `idle call used ${bucket.subrequests} subrequests`);
   });
 
   it('returns 0 when the zip does not exist', async () => {
     const bucket = new MockR2Bucket();
-    const result = await extractZipToR2(bucket as unknown as R2Bucket, 'zip/missing.zip', 'post3', 5);
+    const result = await extractZipToR2(bucket as unknown as R2Bucket, 'zip/missing.zip', 'post3', null, 5);
     assert.strictEqual(result, 0);
   });
 });

@@ -386,6 +386,7 @@ groups.get('/groups/:id/messages', requireAuth, async (c) => {
     const userId = c.get('user')?.id || '';
     const groupId = c.req.param('id');
     const cursor = c.req.query('cursor');
+    const after = c.req.query('after');
     const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
 
     // Verify membership
@@ -398,7 +399,24 @@ groups.get('/groups/:id/messages', requireAuth, async (c) => {
     }
 
     let messages: { results?: Array<Record<string, unknown>> };
-    if (cursor) {
+    if (after) {
+      // Realtime poll: messages at-or-newer than the client's latest, oldest-first.
+      messages = await c.env.DB.prepare(`
+        SELECT m.id, m.group_id, m.sender_id, m.content, m.created_at,
+               m.gif_key, m.payload_key, m.swf_key, m.edited_at,
+                m.content_iv, m.enc_version, m.key_version,
+                m.stamp_id,
+                u.username as sender_username, u.display_name as sender_display_name,
+               u.avatar_key as sender_avatar_key
+        FROM group_messages m
+        JOIN users u ON m.sender_id = u.id
+        WHERE m.group_id = ? AND m.created_at >= ?
+        ORDER BY m.created_at ASC
+        LIMIT ?
+      `)
+        .bind(groupId, after, limit)
+        .all();
+    } else if (cursor) {
       messages = await c.env.DB.prepare(`
         SELECT m.id, m.group_id, m.sender_id, m.content, m.created_at,
                m.gif_key, m.payload_key, m.swf_key, m.edited_at,

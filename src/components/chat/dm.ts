@@ -1,4 +1,4 @@
-import { getStoredSrpSalt, verifyCurrentPassword } from '../../lib/auth-srp.js';
+import { verifyCurrentPassword } from '../../lib/auth-srp.js';
 import { t } from '../../lib/i18n.js';
 import { unwrapStringWithKek, wrapStringWithKek } from '../../lib/messenger-dm-cache.js';
 import { decryptDmMessageV2, encryptDmMessageV2, resetDmRatchet } from '../../lib/messenger-dm-session.js';
@@ -71,16 +71,11 @@ export class DmTransport implements MessageTransport {
         showToast('パスワードが正しくありません', true);
         return false;
       }
-      // Use the server-stored encSalt first — it is the authoritative salt
-      // that was actually used to encrypt the identity keys.
+      // Single authoritative salt: the server-stored encSalt. Never overwrite
+      // an existing identity on failure (that would destroy message history).
       if (await unlockIdentityV2WithPassword(pw)) return true;
-      // Fallback: derive KEK from the SRP salt. If the identity can't be
-      // decrypted, ensureE2EEIdentityV2 will overwrite it with a fresh one
-      // using the same SRP salt — keeping the KEK consistent for future
-      // password changes.
-      const salt = getStoredSrpSalt();
-      if (salt && (await ensureE2EEIdentityV2(pw, salt))) return true;
-      showToast('Could not enable E2EE identity', true);
+      if (await ensureE2EEIdentityV2(pw)) return true;
+      showToast('E2EEのロックを解除できませんでした（パスワードまたは鍵の不一致）', true);
       return false;
     } catch (e) {
       console.error('[e2ee] unlockV2 exception:', e);
@@ -107,7 +102,7 @@ export class DmTransport implements MessageTransport {
 
   async pollMessages(cursor: string): Promise<ChatMessage[]> {
     const res = await fetch(
-      `/api/dm/conversations/${this.conversationId}/messages?limit=10&cursor=${encodeURIComponent(cursor)}`,
+      `/api/dm/conversations/${this.conversationId}/messages?limit=10&after=${encodeURIComponent(cursor)}`,
       { credentials: 'include' },
     );
     if (!res.ok) return [];
@@ -125,7 +120,7 @@ export class DmTransport implements MessageTransport {
     try {
       const requested = await checkRatchetResetRequest(this.conversationId);
       if (requested) {
-        resetDmRatchet(this.conversationId, this.peerUserId);
+        await resetDmRatchet(this.conversationId, this.peerUserId);
         await clearRatchetResetRequest(this.conversationId);
       }
     } catch {
@@ -497,7 +492,7 @@ export class DmTransport implements MessageTransport {
     btn.className = 'msg-decrypt-unlock';
     btn.textContent = '🔄 暗号セッションを再確立';
     btn.addEventListener('click', () => {
-      resetDmRatchet(this.conversationId, this.peerUserId ?? '');
+      void resetDmRatchet(this.conversationId, this.peerUserId ?? '');
       void requestRatchetReset(this.conversationId);
       showToast('セッションをリセットしました。新しいメッセージを送信すると再確立されます。');
       el.textContent = '🔄 セッションをリセットしました — 新しいメッセージを送信してください';

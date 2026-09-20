@@ -47,14 +47,10 @@ export async function deleteAccount(env: Env, userId: string): Promise<void> {
 
   const postIds = (treeRows.results || []).map((r: PostRowWithKeys) => r.id);
 
-  // Collect R2 keys for deferred deletion after the DB transaction commits
+  // Collect R2 keys for deferred deletion after the DB transaction commits.
+  // Posts (and their attachments) are intentionally kept so public content
+  // survives account deletion; only the avatar is removed.
   const fileKeys = new Set<string>();
-  for (const row of treeRows.results || []) {
-    if (row.gif_key) fileKeys.add(row.gif_key);
-    if (row.payload_key) fileKeys.add(row.payload_key);
-    if (row.swf_key) fileKeys.add(row.swf_key);
-    if (row.thumbnail_key) fileKeys.add(row.thumbnail_key);
-  }
 
   const userRow = await db.prepare('SELECT avatar_key FROM users WHERE id = ?').bind(userId).first<{
     avatar_key: string | null;
@@ -93,7 +89,7 @@ export async function deleteAccount(env: Env, userId: string): Promise<void> {
 
   // --- Sessions, devices, push subscriptions ---
   statements.push(db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM device_tokens WHERE user_id = ?').bind(userId));
+  // device_tokens was removed in migration 0035 (Web Push replaced FCM).
   statements.push(db.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').bind(userId));
 
   // --- User preference / recommender state ---
@@ -120,11 +116,8 @@ export async function deleteAccount(env: Env, userId: string): Promise<void> {
     statements.push(db.prepare(`DELETE FROM notifications WHERE post_id IN (${ph})`).bind(...ids));
   }
 
-  // --- The user's posts (and reply tree) ---
-  for (const chunk of chunkIds(postIds, 400)) {
-    const ph = placeholders(chunk.length);
-    statements.push(db.prepare(`DELETE FROM posts WHERE id IN (${ph})`).bind(...chunk));
-  }
+  // --- The user's posts are intentionally PRESERVED (public content survives
+  // account deletion). Only the user row and personal data are removed. ---
 
   // --- The user row itself (last: everything above references it) ---
   statements.push(db.prepare('DELETE FROM users WHERE id = ?').bind(userId));

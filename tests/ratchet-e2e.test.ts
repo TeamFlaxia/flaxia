@@ -1,6 +1,6 @@
 // End-to-end test of the actual X3DH + Double Ratchet code paths used by DMs.
 // Run with: npx ts-node --esm --experimental-specifier-resolution=node test/ratchet-e2e.ts
-import { x25519 } from '@noble/curves/ed25519.js';
+import { ed25519, x25519 } from '@noble/curves/ed25519.js';
 import { DoubleRatchet } from '../src/lib/messenger-ratchet.ts';
 import {
   bufToBase64,
@@ -18,11 +18,26 @@ function freshRatchetPair() {
 function makeIdentity() {
   const dh = x25519.keygen();
   const spk = x25519.keygen();
+  const sign = ed25519.keygen();
   return {
     identityDhPriv: dh.secretKey,
     identityDhPub: x25519.getPublicKey(dh.secretKey),
     spkPriv: spk.secretKey,
     spkPub: x25519.getPublicKey(spk.secretKey),
+    signPriv: sign.secretKey,
+    signPub: sign.publicKey,
+  };
+}
+
+// Build a validly-signed prekey bundle for `bob` (the real X3DH initiator now
+// rejects bundles whose SPK signature does not verify).
+function signedBundle(bob: ReturnType<typeof makeIdentity>, extra: Partial<PreKeyBundle> = {}): PreKeyBundle {
+  return {
+    identitySignPub: bufToBase64(bob.signPub),
+    identityDhPub: bufToBase64(bob.identityDhPub),
+    signedPreKeyPub: bufToBase64(bob.spkPub),
+    signedPreKeySignature: bufToBase64(ed25519.sign(bob.spkPub, bob.signPriv)),
+    ...extra,
   };
 }
 
@@ -86,14 +101,10 @@ function run() {
     const bob = makeIdentity();
     const opk = x25519.keygen();
     const opkId = 'opk-1';
-    const bundle: PreKeyBundle = {
-      identitySignPub: bufToBase64(bob.identityDhPub),
-      identityDhPub: bufToBase64(bob.identityDhPub),
-      signedPreKeyPub: bufToBase64(bob.spkPub),
-      signedPreKeySignature: 'sig',
+    const bundle: PreKeyBundle = signedBundle(bob, {
       preKeyPub: bufToBase64(x25519.getPublicKey(opk.secretKey)),
       preKeyId: opkId,
-    };
+    });
     const a = buildInitiator(alice, bundle);
     const b = buildResponder(bob, bufToBase64(opk.secretKey), a.bootstrap);
 
@@ -123,14 +134,10 @@ function run() {
     const alice = makeIdentity();
     const bob = makeIdentity();
     const opk = x25519.keygen();
-    const bundle: PreKeyBundle = {
-      identitySignPub: bufToBase64(bob.identityDhPub),
-      identityDhPub: bufToBase64(bob.identityDhPub),
-      signedPreKeyPub: bufToBase64(bob.spkPub),
-      signedPreKeySignature: 'sig',
+    const bundle: PreKeyBundle = signedBundle(bob, {
       preKeyPub: bufToBase64(x25519.getPublicKey(opk.secretKey)),
       preKeyId: 'opk-1',
-    };
+    });
     const a = buildInitiator(alice, bundle);
     // Responder CANNOT get the OPK private (server deleted it) -> null
     const b = buildResponder(bob, null, a.bootstrap);
@@ -161,13 +168,7 @@ function run() {
   {
     const alice = makeIdentity();
     const bob = makeIdentity();
-    const bundle: PreKeyBundle = {
-      identitySignPub: bufToBase64(bob.identityDhPub),
-      identityDhPub: bufToBase64(bob.identityDhPub),
-      signedPreKeyPub: bufToBase64(bob.spkPub),
-      signedPreKeySignature: 'sig',
-      // no preKeyPub / preKeyId
-    };
+    const bundle: PreKeyBundle = signedBundle(bob);
     const a = buildInitiator(alice, bundle);
     const b = buildResponder(bob, null, a.bootstrap);
     const m1 = a.ratchet.encrypt('hello');

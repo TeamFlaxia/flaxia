@@ -25,6 +25,11 @@ const makeStorage = () => ({
 g.sessionStorage = makeStorage();
 g.localStorage = makeStorage();
 
+// Reuse a stable device id across actor processes so a persisted ratchet
+// session (stored per device) is visible on the next "reload" process, exactly
+// like a browser tab that keeps localStorage.
+if (process.env.DEVICE_ID) store.set('flaxia_device_id', process.env.DEVICE_ID);
+
 const BASE_URL = 'http://localhost:8788';
 const cookie = process.env.COOKIE ?? '';
 const realFetch = (globalThis.fetch as (input: string, init?: Record<string, unknown>) => Promise<Response>).bind(

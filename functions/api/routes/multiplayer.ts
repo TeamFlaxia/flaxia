@@ -8,12 +8,17 @@ const multiplayer = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 multiplayer.post('/rooms', requireAuth, async (c) => {
   try {
     const user = c.get('user')!;
-    const body = (await c.req.json()) as {
+    let body: {
       gameId: string;
       maxPlayers?: number;
       isPublic?: boolean;
       metadata?: Record<string, unknown>;
     };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Invalid JSON body' }, 400);
+    }
 
     if (!body.gameId) {
       return c.json({ error: 'gameId is required' }, 400);
@@ -37,6 +42,14 @@ multiplayer.post('/rooms', requireAuth, async (c) => {
         body.metadata ? JSON.stringify(body.metadata) : null,
         now,
       )
+      .run();
+
+    // The host occupies the first player slot.
+    await c.env.DB.prepare(`
+      INSERT OR REPLACE INTO multiplayer_room_participants (room_id, user_id, username, display_name, avatar_key, joined_at, is_host)
+      VALUES (?, ?, ?, ?, ?, ?, 1)
+    `)
+      .bind(roomId, user.id, user.username, user.display_name || null, user.avatar_key || null, now)
       .run();
 
     // Create DO instance for the room (lazy — will be instantiated on first WebSocket connection)

@@ -70,7 +70,7 @@ export class ServerChannelTransport implements MessageTransport {
   async pollMessages(cursor: string): Promise<ChatMessage[]> {
     if (!this.channelId) return [];
     const res = await fetch(
-      `/api/servers/${this.serverId}/channels/${this.channelId}/messages?limit=10&cursor=${encodeURIComponent(cursor)}`,
+      `/api/servers/${this.serverId}/channels/${this.channelId}/messages?limit=10&after=${encodeURIComponent(cursor)}`,
       { credentials: 'include' },
     );
     if (!res.ok) return [];

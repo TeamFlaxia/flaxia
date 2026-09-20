@@ -248,6 +248,9 @@ export function encryptDmMessageV2(dmId: string, peerId: string, plaintext: stri
 
 async function encryptDmMessageV2Inner(dmId: string, peerId: string, plaintext: string): Promise<DmSendEnvelope> {
   const key = sessionKey(dmId, peerId);
+  // Finish any pending server-side reset first so a just-abandoned session can
+  // never be loaded back and reused (which would defeat "再確立").
+  await awaitPendingReset(dmId);
   let list = sessions.get(key);
   if (!list || list.length === 0) {
     const loaded = await loadDmRatchet(dmId);
@@ -257,7 +260,7 @@ async function encryptDmMessageV2Inner(dmId: string, peerId: string, plaintext: 
       // so this send establishes a fresh X3DH ratchet — recovery works even
       // without actively polling the conversation.
       if (await checkRatchetResetRequest(dmId)) {
-        resetDmRatchet(dmId, peerId);
+        await resetDmRatchet(dmId, peerId);
         await clearRatchetResetRequest(dmId);
         list = [];
       } else {
@@ -426,13 +429,37 @@ export function clearDmSessions(): void {
   sessions.clear();
 }
 
+// In-flight server-side ratchet deletions, keyed by conversation. A reset is
+// requested from the UI (button / peer request) and the very next send must
+// re-bootstrap X3DH; if the DELETE has not landed yet, `loadDmRatchet` would
+// resurrect the just-abandoned session and the "reset" would silently fail.
+// Awaiting this promise before loading closes that race.
+const resetPromises = new Map<string, Promise<void>>();
+
+async function awaitPendingReset(dmId: string): Promise<void> {
+  const p = resetPromises.get(dmId);
+  if (p) await p;
+}
+
 // Discard the local + persisted ratchet for a single DM so the next outgoing
 // message re-bootstraps X3DH from scratch (recovering a broken session). The
 // peer automatically rebuilds its side when it receives the new bootstrap.
-export function resetDmRatchet(dmId: string, peerId: string): void {
+//
+// The durable plaintext cache is intentionally NOT cleared: it is the last copy
+// of already-decrypted history and the ratchet can never recompute consumed
+// message keys, so wiping it would permanently blank the conversation.
+export function resetDmRatchet(dmId: string, peerId: string): Promise<void> {
   sessions.delete(sessionKey(dmId, peerId));
-  void clearDmRatchetOnServer(dmId);
-  void clearDmPlaintext(dmId);
+  const prev = resetPromises.get(dmId) ?? Promise.resolve();
+  const p = prev.then(
+    () => clearDmRatchetOnServer(dmId),
+    () => clearDmRatchetOnServer(dmId),
+  );
+  resetPromises.set(dmId, p);
+  void p.finally(() => {
+    if (resetPromises.get(dmId) === p) resetPromises.delete(dmId);
+  });
+  return p;
 }
 
 // Unit-test hooks: inject/clear candidate sessions without the unlock flow.
