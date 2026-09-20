@@ -1,4 +1,3 @@
-import { FlaxiaClient } from '@flaxia/sdk';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
@@ -7,6 +6,7 @@ import { copyHtmlToWvfs, extractFileFromZip, extractZipToR2 } from '../../../src
 import type { ReportCategory } from '../../../src/types/post';
 import { buildCreateActivity, buildDeleteActivity, buildNoteObject } from '../../lib/activitypub/note';
 import { getMeWithSession, getSessionToken } from '../../lib/auth';
+import { embedPost, submitDetectNsfw } from '../../lib/crowd';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { sendPushToAll } from '../../lib/notify';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
@@ -25,27 +25,6 @@ import {
 } from './recommender';
 
 const posts = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-const embeddingPosts = new Set<string>();
-let lastEmbedTime = 0;
-const EMBED_RATE_LIMIT_MS = 10_000;
-const PENDING_EMBED_MAX_ATTEMPTS = 5;
-
-const IMAGE_KEY_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
-const _IMAGE_EXTENSION_LIKE = IMAGE_KEY_EXTENSIONS.map((ext) => `(lower(gif_key) LIKE '%${ext}')`).join(' OR ');
-const nsfwScanPosts = new Set<string>();
-let lastNsfwSubmitTime = 0;
-const NSFW_RATE_LIMIT_MS = 10_000;
-const NSFW_SCAN_SCHEMA = `post_id TEXT PRIMARY KEY, task_id TEXT, status TEXT NOT NULL DEFAULT 'submitted' CHECK(status IN ('submitted', 'done', 'failed')), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), scanned_at TEXT`;
-const PENDING_EMBEDS_SCHEMA = `post_id TEXT PRIMARY KEY, text TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), last_error TEXT`;
-
-async function ensureNsfwScansTable(db: D1Database): Promise<void> {
-  try {
-    await db.prepare(`CREATE TABLE IF NOT EXISTS post_nsfw_scans (${NSFW_SCAN_SCHEMA})`).run();
-    await db.prepare('CREATE INDEX IF NOT EXISTS idx_nsfw_scans_status ON post_nsfw_scans(status, created_at)').run();
-  } catch (e) {
-    console.error('Failed to ensure post_nsfw_scans table:', e);
-  }
-}
 
 async function ensureReactionsTable(db: D1Database): Promise<void> {
   try {
@@ -66,218 +45,6 @@ async function ensureReactionsTable(db: D1Database): Promise<void> {
   }
 }
 
-async function markNsfwScan(db: D1Database, postId: string, status: string, taskId?: string): Promise<void> {
-  try {
-    if (status === 'submitted') {
-      await db
-        .prepare('INSERT OR IGNORE INTO post_nsfw_scans (post_id, status) VALUES (?, ?)')
-        .bind(postId, status)
-        .run();
-    } else {
-      await db
-        .prepare('UPDATE post_nsfw_scans SET status = ?, scanned_at = ? WHERE post_id = ?')
-        .bind(status, new Date().toISOString(), postId)
-        .run();
-    }
-    if (taskId && status === 'submitted') {
-      await db.prepare('UPDATE post_nsfw_scans SET task_id = ? WHERE post_id = ?').bind(taskId, postId).run();
-    }
-  } catch (e) {
-    console.error(`Failed to record NSFW scan state for post ${postId}:`, e);
-  }
-}
-
-async function submitDetectNsfw(
-  db: D1Database,
-  orchestratorUrl: string,
-  apiKey: string,
-  baseUrl: string,
-  postId: string,
-  gifKey: string | null,
-): Promise<void> {
-  const normalizedUrl = orchestratorUrl.replace(/\/+$/, '');
-  if (!normalizedUrl || !apiKey || !gifKey) return;
-
-  const lower = gifKey.toLowerCase();
-  if (!IMAGE_KEY_EXTENSIONS.some((ext) => lower.endsWith(ext))) return;
-
-  if (nsfwScanPosts.has(postId)) return;
-  nsfwScanPosts.add(postId);
-
-  const now = Date.now();
-  if (now - lastNsfwSubmitTime < NSFW_RATE_LIMIT_MS) {
-    nsfwScanPosts.delete(postId);
-    return;
-  }
-  lastNsfwSubmitTime = now;
-
-  try {
-    await ensureNsfwScansTable(db);
-
-    const existing = (await db
-      .prepare('SELECT status FROM post_nsfw_scans WHERE post_id = ?')
-      .bind(postId)
-      .first()) as { status: string } | null;
-    if (existing?.status === 'done') return;
-
-    const client = new FlaxiaClient({ baseUrl: `${normalizedUrl}/crowd`, apiKey });
-    const callbackUrl = `${baseUrl || 'https://flaxia.app'}/api/crowd/webhook?type=nsfw&postId=${postId}`;
-    const res = await client.submit({
-      workload: 'nudenet',
-      payload: { imageUrl: `${baseUrl || 'https://flaxia.app'}/api/images/${gifKey}` },
-      callbackUrl,
-      timeoutMs: 120000,
-    } as never);
-    await markNsfwScan(db, postId, 'submitted', res.taskId);
-    console.log(`NSFW detection task submitted for post ${postId} (task ${res.taskId})`);
-  } catch (err) {
-    console.error(`NSFW detection submission failed for post ${postId}:`, err);
-  } finally {
-    nsfwScanPosts.delete(postId);
-  }
-}
-
-// Persist a post for later vector-embed submission. Used instead of silently
-// dropping when the crowd pipeline is rate-limited, unconfigured, or failed, so
-// no post is ever lost from the recommendation candidate pool.
-async function enqueuePendingEmbed(
-  db: D1Database | undefined,
-  postId: string,
-  text: string,
-  attempts = 0,
-  error?: string,
-): Promise<void> {
-  if (!db) return;
-  try {
-    await db
-      .prepare(
-        `INSERT INTO pending_embeddings (post_id, text, attempts, last_error)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(post_id) DO UPDATE SET
-           attempts = excluded.attempts,
-           last_error = excluded.last_error`,
-      )
-      .bind(postId, text, attempts, error ?? null)
-      .run();
-  } catch (e) {
-    console.error(`Failed to enqueue pending embed for post ${postId}:`, e);
-  }
-}
-
-// Submit a single vector-embed task to the crowd orchestrator. Sets the shared
-// throttle timestamp on success so real-time traffic stays gentle on the queue.
-async function submitEmbedTask(
-  orchestratorUrl: string,
-  apiKey: string,
-  baseUrl: string,
-  postId: string,
-  text: string,
-): Promise<boolean> {
-  const normalizedUrl = orchestratorUrl.replace(/\/+$/, '');
-  if (!normalizedUrl || !apiKey) return false;
-
-  const client = new FlaxiaClient({ baseUrl: `${normalizedUrl}/crowd`, apiKey });
-  const callbackUrl = `${baseUrl || 'https://flaxia.app'}/api/crowd/webhook?type=vector-embed&postId=${postId}`;
-  try {
-    await client.submit({
-      workload: 'vector-embed',
-      payload: { text },
-      callbackUrl,
-      timeoutMs: 600000,
-    } as never);
-    lastEmbedTime = Date.now();
-    console.log(`Embedding task submitted for post ${postId}`);
-    return true;
-  } catch (err) {
-    console.error(`Embedding submission failed for post ${postId}:`, err);
-    return false;
-  }
-}
-
-// Drain the pending_embeddings outbox. `respectThrottle` keeps the 10s ceiling
-// for real-time traffic; the admin backfill may pass false to make progress on
-// a large backlog. Failed submissions are kept (attempts++) instead of dropped.
-async function drainPendingEmbeds(
-  db: D1Database,
-  orchestratorUrl: string,
-  apiKey: string,
-  baseUrl: string,
-  opts: { maxBatch?: number; delayMs?: number; respectThrottle?: boolean } = {},
-): Promise<{ submitted: number; remaining: number }> {
-  const { maxBatch = 10, delayMs = 0, respectThrottle = true } = opts;
-  if (!orchestratorUrl || !apiKey) {
-    const { total } = (await db
-      .prepare('SELECT COUNT(*) as total FROM pending_embeddings')
-      .first<{ total: number }>()) || { total: 0 };
-    return { submitted: 0, remaining: total };
-  }
-
-  const rows = await db
-    .prepare(
-      `SELECT post_id, text, attempts FROM pending_embeddings
-       WHERE attempts < ?
-       ORDER BY created_at ASC
-       LIMIT ?`,
-    )
-    .bind(PENDING_EMBED_MAX_ATTEMPTS, maxBatch)
-    .all<{ post_id: string; text: string; attempts: number }>();
-
-  let submitted = 0;
-  for (const row of rows.results || []) {
-    if (embeddingPosts.has(row.post_id)) continue;
-    if (respectThrottle && Date.now() - lastEmbedTime < EMBED_RATE_LIMIT_MS) break;
-
-    const ok = await submitEmbedTask(orchestratorUrl, apiKey, baseUrl, row.post_id, row.text);
-    if (ok) {
-      await db.prepare('DELETE FROM pending_embeddings WHERE post_id = ?').bind(row.post_id).run();
-      submitted++;
-    } else {
-      await enqueuePendingEmbed(db, row.post_id, row.text, row.attempts + 1, 'submission failed');
-    }
-    if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
-  }
-
-  const { total } = (await db
-    .prepare('SELECT COUNT(*) as total FROM pending_embeddings')
-    .first<{ total: number }>()) || { total: 0 };
-  return { submitted, remaining: total };
-}
-
-async function embedPost(
-  db: D1Database | undefined,
-  orchestratorUrl: string,
-  apiKey: string,
-  baseUrl: string,
-  postId: string,
-  text: string,
-): Promise<void> {
-  if (embeddingPosts.has(postId)) return;
-  embeddingPosts.add(postId);
-  try {
-    if (!orchestratorUrl || !apiKey) {
-      // Crowd not configured: persist so a later backfill can pick it up.
-      await enqueuePendingEmbed(db, postId, text);
-      return;
-    }
-
-    // Best-effort drain of any backlog first (respects the rate limit).
-    if (db) {
-      await drainPendingEmbeds(db, orchestratorUrl, apiKey, baseUrl).catch((e) =>
-        console.error('Pending embed drain failed:', e),
-      );
-    }
-
-    // Submit the new post; if rate-limited or failed, enqueue instead of dropping.
-    if (Date.now() - lastEmbedTime < EMBED_RATE_LIMIT_MS) {
-      await enqueuePendingEmbed(db, postId, text);
-      return;
-    }
-    const ok = await submitEmbedTask(orchestratorUrl, apiKey, baseUrl, postId, text);
-    if (!ok) await enqueuePendingEmbed(db, postId, text, 1, 'submission failed');
-  } finally {
-    embeddingPosts.delete(postId);
-  }
-}
 async function filterBlockedAuthors(
   db: D1Database,
   currentUserId: string | null | undefined,
@@ -522,9 +289,7 @@ posts.get('/posts', async (c) => {
         const embeddedIds = new Set((embeddedResult.success ? embeddedResult.results : []).map((r) => r.post_id));
         for (const p of textPosts) {
           if (!embeddedIds.has(p.id)) {
-            embedPost(c.env.DB, c.env.CROWD_ORCHESTRATOR_URL, c.env.CROWD_API_KEY, c.env.BASE_URL, p.id, p.text).catch(
-              (e) => console.error('Background embed failed:', e),
-            );
+            embedPost(c.env.DB, c.env, p.id, p.text).catch((e) => console.error('Background embed failed:', e));
           }
         }
       })(),
@@ -1839,23 +1604,9 @@ posts.post('/posts/commit', requireAuth, async (c) => {
     await enrichPostsWithQuotes([fullPost], c.env.DB);
     await enrichPostsWithReactions([fullPost], c.env.DB, c.get('user')?.id);
 
-    embedPost(
-      c.env.DB,
-      c.env.CROWD_ORCHESTRATOR_URL,
-      c.env.CROWD_API_KEY,
-      c.env.BASE_URL,
-      fullPost.id,
-      fullPost.text,
-    ).catch((e) => console.error('Background embed failed:', e));
+    embedPost(c.env.DB, c.env, fullPost.id, fullPost.text).catch((e) => console.error('Background embed failed:', e));
 
-    submitDetectNsfw(
-      c.env.DB,
-      c.env.CROWD_ORCHESTRATOR_URL,
-      c.env.CROWD_API_KEY,
-      c.env.BASE_URL,
-      fullPost.id,
-      fullPost.gif_key,
-    );
+    submitDetectNsfw(c.env.DB, c.env, fullPost.id, fullPost.gif_key);
 
     // Pre-extract ZIP to R2 for WVFS persistent caching
     if (payloadKey && payloadKey.endsWith('.zip')) {
@@ -2577,14 +2328,9 @@ posts.get('/posts/:id/replies', async (c) => {
       const existingIds = new Set((existingRows.results || []).map((r) => r.post_id));
       for (const p of toEmbed) {
         if (!existingIds.has(p.id as string)) {
-          embedPost(
-            c.env.DB,
-            c.env.CROWD_ORCHESTRATOR_URL,
-            c.env.CROWD_API_KEY,
-            c.env.BASE_URL,
-            p.id as string,
-            p.text as string,
-          ).catch((e) => console.error('Background embed failed:', e));
+          embedPost(c.env.DB, c.env, p.id as string, p.text as string).catch((e) =>
+            console.error('Background embed failed:', e),
+          );
         }
       }
     }
@@ -2693,14 +2439,9 @@ posts.get('/posts/:id/thread', async (c) => {
       const existingIds2 = new Set((existingRows2.results || []).map((r) => r.post_id));
       for (const p of toEmbed2) {
         if (!existingIds2.has(p.id as string)) {
-          embedPost(
-            c.env.DB,
-            c.env.CROWD_ORCHESTRATOR_URL,
-            c.env.CROWD_API_KEY,
-            c.env.BASE_URL,
-            p.id as string,
-            p.text as string,
-          ).catch((e) => console.error('Background embed failed:', e));
+          embedPost(c.env.DB, c.env, p.id as string, p.text as string).catch((e) =>
+            console.error('Background embed failed:', e),
+          );
         }
       }
     }
@@ -3137,7 +2878,7 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
     }
 
     if (gifKey) {
-      submitDetectNsfw(c.env.DB, c.env.CROWD_ORCHESTRATOR_URL, c.env.CROWD_API_KEY, c.env.BASE_URL, replyId, gifKey);
+      submitDetectNsfw(c.env.DB, c.env, replyId, gifKey);
     }
 
     return c.json({ reply });

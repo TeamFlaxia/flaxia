@@ -14,6 +14,14 @@ import type { ThreadPage } from './components/ThreadPage.js';
 import type { Timeline } from './components/Timeline.js';
 import { getMe } from './lib/auth-cache.js';
 import { initContentProtection } from './lib/content-protection.js';
+import {
+  CROWD_NODE_MAX_CPU_LOAD,
+  CROWD_ORCHESTRATOR_URL,
+  CROWD_SITE_CAPABILITIES,
+  CROWD_SITE_ID,
+  crowdNodeEntry,
+  type FlaxiaNodeModule,
+} from './lib/crowd-node.js';
 import { initI18n } from './lib/i18n.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
 import { initTheme } from './lib/theme.js';
@@ -3006,17 +3014,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (!canRunCrowdNode()) return;
 
-      // @ts-expect-error - dynamic import of local path
-      const { initFlaxiaNode } = await import('/api/crowd/v0.3.4-0/index.js');
+      const { initFlaxiaNode } = (await import(/* @vite-ignore */ crowdNodeEntry())) as FlaxiaNodeModule;
       initFlaxiaNode({
-        orchestratorUrl: 'https://crowd.flaxia.app',
-        siteId: 'flaxia',
+        orchestratorUrl: CROWD_ORCHESTRATOR_URL,
+        siteId: CROWD_SITE_ID,
         consent: {
           brandName: 'Flaxia',
           position: 'bottom-right',
         },
-        capabilities: ['ai-inference', 'vector-embed', 'nudenet'],
-        maxCpuLoad: 0.15,
+        capabilities: CROWD_SITE_CAPABILITIES,
+        maxCpuLoad: CROWD_NODE_MAX_CPU_LOAD,
       });
     });
   }

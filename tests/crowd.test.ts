@@ -4,10 +4,12 @@ import { BASE_URL, resetDb } from './helpers/setup.ts';
 
 // Crowd integration tests.
 //
-// The Crowd feature (functions/api/crowd/[[route]].ts) has two surfaces:
-//   1. POST /api/crowd/webhook — callbacks from the crowd orchestrator
+// The Crowd feature has two surfaces, split across two Pages Functions:
+//   1. POST /api/crowd/webhook (functions/api/crowd/webhook.ts, backed by
+//      functions/lib/crowd.ts) — callbacks from the crowd orchestrator
 //      (nsfw / vector-embed workloads) that write to D1.
-//   2. GET /api/crowd/* — immutable asset proxy for the @flaxia/node bundle.
+//   2. GET /api/crowd/* (functions/api/crowd/[[route]].ts) — immutable asset
+//      proxy for the @flaxia/node bundle.
 //
 // These tests run against the same dev server (port 8788) as the other suites.
 // Since the local dev server keeps app data on the primary DB binding (the

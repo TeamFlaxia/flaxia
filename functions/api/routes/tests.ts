@@ -1,30 +1,7 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { Hono } from 'hono';
+import { ensureNsfwScansTable, ensurePendingEmbedsTable } from '../../lib/crowd.ts';
 import type { Bindings, Variables } from '../types';
-
-const NSFW_SCAN_SCHEMA = `post_id TEXT PRIMARY KEY, task_id TEXT, status TEXT NOT NULL DEFAULT 'submitted' CHECK(status IN ('submitted', 'done', 'failed')), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), scanned_at TEXT`;
-
-const PENDING_EMBEDS_SCHEMA = `post_id TEXT PRIMARY KEY, text TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), last_error TEXT`;
-
-async function ensureNsfwScansTable(db: D1Database): Promise<void> {
-  try {
-    await db.prepare(`CREATE TABLE IF NOT EXISTS post_nsfw_scans (${NSFW_SCAN_SCHEMA})`).run();
-    await db.prepare('CREATE INDEX IF NOT EXISTS idx_nsfw_scans_status ON post_nsfw_scans(status, created_at)').run();
-  } catch (e) {
-    console.error('Failed to ensure post_nsfw_scans table:', e);
-  }
-}
-
-async function ensurePendingEmbedsTable(db: D1Database): Promise<void> {
-  try {
-    await db.prepare(`CREATE TABLE IF NOT EXISTS pending_embeddings (${PENDING_EMBEDS_SCHEMA})`).run();
-    await db
-      .prepare('CREATE INDEX IF NOT EXISTS idx_pending_embeddings_created ON pending_embeddings(created_at)')
-      .run();
-  } catch (e) {
-    console.error('Failed to ensure pending_embeddings table:', e);
-  }
-}
 
 async function ensureReactionsTable(db: D1Database): Promise<void> {
   try {

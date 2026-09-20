@@ -1,4 +1,3 @@
-import { FlaxiaClient } from '@flaxia/sdk';
 import type { Context, Next } from 'hono';
 import { isAdmin } from '../../src/lib/admin';
 import { getMeWithSession, getSessionToken } from '../lib/auth';
@@ -376,28 +375,7 @@ export async function batchGetFreshAndBookmarkStatus(
   };
 }
 
-// ── NSFW scan helpers ──
-
-const IMAGE_KEY_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
-const nsfwScanPosts = new Set<string>();
-let lastNsfwSubmitTime = 0;
-const NSFW_RATE_LIMIT_MS = 10_000;
-
-export async function ensureNsfwScansTable(db: D1Database): Promise<void> {
-  try {
-    await db
-      .prepare(
-        `CREATE TABLE IF NOT EXISTS post_nsfw_scans (
-           post_id TEXT PRIMARY KEY, task_id TEXT,
-           status TEXT NOT NULL DEFAULT 'submitted' CHECK(status IN ('submitted', 'done', 'failed')),
-           created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), scanned_at TEXT)`,
-      )
-      .run();
-    await db.prepare('CREATE INDEX IF NOT EXISTS idx_nsfw_scans_status ON post_nsfw_scans(status, created_at)').run();
-  } catch (e) {
-    console.error('Failed to ensure post_nsfw_scans table:', e);
-  }
-}
+// ── Reactions helper ──
 
 export async function ensureReactionsTable(db: D1Database): Promise<void> {
   try {
@@ -412,77 +390,6 @@ export async function ensureReactionsTable(db: D1Database): Promise<void> {
     await db.prepare('CREATE INDEX IF NOT EXISTS idx_reactions_post ON reactions(post_id)').run();
   } catch (e) {
     console.error('Failed to ensure reactions table:', e);
-  }
-}
-
-async function markNsfwScan(db: D1Database, postId: string, status: string, taskId?: string): Promise<void> {
-  try {
-    if (status === 'submitted') {
-      await db
-        .prepare('INSERT OR IGNORE INTO post_nsfw_scans (post_id, status) VALUES (?, ?)')
-        .bind(postId, status)
-        .run();
-    } else {
-      await db
-        .prepare('UPDATE post_nsfw_scans SET status = ?, scanned_at = ? WHERE post_id = ?')
-        .bind(status, new Date().toISOString(), postId)
-        .run();
-    }
-    if (taskId && status === 'submitted') {
-      await db.prepare('UPDATE post_nsfw_scans SET task_id = ? WHERE post_id = ?').bind(taskId, postId).run();
-    }
-  } catch (e) {
-    console.error(`Failed to record NSFW scan state for post ${postId}:`, e);
-  }
-}
-
-export async function submitDetectNsfw(
-  db: D1Database,
-  orchestratorUrl: string,
-  apiKey: string,
-  baseUrl: string,
-  postId: string,
-  gifKey: string | null,
-): Promise<void> {
-  const normalizedUrl = orchestratorUrl.replace(/\/+$/, '');
-  if (!normalizedUrl || !apiKey || !gifKey) return;
-
-  const lower = gifKey.toLowerCase();
-  if (!IMAGE_KEY_EXTENSIONS.some((ext) => lower.endsWith(ext))) return;
-
-  if (nsfwScanPosts.has(postId)) return;
-  nsfwScanPosts.add(postId);
-
-  const now = Date.now();
-  if (now - lastNsfwSubmitTime < NSFW_RATE_LIMIT_MS) {
-    nsfwScanPosts.delete(postId);
-    return;
-  }
-  lastNsfwSubmitTime = now;
-
-  try {
-    await ensureNsfwScansTable(db);
-
-    const existing = (await db
-      .prepare('SELECT status FROM post_nsfw_scans WHERE post_id = ?')
-      .bind(postId)
-      .first()) as { status: string } | null;
-    if (existing?.status === 'done') return;
-
-    const client = new FlaxiaClient({ baseUrl: `${normalizedUrl}/crowd`, apiKey });
-    const callbackUrl = `${baseUrl || 'https://flaxia.app'}/api/crowd/webhook?type=nsfw&postId=${postId}`;
-    const res = await client.submit({
-      workload: 'nudenet',
-      payload: { imageUrl: `${baseUrl || 'https://flaxia.app'}/api/images/${gifKey}` },
-      callbackUrl,
-      timeoutMs: 120000,
-    } as never);
-    await markNsfwScan(db, postId, 'submitted', res.taskId);
-    console.log(`NSFW detection task submitted for post ${postId} (task ${res.taskId})`);
-  } catch (err) {
-    console.error(`NSFW detection submission failed for post ${postId}:`, err);
-  } finally {
-    nsfwScanPosts.delete(postId);
   }
 }
 

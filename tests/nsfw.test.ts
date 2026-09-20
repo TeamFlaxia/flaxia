@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
-import { type NudeNetDetection, resolveNsfwTags } from '../functions/lib/nsfw.ts';
+import { type NudeNetDetection, resolveNsfwTags } from '@flaxia/sdk';
 
 function det(label: string, score: number): NudeNetDetection {
   return { label, score, box: [0, 0, 10, 10] };

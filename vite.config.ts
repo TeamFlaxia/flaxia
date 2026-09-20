@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { defineConfig } from 'vite';
+import { CROWD_NODE_VERSION } from './src/lib/crowd-node';
 import { docsManifestPlugin } from './vite-docs-manifest';
 
 export default defineConfig({
@@ -31,7 +32,7 @@ export default defineConfig({
     },
     proxy: {
       '/api/crowd': {
-        target: 'https://unpkg.com/@flaxia/node@0.3.1/dist',
+        target: `https://unpkg.com/@flaxia/node@${CROWD_NODE_VERSION}/dist`,
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/crowd/, ''),
       },

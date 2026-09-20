@@ -1,208 +1,18 @@
-import { FlaxiaClient } from '@flaxia/sdk';
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { isAdmin } from '../../../src/lib/admin';
 import { extractFileFromZip } from '../../../src/lib/wvfs-zip-server';
 import { deleteAccount } from '../../lib/account-deletion';
+import { drainPendingEmbeds, enqueuePendingEmbed, ensureNsfwScansTable, submitDetectNsfw } from '../../lib/crowd';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { requireAdmin, requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
 const admin = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-// ─── Embedding constants & helpers ────────────────────────────────────────────
-const embeddingPosts = new Set<string>();
-let lastEmbedTime = 0;
-const EMBED_RATE_LIMIT_MS = 10_000;
-const PENDING_EMBED_MAX_ATTEMPTS = 5;
-
-async function enqueuePendingEmbed(
-  db: D1Database | undefined,
-  postId: string,
-  text: string,
-  attempts = 0,
-  error?: string,
-): Promise<void> {
-  if (!db) return;
-  try {
-    await db
-      .prepare(
-        `INSERT INTO pending_embeddings (post_id, text, attempts, last_error)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(post_id) DO UPDATE SET
-           attempts = excluded.attempts,
-           last_error = excluded.last_error`,
-      )
-      .bind(postId, text, attempts, error ?? null)
-      .run();
-  } catch (e) {
-    console.error(`Failed to enqueue pending embed for post ${postId}:`, e);
-  }
-}
-
-async function submitEmbedTask(
-  orchestratorUrl: string,
-  apiKey: string,
-  baseUrl: string,
-  postId: string,
-  text: string,
-): Promise<boolean> {
-  const normalizedUrl = orchestratorUrl.replace(/\/+$/, '');
-  if (!normalizedUrl || !apiKey) return false;
-
-  const client = new FlaxiaClient({ baseUrl: `${normalizedUrl}/crowd`, apiKey });
-  const callbackUrl = `${baseUrl || 'https://flaxia.app'}/api/crowd/webhook?type=vector-embed&postId=${postId}`;
-  try {
-    await client.submit({
-      workload: 'vector-embed',
-      payload: { text },
-      callbackUrl,
-      timeoutMs: 600000,
-    } as never);
-    lastEmbedTime = Date.now();
-    console.log(`Embedding task submitted for post ${postId}`);
-    return true;
-  } catch (err) {
-    console.error(`Embedding submission failed for post ${postId}:`, err);
-    return false;
-  }
-}
-
-async function drainPendingEmbeds(
-  db: D1Database,
-  orchestratorUrl: string,
-  apiKey: string,
-  baseUrl: string,
-  opts: { maxBatch?: number; delayMs?: number; respectThrottle?: boolean } = {},
-): Promise<{ submitted: number; remaining: number }> {
-  const { maxBatch = 10, delayMs = 0, respectThrottle = true } = opts;
-  if (!orchestratorUrl || !apiKey) {
-    const { total } = (await db
-      .prepare('SELECT COUNT(*) as total FROM pending_embeddings')
-      .first<{ total: number }>()) || { total: 0 };
-    return { submitted: 0, remaining: total };
-  }
-
-  const rows = await db
-    .prepare(
-      `SELECT post_id, text, attempts FROM pending_embeddings
-       WHERE attempts < ?
-       ORDER BY created_at ASC
-       LIMIT ?`,
-    )
-    .bind(PENDING_EMBED_MAX_ATTEMPTS, maxBatch)
-    .all<{ post_id: string; text: string; attempts: number }>();
-
-  let submitted = 0;
-  for (const row of rows.results || []) {
-    if (embeddingPosts.has(row.post_id)) continue;
-    if (respectThrottle && Date.now() - lastEmbedTime < EMBED_RATE_LIMIT_MS) break;
-
-    const ok = await submitEmbedTask(orchestratorUrl, apiKey, baseUrl, row.post_id, row.text);
-    if (ok) {
-      await db.prepare('DELETE FROM pending_embeddings WHERE post_id = ?').bind(row.post_id).run();
-      submitted++;
-    } else {
-      await enqueuePendingEmbed(db, row.post_id, row.text, row.attempts + 1, 'submission failed');
-    }
-    if (delayMs > 0) await new Promise((r) => setTimeout(r, delayMs));
-  }
-
-  const { total } = (await db
-    .prepare('SELECT COUNT(*) as total FROM pending_embeddings')
-    .first<{ total: number }>()) || { total: 0 };
-  return { submitted, remaining: total };
-}
-
 // ─── NSFW scanning constants & helpers ────────────────────────────────────────
 const IMAGE_KEY_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
 const IMAGE_EXTENSION_LIKE = IMAGE_KEY_EXTENSIONS.map((ext) => `(lower(gif_key) LIKE '%${ext}')`).join(' OR ');
-
-const nsfwScanPosts = new Set<string>();
-let lastNsfwSubmitTime = 0;
-const NSFW_RATE_LIMIT_MS = 10_000;
-
-const NSFW_SCAN_SCHEMA = `post_id TEXT PRIMARY KEY, task_id TEXT, status TEXT NOT NULL DEFAULT 'submitted' CHECK(status IN ('submitted', 'done', 'failed')), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), scanned_at TEXT`;
-
-async function ensureNsfwScansTable(db: D1Database): Promise<void> {
-  try {
-    await db.prepare(`CREATE TABLE IF NOT EXISTS post_nsfw_scans (${NSFW_SCAN_SCHEMA})`).run();
-    await db.prepare('CREATE INDEX IF NOT EXISTS idx_nsfw_scans_status ON post_nsfw_scans(status, created_at)').run();
-  } catch (e) {
-    console.error('Failed to ensure post_nsfw_scans table:', e);
-  }
-}
-
-async function markNsfwScan(db: D1Database, postId: string, status: string, taskId?: string): Promise<void> {
-  try {
-    if (status === 'submitted') {
-      await db
-        .prepare('INSERT OR IGNORE INTO post_nsfw_scans (post_id, status) VALUES (?, ?)')
-        .bind(postId, status)
-        .run();
-    } else {
-      await db
-        .prepare('UPDATE post_nsfw_scans SET status = ?, scanned_at = ? WHERE post_id = ?')
-        .bind(status, new Date().toISOString(), postId)
-        .run();
-    }
-    if (taskId && status === 'submitted') {
-      await db.prepare('UPDATE post_nsfw_scans SET task_id = ? WHERE post_id = ?').bind(taskId, postId).run();
-    }
-  } catch (e) {
-    console.error(`Failed to record NSFW scan state for post ${postId}:`, e);
-  }
-}
-
-async function submitDetectNsfw(
-  db: D1Database,
-  orchestratorUrl: string,
-  apiKey: string,
-  baseUrl: string,
-  postId: string,
-  gifKey: string | null,
-): Promise<void> {
-  const normalizedUrl = orchestratorUrl.replace(/\/+$/, '');
-  if (!normalizedUrl || !apiKey || !gifKey) return;
-
-  const lower = gifKey.toLowerCase();
-  if (!IMAGE_KEY_EXTENSIONS.some((ext) => lower.endsWith(ext))) return;
-
-  if (nsfwScanPosts.has(postId)) return;
-  nsfwScanPosts.add(postId);
-
-  const now = Date.now();
-  if (now - lastNsfwSubmitTime < NSFW_RATE_LIMIT_MS) {
-    nsfwScanPosts.delete(postId);
-    return;
-  }
-  lastNsfwSubmitTime = now;
-
-  try {
-    await ensureNsfwScansTable(db);
-
-    const existing = (await db
-      .prepare('SELECT status FROM post_nsfw_scans WHERE post_id = ?')
-      .bind(postId)
-      .first()) as { status: string } | null;
-    if (existing?.status === 'done') return;
-
-    const client = new FlaxiaClient({ baseUrl: `${normalizedUrl}/crowd`, apiKey });
-    const callbackUrl = `${baseUrl || 'https://flaxia.app'}/api/crowd/webhook?type=nsfw&postId=${postId}`;
-    const res = await client.submit({
-      workload: 'nudenet',
-      payload: { imageUrl: `${baseUrl || 'https://flaxia.app'}/api/images/${gifKey}` },
-      callbackUrl,
-      timeoutMs: 120000,
-    } as never);
-    await markNsfwScan(db, postId, 'submitted', res.taskId);
-    console.log(`NSFW detection task submitted for post ${postId} (task ${res.taskId})`);
-  } catch (err) {
-    console.error(`NSFW detection submission failed for post ${postId}:`, err);
-  } finally {
-    nsfwScanPosts.delete(postId);
-  }
-}
 
 // ─── Game description extraction ──────────────────────────────────────────────
 async function extractGameDescription(
@@ -1064,14 +874,7 @@ admin.post('/backfill-nsfw', requireAuth, requireAdmin, async (c) => {
 
     let submitted = 0;
     for (const post of candidates.results) {
-      await submitDetectNsfw(
-        c.env.DB,
-        c.env.CROWD_ORCHESTRATOR_URL,
-        c.env.CROWD_API_KEY,
-        c.env.BASE_URL,
-        post.id,
-        post.gif_key,
-      );
+      await submitDetectNsfw(c.env.DB, c.env, post.id, post.gif_key);
       submitted++;
     }
 
@@ -1129,13 +932,11 @@ admin.post('/backfill-embeddings', requireAuth, requireAdmin, async (c) => {
       // Let the response return immediately; keep draining in the background.
       execCtx.waitUntil(
         (async () => {
-          const result = await drainPendingEmbeds(
-            c.env.DB,
-            c.env.CROWD_ORCHESTRATOR_URL,
-            c.env.CROWD_API_KEY,
-            c.env.BASE_URL,
-            { maxBatch: enqueued || 50, delayMs: 50, respectThrottle: false },
-          ).catch((e) => {
+          const result = await drainPendingEmbeds(c.env.DB, c.env, {
+            maxBatch: enqueued || 50,
+            delayMs: 50,
+            respectThrottle: false,
+          }).catch((e) => {
             console.error('Backfill embed drain failed:', e);
             return { submitted: 0, remaining: enqueued };
           });
