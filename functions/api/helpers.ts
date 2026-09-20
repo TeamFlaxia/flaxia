@@ -298,14 +298,20 @@ export async function resolveMentions(
     .bind(...mentionedUsernames.map((u) => u.toLowerCase()))
     .all<{ id: string; username: string }>();
   const userMap = new Map(rows.results?.map((r) => [r.username.toLowerCase(), r]) || []);
-  return JSON.stringify(
-    mentionedUsernames
-      .map((u) => {
-        const user = userMap.get(u.toLowerCase());
-        return user ? { username: user.username, user_id: user.id } : null;
-      })
-      .filter(Boolean),
-  );
+  // 同一ユーザーが大文字小文字違いなどで複数回メンションされても1件に集約する
+  const seenUserIds = new Set<string>();
+  const resolved = mentionedUsernames
+    .map((u) => {
+      const user = userMap.get(u.toLowerCase());
+      return user ? { username: user.username, user_id: user.id } : null;
+    })
+    .filter((m): m is { username: string; user_id: string } => m !== null)
+    .filter((m) => {
+      if (seenUserIds.has(m.user_id)) return false;
+      seenUserIds.add(m.user_id);
+      return true;
+    });
+  return JSON.stringify(resolved);
 }
 
 // Notification helpers

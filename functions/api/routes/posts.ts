@@ -1472,23 +1472,29 @@ posts.post('/posts/commit', requireAuth, async (c) => {
       }
     }
 
-    // Create mention notifications for mentioned users (skip self-mentions)
+    // Create mention notifications for mentioned users (skip self-mentions, quoted author, and duplicates)
     if (mentionedUsernames.length > 0) {
       try {
         const mentionData = JSON.parse(mentionsJson) as Array<{ username: string; user_id: string }>;
-        const mentionStmts = mentionData
-          .filter((m) => m.user_id !== userId)
-          .map((m) =>
-            c.env.DB.prepare(
-              'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
-            ).bind(nanoid(), m.user_id, 'mention', postId, userId),
-          );
+        const seenMentionUserIds = new Set<string>();
+        const mentionTargets = mentionData.filter((m) => {
+          if (m.user_id === userId) return false;
+          // The quoted post author gets a dedicated 'quote' notification below.
+          if (m.user_id === quotedPostAuthorId) return false;
+          if (seenMentionUserIds.has(m.user_id)) return false;
+          seenMentionUserIds.add(m.user_id);
+          return true;
+        });
+        const mentionStmts = mentionTargets.map((m) =>
+          c.env.DB.prepare(
+            'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
+          ).bind(nanoid(), m.user_id, 'mention', postId, userId),
+        );
         if (mentionStmts.length > 0) {
           await c.env.DB.batch(mentionStmts);
         }
-        for (const mention of mentionData) {
-          if (mention.user_id === userId) continue;
-          const actor = c.get('user');
+        const actor = c.get('user');
+        for (const mention of mentionTargets) {
           await sendPushToAll(
             c.env,
             mention.user_id,
@@ -2787,23 +2793,27 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       }
     }
 
-    // Create mention notifications for mentioned users in the reply (skip self-mentions)
+    // Create mention notifications for mentioned users in the reply
+    // (skip self-mentions, users already notified for this reply, and duplicates)
     if (mentionedUsernames.length > 0) {
       try {
         const mentionData = JSON.parse(mentionsJson) as Array<{ username: string; user_id: string }>;
-        const mentionStmts = mentionData
-          .filter((m) => m.user_id !== replyUserId)
-          .map((m) =>
-            c.env.DB.prepare(
-              'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
-            ).bind(nanoid(), m.user_id, 'mention', replyId, replyUserId),
-          );
+        const mentionTargets = mentionData.filter((m) => {
+          if (m.user_id === replyUserId) return false;
+          if (notifiedUserIds.has(m.user_id)) return false;
+          notifiedUserIds.add(m.user_id);
+          return true;
+        });
+        const mentionStmts = mentionTargets.map((m) =>
+          c.env.DB.prepare(
+            'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
+          ).bind(nanoid(), m.user_id, 'mention', replyId, replyUserId),
+        );
         if (mentionStmts.length > 0) {
           await c.env.DB.batch(mentionStmts);
         }
-        for (const mention of mentionData) {
-          if (mention.user_id === replyUserId) continue;
-          const actor = c.get('user');
+        const actor = c.get('user');
+        for (const mention of mentionTargets) {
           await sendPushToAll(c.env, mention.user_id, 'mention', actor?.username, actor?.display_name, text, postId);
         }
       } catch (e) {
@@ -3509,14 +3519,20 @@ async function resolveMentions(db: D1Database, mentionedUsernames: string[], cur
     .bind(...mentionedUsernames.map((u) => u.toLowerCase()))
     .all<{ id: string; username: string }>();
   const userMap = new Map(rows.results?.map((r) => [r.username.toLowerCase(), r]) || []);
-  return JSON.stringify(
-    mentionedUsernames
-      .map((u) => {
-        const user = userMap.get(u.toLowerCase());
-        return user ? { username: user.username, user_id: user.id } : null;
-      })
-      .filter(Boolean),
-  );
+  // 同一ユーザーが大文字小文字違いなどで複数回メンションされても1件に集約する
+  const seenUserIds = new Set<string>();
+  const resolved = mentionedUsernames
+    .map((u) => {
+      const user = userMap.get(u.toLowerCase());
+      return user ? { username: user.username, user_id: user.id } : null;
+    })
+    .filter((m): m is { username: string; user_id: string } => m !== null)
+    .filter((m) => {
+      if (seenUserIds.has(m.user_id)) return false;
+      seenUserIds.add(m.user_id);
+      return true;
+    });
+  return JSON.stringify(resolved);
 }
 
 // Helper function to insert notification

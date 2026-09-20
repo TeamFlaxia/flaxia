@@ -1,6 +1,7 @@
 export interface FcmPayload {
   title: string;
   body: string;
+  url?: string;
 }
 
 interface ServiceAccount {
@@ -115,7 +116,7 @@ export async function sendPushToDevice(
           data: {
             title: payload.title,
             body: payload.body,
-            click_url: '/',
+            click_url: payload.url || '/',
           },
           android: {
             priority: 'high',
@@ -129,7 +130,6 @@ export async function sendPushToDevice(
             payload: {
               aps: {
                 sound: 'default',
-                badge: 1,
               },
             },
           },

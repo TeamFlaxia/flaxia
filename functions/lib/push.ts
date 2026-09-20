@@ -151,6 +151,13 @@ export function getPushPayload(
       return { title: 'Flaxia', body: `Your poll has ended${preview}`, url, type: 'notification' };
     case 'bookmark':
       return { title: 'Flaxia', body: `${name} bookmarked your post${preview}`, url, type: 'notification' };
+    case 'dm':
+      return {
+        title: 'Flaxia',
+        body: `${name} sent you a message${preview}`,
+        url: postId ? `/messages/${postId}` : '/messages',
+        type: 'dm',
+      };
     case 'call':
       return {
         title: postPreview || 'Incoming call',

@@ -186,7 +186,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentUser: { username: string; id: string; display_name?: string; avatar_key?: string } | null = null;
     let unreadNotificationCount = 0;
     let unreadDmCount = 0;
-    let previousUnreadCount = 0;
 
     let tauriNotify: ((title: string, body: string) => Promise<void>) | null = null;
     let tauriBadge: ((count: number) => Promise<void>) | null = null;
@@ -295,9 +294,8 @@ document.addEventListener('DOMContentLoaded', async () => {
               if (data.push && typeof tauriNotify === 'function') {
                 tauriNotify(data.push.title, data.push.body);
               }
-              if (data.push && typeof capacitorNotify === 'function') {
-                capacitorNotify(data.push.title, data.push.body);
-              }
+              // OS 通知の表示は Push (FCM / Web Push) が担当する。
+              // Tauri には Push サービスが無いため WebSocket 経由でのみ表示する。
               // Handle incoming call notification
               if (data.push?.type === 'call' && data.push?.postId) {
                 showIncomingCall(data.push.postId);
@@ -305,9 +303,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else if (data.title) {
               if (typeof tauriNotify === 'function') {
                 tauriNotify(data.title, data.body || 'New notification');
-              }
-              if (typeof capacitorNotify === 'function') {
-                capacitorNotify(data.title, data.body || 'New notification');
               }
               refreshNotificationBadges();
             }
@@ -368,7 +363,15 @@ document.addEventListener('DOMContentLoaded', async () => {
           try {
             notifId = (notifId + 1) % 2147483647;
             await LocalNotifications.schedule({
-              notifications: [{ title, body, id: notifId }],
+              notifications: [
+                {
+                  title,
+                  body,
+                  id: notifId,
+                  channelId: 'flaxia_notifications',
+                  smallIcon: 'ic_stat_flaxia',
+                },
+              ],
             });
           } catch (err) {
             console.error('[notif] Capacitor sendNotification failed:', err);
@@ -514,54 +517,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const refreshNotificationBadges = async () => {
       console.log('[poll] refreshNotificationBadges called');
-      const data = await fetchNotifications();
+      await fetchNotifications();
       await fetchDmUnreadCount();
       await fetchGroupUnreadCount();
       console.log('[poll] unread count:', unreadNotificationCount);
       updateBadgeUI();
-
-      // Show notification when new unread notifications arrive (legacy polling path)
-      const isRealTauriAndroid =
-        typeof window !== 'undefined' &&
-        (window.__TAURI__ || window.__TAURI_INTERNALS__) &&
-        /Android/i.test(navigator.userAgent);
-      if (
-        tauriNotify &&
-        !isRealTauriAndroid &&
-        !isCapacitorNative &&
-        unreadNotificationCount > previousUnreadCount &&
-        data?.notifications?.length
-      ) {
-        const latest = data.notifications[0];
-        let body = '';
-        if (latest.actor) {
-          const u = latest.actor.username;
-          const d = latest.actor.display_name;
-          body = d && d !== u ? `@${u} (${d})` : `@${u}: `;
-        }
-        body += latest.post_text_preview || 'New notification';
-        tauriNotify('Flaxia', body).catch((err) => {
-          console.error('[notif] tauriNotify failed:', err);
-        });
-      } else if (
-        capacitorNotify &&
-        isCapacitorNative &&
-        unreadNotificationCount > previousUnreadCount &&
-        data?.notifications?.length
-      ) {
-        const latest = data.notifications[0];
-        let body = '';
-        if (latest.actor) {
-          const u = latest.actor.username;
-          const d = latest.actor.display_name;
-          body = d && d !== u ? `@${u} (${d})` : `@${u}: `;
-        }
-        body += latest.post_text_preview || 'New notification';
-        capacitorNotify('Flaxia', body).catch((err) => {
-          console.error('[notif] capacitorNotify failed:', err);
-        });
-      }
-      previousUnreadCount = unreadNotificationCount;
     };
 
     // Expose for Rust desktop background polling (lib.rs background thread, Tauri desktop only)
