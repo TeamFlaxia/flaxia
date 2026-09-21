@@ -16,7 +16,7 @@ offered (Flaxia++ / Flaxia# are defined in the database but not sold yet).
 - 通常品質な通話
 - Arcade（Shortsのようなゲームプレイ）
 
-### Plan Flaxia+ (¥150/mo) — そのカフェインをスタンプに ★販売中
+### Plan Flaxia+ (¥300/mo) — そのカフェインをスタンプに ★販売中
 
 - Flaxiaの全ての機能
 - ユーザー定義スタンプを無制限に
@@ -149,7 +149,7 @@ Customer 二重作成を防ぐ。
 
 ### Stripe Dashboard 側の準備
 
-1. 商品「Flaxia+」＋月次 Price（JPY 150）を作成し Price ID を取得
+1. 商品「Flaxia+」＋月次 Price（JPY 300）を作成し Price ID を取得
 2. Customer Portal を有効化（解約・支払い方法変更・請求履歴）
 3. Webhook `https://flaxia.app/api/billing/webhook` を登録（上表のイベント）
 4. secrets 投入: `npx wrangler pages secret put STRIPE_SECRET_KEY` など

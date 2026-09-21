@@ -30,7 +30,7 @@ export function getStripe(env: BillingEnv): Stripe {
  * hidden but remain valid plan ids in the database for future use.
  */
 export const CHECKOUT_PLANS: Record<string, { name: string; priceMonthly: number; priceEnv?: string }> = {
-  flaxia_plus: { name: 'Flaxia+', priceMonthly: 150 },
+  flaxia_plus: { name: 'Flaxia+', priceMonthly: 300 },
 };
 
 export const PLAN_NAMES: Record<string, string> = {

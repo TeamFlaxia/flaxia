@@ -1324,7 +1324,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     plusPrice.style.cssText = 'margin-bottom: 0.75rem;';
     const plusPriceNum = document.createElement('span');
     plusPriceNum.style.cssText = 'font-size: 1.5rem; font-weight: 700; color: var(--text-primary);';
-    plusPriceNum.textContent = '¥150';
+    plusPriceNum.textContent = '¥300';
     const plusPricePeriod = document.createElement('span');
     plusPricePeriod.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);';
     plusPricePeriod.textContent = '/mo';
@@ -1387,7 +1387,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     container.appendChild(billingSection);
 
     const planNames: Record<string, string> = {
-      flaxia_plus: 'Flaxia+ (¥150/mo)',
+      flaxia_plus: 'Flaxia+ (¥300/mo)',
       flaxia_plus_plus: 'Flaxia++ (¥500/mo)',
       flaxia_sharp: 'Flaxia# (¥1000/mo)',
     };
