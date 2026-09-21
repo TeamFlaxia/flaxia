@@ -158,7 +158,8 @@ Flaxia uses Cloudflare D1 (SQLite-compatible) with migrations in `migrations/`.
 | stripe_subscription_id | TEXT | UNIQUE |
 | stripe_customer_id | TEXT | |
 | plan_id | TEXT | `flaxia_plus`, `flaxia_plus_plus`, `flaxia_sharp` |
-| status | TEXT | `active`, `canceled`, `past_due`, `incomplete`, `trialing` |
+| status | TEXT | `active`, `canceled`, `past_due`, `incomplete`, `incomplete_expired`, `trialing`, `unpaid`, `paused` |
+| cancel_at_period_end | INTEGER | 1 = 期間終了時に解約（migration 0088） |
 | current_period_start | TEXT | ISO 8601 |
 | current_period_end | TEXT | ISO 8601 |
 | created_at | TEXT | ISO 8601 |
@@ -172,6 +173,7 @@ Flaxia uses Cloudflare D1 (SQLite-compatible) with migrations in `migrations/`.
 | post_id | TEXT | FK → posts(id) (marketplace only) |
 | stripe_session_id | TEXT | UNIQUE |
 | stripe_payment_intent_id | TEXT | |
+| stripe_invoice_id | TEXT | UNIQUE（継続課金の請求、migration 0088） |
 | type | TEXT | `subscription` or `marketplace` |
 | plan_id | TEXT | (subscription only) |
 | amount | INTEGER | Amount in JPY |
@@ -179,6 +181,18 @@ Flaxia uses Cloudflare D1 (SQLite-compatible) with migrations in `migrations/`.
 | status | TEXT | `pending`, `completed`, `failed`, `refunded` |
 | metadata | TEXT | JSON (optional) |
 | created_at | TEXT | ISO 8601 |
+
+### `stripe_events`
+Webhook の `event.id` を記録し、Stripe の再送を冪等に処理する（migration 0088）。
+
+| Column | Type | Notes |
+|---|---|---|
+| id | TEXT | PK (Stripe event id) |
+| type | TEXT | Event type |
+| created_at | TEXT | ISO 8601 |
+
+`users.stripe_customer_id` は Stripe Customer を保持し、checkout ごとの
+Customer 二重作成を防ぐ（migration 0088）。
 
 ## Other Tables
 

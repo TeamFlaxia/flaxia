@@ -397,7 +397,7 @@ Flaxia プロジェクトには既に以下の設定ファイルが用意され�
 | ファイル | 役割 |
 |---------|------|
 | `.opencode/` | opencode の設定ディレクトリ（パーミッションルール、スキルなど） |
-| `AGENT.MD` | プロジェクトの技術スタック・アーキテクチャ・コーディング規約を定義 |
+| `AGENTS.md` | プロジェクトの技術スタック・アーキテクチャ・コーディング規約を定義 |
 | `CLAUDE.MD` | Claude Code 用のプロジェクトガイド（互換性あり） |
 
 ### 便利な使い方のコツ
@@ -1828,7 +1828,7 @@ private async handleFresh() {
 | ActivityPub 連携 | `docs/activitypub.md` |
 | デプロイ手順 | `docs/deployment.md` |
 | サンドボックス解説 | `docs/sandbox.md` |
-| AI エージェント用ガイド | `AGENT.MD` |
+| AI エージェント用ガイド | `AGENTS.md` |
 | ローカルテストアカウント | `local-test-accounts.md` |
 | セキュリティ監査レポート | `vulnerability-report.md` |
 | 未訳機能の TODO | `TODO.md` |

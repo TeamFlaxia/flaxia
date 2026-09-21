@@ -1,0 +1,15 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Format edited files with the project formatter (Biome).
+  "formatter": true,
+  // Keep generated output out of the file watcher.
+  "watcher": {
+    "ignore": ["dist/**", ".wrangler/**", "node_modules/**", "worker-configuration.d.ts"]
+  },
+  "permissions": [
+    // Never let an agent read real secrets from local dev vars.
+    { "action": "read", "resource": "*.dev.vars", "effect": "deny" },
+    // Pushing is a deliberate, human decision.
+    { "action": "shell", "resource": "git push *", "effect": "ask" }
+  ]
+}

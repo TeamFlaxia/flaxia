@@ -160,4 +160,48 @@ app.get('/api/test/nsfw-scans', requireTestEnvironment, async (c) => {
   return c.json({ scans: rows.results || [] });
 });
 
+// POST /api/test/subscription - seed a subscription row for billing tests.
+// Gated like /api/test/reset: only reachable from the test dev server.
+app.post('/api/test/subscription', requireTestEnvironment, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    username?: string;
+    planId?: string;
+    status?: string;
+    currentPeriodEnd?: string | null;
+    cancelAtPeriodEnd?: boolean;
+    stripeCustomerId?: string | null;
+  };
+  if (!body.username) return c.json({ error: 'Missing username' }, 400);
+
+  const db = c.env.DB;
+  const user = await db.prepare('SELECT id FROM users WHERE username = ?').bind(body.username).first<{ id: string }>();
+  if (!user) return c.json({ error: 'User not found' }, 404);
+
+  const id = crypto.randomUUID();
+  await db
+    .prepare(
+      `INSERT INTO subscriptions (
+         id, user_id, stripe_subscription_id, stripe_customer_id, plan_id, status,
+         cancel_at_period_end, current_period_end
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      id,
+      user.id,
+      `sub_test_${id}`,
+      body.stripeCustomerId ?? null,
+      body.planId ?? 'flaxia_plus',
+      body.status ?? 'active',
+      body.cancelAtPeriodEnd ? 1 : 0,
+      body.currentPeriodEnd ?? null,
+    )
+    .run();
+
+  if (body.stripeCustomerId) {
+    await db.prepare('UPDATE users SET stripe_customer_id = ? WHERE id = ?').bind(body.stripeCustomerId, user.id).run();
+  }
+
+  return c.json({ id, userId: user.id });
+});
+
 export default app;

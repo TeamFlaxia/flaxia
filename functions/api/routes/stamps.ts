@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
+import { getUserPlan } from '../../lib/billing';
 import { detectMimeType, isAllowedImageMime, requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
@@ -60,15 +61,8 @@ stamps.post('/stamps', requireAuth, async (c) => {
     const userId = c.get('user')?.id || '';
 
     // Check plan for stamp limit
-    const sub =
-      (await c.env.DB.prepare(
-        "SELECT plan_id FROM subscriptions WHERE user_id = ? AND status IN ('active', 'trialing') ORDER BY created_at DESC LIMIT 1",
-      )
-        .bind(userId)
-        .first<{ plan_id: string }>()) || null;
-
-    const isPlus =
-      sub?.plan_id === 'flaxia_plus' || sub?.plan_id === 'flaxia_plus_plus' || sub?.plan_id === 'flaxia_sharp';
+    const plan = await getUserPlan(c.env, userId);
+    const isPlus = plan.isActive;
 
     if (!isPlus) {
       const countRow = await c.env.DB.prepare('SELECT COUNT(*) AS cnt FROM custom_stamps WHERE user_id = ?')

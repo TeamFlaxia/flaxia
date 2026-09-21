@@ -155,20 +155,33 @@ All API endpoints are served from `functions/api/[[route]].ts` via Hono framewor
 
 | Method | Endpoint | Description |
 |---|---|---|
-| POST | `/api/billing/checkout` | Create Stripe Checkout session for subscription |
+| POST | `/api/billing/checkout` | Flaxia+ の Stripe Checkout セッション作成 |
+| POST | `/api/billing/portal` | Stripe Customer Portal セッション作成 |
 | GET | `/api/billing/plan` | Get current user's plan |
+| GET | `/api/billing/transactions` | Get the user's payment history |
 | POST | `/api/billing/webhook` | Stripe webhook receiver |
 
 ### Checkout
 `POST /api/billing/checkout`
 - Auth: Required (session cookie)
-- Body: `{ planId: "flaxia_plus" | "flaxia_plus_plus" | "flaxia_sharp", mode?: "subscription" }`
+- Body: `{ planId: "flaxia_plus" }`
 - Returns: `{ sessionId, url }` — redirect to Stripe Checkout
+- Errors: `400` unsupported plan, `401` unauthorized, `409` already subscribed
+
+### Portal
+`POST /api/billing/portal`
+- Auth: Required
+- Returns: `{ url }` — Stripe Customer Portal (cancel / payment method / invoices)
 
 ### Get Plan
 `GET /api/billing/plan`
 - Auth: Optional
-- Returns: `{ plan: string | null, status: string | null, expiresAt: string | null }`
+- Returns: `{ plan, planName, status, expiresAt, cancelAtPeriodEnd }`
+
+### Get Transactions
+`GET /api/billing/transactions`
+- Auth: Required
+- Returns: `{ transactions: [...] }` (latest 50)
 
 ---
 

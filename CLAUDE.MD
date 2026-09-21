@@ -26,10 +26,13 @@ Flaxia is an SNS where posts are living, interactive applications. Concept: "Twi
 
 ## Project Structure
 ```
-functions/api/[[route]].ts  # Main API router (all endpoints)
-src/main.ts                 # SPA entry point (~2500 lines)
+functions/api/[[route]].ts  # Thin Hono router mounting routes/*.ts
+functions/api/routes/       # Feature routers (posts, media, stamps, ...)
+functions/api/billing/[[route]].ts  # Stripe subscription billing (Flaxia+)
+functions/lib/              # Server-side helpers (auth, billing, ...)
+src/main.ts                 # SPA entry point
 src/components/             # UI components
-src/lib/                    # Utilities (db, r2, bridge, sandbox, zip, etc.)
+src/lib/                    # Utilities (i18n, db, r2, bridge, sandbox, zip, ...)
 migrations/                 # D1 SQL migrations
 tests/                      # Test files (*.test.ts)
 docs/                       # Developer documentation

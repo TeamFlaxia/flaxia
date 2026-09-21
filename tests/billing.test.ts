@@ -85,16 +85,17 @@ describe('POST /api/billing/checkout', () => {
     assert.equal(res.status, 400);
   });
 
-  it('rejects invalid mode → 400 (or 500 without Stripe key)', async () => {
+  it('ignores unknown mode and proceeds (500 without Stripe key)', async () => {
     const { cookie } = await seedUserAndLogin('1');
     const res = await fetch(`${BASE_URL}/api/billing/checkout`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: cookie },
       body: JSON.stringify({ planId: 'flaxia_plus', mode: 'invalid' }),
     });
-    // Without STRIPE_SECRET_KEY, getStripe() throws before the mode check,
-    // so we get 500. With a key, we'd get 400.
-    assert.ok(res.status === 400 || res.status === 500, `expected 400 or 500, got ${res.status}`);
+    // `mode` is no longer part of the request contract; without
+    // STRIPE_SECRET_KEY the Stripe call fails with 500 rather than 400.
+    assert.notEqual(res.status, 400, 'unknown mode should not be a validation error');
+    assert.notEqual(res.status, 401, 'should not be unauthorized');
   });
 });
 
@@ -198,23 +199,33 @@ describe('POST /api/market/checkout', () => {
 });
 
 // ===========================================================================
-// POST /api/billing/checkout — subscription validation paths
+// POST /api/billing/checkout — Flaxia+ only
 // ===========================================================================
-describe('POST /api/billing/checkout — subscription plans', () => {
+describe('POST /api/billing/checkout — Flaxia+ only', () => {
   beforeEach(resetDb);
 
-  for (const planId of ['flaxia_plus', 'flaxia_plus_plus', 'flaxia_sharp']) {
-    it(`accepts valid plan "${planId}" (Stripe call expected to fail without key)`, async () => {
+  it('accepts Flaxia+ (Stripe call expected to fail without key)', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const res = await fetch(`${BASE_URL}/api/billing/checkout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ planId: 'flaxia_plus' }),
+    });
+    assert.notEqual(res.status, 400, 'should not be a validation error');
+    assert.notEqual(res.status, 401, 'should not be unauthorized');
+  });
+
+  for (const planId of ['flaxia_plus_plus', 'flaxia_sharp']) {
+    it(`rejects non-offered plan "${planId}" → 400`, async () => {
       const { cookie } = await seedUserAndLogin('1');
       const res = await fetch(`${BASE_URL}/api/billing/checkout`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Cookie: cookie },
-        body: JSON.stringify({ planId, mode: 'subscription' }),
+        body: JSON.stringify({ planId }),
       });
-      // Without STRIPE_SECRET_KEY, Stripe will error → 500.  The important
-      // thing is that the validation layer accepted the request.
-      assert.notEqual(res.status, 400, 'should not be a validation error');
-      assert.notEqual(res.status, 401, 'should not be unauthorized');
+      assert.equal(res.status, 400);
+      const body = (await res.json()) as { error: string };
+      assert.ok(body.error.includes('Invalid plan'));
     });
   }
 });
@@ -269,5 +280,92 @@ describe('POST /api/market/checkout — amount boundaries', () => {
       body: JSON.stringify({ postId: 'x', amount: 50001 }),
     });
     assert.equal(res.status, 400);
+  });
+});
+
+// ===========================================================================
+// Billing — subscription state, history and portal
+// ===========================================================================
+async function seedSubscription(
+  username: string,
+  data: {
+    planId?: string;
+    status?: string;
+    currentPeriodEnd?: string;
+    cancelAtPeriodEnd?: boolean;
+  } = {},
+): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/test/subscription`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, ...data }),
+  });
+  assert.ok(res.ok, `seed subscription failed: ${res.status}`);
+}
+
+describe('billing subscription state', () => {
+  beforeEach(resetDb);
+
+  it('rejects a second checkout while subscribed → 409', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedSubscription(username, { planId: 'flaxia_plus', status: 'active' });
+
+    const res = await fetch(`${BASE_URL}/api/billing/checkout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ planId: 'flaxia_plus' }),
+    });
+    assert.equal(res.status, 409);
+  });
+
+  it('GET /plan returns the active plan and cancellation flag', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedSubscription(username, {
+      planId: 'flaxia_plus',
+      status: 'active',
+      cancelAtPeriodEnd: true,
+      currentPeriodEnd: '2099-01-01T00:00:00.000Z',
+    });
+
+    const res = await fetch(`${BASE_URL}/api/billing/plan`, { headers: { Cookie: cookie } });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      plan: string | null;
+      status: string | null;
+      cancelAtPeriodEnd: boolean;
+      expiresAt: string | null;
+    };
+    assert.equal(body.plan, 'flaxia_plus');
+    assert.equal(body.status, 'active');
+    assert.equal(body.cancelAtPeriodEnd, true);
+    assert.equal(body.expiresAt, '2099-01-01T00:00:00.000Z');
+  });
+
+  it('GET /plan ignores canceled subscriptions', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedSubscription(username, { planId: 'flaxia_plus', status: 'canceled' });
+
+    const res = await fetch(`${BASE_URL}/api/billing/plan`, { headers: { Cookie: cookie } });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { plan: string | null };
+    assert.equal(body.plan, null);
+  });
+
+  it('GET /transactions requires auth → 401', async () => {
+    const res = await fetch(`${BASE_URL}/api/billing/transactions`);
+    assert.equal(res.status, 401);
+  });
+
+  it('GET /transactions returns an empty list initially', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const res = await fetch(`${BASE_URL}/api/billing/transactions`, { headers: { Cookie: cookie } });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { transactions: unknown[] };
+    assert.deepEqual(body.transactions, []);
+  });
+
+  it('POST /portal requires auth → 401', async () => {
+    const res = await fetch(`${BASE_URL}/api/billing/portal`, { method: 'POST' });
+    assert.equal(res.status, 401);
   });
 });

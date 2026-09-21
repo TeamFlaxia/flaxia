@@ -34,6 +34,8 @@ BASE_URL = "https://flaxia.app"
 ENVIRONMENT = "production"
 CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
 ADMIN_USERNAMES = "remydrescarlet"
+STRIPE_PRICE_FLXIA_PLUS = "price_1UA0Oy58bm0e7B16tMZ7EWjk"  # Stripe Price ID は公開識別子なので vars で管理（secret ではない）
+
 
 # To set CROWD_API_KEY secret:
 #   npx wrangler secret put CROWD_API_KEY
@@ -73,6 +75,17 @@ binding = "AP_DELIVERY_QUEUE"
 #   npx wrangler secret put VAPID_PUBLIC_KEY
 #   npx wrangler secret put VAPID_PRIVATE_KEY
 # 開発環境では自動生成される（毎回変わるので通知が切れる可能性あり）
+
+# Stripe (billing)
+# Dashboard で商品「Flaxia+」＋月次 Price (JPY 150) と Customer Portal を作成し、
+# Webhook エンドポイント https://flaxia.app/api/billing/webhook を登録する。
+# 本番環境では下記の secret を設定:
+#   npx wrangler secret put STRIPE_SECRET_KEY
+#   npx wrangler secret put STRIPE_WEBHOOK_SECRET
+#   npx wrangler secret put STRIPE_PRICE_FLXIA_PLUS
+# ローカル開発では .dev.vars に同様の値を保存する。
+# STRIPE_PRICE_FLXIA_PLUS 未設定時は checkout が price_data にフォールバックする。
+
 
 [[vectorize]]
 binding = "VECTORIZE"

@@ -1,6 +1,16 @@
 import { clearMeCache } from '../lib/auth-cache';
 import { storeSrpSalt } from '../lib/auth-srp.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
+import {
+  canRunFlaxiaNode,
+  denyCrowdConsent,
+  getCrowdConsentState,
+  getCrowdNodeController,
+  grantCrowdConsent,
+  initCrowdNode,
+  startCrowdNode,
+  stopCrowdNode,
+} from '../lib/crowd-node.js';
 import { getLocale, setLocale, t } from '../lib/i18n.js';
 import { rewrapE2EEIdentityV2, unlockIdentityV2WithPassword } from '../lib/messenger-identity-v2.js';
 import { getReplyStyle, getShowNsfw, ReplyStyle, setReplyStyle, setShowNsfw } from '../lib/settings.js';
@@ -465,6 +475,128 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   displaySection.appendChild(displayMessage);
 
   container.appendChild(displaySection);
+
+  // Crowd Section (opt in/out of donating browser compute)
+  const crowdSection = document.createElement('div');
+  crowdSection.className = 'settings-section';
+  crowdSection.style.cssText = `
+    margin-bottom: 2rem;
+    padding: 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-primary);
+  `;
+
+  const crowdTitle = document.createElement('h2');
+  crowdTitle.textContent = t('settings.crowd');
+  crowdTitle.style.cssText = `
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.5rem;
+  `;
+
+  const nodeAvailable = canRunFlaxiaNode();
+
+  const crowdLabel = document.createElement('label');
+  crowdLabel.style.cssText = `
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: ${nodeAvailable ? 'pointer' : 'not-allowed'};
+    transition: border-color 0.2s;
+    margin-bottom: 0.5rem;
+    opacity: ${nodeAvailable ? '1' : '0.6'};
+  `;
+
+  const crowdCheckbox = document.createElement('input');
+  crowdCheckbox.type = 'checkbox';
+  crowdCheckbox.checked = getCrowdConsentState() === 'granted';
+  crowdCheckbox.disabled = !nodeAvailable;
+  crowdCheckbox.style.cssText = 'accent-color: var(--accent); width: 18px; height: 18px; cursor: pointer;';
+
+  const crowdTextDiv = document.createElement('div');
+  crowdTextDiv.style.cssText = 'display: flex; flex-direction: column;';
+
+  const crowdNameSpan = document.createElement('span');
+  crowdNameSpan.style.cssText = 'font-weight: 600; color: var(--text-primary); font-size: 0.9375rem;';
+  crowdNameSpan.textContent = t('settings.crowd');
+
+  const crowdDescSpan = document.createElement('span');
+  crowdDescSpan.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem;';
+  crowdDescSpan.textContent = t('settings.crowd_desc');
+
+  crowdTextDiv.appendChild(crowdNameSpan);
+  crowdTextDiv.appendChild(crowdDescSpan);
+  crowdLabel.appendChild(crowdCheckbox);
+  crowdLabel.appendChild(crowdTextDiv);
+
+  const crowdStatus = document.createElement('div');
+  crowdStatus.style.cssText = 'font-size: 0.8125rem; color: var(--text-muted);';
+
+  const crowdMessage = document.createElement('div');
+  crowdMessage.style.cssText = `
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    min-height: 1.25rem;
+  `;
+
+  const updateCrowdStatus = () => {
+    if (!nodeAvailable) {
+      crowdStatus.textContent = t('settings.crowd_unavailable');
+      return;
+    }
+    const state = getCrowdConsentState();
+    crowdStatus.textContent =
+      state === 'granted'
+        ? t('settings.crowd_running')
+        : state === 'denied'
+          ? t('settings.crowd_denied')
+          : t('settings.crowd_unset');
+    crowdStatus.style.color = state === 'granted' ? 'var(--success, #10b981)' : 'var(--text-muted)';
+  };
+  updateCrowdStatus();
+
+  crowdCheckbox.addEventListener('change', async () => {
+    if (!nodeAvailable) return;
+    // The node controller is created during deferred app init; make sure it
+    // exists before mutating state so a fast navigation never loses the toggle.
+    if (!getCrowdNodeController()) {
+      try {
+        await initCrowdNode();
+      } catch {
+        // fall through to the availability check below
+      }
+    }
+    if (!getCrowdNodeController()) {
+      crowdMessage.textContent = t('settings.crowd_unavailable');
+      crowdMessage.style.color = 'var(--danger, #ef4444)';
+      crowdCheckbox.checked = false;
+      return;
+    }
+    if (crowdCheckbox.checked) {
+      grantCrowdConsent();
+      startCrowdNode();
+    } else {
+      denyCrowdConsent();
+      stopCrowdNode();
+    }
+    updateCrowdStatus();
+    crowdMessage.textContent = t('settings.crowd_saved');
+    crowdMessage.style.color = 'var(--success, #10b981)';
+  });
+
+  crowdSection.appendChild(crowdTitle);
+  crowdSection.appendChild(crowdLabel);
+  crowdSection.appendChild(crowdStatus);
+  crowdSection.appendChild(crowdMessage);
+
+  container.appendChild(crowdSection);
 
   // Language Section
   const languageSection = document.createElement('div');
@@ -1131,7 +1263,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     loadStamps();
   }
 
-  // Billing Section
+  // Billing Section (Flaxia+ only)
   if (currentUser) {
     const billingSection = document.createElement('div');
     billingSection.className = 'settings-section';
@@ -1153,7 +1285,6 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
       border-bottom: 1px solid var(--border);
       padding-bottom: 0.5rem;
     `;
-
     billingSection.appendChild(billingTitle);
 
     // Current plan display
@@ -1171,171 +1302,232 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     const planName = document.createElement('div');
     planName.style.cssText = 'font-weight: 600; font-size: 1.125rem; color: var(--text-primary);';
     planName.textContent = t('settings.loading') || 'Loading...';
+    const planMeta = document.createElement('div');
+    planMeta.style.cssText = 'font-size: 0.8125rem; color: var(--text-secondary); margin-top: 0.35rem;';
     planInfo.appendChild(planLabel);
     planInfo.appendChild(planName);
+    planInfo.appendChild(planMeta);
     billingSection.appendChild(planInfo);
 
-    // Fetch current plan
-    fetch('/api/billing/plan')
-      .then((r) => r.json() as Promise<{ plan: string | null }>)
-      .then((data) => {
-        const planNames: Record<string, string> = {
-          flaxia_plus: 'Flaxia+ (¥150/mo)',
-          flaxia_plus_plus: 'Flaxia++ (¥500/mo)',
-          flaxia_sharp: 'Flaxia# (¥1000/mo)',
-        };
-        planName.textContent = data.plan ? planNames[data.plan] || data.plan : t('settings.free_plan') || 'Flaxia Free';
-      })
-      .catch(() => {
-        planName.textContent = t('settings.free_plan') || 'Flaxia Free';
-      });
-
-    // Plan cards
-    const plans = [
-      {
-        id: 'flaxia_plus',
-        name: 'Flaxia+',
-        price: '¥150',
-        period: '/mo',
-        features: [
-          t('settings.plan_plus_f1') || 'Unlimited custom stamps',
-          t('settings.plan_plus_f2') || 'GIF & MP4 stamps/icons/intro',
-          t('settings.plan_plus_f3') || 'Improved call quality',
-        ],
-        color: '#8b5cf6',
-      },
-      // --- Flaxia++ / Flaxia# are temporarily hidden ---
-      // {
-      //   id: 'flaxia_plus_plus',
-      //   name: 'Flaxia++',
-      //   price: '¥500',
-      //   period: '/mo',
-      //   features: [
-      //     t('settings.plan_plusplus_f1') || 'Everything in Flaxia+',
-      //     t('settings.plan_plusplus_f2') || 'Offline games, images, videos & music',
-      //     t('settings.plan_plusplus_f3') || 'Premium call quality',
-      //   ],
-      //   color: '#f59e0b',
-      // },
-      // {
-      //   id: 'flaxia_sharp',
-      //   name: 'Flaxia#',
-      //   price: '¥1000',
-      //   period: '/mo',
-      //   features: [
-      //     t('settings.plan_sharp_f1') || 'Everything in Flaxia++',
-      //     t('settings.plan_sharp_f2') || 'Access to preview branches',
-      //     t('settings.plan_sharp_f3') || 'Use experimental features',
-      //   ],
-      //   color: '#ef4444',
-      // },
-    ];
-
-    const plansGrid = document.createElement('div');
-    plansGrid.style.cssText = `
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 1rem;
+    // Flaxia+ plan card
+    const plusCard = document.createElement('div');
+    plusCard.style.cssText = `
+      border: 2px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
       margin-bottom: 1rem;
     `;
+    const plusName = document.createElement('div');
+    plusName.style.cssText = 'font-weight: 700; font-size: 1rem; color: #8b5cf6; margin-bottom: 0.25rem;';
+    plusName.textContent = 'Flaxia+';
+    const plusPrice = document.createElement('div');
+    plusPrice.style.cssText = 'margin-bottom: 0.75rem;';
+    const plusPriceNum = document.createElement('span');
+    plusPriceNum.style.cssText = 'font-size: 1.5rem; font-weight: 700; color: var(--text-primary);';
+    plusPriceNum.textContent = '¥150';
+    const plusPricePeriod = document.createElement('span');
+    plusPricePeriod.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);';
+    plusPricePeriod.textContent = '/mo';
+    plusPrice.appendChild(plusPriceNum);
+    plusPrice.appendChild(plusPricePeriod);
 
-    plans.forEach((plan) => {
-      const card = document.createElement('div');
-      card.style.cssText = `
-        border: 2px solid var(--border);
-        border-radius: 8px;
-        padding: 1rem;
-        cursor: pointer;
-        transition: border-color 0.2s, transform 0.1s;
-      `;
-      card.addEventListener('mouseenter', () => {
-        card.style.borderColor = plan.color;
-        card.style.transform = 'translateY(-2px)';
-      });
-      card.addEventListener('mouseleave', () => {
-        card.style.borderColor = 'var(--border)';
-        card.style.transform = 'none';
-      });
-
-      const nameEl = document.createElement('div');
-      nameEl.style.cssText = `font-weight: 700; font-size: 1rem; color: ${plan.color}; margin-bottom: 0.25rem;`;
-      nameEl.textContent = plan.name;
-
-      const priceEl = document.createElement('div');
-      priceEl.style.cssText = 'margin-bottom: 0.75rem;';
-      const priceNum = document.createElement('span');
-      priceNum.style.cssText = 'font-size: 1.5rem; font-weight: 700; color: var(--text-primary);';
-      priceNum.textContent = plan.price;
-      const pricePeriod = document.createElement('span');
-      pricePeriod.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);';
-      pricePeriod.textContent = plan.period;
-      priceEl.appendChild(priceNum);
-      priceEl.appendChild(pricePeriod);
-
-      const featuresEl = document.createElement('ul');
-      featuresEl.style.cssText = 'list-style: none; padding: 0; margin: 0;';
-      plan.features.forEach((f) => {
-        const li = document.createElement('li');
-        li.style.cssText = 'font-size: 0.8125rem; color: var(--text-secondary); padding: 0.25rem 0;';
-        li.textContent = `✓ ${f}`;
-        featuresEl.appendChild(li);
-      });
-
-      const buyBtn = document.createElement('button');
-      buyBtn.textContent = t('settings.subscribe') || 'Subscribe';
-      buyBtn.style.cssText = `
-        width: 100%;
-        margin-top: 0.75rem;
-        padding: 0.5rem;
-        border: none;
-        border-radius: 6px;
-        background: ${plan.color};
-        color: white;
-        font-weight: 600;
-        font-size: 0.875rem;
-        cursor: pointer;
-        transition: opacity 0.2s;
-      `;
-      buyBtn.addEventListener('mouseenter', () => {
-        if (!buyBtn.disabled) buyBtn.style.opacity = '0.85';
-      });
-      buyBtn.addEventListener('mouseleave', () => {
-        if (!buyBtn.disabled) buyBtn.style.opacity = '1';
-      });
-      buyBtn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        buyBtn.disabled = true;
-        buyBtn.textContent = t('settings.redirecting') || 'Redirecting...';
-        try {
-          const res = await fetch('/api/billing/checkout', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ planId: plan.id, mode: 'subscription' }),
-          });
-          const data = (await res.json()) as { url?: string; error?: string };
-          if (data.url) {
-            window.location.href = data.url;
-          } else {
-            alert(data.error || 'Failed to create checkout session');
-            buyBtn.disabled = false;
-            buyBtn.textContent = t('settings.subscribe') || 'Subscribe';
-          }
-        } catch {
-          alert(t('settings.network_error') || 'Network error');
-          buyBtn.disabled = false;
-          buyBtn.textContent = t('settings.subscribe') || 'Subscribe';
-        }
-      });
-
-      card.appendChild(nameEl);
-      card.appendChild(priceEl);
-      card.appendChild(featuresEl);
-      card.appendChild(buyBtn);
-      plansGrid.appendChild(card);
+    const plusFeatures = document.createElement('ul');
+    plusFeatures.style.cssText = 'list-style: none; padding: 0; margin: 0 0 0.5rem;';
+    const plusFeatureLabels = [
+      t('settings.plan_plus_f1') || 'Unlimited custom stamps',
+      t('settings.plan_plus_f2') || 'GIF & MP4 stamps/icons/intro',
+      t('settings.plan_plus_f3') || 'Improved call quality',
+    ];
+    plusFeatureLabels.forEach((feature) => {
+      const li = document.createElement('li');
+      li.style.cssText = 'font-size: 0.8125rem; color: var(--text-secondary); padding: 0.25rem 0;';
+      li.textContent = `✓ ${feature}`;
+      plusFeatures.appendChild(li);
     });
 
-    billingSection.appendChild(plansGrid);
+    const actionBtn = document.createElement('button');
+    actionBtn.style.cssText = `
+      width: 100%;
+      padding: 0.5rem;
+      border: none;
+      border-radius: 6px;
+      background: #8b5cf6;
+      color: white;
+      font-weight: 600;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    `;
+    actionBtn.addEventListener('mouseenter', () => {
+      if (!actionBtn.disabled) actionBtn.style.opacity = '0.85';
+    });
+    actionBtn.addEventListener('mouseleave', () => {
+      if (!actionBtn.disabled) actionBtn.style.opacity = '1';
+    });
+
+    plusCard.appendChild(plusName);
+    plusCard.appendChild(plusPrice);
+    plusCard.appendChild(plusFeatures);
+    plusCard.appendChild(actionBtn);
+    billingSection.appendChild(plusCard);
+
+    // Billing history
+    const historySection = document.createElement('div');
+    const historyTitle = document.createElement('div');
+    historyTitle.style.cssText =
+      'font-weight: 600; font-size: 0.9375rem; color: var(--text-primary); margin: 0.5rem 0;';
+    historyTitle.textContent = t('settings.billing_history') || 'Billing History';
+    const historyList = document.createElement('div');
+    historyList.style.cssText = 'display: flex; flex-direction: column; gap: 0.5rem;';
+    historyList.textContent = t('settings.loading') || 'Loading...';
+    historySection.appendChild(historyTitle);
+    historySection.appendChild(historyList);
+    billingSection.appendChild(historySection);
+
     container.appendChild(billingSection);
+
+    const planNames: Record<string, string> = {
+      flaxia_plus: 'Flaxia+ (¥150/mo)',
+      flaxia_plus_plus: 'Flaxia++ (¥500/mo)',
+      flaxia_sharp: 'Flaxia# (¥1000/mo)',
+    };
+
+    const formatDate = (iso: string | null): string => {
+      if (!iso) return '';
+      try {
+        return new Date(iso).toLocaleDateString(getLocale());
+      } catch {
+        return iso;
+      }
+    };
+
+    const statusLabel = (status: string | null): string => {
+      switch (status) {
+        case 'active':
+          return t('settings.status_active') || 'Active';
+        case 'trialing':
+          return t('settings.status_trialing') || 'Trial';
+        case 'past_due':
+          return t('settings.status_past_due') || 'Past due';
+        case 'canceled':
+          return t('settings.status_canceled') || 'Canceled';
+        default:
+          return status || '';
+      }
+    };
+
+    let currentPlan: {
+      plan: string | null;
+      status: string | null;
+      expiresAt: string | null;
+      cancelAtPeriodEnd: boolean;
+    } = { plan: null, status: null, expiresAt: null, cancelAtPeriodEnd: false };
+
+    actionBtn.addEventListener('click', async () => {
+      actionBtn.disabled = true;
+      const originalLabel = actionBtn.textContent || t('settings.subscribe') || 'Subscribe';
+      actionBtn.textContent = t('settings.redirecting') || 'Redirecting...';
+      try {
+        const hasSubscription =
+          !!currentPlan.plan && ['active', 'trialing', 'past_due'].includes(currentPlan.status || '');
+        const endpoint = hasSubscription ? '/api/billing/portal' : '/api/billing/checkout';
+        const init: RequestInit = { method: 'POST', headers: { 'Content-Type': 'application/json' } };
+        if (!hasSubscription) {
+          init.body = JSON.stringify({ planId: 'flaxia_plus' });
+        }
+        const res = await fetch(endpoint, init);
+        const data = (await res.json()) as { url?: string; error?: string };
+        if (data.url) {
+          window.location.href = data.url;
+          return;
+        }
+        alert(data.error || t('settings.billing_error') || 'Failed to start billing');
+      } catch {
+        alert(t('settings.network_error') || 'Network error');
+      }
+      actionBtn.disabled = false;
+      actionBtn.textContent = originalLabel;
+    });
+
+    const renderPlan = () => {
+      const hasSubscription =
+        !!currentPlan.plan && ['active', 'trialing', 'past_due'].includes(currentPlan.status || '');
+      planName.textContent = currentPlan.plan
+        ? planNames[currentPlan.plan] || currentPlan.plan
+        : t('settings.free_plan') || 'Flaxia Free';
+
+      if (!hasSubscription) {
+        planMeta.textContent = '';
+        actionBtn.textContent = t('settings.subscribe') || 'Subscribe';
+        actionBtn.style.background = '#8b5cf6';
+        return;
+      }
+
+      const date = formatDate(currentPlan.expiresAt);
+      if (currentPlan.status === 'past_due') {
+        planMeta.textContent = t('settings.past_due_notice') || 'Payment past due.';
+      } else if (currentPlan.cancelAtPeriodEnd) {
+        planMeta.textContent = date
+          ? t('settings.cancels_on', { date }) || `Cancels on ${date}`
+          : t('settings.status_canceled') || 'Canceled';
+      } else {
+        const label = statusLabel(currentPlan.status);
+        planMeta.textContent = date ? `${label} · ${t('settings.renews_on', { date }) || `Renews on ${date}`}` : label;
+      }
+      actionBtn.textContent = t('settings.manage_subscription') || 'Manage / Cancel';
+      actionBtn.style.background = 'var(--accent)';
+    };
+
+    const renderHistory = (transactions: Array<Record<string, unknown>>) => {
+      historyList.textContent = '';
+      if (transactions.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'font-size: 0.8125rem; color: var(--text-muted);';
+        empty.textContent = t('settings.no_billing_history') || 'No payments yet';
+        historyList.appendChild(empty);
+        return;
+      }
+      const txStatus = (status: unknown): string => {
+        const key = `settings.status_${String(status)}`;
+        const translated = t(key);
+        return translated !== key ? translated : String(status);
+      };
+      transactions.slice(0, 10).forEach((tx) => {
+        const row = document.createElement('div');
+        row.style.cssText =
+          'display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.8125rem; color: var(--text-secondary); border-bottom: 1px solid var(--border); padding-bottom: 0.35rem;';
+        const left = document.createElement('div');
+        const datePart = formatDate((tx.createdAt as string) || null);
+        const namePart = (tx.planName as string) || (tx.type as string) || '';
+        left.textContent = [datePart, namePart].filter(Boolean).join(' · ');
+        const right = document.createElement('div');
+        const amount = Number(tx.amount ?? 0);
+        right.textContent = `${amount.toLocaleString()} ${String(tx.currency || 'jpy').toUpperCase()} · ${txStatus(tx.status)}`;
+        row.appendChild(left);
+        row.appendChild(right);
+        historyList.appendChild(row);
+      });
+    };
+
+    const loadBilling = async () => {
+      try {
+        const [planRes, txRes] = await Promise.all([fetch('/api/billing/plan'), fetch('/api/billing/transactions')]);
+        if (planRes.ok) {
+          currentPlan = (await planRes.json()) as typeof currentPlan;
+        }
+        if (txRes.ok) {
+          const data = (await txRes.json()) as { transactions?: Array<Record<string, unknown>> };
+          renderHistory(data.transactions || []);
+        } else {
+          renderHistory([]);
+        }
+      } catch {
+        renderHistory([]);
+      }
+      renderPlan();
+    };
+
+    void loadBilling();
   }
 
   return {
