@@ -15,7 +15,7 @@ import type { ThreadPage } from './components/ThreadPage.js';
 import type { Timeline } from './components/Timeline.js';
 import { getMe } from './lib/auth-cache.js';
 import { initContentProtection } from './lib/content-protection.js';
-import { canRunFlaxiaNode, initCrowdNode } from './lib/crowd-node.js';
+import { canRunFlaxiaNode, initCrowdNode, notifyCrowdConsentChanged } from './lib/crowd-node.js';
 import { initI18n } from './lib/i18n.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
 import { initTheme } from './lib/theme.js';
@@ -2940,8 +2940,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       try {
         await initCrowdNode((controls) => {
           showCrowdConsentModal({
-            onAccept: () => controls.accept(),
-            onReject: () => controls.reject(),
+            onAccept: () => {
+              controls.accept();
+              notifyCrowdConsentChanged();
+            },
+            onReject: () => {
+              controls.reject();
+              notifyCrowdConsentChanged();
+            },
           });
         });
       } catch (e) {

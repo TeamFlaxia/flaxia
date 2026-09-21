@@ -2,12 +2,14 @@ import { clearMeCache } from '../lib/auth-cache';
 import { storeSrpSalt } from '../lib/auth-srp.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import {
+  CROWD_CONSENT_CHANGE_EVENT,
   canRunFlaxiaNode,
   denyCrowdConsent,
   getCrowdConsentState,
   getCrowdNodeController,
   grantCrowdConsent,
   initCrowdNode,
+  resolveCrowdConsentState,
   startCrowdNode,
   stopCrowdNode,
 } from '../lib/crowd-node.js';
@@ -590,6 +592,18 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     crowdMessage.textContent = t('settings.crowd_saved');
     crowdMessage.style.color = 'var(--success, #10b981)';
   });
+
+  // Stay in sync if consent is changed elsewhere (e.g. the consent modal).
+  const onCrowdConsentChange = () => {
+    crowdCheckbox.checked = getCrowdConsentState() === 'granted';
+    updateCrowdStatus();
+  };
+  window.addEventListener(CROWD_CONSENT_CHANGE_EVENT, onCrowdConsentChange);
+
+  // The node bundle is loaded during deferred app init, which may run after this
+  // screen renders (e.g. a direct /settings reload). Load its persisted consent
+  // state through the public API so the toggle is correct on first paint.
+  void resolveCrowdConsentState().then(onCrowdConsentChange);
 
   crowdSection.appendChild(crowdTitle);
   crowdSection.appendChild(crowdLabel);
@@ -1533,6 +1547,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   return {
     getElement: () => container,
     destroy: () => {
+      window.removeEventListener(CROWD_CONSENT_CHANGE_EVENT, onCrowdConsentChange);
       container.remove();
     },
   };

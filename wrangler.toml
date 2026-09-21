@@ -34,7 +34,7 @@ BASE_URL = "https://flaxia.app"
 ENVIRONMENT = "production"
 CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
 ADMIN_USERNAMES = "remydrescarlet"
-STRIPE_PRICE_FLXIA_PLUS = "price_1UA0Oy58bm0e7B16tMZ7EWjk"  # Stripe Price ID は公開識別子なので vars で管理（secret ではない）
+STRIPE_PRICE_FLXIA_PLUS = "price_1UI3sxGMn6YcUp3x8rC58pdt"  # Stripe Price ID は公開識別子なので vars で管理（secret ではない）
 
 
 # To set CROWD_API_KEY secret:

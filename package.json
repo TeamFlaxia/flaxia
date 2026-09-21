@@ -71,7 +71,7 @@
     "@capacitor/push-notifications": "^8.1.1",
     "@capawesome/capacitor-badge": "^8.0.2",
     "@cloudflare/kv-asset-handler": "^0.4.2",
-    "@flaxia/node": "^0.3.6",
+    "@flaxia/node": "^0.3.7",
     "@flaxia/sdk": "^0.4.1",
     "@noble/curves": "^2.3.0",
     "@tauri-apps/api": "^2.11.0",

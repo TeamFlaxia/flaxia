@@ -3,7 +3,7 @@
 export const CROWD_ORCHESTRATOR_URL = 'https://crowd.flaxia.app';
 
 /** Pinned `@flaxia/node` version served through the /api/crowd asset proxy. */
-export const CROWD_NODE_VERSION = '0.3.6';
+export const CROWD_NODE_VERSION = '0.3.7';
 
 export const CROWD_SITE_ID = 'flaxia';
 
@@ -55,6 +55,8 @@ export interface CrowdNodeConfig {
 /** Minimal typed surface of the versioned `@flaxia/node` runtime bundle. */
 export interface FlaxiaNodeModule {
   initFlaxiaNode(config: CrowdNodeConfig): CrowdNodeController;
+  /** Persisted consent state, available without initialising the node. */
+  getFlaxiaNodeConsentState(): CrowdConsentState;
 }
 
 /**
@@ -66,6 +68,7 @@ export function crowdNodeEntry(version: string = CROWD_NODE_VERSION): string {
 }
 
 let modulePromise: Promise<FlaxiaNodeModule> | null = null;
+let moduleRef: FlaxiaNodeModule | null = null;
 let controller: CrowdNodeController | null = null;
 
 /**
@@ -75,7 +78,10 @@ let controller: CrowdNodeController | null = null;
  */
 export function loadCrowdNodeModule(version: string = CROWD_NODE_VERSION): Promise<FlaxiaNodeModule> {
   if (!modulePromise) {
-    modulePromise = import(/* @vite-ignore */ crowdNodeEntry(version)) as Promise<FlaxiaNodeModule>;
+    modulePromise = (import(/* @vite-ignore */ crowdNodeEntry(version)) as Promise<FlaxiaNodeModule>).then((mod) => {
+      moduleRef = mod;
+      return mod;
+    });
   }
   return modulePromise;
 }
@@ -154,17 +160,46 @@ export function getCrowdNodeController(): CrowdNodeController | null {
   return controller;
 }
 
-/** Persisted consent state, or `unset` while the node bundle is unavailable. */
+/** Persisted consent state. Uses the node bundle's API once it is loaded. */
 export function getCrowdConsentState(): CrowdConsentState {
-  return controller?.getConsentState() ?? 'unset';
+  if (controller) return controller.getConsentState();
+  if (moduleRef && typeof moduleRef.getFlaxiaNodeConsentState === 'function') {
+    return moduleRef.getFlaxiaNodeConsentState();
+  }
+  return 'unset';
+}
+
+/**
+ * Ensure the node bundle is loaded, then return the persisted consent state.
+ * Lets the settings screen render the correct value before `initCrowdNode`
+ * (deferred app init) has created a controller.
+ */
+export async function resolveCrowdConsentState(): Promise<CrowdConsentState> {
+  try {
+    await loadCrowdNodeModule();
+  } catch {
+    // Offline or proxy error: fall back to whatever we already know.
+  }
+  return getCrowdConsentState();
+}
+
+/** Fired on `window` whenever consent is granted/denied so open UIs can refresh. */
+export const CROWD_CONSENT_CHANGE_EVENT = 'crowdconsentchange';
+
+/** Notify listeners (e.g. the settings screen) that consent state changed. */
+export function notifyCrowdConsentChanged(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(CROWD_CONSENT_CHANGE_EVENT));
 }
 
 export function grantCrowdConsent(): void {
   controller?.grant();
+  notifyCrowdConsentChanged();
 }
 
 export function denyCrowdConsent(): void {
   controller?.deny();
+  notifyCrowdConsentChanged();
 }
 
 export function startCrowdNode(): void {
