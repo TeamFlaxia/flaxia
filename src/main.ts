@@ -4,6 +4,7 @@ import type { BookmarksPage } from './components/BookmarksPage.js';
 import type { BottomNav } from './components/BottomNav.js';
 import type { ChatChannelList } from './components/ChatChannelList.js';
 import type { ConversationView } from './components/ConversationView.js';
+import { showCrowdConsentModal } from './components/CrowdConsentModal.js';
 import type { ExplorePage } from './components/ExplorePage.js';
 import type { GroupChatView } from './components/GroupChatView.js';
 import type { LeftNav } from './components/LeftNav.js';
@@ -14,14 +15,7 @@ import type { ThreadPage } from './components/ThreadPage.js';
 import type { Timeline } from './components/Timeline.js';
 import { getMe } from './lib/auth-cache.js';
 import { initContentProtection } from './lib/content-protection.js';
-import {
-  CROWD_NODE_MAX_CPU_LOAD,
-  CROWD_ORCHESTRATOR_URL,
-  CROWD_SITE_CAPABILITIES,
-  CROWD_SITE_ID,
-  crowdNodeEntry,
-  type FlaxiaNodeModule,
-} from './lib/crowd-node.js';
+import { canRunFlaxiaNode, initCrowdNode } from './lib/crowd-node.js';
 import { initI18n } from './lib/i18n.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
 import { initTheme } from './lib/theme.js';
@@ -2939,52 +2933,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       initCapacitorNotifications().catch(() => {});
       initCapacitorPushRegistration().catch(() => {});
 
-      const canRunCrowdNode = () => {
-        if (typeof navigator === 'undefined') return false;
+      if (!canRunFlaxiaNode()) return;
 
-        // The crowd node runs Web Workers that load heavy WebAssembly inference
-        // (transformers.js / onnxruntime). We keep it out of the native Capacitor
-        // WebView: a model load there can spike memory and Android/iOS will kill
-        // the whole app process.
-        //
-        // NOTE: `navigator.deviceMemory` IS reported by Android Chrome (a quantized
-        // value, e.g. a 3 GB phone reports 4), so Android Chrome passes the numeric
-        // check below and is allowed to run as a node. @flaxia/node >= 0.3.4 makes
-        // that safe: it runs inference single-threaded AND gates heavy WASM behind a
-        // real measured WebAssembly.Memory probe — devices that cannot actually
-        // commit >= 2GB register with empty capabilities and reject every task
-        // before any model is loaded, so the previous mobile crashes/overheat-kills
-        // no longer happen. Platforms that don't expose deviceMemory (iOS WebViews,
-        // some browsers) stay blocked. Requiring a KNOWN value >= 4 GB is a
-        // conservative safety margin; the node re-checks with a real probe.
-        const isCapacitorNative =
-          typeof window !== 'undefined' &&
-          typeof window.Capacitor !== 'undefined' &&
-          typeof window.Capacitor.isNativePlatform === 'function' &&
-          window.Capacitor.isNativePlatform();
-        if (isCapacitorNative) return false;
-
-        const cores = navigator.hardwareConcurrency ?? 0;
-        if (cores < 4) return false;
-
-        const deviceMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
-        if (typeof deviceMemory !== 'number' || deviceMemory < 4) return false;
-        return true;
-      };
-
-      if (!canRunCrowdNode()) return;
-
-      const { initFlaxiaNode } = (await import(/* @vite-ignore */ crowdNodeEntry())) as FlaxiaNodeModule;
-      initFlaxiaNode({
-        orchestratorUrl: CROWD_ORCHESTRATOR_URL,
-        siteId: CROWD_SITE_ID,
-        consent: {
-          brandName: 'Flaxia',
-          position: 'bottom-right',
-        },
-        capabilities: CROWD_SITE_CAPABILITIES,
-        maxCpuLoad: CROWD_NODE_MAX_CPU_LOAD,
-      });
+      // Flaxia owns the consent UI. `initCrowdNode` asks us back only while the
+      // decision is unset; the node bundle owns persistence and lifecycle.
+      try {
+        await initCrowdNode((controls) => {
+          showCrowdConsentModal({
+            onAccept: () => controls.accept(),
+            onReject: () => controls.reject(),
+          });
+        });
+      } catch (e) {
+        // A missing/unreachable node bundle must never break app init.
+        console.error('Failed to initialize Crowd node:', e);
+      }
     });
   }
 });

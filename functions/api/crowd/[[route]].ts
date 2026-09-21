@@ -20,7 +20,7 @@ export async function onRequest(context: {
     return new Response('Not Found', { status: 404 });
   }
 
-  // Strip a leading version segment (e.g. /api/crowd/v0.3.5-0/index.js) so
+  // Strip a leading version segment (e.g. /api/crowd/v0.3.6-0/index.js) so
   // clients can cache-bust immutable assets by bumping the versioned path.
   const path = url.pathname.replace(/^\/api\/crowd\//, '').replace(/^v[^/]+\//, '');
 
