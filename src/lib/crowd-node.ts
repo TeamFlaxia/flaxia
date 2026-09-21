@@ -83,20 +83,19 @@ export function loadCrowdNodeModule(version: string = CROWD_NODE_VERSION): Promi
 /**
  * Whether this device may run a Crowd node at all. Kept here (rather than in
  * `main.ts`) so the settings screen reflects the same decision.
+ *
+ * This is intentionally permissive: `@flaxia/node` probes the real amount of
+ * WebAssembly memory it can commit before advertising heavy capabilities, so we
+ * must not refuse capable devices just because a browser doesn't expose
+ * `navigator.deviceMemory` (Firefox, Safari, WebKit-based desktop shells) or
+ * reports an odd core count.
  */
 export function canRunFlaxiaNode(): boolean {
   if (typeof navigator === 'undefined') return false;
 
-  // The crowd node runs Web Workers that load heavy WebAssembly inference
-  // (transformers.js / onnxruntime). We keep it out of the native Capacitor
-  // WebView: a model load there can spike memory and Android/iOS will kill
-  // the whole app process.
-  //
-  // `navigator.deviceMemory` IS reported by Android Chrome (quantized), so
-  // Android Chrome passes the numeric check and is allowed to run as a node.
-  // @flaxia/node >= 0.3.4 gates heavy WASM behind a real measured probe, so the
-  // node re-checks before loading any model. Requiring a KNOWN value >= 4 GB is
-  // a conservative safety margin for platforms that don't expose the value.
+  // The only hard block: native Capacitor WebViews. Loading multi-GB WASM
+  // models there can spike memory and Android/iOS may kill the whole app
+  // process, which is far worse than simply not contributing.
   const isCapacitorNative =
     typeof window !== 'undefined' &&
     typeof window.Capacitor !== 'undefined' &&
@@ -104,11 +103,16 @@ export function canRunFlaxiaNode(): boolean {
     window.Capacitor.isNativePlatform();
   if (isCapacitorNative) return false;
 
-  const cores = navigator.hardwareConcurrency ?? 0;
-  if (cores < 4) return false;
-
+  // Reject only devices that explicitly report a very small amount of memory.
+  // Unknown values are allowed through; the node re-checks with a real probe.
   const deviceMemory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
-  if (typeof deviceMemory !== 'number' || deviceMemory < 4) return false;
+  if (typeof deviceMemory === 'number' && deviceMemory < 2) return false;
+
+  // Same for cores: an unknown count is not a reason to refuse, only an
+  // explicitly single-core device is.
+  const cores = navigator.hardwareConcurrency;
+  if (typeof cores === 'number' && cores > 0 && cores < 2) return false;
+
   return true;
 }
 
