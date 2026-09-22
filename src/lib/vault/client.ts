@@ -83,3 +83,105 @@ export async function prepareVaultRewrap(currentPassword: string, newPassword: s
 
 /** Enable-vault payload helper: build the envelope body from a password + phrase. */
 export { DEFAULT_VAULT_KDF_PARAMS };
+
+// ─── Device pairing (/vault/devices) ────────────────────────────────────────
+// The server relays public keys and one opaque handoff blob; the X25519 shared
+// secret and VK itself never cross it (docs/e2ee.md, "Pairing a second device").
+
+export interface DeviceSummary {
+  id: string;
+  label: string;
+  state: 'pending' | 'active';
+  created_at: string;
+}
+
+export interface PairingPoll {
+  id: string;
+  state: 'pending' | 'active' | 'expired';
+  label?: string;
+  expires_at?: string;
+  /** Present only for an approved pairing, and only openable by the joiner. */
+  approved_pub?: string;
+  wrapped_vk?: string;
+}
+
+export type ApproveResult = 'ok' | 'reused' | 'expired' | 'failed';
+
+export async function listDevices(): Promise<DeviceSummary[]> {
+  try {
+    const res = await fetch('/api/vault/devices', { credentials: 'include' });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { devices?: DeviceSummary[] };
+    return data.devices ?? [];
+  } catch {
+    return [];
+  }
+}
+
+/** Begin a pairing: publish this device's ephemeral public half, get an id for the QR. */
+export async function startPairing(
+  label: string,
+  peerPub: string,
+  ttlSeconds?: number,
+): Promise<{ id: string; expires_at: string | null } | null> {
+  try {
+    const res = await fetch('/api/vault/devices', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ label, peer_pub: peerPub, ttl_seconds: ttlSeconds }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as { id: string; expires_at: string | null };
+  } catch {
+    return null;
+  }
+}
+
+export async function pollPairing(id: string): Promise<PairingPoll | null> {
+  try {
+    const res = await fetch(`/api/vault/devices/${encodeURIComponent(id)}`, { credentials: 'include' });
+    if (!res.ok) return null;
+    return (await res.json()) as PairingPoll;
+  } catch {
+    return null;
+  }
+}
+
+export async function approvePairing(id: string, approvedPub: string, wrappedVk: string): Promise<ApproveResult> {
+  try {
+    const res = await fetch(`/api/vault/devices/${encodeURIComponent(id)}/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ approved_pub: approvedPub, wrapped_vk: wrappedVk }),
+    });
+    if (res.ok) return 'ok';
+    if (res.status === 409) return 'reused';
+    if (res.status === 410) return 'expired';
+    return 'failed';
+  } catch {
+    return 'failed';
+  }
+}
+
+/** Abandon our own QR before it expires (the TTL reap is the backstop). */
+export async function cancelPairing(id: string): Promise<void> {
+  try {
+    await fetch(`/api/vault/devices/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'include' });
+  } catch {
+    // An abandoned row dies with its expiry anyway.
+  }
+}
+
+export async function revokeDevice(id: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/vault/devices/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

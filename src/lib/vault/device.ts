@@ -86,20 +86,45 @@ export function detectDeviceLabel(): string {
   return `${browser} on ${platform}`;
 }
 
-function randomId(): string {
+/** 16 random bytes, base64url — the same id shape the server issues. */
+export function newDeviceId(): string {
   return encodeB64(crypto.getRandomValues(new Uint8Array(16)))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');
 }
 
-export async function createDevice(label = detectDeviceLabel()): Promise<StoredDevice> {
+export function getCurrentDeviceId(): string | null {
+  try {
+    return localStorage.getItem(CURRENT_DEVICE_KEY);
+  } catch {
+    return null; // storage disabled: pairing still works, the id just won't stick
+  }
+}
+
+function setCurrentDeviceId(id: string): void {
+  try {
+    localStorage.setItem(CURRENT_DEVICE_KEY, id);
+  } catch {
+    // Non-fatal: this tab keeps auto-unlocking, a reload asks for the password.
+  }
+}
+
+function clearCurrentDeviceId(): void {
+  try {
+    localStorage.removeItem(CURRENT_DEVICE_KEY);
+  } catch {
+    // Nothing to clean up if storage is unavailable in the first place.
+  }
+}
+
+export async function createDevice(label = detectDeviceLabel(), id = newDeviceId()): Promise<StoredDevice> {
   const raw = crypto.getRandomValues(new Uint8Array(32)) as Uint8Array<ArrayBuffer>;
   const key = await crypto.subtle.importKey('raw', raw as BufferSource, 'AES-GCM', false, ['encrypt', 'decrypt']);
   raw.fill(0);
-  const device: StoredDevice = { id: randomId(), label, createdAt: new Date().toISOString(), key };
+  const device: StoredDevice = { id, label, createdAt: new Date().toISOString(), key };
   await withStore<IDBValidKey>('readwrite', (store) => store.put(device));
-  localStorage.setItem(CURRENT_DEVICE_KEY, device.id);
+  setCurrentDeviceId(device.id);
   return device;
 }
 
@@ -109,7 +134,7 @@ export async function getDevice(id: string): Promise<StoredDevice | null> {
 }
 
 export async function getOrCreateCurrentDevice(label?: string): Promise<StoredDevice> {
-  const existingId = localStorage.getItem(CURRENT_DEVICE_KEY);
+  const existingId = getCurrentDeviceId();
   if (existingId) {
     const existing = await getDevice(existingId);
     if (existing) return existing;
@@ -127,7 +152,7 @@ export async function saveVaultKeyForDevice(device: StoredDevice, vk: Uint8Array
 
 /** Auto-unlock on reload. Returns null when this device has never unlocked. */
 export async function unlockWithDevice(deviceId?: string): Promise<Uint8Array | null> {
-  const id = deviceId ?? localStorage.getItem(CURRENT_DEVICE_KEY);
+  const id = deviceId ?? getCurrentDeviceId();
   if (!id) return null;
   const device = await getDevice(id);
   if (!device?.wrappedVk) return null;
@@ -142,7 +167,7 @@ export async function unlockWithDevice(deviceId?: string): Promise<Uint8Array | 
 
 export async function deleteDevice(id: string): Promise<void> {
   await withStore<undefined>('readwrite', (store) => store.delete(id));
-  if (localStorage.getItem(CURRENT_DEVICE_KEY) === id) localStorage.removeItem(CURRENT_DEVICE_KEY);
+  if (getCurrentDeviceId() === id) clearCurrentDeviceId();
 }
 
 /** Restore a wrapped VK captured from an API response (after QR pairing). */

@@ -20,6 +20,7 @@ import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
 import { getTheme, setTheme, Theme } from '../lib/theme.js';
 import { prepareVaultRewrap } from '../lib/vault/client.js';
 import { createAddStampModal } from './AddStampModal.js';
+import { createVaultSection } from './VaultSection.js';
 
 function b64(b: Uint8Array): string {
   let binary = '';
@@ -1123,6 +1124,12 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   container.appendChild(emailSection);
   container.appendChild(passwordSection);
 
+  // ─── Personal Vault Section ──────────────────────────────────────────────
+  // Own component: it has three states of its own (setup / locked / unlocked)
+  // and timers to clean up, which would drown the settings page otherwise.
+  const vaultSection = createVaultSection();
+  container.appendChild(vaultSection.getElement());
+
   // ─── Custom Emoji Section ────────────────────────────────────────────────
   if (currentUser) {
     const emojiSection = document.createElement('div');
@@ -1558,6 +1565,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     getElement: () => container,
     destroy: () => {
       window.removeEventListener(CROWD_CONSENT_CHANGE_EVENT, onCrowdConsentChange);
+      vaultSection.destroy();
       container.remove();
     },
   };

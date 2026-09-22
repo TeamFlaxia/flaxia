@@ -204,6 +204,10 @@ Encrypted personal storage (drafts, notes, settings) — threat model and key
 hierarchy in `docs/e2ee.md`. Every value below is opaque ciphertext produced
 in the browser; migrations `0091` (tables) and `0092` (device pairing).
 
+The device that enables the vault is inserted into `device_keys` in the same
+batch (active, empty pairing fields, id chosen by the client) so even the
+first device has a row that can be revoked.
+
 ### `vault_keys`
 | Column | Type | Notes |
 |---|---|---|

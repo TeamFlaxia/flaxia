@@ -316,3 +316,63 @@ describe('device management', () => {
     );
   });
 });
+
+describe('POST /api/vault/keys — the enabling device registers itself', () => {
+  beforeEach(resetDb);
+
+  /** Same id shape device.ts produces: 16 random bytes, base64url, 22 chars. */
+  function localDeviceId(): string {
+    return encodeB64(crypto.getRandomValues(new Uint8Array(16)))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
+  }
+
+  async function enableAs(cookie: string, extra: Record<string, unknown>): Promise<Response> {
+    const { envelope } = await createVaultEnvelope(PASSWORD, PHRASE);
+    const proof = await createSrpProof(cookie, PASSWORD);
+    assert.ok(proof, 'should be able to prove the current password');
+    return fetch(`${BASE_URL}/api/vault/keys`, {
+      method: 'POST',
+      headers: headers(cookie),
+      body: JSON.stringify({ current_srp: proof, ...envelope, ...extra }),
+    });
+  }
+
+  it('creates an active row under the client-chosen id → 201', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const deviceId = localDeviceId();
+    const res = await enableAs(cookie, { device_id: deviceId, device_label: 'Chrome on Linux' });
+    assert.equal(res.status, 201);
+    assert.equal(((await res.json()) as { device_id?: string }).device_id, deviceId);
+
+    const list = await fetch(`${BASE_URL}/api/vault/devices`, { headers: headers(cookie) });
+    const { devices } = (await list.json()) as { devices: Array<{ id: string; label: string; state: string }> };
+    assert.equal(devices.length, 1, 'the enabling device must be revocable later (threat T4)');
+    assert.equal(devices[0].id, deviceId, 'local record and server row must share one id');
+    assert.equal(devices[0].state, 'active');
+    assert.equal(devices[0].label, 'Chrome on Linux');
+  });
+
+  it('rejects a malformed device id before writing anything → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const res = await enableAs(cookie, { device_id: 'not base64url!!', device_label: 'x' });
+    assert.equal(res.status, 400);
+
+    const keys = await fetch(`${BASE_URL}/api/vault/keys`, { headers: headers(cookie) });
+    assert.equal(((await keys.json()) as { enabled?: boolean }).enabled, false, 'no half-enabled vault');
+  });
+
+  it('rejects a missing label when an id is supplied → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const res = await enableAs(cookie, { device_id: localDeviceId() });
+    assert.equal(res.status, 400);
+  });
+
+  it('still enables when no device fields are sent (older clients) → 201', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const res = await enableAs(cookie, {});
+    assert.equal(res.status, 201);
+    assert.equal(((await res.json()) as { device_id?: string | null }).device_id, null);
+  });
+});

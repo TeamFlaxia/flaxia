@@ -67,7 +67,13 @@ Wrapped key material only — the server cannot decrypt anything here
 ### Enable
 `POST /api/vault/keys`
 - Body: `{ current_srp, salt, recovery_salt, kdf_params, wrapped_vk, recovery_blob }`
-- 409 if a vault already exists; 400 on malformed key material or a cheap KDF
+  plus optional `device_id` + `device_label` (16–40 base64url chars / 1–40 chars)
+- `device_id` registers the *enabling* device as an active device row in the
+  same atomic batch — the client picks the id so its local record and the
+  server row are the same record (without it there would be nothing to revoke
+  later). Malformed device fields → 400 **before** anything is written.
+- 201 `{ enabled: true, vk_version, device_id }`; 409 if a vault already
+  exists; 400 on malformed key material or a cheap KDF
 
 ### Rotate envelope
 `PUT /api/vault/keys`

@@ -6,7 +6,12 @@
 // allowlists below are the entire server-side "understanding" of this data.
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
-import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../src/lib/vault/primitives';
+import {
+  isValidB64,
+  isValidVaultKdfParams,
+  isValidWrappedKey,
+  PAIRING_ID_PATTERN,
+} from '../../../src/lib/vault/primitives';
 import { verifySrpPassword } from '../../lib/auth';
 import { requireAuth } from '../helpers';
 import type { Bindings, SrpProofBody, Variables } from '../types';
@@ -136,7 +141,11 @@ vault.post('/vault/keys', requireAuth, async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const body = (await c.req.json().catch(() => ({}))) as EnvelopeBody & { current_srp?: SrpProofBody };
+  const body = (await c.req.json().catch(() => ({}))) as EnvelopeBody & {
+    current_srp?: SrpProofBody;
+    device_id?: unknown;
+    device_label?: unknown;
+  };
   const envelopeError = validateEnvelope(body);
   if (envelopeError) return c.json({ error: envelopeError }, 400);
 
@@ -150,22 +159,46 @@ vault.post('/vault/keys', requireAuth, async (c) => {
   const existing = await c.env.DB.prepare('SELECT user_id FROM vault_keys WHERE user_id = ?').bind(user.id).first();
   if (existing) return c.json({ error: 'Vault already enabled' }, 409);
 
-  const result = await c.env.DB.prepare(
-    `INSERT INTO vault_keys (user_id, salt, recovery_salt, kdf_params, wrapped_vk, recovery_blob, vk_version)
-     VALUES (?, ?, ?, ?, ?, ?, 1)`,
-  )
-    .bind(
+  // Optional self-registration of the enabling device. The id is chosen by
+  // the client so its local record and this row are the same record — without
+  // a row there would be nothing to revoke later (threat T4). Shapes only:
+  // a label and an opaque id, never a key.
+  const deviceId = body.device_id;
+  const deviceLabel = body.device_label;
+  if (deviceId !== undefined || deviceLabel !== undefined) {
+    if (!(typeof deviceId === 'string' && PAIRING_ID_PATTERN.test(deviceId)) || !isValidLabel(deviceLabel)) {
+      return c.json({ error: 'Invalid device registration' }, 400);
+    }
+  }
+
+  const statements = [
+    c.env.DB.prepare(
+      `INSERT INTO vault_keys (user_id, salt, recovery_salt, kdf_params, wrapped_vk, recovery_blob, vk_version)
+       VALUES (?, ?, ?, ?, ?, ?, 1)`,
+    ).bind(
       user.id,
       body.salt as string,
       body.recovery_salt as string,
       JSON.stringify(body.kdf_params),
       body.wrapped_vk as string,
       body.recovery_blob as string,
-    )
-    .run();
-  if (!result.success) return c.json({ error: 'Failed to enable vault' }, 500);
+    ),
+  ];
+  if (typeof deviceId === 'string' && typeof deviceLabel === 'string') {
+    // OR IGNORE: the id is client-generated and must never displace another
+    // user's row if two accounts somehow collided on one (16 random bytes).
+    statements.push(
+      c.env.DB.prepare(
+        `INSERT OR IGNORE INTO device_keys (id, user_id, label, state, peer_pub, wrapped_vk, expires_at, last_seen_at)
+         VALUES (?, ?, ?, 'active', '', '', '', ${NOW_SQL})`,
+      ).bind(deviceId, user.id, deviceLabel),
+    );
+  }
 
-  return c.json({ enabled: true, vk_version: 1 }, 201);
+  const results = await c.env.DB.batch(statements);
+  if (results.some((r) => !r.success)) return c.json({ error: 'Failed to enable vault' }, 500);
+
+  return c.json({ enabled: true, vk_version: 1, device_id: deviceId ?? null }, 201);
 });
 
 // PUT /vault/keys — replace the envelope (recovery phrase rotation).

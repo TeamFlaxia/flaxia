@@ -112,6 +112,10 @@ Migrations `0091_add_vault.sql` (tables) and `0092_pairing_devices.sql`
   blob is wrapped under an X25519 shared secret whose two private halves are
   discarded the moment pairing finishes, so afterwards the row is inert — it is
   kept only as a revocation record, and a database dump of it opens nothing.
+  The device that *enables* the vault registers itself in the same request
+  under a client-chosen id (no pairing, empty fields): without that first row
+  there would be no record to revoke for the first device, which is exactly
+  the case threat T4 cares about.
 
 ---
 
@@ -120,7 +124,7 @@ Migrations `0091_add_vault.sql` (tables) and `0092_pairing_devices.sql`
 | Endpoint | Purpose | Proof |
 |---|---|---|
 | `GET /api/vault/keys` | Fetch the envelope + device list to unlock | session |
-| `POST /api/vault/keys` | Enable the vault (409 if one exists) | `current_srp` |
+| `POST /api/vault/keys` | Enable the vault (409 if one exists); optional `device_id`/`device_label` self-registers the enabling device | `current_srp` |
 | `PUT /api/vault/keys` | Rotate the whole envelope (bumps `vk_version`) | `current_srp` + `vk_version` |
 | `PATCH /users/me/password` | Swap verifier **and** re-wrap VK atomically | `current_srp` + `vault_kek` |
 | `POST /api/vault/devices` | Start a pairing → `{ id, expires_at }` (`ttl_seconds` 1–600) | session |
@@ -161,6 +165,7 @@ when a device is lost without ever being paired.
 | Operation | Client does | Server sees |
 |---|---|---|
 | Enable vault | Derives KEK, generates VK, generates REK from the phrase, wraps VK three ways | `salt`, `kdf_params`, `wrapped_vk`, `recovery_blob` + SRP proof |
+| Register this device | Same request as enable; client picks the id so local record = server row | `device_id`, `device_label` |
 | Unlock (reload) | Uses device key D to unwrap VK | nothing new |
 | Unlock (new device) | Shows a QR (id + ephemeral public key); approver wraps VK under X25519+HKDF; joiner polls, opens it, discards both ephemerals | `label`, `peer_pub`, `approved_pub`, `wrapped_vk` — no secret |
 | Unlock (password) | Derives KEK, unwraps VK | nothing |

@@ -33,6 +33,13 @@ export const DEFAULT_VAULT_KDF_PARAMS: VaultKdfParams = {
 
 // Every wrap operation binds the ciphertext to its role via AES-GCM AAD, so a
 // value lifted out of one column cannot be pasted into another.
+/**
+ * A pairing id is base64url with 16–40 characters. Shared by both sides —
+ * the client that renders one into a QR and the server that accepts one as a
+ * device row id (enable = self-registration, pairing = QR flow).
+ */
+export const PAIRING_ID_PATTERN = /^[A-Za-z0-9_-]{16,40}$/;
+
 export const CONTEXT_VK_PASSWORD = 'flaxia.vault.vk.v1';
 export const CONTEXT_VK_RECOVERY = 'flaxia.vault.vk.recovery.v1';
 export const CONTEXT_VK_DEVICE = 'flaxia.vault.vk.device.v1';

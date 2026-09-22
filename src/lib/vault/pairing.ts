@@ -17,11 +17,11 @@
 import { x25519 } from '@noble/curves/ed25519.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { decodeB64, encodeB64, unwrapSecret, wrapSecret } from './primitives.ts';
+import { decodeB64, encodeB64, PAIRING_ID_PATTERN, unwrapSecret, wrapSecret } from './primitives.ts';
 
 export const PAIRING_URI_PREFIX = 'flaxia-vault://pair/';
 /** Base64url of 16 random bytes = 22 chars; server ids are nanoid (21). */
-export const PAIRING_ID_PATTERN = /^[A-Za-z0-9_-]{16,40}$/;
+export { PAIRING_ID_PATTERN };
 export const PAIRING_TTL_SECONDS = 600;
 
 const CONTEXT_PAIRING = 'flaxia.vault.pair.v1';
