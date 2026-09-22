@@ -117,11 +117,6 @@ export class ThreadPage {
         } else if (item === 'arcade') {
           window.history.pushState({}, '', '/arcade');
           window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade' } }));
-        } else if (item === 'groups') {
-          if (this.props.currentUser) {
-            window.history.pushState({}, '', '/groups');
-            window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'groups' } }));
-          }
         } else if (item === 'notifications') {
           if (this.props.currentUser) {
             window.history.pushState({}, '', '/notifications');

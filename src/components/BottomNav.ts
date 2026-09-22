@@ -1,11 +1,8 @@
-import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { type IconName, icon } from '../lib/icons.js';
 
 export interface BottomNavProps {
   activeItem?: string;
-  unreadDmCount?: number;
-  unreadGroupCount?: number;
   currentUser?: {
     id: string;
     username: string;
@@ -19,8 +16,8 @@ export interface BottomNavProps {
 
 /**
  * Mobile-only bottom navigation bar. Rendered as a single global instance and
- * shown only on small screens via CSS. Contains Home / Explore / Arcade / Messages
- * / Notifications plus a contextual right-most item: the account avatar (logged in)
+ * shown only on small screens via CSS. Contains Home / Explore / Arcade /
+ * Notifications plus a contextual right-most item: the account avatar (logged in)
  * or a sign-in button (guest).
  */
 export class BottomNav {
@@ -48,7 +45,6 @@ export class BottomNav {
       { id: 'home', label: t('nav.home'), icon: 'home' as IconName },
       { id: 'explore', label: t('nav.explore'), icon: 'search' as IconName },
       { id: 'arcade', label: t('nav.arcade'), icon: 'game' as IconName },
-      { id: 'messages', label: t('nav.messages'), icon: 'reply' as IconName },
       { id: 'notifications', label: t('nav.notifications'), icon: 'notifications' as IconName },
     ];
 
@@ -82,13 +78,8 @@ export class BottomNav {
     labelSpan.textContent = label;
     btn.appendChild(labelSpan);
 
-    if (id === 'messages') {
-      const total = (this.props.unreadDmCount || 0) + (this.props.unreadGroupCount || 0);
-      if (total > 0) btn.appendChild(this.createBadge(total));
-    }
-
     btn.addEventListener('click', () => {
-      if ((id === 'messages' || id === 'notifications') && !this.props.currentUser) {
+      if (id === 'notifications' && !this.props.currentUser) {
         this.props.onSignIn?.();
         return;
       }
@@ -135,13 +126,6 @@ export class BottomNav {
     return btn;
   }
 
-  private createBadge(count: number): HTMLElement {
-    const badge = document.createElement('span');
-    badge.className = 'bottom-nav-badge';
-    badge.textContent = count >= 99 ? '99+' : formatCount(count);
-    return badge;
-  }
-
   private rebuild(): void {
     this.element.innerHTML = '';
     this.element.appendChild(this.buildItems());
@@ -158,29 +142,6 @@ export class BottomNav {
   public updateUser(user: BottomNavProps['currentUser']): void {
     this.props.currentUser = user ?? null;
     this.rebuild();
-  }
-
-  public setUnreadDmCount(count: number): void {
-    this.props.unreadDmCount = count;
-    this.updateMessageBadge();
-  }
-
-  public setUnreadGroupCount(count: number): void {
-    this.props.unreadGroupCount = count;
-    this.updateMessageBadge();
-  }
-
-  private updateMessageBadge(): void {
-    const item = this.element.querySelector('.bottom-nav-item[data-nav-id="messages"]') as HTMLElement | null;
-    if (!item) return;
-    const total = (this.props.unreadDmCount || 0) + (this.props.unreadGroupCount || 0);
-    const existing = item.querySelector('.bottom-nav-badge');
-    if (total > 0) {
-      if (existing) existing.textContent = total >= 99 ? '99+' : formatCount(total);
-      else item.appendChild(this.createBadge(total));
-    } else if (existing) {
-      existing.remove();
-    }
   }
 
   public getActiveItem(): string {

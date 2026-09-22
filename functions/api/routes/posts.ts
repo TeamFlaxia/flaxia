@@ -3899,8 +3899,6 @@ posts.post('/posts/:id/counter-notice', requireAuth, async (c) => {
   }
 });
 
-// ─── Direct Messages (extracted to routes/messenger.ts) ────────────────────────
-
 // GET /api/posts/:id/versions - list archived versions of a game (public)
 posts.get('/posts/:id/versions', async (c) => {
   try {

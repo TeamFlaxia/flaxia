@@ -20,8 +20,7 @@ function chunkIds(ids: string[], size: number): string[][] {
 
 /**
  * Deletes a user account along with all related data: posts (and their reply
- * trees), DMs, group chats, calls, notifications, follows, profiles, and the
- * associated files stored in R2.
+ * trees), notifications, follows, profiles, and the associated files stored in R2.
  *
  * The deletes run in a single D1 batch so they succeed atomically, and child
  * rows are removed before their FK parents to avoid constraint violations.
@@ -61,19 +60,6 @@ export async function deleteAccount(env: Env, userId: string): Promise<void> {
   const statements: D1PreparedStatement[] = [];
 
   // --- Row-level data that directly references the user ---
-  statements.push(db.prepare('DELETE FROM dm_conversations WHERE user_a_id = ? OR user_b_id = ?').bind(userId, userId));
-  statements.push(db.prepare('DELETE FROM dm_messages WHERE sender_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM group_members WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM group_read_states WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM group_messages WHERE sender_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM group_conversations WHERE created_by = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM call_participants WHERE user_id = ?').bind(userId));
-  statements.push(
-    db
-      .prepare('DELETE FROM call_participants WHERE call_id IN (SELECT id FROM calls WHERE initiator_id = ?)')
-      .bind(userId),
-  );
-  statements.push(db.prepare('DELETE FROM calls WHERE initiator_id = ?').bind(userId));
   statements.push(db.prepare('DELETE FROM ap_following WHERE local_user_id = ?').bind(userId));
   statements.push(db.prepare('DELETE FROM follows WHERE follower_id = ? OR followee_id = ?').bind(userId, userId));
 

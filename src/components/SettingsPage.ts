@@ -14,7 +14,6 @@ import {
   stopCrowdNode,
 } from '../lib/crowd-node.js';
 import { getLocale, setLocale, t } from '../lib/i18n.js';
-import { rewrapE2EEIdentityV2, unlockIdentityV2WithPassword } from '../lib/messenger-identity-v2.js';
 import { getReplyStyle, getShowNsfw, ReplyStyle, setReplyStyle, setShowNsfw } from '../lib/settings.js';
 import { clientStep1, clientStep2, computeVerifier, generateSalt } from '../lib/srp.js';
 import { getTheme, setTheme, Theme } from '../lib/theme.js';
@@ -1032,8 +1031,8 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     passwordSaveButton.style.opacity = '0.6';
 
     try {
-      // Derive a fresh SRP verifier from the new password so the single account
-      // password also protects E2EE after the change.
+      // Derive a fresh SRP verifier from the new password so the account
+      // continues to authenticate via SRP after the change.
       const salt = generateSalt();
       const verifier = await computeVerifier(newPassword, salt);
 
@@ -1069,12 +1068,6 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
       if (response.ok) {
         storeSrpSalt(salt);
-        // Ensure the E2EE identity is unlocked with the OLD password before
-        // re-wrapping, so the re-wrap never silently fails when the identity
-        // was not yet in memory this session.
-        await unlockIdentityV2WithPassword(currentPassword);
-        // Re-wrap the E2EE identity with the new KEK (keeps identity keys).
-        await rewrapE2EEIdentityV2(newPassword, salt);
         passwordMessage.textContent = t('settings.password_saved');
         passwordMessage.style.color = 'var(--success, #10b981)';
         currentPasswordInput2.value = '';

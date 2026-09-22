@@ -872,7 +872,7 @@ export class ArcadePage {
     shareBtn.dataset.tutorial = 'share';
 
     // Comments button
-    const commentsBtn = this.createActionButton('messages', formatCount(game.replyCount || 0), () =>
+    const commentsBtn = this.createActionButton('reply', formatCount(game.replyCount || 0), () =>
       this.handleComments(),
     );
     commentsBtn.dataset.tutorial = 'comments';

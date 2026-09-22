@@ -19,7 +19,6 @@ export type Bindings = {
   CF_TEAM_DOMAIN: string;
   CROWD_ORCHESTRATOR?: Fetcher;
   NOTIFICATION_STREAM?: DurableObjectNamespace;
-  CALL_STREAM?: DurableObjectNamespace;
   MULTIPLAYER_ROOM?: DurableObjectNamespace;
   MATCHMAKER?: DurableObjectNamespace;
   FCM_SERVER_KEY?: string;

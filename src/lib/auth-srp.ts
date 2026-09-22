@@ -1,9 +1,7 @@
 // Client-side SRP-6a auth helpers. The account password never leaves the
 // browser in plaintext: registration computes the verifier locally, and login
-// proves knowledge of the password via the SRP handshake. On success the same
-// password + SRP salt derive the E2EE KEK (single password for both).
+// proves knowledge of the password via the SRP handshake.
 
-import { ensureE2EEIdentityV2 } from './messenger-identity-v2.ts';
 import { clientStep1, clientStep2, computeVerifier, generateSalt, verifyServerProof } from './srp.ts';
 
 function b64(b: Uint8Array): string {
@@ -20,8 +18,7 @@ function unb64(s: string): Uint8Array {
 }
 
 // The SRP salt is not secret; persist it so a tab that did not perform the
-// login handshake can still derive the E2EE KEK (e.g. a password re-prompt),
-// keeping the E2EE salt consistent with the login salt.
+// login handshake can still reuse the same salt (e.g. a password re-prompt).
 const SRP_SALT_KEY = 'flaxia_srp_salt';
 
 export function storeSrpSalt(salt: Uint8Array): void {
@@ -41,7 +38,7 @@ export function getStoredSrpSalt(): Uint8Array | null {
   }
 }
 
-// Register a new account via SRP and provision the E2EE identity.
+// Register a new account via SRP.
 export async function registerWithSrp(
   email: string,
   username: string,
@@ -68,12 +65,11 @@ export async function registerWithSrp(
     return { ok: false, error: data.error };
   }
   storeSrpSalt(salt);
-  const e2ee = await ensureE2EEIdentityV2(password);
-  return { ok: e2ee, error: e2ee ? undefined : 'E2EE setup failed' };
+  return { ok: true };
 }
 
 // Log in via SRP. Legacy (non-SRP) accounts transparently fall back to the
-// plaintext endpoint, then upgrade to SRP and provision E2EE on first login.
+// plaintext endpoint, then upgrade to SRP on first login.
 export async function loginWithSrp(email: string, password: string): Promise<boolean> {
   const start = await fetch('/api/auth/login/start', {
     method: 'POST',
@@ -91,7 +87,7 @@ export async function loginWithSrp(email: string, password: string): Promise<boo
       body: JSON.stringify({ email, password }),
     });
     if (!legacy.ok) return false;
-    await upgradeSrpAndEnsure(password);
+    await upgradeSrp(password);
     return true;
   }
 
@@ -111,12 +107,11 @@ export async function loginWithSrp(email: string, password: string): Promise<boo
   if (!ok) return false;
 
   storeSrpSalt(salt);
-  await ensureE2EEIdentityV2(password);
   return true;
 }
 
-// Upgrade a legacy account to SRP (compute verifier locally) and provision E2EE.
-async function upgradeSrpAndEnsure(password: string): Promise<void> {
+// Upgrade a legacy account to SRP (compute verifier locally).
+async function upgradeSrp(password: string): Promise<void> {
   const salt = generateSalt();
   const verifier = await computeVerifier(password, salt);
   await fetch('/api/auth/upgrade-srp', {
@@ -130,13 +125,10 @@ async function upgradeSrpAndEnsure(password: string): Promise<void> {
     }),
   });
   storeSrpSalt(salt);
-  await ensureE2EEIdentityV2(password);
 }
 
 // Verify the current user's password via SRP without creating a session or
 // modifying any state. Returns true if the password is correct, false otherwise.
-// Used by the E2EE unlock flow so a wrong password is rejected early with a
-// clear error message, before attempting KEK derivation / identity unwrap.
 export async function verifyCurrentPassword(password: string): Promise<boolean> {
   try {
     const reauth = await fetch('/api/auth/reauth/start', {

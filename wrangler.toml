@@ -9,11 +9,6 @@ class_name = "NotificationStream"
 script_name = "notif-stream"
 
 [[durable_objects.bindings]]
-name = "CALL_STREAM"
-class_name = "CallStream"
-script_name = "notif-stream"
-
-[[durable_objects.bindings]]
 name = "MULTIPLAYER_ROOM"
 class_name = "MultiplayerRoom"
 script_name = "multiplayer-worker"

@@ -58,7 +58,6 @@ export type IconName =
   | 'explore'
   | 'arcade'
   | 'notifications'
-  | 'messages'
   | 'profile'
   | 'maximize'
   | 'flag'
@@ -92,7 +91,6 @@ const ICON_NODES: Record<IconName, IconNode> = {
   explore: Search,
   arcade: Gamepad2,
   notifications: Bell,
-  messages: MessageCircle,
   profile: User,
   maximize: Maximize,
   flag: Flag,

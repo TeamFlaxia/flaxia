@@ -18,28 +18,12 @@ const media = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 type MediaContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 
 /**
- * DM media keys (`dm/...`) are private: only participants of the owning
- * conversation may read them. Non-DM keys are public and always allowed.
+ * Legacy DM media keys (`dm/...`) are no longer served — the direct-message
+ * feature has been removed. All other media keys are public and always allowed.
  */
-async function canAccessMediaKey(c: MediaContext, key: string): Promise<boolean> {
-  if (!key.startsWith('dm/')) return true;
-  const user = c.get('user');
-  if (!user) return false;
-  const msgId = key
-    .split('/')
-    .pop()
-    ?.replace(/\.[^.]+$/, '');
-  if (!msgId) return false;
-  const row = (await c.env.DB.prepare(
-    `SELECT c.user_a_id, c.user_b_id
-     FROM dm_messages m
-     JOIN dm_conversations c ON c.id = m.conversation_id
-     WHERE m.id = ?`,
-  )
-    .bind(msgId)
-    .first()) as { user_a_id: string; user_b_id: string } | null;
-  if (!row) return false;
-  return row.user_a_id === user.id || row.user_b_id === user.id;
+async function canAccessMediaKey(_c: MediaContext, key: string): Promise<boolean> {
+  if (key.startsWith('dm/')) return false;
+  return true;
 }
 
 /**
@@ -366,17 +350,8 @@ media.get('/zip/:postId', async (c) => {
     }
 
     const publicKey = `zip/${postId}.zip`;
-    const dmKey = `dm/zip/${postId}.zip`;
 
-    // Public post ZIPs are not authenticated; DM ZIPs require the requester to
-    // be a participant of the owning conversation.
-    let object = await c.env.BUCKET.get(publicKey);
-    if (!object) {
-      if (!(await canAccessMediaKey(c, dmKey))) {
-        return c.json({ error: 'ZIP not found' }, 404);
-      }
-      object = await c.env.BUCKET.get(dmKey);
-    }
+    const object = await c.env.BUCKET.get(publicKey);
 
     if (!object) {
       return c.json({ error: 'ZIP not found' }, 404);
@@ -496,19 +471,10 @@ media.get('/swf/:postId', async (c) => {
       return c.json({ error: 'Storage not available' }, 500);
     }
 
-    // Try standard SWF key first, then DM variant
+    // SWF key
     const publicKey = `swf/${postId}.swf`;
-    const dmKey = `dm/swf/${postId}.swf`;
 
-    // Public post SWFs are not authenticated; DM SWFs require the requester to
-    // be a participant of the owning conversation.
-    let object = await c.env.BUCKET.get(publicKey);
-    if (!object) {
-      if (!(await canAccessMediaKey(c, dmKey))) {
-        return c.json({ error: 'SWF not found' }, 404);
-      }
-      object = await c.env.BUCKET.get(dmKey);
-    }
+    const object = await c.env.BUCKET.get(publicKey);
 
     if (!object) {
       return c.json({ error: 'SWF not found' }, 404);
