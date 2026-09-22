@@ -92,8 +92,12 @@ SSR/SEO, vector search, push need them).
   and a per-device non-extractable key all wrap **VK**; VK wraps one
   `item_key` per item; `item_key` AES-256-GCM-encrypts the payload.
 - The server stores only wrapped blobs (`vault_keys`, `device_keys`,
-  `vault_items` — migration `0091`) and must never derive, unwrap, or see a
+  `vault_items` — migrations `0091`/`0092`) and must never derive, unwrap, or see a
   key, password, or recovery phrase. Enforced by `tests/security-guards.test.ts`.
+- Multi-device uses **QR approval**: the joiner publishes an ephemeral X25519
+  public key, an unlocked device approves it with VK wrapped under
+  X25519+HKDF (`src/lib/vault/pairing.ts`), and both ephemeral secrets are
+  discarded afterwards. A session alone can never read VK.
 - Enabling/rotating the vault requires an SRP account plus a `current_srp`
   proof; `PUT` is version-checked via `vk_version`.
 - A password change must re-wrap VK in the same request (`vault_kek`) or it is

@@ -202,7 +202,7 @@ Customer 二重作成を防ぐ（migration 0088）。
 
 Encrypted personal storage (drafts, notes, settings) — threat model and key
 hierarchy in `docs/e2ee.md`. Every value below is opaque ciphertext produced
-in the browser; migration `0091`.
+in the browser; migrations `0091` (tables) and `0092` (device pairing).
 
 ### `vault_keys`
 | Column | Type | Notes |
@@ -218,11 +218,16 @@ in the browser; migration `0091`.
 ### `device_keys`
 | Column | Type | Notes |
 |---|---|---|
-| id | TEXT | PK, one row per approved device |
+| id | TEXT | PK, shown in the joiner's QR |
 | user_id | TEXT | FK → users(id) |
 | label | TEXT | user-visible device name |
-| wrapped_vk | TEXT | VK wrapped under that device's non-extractable key |
-| created_at / last_seen_at | TEXT | |
+| state | TEXT | `pending` → `active` (check-constrained) |
+| peer_pub | TEXT | joiner's ephemeral X25519 public key (base64) |
+| approved_pub | TEXT | approver's ephemeral X25519 public key (base64) |
+| wrapped_vk | TEXT | VK wrapped under the pairing secret; `''` while pending |
+| created_at | TEXT | |
+| expires_at | TEXT | pending only; QR dies after this (default +10 min) |
+| last_seen_at | TEXT | set when a pairing is approved |
 
 ### `vault_items`
 | Column | Type | Notes |

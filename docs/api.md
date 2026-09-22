@@ -79,6 +79,24 @@ Wrapped key material only — the server cannot decrypt anything here
 wrapped_vk }`, re-wrapped under the new password in the same request.
 Omitting it fails with **409 `vault_rewrap_required`**.
 
+### Pair a device (QR)
+The joiner (new device) holds an ephemeral X25519 keypair; the approver is an
+already-unlocked device. The server only relays public keys and one opaque
+handoff blob — never the shared secret (see `docs/e2ee.md`).
+
+1. `POST /api/vault/devices` — `{ label, peer_pub, ttl_seconds? }`
+   → `{ id, expires_at }` (409 `vault_not_enabled`, 400 on bad shapes)
+   - The joiner renders `flaxia-vault://pair/<id>#<peer_pub>` as its QR code
+   - `ttl_seconds` is clamped to 1–600; default 600
+2. `GET /api/vault/devices/<id>` — joiner polls:
+   `{ state: 'pending' | 'active' | 'expired', ... }`; only `active` returns
+   `{ approved_pub, wrapped_vk }`
+3. `POST /api/vault/devices/<id>/approve` — `{ approved_pub, wrapped_vk }`
+   - 409 `pairing_already_used`, 410 `pairing_expired`, 404 unknown id
+   - Scanning the QR **is** the second factor, so no SRP proof is required
+4. `GET /api/vault/devices` — management list (ids/labels/states, no blobs)
+5. `DELETE /api/vault/devices/<id>` — revoke (404 if already gone)
+
 ---
 
 ## Posts
