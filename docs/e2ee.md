@@ -98,7 +98,14 @@ Migrations `0091_add_vault.sql` (tables) and `0092_pairing_devices.sql`
 - `kdf_params` (JSON) travels with the row so the KDF can be strengthened later
   without a flag day: the parameters that produced the stored `wrapped_vk` are
   the parameters the client must use to reopen it. The server allowlists the
-  shape (`isValidVaultKdfParams`) but never runs it.
+  shape (`isValidVaultKdfParams`) but never runs it. The allowlist is an
+  **integer** iteration count in **100 000 – 10 000 000**: the floor keeps a
+  downgraded envelope expensive to brute-force, the ceiling keeps a hostile or
+  corrupted row from pinning a client inside PBKDF2 — JSON can even carry
+  `1e999`, which parses to `Infinity`, and the integer check rejects that too.
+  The client re-checks the same bounds **before** deriving, so a malformed
+  envelope fails immediately instead of inside a KDF run, and the UI reports it
+  as a broken row — never as a wrong password.
 - `wrapped_vk` / `recovery_blob` / `item_key_wrapped` / `payload` each carry
   their own IV in the canonical `base64(iv).base64(ct)` form.
   **IVs must never be reused with the same key** (migration `0076` exists
@@ -230,7 +237,8 @@ password: legacy login (auto-upgrade), password change, and vault enable.
 | `tests/srp-copy.test.ts` | `src/lib/srp.ts` and `functions/lib/srp.ts` stay byte-identical |
 | `tests/srp.test.ts`, `tests/srp-auth-e2e.test.ts` | protocol + server integration |
 | `tests/password-policy.test.ts` | 8–128 rule now enforced client-side |
-| `tests/vault-primitives.test.ts` | fixed test vectors for every vault primitive |
+| `tests/vault-primitives.test.ts` | fixed test vectors for every vault primitive — including published PBKDF2-HMAC-SHA256 vectors — plus KDF window abuse, pre-derivation envelope shape rejection, tamper/column-swap coverage, and the five-context AAD matrix |
 | `tests/vault-pairing.test.ts` | RFC 7748 / HKDF vectors, independent blob open, QR parsing |
-| `tests/vault.test.ts`, `tests/vault-devices.test.ts` | envelope API + the full two-device handshake over HTTP |
+| `tests/vault.test.ts`, `tests/vault-devices.test.ts` | envelope API + the full two-device handshake over HTTP — hostile values (salts, KDF params, `1e999`, `vk_version`), single-use proof replay, TTL clamp, 10-device cap |
+| `tests/vault-session.test.ts` | unlock outcome classification (wrong/network/malformed/ok), enable round-trip with device self-registration, re-wrap refusal paths |
 | `tests/security-guards.test.ts` | static guards (escrow, sandboxing, constant-time verify) |

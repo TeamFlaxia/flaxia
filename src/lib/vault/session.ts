@@ -8,8 +8,8 @@
 // there is exactly one place that decides when the key is alive.
 import { generateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
-import { createSrpProof } from '../auth-srp.js';
-import { fetchVaultKeys } from './client.js';
+import { createSrpProof } from '../auth-srp.ts';
+import { fetchVaultKeys } from './client.ts';
 import {
   createDevice,
   detectDeviceLabel,
@@ -19,14 +19,28 @@ import {
   saveVaultKeyForDevice,
   unlockWithDevice,
   unwrapImportedVaultKey,
-} from './device.js';
-import { createVaultEnvelope, unlockVaultWithPassword } from './primitives.ts';
+} from './device.ts';
+import {
+  createVaultEnvelope,
+  isEnvelopeShapeError,
+  isValidRecoveryPhrase,
+  normalizeRecoveryPhrase,
+  unlockVaultWithPassword,
+} from './primitives.ts';
 
 export type VaultStatus = 'loading' | 'disabled' | 'locked' | 'unlocked';
 
 export type EnableResult =
   | { ok: true }
   | { ok: false; error: 'proof_failed' | 'already_exists' | 'network' | 'failed' };
+
+/**
+ * Unlock outcome. 'wrong' is the ONLY class where the password was wrong — a
+ * dead network and an unreadable stored envelope are different situations and
+ * must not blame the user's typing. The server learns nothing from this split:
+ * all three paths are decided client-side from data it already sent.
+ */
+export type UnlockResult = 'ok' | 'wrong' | 'network' | 'malformed';
 
 let sessionVk: Uint8Array | null = null;
 const listeners = new Set<() => void>();
@@ -93,10 +107,18 @@ async function rememberOnThisDevice(vk: Uint8Array, deviceId?: string): Promise<
  * this device leaves behind a row someone else can revoke.
  */
 export async function enableVault(password: string, recoveryPhrase: string): Promise<EnableResult> {
+  // Cheap local validation first: a typo'd phrase fails here, before any
+  // network round-trip or KDF run. createVaultEnvelope checks it again.
+  if (!isValidRecoveryPhrase(normalizeRecoveryPhrase(recoveryPhrase))) return { ok: false, error: 'failed' };
+
   const proof = await createSrpProof(password);
   if (!proof) return { ok: false, error: 'proof_failed' };
 
-  const { envelope, vk } = await createVaultEnvelope(password, recoveryPhrase);
+  // Backstop: an out-of-window KDF or unexpected throw classifies as a plain
+  // failure instead of escaping into the UI's promise chain.
+  const built = await createVaultEnvelope(password, recoveryPhrase).catch(() => null);
+  if (!built) return { ok: false, error: 'failed' };
+  const { envelope, vk } = built;
   const deviceId = newDeviceId();
 
   let res: Response;
@@ -124,14 +146,19 @@ export async function enableVault(password: string, recoveryPhrase: string): Pro
 }
 
 /**
- * Unlock with the account password. The wrong password fails as a GCM unwrap,
- * which is indistinguishable from garbage ciphertext by design — hence
- * 'wrong' rather than an error message that could oracle the envelope.
+ * Unlock with the account password.
+ *
+ * Three failures, three labels — because they need different UI:
+ *   - 'network'   the envelope never arrived (offline, server down);
+ *   - 'malformed' the stored envelope cannot ever open (shape error raised
+ *     BEFORE the KDF — never blame the password for a broken row);
+ *   - 'wrong'     the KDF ran and GCM refused. That is indistinguishable from
+ *     garbage ciphertext by design, so nothing here can oracle the envelope.
  */
-export async function unlockVault(password: string): Promise<'ok' | 'wrong' | 'error'> {
+export async function unlockVault(password: string): Promise<UnlockResult> {
   const keys = await fetchVaultKeys();
-  if (keys === null) return 'error';
-  if (!keys.enabled || !keys.salt || !keys.kdf_params || !keys.wrapped_vk) return 'error';
+  if (keys === null) return 'network';
+  if (!keys.enabled || !keys.salt || !keys.kdf_params || !keys.wrapped_vk) return 'malformed';
 
   try {
     const vk = await unlockVaultWithPassword(password, {
@@ -142,8 +169,8 @@ export async function unlockVault(password: string): Promise<'ok' | 'wrong' | 'e
     await rememberOnThisDevice(vk);
     setVaultKey(vk);
     return 'ok';
-  } catch {
-    return 'wrong';
+  } catch (error) {
+    return isEnvelopeShapeError(error) ? 'malformed' : 'wrong';
   }
 }
 

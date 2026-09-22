@@ -73,12 +73,18 @@ Wrapped key material only — the server cannot decrypt anything here
   server row are the same record (without it there would be nothing to revoke
   later). Malformed device fields → 400 **before** anything is written.
 - 201 `{ enabled: true, vk_version, device_id }`; 409 if a vault already
-  exists; 400 on malformed key material or a cheap KDF
+  exists; 400 on malformed key material or KDF parameters outside the integer
+  100 000–10 000 000 iteration window
+  - Shape checks run **before** the proof, so a rejected body consumes no
+    single-use handshake and writes nothing
 
 ### Rotate envelope
 `PUT /api/vault/keys`
-- Body: same as enable plus `vk_version` (the value currently stored)
+- Body: same as enable plus `vk_version` (the value currently stored);
+  missing, fractional, or non-numeric `vk_version` → 400
 - 409 on a stale `vk_version`; bumps the stored version on success
+- The SRP proof is checked before the version conflict and is single-use:
+  replaying an already-consumed proof → 401
 
 ### Password change with a vault
 `PATCH /api/users/me/password` must include `vault_kek: { salt, kdf_params,

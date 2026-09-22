@@ -7,6 +7,7 @@ import {
   DEFAULT_VAULT_KDF_PARAMS,
   encodeB64,
   generateVaultSalt,
+  isEnvelopeShapeError,
   rewrapVaultKeyForPassword,
   unlockVaultWithPassword,
   type VaultKdfParams,
@@ -67,7 +68,10 @@ export async function prepareVaultRewrap(currentPassword: string, newPassword: s
       kdf_params: keys.kdf_params,
       wrapped_vk: keys.wrapped_vk,
     });
-  } catch {
+  } catch (error) {
+    // Shape failure (never openable) is NOT a wrong password: refuse with
+    // 'error' instead of inviting endless retypes of a correct password.
+    if (isEnvelopeShapeError(error)) return { status: 'error' };
     return { status: 'unlock_failed' };
   }
 

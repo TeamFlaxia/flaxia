@@ -289,3 +289,127 @@ describe('password change with a vault', () => {
     assert.equal(newLogin.res.status, 200, 'new password must work');
   });
 });
+
+// Shape checks run before the proof and before any write: a hostile body must
+// bounce without consuming a single-use handshake or touching a row.
+describe('hostile values against the envelope API', () => {
+  beforeEach(resetDb);
+
+  it('rejects salts of the wrong byte length → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { envelope } = await createVaultEnvelope(PASSWORD, PHRASE);
+
+    for (const bytes of [15, 17]) {
+      const res = await fetch(`${BASE_URL}/api/vault/keys`, {
+        method: 'POST',
+        headers: headers(cookie),
+        body: JSON.stringify({ ...envelope, salt: encodeB64(new Uint8Array(bytes)) }),
+      });
+      assert.equal(res.status, 400, `${bytes}-byte salt`);
+      assert.equal(((await res.json()) as { error: string }).error, 'Invalid vault salt');
+    }
+
+    const recovery = await fetch(`${BASE_URL}/api/vault/keys`, {
+      method: 'POST',
+      headers: headers(cookie),
+      body: JSON.stringify({ ...envelope, recovery_salt: encodeB64(new Uint8Array(17)) }),
+    });
+    assert.equal(recovery.status, 400);
+    assert.equal(((await recovery.json()) as { error: string }).error, 'Invalid recovery salt');
+
+    const keys = (await (await getKeys(cookie)).json()) as { enabled: boolean };
+    assert.equal(keys.enabled, false, 'no row may be created by a rejected body');
+  });
+
+  it('rejects absurd or non-integer KDF parameters → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { envelope } = await createVaultEnvelope(PASSWORD, PHRASE);
+    const hostile: Array<[string, unknown]> = [
+      ['above the ceiling', { alg: 'PBKDF2-SHA256', iterations: 10_000_001 }],
+      ['integral but absurd (1e15)', { alg: 'PBKDF2-SHA256', iterations: 1e15 }],
+      ['fractional', { alg: 'PBKDF2-SHA256', iterations: 600_000.5 }],
+      ['stringified', { alg: 'PBKDF2-SHA256', iterations: '600000' }],
+      ['iterations missing', { alg: 'PBKDF2-SHA256' }],
+      ['kdf_params missing', undefined],
+    ];
+    for (const [label, kdf_params] of hostile) {
+      const res = await fetch(`${BASE_URL}/api/vault/keys`, {
+        method: 'POST',
+        headers: headers(cookie),
+        body: JSON.stringify({ ...envelope, kdf_params }),
+      });
+      assert.equal(res.status, 400, label);
+      assert.equal(((await res.json()) as { error: string }).error, 'Unsupported vault KDF parameters', label);
+    }
+  });
+
+  it('rejects a JSON overflow iteration count (1e999 → Infinity) → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { envelope } = await createVaultEnvelope(PASSWORD, PHRASE);
+    // JSON.stringify would print a JS-side Infinity as `null`, so send the
+    // literal exactly as it appears on the wire: the server's JSON.parse turns
+    // 1e999 into Infinity, and the integer check must reject it. Accepting it
+    // would store `JSON.stringify(Infinity)` = `null` and brick the vault.
+    const raw = JSON.stringify({ ...envelope }).replace('"iterations":600000', '"iterations":1e999');
+    assert.ok(raw.includes('1e999'), 'fixture must contain the overflow literal');
+    const res = await fetch(`${BASE_URL}/api/vault/keys`, {
+      method: 'POST',
+      headers: headers(cookie),
+      body: raw,
+    });
+    assert.equal(res.status, 400);
+    assert.equal(((await res.json()) as { error: string }).error, 'Unsupported vault KDF parameters');
+  });
+
+  it('requires an integer vk_version on rotation → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const enabled = await enableVault(cookie, PASSWORD);
+    assert.equal(enabled.res.status, 201);
+    const fresh = await createVaultEnvelope(PASSWORD, PHRASE);
+
+    // No proof attached on purpose: the optimistic-lock shape check must fire
+    // FIRST, so a malformed version can never consume a reauth handshake —
+    // and omitting vk_version entirely can never bypass the conflict check.
+    const cases: Array<[string, unknown]> = [
+      ['missing', undefined],
+      ['stringified', '1'],
+      ['fractional', 1.5],
+      ['null', null],
+    ];
+    for (const [label, vk_version] of cases) {
+      const body: Record<string, unknown> = { ...fresh.envelope };
+      delete body.vk_version; // createVaultEnvelope always emits 1 — drop it for the "missing" case
+      if (vk_version !== undefined) body.vk_version = vk_version;
+      const res = await fetch(`${BASE_URL}/api/vault/keys`, {
+        method: 'PUT',
+        headers: headers(cookie),
+        body: JSON.stringify(body),
+      });
+      assert.equal(res.status, 400, label);
+      assert.equal(((await res.json()) as { error: string }).error, 'Invalid vault key version', label);
+    }
+
+    const keys = (await (await getKeys(cookie)).json()) as { vk_version: number; wrapped_vk: string };
+    assert.equal(keys.vk_version, 1, 'a rejected rotation must not bump the version');
+    assert.equal(keys.wrapped_vk, enabled.envelope.wrapped_vk, 'a rejected rotation must not write');
+  });
+
+  it('consumes the password proof, so a byte-identical replay fails → 401', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    assert.equal((await enableVault(cookie, PASSWORD)).res.status, 201);
+    const fresh = await createVaultEnvelope(PASSWORD, PHRASE);
+    const proof = await createSrpProof(cookie, PASSWORD);
+    assert.ok(proof, 'should be able to prove the current password');
+    const body = JSON.stringify({ current_srp: proof, ...fresh.envelope, vk_version: 1 });
+
+    const first = await fetch(`${BASE_URL}/api/vault/keys`, { method: 'PUT', headers: headers(cookie), body });
+    assert.equal(first.status, 200, 'the first use succeeds');
+
+    // The handshake row is deleted on first use. On replay vk_version is stale
+    // too (now 2), but the proof is checked first — the error string proves
+    // which gate fired.
+    const replay = await fetch(`${BASE_URL}/api/vault/keys`, { method: 'PUT', headers: headers(cookie), body });
+    assert.equal(replay.status, 401);
+    assert.equal(((await replay.json()) as { error: string }).error, 'Current password is incorrect');
+  });
+});

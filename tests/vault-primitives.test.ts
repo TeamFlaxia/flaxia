@@ -1,15 +1,22 @@
 // Vault cryptography primitives (docs/e2ee.md).
 //
-// Two kinds of coverage:
+// Three kinds of coverage:
 //   1. Known-answer vectors — pin the KDF and the wire encodings so a change
 //      to parameters or formats cannot ship silently and strand every stored
-//      envelope.
+//      envelope. Includes published PBKDF2-HMAC-SHA256 vectors checked
+//      independently against OpenSSL.
 //   2. Behaviour — every unlock path opens the same VK, every wrong input
 //      fails, and each AAD context actually binds the ciphertext to its role.
+//   3. Hostile inputs — malformed envelopes, absurd/fractional KDF parameters,
+//      wrong-size keys, and tampered bytes must fail fast (BEFORE any KDF run
+//      where shape is concerned) with errors that do not blame the user's
+//      password.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  CONTEXT_ITEM_KEY,
   CONTEXT_PAYLOAD,
+  CONTEXT_VK_DEVICE,
   CONTEXT_VK_PASSWORD,
   CONTEXT_VK_RECOVERY,
   createDeviceKey,
@@ -23,6 +30,8 @@ import {
   encodeB64,
   encodeWrapped,
   encryptVaultItem,
+  generateVaultSalt,
+  isEnvelopeShapeError,
   isValidB64,
   isValidRecoveryPhrase,
   isValidVaultItemId,
@@ -31,12 +40,15 @@ import {
   normalizeRecoveryPhrase,
   rewrapItemKeyForVaultKey,
   rewrapVaultKeyForPassword,
+  rewrapVaultKeyForRecovery,
   unlockVaultWithPassword,
   unlockVaultWithRecovery,
   unwrapSecret,
   unwrapVaultKeyWithDevice,
   VAULT_IV_BYTES,
   VAULT_KDF_ITERATIONS,
+  VAULT_KDF_MAX_ITERATIONS,
+  VAULT_KDF_MIN_ITERATIONS,
   wrapSecret,
   wrapVaultKeyForDevice,
 } from '../src/lib/vault/primitives.ts';
@@ -57,6 +69,32 @@ function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
 
 async function expectReject(promise: Promise<unknown>, label: string): Promise<void> {
   await assert.rejects(promise, /unable to decrypt|recovery phrase|malformed/, `${label} should have failed`);
+}
+
+type RejectionPattern = RegExp | ((value: unknown) => unknown);
+
+/**
+ * Assert that a promise rejects with `pattern` AND does so almost instantly.
+ * A shape error raised before the KDF must not be confused with a failure that
+ * only surfaces after a 600k-iteration PBKDF2 run (or, worse, an unbounded
+ * one) — the timeout is what proves the guard runs first.
+ */
+async function rejectsQuickly(label: string, promise: Promise<unknown>, pattern: RejectionPattern): Promise<void> {
+  const started = Date.now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label}: still running after 2000ms — a shape error must fail before the KDF`)),
+      2000,
+    );
+  });
+  try {
+    await Promise.race([assert.rejects(promise, pattern as never, label), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 2000, `${label}: rejected too slowly for a pre-derivation check (${elapsed}ms)`);
 }
 
 // ─── Known-answer vectors ────────────────────────────────────────────────────
@@ -313,3 +351,353 @@ test('vault key rotation re-wraps item keys without touching payloads', async ()
 test('payload context differs from item-key context', () => {
   assert.notEqual(CONTEXT_PAYLOAD, CONTEXT_VK_PASSWORD);
 });
+
+// ─── Published KDF vectors ──────────────────────────────────────────────────
+
+test('PBKDF2 vector: published known-answer vectors (OpenSSL cross-check)', async () => {
+  // PBKDF2-HMAC-SHA256, P = "password", S = "salt", dkLen = 32. RFC 6070
+  // only publishes SHA-1 vectors; these are the widely published SHA-256
+  // counterparts, each verified against an independent implementation
+  // (OpenSSL's EVP_PBKDF2). Low iteration counts are legal at this layer on
+  // purpose: the envelope-level window is enforced separately.
+  const salt = new TextEncoder().encode('salt');
+  const vectors: Array<[number, string]> = [
+    [1, '120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b'],
+    [2, 'ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43'],
+    [4096, 'c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a'],
+  ];
+  for (const [iterations, expected] of vectors) {
+    const bits = await deriveVaultKeBits('password', salt, { alg: 'PBKDF2-SHA256', iterations });
+    assert.equal(encodeB64(bits), toBase64Hex(expected), `c=${iterations} must match the published vector`);
+  }
+});
+
+// ─── KDF parameter abuse ────────────────────────────────────────────────────
+
+test('kdf params are an integer window: floor, ceiling, and JSON oddities', () => {
+  const kdf = (iterations: unknown): boolean => isValidVaultKdfParams({ alg: 'PBKDF2-SHA256', iterations });
+  // Window boundaries are inclusive on both ends.
+  assert.ok(kdf(VAULT_KDF_MIN_ITERATIONS), 'floor is inclusive');
+  assert.ok(kdf(VAULT_KDF_MAX_ITERATIONS), 'ceiling is inclusive');
+  assert.ok(!kdf(VAULT_KDF_MIN_ITERATIONS - 1), 'below the floor');
+  assert.ok(!kdf(VAULT_KDF_MAX_ITERATIONS + 1), 'above the ceiling');
+  // Absurd but INTEGRAL: Number.isInteger(1e15) is true, so only the ceiling
+  // catches it — without which the client would grind PBKDF2 for hours.
+  assert.ok(!kdf(1e15), 'integral but absurd');
+  // Non-finite, fractional, non-numeric.
+  assert.ok(!kdf(Infinity), 'Infinity');
+  assert.ok(!kdf(-Infinity), '-Infinity');
+  assert.ok(!kdf(Number.NaN), 'NaN');
+  assert.ok(!kdf(600_000.5), 'fractional');
+  assert.ok(!kdf('600000'), 'stringified');
+  assert.ok(!kdf(null), 'null');
+  assert.ok(!kdf(undefined), 'missing');
+  // The exact wire attack: JSON may carry `1e999`, which parses to Infinity
+  // and would otherwise reach storage as `null` via JSON.stringify and brick
+  // the vault.
+  const hostile = JSON.parse('{"alg":"PBKDF2-SHA256","iterations":1e999}') as { iterations: number };
+  assert.equal(hostile.iterations, Infinity, 'JSON 1e999 parses to Infinity');
+  assert.ok(!isValidVaultKdfParams(hostile), 'Infinity must be rejected');
+});
+
+test('the raw KDF refuses to start an invalid run', async () => {
+  const salt = salt00to0f();
+  // Each of these would otherwise be silently coerced by WebIDL (1e15 →
+  // 3 269 632 iterations, producing a key nobody asked for), run unbounded, or
+  // throw an unrelated OperationError — all must fail fast with our own
+  // message, proving no derivation started. Negative counts are covered by the
+  // same `iterations < 1` check that 0 exercises.
+  for (const iterations of [0, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 10_000_001, 1e15]) {
+    await rejectsQuickly(
+      `iterations=${String(iterations)}`,
+      deriveVaultKeBits(PASSWORD, salt, { alg: 'PBKDF2-SHA256', iterations }),
+      /iterations must be an integer/,
+    );
+  }
+});
+
+test('a malformed envelope fails BEFORE any derivation', async () => {
+  const { envelope } = await createVaultEnvelope(PASSWORD, PHRASE);
+  const hostile: Array<[string, Record<string, unknown>]> = [
+    ['salt is not base64', { salt: '!!!not-base64!!!' }],
+    ['salt decodes to 15 bytes', { salt: encodeB64(new Uint8Array(15)) }],
+    ['salt missing', { salt: undefined }],
+    ['kdf iterations absurd', { kdf_params: { alg: 'PBKDF2-SHA256', iterations: 1e15 } }],
+    ['kdf iterations fractional', { kdf_params: { alg: 'PBKDF2-SHA256', iterations: 600_000.5 } }],
+    ['kdf params missing', { kdf_params: undefined }],
+    ['wrapped_vk is not a string', { wrapped_vk: 42 }],
+    ['wrapped_vk has no separator', { wrapped_vk: 'garbage' }],
+    ['wrapped_vk IV is the wrong size', { wrapped_vk: 'AQID.AQID' }],
+  ];
+  for (const [label, patch] of hostile) {
+    // isEnvelopeShapeError (not just "some rejection") is the assertion: a
+    // wrong-length salt that fell through to the KDF would end in a plain
+    // GCM failure instead, and a non-string wrapped_vk would surface as an
+    // unrelated parse error.
+    await rejectsQuickly(label, unlockVaultWithPassword(PASSWORD, { ...envelope, ...patch }), isEnvelopeShapeError);
+  }
+  // The recovery path validates the same way.
+  await rejectsQuickly(
+    'recovery_blob malformed',
+    unlockVaultWithRecovery(PHRASE, { ...envelope, recovery_blob: 'x.y' }),
+    isEnvelopeShapeError,
+  );
+  await rejectsQuickly(
+    'recovery_salt wrong length',
+    unlockVaultWithRecovery(PHRASE, { ...envelope, recovery_salt: encodeB64(new Uint8Array(17)) }),
+    isEnvelopeShapeError,
+  );
+  // Sanity: the untouched fixture still opens after all that poking.
+  assert.equal((await unlockVaultWithPassword(PASSWORD, envelope)).length, 32);
+});
+
+test('every region of a stored envelope is authenticated', async () => {
+  const { envelope } = await createVaultEnvelope(PASSWORD, PHRASE);
+  const parsed = decodeWrapped(envelope.wrapped_vk);
+  assert.ok(parsed);
+  const flip = (bytes: Uint8Array, index: number): Uint8Array => {
+    const copy = Uint8Array.from(bytes);
+    copy[index] ^= 0xff;
+    return copy;
+  };
+  const tampered: Array<[string, string]> = [
+    ['IV first byte', encodeWrapped(flip(parsed.iv, 0), parsed.ciphertext)],
+    ['IV last byte', encodeWrapped(flip(parsed.iv, parsed.iv.length - 1), parsed.ciphertext)],
+    ['ciphertext first byte', encodeWrapped(parsed.iv, flip(parsed.ciphertext, 0))],
+    [
+      'ciphertext middle byte',
+      encodeWrapped(parsed.iv, flip(parsed.ciphertext, Math.floor(parsed.ciphertext.length / 2))),
+    ],
+    ['GCM tag (last byte)', encodeWrapped(parsed.iv, flip(parsed.ciphertext, parsed.ciphertext.length - 1))],
+  ];
+  for (const [label, wrapped] of tampered) {
+    await expectReject(unlockVaultWithPassword(PASSWORD, { ...envelope, wrapped_vk: wrapped }), label);
+  }
+
+  // Salt and iteration count are KDF inputs: change either and the KEK
+  // changes, so the unwrap fails even though every stored byte is intact.
+  const salt = decodeB64(envelope.salt);
+  salt[0] ^= 0xff;
+  await expectReject(unlockVaultWithPassword(PASSWORD, { ...envelope, salt: encodeB64(salt) }), 'flipped salt byte');
+  await expectReject(
+    unlockVaultWithPassword(PASSWORD, {
+      ...envelope,
+      kdf_params: { alg: 'PBKDF2-SHA256', iterations: VAULT_KDF_ITERATIONS + 1 },
+    }),
+    'changed iteration count',
+  );
+});
+
+test('envelope columns cannot be swapped or mixed across rows', async () => {
+  const a = await createVaultEnvelope(PASSWORD, PHRASE);
+  const b = await createVaultEnvelope(PASSWORD, PHRASE);
+
+  // Within-row column swaps: each column is bound to its own role AND its own
+  // salt, so no permutation of a single row opens.
+  await expectReject(
+    unlockVaultWithPassword(PASSWORD, { ...a.envelope, wrapped_vk: a.envelope.recovery_blob }),
+    'recovery blob pasted into the password column',
+  );
+  await expectReject(
+    unlockVaultWithRecovery(PHRASE, { ...a.envelope, recovery_blob: a.envelope.wrapped_vk }),
+    'password blob pasted into the recovery column',
+  );
+  await expectReject(
+    unlockVaultWithPassword(PASSWORD, { ...a.envelope, salt: a.envelope.recovery_salt }),
+    'salt columns swapped (password)',
+  );
+  await expectReject(
+    unlockVaultWithRecovery(PHRASE, { ...a.envelope, recovery_salt: a.envelope.salt }),
+    'salt columns swapped (recovery)',
+  );
+
+  // Across-row mixing: blob from one row, salt from another.
+  await expectReject(unlockVaultWithPassword(PASSWORD, { ...a.envelope, salt: b.envelope.salt }), 'foreign salt');
+
+  // Both original rows still open — the failures above are binding failures,
+  // not a broken fixture.
+  assert.ok(equalBytes(await unlockVaultWithPassword(PASSWORD, a.envelope), a.vk));
+  assert.ok(equalBytes(await unlockVaultWithRecovery(PHRASE, b.envelope), b.vk));
+});
+
+test('a corrupted recovery column leaves the password path intact', async () => {
+  const { envelope, vk } = await createVaultEnvelope(PASSWORD, PHRASE);
+  const damaged = { ...envelope, recovery_blob: 'x.y' };
+  await assert.rejects(unlockVaultWithRecovery(PHRASE, damaged), isEnvelopeShapeError, 'recovery path must fail');
+  assert.ok(
+    equalBytes(await unlockVaultWithPassword(PASSWORD, damaged), vk),
+    'the password path must ignore the recovery column entirely',
+  );
+});
+
+// ─── Abnormal payloads, keys, and ids ───────────────────────────────────────
+
+test('payloads of zero bytes and 256 KiB round-trip', async () => {
+  const { vk } = await createVaultEnvelope(PASSWORD, PHRASE);
+
+  const empty = await encryptVaultItem(vk, ITEM_ID, new Uint8Array(0));
+  assert.ok(isValidWrappedKey(empty.payload), 'a tag-only ciphertext is still canonical wire form');
+  assert.equal((await decryptVaultItem(vk, ITEM_ID, empty.item_key_wrapped, empty.payload)).length, 0);
+
+  // 256 KiB, filled deterministically — getRandomValues caps per-call at 64 KiB.
+  const big = new Uint8Array(256 * 1024);
+  for (let i = 0; i < big.length; i++) big[i] = i & 0xff;
+  const bigItem = await encryptVaultItem(vk, ITEM_ID, big);
+  const out = await decryptVaultItem(vk, ITEM_ID, bigItem.item_key_wrapped, bigItem.payload);
+  assert.ok(equalBytes(out, big), 'large payload must survive both layers byte-for-byte');
+});
+
+test('only a 32-byte value can pass as VK', async () => {
+  // Envelope level: a well-formed blob that unwraps to the wrong size must be
+  // rejected right after the unwrap — never adopted as the session key.
+  const kek = await deriveVaultKe(PASSWORD, salt00to0f());
+  const shell = { salt: encodeB64(salt00to0f()), kdf_params: DEFAULT_VAULT_KDF_PARAMS };
+  for (const length of [0, 31, 33]) {
+    const wrapped = await wrapSecret(kek, new Uint8Array(length), CONTEXT_VK_PASSWORD);
+    await assert.rejects(
+      unlockVaultWithPassword(PASSWORD, { ...shell, wrapped_vk: wrapped }),
+      isEnvelopeShapeError,
+      `a ${length}-byte unwrap must not be accepted as VK`,
+    );
+  }
+  // Item level: vaultKeyAsAesKey is the last line of defence.
+  await assert.rejects(encryptVaultItem(new Uint8Array(31), ITEM_ID, new Uint8Array(4)), /32 bytes/);
+  await assert.rejects(encryptVaultItem(new Uint8Array(33), ITEM_ID, new Uint8Array(4)), /32 bytes/);
+});
+
+test('item keys and payloads cannot be crossed between rows', async () => {
+  const { vk } = await createVaultEnvelope(PASSWORD, PHRASE);
+  const otherId = 'item_otherXYZ987';
+  const one = await encryptVaultItem(vk, ITEM_ID, new TextEncoder().encode('first'));
+  const two = await encryptVaultItem(vk, otherId, new TextEncoder().encode('second'));
+
+  // Row-two key presented under row-one's id → layer-1 AAD mismatch.
+  await expectReject(decryptVaultItem(vk, ITEM_ID, two.item_key_wrapped, one.payload), 'crossed item key');
+  // Row-two key + row-one payload under row-two's id → layer 1 opens, layer 2
+  // AAD mismatch. This pins BOTH layers, not just the outer one.
+  await expectReject(decryptVaultItem(vk, otherId, two.item_key_wrapped, one.payload), 'crossed payload');
+
+  // Sanity: the correct pairings still work.
+  assert.equal(
+    new TextDecoder().decode(await decryptVaultItem(vk, otherId, two.item_key_wrapped, two.payload)),
+    'second',
+  );
+});
+
+test('a foreign vault key cannot re-wrap an item key', async () => {
+  const { vk } = await createVaultEnvelope(PASSWORD, PHRASE);
+  const other = await createVaultEnvelope(PASSWORD, PHRASE);
+  const item = await encryptVaultItem(vk, ITEM_ID, new TextEncoder().encode('body'));
+
+  await expectReject(
+    rewrapItemKeyForVaultKey(other.vk, vk, ITEM_ID, item.item_key_wrapped),
+    're-wrap attempted with a foreign old VK',
+  );
+  await expectReject(rewrapItemKeyForVaultKey(vk, other.vk, ITEM_ID, 'not-a-blob'), 'malformed item key blob');
+});
+
+// ─── Recovery phrase boundaries and normalisation ───────────────────────────
+
+test('recovery phrase word counts are exactly the BIP-39 lengths', async () => {
+  const words = PHRASE.split(' ');
+  const at = (n: number): string => Array.from({ length: n }, (_, i) => words[i % words.length]).join(' ');
+  for (const n of [12, 15, 18, 21, 24]) assert.ok(isValidRecoveryPhrase(at(n)), `${n} words are valid`);
+  for (const n of [11, 13, 23, 25]) assert.ok(!isValidRecoveryPhrase(at(n)), `${n} words are not a BIP-39 length`);
+
+  // The failure message must name the real lengths — a "12-24" hint would
+  // send users hunting for a 13-word phrase that can never exist.
+  const phraseError = /12, 15, 18, 21, or 24/;
+  await assert.rejects(createVaultEnvelope(PASSWORD, at(13)), phraseError);
+  await assert.rejects(createVaultEnvelope(PASSWORD, at(25)), phraseError);
+  await assert.rejects(rewrapVaultKeyForRecovery(generateVaultKeyBytes(), at(13), generateVaultSalt()), phraseError);
+
+  // A valid 24-word phrase really derives and opens.
+  const { envelope, vk } = await createVaultEnvelope(PASSWORD, at(24));
+  assert.ok(equalBytes(await unlockVaultWithRecovery(at(24), envelope), vk));
+});
+
+test('phrases normalise to NFKD, so NFC and NFD typing derive the same REK', async () => {
+  const nfc = PHRASE.replace('yellow', 'caf\u00e9'); // precomposed é (U+00E9)
+  const nfd = PHRASE.replace('yellow', 'cafe\u0301'); // e + combining acute (U+0301)
+  assert.notEqual(nfc, nfd, 'the two encodings must differ as typed');
+  assert.equal(normalizeRecoveryPhrase(nfc), normalizeRecoveryPhrase(nfd));
+
+  const { envelope, vk } = await createVaultEnvelope(PASSWORD, nfd);
+  assert.ok(
+    equalBytes(await unlockVaultWithRecovery(nfc, envelope), vk),
+    'NFC typing must open an NFD-derived envelope',
+  );
+
+  // Full-width ideographic space (U+3000) counts as whitespace too.
+  const ideographic = PHRASE.replace(/ /g, '　');
+  assert.equal(normalizeRecoveryPhrase(ideographic), PHRASE);
+  assert.ok(isValidRecoveryPhrase(ideographic));
+});
+
+test('vault item ids are validated at their boundaries', () => {
+  assert.ok(isValidVaultItemId('a'.repeat(10)), '10 chars (minimum)');
+  assert.ok(isValidVaultItemId('a'.repeat(40)), '40 chars (maximum)');
+  assert.ok(!isValidVaultItemId('a'.repeat(9)), '9 chars');
+  assert.ok(!isValidVaultItemId('a'.repeat(41)), '41 chars');
+  assert.ok(!isValidVaultItemId(''), 'empty');
+  // In range, but outside the charset: `:` would let a caller forge a context
+  // prefix (`payload:a:REALID`) and `.` collides with the wrapped separator.
+  assert.ok(!isValidVaultItemId('abc:defghij'), 'colon is not in the charset');
+  assert.ok(!isValidVaultItemId('abc.defghij'), 'dot is not in the charset');
+});
+
+// ─── AAD context matrix ─────────────────────────────────────────────────────
+
+test('AAD context strings are pinned — changing them strands every stored value', () => {
+  assert.equal(CONTEXT_VK_PASSWORD, 'flaxia.vault.vk.v1');
+  assert.equal(CONTEXT_VK_RECOVERY, 'flaxia.vault.vk.recovery.v1');
+  assert.equal(CONTEXT_VK_DEVICE, 'flaxia.vault.vk.device.v1');
+  assert.equal(CONTEXT_ITEM_KEY, 'flaxia.vault.itemkey.v1');
+  assert.equal(CONTEXT_PAYLOAD, 'flaxia.vault.payload.v1');
+});
+
+test('all five AAD contexts are pairwise distinct', async () => {
+  // One key for everything, so ONLY the AAD can be what separates the
+  // contexts — 5 self-opens plus 5 × 4 = 20 cross pairs that must all fail.
+  const kek = await deriveVaultKe(PASSWORD, salt00to0f());
+  const value = new Uint8Array(32).fill(5);
+  const contexts = [
+    CONTEXT_VK_PASSWORD,
+    CONTEXT_VK_RECOVERY,
+    CONTEXT_VK_DEVICE,
+    `${CONTEXT_ITEM_KEY}:${ITEM_ID}`,
+    `${CONTEXT_PAYLOAD}:${ITEM_ID}`,
+  ];
+  const wrapped: string[] = [];
+  for (const context of contexts) wrapped.push(await wrapSecret(kek, value, context));
+
+  let crossPairs = 0;
+  for (let i = 0; i < contexts.length; i++) {
+    assert.ok(equalBytes(await unwrapSecret(kek, wrapped[i], contexts[i]), value), `context ${i} opens its own blob`);
+    for (let j = 0; j < contexts.length; j++) {
+      if (i === j) continue;
+      crossPairs++;
+      await expectReject(unwrapSecret(kek, wrapped[j], contexts[i]), `context ${i} must not open blob ${j}`);
+    }
+  }
+  assert.equal(crossPairs, 20, '5 contexts × 4 foreign blobs each');
+});
+
+// ─── Encoding round-trips ───────────────────────────────────────────────────
+
+test('base64 round-trips every byte value', () => {
+  const all = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) all[i] = i;
+  assert.deepEqual(decodeB64(encodeB64(all)), all);
+  assert.ok(isValidB64(encodeB64(all), 256));
+});
+
+test('decodeWrapped never throws on non-string input', () => {
+  for (const value of [42, null, undefined, {}, [], true]) {
+    assert.equal(decodeWrapped(value as unknown as string), null, `decodeWrapped(${String(value)}) must be null`);
+  }
+});
+
+function generateVaultKeyBytes(): Uint8Array {
+  return crypto.getRandomValues(new Uint8Array(32));
+}

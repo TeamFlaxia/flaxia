@@ -212,6 +212,11 @@ vault.put('/vault/keys', requireAuth, async (c) => {
   };
   const envelopeError = validateEnvelope(body);
   if (envelopeError) return c.json({ error: envelopeError }, 400);
+  // vk_version is REQUIRED and must be the integer the client last saw.
+  // Missing/fractional/non-numeric is a shape problem (400); a stale-but-valid
+  // integer is a conflict (409 below). Skipping it entirely would let any
+  // client bypass the optimistic lock.
+  if (!Number.isInteger(body.vk_version)) return c.json({ error: 'Invalid vault key version' }, 400);
 
   if (!hasProofShape(body.current_srp)) {
     return c.json({ error: 'Current password proof is required' }, 400);
@@ -224,7 +229,7 @@ vault.put('/vault/keys', requireAuth, async (c) => {
   if (!current) return c.json({ error: 'Vault not enabled' }, 404);
 
   // A stale client must not silently downgrade the version it cannot produce.
-  if (body.vk_version !== undefined && body.vk_version !== current.vk_version) {
+  if (body.vk_version !== current.vk_version) {
     return c.json({ error: 'Vault key version conflict' }, 409);
   }
 

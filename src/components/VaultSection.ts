@@ -348,9 +348,17 @@ export function createVaultSection() {
           render();
           return;
         }
-        // Deriving takes ~600k PBKDF2 iterations either way; failures return
-        // the input box untouched so the password can be retyped.
-        msg.textContent = outcome === 'wrong' ? t('settings.vault_wrong_password') : t('settings.network_error');
+        // Three failures, three messages: a wrong password paid the full ~600k
+        // PBKDF2 run and deserves that specific hint; a dead network deserves
+        // the network hint; a malformed stored envelope (shape error, raised
+        // before any KDF) must NOT blame the typing — it can never open.
+        // The input box stays either way so the password can be retyped.
+        msg.textContent =
+          outcome === 'wrong'
+            ? t('settings.vault_wrong_password')
+            : outcome === 'network'
+              ? t('settings.network_error')
+              : t('settings.vault_error');
         msg.style.color = 'var(--danger)';
       })();
     };

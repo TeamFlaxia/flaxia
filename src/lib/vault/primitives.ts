@@ -20,6 +20,15 @@ export const VAULT_KEY_BYTES = 32;
 export const VAULT_SALT_BYTES = 16;
 export const VAULT_IV_BYTES = 12;
 export const VAULT_KDF_ITERATIONS = 600_000;
+/**
+ * The accepted KDF window, shared by client and server. The floor stops a
+ * downgraded envelope from becoming cheap to brute-force; the ceiling stops a
+ * hostile or corrupted row from pinning a client inside PBKDF2 — JSON can even
+ * carry `1e999`, which parses to `Infinity`, and the integer check rejects
+ * that too.
+ */
+export const VAULT_KDF_MIN_ITERATIONS = 100_000;
+export const VAULT_KDF_MAX_ITERATIONS = 10_000_000;
 
 export interface VaultKdfParams {
   readonly alg: 'PBKDF2-SHA256';
@@ -64,7 +73,8 @@ export function encodeWrapped(iv: Uint8Array, ciphertext: Uint8Array): string {
   return `${encodeB64(iv)}.${encodeB64(ciphertext)}`;
 }
 
-export function decodeWrapped(value: string): { iv: Uint8Array; ciphertext: Uint8Array } | null {
+export function decodeWrapped(value: unknown): { iv: Uint8Array; ciphertext: Uint8Array } | null {
+  if (typeof value !== 'string') return null;
   const parts = value.split('.');
   if (parts.length !== 2) return null;
   let iv: Uint8Array;
@@ -100,6 +110,20 @@ export async function deriveVaultKeBits(
   salt: Uint8Array,
   params: VaultKdfParams = DEFAULT_VAULT_KDF_PARAMS,
 ): Promise<Uint8Array> {
+  // Deliberately NO floor here: this primitive must stay usable by tests with
+  // published low-count vectors (c = 1/2/4096). Envelope-level APIs and the
+  // server apply the real window (isValidVaultKdfParams); what must never
+  // happen is WebCrypto being handed a fractional, non-finite, or absurd run —
+  // WebIDL would silently coerce those (1e15 → 3 269 632 iterations).
+  const iterations: unknown = params?.iterations;
+  if (
+    typeof iterations !== 'number' ||
+    !Number.isInteger(iterations) ||
+    iterations < 1 ||
+    iterations > VAULT_KDF_MAX_ITERATIONS
+  ) {
+    throw new Error('vault KDF iterations must be an integer in 1..10000000');
+  }
   const material = await subtle.importKey('raw', new TextEncoder().encode(secret), 'PBKDF2', false, ['deriveBits']);
   const bits = await subtle.deriveBits(
     { name: 'PBKDF2', salt: salt as BufferSource, iterations: params.iterations, hash: 'SHA-256' },
@@ -196,14 +220,69 @@ export interface VaultEnvelope {
   vk_version: number;
 }
 
+/**
+ * A structurally broken envelope can never open, whatever the user types — it
+ * is not a wrong-password case. Tagging these lets callers tell "retry the
+ * password" (GCM failure) apart from "this row is unreadable" (shape failure)
+ * without relying on a class (`instanceof` across module instances is fragile;
+ * the name check works in both the browser bundle and the Workers runtime).
+ * The messages are deliberately secret-independent: they describe byte
+ * layouts only, so surfacing the `malformed` class leaks nothing about keys.
+ */
+function envelopeError(message: string): Error {
+  const error = new Error(message);
+  error.name = 'VaultEnvelopeError';
+  return error;
+}
+
+export function isEnvelopeShapeError(value: unknown): value is Error {
+  return value instanceof Error && value.name === 'VaultEnvelopeError';
+}
+
+// Shape checks run BEFORE any PBKDF2 derivation: a hostile row must fail in
+// microseconds, not after a 600k-iteration run (or an unbounded one — the KDF
+// window is part of this check for exactly that reason).
+function assertPasswordEnvelopeShape(envelope: { salt?: unknown; kdf_params?: unknown; wrapped_vk?: unknown }): void {
+  if (!isValidB64(envelope.salt, VAULT_SALT_BYTES)) throw envelopeError('malformed vault envelope: salt');
+  if (!isValidVaultKdfParams(envelope.kdf_params)) {
+    throw envelopeError('malformed vault envelope: unsupported KDF parameters');
+  }
+  if (!isValidWrappedKey(envelope.wrapped_vk)) throw envelopeError('malformed vault envelope: wrapped_vk');
+}
+
+function assertRecoveryEnvelopeShape(envelope: {
+  recovery_salt?: unknown;
+  kdf_params?: unknown;
+  recovery_blob?: unknown;
+}): void {
+  if (!isValidB64(envelope.recovery_salt, VAULT_SALT_BYTES)) {
+    throw envelopeError('malformed vault envelope: recovery_salt');
+  }
+  if (!isValidVaultKdfParams(envelope.kdf_params)) {
+    throw envelopeError('malformed vault envelope: unsupported KDF parameters');
+  }
+  if (!isValidWrappedKey(envelope.recovery_blob)) throw envelopeError('malformed vault envelope: recovery_blob');
+}
+
+/** VK is 32 bytes by construction; anything else means the row was tampered with. */
+function assertVaultKeyBytes(vk: Uint8Array): Uint8Array {
+  if (vk.length !== VAULT_KEY_BYTES) throw envelopeError('malformed vault envelope: vault key is not 32 bytes');
+  return vk;
+}
+
+function assertKdfParams(params: VaultKdfParams): void {
+  if (!isValidVaultKdfParams(params)) throw envelopeError('malformed vault envelope: unsupported KDF parameters');
+}
+
 /** Create the stored envelope. VK is returned in memory only — never persisted raw. */
 export async function createVaultEnvelope(
   password: string,
   recoveryPhrase: string,
   params: VaultKdfParams = DEFAULT_VAULT_KDF_PARAMS,
 ): Promise<{ envelope: VaultEnvelope; vk: Uint8Array }> {
+  assertKdfParams(params);
   const phrase = normalizeRecoveryPhrase(recoveryPhrase);
-  if (!isValidRecoveryPhrase(phrase)) throw new Error('recovery phrase must be 12-24 words');
+  if (!isValidRecoveryPhrase(phrase)) throw new Error('recovery phrase must be 12, 15, 18, 21, or 24 words');
 
   const vk = generateVaultKey();
   const salt = generateVaultSalt();
@@ -229,20 +308,22 @@ export async function unlockVaultWithPassword(
   password: string,
   envelope: Pick<VaultEnvelope, 'salt' | 'kdf_params' | 'wrapped_vk'>,
 ): Promise<Uint8Array> {
+  assertPasswordEnvelopeShape(envelope);
   const kek = await deriveVaultKe(password, decodeB64(envelope.salt), envelope.kdf_params);
-  return unwrapSecret(kek, envelope.wrapped_vk, CONTEXT_VK_PASSWORD);
+  return assertVaultKeyBytes(await unwrapSecret(kek, envelope.wrapped_vk, CONTEXT_VK_PASSWORD));
 }
 
 export async function unlockVaultWithRecovery(
   recoveryPhrase: string,
   envelope: Pick<VaultEnvelope, 'recovery_salt' | 'kdf_params' | 'recovery_blob'>,
 ): Promise<Uint8Array> {
+  assertRecoveryEnvelopeShape(envelope);
   const rek = await deriveVaultKe(
     normalizeRecoveryPhrase(recoveryPhrase),
     decodeB64(envelope.recovery_salt),
     envelope.kdf_params,
   );
-  return unwrapSecret(rek, envelope.recovery_blob, CONTEXT_VK_RECOVERY);
+  return assertVaultKeyBytes(await unwrapSecret(rek, envelope.recovery_blob, CONTEXT_VK_RECOVERY));
 }
 
 /** Password change: re-wrap VK under the new KEK. Items and devices are untouched. */
@@ -252,6 +333,13 @@ export async function rewrapVaultKeyForPassword(
   salt: Uint8Array,
   params: VaultKdfParams = DEFAULT_VAULT_KDF_PARAMS,
 ): Promise<string> {
+  // Validated BEFORE deriving: a bad params/salt value here would otherwise
+  // only surface as an unopenable envelope after the password change lands.
+  assertKdfParams(params);
+  if (!(salt instanceof Uint8Array) || salt.length !== VAULT_SALT_BYTES) {
+    throw envelopeError('malformed vault envelope: salt');
+  }
+  assertVaultKeyBytes(vk);
   const kek = await deriveVaultKe(newPassword, salt, params);
   return wrapSecret(kek, vk, CONTEXT_VK_PASSWORD);
 }
@@ -264,7 +352,12 @@ export async function rewrapVaultKeyForRecovery(
   params: VaultKdfParams = DEFAULT_VAULT_KDF_PARAMS,
 ): Promise<string> {
   const phrase = normalizeRecoveryPhrase(newPhrase);
-  if (!isValidRecoveryPhrase(phrase)) throw new Error('recovery phrase must be 12-24 words');
+  if (!isValidRecoveryPhrase(phrase)) throw new Error('recovery phrase must be 12, 15, 18, 21, or 24 words');
+  assertKdfParams(params);
+  if (!(recoverySalt instanceof Uint8Array) || recoverySalt.length !== VAULT_SALT_BYTES) {
+    throw envelopeError('malformed vault envelope: recovery_salt');
+  }
+  assertVaultKeyBytes(vk);
   const rek = await deriveVaultKe(phrase, recoverySalt, params);
   return wrapSecret(rek, vk, CONTEXT_VK_RECOVERY);
 }
@@ -346,7 +439,13 @@ export async function rewrapItemKeyForVaultKey(
 export function isValidVaultKdfParams(value: unknown): value is VaultKdfParams {
   if (typeof value !== 'object' || value === null) return false;
   const params = value as { alg?: unknown; iterations?: unknown };
-  return params.alg === 'PBKDF2-SHA256' && typeof params.iterations === 'number' && params.iterations >= 100_000;
+  if (params.alg !== 'PBKDF2-SHA256') return false;
+  const iterations: unknown = params.iterations;
+  // Integer + window. `Number.isInteger(1e15)` is true, so the ceiling is what
+  // rejects absurd-but-integral counts; `JSON.parse('1e999')` yields Infinity,
+  // which the integer check rejects before any PBKDF2 run is ever started.
+  if (typeof iterations !== 'number' || !Number.isInteger(iterations)) return false;
+  return iterations >= VAULT_KDF_MIN_ITERATIONS && iterations <= VAULT_KDF_MAX_ITERATIONS;
 }
 
 export function isValidB64(value: unknown, bytes?: number): boolean {

@@ -112,6 +112,57 @@ describe('POST /api/vault/devices — joiner starts pairing', () => {
     const drift = Date.parse(data.expires_at) - Date.now();
     assert.ok(drift > 9 * 60_000 && drift < 11 * 60_000, `default TTL should be ~10 minutes, got ${drift}ms`);
   });
+
+  it('clamps ttl_seconds into the 1–600s window → 201', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    await enableVault(cookie);
+    const pub = encodeB64(generateEphemeralKeyPair().publicKey);
+    const cases: Array<[unknown, number]> = [
+      [0, 1], // clamped up — a 0s QR would be dead on arrival
+      [-30, 1], // negative → floor
+      [2.9, 2], // floored to 2s; inside the window, so only the floor applies
+      [1e6, 600], // clamped down — an unclamped row would outlive revocation logic
+      ['abc', 600], // non-number → default (a direct Math.floor would yield NaN)
+      [null, 600],
+    ];
+    for (const [ttl, expected] of cases) {
+      const res = await createPairing(cookie, { label: 'T', peer_pub: pub, ttl_seconds: ttl });
+      assert.equal(res.status, 201, `ttl_seconds=${String(ttl)}`);
+      const { expires_at } = (await res.json()) as { expires_at: string };
+      const drift = Date.parse(expires_at) - Date.now();
+      assert.ok(
+        Math.abs(drift - expected * 1000) < 750,
+        `ttl_seconds=${String(ttl)} → ${drift}ms, expected ~${expected * 1000}ms`,
+      );
+    }
+  });
+
+  it('caps active devices at 10 → 409', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    await enableVault(cookie); // no self-registration, so we start at 0 active
+    // The server cannot interpret the blob, only its shape — enough to approve.
+    const wellFormedDummy = `${encodeB64(new Uint8Array(12))}.${encodeB64(new Uint8Array(32))}`;
+
+    for (let i = 0; i < 10; i++) {
+      const joiner = generateEphemeralKeyPair();
+      const created = await createPairing(cookie, { label: `Device ${i}`, peer_pub: encodeB64(joiner.publicKey) });
+      assert.equal(created.status, 201, `pairing ${i} must fit under the cap`);
+      const { id } = (await created.json()) as { id: string };
+      const approver = generateEphemeralKeyPair();
+      const approved = await approve(cookie, id, {
+        approved_pub: encodeB64(approver.publicKey),
+        wrapped_vk: wellFormedDummy,
+      });
+      assert.equal(approved.status, 200, `approval ${i} must count towards the cap`);
+    }
+
+    const overflow = await createPairing(cookie, {
+      label: 'One too many',
+      peer_pub: encodeB64(generateEphemeralKeyPair().publicKey),
+    });
+    assert.equal(overflow.status, 409, 'the 11th active device must be refused');
+    assert.equal(((await overflow.json()) as { error?: string }).error, 'Device limit reached');
+  });
 });
 
 describe('POST /api/vault/devices/:id/approve — approver hands over VK', () => {
@@ -374,5 +425,26 @@ describe('POST /api/vault/keys — the enabling device registers itself', () => 
     const res = await enableAs(cookie, {});
     assert.equal(res.status, 201);
     assert.equal(((await res.json()) as { device_id?: string | null }).device_id, null);
+  });
+
+  it('does not register a device when the vault already exists → 409', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const firstId = localDeviceId();
+    assert.equal((await enableAs(cookie, { device_id: firstId, device_label: 'First' })).status, 201);
+
+    // A second enable — possibly another machine — must fail AND leave no
+    // trace: the statements batch is never built after the 409, so the
+    // rejected device stays unregistered (nothing to revoke, nothing rogue).
+    const secondId = localDeviceId();
+    const second = await enableAs(cookie, { device_id: secondId, device_label: 'Second' });
+    assert.equal(second.status, 409);
+
+    const list = await fetch(`${BASE_URL}/api/vault/devices`, { headers: headers(cookie) });
+    const { devices } = (await list.json()) as { devices: Array<{ id: string }> };
+    assert.deepEqual(
+      devices.map((device) => device.id),
+      [firstId],
+      'the rejected request must not insert its device row',
+    );
   });
 });
