@@ -1,5 +1,5 @@
 import { clearMeCache } from '../lib/auth-cache';
-import { storeSrpSalt } from '../lib/auth-srp.js';
+import { createSrpProof, storeSrpSalt } from '../lib/auth-srp.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import {
   CROWD_CONSENT_CHANGE_EVENT,
@@ -14,22 +14,17 @@ import {
   stopCrowdNode,
 } from '../lib/crowd-node.js';
 import { getLocale, setLocale, t } from '../lib/i18n.js';
+import { passwordLengthError } from '../lib/password-policy.js';
 import { getReplyStyle, getShowNsfw, ReplyStyle, setReplyStyle, setShowNsfw } from '../lib/settings.js';
-import { clientStep1, clientStep2, computeVerifier, generateSalt } from '../lib/srp.js';
+import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
 import { getTheme, setTheme, Theme } from '../lib/theme.js';
+import { prepareVaultRewrap } from '../lib/vault/client.js';
 import { createAddStampModal } from './AddStampModal.js';
 
 function b64(b: Uint8Array): string {
   let binary = '';
   for (const x of b) binary += String.fromCharCode(x);
   return btoa(binary);
-}
-
-function unb64(s: string): Uint8Array {
-  const binary = atob(s);
-  const b = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) b[i] = binary.charCodeAt(i);
-  return b;
 }
 
 interface SettingsPageProps {
@@ -976,12 +971,21 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     emailSaveButton.style.opacity = '0.6';
 
     try {
+      // Re-authenticate with an SRP proof: the server verifies knowledge of
+      // the current password without ever receiving it.
+      const proof = await createSrpProof(currentPassword);
+      if (!proof) {
+        emailMessage.textContent = t('settings.current_password_incorrect');
+        emailMessage.style.color = 'var(--danger)';
+        return;
+      }
+
       const response = await fetch('/api/users/me/email', {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ current_password: currentPassword, new_email: newEmail }),
+        body: JSON.stringify({ current_srp: proof, new_email: newEmail }),
       });
 
       if (response.ok) {
@@ -1020,7 +1024,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
       return;
     }
 
-    if (newPassword.length < 8 || newPassword.length > 128) {
+    if (passwordLengthError(newPassword)) {
       passwordMessage.textContent = t('settings.password_length');
       passwordMessage.style.color = 'var(--danger)';
       return;
@@ -1032,23 +1036,32 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
     try {
       // Derive a fresh SRP verifier from the new password so the account
-      // continues to authenticate via SRP after the change.
+      // continues to authenticate via SRP after the change. Neither the
+      // current nor the new password is sent to the server: the current one is
+      // proven with an SRP handshake, the new one only as its verifier.
       const salt = generateSalt();
-      const verifier = await computeVerifier(newPassword, salt);
+      const verifier = await computeVerifier(newPassword, salt, DEFAULT_SRP_KDF);
 
-      // Prove knowledge of the CURRENT password via an SRP handshake so SRP-only
-      // accounts (no legacy hash) are still verified before the change.
-      let currentSrp: { challenge_id: string; A: string; M1: string } | undefined;
-      const reauth = await fetch('/api/auth/reauth/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-      });
-      if (reauth.ok) {
-        const r = (await reauth.json()) as { challenge_id: string; salt: string; B: string };
-        const { A, a } = await clientStep1(currentPassword, unb64(r.salt));
-        const finish = await clientStep2(currentPassword, unb64(r.salt), a, unb64(r.B));
-        currentSrp = { challenge_id: r.challenge_id, A: b64(A), M1: b64(finish.M1) };
+      const currentSrp = await createSrpProof(currentPassword);
+      if (!currentSrp) {
+        passwordMessage.textContent = t('settings.current_password_incorrect');
+        passwordMessage.style.color = 'var(--danger)';
+        return;
+      }
+
+      // Carry the vault across: VK is wrapped under a KEK derived from the OLD
+      // password, so it must be re-wrapped inside this very request. Refusing
+      // to proceed beats storing an envelope the new password cannot open.
+      const vaultRewrap = await prepareVaultRewrap(currentPassword, newPassword);
+      if (vaultRewrap.status === 'unlock_failed') {
+        passwordMessage.textContent = t('settings.current_password_incorrect');
+        passwordMessage.style.color = 'var(--danger)';
+        return;
+      }
+      if (vaultRewrap.status === 'error') {
+        passwordMessage.textContent = t('settings.password_save_failed');
+        passwordMessage.style.color = 'var(--danger)';
+        return;
       }
 
       const response = await fetch('/api/users/me/password', {
@@ -1057,12 +1070,12 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          current_password: currentPassword,
-          new_password: newPassword,
           srp_salt: b64(salt),
           srp_verifier: b64(verifier),
           srp_group: '2048',
+          srp_kdf: DEFAULT_SRP_KDF,
           current_srp: currentSrp,
+          ...(vaultRewrap.status === 'ok' ? { vault_kek: vaultRewrap.fields } : {}),
         }),
       });
 
@@ -1075,7 +1088,11 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
         confirmPasswordInput.value = '';
       } else {
         const errorData = (await response.json()) as { error?: string };
-        passwordMessage.textContent = errorData.error || t('settings.password_save_failed');
+        const message =
+          errorData.error === 'vault_rewrap_required'
+            ? t('settings.vault_rewrap_required')
+            : errorData.error || t('settings.password_save_failed');
+        passwordMessage.textContent = message;
         passwordMessage.style.color = 'var(--danger)';
       }
     } catch (_error: unknown) {

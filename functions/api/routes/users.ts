@@ -1,16 +1,11 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
+import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../src/lib/vault/primitives';
 import { deleteAccount } from '../../lib/account-deletion';
-import {
-  deleteSession,
-  getMeWithSession,
-  getSessionToken,
-  hashPassword,
-  verifyPassword,
-  verifySrpPassword,
-} from '../../lib/auth';
+import { deleteSession, getMeWithSession, getSessionToken, verifySrpPassword } from '../../lib/auth';
+import { isSupportedSrpKdf } from '../../lib/srp';
 import { detectMimeType, isAllowedImageMime, requireAuth } from '../helpers';
-import type { Bindings, PostRow, Variables } from '../types';
+import type { Bindings, PostRow, SrpProofBody, Variables } from '../types';
 
 const users = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -1022,6 +1017,12 @@ users.patch('/users/me', requireAuth, async (c) => {
 });
 
 // PATCH /users/me/email - update email (protected)
+//
+// Re-authentication is an SRP proof of the current password
+// (`current_srp = {challenge_id, A, M1}` from /api/auth/reauth/start), so the
+// password itself never reaches the server. This also fixes SRP-only accounts,
+// which previously could not change email at all: they have no `password_hash`
+// for the old plaintext path to compare against.
 users.patch('/users/me/email', requireAuth, async (c) => {
   try {
     const user = c.get('user');
@@ -1033,10 +1034,15 @@ users.patch('/users/me/email', requireAuth, async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    const { current_password, new_email } = await c.req.json();
+    const { current_srp, new_email } = await c.req.json();
 
-    if (!current_password || !new_email) {
-      return c.json({ error: 'Current password and new email are required' }, 400);
+    if (!new_email) {
+      return c.json({ error: 'New email is required' }, 400);
+    }
+
+    const proof = current_srp as SrpProofBody | undefined;
+    if (!proof?.challenge_id || !proof.A || !proof.M1) {
+      return c.json({ error: 'Current password proof is required' }, 400);
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -1046,17 +1052,7 @@ users.patch('/users/me/email', requireAuth, async (c) => {
 
     const userId = user.id;
 
-    const userWithPassword = (await c.env.DB.prepare(`
-      SELECT password_hash FROM users WHERE id = ?
-    `)
-      .bind(userId)
-      .first()) as { password_hash: string } | null;
-
-    if (!userWithPassword) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    const isValid = await verifyPassword(current_password, userWithPassword.password_hash);
+    const isValid = await verifySrpPassword(c.env, userId, proof.challenge_id, proof.A, proof.M1);
     if (!isValid) {
       return c.json({ error: 'Current password is incorrect' }, 401);
     }
@@ -1082,6 +1078,12 @@ users.patch('/users/me/email', requireAuth, async (c) => {
 });
 
 // PATCH /users/me/password - update password (protected)
+//
+// Neither the current nor the new password is ever sent: the current one is
+// proven via SRP, the new one arrives only as a verifier the client derived
+// locally. `password_hash` is blanked unconditionally so the account stops
+// carrying a value that a database dump could dictionary-attack outside the
+// protocol.
 users.patch('/users/me/password', requireAuth, async (c) => {
   try {
     const user = c.get('user');
@@ -1093,69 +1095,68 @@ users.patch('/users/me/password', requireAuth, async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    const { current_password, new_password, srp_salt, srp_verifier, srp_group, current_srp } = await c.req.json();
+    const { srp_salt, srp_verifier, srp_group, srp_kdf, current_srp, vault_kek } = await c.req.json();
 
-    const srp =
-      srp_salt && srp_verifier && srp_group
-        ? { salted: true as const, salt: srp_salt, verifier: srp_verifier, group: srp_group }
-        : null;
+    if (!srp_salt || !srp_verifier || !srp_group || !srp_kdf) {
+      return c.json({ error: 'New SRP verifier required' }, 400);
+    }
+    if (srp_group !== '2048') return c.json({ error: 'Unsupported SRP group' }, 400);
+    if (!isSupportedSrpKdf(srp_kdf)) return c.json({ error: 'Unsupported SRP KDF' }, 400);
 
-    if (!current_password && !current_srp) {
-      return c.json({ error: 'Current password is required' }, 400);
-    }
-    if (!new_password && !srp) {
-      return c.json({ error: 'New password or SRP verifier required' }, 400);
-    }
-    if (new_password && (new_password.length < 8 || new_password.length > 128)) {
-      return c.json({ error: 'Password must be 8-128 characters' }, 400);
+    const proof = current_srp as SrpProofBody | undefined;
+    if (!proof?.challenge_id || !proof.A || !proof.M1) {
+      return c.json({ error: 'Current password proof is required' }, 400);
     }
 
     const userId = user.id;
 
-    const userWithPassword = (await c.env.DB.prepare(`
-      SELECT password_hash, srp_verifier FROM users WHERE id = ?
-    `)
-      .bind(userId)
-      .first()) as { password_hash: string; srp_verifier: string | null } | null;
-
-    if (!userWithPassword) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    let verified = false;
-    if (userWithPassword.password_hash && current_password) {
-      if (await verifyPassword(current_password, userWithPassword.password_hash)) verified = true;
-    }
-    if (!verified && userWithPassword.srp_verifier && current_srp) {
-      const { challenge_id, A, M1 } = current_srp as { challenge_id?: string; A?: string; M1?: string };
-      if (challenge_id && A && M1 && (await verifySrpPassword(c.env, userId, challenge_id, A, M1))) {
-        verified = true;
-      }
-    }
+    const verified = await verifySrpPassword(c.env, userId, proof.challenge_id, proof.A, proof.M1);
     if (!verified) {
       return c.json({ error: 'Current password is incorrect' }, 401);
     }
 
-    const newPasswordHash = new_password ? await hashPassword(new_password) : null;
-
-    const sets: string[] = [];
-    const binds: unknown[] = [];
-    if (newPasswordHash) {
-      sets.push('password_hash = ?');
-      binds.push(newPasswordHash);
+    // A vault exists ⇒ VK is wrapped under a KEK derived from the OLD password.
+    // The client holds that password right now, so it must re-wrap VK in the
+    // same request; otherwise the vault is orphaned the moment this lands.
+    const vaultRow = (await c.env.DB.prepare('SELECT user_id FROM vault_keys WHERE user_id = ?')
+      .bind(userId)
+      .first()) as { user_id: string } | null;
+    const vaultUpdate = await (async () => {
+      if (!vaultRow) {
+        if (vault_kek !== undefined) return { error: 'No vault is enabled' } as const;
+        return null;
+      }
+      const rewrap = vault_kek as { salt?: unknown; kdf_params?: unknown; wrapped_vk?: unknown } | undefined;
+      if (!rewrap) return { error: 'vault_rewrap_required' } as const;
+      if (!isValidB64(rewrap.salt, 16)) return { error: 'Invalid vault salt' } as const;
+      if (!isValidVaultKdfParams(rewrap.kdf_params)) return { error: 'Unsupported vault KDF parameters' } as const;
+      if (!isValidWrappedKey(rewrap.wrapped_vk)) return { error: 'Invalid wrapped vault key' } as const;
+      return {
+        sql: `UPDATE vault_keys SET salt = ?, kdf_params = ?, wrapped_vk = ?,
+                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+              WHERE user_id = ?`,
+        binds: [rewrap.salt as string, JSON.stringify(rewrap.kdf_params), rewrap.wrapped_vk as string, userId],
+      } as const;
+    })();
+    if (vaultUpdate && 'error' in vaultUpdate) {
+      const status = vaultUpdate.error === 'vault_rewrap_required' ? 409 : 400;
+      return c.json({ error: vaultUpdate.error }, status);
     }
-    if (srp) {
-      if (srp.group !== '2048') return c.json({ error: 'Unsupported SRP group' }, 400);
-      sets.push('srp_salt = ?, srp_verifier = ?, srp_group = ?');
-      binds.push(srp.salt, srp.verifier, srp.group);
+
+    // password_hash is blanked unconditionally: the account must stop carrying
+    // a value a dump could dictionary-attack outside the SRP protocol.
+    const statements = [
+      c.env.DB.prepare(
+        `UPDATE users SET password_hash = '', srp_salt = ?, srp_verifier = ?, srp_group = ?, srp_kdf = ? WHERE id = ?`,
+      ).bind(srp_salt, srp_verifier, srp_group, srp_kdf, userId),
+    ];
+    if (vaultUpdate) {
+      statements.push(c.env.DB.prepare(vaultUpdate.sql).bind(...vaultUpdate.binds));
     }
-    binds.push(userId);
-
-    const result = await c.env.DB.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`)
-      .bind(...binds)
-      .run();
-
-    if (!result.success) {
+    // batch() is atomic: the vault must never end up pointing at a KEK the new
+    // password cannot derive, or vice versa.
+    const results = await c.env.DB.batch(statements);
+    if (results.some((r) => !r.success)) {
       return c.json({ error: 'Failed to update password' }, 500);
     }
 

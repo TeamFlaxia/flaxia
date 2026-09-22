@@ -1,6 +1,11 @@
 import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
-import { BASE_URL, loginUser, registerUser, resetDb } from './helpers/setup.ts';
+import { computeVerifier, generateSalt } from '../src/lib/srp.ts';
+import { BASE_URL, loginUser, registerUser, resetDb, seedLegacyUser } from './helpers/setup.ts';
+
+function b64(b: Uint8Array): string {
+  return Buffer.from(b).toString('base64');
+}
 
 describe('POST /api/auth/register', () => {
   beforeEach(resetDb);
@@ -40,12 +45,59 @@ describe('POST /api/auth/register', () => {
     assert.equal(res.status, 409);
   });
 
-  it('rejects password shorter than 8 chars → 400', async () => {
-    const res = await registerUser({
-      email: 'a@test.com',
-      password: 'short',
-      username: 'usera',
-      display_name: 'User A',
+  it('rejects plaintext registration (no SRP verifier) → 400', async () => {
+    // Registration is SRP-only: the server must never receive a password, so
+    // a body carrying one instead of a verifier is refused outright.
+    const res = await fetch(`${BASE_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'a@test.com',
+        password: 'password123',
+        username: 'usera',
+        display_name: 'User A',
+      }),
+    });
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error?: string };
+    assert.match(body.error ?? '', /SRP verifier/);
+  });
+
+  it('rejects an unknown srp_kdf → 400', async () => {
+    // The KDF id is an allowlist, not a passthrough: a client must not be able
+    // to register an account whose verifier is cheap to dictionary-attack.
+    const salt = generateSalt();
+    const verifier = await computeVerifier('password123', salt, 'sha256-v1');
+    const res = await fetch(`${BASE_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'a@test.com',
+        username: 'usera',
+        display_name: 'User A',
+        srp_salt: b64(salt),
+        srp_verifier: b64(verifier),
+        srp_group: '2048',
+        srp_kdf: 'pbkdf2-1-v2',
+      }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it('rejects a verifier of the wrong length → 400', async () => {
+    const salt = generateSalt();
+    const res = await fetch(`${BASE_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'a@test.com',
+        username: 'usera',
+        display_name: 'User A',
+        srp_salt: b64(salt),
+        srp_verifier: b64(new Uint8Array(32)),
+        srp_group: '2048',
+        srp_kdf: 'pbkdf2-600k-v2',
+      }),
     });
     assert.equal(res.status, 400);
   });
@@ -69,7 +121,7 @@ describe('POST /api/auth/register', () => {
     assert.equal(res.status, 400);
   });
 
-  it('rejects missing password → 400', async () => {
+  it('rejects missing SRP verifier → 400', async () => {
     const res = await fetch(`${BASE_URL}/api/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -152,36 +204,6 @@ describe('POST /api/auth/register', () => {
       display_name: 'User A',
     });
     assert.equal(res.status, 400);
-  });
-
-  it('rejects password of length 7 → 400', async () => {
-    const res = await registerUser({
-      email: 'a@test.com',
-      password: '1234567',
-      username: 'usera',
-      display_name: 'User A',
-    });
-    assert.equal(res.status, 400);
-  });
-
-  it('rejects password of length 129 → 400', async () => {
-    const res = await registerUser({
-      email: 'a@test.com',
-      password: 'a'.repeat(129),
-      username: 'usera',
-      display_name: 'User A',
-    });
-    assert.equal(res.status, 400);
-  });
-
-  it('accepts password of length 128 → 201', async () => {
-    const res = await registerUser({
-      email: 'a@test.com',
-      password: 'a'.repeat(128),
-      username: 'usera',
-      display_name: 'User A',
-    });
-    assert.equal(res.status, 201);
   });
 
   it('rejects username longer than 20 chars → 400', async () => {
@@ -331,6 +353,20 @@ describe('POST /api/auth/login', () => {
       body: JSON.stringify({}),
     });
     assert.equal(res.status, 400);
+  });
+
+  it('still admits a pre-SRP account through the deprecated plaintext path', async () => {
+    // This route exists only for accounts that predate SRP and must keep
+    // working until the cutoff (see the note on POST /api/auth/login).
+    await seedLegacyUser('legacy@test.com', 'legacy-password-1', 'legacypw');
+    const { res } = await loginUser('legacy@test.com', 'legacy-password-1');
+    assert.equal(res.status, 200);
+  });
+
+  it('rejects a wrong password on the deprecated plaintext path → 401', async () => {
+    await seedLegacyUser('legacy2@test.com', 'legacy-password-2', 'legacypw2');
+    const { res } = await loginUser('legacy2@test.com', 'not-the-password');
+    assert.equal(res.status, 401);
   });
 });
 

@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { Hono } from 'hono';
+import { hashPassword } from '../../lib/auth.ts';
 import { ensureNsfwScansTable, ensurePendingEmbedsTable } from '../../lib/crowd.ts';
 import type { Bindings, Variables } from '../types';
 
@@ -82,6 +83,9 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
       'follows',
       'posts',
       'actor_keys',
+      'vault_items',
+      'device_keys',
+      'vault_keys',
       'user_profiles',
       'push_subscriptions',
       'device_tokens',
@@ -177,6 +181,39 @@ app.post('/api/test/subscription', requireTestEnvironment, async (c) => {
   }
 
   return c.json({ id, userId: user.id });
+});
+
+// POST /api/test/seed-legacy-user - create an account that predates SRP.
+//
+// Registration is SRP-only, but the deprecated plaintext POST /api/auth/login
+// must stay covered until it is deleted (see its cutoff note). This is the only
+// way to produce an account that can still reach it.
+app.post('/api/test/seed-legacy-user', requireTestEnvironment, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    email?: string;
+    password?: string;
+    username?: string;
+    display_name?: string;
+  };
+  if (!body.email || !body.password || !body.username) {
+    return c.json({ error: 'email, password and username are required' }, 400);
+  }
+
+  const db = c.env.DB;
+  const existing = await db.prepare('SELECT id FROM users WHERE email = ?').bind(body.email).first<{ id: string }>();
+  if (existing) return c.json({ error: 'Email already registered' }, 409);
+
+  const userId = crypto.randomUUID();
+  const passwordHash = await hashPassword(body.password);
+  await db
+    .prepare(
+      `INSERT INTO users (id, email, password_hash, username, display_name, bio)
+       VALUES (?, ?, ?, ?, ?, '')`,
+    )
+    .bind(userId, body.email, passwordHash, body.username, body.display_name ?? body.username)
+    .run();
+
+  return c.json({ id: userId }, 201);
 });
 
 export default app;

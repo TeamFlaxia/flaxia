@@ -105,3 +105,47 @@ describe('security guards', () => {
     }
   });
 });
+
+// The invariants of docs/e2ee.md that are cheap to break and expensive to
+// notice: a plaintext password field or a server-side unwrap both compile and
+// pass ordinary tests while silently voiding the threat model.
+describe('plaintext passwords are retired (docs/e2ee.md)', () => {
+  it('no new code path puts a password in a request body', () => {
+    const settings = readFileSync(join(ROOT, 'src/components/SettingsPage.ts'), 'utf8');
+    assert.ok(!/current_password\s*:/.test(settings), 'settings must prove the password with SRP, not send it');
+    assert.ok(!/new_password\s*:/.test(settings), 'a new password only travels as a verifier');
+
+    const users = readFileSync(join(ROOT, 'functions/api/routes/users.ts'), 'utf8');
+    assert.ok(!/current_password\s*:/.test(users), 'the server must not accept a plaintext current password');
+    assert.ok(!/new_password\s*:/.test(users), 'the server must not accept a plaintext new password');
+  });
+
+  it('registration is SRP-only and the legacy login carries its removal condition', () => {
+    const auth = readFileSync(join(ROOT, 'functions/api/routes/auth.ts'), 'utf8');
+    assert.ok(auth.includes('SRP verifier required'), 'plaintext registration must be rejected');
+    assert.ok(auth.includes('CUTOFF: delete this route'), 'legacy /login must document when it dies');
+
+    const admin = readFileSync(join(ROOT, 'functions/api/routes/admin.ts'), 'utf8');
+    assert.ok(admin.includes('cutoff_reached'), 'the removal condition must be measurable, not folklore');
+  });
+
+  it('the server never derives or opens vault key material', () => {
+    const offenders = walk(join(ROOT, 'functions'))
+      .filter((file) =>
+        /deriveVaultKe|unlockVaultWith|unwrapSecret|decryptVaultItem|wrapVaultKey/.test(readFileSync(file, 'utf8')),
+      )
+      .map((file) => relative(ROOT, file));
+    assert.deepEqual(offenders, [], `vault cryptography must stay client-side: ${offenders.join(', ')}`);
+
+    const vault = readFileSync(join(ROOT, 'functions/api/routes/vault.ts'), 'utf8');
+    assert.ok(!/password\s*:/.test(vault), 'vault routes must never read a password field');
+    assert.ok(vault.includes('isValidVaultKdfParams'), 'opaque values must still be shape-checked');
+  });
+
+  it('the threat model states its invariants', () => {
+    const spec = readFileSync(join(ROOT, 'docs/e2ee.md'), 'utf8');
+    for (const invariant of ['server must never receive', 'No server-side escrow', 'allow-same-origin']) {
+      assert.ok(spec.includes(invariant), `docs/e2ee.md must state: ${invariant}`);
+    }
+  });
+});

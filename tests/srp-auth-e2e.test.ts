@@ -1,7 +1,14 @@
 import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
-import { clientStep1, clientStep2, computeVerifier, generateSalt, verifyServerProof } from '../src/lib/srp.ts';
-import { BASE_URL, resetDb, seedUserAndLogin } from './helpers/setup.ts';
+import {
+  clientStep1,
+  clientStep2,
+  computeVerifier,
+  DEFAULT_SRP_KDF,
+  generateSalt,
+  verifyServerProof,
+} from '../src/lib/srp.ts';
+import { BASE_URL, resetDb, seedLegacyUser } from './helpers/setup.ts';
 
 function b64(b: Uint8Array): string {
   return Buffer.from(b).toString('base64');
@@ -12,7 +19,7 @@ function unb64(s: string): Uint8Array {
 
 async function registerSrp(email: string, username: string, password: string): Promise<Response> {
   const salt = generateSalt();
-  const v = await computeVerifier(password, salt);
+  const v = await computeVerifier(password, salt, DEFAULT_SRP_KDF);
   return fetch(`${BASE_URL}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -23,6 +30,7 @@ async function registerSrp(email: string, username: string, password: string): P
       srp_salt: b64(salt),
       srp_verifier: b64(v),
       srp_group: '2048',
+      srp_kdf: DEFAULT_SRP_KDF,
     }),
   });
 }
@@ -90,7 +98,8 @@ describe('SRP-6a authentication (server never sees plaintext password)', () => {
   });
 
   it('legacy /login/start signals fallback for non-SRP accounts', async () => {
-    await seedUserAndLogin('legacysrp');
+    // Only a pre-SRP account can lack a verifier now: registration is SRP-only.
+    await seedLegacyUser('noversrp@test.com', 'legacy-password-1', 'noversrp');
     const start = await fetch(`${BASE_URL}/api/auth/login/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -98,5 +107,13 @@ describe('SRP-6a authentication (server never sees plaintext password)', () => {
     });
     const data = (await start.json()) as { srp: boolean };
     assert.equal(data.srp, false);
+
+    // ...and the deprecated plaintext endpoint still admits it.
+    const legacy = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'noversrp@test.com', password: 'legacy-password-1' }),
+    });
+    assert.equal(legacy.status, 200);
   });
 });

@@ -78,6 +78,11 @@ export async function deleteAccount(env: Env, userId: string): Promise<void> {
   // device_tokens was removed in migration 0035 (Web Push replaced FCM).
   statements.push(db.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').bind(userId));
 
+  // --- Personal vault: wrapped key material and ciphertext only (docs/e2ee.md) ---
+  statements.push(db.prepare('DELETE FROM vault_items WHERE user_id = ?').bind(userId));
+  statements.push(db.prepare('DELETE FROM device_keys WHERE user_id = ?').bind(userId));
+  statements.push(db.prepare('DELETE FROM vault_keys WHERE user_id = ?').bind(userId));
+
   // --- User preference / recommender state ---
   statements.push(db.prepare('DELETE FROM user_profiles WHERE user_id = ?').bind(userId));
   statements.push(db.prepare('DELETE FROM bandit_state WHERE user_id = ?').bind(userId));

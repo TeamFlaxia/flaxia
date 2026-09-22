@@ -249,6 +249,8 @@
   "settings.change_password": "パスワード変更",
   "settings.password_current": "現在のパスワード",
   "settings.password_current_placeholder": "現在のパスワードを入力",
+  "settings.current_password_incorrect": "現在のパスワードが正しくありません",
+  "settings.vault_rewrap_required": "パスワードは変更されませんでした。保管庫の再ラップに失敗しました。もう一度お試しください。",
   "settings.password_new": "新しいパスワード",
   "settings.password_new_placeholder": "新しいパスワードを入力",
   "settings.password_confirm": "新しいパスワード（確認）",

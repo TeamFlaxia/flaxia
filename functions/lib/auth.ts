@@ -1,5 +1,8 @@
 import { nanoid } from 'nanoid';
-import { serverStep1, serverStep2 } from './srp';
+// Extension kept explicit: this module is also imported by Node-run tests
+// (tests/security-guards.test.ts reaches it through routes/tests.ts), and Node
+// ESM does not resolve extensionless relative specifiers.
+import { isSupportedSrpKdf, serverStep1, serverStep2 } from './srp.ts';
 
 export interface User {
   id: string;
@@ -211,21 +214,23 @@ export interface SrpRegistration {
   salt: string; // base64 (16 bytes)
   verifier: string; // base64 (256 bytes)
   group: string; // '2048'
+  kdf: string; // 'sha256-v1' | 'pbkdf2-600k-v2' — how the client derived x
 }
 
-// Register user. Supports either legacy password-based registration or
-// SRP-based registration where the client computes the verifier locally.
+// Register a new account. SRP-only: the server never receives the password, so
+// there is no legacy plaintext branch to fall back to. Password policy
+// (8-128 chars) is enforced client-side because there is nothing to check
+// server-side once only a verifier is sent.
 export async function registerUser(
   env: Env,
   userData: {
     email: string;
-    password?: string;
     username: string;
     display_name: string;
-    srp?: SrpRegistration;
+    srp: SrpRegistration;
   },
 ): Promise<User> {
-  const { email, password, username, display_name, srp } = userData;
+  const { email, username, display_name, srp } = userData;
 
   // Check if email already exists
   const existingEmail = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
@@ -244,34 +249,19 @@ export async function registerUser(
   // Generate user ID
   const userId = nanoid();
 
-  let passwordHash: string = '';
-  let srpSalt: string | null = null;
-  let srpVerifier: string | null = null;
-  let srpGroup: string | null = null;
+  if (srp.group !== '2048') throw new Error('Unsupported SRP group');
+  if (!isSupportedSrpKdf(srp.kdf)) throw new Error('Unsupported SRP KDF');
+  // Basic length sanity checks (16-byte salt, 256-byte verifier).
+  if (base64ToUint8Array(srp.salt).length !== 16) throw new Error('Invalid SRP salt');
+  if (base64ToUint8Array(srp.verifier).length !== 256) throw new Error('Invalid SRP verifier');
 
-  if (srp) {
-    if (srp.group !== '2048') throw new Error('Unsupported SRP group');
-    // Basic length sanity checks (16-byte salt, 256-byte verifier).
-    if (base64ToUint8Array(srp.salt).length !== 16) throw new Error('Invalid SRP salt');
-    if (base64ToUint8Array(srp.verifier).length !== 256) throw new Error('Invalid SRP verifier');
-    srpSalt = srp.salt;
-    srpVerifier = srp.verifier;
-    srpGroup = srp.group;
-    // SRP-only accounts have no legacy hash; store empty string so the NOT
-    // NULL column is satisfied and legacy login correctly fails.
-    passwordHash = '';
-  } else if (password) {
-    passwordHash = await hashPassword(password);
-  } else {
-    throw new Error('Password or SRP verifier required');
-  }
-
-  // Create user
-  const result = await env.DB.prepare(`
-    INSERT INTO users (id, email, password_hash, username, display_name, bio, srp_salt, srp_verifier, srp_group)
-    VALUES (?, ?, ?, ?, ?, '', ?, ?, ?)
-  `)
-    .bind(userId, email, passwordHash, username, display_name, srpSalt, srpVerifier, srpGroup)
+  // SRP-only accounts have no legacy hash; store empty string so the NOT NULL
+  // column is satisfied and legacy login correctly fails.
+  const result = await env.DB.prepare(
+    `INSERT INTO users (id, email, password_hash, username, display_name, bio, srp_salt, srp_verifier, srp_group, srp_kdf)
+     VALUES (?, ?, '', ?, ?, '', ?, ?, ?, ?)`,
+  )
+    .bind(userId, email, username, display_name, srp.salt, srp.verifier, srp.group, srp.kdf)
     .run();
 
   if (!result.success) {
@@ -289,15 +279,16 @@ export async function registerUser(
   return user;
 }
 
-// Begin an SRP login: returns the server ephemeral B and the user's salt.
+// Begin an SRP login: returns the server ephemeral B, the user's salt, and the
+// KDF id the stored verifier was derived with (the client needs it to compute x).
 // Returns null if the user has no SRP verifier (client should fall back to legacy).
 export async function startSrpLogin(
   env: Env,
   email: string,
-): Promise<{ challengeId: string; salt: string; B: string } | null> {
-  const user = (await env.DB.prepare('SELECT id, srp_salt, srp_verifier FROM users WHERE email = ?')
+): Promise<{ challengeId: string; salt: string; B: string; kdf: string } | null> {
+  const user = (await env.DB.prepare('SELECT id, srp_salt, srp_verifier, srp_kdf FROM users WHERE email = ?')
     .bind(email)
-    .first()) as { id: string; srp_salt: string | null; srp_verifier: string | null } | null;
+    .first()) as { id: string; srp_salt: string | null; srp_verifier: string | null; srp_kdf: string | null } | null;
 
   if (!user || !user.srp_verifier || !user.srp_salt) return null;
 
@@ -314,7 +305,13 @@ export async function startSrpLogin(
     .run();
   if (!insert.success) throw new Error('Failed to store SRP handshake');
 
-  return { challengeId, salt: user.srp_salt, B: uint8ArrayToBase64(B) };
+  return {
+    challengeId,
+    salt: user.srp_salt,
+    B: uint8ArrayToBase64(B),
+    // Rows written before migration 0090 have no label; they are all v1.
+    kdf: user.srp_kdf ?? 'sha256-v1',
+  };
 }
 
 // Finish an SRP login: validates M1 and returns the session on success.
@@ -374,13 +371,18 @@ export async function verifySrpLogin(
 }
 
 // Store (or replace) the SRP verifier for an already-authenticated user.
-// Used to upgrade a legacy account to SRP.
+// Used to upgrade a legacy account to SRP and to migrate v1 verifiers to v2 —
+// both happen at a moment where the browser holds the plaintext password.
+// The server never derives x itself; it only records what the client computed.
 export async function upgradeSrp(env: Env, userId: string, srp: SrpRegistration): Promise<void> {
   if (srp.group !== '2048') throw new Error('Unsupported SRP group');
+  if (!isSupportedSrpKdf(srp.kdf)) throw new Error('Unsupported SRP KDF');
   if (base64ToUint8Array(srp.salt).length !== 16) throw new Error('Invalid SRP salt');
   if (base64ToUint8Array(srp.verifier).length !== 256) throw new Error('Invalid SRP verifier');
-  const result = await env.DB.prepare('UPDATE users SET srp_salt = ?, srp_verifier = ?, srp_group = ? WHERE id = ?')
-    .bind(srp.salt, srp.verifier, srp.group, userId)
+  const result = await env.DB.prepare(
+    'UPDATE users SET srp_salt = ?, srp_verifier = ?, srp_group = ?, srp_kdf = ? WHERE id = ?',
+  )
+    .bind(srp.salt, srp.verifier, srp.group, srp.kdf, userId)
     .run();
   if (!result.success) throw new Error('Failed to upgrade SRP');
 }

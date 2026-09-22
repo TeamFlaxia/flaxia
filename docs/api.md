@@ -6,15 +6,44 @@ All API endpoints are served from `functions/api/[[route]].ts` via Hono framewor
 
 ## Authentication
 
+SRP-6a end-to-end: the browser derives the verifier locally and the server
+never sees a password (see `docs/e2ee.md`).
+
 ### Register
 `POST /api/auth/register`
-- Body: `{ email, password, username }`
+- Body: `{ email, username, display_name, srp: { salt, verifier, group, kdf } }`
+- SRP verifier is **required** — a plaintext `password` field is rejected with 400
 - Returns session cookie
 
-### Login
-`POST /api/auth/login`
-- Body: `{ email, password }`
-- Returns session cookie
+### Login (SRP)
+1. `POST /api/auth/login/start` — `{ email }` → `{ challenge_id, salt, B, srp }`
+   - `srp: false` means a pre-SRP account; only then may the client fall back
+2. `POST /api/auth/login/verify` — `{ challenge_id, A, M1 }` → session cookie
+   - The client derives `M1` with the KDF id returned in step 1 (`srp_kdf`)
+
+### Re-authentication proof
+Used whenever an action needs proof that the *current password* is in hand
+(password change, email change, vault enable/rotation). The password itself is
+never sent.
+
+1. `POST /api/auth/reauth/start` — no body (session cookie only) →
+   `{ challenge_id, salt, B, srp_kdf }`
+2. The client derives `A` and `M1` locally and sends `{ challenge_id, A, M1 }`
+   as `current_srp` inside the sensitive request body. The endpoint that
+   consumes it deletes the handshake, so a proof is single-use.
+
+`POST /api/auth/reauth/verify` — `{ challenge_id, A, M1 }` → `{ valid }` is the
+yes/no variant for callers that do not want to attach the proof to another
+request. It never creates a session.
+
+### Legacy login (deprecated)
+`POST /api/auth/login` — `{ email, password }`
+- Exists **only** for accounts created before SRP (`srp_salt IS NULL`)
+- Deleted once `GET /api/admin/auth-migration` reports `cutoff_reached`
+
+### Upgrade SRP
+`POST /api/auth/upgrade-srp` — stores a verifier for a legacy account (called
+automatically after a successful legacy login, or on password change)
 
 ### Logout
 `POST /api/auth/logout`
@@ -22,6 +51,33 @@ All API endpoints are served from `functions/api/[[route]].ts` via Hono framewor
 ### Me
 `GET /api/auth/me`
 - Returns current user info
+
+---
+
+## Personal Vault (E2EE)
+
+Wrapped key material only — the server cannot decrypt anything here
+(`docs/e2ee.md`).
+
+### Get envelope
+`GET /api/vault/keys`
+- Returns `{ enabled: false }`, or `{ salt, recovery_salt, kdf_params,
+  wrapped_vk, recovery_blob, vk_version, devices }`
+
+### Enable
+`POST /api/vault/keys`
+- Body: `{ current_srp, salt, recovery_salt, kdf_params, wrapped_vk, recovery_blob }`
+- 409 if a vault already exists; 400 on malformed key material or a cheap KDF
+
+### Rotate envelope
+`PUT /api/vault/keys`
+- Body: same as enable plus `vk_version` (the value currently stored)
+- 409 on a stale `vk_version`; bumps the stored version on success
+
+### Password change with a vault
+`PATCH /api/users/me/password` must include `vault_kek: { salt, kdf_params,
+wrapped_vk }`, re-wrapped under the new password in the same request.
+Omitting it fails with **409 `vault_rewrap_required`**.
 
 ---
 

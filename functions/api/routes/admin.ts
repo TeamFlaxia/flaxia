@@ -953,4 +953,49 @@ admin.post('/backfill-embeddings', requireAuth, requireAdmin, async (c) => {
   }
 });
 
+// GET /auth-migration — progress of the plaintext-password retirement.
+//
+// Two independent counters, because they retire at different times:
+//   no_srp       accounts that can only use the deprecated POST /auth/login.
+//                Hits 0 as every remaining legacy account signs in once.
+//   plaintext_hash accounts still carrying password_hash (PBKDF2). Non-empty
+//                for the same set; it is blanked by the upgrade itself.
+// `cutoffReached` is the signal that POST /api/auth/login can be deleted (see
+// the comment on that route). srp_v1 rows are verifiers still derived with a
+// single SHA-256; they migrate at the next password-holding event.
+admin.get('/auth-migration', requireAuth, requireAdmin, async (c) => {
+  try {
+    const row = await c.env.DB.prepare(
+      `SELECT
+         COUNT(*) AS total,
+         COALESCE(SUM(CASE WHEN password_hash <> '' THEN 1 ELSE 0 END), 0) AS plaintext_hash,
+         COALESCE(SUM(CASE WHEN srp_salt IS NULL THEN 1 ELSE 0 END), 0) AS no_srp,
+         COALESCE(SUM(CASE WHEN srp_kdf = 'sha256-v1' THEN 1 ELSE 0 END), 0) AS srp_v1,
+         COALESCE(SUM(CASE WHEN srp_kdf = 'pbkdf2-600k-v2' THEN 1 ELSE 0 END), 0) AS srp_v2,
+         COALESCE(SUM(CASE WHEN srp_salt IS NOT NULL AND srp_kdf IS NULL THEN 1 ELSE 0 END), 0) AS srp_kdf_unlabelled
+       FROM users`,
+    ).first<{
+      total: number;
+      plaintext_hash: number;
+      no_srp: number;
+      srp_v1: number;
+      srp_v2: number;
+      srp_kdf_unlabelled: number;
+    }>();
+
+    const stats = row ?? {
+      total: 0,
+      plaintext_hash: 0,
+      no_srp: 0,
+      srp_v1: 0,
+      srp_v2: 0,
+      srp_kdf_unlabelled: 0,
+    };
+    return c.json({ ...stats, cutoff_reached: stats.plaintext_hash === 0 && stats.no_srp === 0 });
+  } catch (error: unknown) {
+    console.error('Auth migration stats error:', error);
+    return c.json({ error: 'Failed to read migration stats' }, 500);
+  }
+});
+
 export default admin;

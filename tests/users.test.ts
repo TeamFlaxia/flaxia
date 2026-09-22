@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
-import { BASE_URL, loginUser, resetDb, seedUserAndLogin } from './helpers/setup.ts';
+import { BASE_URL, createSrpProof, loginUser, resetDb, seedUserAndLogin, srpVerifierPayload } from './helpers/setup.ts';
 
 describe('GET /api/users/:username', () => {
   beforeEach(resetDb);
@@ -260,14 +260,11 @@ describe('PATCH /api/users/me', () => {
 describe('PATCH /api/users/me/email — validation', () => {
   beforeEach(resetDb);
 
-  it('rejects missing current_password → 400', async () => {
+  it('rejects missing current-password proof → 400', async () => {
     const { cookie } = await seedUserAndLogin('1');
     const res = await fetch(`${BASE_URL}/api/users/me/email`, {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: cookie,
-      },
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
       body: JSON.stringify({ new_email: 'new@test.com' }),
     });
     assert.equal(res.status, 400);
@@ -277,11 +274,8 @@ describe('PATCH /api/users/me/email — validation', () => {
     const { cookie } = await seedUserAndLogin('1');
     const res = await fetch(`${BASE_URL}/api/users/me/email`, {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: cookie,
-      },
-      body: JSON.stringify({ current_password: 'password123' }),
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({}),
     });
     assert.equal(res.status, 400);
   });
@@ -290,113 +284,146 @@ describe('PATCH /api/users/me/email — validation', () => {
     const { cookie } = await seedUserAndLogin('1');
     const res = await fetch(`${BASE_URL}/api/users/me/email`, {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: cookie,
-      },
-      body: JSON.stringify({ current_password: 'password123', new_email: 'invalid-email' }),
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      // Shape-valid proof: format validation happens before it is verified.
+      body: JSON.stringify({
+        current_srp: { challenge_id: 'unused', A: 'unused', M1: 'unused' },
+        new_email: 'invalid-email',
+      }),
     });
     assert.equal(res.status, 400);
   });
 
-  it('rejects wrong current password → 401', async () => {
+  it('rejects a proof from the wrong password → 401', async () => {
     const { cookie } = await seedUserAndLogin('1');
+    const proof = await createSrpProof(cookie, 'wrongpassword');
+    assert.ok(proof, 'proof should be produced for the wrong password');
     const res = await fetch(`${BASE_URL}/api/users/me/email`, {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: cookie,
-      },
-      body: JSON.stringify({ current_password: 'wrongpassword', new_email: 'new@test.com' }),
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ current_srp: proof, new_email: 'new@test.com' }),
     });
     assert.equal(res.status, 401);
   });
 
-  it('rejects unauthenticated request → 401', async () => {
+  it('rejects an unauthenticated request → 401', async () => {
     const res = await fetch(`${BASE_URL}/api/users/me/email`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ current_password: 'password123', new_email: 'new@test.com' }),
+      body: JSON.stringify({ current_srp: { challenge_id: 'x', A: 'y', M1: 'z' }, new_email: 'new@test.com' }),
     });
     assert.equal(res.status, 401);
+  });
+
+  it('changes email with a valid SRP proof → 200', async () => {
+    // SRP-only accounts have no password_hash, so this path is the only way
+    // they can ever change email.
+    const { cookie } = await seedUserAndLogin('1');
+    const proof = await createSrpProof(cookie, 'password123');
+    assert.ok(proof);
+    const res = await fetch(`${BASE_URL}/api/users/me/email`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ current_srp: proof, new_email: 'new@test.com' }),
+    });
+    assert.equal(res.status, 200);
   });
 });
 
 describe('PATCH /api/users/me/password — validation', () => {
   beforeEach(resetDb);
 
-  it('rejects missing current_password → 400', async () => {
+  it('rejects a request without a new verifier → 400', async () => {
     const { cookie } = await seedUserAndLogin('1');
+    const proof = await createSrpProof(cookie, 'password123');
     const res = await fetch(`${BASE_URL}/api/users/me/password`, {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: cookie,
-      },
-      body: JSON.stringify({ new_password: 'newpassword123' }),
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ current_srp: proof }),
     });
     assert.equal(res.status, 400);
   });
 
-  it('rejects missing new_password → 400', async () => {
+  it('rejects a request without a current-password proof → 400', async () => {
     const { cookie } = await seedUserAndLogin('1');
+    const verifier = await srpVerifierPayload('newpassword123');
     const res = await fetch(`${BASE_URL}/api/users/me/password`, {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: cookie,
-      },
-      body: JSON.stringify({ current_password: 'password123' }),
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify(verifier),
     });
     assert.equal(res.status, 400);
   });
 
-  it('rejects new password shorter than 8 chars → 400', async () => {
+  it('rejects the plaintext current_password/new_password shape → 400', async () => {
+    // Both halves of the old request are gone: neither value may reach the
+    // server in cleartext any more.
     const { cookie } = await seedUserAndLogin('1');
     const res = await fetch(`${BASE_URL}/api/users/me/password`, {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: cookie,
-      },
-      body: JSON.stringify({ current_password: 'password123', new_password: 'short' }),
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ current_password: 'password123', new_password: 'newpassword123' }),
     });
     assert.equal(res.status, 400);
   });
 
-  it('rejects new password of length 129 → 400', async () => {
+  it('rejects an unsupported srp_kdf → 400', async () => {
     const { cookie } = await seedUserAndLogin('1');
+    const proof = await createSrpProof(cookie, 'password123');
+    const verifier = await srpVerifierPayload('newpassword123');
     const res = await fetch(`${BASE_URL}/api/users/me/password`, {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: cookie,
-      },
-      body: JSON.stringify({ current_password: 'password123', new_password: 'a'.repeat(129) }),
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ ...verifier, srp_kdf: 'pbkdf2-1-v2', current_srp: proof }),
     });
     assert.equal(res.status, 400);
   });
 
-  it('rejects wrong current password → 401', async () => {
+  it('rejects a proof from the wrong password → 401', async () => {
     const { cookie } = await seedUserAndLogin('1');
+    const proof = await createSrpProof(cookie, 'wrongpassword');
+    assert.ok(proof);
+    const verifier = await srpVerifierPayload('newpassword123');
     const res = await fetch(`${BASE_URL}/api/users/me/password`, {
       method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Cookie: cookie,
-      },
-      body: JSON.stringify({ current_password: 'wrongpassword', new_password: 'newpassword123' }),
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ ...verifier, current_srp: proof }),
     });
     assert.equal(res.status, 401);
   });
 
-  it('rejects unauthenticated request → 401', async () => {
+  it('rejects an unauthenticated request → 401', async () => {
     const res = await fetch(`${BASE_URL}/api/users/me/password`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ current_password: 'password123', new_password: 'newpassword123' }),
+      body: JSON.stringify({
+        srp_salt: 'x',
+        srp_verifier: 'y',
+        srp_group: '2048',
+        srp_kdf: 'pbkdf2-600k-v2',
+        current_srp: { challenge_id: 'a', A: 'b', M1: 'c' },
+      }),
     });
     assert.equal(res.status, 401);
+  });
+
+  it('changes password without sending either password, then both work → 200', async () => {
+    const { cookie, email } = await seedUserAndLogin('1');
+    const proof = await createSrpProof(cookie, 'password123');
+    assert.ok(proof);
+    const verifier = await srpVerifierPayload('brandnewpass1');
+    const res = await fetch(`${BASE_URL}/api/users/me/password`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ ...verifier, current_srp: proof }),
+    });
+    assert.equal(res.status, 200);
+
+    const wrong = await loginUser(email, 'password123');
+    assert.equal(wrong.res.status, 401, 'old password must stop working');
+
+    const right = await loginUser(email, 'brandnewpass1');
+    assert.equal(right.res.status, 200, 'new password must work');
   });
 });
 

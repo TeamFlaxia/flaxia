@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
-import { BASE_URL, resetDb } from './helpers/setup.ts';
+import { BASE_URL, loginUser, registerUser, resetDb } from './helpers/setup.ts';
 
 // Crowd integration tests.
 //
@@ -22,18 +22,31 @@ let seq = 0;
 async function loginUnique(): Promise<string> {
   const s = `ct${RUN}_${++seq}`;
   const email = `${s}@test.com`;
-  await fetch(`${BASE_URL}/api/auth/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', username: s, display_name: `Crowd ${s}` }),
-  });
-  const res = await fetch(`${BASE_URL}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123' }),
-  });
-  const cookie = res.headers.get('set-cookie') ?? '';
+  // Registration is SRP-only and login goes through the handshake, so both run
+  // through the shared helpers rather than raw fetches.
+  const reg = await registerUser({ email, password: 'password123', username: s, display_name: `Crowd ${s}` });
+  assert.equal(reg.status, 201, 'expected registration to succeed');
+  const { cookie } = await loginUser(email, 'password123');
   assert.ok(cookie, 'expected a session cookie after login');
+  return cookie;
+}
+
+// The admin username is fixed in ADMIN_USERNAMES, so reset users first to
+// avoid collisions with stale rows in the persistent local test DB. A stale
+// admin may survive the reset anyway (the reset clears a different binding in
+// some setups), which is why login is attempted even when registration 409s:
+// loginUser handles both an SRP account and a leftover pre-SRP one.
+async function loginAdmin(): Promise<string> {
+  await resetDb();
+  const creds = {
+    email: 'admin@test.com',
+    password: 'password123',
+    username: 'remydrescarlet',
+    display_name: 'Admin',
+  };
+  await registerUser(creds);
+  const { cookie } = await loginUser(creds.email, creds.password);
+  assert.ok(cookie, 'expected admin session cookie');
   return cookie;
 }
 
@@ -345,29 +358,7 @@ describe('POST /api/admin/backfill-nsfw', () => {
   });
 
   it('returns success even with no image candidates', async () => {
-    // The admin username is fixed in ADMIN_USERNAMES, so reset users first to
-    // avoid collisions with stale rows in the persistent local test DB.
-    await resetDb();
-    const creds = {
-      email: 'admin@test.com',
-      password: 'password123',
-      username: 'remydrescarlet',
-      display_name: 'Admin',
-    };
-    let res = await fetch(`${BASE_URL}/api/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(creds),
-    });
-    if (res.status !== 201) {
-      res = await fetch(`${BASE_URL}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: creds.email, password: creds.password }),
-      });
-    }
-    const cookie = res.headers.get('set-cookie') ?? '';
-    assert.ok(cookie, 'expected admin session cookie');
+    const cookie = await loginAdmin();
 
     const backfill = await fetch(`${BASE_URL}/api/admin/backfill-nsfw`, {
       method: 'POST',
@@ -391,29 +382,7 @@ describe('POST /api/admin/backfill-embeddings', () => {
   });
 
   it('enqueues text posts that have no embedding', async () => {
-    // The admin username is fixed in ADMIN_USERNAMES, so reset users first to
-    // avoid collisions with stale rows in the persistent local test DB.
-    await resetDb();
-    const creds = {
-      email: 'admin@test.com',
-      password: 'password123',
-      username: 'remydrescarlet',
-      display_name: 'Admin',
-    };
-    let res = await fetch(`${BASE_URL}/api/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(creds),
-    });
-    if (res.status !== 201) {
-      res = await fetch(`${BASE_URL}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: creds.email, password: creds.password }),
-      });
-    }
-    const cookie = res.headers.get('set-cookie') ?? '';
-    assert.ok(cookie, 'expected admin session cookie');
+    const cookie = await loginAdmin();
 
     // A text post has no embedding in the test DB, so it must be picked up.
     await createTextPost(cookie, 'embed me for the recommended feed');

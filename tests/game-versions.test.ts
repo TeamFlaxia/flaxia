@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
 import JSZip from 'jszip';
-import { BASE_URL } from './helpers/setup.ts';
+import { BASE_URL, loginUser, registerUser } from './helpers/setup.ts';
 
 // Game versioning (rolling-update) integration tests.
 //
@@ -14,17 +14,11 @@ let seq = 0;
 async function loginUnique(): Promise<string> {
   const s = `gv${RUN}_${++seq}`;
   const email = `${s}@test.com`;
-  await fetch(`${BASE_URL}/api/auth/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123', username: s, display_name: `GV ${s}` }),
-  });
-  const res = await fetch(`${BASE_URL}/api/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password: 'password123' }),
-  });
-  const cookie = res.headers.get('set-cookie') ?? '';
+  // Registration is SRP-only and login goes through the handshake, so both run
+  // through the shared helpers rather than raw fetches.
+  const reg = await registerUser({ email, password: 'password123', username: s, display_name: `GV ${s}` });
+  assert.equal(reg.status, 201, 'expected registration to succeed');
+  const { cookie } = await loginUser(email, 'password123');
   assert.ok(cookie, 'expected a session cookie after login');
   return cookie;
 }

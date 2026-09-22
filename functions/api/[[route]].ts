@@ -20,6 +20,7 @@ import stampsRouter from './routes/stamps';
 import tagsRouter from './routes/tags';
 import testsRouter from './routes/tests';
 import usersRouter from './routes/users';
+import vaultRouter from './routes/vault';
 
 type Bindings = {
   DB: D1Database;
@@ -131,6 +132,9 @@ app.route('/api', postsRouter);
 
 // Test routes (extracted to routes/tests.ts)
 app.route('/', testsRouter);
+
+// Vault key storage (extracted to routes/vault.ts) — see docs/e2ee.md
+app.route('/api', vaultRouter);
 
 export async function onRequest(context: Record<string, unknown>) {
   const request = context.request as Request;

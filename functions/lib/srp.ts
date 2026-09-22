@@ -1,8 +1,8 @@
 // SRP-6a (RFC 5054 style) using the 2048-bit group and SHA-256.
-// Pure implementation: only BigInt + Web Crypto (crypto.subtle.digest).
+// Pure implementation: only BigInt + Web Crypto (crypto.subtle).
 // The server never receives the password; it only stores the verifier v.
 //
-//   x = H(salt | password)
+//   x = KDF(password, salt)             (client computes at registration)
 //   v = g^x mod N                       (client computes at registration)
 //   A = g^a mod N                       (client ephemeral)
 //   B = (k*v + g^b) mod N               (server ephemeral)
@@ -32,6 +32,49 @@ const subtle = (globalThis.crypto as Crypto).subtle;
 async function sha256(bytes: Uint8Array): Promise<Uint8Array> {
   const digest = await subtle.digest('SHA-256', bytes as BufferSource);
   return new Uint8Array(digest);
+}
+
+// ─── KDF for the private value x ─────────────────────────────────────────────
+//
+// `v = g^x` is stored server-side, so anyone holding a database dump can
+// dictionary-attack x offline. How expensive that attack is depends entirely on
+// how x was derived — which only the client ever computes (the server only ever
+// compares v), so strengthening it costs the server nothing.
+//
+//   sha256-v1        x = SHA-256(salt | password)          1 hash per guess
+//   pbkdf2-600k-v2   x = PBKDF2-SHA256(password, salt, 600_000)
+//
+// v1 is kept only so verifiers created before this scheme still authenticate;
+// every new or re-derived verifier uses v2. The id travels with the account
+// (`users.srp_kdf`) and is handed to the client by /login/start and
+// /reauth/start, so the client always derives x the same way the stored v was
+// built. New ids may be added later (e.g. an Argon2id variant) without a flag
+// day: the id IS the version.
+export type SrpKdfId = 'sha256-v1' | 'pbkdf2-600k-v2';
+
+export const SRP_KDF_V1: SrpKdfId = 'sha256-v1';
+export const SRP_KDF_V2: SrpKdfId = 'pbkdf2-600k-v2';
+export const DEFAULT_SRP_KDF: SrpKdfId = SRP_KDF_V2;
+
+const SRP_KDF_ITERATIONS_V2 = 600_000;
+
+// Exact-match allowlist: an unknown id from a client is rejected rather than
+// passed through, so a client cannot register an account with a cheap KDF.
+export function isSupportedSrpKdf(value: unknown): value is SrpKdfId {
+  return value === SRP_KDF_V1 || value === SRP_KDF_V2;
+}
+
+async function deriveX(password: string, salt: Uint8Array, kdf: SrpKdfId): Promise<Uint8Array> {
+  if (kdf === SRP_KDF_V1) {
+    return sha256(concat(salt, new TextEncoder().encode(password)));
+  }
+  const key = await subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await subtle.deriveBits(
+    { name: 'PBKDF2', salt: salt as BufferSource, iterations: SRP_KDF_ITERATIONS_V2, hash: 'SHA-256' },
+    key,
+    256,
+  );
+  return new Uint8Array(bits);
 }
 
 function concat(...parts: Uint8Array[]): Uint8Array {
@@ -107,8 +150,12 @@ export function generateSalt(): Uint8Array {
   return randomBytes(16);
 }
 
-export async function computeVerifier(password: string, salt: Uint8Array): Promise<Uint8Array> {
-  const x = bytesToBigInt(await sha256(concat(salt, new TextEncoder().encode(password))));
+export async function computeVerifier(
+  password: string,
+  salt: Uint8Array,
+  kdf: SrpKdfId = DEFAULT_SRP_KDF,
+): Promise<Uint8Array> {
+  const x = bytesToBigInt(await deriveX(password, salt, kdf));
   const v = modPow(G, x, N);
   return bigIntToBytes(v, N_BYTES);
 }
@@ -124,12 +171,15 @@ export async function clientStep2(
   salt: Uint8Array,
   a: bigint,
   B: Uint8Array,
+  kdf: SrpKdfId = DEFAULT_SRP_KDF,
 ): Promise<SrpClientFinish> {
   const B_bi = bytesToBigInt(B);
   if (B_bi % N === 0n) throw new Error('SRP: invalid server public');
   const A_bi = modPow(G, a, N);
   const u = bytesToBigInt(await sha256(concat(pad(A_bi), pad(B_bi))));
-  const x = bytesToBigInt(await sha256(concat(salt, new TextEncoder().encode(password))));
+  // Must use the same KDF the stored verifier was built with; /login/start and
+  // /reauth/start report `srp_kdf` for exactly this reason.
+  const x = bytesToBigInt(await deriveX(password, salt, kdf));
   const base = (((B_bi - K_MULT * modPow(G, x, N)) % N) + N) % N;
   const exp = (a + u * x) % N;
   const S = modPow(base, exp, N);

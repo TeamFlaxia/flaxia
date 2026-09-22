@@ -249,6 +249,8 @@
   "settings.change_password": "Change Password",
   "settings.password_current": "Current Password",
   "settings.password_current_placeholder": "Enter current password",
+  "settings.current_password_incorrect": "Current password is incorrect",
+  "settings.vault_rewrap_required": "Password not changed — your vault could not be re-wrapped. Please try again.",
   "settings.password_new": "New Password",
   "settings.password_new_placeholder": "Enter new password",
   "settings.password_confirm": "Confirm New Password",

@@ -29,6 +29,17 @@ export type Variables = {
   user: User | null;
 };
 
+/**
+ * Body shape of an SRP re-authentication proof: the output of
+ * `/api/auth/reauth/start` plus the client's `A` and `M1`. The password itself
+ * never appears in a request body — see docs/e2ee.md.
+ */
+export type SrpProofBody = {
+  challenge_id?: string;
+  A?: string;
+  M1?: string;
+};
+
 export type PostRow = {
   id: string;
   user_id: string;

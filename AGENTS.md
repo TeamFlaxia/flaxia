@@ -80,6 +80,34 @@ CI run with npm).
 - Secrets: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_FLXIA_PLUS` (see `docs/billing.md`).
 - Never hard-code or log secrets. Webhook events are made idempotent via the `stripe_events` table.
 
+## E2EE (Personal Vault)
+
+Personal data at rest — drafts, private notes, personal settings — is encrypted
+in the browser. Posts and media stay plaintext on purpose (ActivityPub,
+SSR/SEO, vector search, push need them).
+
+**`docs/e2ee.md` is the spec: code that contradicts it is a bug.**
+
+- Key hierarchy: `password →PBKDF2-SHA256(600k)→ KEK`, `recovery phrase → REK`,
+  and a per-device non-extractable key all wrap **VK**; VK wraps one
+  `item_key` per item; `item_key` AES-256-GCM-encrypts the payload.
+- The server stores only wrapped blobs (`vault_keys`, `device_keys`,
+  `vault_items` — migration `0091`) and must never derive, unwrap, or see a
+  key, password, or recovery phrase. Enforced by `tests/security-guards.test.ts`.
+- Enabling/rotating the vault requires an SRP account plus a `current_srp`
+  proof; `PUT` is version-checked via `vk_version`.
+- A password change must re-wrap VK in the same request (`vault_kek`) or it is
+  rejected with 409 `vault_rewrap_required` — an envelope wrapped around the
+  old password would be unreachable.
+- All new auth code is SRP-6a; the KDF id lives in `users.srp_kdf`
+  (`sha256-v1` → `pbkdf2-600k-v2`, migration `0090`) and is an **allowlist**.
+- Legacy `POST /api/auth/login` exists only for pre-SRP accounts. Delete it
+  when `GET /api/admin/auth-migration` reports `cutoff_reached`.
+- `src/lib/srp.ts` and `functions/lib/srp.ts` must stay **byte-identical**
+  (`tests/srp-copy.test.ts`).
+
+---
+
 ## Commands
 
 ```bash
@@ -100,4 +128,4 @@ npm run test:billing  # in another shell
 ```
 
 ## Detailed Specifications
-See `docs/` for architecture, setup, deployment, API, database, and billing documentation.
+See `docs/` for architecture, setup, deployment, API, database, and billing documentation. Encryption, key hierarchy, and the plaintext-password retirement are specified in `docs/e2ee.md`.

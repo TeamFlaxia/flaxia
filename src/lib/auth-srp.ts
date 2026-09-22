@@ -2,7 +2,16 @@
 // browser in plaintext: registration computes the verifier locally, and login
 // proves knowledge of the password via the SRP handshake.
 
-import { clientStep1, clientStep2, computeVerifier, generateSalt, verifyServerProof } from './srp.ts';
+import {
+  clientStep1,
+  clientStep2,
+  computeVerifier,
+  DEFAULT_SRP_KDF,
+  generateSalt,
+  isSupportedSrpKdf,
+  type SrpKdfId,
+  verifyServerProof,
+} from './srp.ts';
 
 function b64(b: Uint8Array): string {
   let binary = '';
@@ -38,6 +47,13 @@ export function getStoredSrpSalt(): Uint8Array | null {
   }
 }
 
+// The KDF the account's verifier was derived with. /login/start and
+// /reauth/start report it; anything unlabelled predates migration 0090 and is
+// v1. New verifiers are always written with the current default (v2).
+function kdfFrom(value: unknown): SrpKdfId {
+  return isSupportedSrpKdf(value) ? value : DEFAULT_SRP_KDF;
+}
+
 // Register a new account via SRP.
 export async function registerWithSrp(
   email: string,
@@ -46,7 +62,7 @@ export async function registerWithSrp(
   password: string,
 ): Promise<{ ok: boolean; error?: string }> {
   const salt = generateSalt();
-  const verifier = await computeVerifier(password, salt);
+  const verifier = await computeVerifier(password, salt, DEFAULT_SRP_KDF);
   const res = await fetch('/api/auth/register', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -58,6 +74,7 @@ export async function registerWithSrp(
       srp_salt: b64(salt),
       srp_verifier: b64(verifier),
       srp_group: '2048',
+      srp_kdf: DEFAULT_SRP_KDF,
     }),
   });
   if (!res.ok) {
@@ -78,8 +95,16 @@ export async function loginWithSrp(email: string, password: string): Promise<boo
     body: JSON.stringify({ email }),
   });
   if (!start.ok) return false;
-  const s = (await start.json()) as { srp: boolean; challenge_id?: string; salt?: string; B?: string };
+  const s = (await start.json()) as {
+    srp: boolean;
+    challenge_id?: string;
+    salt?: string;
+    B?: string;
+    srp_kdf?: string;
+  };
   if (!s.srp) {
+    // Deprecated plaintext fallback for pre-SRP accounts; immediately followed
+    // by an upgrade so this account can never take this path again.
     const legacy = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -94,7 +119,7 @@ export async function loginWithSrp(email: string, password: string): Promise<boo
   const salt = unb64(s.salt!);
   const B = unb64(s.B!);
   const { A, a } = await clientStep1(password, salt);
-  const finish = await clientStep2(password, salt, a, B);
+  const finish = await clientStep2(password, salt, a, B, kdfFrom(s.srp_kdf));
   const verify = await fetch('/api/auth/login/verify', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -110,10 +135,12 @@ export async function loginWithSrp(email: string, password: string): Promise<boo
   return true;
 }
 
-// Upgrade a legacy account to SRP (compute verifier locally).
+// Upgrade a legacy account to SRP, or migrate a v1 verifier to v2. Both only
+// happen while the browser still holds the plaintext password, which is the
+// only moment x can be re-derived.
 async function upgradeSrp(password: string): Promise<void> {
   const salt = generateSalt();
-  const verifier = await computeVerifier(password, salt);
+  const verifier = await computeVerifier(password, salt, DEFAULT_SRP_KDF);
   await fetch('/api/auth/upgrade-srp', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -122,9 +149,38 @@ async function upgradeSrp(password: string): Promise<void> {
       srp_salt: b64(salt),
       srp_verifier: b64(verifier),
       srp_group: '2048',
+      srp_kdf: DEFAULT_SRP_KDF,
     }),
   });
   storeSrpSalt(salt);
+}
+
+export interface SrpProof {
+  challenge_id: string;
+  A: string;
+  M1: string;
+}
+
+// Prove knowledge of the current password without sending it, for endpoints
+// that must re-authenticate a sensitive action (password change, email change,
+// vault unlock). The proof is single-use: the server deletes the handshake when
+// it verifies it, so it cannot be replayed against another request.
+export async function createSrpProof(password: string): Promise<SrpProof | null> {
+  try {
+    const reauth = await fetch('/api/auth/reauth/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+    });
+    if (!reauth.ok) return null;
+    const r = (await reauth.json()) as { challenge_id: string; salt: string; B: string; srp_kdf?: string };
+    const salt = unb64(r.salt);
+    const { A, a } = await clientStep1(password, salt);
+    const finish = await clientStep2(password, salt, a, unb64(r.B), kdfFrom(r.srp_kdf));
+    return { challenge_id: r.challenge_id, A: b64(A), M1: b64(finish.M1) };
+  } catch {
+    return null;
+  }
 }
 
 // Verify the current user's password via SRP without creating a session or
@@ -137,9 +193,10 @@ export async function verifyCurrentPassword(password: string): Promise<boolean> 
       credentials: 'include',
     });
     if (!reauth.ok) return false;
-    const r = (await reauth.json()) as { challenge_id: string; salt: string; B: string };
-    const { A, a } = await clientStep1(password, unb64(r.salt));
-    const finish = await clientStep2(password, unb64(r.salt), a, unb64(r.B));
+    const r = (await reauth.json()) as { challenge_id: string; salt: string; B: string; srp_kdf?: string };
+    const salt = unb64(r.salt);
+    const { A, a } = await clientStep1(password, salt);
+    const finish = await clientStep2(password, salt, a, unb64(r.B), kdfFrom(r.srp_kdf));
     const res = await fetch('/api/auth/reauth/verify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

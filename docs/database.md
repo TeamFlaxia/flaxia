@@ -15,7 +15,11 @@ Flaxia uses Cloudflare D1 (SQLite-compatible) with migrations in `migrations/`.
 | display_name | TEXT | |
 | bio | TEXT | |
 | avatar_key | TEXT | R2 key for avatar |
-| password_hash | TEXT | bcrypt |
+| password_hash | TEXT | Legacy only; always `''` on SRP accounts |
+| srp_salt | TEXT | SRP salt; `NULL` = pre-SRP account |
+| srp_verifier | TEXT | SRP verifier `v` (the server never computes `x`) |
+| srp_group | TEXT | SRP group (`2048`) |
+| srp_kdf | TEXT | `sha256-v1` or `pbkdf2-600k-v2` (migration 0090) |
 | created_at | TEXT | ISO 8601 |
 
 ### `sessions`
@@ -193,6 +197,42 @@ Webhook の `event.id` を記録し、Stripe の再送を冪等に処理する�
 
 `users.stripe_customer_id` は Stripe Customer を保持し、checkout ごとの
 Customer 二重作成を防ぐ（migration 0088）。
+
+## Personal Vault (E2EE)
+
+Encrypted personal storage (drafts, notes, settings) — threat model and key
+hierarchy in `docs/e2ee.md`. Every value below is opaque ciphertext produced
+in the browser; migration `0091`.
+
+### `vault_keys`
+| Column | Type | Notes |
+|---|---|---|
+| user_id | TEXT | PK → users(id) |
+| salt | TEXT | 16 B, salts the password-derived KEK |
+| recovery_salt | TEXT | 16 B, independent of `salt` |
+| kdf_params | TEXT | JSON `{"alg":"PBKDF2-SHA256","iterations":600000}` |
+| wrapped_vk | TEXT | `base64(iv).base64(ct)`, KEK-wrapped VK |
+| recovery_blob | TEXT | `base64(iv).base64(ct)`, REK-wrapped VK |
+| vk_version | INTEGER | incremented on rotation |
+
+### `device_keys`
+| Column | Type | Notes |
+|---|---|---|
+| id | TEXT | PK, one row per approved device |
+| user_id | TEXT | FK → users(id) |
+| label | TEXT | user-visible device name |
+| wrapped_vk | TEXT | VK wrapped under that device's non-extractable key |
+| created_at / last_seen_at | TEXT | |
+
+### `vault_items`
+| Column | Type | Notes |
+|---|---|---|
+| id | TEXT | client-generated, part of PK, also the AAD |
+| user_id | TEXT | part of PK |
+| item_key_wrapped | TEXT | VK-wrapped per-item key |
+| payload | TEXT | AES-256-GCM ciphertext of the body |
+| kind | TEXT | `draft` / `note` / `settings` |
+| vk_version | INTEGER | VK version at wrap time |
 
 ## Other Tables
 

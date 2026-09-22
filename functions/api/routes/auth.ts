@@ -50,12 +50,17 @@ async function rateLimit(
 }
 
 // POST /api/auth/register
+//
+// SRP-only: the body carries a verifier the client derived locally, never the
+// password. There is deliberately no plaintext `password` branch — a new
+// account must not start life with a value the server can dictionary-attack
+// outside the protocol. Password length policy lives client-side.
 auth.post('/register', async (c) => {
   try {
     const limited = await rateLimit(c, 'auth:register', getClientIp(c.req.raw), 5, 60);
     if (limited) return limited;
 
-    const { email, password, username, display_name, srp_salt, srp_verifier, srp_group } = await c.req.json();
+    const { email, username, display_name, srp_salt, srp_verifier, srp_group, srp_kdf } = await c.req.json();
 
     if (!email || !username || !display_name) {
       return c.json({ error: 'Missing required fields' }, 400);
@@ -75,26 +80,20 @@ auth.post('/register', async (c) => {
       return c.json({ error: 'Display name must be ≤50 characters' }, 400);
     }
 
-    const srp =
-      srp_salt && srp_verifier && srp_group
-        ? { salt: srp_salt as string, verifier: srp_verifier as string, group: srp_group as string }
-        : undefined;
-
-    if (!srp) {
-      if (!password) {
-        return c.json({ error: 'Password or SRP verifier required' }, 400);
-      }
-      if (password.length < 8 || password.length > 128) {
-        return c.json({ error: 'Password must be 8-128 characters' }, 400);
-      }
+    if (!srp_salt || !srp_verifier || !srp_group || !srp_kdf) {
+      return c.json({ error: 'SRP verifier required (plaintext registration is not supported)' }, 400);
     }
 
     const user = await registerUser(c.env, {
       email,
-      password,
       username,
       display_name,
-      srp,
+      srp: {
+        salt: srp_salt as string,
+        verifier: srp_verifier as string,
+        group: srp_group as string,
+        kdf: srp_kdf as string,
+      },
     });
 
     const session = await createSession(c.env, user.id);
@@ -112,7 +111,18 @@ auth.post('/register', async (c) => {
   }
 });
 
-// POST /api/auth/login
+// POST /api/auth/login — DEPRECATED plaintext fallback.
+//
+// Kept only so accounts created before SRP can still sign in: each such login
+// is followed by the client calling /upgrade-srp, which replaces the plaintext
+// hash with a v2 verifier. No new account can reach this path (registration is
+// SRP-only), so the population served here only shrinks.
+//
+// CUTOFF: delete this route once
+//   SELECT COUNT(*) FROM users WHERE srp_salt IS NULL
+// reaches 0 (see GET /api/admin/auth-migration) — or once an email-based
+// password reset exists, whichever lands first. Until then dormant legacy
+// accounts would be locked out forever without it.
 auth.post('/login', async (c) => {
   try {
     const { email, password } = await c.req.json();
@@ -154,7 +164,7 @@ auth.post('/login/start', async (c) => {
     const hs = await startSrpLogin(c.env, email);
     if (!hs) return c.json({ srp: false });
 
-    return c.json({ srp: true, challenge_id: hs.challengeId, salt: hs.salt, B: hs.B });
+    return c.json({ srp: true, challenge_id: hs.challengeId, salt: hs.salt, B: hs.B, srp_kdf: hs.kdf });
   } catch (error: unknown) {
     console.error('SRP login/start error:', error);
     return c.json({ error: 'Login failed' }, 500);
@@ -194,7 +204,7 @@ auth.post('/reauth/start', requireAuth, async (c) => {
     if (!user?.email) return c.json({ error: 'Unauthorized' }, 401);
     const hs = await startSrpLogin(c.env, user.email);
     if (!hs) return c.json({ error: 'SRP not available' }, 400);
-    return c.json({ challenge_id: hs.challengeId, salt: hs.salt, B: hs.B });
+    return c.json({ challenge_id: hs.challengeId, salt: hs.salt, B: hs.B, srp_kdf: hs.kdf });
   } catch (error: unknown) {
     console.error('SRP reauth/start error:', error);
     return c.json({ error: 'Re-auth failed' }, 500);
@@ -221,10 +231,15 @@ auth.post('/reauth/verify', requireAuth, async (c) => {
 });
 
 // POST /api/auth/upgrade-srp
+//
+// The only endpoint that changes how a verifier was derived. Callers hold the
+// plaintext password at this moment (legacy login just happened, or the user is
+// mid password-change / vault-enable), so the expensive KDF runs client-side
+// and this handler only stores the result.
 auth.post('/upgrade-srp', requireAuth, async (c) => {
   try {
-    const { srp_salt, srp_verifier, srp_group } = await c.req.json();
-    if (!srp_salt || !srp_verifier || !srp_group) {
+    const { srp_salt, srp_verifier, srp_group, srp_kdf } = await c.req.json();
+    if (!srp_salt || !srp_verifier || !srp_group || !srp_kdf) {
       return c.json({ error: 'Missing SRP parameters' }, 400);
     }
     const userId = c.get('user')?.id;
@@ -233,6 +248,7 @@ auth.post('/upgrade-srp', requireAuth, async (c) => {
       salt: srp_salt,
       verifier: srp_verifier,
       group: srp_group,
+      kdf: srp_kdf,
     });
     return c.json({ success: true });
   } catch (error: unknown) {
