@@ -1,5 +1,5 @@
 import Stripe from 'stripe';
-import { getSession, getSessionToken } from './auth';
+import { getSession, getSessionToken } from './auth.ts';
 
 /**
  * Environment bindings required by the billing code. Stripe secrets are only

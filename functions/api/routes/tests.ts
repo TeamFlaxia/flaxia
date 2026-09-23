@@ -1,7 +1,7 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { Hono } from 'hono';
 import { hashPassword } from '../../lib/auth.ts';
-import { badgeTypeForPlan } from '../../lib/billing';
+import { badgeTypeForPlan } from '../../lib/billing.ts';
 import { ensureNsfwScansTable, ensurePendingEmbedsTable } from '../../lib/crowd.ts';
 import type { Bindings, Variables } from '../types';
 
