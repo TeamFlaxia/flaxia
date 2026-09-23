@@ -1,6 +1,8 @@
 import type { FFmpeg } from '@ffmpeg/ffmpeg';
 
-const CORE_BASE = '/ffmpeg';
+// Loaded from a CDN: Pages rejects files >25MiB and @ffmpeg/core's wasm is
+// ~31MiB, so the core cannot ship inside dist/.
+const CORE_BASE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
 
 let instance: FFmpeg | null = null;
 let loadPromise: Promise<FFmpeg> | null = null;
@@ -12,9 +14,10 @@ async function importFFmpeg(): Promise<typeof import('@ffmpeg/ffmpeg').FFmpeg> {
 }
 
 /**
- * Lazily loads the self-hosted ffmpeg.wasm core (dist/ffmpeg). The core is
- * single-threaded on purpose: the multithreaded build would force COOP/COEP
- * headers site-wide, which would break third-party iframes and images.
+ * Lazily loads the ffmpeg.wasm core from jsDelivr (ESM build — the worker
+ * imports it as a module). The core is single-threaded on purpose: the
+ * multithreaded build would force COOP/COEP headers site-wide, which would
+ * break third-party iframes and images.
  */
 export async function getFFmpeg(): Promise<FFmpeg> {
   if (instance?.loaded) return instance;

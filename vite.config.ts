@@ -1,12 +1,4 @@
-import {
-  copyFileSync,
-  createReadStream,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs';
+import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { defineConfig } from 'vite';
 import { CROWD_NODE_VERSION } from './src/lib/crowd-node';
@@ -119,34 +111,6 @@ export default defineConfig({
             console.log('Patched ai-inference import to use CDN');
           }
         }
-      },
-    },
-    {
-      name: 'copy-ffmpeg-core',
-      writeBundle() {
-        const ffmpegSrc = 'node_modules/@ffmpeg/core/dist/esm';
-        const ffmpegDest = 'dist/ffmpeg';
-        if (!existsSync(ffmpegSrc)) return;
-        mkdirSync(ffmpegDest, { recursive: true });
-        for (const entry of readdirSync(ffmpegSrc)) {
-          copyFileSync(join(ffmpegSrc, entry), join(ffmpegDest, entry));
-        }
-        console.log('Copied @ffmpeg/core assets to dist/ffmpeg');
-      },
-      configureServer(server) {
-        // Dev servers (vite --host) don't run writeBundle, so serve the core
-        // straight from node_modules at /ffmpeg/*.
-        server.middlewares.use((req, res, next) => {
-          const url = (req.url || '').split('?')[0];
-          if (!url.startsWith('/ffmpeg/')) return next();
-          const name = url.slice('/ffmpeg/'.length);
-          if (name !== 'ffmpeg-core.js' && name !== 'ffmpeg-core.wasm') return next();
-          const filePath = join('node_modules/@ffmpeg/core/dist/esm', name);
-          if (!existsSync(filePath)) return next();
-          res.setHeader('Content-Type', name.endsWith('.wasm') ? 'application/wasm' : 'application/javascript');
-          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-          createReadStream(filePath).pipe(res);
-        });
       },
     },
     {
