@@ -15,7 +15,7 @@ export interface PostComposerProps {
 
 import { attachPlusBadge } from '../lib/avatar.js';
 import { getMimeType } from '../lib/file-extensions.js';
-import { AttachPreviewHandle, checkImageSizeLimit, renderFilePreview } from '../lib/file-preview.js';
+import { AttachPreviewHandle, checkImageSizeLimit, detectAttachKind, renderFilePreview } from '../lib/file-preview.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { attachIcons, icon } from '../lib/icons.js';
@@ -23,6 +23,7 @@ import { registerModal } from '../lib/modal-state.js';
 import { showToast } from '../lib/toast.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
+import { openMediaEditor } from './MediaEditorModal.js';
 import { closeStampPicker, openStampPicker } from './StampPicker.js';
 import { createVideoPlayer } from './VideoPlayer.js';
 
@@ -133,6 +134,9 @@ export class PostComposer {
         <div class="composer-file-preview" style="display: none;">
           <div class="file-info">
             <span class="file-name"></span>
+            <button class="file-edit" type="button" title="${t('editor.edit_button')}" style="display: none;">
+              <span class="action-icon" data-icon="edit"></span>
+            </button>
             <button class="file-remove" type="button"><span class="action-icon" data-icon="close"></span></button>
           </div>
         </div>
@@ -423,6 +427,12 @@ export class PostComposer {
     const fileRemove = this.element.querySelector('.file-remove')!;
     fileRemove.addEventListener('click', () => {
       this.clearFileSelection();
+    });
+
+    // Media editor
+    const fileEdit = this.element.querySelector('.file-edit')!;
+    fileEdit.addEventListener('click', () => {
+      void this.handleEditFile();
     });
 
     // Thumbnail button click
@@ -795,10 +805,8 @@ export class PostComposer {
   }
 
   private validateFile(file: File): { valid: boolean; error?: string } {
-    const maxSize = 25 * 1024 * 1024;
-    if (file.size > maxSize) {
-      return { valid: false, error: t('composer.error_file_too_large') };
-    }
+    // Size is enforced at submit time (and by the server on upload) so users
+    // can attach an oversized file and compress it in the editor first.
 
     // Check file extension
     const ext = file.name.toLowerCase().split('.').pop();
@@ -919,6 +927,12 @@ export class PostComposer {
       this.clearFileSelection();
       showToast(dimError, true);
       return;
+    }
+
+    // Non-blocking notice: the file can be attached now, but posting requires
+    // it to be ≤25MB — the editor can compress it.
+    if (file.size > 25 * 1024 * 1024) {
+      showToast(t('composer.attach_over_size'), false);
     }
 
     this.selectedFile = file;
@@ -1101,6 +1115,13 @@ export class PostComposer {
     this.previewHandle?.destroy();
     fileName.textContent = `${file.name} (${this.formatFileSize(file.size)})`;
     preview.style.display = 'block';
+
+    const editBtn = preview.querySelector('.file-edit') as HTMLButtonElement | null;
+    if (editBtn) {
+      const kind = detectAttachKind(file);
+      editBtn.style.display = kind === 'image' || kind === 'audio' || kind === 'video' ? '' : 'none';
+    }
+
     this.previewHandle = renderFilePreview(file, preview);
   }
 
@@ -1109,6 +1130,15 @@ export class PostComposer {
     this.previewHandle?.destroy();
     this.previewHandle = null;
     preview.style.display = 'none';
+  }
+
+  private async handleEditFile(): Promise<void> {
+    if (!this.selectedFile) return;
+    const edited = await openMediaEditor(this.selectedFile);
+    if (edited) {
+      this.selectedFile = edited;
+      this.showFilePreview(edited);
+    }
   }
 
   private formatFileSize(bytes: number): string {
@@ -1553,6 +1583,13 @@ export class PostComposer {
 
     const text = this.textarea.value.trim();
     if (!text) return;
+
+    // Enforce the upload cap at post time (attachment itself is unrestricted
+    // so oversized media can be compressed in the editor first).
+    if (this.selectedFile && this.selectedFile.size > 25 * 1024 * 1024) {
+      showToast(t('composer.error_file_too_large'), true);
+      return;
+    }
 
     this.isSubmitting = true;
     this.updateSubmitButton();

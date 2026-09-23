@@ -12,6 +12,19 @@
 /assets/*.js
   Content-Type: application/javascript
 
+# ffmpeg.wasm core (self-hosted, loaded lazily by the media editor)
+/ffmpeg/*
+  X-Content-Type-Options: nosniff
+  Access-Control-Allow-Origin: *
+
+/ffmpeg/*.wasm
+  Content-Type: application/wasm
+  Cache-Control: public, max-age=31536000, immutable
+
+/ffmpeg/*.js
+  Content-Type: application/javascript
+  Cache-Control: public, max-age=31536000, immutable
+
 # Ad network MIME type fixes
 /AdServer/js/*.js
   Content-Type: application/javascript

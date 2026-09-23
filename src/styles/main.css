@@ -2786,6 +2786,36 @@ emoji-picker {
   color: var(--text-primary);
 }
 
+.file-edit {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+  margin-right: 0.35rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.file-edit:hover {
+  background: var(--bg-input);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.file-edit .action-icon,
+.file-edit svg {
+  width: 14px;
+  height: 14px;
+}
+
 .file-preview-body {
   margin-top: 0.75rem;
 }

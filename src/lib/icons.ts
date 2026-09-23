@@ -16,6 +16,7 @@ import {
   Maximize,
   MessageCircle,
   Music2,
+  Pencil,
   Quote,
   Save,
   Search,
@@ -61,7 +62,8 @@ export type IconName =
   | 'profile'
   | 'maximize'
   | 'flag'
-  | 'warning';
+  | 'warning'
+  | 'edit';
 
 const ICON_NODES: Record<IconName, IconNode> = {
   fresh: Leaf,
@@ -95,6 +97,7 @@ const ICON_NODES: Record<IconName, IconNode> = {
   maximize: Maximize,
   flag: Flag,
   warning: AlertTriangle,
+  edit: Pencil,
 };
 
 export function icon(name: IconName, attrs: Record<string, string> = {}): SVGElement {
