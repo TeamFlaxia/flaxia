@@ -6,10 +6,17 @@
   "watcher": {
     "ignore": ["dist/**", ".wrangler/**", "node_modules/**", "worker-configuration.d.ts"]
   },
-  "permissions": [
+  // OpenCode V1 の permission 形式（V2 の permissions 配列は V1 では拒否される）。
+  "permission": {
     // Never let an agent read real secrets from local dev vars.
-    { "action": "read", "resource": "*.dev.vars", "effect": "deny" },
+    "read": {
+      "*.dev.vars": "deny",
+      "**/*.dev.vars": "deny",
+      "**/.dev.vars": "deny"
+    },
     // Pushing is a deliberate, human decision.
-    { "action": "shell", "resource": "git push *", "effect": "ask" }
-  ]
+    "bash": {
+      "git push *": "ask"
+    }
+  }
 }
