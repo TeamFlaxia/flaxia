@@ -1,5 +1,6 @@
 import { clearMeCache } from '../lib/auth-cache';
 import { createSrpProof, storeSrpSalt } from '../lib/auth-srp.js';
+import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import {
   CROWD_CONSENT_CHANGE_EVENT,
@@ -34,6 +35,7 @@ interface SettingsPageProps {
     username: string;
     display_name?: string;
     avatar_key?: string;
+    badge_type?: string | null;
     language?: string;
     email?: string;
   };
@@ -129,15 +131,19 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     const avatarUrl = currentUser.avatar_key ? `/api/images/${currentUser.avatar_key}` : '/api/images/default-avatar';
     const displayName = currentUser.display_name || currentUser.username;
 
+    const avatarWrap = document.createElement('div');
+    avatarWrap.style.cssText = 'position: relative; width: 60px; height: 60px; flex-shrink: 0;';
     const avatarEl = document.createElement('img');
     avatarEl.src = avatarUrl;
     avatarEl.alt = '';
     avatarEl.style.cssText =
-      'width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border);';
+      'width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border); display: block;';
     avatarEl.onerror = () => {
       avatarEl.src = '/api/images/default-avatar';
     };
-    userChip.appendChild(avatarEl);
+    avatarWrap.appendChild(avatarEl);
+    attachPlusBadge(avatarWrap, currentUser.badge_type);
+    userChip.appendChild(avatarWrap);
 
     const infoDiv = document.createElement('div');
     infoDiv.style.cssText = 'flex: 1; min-width: 0;';
@@ -1130,6 +1136,15 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   const vaultSection = createVaultSection();
   container.appendChild(vaultSection.getElement());
 
+  // Shared billing state: populated by `loadBilling`, read by the stamp counter.
+  let currentPlan: {
+    plan: string | null;
+    status: string | null;
+    expiresAt: string | null;
+    cancelAtPeriodEnd: boolean;
+  } = { plan: null, status: null, expiresAt: null, cancelAtPeriodEnd: false };
+  let refreshStamps: () => void = () => {};
+
   // ─── Custom Emoji Section ────────────────────────────────────────────────
   if (currentUser) {
     const emojiSection = document.createElement('div');
@@ -1180,7 +1195,8 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
         .then((r) => r.json() as Promise<{ stamps: Array<{ id: string; name: string; url: string }> }>)
         .then((data) => {
           stampsGrid.innerHTML = '';
-          emojiCountValue.textContent = `${data.stamps.length} / 5`;
+          const unlimited = !!currentPlan.plan && ['active', 'trialing'].includes(currentPlan.status || '');
+          emojiCountValue.textContent = unlimited ? `${data.stamps.length} / ∞` : `${data.stamps.length} / 5`;
           for (const stamp of data.stamps) {
             const card = document.createElement('div');
             card.style.cssText = `
@@ -1291,6 +1307,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     emojiSection.appendChild(stampsGrid);
     container.appendChild(emojiSection);
 
+    refreshStamps = loadStamps;
     loadStamps();
   }
 
@@ -1367,7 +1384,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     const plusFeatureLabels = [
       t('settings.plan_plus_f1') || 'Unlimited custom stamps',
       t('settings.plan_plus_f2') || 'GIF & MP4 stamps/icons/intro',
-      t('settings.plan_plus_f3') || 'Improved call quality',
+      t('settings.plan_plus_f3') || 'Flaxia+ avatar checkmark badge',
     ];
     plusFeatureLabels.forEach((feature) => {
       const li = document.createElement('li');
@@ -1446,13 +1463,6 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
           return status || '';
       }
     };
-
-    let currentPlan: {
-      plan: string | null;
-      status: string | null;
-      expiresAt: string | null;
-      cancelAtPeriodEnd: boolean;
-    } = { plan: null, status: null, expiresAt: null, cancelAtPeriodEnd: false };
 
     actionBtn.addEventListener('click', async () => {
       actionBtn.disabled = true;
@@ -1556,6 +1566,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
         renderHistory([]);
       }
       renderPlan();
+      refreshStamps();
     };
 
     void loadBilling();

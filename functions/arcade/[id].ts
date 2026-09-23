@@ -1,6 +1,6 @@
 import { buildGameDescription, buildGameTitle } from '../../src/lib/game-seo';
 import { isCrawler } from '../../src/lib/is-crawler';
-import { escapeHtml, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
+import { escapeHtml, renderAvatarBadge, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import {
   renderBreadcrumbJsonLd,
@@ -24,6 +24,7 @@ interface PostRow {
   username: string;
   display_name: string | null;
   avatar_key: string | null;
+  badge_type: string | null;
   text: string;
   payload_key: string | null;
   swf_key: string | null;
@@ -52,6 +53,7 @@ function toPost(row: RawPost): PostRow {
     username: String(row.username),
     display_name: row.display_name ? String(row.display_name) : null,
     avatar_key: row.avatar_key ? String(row.avatar_key) : null,
+    badge_type: row.badge_type ? String(row.badge_type) : null,
     text: String(row.text),
     payload_key: row.payload_key ? String(row.payload_key) : null,
     swf_key: row.swf_key ? String(row.swf_key) : null,
@@ -124,7 +126,7 @@ export async function onRequest(context: {
 
   try {
     const mainRow = (await env.DB.prepare(`
-      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key,
+      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type,
         p.text, p.payload_key, p.swf_key, p.thumbnail_key, p.gif_key,
         p.game_description,
         p.fresh_count, COALESCE(p.reply_count, 0) as reply_count,
@@ -271,7 +273,7 @@ export async function onRequest(context: {
           <h1 style="font-size:20px;font-weight:700;margin:0 0 12px 0;color:#1a1a1a">${escapeHtml(title)}</h1>
           <div class="ssr-game-meta">
             <a href="${escapeHtml(profileUrl)}">
-              <img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(authorName)}" class="ssr-game-author-img">
+              <span class="ssr-avatar-wrap"><img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(authorName)}" class="ssr-game-author-img">${renderAvatarBadge(post.badge_type)}</span>
             </a>
             <div>
               <a href="${escapeHtml(profileUrl)}" class="ssr-game-author-name">${escapeHtml(authorName)}</a>

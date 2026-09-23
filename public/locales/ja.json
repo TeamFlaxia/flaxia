@@ -764,7 +764,7 @@
   "settings.redirecting": "リダイレクト中...",
   "settings.plan_plus_f1": "カスタムスタンプ無制限",
   "settings.plan_plus_f2": "GIF・MP4対応スタンプ/アイコン/自己紹介",
-  "settings.plan_plus_f3": "通話品質の改善",
+  "settings.plan_plus_f3": "Flaxia+ アバター認証バッジ",
   "settings.plan_plusplus_f1": "Flaxia+の全ての機能",
   "settings.plan_plusplus_f2": "オフラインでゲーム・画像・動画・音楽を楽しむ",
   "settings.plan_plusplus_f3": "より高度な通話品質",
@@ -800,5 +800,6 @@
   "crowd.consent_note": "同意はこの端末にのみ保存され、30日で失効します。いつでも設定画面からオフにできます。",
   "crowd.consent_privacy_link": "プライバシーポリシー",
   "crowd.consent_accept": "同意して協力",
-  "crowd.consent_reject": "協力しない"
+  "crowd.consent_reject": "協力しない",
+  "badge.flaxia_plus": "Flaxia+ メンバー"
 }

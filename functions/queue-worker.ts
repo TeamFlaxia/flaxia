@@ -288,7 +288,7 @@ async function handleCreateActivity(
         // Batch lookup all mentioned users
         const placeholders = filteredUsernames.map(() => '?').join(',');
         const mentionedUsers = (await env.DB.prepare(
-          `SELECT id, username, display_name, avatar_key FROM users WHERE username IN (${placeholders}) COLLATE NOCASE`,
+          `SELECT id, username, display_name, avatar_key, badge_type FROM users WHERE username IN (${placeholders}) COLLATE NOCASE`,
         )
           .bind(...filteredUsernames)
           .all<{ id: string; username: string; display_name: string; avatar_key: string | null }>()) as D1Result<{

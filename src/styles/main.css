@@ -1450,6 +1450,57 @@ h1 {
   flex-shrink: 0;
 }
 
+/* Flaxia+ (and future) avatar badges — bottom-right checkmark */
+.avatar-plus-host {
+  position: relative;
+}
+
+.avatar-plus-badge {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent, #3b82f6);
+  color: #fff;
+  border: 2px solid var(--bg-primary, #0f172a);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+.avatar-plus-badge svg {
+  width: 8px;
+  height: 8px;
+  display: block;
+}
+
+/* Compact badge for very small avatars (quoted posts, nav chips). */
+.quoted-post-avatar .avatar-plus-badge,
+.bottom-nav-avatar .avatar-plus-badge,
+.nav-user-avatar .avatar-plus-badge,
+.composer-avatar .avatar-plus-badge,
+.reply-composer-avatar .avatar-plus-badge {
+  width: 10px;
+  height: 10px;
+  border-width: 1px;
+  right: -1px;
+  bottom: -1px;
+}
+
+.quoted-post-avatar .avatar-plus-badge svg,
+.bottom-nav-avatar .avatar-plus-badge svg,
+.nav-user-avatar .avatar-plus-badge svg,
+.composer-avatar .avatar-plus-badge svg,
+.reply-composer-avatar .avatar-plus-badge svg {
+  width: 6px;
+  height: 6px;
+}
+
 .post-display-name {
   font-size: 0.875rem;
   white-space: nowrap;

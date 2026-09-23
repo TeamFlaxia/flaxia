@@ -1,3 +1,4 @@
+import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
 
 export interface RightPanelProps {
@@ -10,6 +11,7 @@ export interface UserSuggestion {
   username: string;
   display_name: string;
   avatar_key?: string;
+  badge_type?: string | null;
 }
 
 export class RightPanel {
@@ -278,6 +280,7 @@ export class RightPanel {
         avatar.textContent = user.display_name.charAt(0).toUpperCase();
         avatar.style.background = `linear-gradient(135deg, #${Math.floor(Math.random() * 16777215).toString(16)} 0%, #${Math.floor(Math.random() * 16777215).toString(16)} 100%)`;
       }
+      attachPlusBadge(avatar, user.badge_type);
 
       // Create info container
       const info = document.createElement('div');

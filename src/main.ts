@@ -154,7 +154,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       document.body.appendChild(bottomNav.getElement());
     };
-    let currentUser: { username: string; id: string; display_name?: string; avatar_key?: string } | null = null;
+    let currentUser: {
+      username: string;
+      id: string;
+      display_name?: string;
+      avatar_key?: string;
+      badge_type?: string | null;
+    } | null = null;
     let unreadNotificationCount = 0;
 
     let tauriNotify: ((title: string, body: string) => Promise<void>) | null = null;
@@ -512,12 +518,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       try {
         const data = await getMe();
         if (data) {
-          const userData = data.user as { id: string; username: string; display_name?: string; avatar_key?: string };
+          const userData = data.user as {
+            id: string;
+            username: string;
+            display_name?: string;
+            avatar_key?: string;
+            badge_type?: string | null;
+          };
           currentUser = {
             id: userData.id,
             username: userData.username,
             display_name: userData.display_name,
             avatar_key: userData.avatar_key,
+            badge_type: userData.badge_type,
           };
 
           // Update all existing LeftNav instances with new user data

@@ -764,7 +764,7 @@
   "settings.redirecting": "Redirecting...",
   "settings.plan_plus_f1": "Unlimited custom stamps",
   "settings.plan_plus_f2": "GIF & MP4 stamps/icons/intro",
-  "settings.plan_plus_f3": "Improved call quality",
+  "settings.plan_plus_f3": "Flaxia+ avatar checkmark badge",
   "settings.plan_plusplus_f1": "Everything in Flaxia+",
   "settings.plan_plusplus_f2": "Offline games, images, videos & music",
   "settings.plan_plusplus_f3": "Premium call quality",
@@ -800,5 +800,6 @@
   "crowd.consent_note": "Consent is stored on this device only and expires after 30 days. You can turn it off anytime in Settings.",
   "crowd.consent_privacy_link": "Privacy Policy",
   "crowd.consent_accept": "Agree and help",
-  "crowd.consent_reject": "Don't help"
+  "crowd.consent_reject": "Don't help",
+  "badge.flaxia_plus": "Flaxia+ subscriber"
 }

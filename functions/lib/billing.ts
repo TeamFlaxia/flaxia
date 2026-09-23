@@ -42,6 +42,24 @@ export const PLAN_NAMES: Record<string, string> = {
 /** Statuses that grant premium entitlements. */
 export const ACTIVE_STATUSES = ['active', 'trialing'] as const;
 
+/**
+ * Map a plan + subscription status to `users.badge_type`.
+ * NULL = no avatar badge. Future paid tiers add entries to this map only.
+ */
+export function badgeTypeForPlan(planId: string | null | undefined, status: string | null | undefined): string | null {
+  if (!planId || !status) return null;
+  if (!(ACTIVE_STATUSES as readonly string[]).includes(status)) return null;
+  // Only Flaxia+ is sold today; keep the badge value equal to the plan id so
+  // higher tiers can introduce distinct badge types later.
+  if (planId === 'flaxia_plus') return 'flaxia_plus';
+  return null;
+}
+
+/** Persist `users.badge_type` from a plan/status pair. */
+export async function setUserBadgeType(env: BillingDbEnv, userId: string, badgeType: string | null): Promise<void> {
+  await env.DB.prepare('UPDATE users SET badge_type = ? WHERE id = ?').bind(badgeType, userId).run();
+}
+
 /** Minimal env for helpers that only need the database (usable from Hono routes). */
 export type BillingDbEnv = { DB: D1Database };
 
@@ -209,6 +227,8 @@ export async function upsertSubscription(
       .bind(customerId, userId)
       .run();
   }
+
+  await setUserBadgeType(env, userId, badgeTypeForPlan(planId, subscription.status));
 }
 
 /** Resolve a user id from a Stripe subscription (metadata or local row). */

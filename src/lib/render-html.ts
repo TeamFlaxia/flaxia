@@ -13,6 +13,7 @@ export interface PostRow {
   username: string;
   display_name: string | null;
   avatar_key: string | null;
+  badge_type?: string | null;
   text: string;
   hashtags: string;
   gif_key: string | null;
@@ -38,6 +39,7 @@ export interface UserRow {
   display_name: string;
   bio: string;
   avatar_key: string | null;
+  badge_type?: string | null;
   created_at: string;
 }
 
@@ -285,6 +287,51 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       object-fit: cover;
       background: #e9ecef;
     }
+    .ssr-avatar-wrap {
+      position: relative;
+      display: inline-block;
+      line-height: 0;
+    }
+    .ssr-avatar-badge {
+      position: absolute;
+      right: -2px;
+      bottom: -2px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #22c55e;
+      color: #ffffff;
+      border: 2px solid var(--bg-primary, #ffffff);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+    }
+    .ssr-avatar-wrap--large .ssr-avatar-badge {
+      width: 22px;
+      height: 22px;
+      border-width: 3px;
+    }
+    .ssr-avatar-wrap--mini .ssr-avatar-badge {
+      width: 9px;
+      height: 9px;
+      border-width: 1px;
+      right: -1px;
+      bottom: -1px;
+    }
+    .ssr-avatar-wrap--mini .ssr-avatar-badge svg {
+      width: 5px;
+      height: 5px;
+    }
+    .ssr-avatar-badge svg {
+      width: 9px;
+      height: 9px;
+      display: block;
+    }
+    .ssr-avatar-wrap--large .ssr-avatar-badge svg {
+      width: 12px;
+      height: 12px;
+    }
     .ssr-display-name {
       font-weight: 600;
       color: var(--text-primary);
@@ -502,6 +549,11 @@ function renderPostMedia(
   return parts.join('\n    ');
 }
 
+export function renderAvatarBadge(badgeType?: string | null): string {
+  if (badgeType !== 'flaxia_plus') return '';
+  return `<span class="ssr-avatar-badge" title="Flaxia+" aria-label="Flaxia+"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg></span>`;
+}
+
 export function renderPostArticle(post: PostRow, baseUrl: string, isReply = false): string {
   const postUrl = `${baseUrl}/thread/${post.id}`;
   const profileUrl = `${baseUrl}/users/${post.username}`;
@@ -512,7 +564,7 @@ export function renderPostArticle(post: PostRow, baseUrl: string, isReply = fals
   return `<article class="ssr-post${replyClass}">
     <div class="ssr-post-header">
       <a href="${escapeHtml(profileUrl)}">
-        <img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(post.display_name || post.username)}" class="ssr-avatar" width="40" height="40">
+        <span class="ssr-avatar-wrap"><img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(post.display_name || post.username)}" class="ssr-avatar" width="40" height="40">${renderAvatarBadge(post.badge_type)}</span>
       </a>
       <div>
         <a href="${escapeHtml(profileUrl)}" class="ssr-display-name">${escapeHtml(post.display_name || post.username)}</a>
@@ -546,7 +598,7 @@ export function renderProfileHeader(user: UserRow, baseUrl: string, postCount: n
   const avatarSrc = user.avatar_key ? assetUrl(baseUrl, user.avatar_key) : `${baseUrl}/default-avatar.png`;
 
   return `<header class="ssr-profile-header">
-    <img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(user.display_name)}" class="ssr-avatar-large" width="72" height="72">
+    <span class="ssr-avatar-wrap ssr-avatar-wrap--large"><img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(user.display_name)}" class="ssr-avatar-large" width="72" height="72">${renderAvatarBadge(user.badge_type)}</span>
     <h1>${escapeHtml(user.display_name)}</h1>
     <div class="ssr-username">@${escapeHtml(user.username)}</div>
     ${user.bio ? `<p class="ssr-bio">${escapeHtml(user.bio)}</p>` : ''}

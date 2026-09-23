@@ -28,7 +28,7 @@ topic.get('/current-topic', async (c) => {
     const pick = candidates.results[Math.floor(Math.random() * candidates.results.length)];
     const result = await c.env.DB.prepare(`
       SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.created_at,
-             u.display_name, u.avatar_key, u.language as author_language,
+             u.display_name, u.avatar_key, u.badge_type, u.language as author_language,
              COALESCE(p.reply_count, 0) as reply_count,
              COALESCE(p.impressions, 0) as impressions,
              p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count
@@ -61,6 +61,7 @@ topic.get('/current-topic', async (c) => {
       username: result.username,
       display_name: result.display_name,
       avatar_key: result.avatar_key,
+      badge_type: (result.badge_type as string | null) ?? null,
       text: result.text,
       hashtags,
       gif_key: result.gif_key,

@@ -1,3 +1,4 @@
+import { attachPlusBadge } from '../lib/avatar.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { type IconName, icon } from '../lib/icons.js';
@@ -14,6 +15,7 @@ export interface LeftNavProps {
     username: string;
     display_name?: string;
     avatar_key?: string;
+    badge_type?: string | null;
   } | null;
 }
 
@@ -174,6 +176,7 @@ export class LeftNav {
           .toUpperCase();
         avatar.style.background = 'var(--accent)';
       }
+      attachPlusBadge(avatar, this.props.currentUser.badge_type);
 
       const info = document.createElement('div');
       info.className = 'nav-user-info';
@@ -554,6 +557,7 @@ export function updateLeftNavUser(
     username: string;
     display_name?: string;
     avatar_key?: string;
+    badge_type?: string | null;
   } | null,
 ): void {
   // Update the props
@@ -770,6 +774,7 @@ export function updateLeftNavUser(
       avatar.textContent = (currentUser.display_name || currentUser.username).charAt(0).toUpperCase();
       avatar.style.background = 'var(--accent)';
     }
+    attachPlusBadge(avatar, currentUser.badge_type);
 
     const info = document.createElement('div');
     info.className = 'nav-user-info';

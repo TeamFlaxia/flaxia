@@ -106,7 +106,7 @@ push.get('/notifications', requireAuth, async (c) => {
         SUBSTR(p.text, 1, 50) as post_text_preview,
         u.username as actor_username,
         u.display_name as actor_display_name,
-        u.avatar_key as actor_avatar_key
+        u.avatar_key as actor_avatar_key, u.badge_type as actor_badge_type
       FROM (
         SELECT * FROM notifications 
         WHERE user_id = ? 
@@ -144,7 +144,7 @@ push.get('/notifications', requireAuth, async (c) => {
     const actorUserMap = new Map<string, Record<string, unknown>>();
     if (allActorIds.size > 0) {
       const userRows = await c.env.DB.prepare(`
-        SELECT id, username, display_name, avatar_key FROM users WHERE id IN (${Array.from(allActorIds)
+        SELECT id, username, display_name, avatar_key, badge_type FROM users WHERE id IN (${Array.from(allActorIds)
           .map(() => '?')
           .join(',')})
       `)
@@ -166,6 +166,7 @@ push.get('/notifications', requireAuth, async (c) => {
               username: row.actor_username,
               display_name: row.actor_display_name,
               avatar_key: row.actor_avatar_key,
+              badge_type: (row.actor_badge_type as string | null) ?? null,
             }
           : undefined,
         actor_id: row.actor_id,
@@ -181,7 +182,14 @@ push.get('/notifications', requireAuth, async (c) => {
             notif.actors = ids
               .map((id: string) => {
                 const u = actorUserMap.get(id);
-                return u ? { username: u.username, display_name: u.display_name, avatar_key: u.avatar_key } : null;
+                return u
+                  ? {
+                      username: u.username,
+                      display_name: u.display_name,
+                      avatar_key: u.avatar_key,
+                      badge_type: (u.badge_type as string | null) ?? null,
+                    }
+                  : null;
               })
               .filter(Boolean);
           }

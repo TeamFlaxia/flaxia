@@ -1,4 +1,5 @@
 import { updateMeCache } from '../lib/auth-cache';
+import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
@@ -10,6 +11,7 @@ interface EditProfileModalProps {
     display_name?: string;
     bio?: string;
     avatar_key?: string;
+    badge_type?: string | null;
     header_key?: string | null;
   };
   onSave: () => void;
@@ -209,7 +211,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
     font-size: 2rem;
     color: white;
     cursor: pointer;
-    overflow: hidden;
+    overflow: visible;
     border: 4px solid var(--bg-primary);
   `;
   // Display existing avatar if available
@@ -221,6 +223,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   } else {
     avatar.textContent = currentUser.username.charAt(0).toUpperCase();
   }
+  attachPlusBadge(avatar, currentUser.badge_type);
 
   const avatarOverlay = document.createElement('div');
   avatarOverlay.className = 'avatar-overlay';

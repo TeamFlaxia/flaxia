@@ -115,7 +115,7 @@ multiplayer.get('/rooms/:id', requireAuth, async (c) => {
   try {
     const roomId = c.req.param('id');
     const room = await c.env.DB.prepare(`
-      SELECT r.*, u.username as host_username, u.display_name as host_display_name, u.avatar_key as host_avatar_key
+      SELECT r.*, u.username as host_username, u.display_name as host_display_name, u.avatar_key as host_avatar_key, u.badge_type as host_badge_type
       FROM multiplayer_rooms r
       JOIN users u ON u.id = r.host_id
       WHERE r.id = ?
@@ -321,7 +321,7 @@ multiplayer.get('/scores/:gameId', async (c) => {
 
     let query = `
       SELECT s.id, s.game_id, s.user_id, s.score, s.label, s.metadata, s.created_at,
-             u.username, u.display_name, u.avatar_key
+             u.username, u.display_name, u.avatar_key, u.badge_type
       FROM multiplayer_scores s
       JOIN users u ON u.id = s.user_id
       WHERE s.game_id = ?

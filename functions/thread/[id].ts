@@ -20,6 +20,7 @@ function toPost(row: RawPost): PostRow {
     username: String(row.username),
     display_name: row.display_name ? String(row.display_name) : null,
     avatar_key: row.avatar_key ? String(row.avatar_key) : null,
+    badge_type: row.badge_type ? String(row.badge_type) : null,
     text: String(row.text),
     hashtags: String(row.hashtags),
     gif_key: row.gif_key ? String(row.gif_key) : null,
@@ -41,7 +42,7 @@ function toPost(row: RawPost): PostRow {
 }
 
 const POST_SELECT = `
-  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key,
+  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type,
     p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key,
     p.game_description,
     p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,

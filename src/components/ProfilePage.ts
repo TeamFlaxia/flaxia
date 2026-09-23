@@ -1,4 +1,5 @@
 import { clearMeCache } from '../lib/auth-cache.js';
+import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { safeRemoveFromBody } from '../lib/dom-utils.js';
 import { formatCount } from '../lib/format.js';
@@ -26,6 +27,7 @@ interface ProfileUserData {
   display_name?: string;
   bio?: string;
   avatar_key?: string | null;
+  badge_type?: string | null;
   header_key?: string | null;
   created_at?: string;
   pinned_post_id?: string | null;
@@ -498,6 +500,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
           avatar.style.backgroundPosition = 'center';
           avatar.textContent = '';
         }
+        attachPlusBadge(avatar, userData.badge_type);
 
         if (userData.header_key) {
           bannerEl.style.backgroundImage = `url(/api/images/${userData.header_key})`;

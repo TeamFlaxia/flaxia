@@ -1,3 +1,4 @@
+import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
 import { Post } from '../types/post.js';
@@ -93,7 +94,13 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
     usersSection.appendChild(usersTitle);
 
     props.users.forEach((user) => {
-      const u = user as { display_name?: string; username: string; [key: string]: unknown };
+      const u = user as {
+        display_name?: string;
+        username: string;
+        avatar_key?: string | null;
+        badge_type?: string | null;
+        [key: string]: unknown;
+      };
       const userItem = document.createElement('div');
       userItem.className = 'search-result-user';
       userItem.style.cssText = `
@@ -136,6 +143,7 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
         font-size: 0.875rem;
       `;
       avatar.textContent = u.display_name?.[0]?.toUpperCase() || u.username[0].toUpperCase();
+      attachPlusBadge(avatar, u.badge_type);
 
       const userInfo = document.createElement('div');
 

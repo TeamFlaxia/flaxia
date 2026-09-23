@@ -23,7 +23,7 @@ offered (Flaxia++ / Flaxia# are defined in the database but not sold yet).
 - ユーザー定義スタンプにgifとmp4を許可
 - アイコンにgifとmp4を許可
 - 自己紹介にgifとmp4を許可
-- 通話品質の改善
+- アバター右下にFlaxia+認証バッジ（チェックマーク）
 
 ### Plan Flaxia++ (¥500/mo) — 未販売（DB定義のみ）
 

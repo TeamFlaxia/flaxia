@@ -1,3 +1,4 @@
+import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
 import { type IconName, icon } from '../lib/icons.js';
 
@@ -8,6 +9,7 @@ export interface BottomNavProps {
     username: string;
     display_name?: string;
     avatar_key?: string;
+    badge_type?: string | null;
   } | null;
   onNavigate?: (item: string) => void;
   onSignIn?: () => void;
@@ -101,6 +103,11 @@ export class BottomNav {
     } else {
       const initial = (user.display_name || user.username || '?').charAt(0).toUpperCase();
       btn.innerHTML = `<span class="bottom-nav-avatar bottom-nav-avatar--initial">${initial}</span>`;
+    }
+
+    const avatarEl = btn.querySelector('.bottom-nav-avatar');
+    if (avatarEl instanceof HTMLElement) {
+      attachPlusBadge(avatarEl, user.badge_type);
     }
 
     btn.addEventListener('click', () => {

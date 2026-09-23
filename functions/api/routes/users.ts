@@ -9,7 +9,7 @@ import type { Bindings, PostRow, SrpProofBody, Variables } from '../types';
 
 const users = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
+const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
   COALESCE(p.reply_count, 0) as reply_count, 
   COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at`;
 
@@ -96,7 +96,7 @@ users.get('/users/suggestions', async (c) => {
     const currentUserId = sessionData.user.id;
 
     const pool = await c.env.DB.prepare(`
-      SELECT id, username, display_name, avatar_key
+      SELECT id, username, display_name, avatar_key, badge_type
       FROM users
       WHERE id != ?
       AND id NOT IN (
@@ -366,7 +366,7 @@ users.get('/users/suggest', async (c) => {
     const prefix = q.toLowerCase();
 
     const result = await c.env.DB.prepare(`
-      SELECT id, username, display_name, avatar_key
+      SELECT id, username, display_name, avatar_key, badge_type
       FROM users
       WHERE LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?
       ORDER BY
@@ -382,6 +382,7 @@ users.get('/users/suggest', async (c) => {
       username: u.username,
       display_name: u.display_name || '',
       avatar_key: u.avatar_key || '',
+      badge_type: (u.badge_type as string | null) ?? null,
     }));
 
     return c.json({ users: usersList }, 200, {
@@ -407,7 +408,7 @@ users.get('/users/:username', async (c) => {
     }
 
     const user = await c.env.DB.prepare(`
-      SELECT id, username, display_name, bio, avatar_key, header_key, created_at, pinned_post_id 
+      SELECT id, username, display_name, bio, avatar_key, badge_type, header_key, created_at, pinned_post_id 
       FROM users 
       WHERE username = ? COLLATE NOCASE
     `)
@@ -579,7 +580,7 @@ users.get('/users/:username/followers', async (c) => {
     }
 
     const user = await c.env.DB.prepare(`
-      SELECT id, username, display_name, bio, avatar_key, created_at 
+      SELECT id, username, display_name, bio, avatar_key, badge_type, created_at 
       FROM users 
       WHERE username = ? COLLATE NOCASE
     `)
@@ -599,7 +600,7 @@ users.get('/users/:username/followers', async (c) => {
 
     let query = `
       SELECT 
-        u.id, u.username, u.display_name, u.avatar_key, u.language as author_language,
+        u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language,
         u.created_at
       FROM follows f
       JOIN users u ON f.follower_id = u.id
@@ -692,7 +693,7 @@ users.get('/users/:username/following', async (c) => {
     }
 
     const user = await c.env.DB.prepare(`
-      SELECT id, username, display_name, bio, avatar_key, created_at 
+      SELECT id, username, display_name, bio, avatar_key, badge_type, created_at 
       FROM users 
       WHERE username = ? COLLATE NOCASE
     `)
@@ -712,7 +713,7 @@ users.get('/users/:username/following', async (c) => {
 
     let query = `
       SELECT 
-        u.id, u.username, u.display_name, u.avatar_key, u.language as author_language,
+        u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language,
         u.created_at
       FROM follows f
       JOIN users u ON f.followee_id = u.id
@@ -990,6 +991,7 @@ users.patch('/users/me', requireAuth, async (c) => {
       display_name: string | null;
       bio: string | null;
       avatar_key: string | null;
+      badge_type: string | null;
       header_key: string | null;
       language: string | null;
       ng_words: string | null;
@@ -997,7 +999,7 @@ users.patch('/users/me', requireAuth, async (c) => {
     };
 
     const updatedUser = await c.env.DB.prepare(`
-      SELECT id, email, username, display_name, bio, avatar_key, header_key, language, ng_words, created_at 
+      SELECT id, email, username, display_name, bio, avatar_key, badge_type, header_key, language, ng_words, created_at 
       FROM users 
       WHERE id = ?
     `)
@@ -1469,7 +1471,7 @@ users.get('/users/me/blocked', requireAuth, async (c) => {
     }
 
     const result = await c.env.DB.prepare(
-      `SELECT u.id, u.username, u.display_name, u.avatar_key
+      `SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type
        FROM blocks b
        JOIN users u ON u.id = b.blocked_id
        WHERE b.blocker_id = ?

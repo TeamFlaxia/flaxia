@@ -2,11 +2,18 @@ import type { Post, QuotedPost } from '../types/post.js';
 
 export interface PostComposerProps {
   onPostCreated?: (post: Post) => void;
-  currentUser?: { username: string; display_name?: string; avatar_key?: string; id?: string } | null;
+  currentUser?: {
+    username: string;
+    display_name?: string;
+    avatar_key?: string;
+    badge_type?: string | null;
+    id?: string;
+  } | null;
   onDraftSaved?: () => void;
   quotedPost?: QuotedPost | null;
 }
 
+import { attachPlusBadge } from '../lib/avatar.js';
 import { getMimeType } from '../lib/file-extensions.js';
 import { AttachPreviewHandle, checkImageSizeLimit, renderFilePreview } from '../lib/file-preview.js';
 import { formatCount } from '../lib/format.js';
@@ -235,6 +242,7 @@ export class PostComposer {
       } else {
         avatar.textContent = this.props.currentUser.username.charAt(0).toUpperCase();
       }
+      attachPlusBadge(avatar, this.props.currentUser.badge_type);
     }
 
     this.renderQuotedPost(container);
@@ -1877,7 +1885,14 @@ export class PostComposer {
     this.textarea.focus();
   }
 
-  public updateCurrentUser(currentUser: { username: string; display_name?: string; avatar_key?: string } | null): void {
+  public updateCurrentUser(
+    currentUser: {
+      username: string;
+      display_name?: string;
+      avatar_key?: string;
+      badge_type?: string | null;
+    } | null,
+  ): void {
     this.props.currentUser = currentUser;
     this.updateAvatar();
   }
@@ -1906,6 +1921,7 @@ export class PostComposer {
       } else {
         avatar.textContent = this.props.currentUser.username.charAt(0).toUpperCase();
       }
+      attachPlusBadge(avatar, this.props.currentUser.badge_type);
     }
   }
 

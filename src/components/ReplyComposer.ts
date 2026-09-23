@@ -1,3 +1,4 @@
+import { attachPlusBadge } from '../lib/avatar.js';
 import { AttachPreviewHandle, checkImageSizeLimit, renderFilePreview } from '../lib/file-preview.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
@@ -12,7 +13,13 @@ export interface ReplyComposerProps {
   onReplyCreated: (newReply: Post) => void;
   onCancel: () => void;
   prefillText?: string;
-  currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null;
+  currentUser?: {
+    username: string;
+    id: string;
+    display_name?: string;
+    avatar_key?: string;
+    badge_type?: string | null;
+  } | null;
 }
 
 export class ReplyComposer {
@@ -591,7 +598,11 @@ export class ReplyComposer {
     const user = this.props.currentUser;
     if (!user) return;
 
-    avatarEl.textContent = user.username.charAt(0).toUpperCase();
+    avatarEl.querySelector(':scope > .avatar-initial')?.remove();
+    const initial = document.createElement('span');
+    initial.className = 'avatar-initial';
+    initial.textContent = user.username.charAt(0).toUpperCase();
+    avatarEl.appendChild(initial);
 
     if (user.avatar_key) {
       const loadAvatar = () => {
@@ -600,7 +611,7 @@ export class ReplyComposer {
           avatarEl.style.backgroundImage = `url(/api/images/${user.avatar_key})`;
           avatarEl.style.backgroundSize = 'cover';
           avatarEl.style.backgroundPosition = 'center';
-          avatarEl.textContent = '';
+          avatarEl.querySelector(':scope > .avatar-initial')?.remove();
         };
         img.onerror = () => {
           console.warn(`Failed to load avatar: ${user.avatar_key}`);
@@ -624,6 +635,7 @@ export class ReplyComposer {
       );
     });
     avatarEl.style.cursor = 'pointer';
+    attachPlusBadge(avatarEl, user.badge_type);
   }
 
   private async handleSubmit(): Promise<void> {

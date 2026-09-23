@@ -1,3 +1,4 @@
+import { attachPlusBadge } from '../lib/avatar.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { Post, PostCardMode } from '../types/post.js';
@@ -6,7 +7,13 @@ import { createPostCard } from './PostCard.js';
 interface SearchPageProps {
   query: string;
   type?: 'posts' | 'users' | 'arcade';
-  currentUser: { username: string; id: string; display_name?: string; avatar_key?: string } | null;
+  currentUser: {
+    username: string;
+    id: string;
+    display_name?: string;
+    avatar_key?: string;
+    badge_type?: string | null;
+  } | null;
   sandboxOrigin: string;
 }
 
@@ -21,6 +28,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
     username: string;
     display_name?: string;
     avatar_key?: string;
+    badge_type?: string | null;
     bio?: string;
     is_following?: boolean;
   }> = [];
@@ -227,13 +235,16 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         const data = (await res.json()) as { tags: { tag: string; count: number }[] };
         renderSuggestions((data.tags || []).map((t) => ({ type: 'tag' as const, label: t.tag, count: t.count })));
       } else {
-        const data = (await res.json()) as { users: { username: string; display_name: string; avatar_key: string }[] };
+        const data = (await res.json()) as {
+          users: { username: string; display_name: string; avatar_key: string; badge_type?: string | null }[];
+        };
         renderSuggestions(
           (data.users || []).map((u) => ({
             type: 'user' as const,
             label: u.username,
             display: u.display_name,
             avatar: u.avatar_key,
+            badge: u.badge_type ?? null,
           })),
         );
       }
@@ -245,7 +256,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   const renderSuggestions = (
     items: (
       | { type: 'tag'; label: string; count: number }
-      | { type: 'user'; label: string; display: string; avatar: string }
+      | { type: 'user'; label: string; display: string; avatar: string; badge?: string | null }
     )[],
   ) => {
     suggestDropdown.innerHTML = '';
@@ -281,6 +292,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         const avatar = document.createElement('div');
         avatar.style.cssText = `width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--bg-primary); display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 0.7rem; flex-shrink: 0;`;
         avatar.textContent = (it.display || it.label)[0].toUpperCase();
+        attachPlusBadge(avatar, it.badge);
         const info = document.createElement('div');
         info.style.cssText = 'display: flex; flex-direction: column;';
         const name = document.createElement('span');
@@ -384,6 +396,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
           username: string;
           display_name?: string;
           avatar_key?: string;
+          badge_type?: string | null;
           bio?: string;
           is_following?: boolean;
         }>;
@@ -484,6 +497,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       username: string;
       display_name?: string;
       avatar_key?: string;
+      badge_type?: string | null;
       bio?: string;
       is_following?: boolean;
     }>,
@@ -523,6 +537,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       if (!user.avatar_key) {
         avatar.textContent = user.display_name?.[0]?.toUpperCase() || user.username[0].toUpperCase();
       }
+      attachPlusBadge(avatar, user.badge_type);
 
       const userInfo = document.createElement('div');
       const usernameEl = document.createElement('div');

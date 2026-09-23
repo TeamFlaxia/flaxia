@@ -19,6 +19,7 @@ export interface QuotedPost {
   username: string;
   display_name?: string | null;
   avatar_key?: string | null;
+  badge_type?: string | null;
   text: string;
   hashtags: string;
   mentions?: string;
@@ -44,6 +45,7 @@ export interface Post {
   username: string;
   display_name?: string;
   avatar_key?: string;
+  badge_type?: string | null;
   text: string;
   hashtags: string;
   mentions?: string;
@@ -87,7 +89,13 @@ export interface PostCardProps {
   post: Post;
   sandboxOrigin: string;
   initialMode?: PostCardMode;
-  currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null;
+  currentUser?: {
+    username: string;
+    id: string;
+    display_name?: string;
+    avatar_key?: string;
+    badge_type?: string | null;
+  } | null;
   onDelete?: (postId: string) => void;
   disableReply?: boolean;
   disableReplyComposer?: boolean;
@@ -105,6 +113,7 @@ export interface PostHeaderProps {
   username: string;
   display_name?: string;
   avatar_key?: string;
+  badge_type?: string | null;
   createdAt: string;
   editedAt?: string;
 }
@@ -159,7 +168,13 @@ export interface PostActionsProps {
 
 export interface TimelineProps {
   sandboxOrigin: string;
-  currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null;
+  currentUser?: {
+    username: string;
+    id: string;
+    display_name?: string;
+    avatar_key?: string;
+    badge_type?: string | null;
+  } | null;
 }
 
 export interface TimelineState {

@@ -1,6 +1,6 @@
 import { buildGameTitle } from '../../src/lib/game-seo';
 import { isCrawler } from '../../src/lib/is-crawler';
-import { escapeHtml, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
+import { escapeHtml, renderAvatarBadge, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import { renderBreadcrumbJsonLd, renderSsrFooter, renderSsrHeader, renderSsrLayoutCss } from '../lib/ssr-layout';
 
@@ -16,6 +16,7 @@ interface GameRow {
   username: string;
   display_name: string | null;
   avatar_key: string | null;
+  badge_type: string | null;
   text: string;
   payload_key: string | null;
   swf_key: string | null;
@@ -32,6 +33,7 @@ function toGame(row: RawGame): GameRow {
     username: String(row.username),
     display_name: row.display_name ? String(row.display_name) : null,
     avatar_key: row.avatar_key ? String(row.avatar_key) : null,
+    badge_type: row.badge_type ? String(row.badge_type) : null,
     text: String(row.text),
     payload_key: row.payload_key ? String(row.payload_key) : null,
     swf_key: row.swf_key ? String(row.swf_key) : null,
@@ -80,7 +82,7 @@ function renderGameCard(game: GameRow, baseUrl: string): string {
       <div class="ssr-game-info">
         <div class="ssr-game-title">${escapeHtml(title)}</div>
         <div class="ssr-game-author">
-          <img src="${escapeHtml(avatarSrc)}" alt="" class="ssr-mini-avatar" width="18" height="18">
+          <span class="ssr-avatar-wrap ssr-avatar-wrap--mini"><img src="${escapeHtml(avatarSrc)}" alt="" class="ssr-mini-avatar" width="18" height="18">${renderAvatarBadge(game.badge_type)}</span>
           <span>${escapeHtml(game.display_name || game.username)}</span>
         </div>
         <div class="ssr-game-stats">
@@ -111,7 +113,7 @@ export async function onRequest(context: {
     let games: GameRow[] = [];
     if (env.DB) {
       const { results } = await env.DB.prepare(`
-        SELECT p.id, p.username, u.display_name, u.avatar_key,
+        SELECT p.id, p.username, u.display_name, u.avatar_key, u.badge_type,
           p.text, p.payload_key, p.swf_key, p.thumbnail_key, p.gif_key,
           p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, p.created_at
         FROM posts p

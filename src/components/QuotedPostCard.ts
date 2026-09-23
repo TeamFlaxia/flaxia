@@ -1,3 +1,4 @@
+import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
 import type { QuotedPost } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
@@ -148,7 +149,7 @@ export function createQuotedPostCard(props: QuotedPostCardProps): HTMLElement {
     color: #fff;
     background: var(--accent);
     flex-shrink: 0;
-    overflow: hidden;
+    overflow: visible;
   `;
   if (quoted.avatar_key) {
     avatar.style.backgroundImage = `url(/api/images/${quoted.avatar_key})`;
@@ -158,6 +159,7 @@ export function createQuotedPostCard(props: QuotedPostCardProps): HTMLElement {
   } else {
     avatar.textContent = (quoted.display_name || quoted.username || '?').charAt(0).toUpperCase();
   }
+  attachPlusBadge(avatar, quoted.badge_type);
 
   const name = document.createElement('span');
   name.className = 'quoted-post-name';

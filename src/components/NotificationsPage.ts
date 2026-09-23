@@ -21,11 +21,13 @@ export interface Notification {
     username: string;
     display_name: string;
     avatar_key: string | null;
+    badge_type?: string | null;
   };
   actors?: Array<{
     username: string;
     display_name: string;
     avatar_key: string | null;
+    badge_type?: string | null;
   } | null>;
   actor_id?: string | null;
   actor_data?: string | null; // JSON string for external actor info or grouped actor IDs

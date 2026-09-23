@@ -353,11 +353,17 @@ export class Timeline {
     // Refresh current user data from cache
     const updatedUser = await getMe();
     if (updatedUser?.user && this.composer) {
-      const u = updatedUser.user as { username: string; display_name?: string; avatar_key?: string };
+      const u = updatedUser.user as {
+        username: string;
+        display_name?: string;
+        avatar_key?: string;
+        badge_type?: string | null;
+      };
       this.composer.updateCurrentUser({
         username: u.username,
         display_name: u.display_name,
         avatar_key: u.avatar_key,
+        badge_type: u.badge_type,
       });
     }
   }

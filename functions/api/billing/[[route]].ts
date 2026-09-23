@@ -1,6 +1,7 @@
 import Stripe from 'stripe';
 import {
   type BillingEnv,
+  badgeTypeForPlan,
   CHECKOUT_PLANS,
   getOrCreateStripeCustomer,
   getRequestUserId,
@@ -11,6 +12,7 @@ import {
   PLAN_NAMES,
   resolvePlanIdForSubscription,
   resolveUserIdForSubscription,
+  setUserBadgeType,
   upsertSubscription,
 } from '../../lib/billing';
 
@@ -317,6 +319,15 @@ export async function processWebhookEvent(event: Stripe.Event, env: BillingEnv):
       )
         .bind(subscription.id)
         .run();
+      const userId = await resolveUserIdForSubscription(env, subscription);
+      if (userId) {
+        const row = await env.DB.prepare(
+          'SELECT plan_id, status FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
+        )
+          .bind(userId)
+          .first<{ plan_id: string; status: string }>();
+        await setUserBadgeType(env, userId, badgeTypeForPlan(row?.plan_id, row?.status));
+      }
       break;
     }
 
@@ -344,6 +355,15 @@ export async function processWebhookEvent(event: Stripe.Event, env: BillingEnv):
         )
           .bind(subscription.id)
           .run();
+        const userId = await resolveUserIdForSubscription(env, subscription);
+        if (userId) {
+          const row = await env.DB.prepare(
+            'SELECT plan_id, status FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
+          )
+            .bind(userId)
+            .first<{ plan_id: string; status: string }>();
+          await setUserBadgeType(env, userId, badgeTypeForPlan(row?.plan_id, row?.status));
+        }
       }
       break;
     }

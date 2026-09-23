@@ -13,6 +13,7 @@ export interface User {
   avatar_key?: string;
   language?: string;
   ng_words?: string;
+  badge_type?: string | null;
   created_at: string;
 }
 
@@ -124,7 +125,7 @@ export async function getSession(env: Env, token: string): Promise<{ user: User;
 
   // Get user from database
   const user = (await env.DB.prepare(`
-    SELECT id, email, username, display_name, bio, avatar_key, created_at
+    SELECT id, email, username, display_name, bio, avatar_key, badge_type, created_at
     FROM users WHERE id = ?
   `)
     .bind(session.user_id)
@@ -160,7 +161,7 @@ export async function getMeWithSession(env: Env, token: string, cache?: KVNamesp
   const result = (await env.DB.prepare(`
     SELECT 
       u.id, u.email, u.username, u.display_name, 
-      u.bio, u.avatar_key, u.language, u.ng_words, u.created_at
+      u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.created_at
     FROM sessions s
     JOIN users u ON s.user_id = u.id
     WHERE s.id = ?
@@ -270,7 +271,7 @@ export async function registerUser(
 
   // Return user without password hash
   const user = (await env.DB.prepare(`
-    SELECT id, email, username, display_name, bio, avatar_key, created_at
+    SELECT id, email, username, display_name, bio, avatar_key, badge_type, created_at
     FROM users WHERE id = ?
   `)
     .bind(userId)
@@ -330,7 +331,7 @@ export async function verifySrpLogin(
   if (!hs) return null;
 
   const user = (await env.DB.prepare(`
-    SELECT id, email, srp_salt, srp_verifier, username, display_name, bio, avatar_key, created_at
+    SELECT id, email, srp_salt, srp_verifier, username, display_name, bio, avatar_key, badge_type, created_at
     FROM users WHERE id = ?
   `)
     .bind(hs.user_id)
@@ -424,7 +425,7 @@ export async function verifySrpPassword(
 export async function loginUser(env: Env, email: string, password: string): Promise<{ user: User; session: Session }> {
   // Get user with password hash
   const userWithPassword = (await env.DB.prepare(`
-    SELECT id, email, password_hash, username, display_name, bio, avatar_key, created_at
+    SELECT id, email, password_hash, username, display_name, bio, avatar_key, badge_type, created_at
     FROM users WHERE email = ?
   `)
     .bind(email)

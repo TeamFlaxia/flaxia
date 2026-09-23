@@ -1,3 +1,4 @@
+import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
@@ -91,7 +92,13 @@ export function createBlockedUsersModal(options: BlockedUsersModalOptions = {}):
   dialog.appendChild(body);
   overlay.appendChild(dialog);
 
-  const renderRow = (u: { id: string; username: string; display_name?: string; avatar_key?: string }) => {
+  const renderRow = (u: {
+    id: string;
+    username: string;
+    display_name?: string;
+    avatar_key?: string;
+    badge_type?: string | null;
+  }) => {
     const row = document.createElement('div');
     row.style.cssText = `
       display: flex;
@@ -103,14 +110,18 @@ export function createBlockedUsersModal(options: BlockedUsersModalOptions = {}):
     `;
 
     const avatarUrl = u.avatar_key ? `/api/images/${u.avatar_key}` : '/api/images/default-avatar';
+    const avatarWrap = document.createElement('div');
+    avatarWrap.style.cssText = 'position: relative; width: 40px; height: 40px; flex-shrink: 0;';
     const img = document.createElement('img');
     img.src = avatarUrl;
     img.alt = '';
-    img.style.cssText = 'width: 40px; height: 40px; border-radius: 50%; object-fit: cover;';
+    img.style.cssText = 'width: 40px; height: 40px; border-radius: 50%; object-fit: cover; display: block;';
     img.onerror = () => {
       img.src = '/api/images/default-avatar';
     };
-    row.appendChild(img);
+    avatarWrap.appendChild(img);
+    attachPlusBadge(avatarWrap, u.badge_type);
+    row.appendChild(avatarWrap);
 
     const info = document.createElement('div');
     info.style.cssText = 'flex: 1; min-width: 0;';
@@ -194,7 +205,13 @@ export function createBlockedUsersModal(options: BlockedUsersModalOptions = {}):
         return;
       }
       const data = (await res.json()) as {
-        users: Array<{ id: string; username: string; display_name?: string; avatar_key?: string }>;
+        users: Array<{
+          id: string;
+          username: string;
+          display_name?: string;
+          avatar_key?: string;
+          badge_type?: string | null;
+        }>;
       };
       if (data.users.length === 0) {
         list.textContent = t('settings.blocked_empty');

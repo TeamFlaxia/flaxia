@@ -1,6 +1,7 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { Hono } from 'hono';
 import { hashPassword } from '../../lib/auth.ts';
+import { badgeTypeForPlan } from '../../lib/billing';
 import { ensureNsfwScansTable, ensurePendingEmbedsTable } from '../../lib/crowd.ts';
 import type { Bindings, Variables } from '../types';
 
@@ -78,8 +79,10 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
       'post_embeddings',
       'post_translations',
       'freshs',
+      'custom_stamps',
       'transactions',
       'subscriptions',
+      'stripe_events',
       'follows',
       'posts',
       'actor_keys',
@@ -157,6 +160,8 @@ app.post('/api/test/subscription', requireTestEnvironment, async (c) => {
   if (!user) return c.json({ error: 'User not found' }, 404);
 
   const id = crypto.randomUUID();
+  const status = body.status ?? 'active';
+  const planId = body.planId ?? 'flaxia_plus';
   await db
     .prepare(
       `INSERT INTO subscriptions (
@@ -169,11 +174,17 @@ app.post('/api/test/subscription', requireTestEnvironment, async (c) => {
       user.id,
       `sub_test_${id}`,
       body.stripeCustomerId ?? null,
-      body.planId ?? 'flaxia_plus',
-      body.status ?? 'active',
+      planId,
+      status,
       body.cancelAtPeriodEnd ? 1 : 0,
       body.currentPeriodEnd ?? null,
     )
+    .run();
+
+  // Keep users.badge_type in sync the same way production webhooks do.
+  await db
+    .prepare('UPDATE users SET badge_type = ? WHERE id = ?')
+    .bind(badgeTypeForPlan(planId, status), user.id)
     .run();
 
   if (body.stripeCustomerId) {
