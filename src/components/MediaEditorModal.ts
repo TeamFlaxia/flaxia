@@ -1,12 +1,8 @@
+import { type AudioEditState, defaultAudioEditState, isAudioStateDirty } from '../lib/editor/audio-editor.ts';
+import { type ExportJob, runExportJob } from '../lib/editor/export-job.ts';
+import { ExportSession, isExportUnreachable } from '../lib/editor/export-popup-protocol.ts';
+import { getFFmpeg, terminateFFmpeg } from '../lib/editor/ffmpeg-client.ts';
 import {
-  type AudioEditState,
-  defaultAudioEditState,
-  encodeAudioFile,
-  isAudioStateDirty,
-} from '../lib/editor/audio-editor.ts';
-import { getFFmpeg, runFFmpeg, terminateFFmpeg } from '../lib/editor/ffmpeg-client.ts';
-import {
-  buildGifEditArgs,
   defaultImageEditState,
   getOutputSize,
   getSourceSize,
@@ -19,11 +15,10 @@ import {
   type NormalizedCrop,
   renderImageFile,
 } from '../lib/editor/image-editor.ts';
-import { computeAudioPlan, defaultTargetBytes, tightenVideoPlan } from '../lib/editor/render-preset.ts';
+import { computeAudioPlan, defaultTargetBytes } from '../lib/editor/render-preset.ts';
 import { createTrimTimeline, formatTimelineTime, type TrimTimelineHandle } from '../lib/editor/trim-timeline.ts';
 import {
   defaultVideoEditState,
-  encodeVideoFile,
   isVideoStateDirty,
   planForState,
   probeVideo,
@@ -382,6 +377,7 @@ class MediaEditorSession {
   private cancelBtn: HTMLButtonElement | null = null;
   private closeBtn: HTMLButtonElement | null = null;
   private objectUrls: string[] = [];
+  private exportSession: ExportSession | null = null;
 
   constructor(file: File, kind: EditableKind, resolveFn: (file: File | null) => void) {
     injectStyles();
@@ -436,6 +432,8 @@ class MediaEditorSession {
     if (this.imgSource instanceof ImageBitmap) this.imgSource.close();
     for (const url of this.objectUrls) URL.revokeObjectURL(url);
     this.objectUrls = [];
+    this.exportSession?.dispose();
+    this.exportSession = null;
     this.unregister();
     this.overlay.remove();
     this.resolveFn(result);
@@ -538,6 +536,7 @@ class MediaEditorSession {
   private cancelRender(): void {
     this.cancelled = true;
     terminateFFmpeg();
+    this.exportSession?.cancel();
   }
 
   private resetRender(): void {
@@ -567,10 +566,6 @@ class MediaEditorSession {
   // ---------------------------------------------------------------- image
 
   private buildImagePanel(host: HTMLElement): void {
-    if (fileExt(this.file.name) === 'gif') {
-      // GIF edits route through ffmpeg; warm the core while decoding pixels.
-      void getFFmpeg().catch(() => {});
-    }
     const preview = document.createElement('div');
     preview.className = 'me-preview';
     const wrap = document.createElement('div');
@@ -1117,8 +1112,6 @@ class MediaEditorSession {
   // ---------------------------------------------------------------- video
 
   private async buildVideoPanel(host: HTMLElement): Promise<void> {
-    // Warm the encoder core in the background while metadata probes.
-    void getFFmpeg().catch(() => {});
     const preview = document.createElement('div');
     preview.className = 'me-preview';
     preview.style.flexDirection = 'column';
@@ -1332,7 +1325,7 @@ class MediaEditorSession {
       this.setBusy(false);
       this.close(result);
     } catch (error) {
-      if (this.cancelled) {
+      if (this.cancelled || (error instanceof Error && error.message === 'render cancelled')) {
         this.resetRender();
         return;
       }
@@ -1363,19 +1356,13 @@ class MediaEditorSession {
     const base = safeBaseName(this.file.name) || t('editor.untitled_media');
 
     if (ext === 'gif') {
-      this.setStatus(t('editor.processing'));
-      const bytes = new Uint8Array(await this.file.arrayBuffer());
-      const inputName = 'input.gif';
-      const outputName = 'output.gif';
-      const data = await runFFmpeg({
-        inputs: [{ name: inputName, data: bytes }],
-        args: buildGifEditArgs(this.imgW, this.imgH, this.imgState, inputName, outputName),
-        outputName,
-        onProgress: (ratio) => this.setProgress(0.1 + ratio * 0.9),
-        signal: () => this.cancelled,
+      return this.executeExport({
+        kind: 'gif',
+        file: this.file,
+        width: this.imgW,
+        height: this.imgH,
+        state: this.imgState,
       });
-      if (data.byteLength > defaultTargetBytes()) throw new Error('output-too-large');
-      return new File([data as BlobPart], `${base}.gif`, { type: 'image/gif' });
     }
 
     const { blob, ext: outExt } = await renderImageFile(this.imgSource, this.imgState, ext);
@@ -1385,21 +1372,41 @@ class MediaEditorSession {
   private async renderAudioOutput(): Promise<File> {
     if (!this.audioState) throw new Error('no audio state');
     if (!isAudioStateDirty(this.audioState, this.audioDuration)) return this.file;
-    this.setStatus(t('editor.processing'));
-    return encodeAudioFile(this.file, this.audioState, {
-      onProgress: (ratio) => this.setProgress(0.1 + ratio * 0.9),
-      signal: () => this.cancelled,
-    });
+    return this.executeExport({ kind: 'audio', file: this.file, state: this.audioState });
   }
 
   private async renderVideoOutput(): Promise<File> {
     if (!this.videoState || !this.videoMeta) throw new Error('no video state');
     if (!isVideoStateDirty(this.videoState)) return this.file;
+    return this.executeExport({ kind: 'video', file: this.file, meta: this.videoMeta, state: this.videoState });
+  }
+
+  /**
+   * Video/GIF encodes prefer the cross-origin isolated export popup (ffmpeg
+   * core-mt); audio and anything the popup refuses run inline on the
+   * single-threaded core.
+   */
+  private async executeExport(job: ExportJob): Promise<File> {
+    const onProgress = (ratio: number): void => this.setProgress(0.1 + ratio * 0.9);
+    if (job.kind !== 'audio') {
+      if (!this.exportSession) {
+        this.exportSession = await ExportSession.open();
+      }
+      const session = this.exportSession;
+      if (session && !this.cancelled) {
+        try {
+          return await session.run(job, {
+            onProgress,
+            onAccepted: () => this.setStatus(t('editor.processing')),
+          });
+        } catch (error) {
+          if (!isExportUnreachable(error)) throw error;
+          this.exportSession = null;
+        }
+      }
+      if (this.cancelled) throw new Error('render cancelled');
+    }
     this.setStatus(t('editor.processing'));
-    return encodeVideoFile(this.file, this.videoMeta, this.videoState, {
-      onProgress: (ratio) => this.setProgress(0.1 + ratio * 0.9),
-      tighten: tightenVideoPlan,
-      signal: () => this.cancelled,
-    });
+    return runExportJob(job, { onProgress, signal: () => this.cancelled });
   }
 }

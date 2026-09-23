@@ -194,6 +194,7 @@ export async function encodeVideoFile(
     targetBytes?: number;
     tighten?: (plan: VideoRenderPlan) => VideoRenderPlan | null;
     signal?: () => boolean;
+    multithreaded?: boolean;
   } = {},
 ): Promise<File> {
   const targetBytes = options.targetBytes ?? defaultTargetBytes();
@@ -230,6 +231,7 @@ export async function encodeVideoFile(
       outputName,
       onProgress: options.onProgress,
       signal: options.signal,
+      multithreaded: options.multithreaded,
     });
 
   let data: Uint8Array;

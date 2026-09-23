@@ -1,8 +1,12 @@
 import type { FFmpeg } from '@ffmpeg/ffmpeg';
 
-// Loaded from a CDN: Pages rejects files >25MiB and @ffmpeg/core's wasm is
-// ~31MiB, so the core cannot ship inside dist/.
+// Loaded from a CDN: Pages rejects files >25MiB and the core wasm is ~31MiB,
+// so the cores cannot ship inside dist/. The multithreaded core needs
+// SharedArrayBuffer (cross-origin isolation), so it only loads inside the
+// export popup — COOP/COEP on /export-popup.html, never site-wide (site-wide
+// isolation would break third-party iframes and images).
 const CORE_BASE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
+const CORE_MT_BASE = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/dist/esm';
 
 let instance: FFmpeg | null = null;
 let loadPromise: Promise<FFmpeg> | null = null;
@@ -13,22 +17,36 @@ async function importFFmpeg(): Promise<typeof import('@ffmpeg/ffmpeg').FFmpeg> {
   return mod.FFmpeg;
 }
 
+export interface FFmpegLoadOptions {
+  /** Load the multithreaded core (requires crossOriginIsolated). */
+  multithreaded?: boolean;
+}
+
 /**
  * Lazily loads the ffmpeg.wasm core from jsDelivr (ESM build — the worker
- * imports it as a module). The core is single-threaded on purpose: the
- * multithreaded build would force COOP/COEP headers site-wide, which would
- * break third-party iframes and images.
+ * imports it as a module). With `multithreaded`, loads @ffmpeg/core-mt plus
+ * the same-origin pthread bootstrap from /ffmpeg/ (Workers cannot be created
+ * from cross-origin URLs).
  */
-export async function getFFmpeg(): Promise<FFmpeg> {
+export async function getFFmpeg(options: FFmpegLoadOptions = {}): Promise<FFmpeg> {
   if (instance?.loaded) return instance;
   if (!loadPromise) {
+    const multithreaded = options.multithreaded === true;
     loadPromise = (async () => {
       const FFmpegClass = await importFFmpeg();
       const ffmpeg = new FFmpegClass();
-      await ffmpeg.load({
-        coreURL: `${CORE_BASE}/ffmpeg-core.js`,
-        wasmURL: `${CORE_BASE}/ffmpeg-core.wasm`,
-      });
+      await ffmpeg.load(
+        multithreaded
+          ? {
+              coreURL: `${CORE_MT_BASE}/ffmpeg-core.js`,
+              wasmURL: `${CORE_MT_BASE}/ffmpeg-core.wasm`,
+              workerURL: `${window.location.origin}/ffmpeg/ffmpeg-core.worker.js`,
+            }
+          : {
+              coreURL: `${CORE_BASE}/ffmpeg-core.js`,
+              wasmURL: `${CORE_BASE}/ffmpeg-core.wasm`,
+            },
+      );
       instance = ffmpeg;
       return ffmpeg;
     })();
@@ -49,6 +67,8 @@ export interface FFmpegRunOptions {
   onProgress?: (ratio: number) => void;
   /** Returns true when the user aborted the render — checked before load/exec. */
   signal?: () => boolean;
+  /** Load the multithreaded core (requires crossOriginIsolated). */
+  multithreaded?: boolean;
 }
 
 /**
@@ -63,7 +83,7 @@ export async function runFFmpeg(options: FFmpegRunOptions): Promise<Uint8Array> 
   running = true;
   try {
     if (options.signal?.()) throw new Error('render cancelled');
-    const ffmpeg = await getFFmpeg();
+    const ffmpeg = await getFFmpeg({ multithreaded: options.multithreaded });
     const written: string[] = [];
     let progressCallback: ((data: { progress: number }) => void) | null = null;
     try {

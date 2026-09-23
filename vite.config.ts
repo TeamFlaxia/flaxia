@@ -1,17 +1,24 @@
 import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { defineConfig } from 'vite';
 import { CROWD_NODE_VERSION } from './src/lib/crowd-node';
 import { docsManifestPlugin } from './vite-docs-manifest';
+
+/** html file → entry chunk name (shared by rollup input and the preload plugin). */
+const ENTRY_INPUTS: Record<string, string> = {
+  main: 'index.html',
+  exportPopup: 'export-popup.html',
+};
+const HTML_ENTRY: Record<string, string> = Object.fromEntries(
+  Object.entries(ENTRY_INPUTS).map(([entry, html]) => [html, entry]),
+);
 
 export default defineConfig({
   build: {
     outDir: 'dist',
     rollupOptions: {
       external: (id) => id.startsWith('/api/crowd/'),
-      input: {
-        main: 'index.html',
-      },
+      input: ENTRY_INPUTS,
       output: {
         manualChunks: {
           // 大型ライブラリを個別チャンクに分割
@@ -73,16 +80,34 @@ export default defineConfig({
       enforce: 'post',
       apply: 'build',
       generateBundle(_opts, bundle) {
-        const entries = Object.entries(bundle)
-          .filter(([, info]) => info.type === 'chunk' && info.isEntry)
-          .map(([file]) => basename(file));
-        if (entries.length === 0) return;
-        const links = entries.map((f) => `<link rel="modulepreload" crossorigin href="/assets/${f}">`).join('\n  ');
+        const chunksByName = new Map(
+          Object.entries(bundle)
+            .filter(([, info]) => info.type === 'chunk' && info.isEntry)
+            .map(([file, info]) => [info.name, file]),
+        );
         for (const [file, info] of Object.entries(bundle)) {
-          if (info.type === 'asset' && file.endsWith('.html') && 'source' in info) {
-            info.source = (info.source as string).replace('</head>', `  ${links}\n</head>`);
-          }
+          if (info.type !== 'asset' || !file.endsWith('.html') || !('source' in info)) continue;
+          const entryName = HTML_ENTRY[file];
+          if (!entryName) continue;
+          const entryFile = chunksByName.get(entryName);
+          if (!entryFile) continue;
+          const link = `<link rel="modulepreload" crossorigin href="/${entryFile}">`;
+          info.source = (info.source as string).replace('</head>', `  ${link}\n</head>`);
         }
+      },
+    },
+    {
+      // vite dev has no _headers — apply the isolation headers the export
+      // popup needs (SharedArrayBuffer / core-mt) only on that path.
+      name: 'export-popup-dev-headers',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (req.url?.startsWith('/export-popup.html')) {
+            res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+            res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+          }
+          next();
+        });
       },
     },
     {

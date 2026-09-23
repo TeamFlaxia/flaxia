@@ -51,6 +51,7 @@ export async function encodeAudioFile(
     onProgress?: (ratio: number) => void;
     targetBytes?: number;
     signal?: () => boolean;
+    multithreaded?: boolean;
   } = {},
 ): Promise<File> {
   const targetBytes = options.targetBytes ?? defaultTargetBytes();
@@ -66,6 +67,7 @@ export async function encodeAudioFile(
     outputName,
     onProgress: options.onProgress,
     signal: options.signal,
+    multithreaded: options.multithreaded,
   });
 
   if (data.byteLength > targetBytes) {

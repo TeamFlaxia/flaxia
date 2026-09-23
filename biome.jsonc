@@ -19,6 +19,7 @@
       "!!**/*.zip",
       "!!worker-configuration.d.ts",
       "!!public/locales",
+      "!!public/ffmpeg",
       "!!scripts/test-fixtures/test-serviceworker.html"
     ]
   },
