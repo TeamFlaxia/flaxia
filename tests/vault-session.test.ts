@@ -14,6 +14,7 @@ import { beforeEach, test } from 'node:test';
 import { validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { prepareVaultRewrap } from '../src/lib/vault/client.ts';
+import { generateEphemeralKeyPair, wrapVaultKeyForPairing } from '../src/lib/vault/pairing.ts';
 import {
   DEFAULT_VAULT_KDF_PARAMS,
   encodeB64,
@@ -21,6 +22,7 @@ import {
   unlockVaultWithPassword,
 } from '../src/lib/vault/primitives.ts';
 import {
+  adoptPairedVaultKey,
   enableVault,
   generateRecoveryPhrase,
   getVaultKey,
@@ -186,6 +188,86 @@ test('generateRecoveryPhrase yields a 24-word checksum-valid mnemonic', () => {
   assert.ok(validateMnemonic(phrase, wordlist), 'the BIP-39 checksum must verify');
   assert.ok(isValidRecoveryPhrase(phrase));
   assert.notEqual(phrase, generateRecoveryPhrase(), 'two phrases must not collide');
+});
+
+// ─── QR pairing adoption (the joiner side of the handshake) ─────────────────
+
+// The full two-device handshake as the UI runs it: joiner creates a pairing
+// and holds its ephemeral secret, approver wraps VK under the ECDH secret, the
+// joiner polls and adopts the blob. This is the path a unit test of
+// unwrapVaultKeyForPairing alone cannot catch — adoption must feed the
+// ephemeral secret and approved_pub into the unwrap, not a device key.
+test('adoptPairedVaultKey opens the handoff blob with the joiner secret', async () => {
+  assert.deepEqual(await enableVault(PASSWORD, PHRASE), { ok: true });
+  const vk = getVaultKey();
+  assert.ok(vk);
+
+  // Joiner: ephemeral keypair, publishes the public half, displays the QR.
+  const joiner = generateEphemeralKeyPair();
+  const created = await fetch('/api/vault/devices', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label: 'Second laptop', peer_pub: encodeB64(joiner.publicKey) }),
+  });
+  assert.equal(created.status, 201);
+  const { id } = (await created.json()) as { id: string };
+
+  // Approver: an already-unlocked device scans and wraps VK.
+  const approver = generateEphemeralKeyPair();
+  const wrapped = await wrapVaultKeyForPairing(vk, approver.secretKey, joiner.publicKey, id);
+  const approved = await fetch(`/api/vault/devices/${id}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ approved_pub: encodeB64(approver.publicKey), wrapped_vk: wrapped }),
+  });
+  assert.equal(approved.status, 200);
+
+  // Joiner polls: the row is active and carries the blob + approver's public.
+  const polled = (await (await fetch(`/api/vault/devices/${id}`)).json()) as {
+    state: string;
+    approved_pub?: string;
+    wrapped_vk?: string;
+  };
+  assert.equal(polled.state, 'active');
+  assert.ok(polled.wrapped_vk && polled.approved_pub, 'an approved row must carry both halves');
+
+  // Simulate a fresh device: no VK in memory, then adopt as the joiner UI does.
+  lockVault();
+  assert.equal(getVaultKey(), null);
+  const adopted = await adoptPairedVaultKey(polled.wrapped_vk, id, joiner.secretKey, polled.approved_pub);
+  assert.equal(adopted, true, 'the joiner must open the blob with its own ephemeral secret');
+  assert.deepEqual(getVaultKey(), vk, 'adoption must yield the same VK the approver wrapped');
+
+  // Wrong ephemeral secret: GCM refuses, nothing may enter the session.
+  lockVault();
+  const impostor = generateEphemeralKeyPair();
+  assert.equal(
+    await adoptPairedVaultKey(polled.wrapped_vk, id, impostor.secretKey, polled.approved_pub),
+    false,
+    'a secret that did not participate in the handshake must not open the blob',
+  );
+  assert.equal(getVaultKey(), null, 'a failed adoption must not hold VK');
+
+  // Wrong approved_pub (the approver's half swapped): same refusal.
+  const stranger = generateEphemeralKeyPair();
+  assert.equal(
+    await adoptPairedVaultKey(polled.wrapped_vk, id, joiner.secretKey, encodeB64(stranger.publicKey)),
+    false,
+    'the approver public half is bound into the HKDF output',
+  );
+  assert.equal(getVaultKey(), null);
+
+  // Wrong pairing id: the id is in the KDF info and the AAD.
+  assert.equal(
+    await adoptPairedVaultKey(polled.wrapped_vk, `${id}x`, joiner.secretKey, polled.approved_pub),
+    false,
+    'a blob cannot be replayed into another pairing id',
+  );
+  assert.equal(getVaultKey(), null);
+
+  // Malformed approved_pub: fails before any crypto, still no VK.
+  assert.equal(await adoptPairedVaultKey(polled.wrapped_vk, id, joiner.secretKey, '!!!'), false);
+  assert.equal(getVaultKey(), null);
 });
 
 // ─── password change preparation ────────────────────────────────────────────

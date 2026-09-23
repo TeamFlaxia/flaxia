@@ -18,10 +18,11 @@ import {
   newDeviceId,
   saveVaultKeyForDevice,
   unlockWithDevice,
-  unwrapImportedVaultKey,
 } from './device.ts';
+import { unwrapVaultKeyForPairing } from './pairing.ts';
 import {
   createVaultEnvelope,
+  decodeB64,
   isEnvelopeShapeError,
   isValidRecoveryPhrase,
   normalizeRecoveryPhrase,
@@ -188,16 +189,26 @@ export async function tryDeviceUnlock(): Promise<boolean> {
 }
 
 /**
- * Finish a QR pairing: open the handoff blob with our ephemeral secret, adopt
- * the pairing's id as this device's id, and keep VK wrapped under the new
- * device key. The ephemeral private half was already zeroed by the caller —
- * after this, nothing on earth can reopen that blob again, including us.
+ * Finish a QR pairing: open the approver's handoff blob with OUR ephemeral
+ * secret + THEIR published public half (the blob is under X25519+HKDF with the
+ * pairing id in the AAD — never under this device's key, which does not exist
+ * yet), adopt the pairing's id as this device's id, and keep VK wrapped under
+ * the new device key. The caller zeroes the ephemeral secret after this
+ * returns; once it is gone the stored blob can never be opened again.
+ *
+ * Device persistence is best-effort (same policy as rememberOnThisDevice):
+ * blocked storage costs auto-unlock after a reload, not this session.
  */
-export async function adoptPairedVaultKey(wrappedVk: string, pairingId: string): Promise<boolean> {
+export async function adoptPairedVaultKey(
+  wrappedVk: string,
+  pairingId: string,
+  ephemeralSecret: Uint8Array,
+  approvedPubB64: string,
+): Promise<boolean> {
   try {
-    const device = await createDevice(detectDeviceLabel(), pairingId);
-    const vk = await unwrapImportedVaultKey(wrappedVk, device);
-    await saveVaultKeyForDevice(device, vk);
+    const approvedPub = decodeB64(approvedPubB64);
+    const vk = await unwrapVaultKeyForPairing(wrappedVk, ephemeralSecret, approvedPub, pairingId);
+    await rememberOnThisDevice(vk, pairingId);
     setVaultKey(vk);
     return true;
   } catch {

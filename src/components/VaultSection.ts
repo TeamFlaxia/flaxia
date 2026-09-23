@@ -408,7 +408,13 @@ export function createVaultSection() {
     if (!state) return; // transient network hiccup: keep waiting out the TTL
     if (state.state === 'active' && state.wrapped_vk) {
       stopPoll();
-      const adopted = await adoptPairedVaultKey(state.wrapped_vk, state.id);
+      // Capture the secret before discarding: adoption needs it to open the
+      // blob, and approved_pub is the approver's half of the same handshake.
+      const secret = pairingSecret;
+      const adopted =
+        secret !== null && state.approved_pub !== undefined
+          ? await adoptPairedVaultKey(state.wrapped_vk, state.id, secret, state.approved_pub)
+          : false;
       discardPairingSecret();
       pairingId = null;
       currentDeviceId = getCurrentDeviceId();

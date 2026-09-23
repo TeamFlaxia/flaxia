@@ -169,8 +169,3 @@ export async function deleteDevice(id: string): Promise<void> {
   await withStore<undefined>('readwrite', (store) => store.delete(id));
   if (getCurrentDeviceId() === id) clearCurrentDeviceId();
 }
-
-/** Restore a wrapped VK captured from an API response (after QR pairing). */
-export function unwrapImportedVaultKey(wrappedVk: string, device: StoredDevice): Promise<Uint8Array> {
-  return unwrapVaultKeyWithDevice(wrappedVk, device.key);
-}
