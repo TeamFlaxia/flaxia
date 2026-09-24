@@ -291,46 +291,29 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       position: relative;
       display: inline-block;
       line-height: 0;
+      --avatar-plus-ratio: 0.4;
     }
     .ssr-avatar-badge {
       position: absolute;
-      right: -2px;
-      bottom: -2px;
-      width: 16px;
-      height: 16px;
+      right: calc(var(--avatar-plus-ratio, 0.4) * -12.5%);
+      bottom: calc(var(--avatar-plus-ratio, 0.4) * -12.5%);
+      width: calc(var(--avatar-plus-ratio, 0.4) * 100%);
+      height: calc(var(--avatar-plus-ratio, 0.4) * 100%);
       border-radius: 50%;
-      background: #22c55e;
+      background: radial-gradient(
+        circle closest-side,
+        #22c55e 0 75%,
+        var(--bg-primary, #ffffff) 75% 100%
+      );
       color: #ffffff;
-      border: 2px solid var(--bg-primary, #ffffff);
       display: flex;
       align-items: center;
       justify-content: center;
-      box-sizing: border-box;
-    }
-    .ssr-avatar-wrap--large .ssr-avatar-badge {
-      width: 22px;
-      height: 22px;
-      border-width: 3px;
-    }
-    .ssr-avatar-wrap--mini .ssr-avatar-badge {
-      width: 9px;
-      height: 9px;
-      border-width: 1px;
-      right: -1px;
-      bottom: -1px;
-    }
-    .ssr-avatar-wrap--mini .ssr-avatar-badge svg {
-      width: 5px;
-      height: 5px;
     }
     .ssr-avatar-badge svg {
-      width: 9px;
-      height: 9px;
+      width: 56.25%;
+      height: 56.25%;
       display: block;
-    }
-    .ssr-avatar-wrap--large .ssr-avatar-badge svg {
-      width: 12px;
-      height: 12px;
     }
     .ssr-display-name {
       font-weight: 600;

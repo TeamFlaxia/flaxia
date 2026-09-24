@@ -1450,55 +1450,36 @@ h1 {
   flex-shrink: 0;
 }
 
-/* Flaxia+ (and future) avatar badges — bottom-right checkmark */
+/* Flaxia+ (and future) avatar badges — bottom-right checkmark.
+ * Size is computed from the host icon: icon : badge = 1 : --avatar-plus-ratio
+ * (default 0.4 → a 40×40 icon gets a 16×16 badge). */
 .avatar-plus-host {
   position: relative;
+  --avatar-plus-ratio: 0.4;
 }
 
 .avatar-plus-badge {
   position: absolute;
-  right: -2px;
-  bottom: -2px;
-  width: 16px;
-  height: 16px;
+  /* Overhang = ring width = 12.5% of the badge → 5% of the icon. */
+  right: calc(var(--avatar-plus-ratio, 0.4) * -12.5%);
+  bottom: calc(var(--avatar-plus-ratio, 0.4) * -12.5%);
+  width: calc(var(--avatar-plus-ratio, 0.4) * 100%);
+  height: calc(var(--avatar-plus-ratio, 0.4) * 100%);
   border-radius: 50%;
-  background: var(--accent, #3b82f6);
+  /* Ring drawn as a gradient so it scales proportionally with the badge. */
+  background: radial-gradient(circle closest-side, var(--accent, #3b82f6) 0 75%, var(--bg-primary, #0f172a) 75% 100%);
   color: #fff;
-  border: 2px solid var(--bg-primary, #0f172a);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 2;
   pointer-events: none;
-  box-sizing: border-box;
 }
 
 .avatar-plus-badge svg {
-  width: 16px;
-  height: 16px;
+  width: 56.25%;
+  height: 56.25%;
   display: block;
-}
-
-/* Compact badge for very small avatars (quoted posts, nav chips). */
-.quoted-post-avatar .avatar-plus-badge,
-.bottom-nav-avatar .avatar-plus-badge,
-.nav-user-avatar .avatar-plus-badge,
-.composer-avatar .avatar-plus-badge,
-.reply-composer-avatar .avatar-plus-badge {
-  width: 20px;
-  height: 20px;
-  border-width: 2px;
-  right: -1px;
-  bottom: -1px;
-}
-
-.quoted-post-avatar .avatar-plus-badge svg,
-.bottom-nav-avatar .avatar-plus-badge svg,
-.nav-user-avatar .avatar-plus-badge svg,
-.composer-avatar .avatar-plus-badge svg,
-.reply-composer-avatar .avatar-plus-badge svg {
-  width: 12px;
-  height: 12px;
 }
 
 .post-display-name {
