@@ -27,9 +27,19 @@ export interface QuotedPost {
   payload_key?: string | null;
   swf_key?: string | null;
   thumbnail_key?: string | null;
+  attachments?: PostAttachment[];
   parent_id?: string | null;
   root_id?: string | null;
   created_at: string;
+}
+
+export type MediaAttachmentKind = 'image' | 'audio' | 'video';
+
+/** One media file attached to a post (multi-media attachments, max 4). */
+export interface PostAttachment {
+  r2_key: string;
+  kind: MediaAttachmentKind;
+  position: number;
 }
 
 export interface ReactionSummary {
@@ -53,6 +63,7 @@ export interface Post {
   payload_key?: string; // Stores ZIP files for HTML execution
   swf_key?: string; // Stores SWF files for Flash execution
   thumbnail_key?: string; // Stores thumbnail image for ZIP/SWF posts
+  attachments?: PostAttachment[]; // Multiple image/audio/video attachments
   fresh_count: number;
   bookmark_count: number;
   reply_count: number;
@@ -140,6 +151,10 @@ export interface GifPreviewProps {
   src?: string;
   // Force the preview into a 16:9 box, center-cropping the image to fill it.
   ratio?: '16:9';
+  /** All image attachment keys of the post, for lightbox prev/next navigation. */
+  gallery?: string[];
+  /** Index of this image inside `gallery`. */
+  galleryIndex?: number;
 }
 
 export interface SandboxFrameProps {

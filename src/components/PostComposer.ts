@@ -27,6 +27,20 @@ import { openMediaEditor } from './MediaEditorModal.js';
 import { closeStampPicker, openStampPicker } from './StampPicker.js';
 import { createVideoPlayer } from './VideoPlayer.js';
 
+// Multi-media attachment limits (mirrors functions/lib/attachments.ts)
+const MAX_MEDIA_ATTACHMENTS = 4;
+const MAX_MEDIA_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_MEDIA_TOTAL_BYTES = 50 * 1024 * 1024;
+const GAME_EXTENSIONS = new Set(['zip', 'swf', 'rsp', 'js', 'wasm']);
+
+function fileExtension(file: File): string {
+  return file.name.toLowerCase().split('.').pop() || '';
+}
+
+function isGameFile(file: File): boolean {
+  return GAME_EXTENSIONS.has(fileExtension(file));
+}
+
 export class PostComposer {
   private element: HTMLElement;
   private props: PostComposerProps;
@@ -36,6 +50,8 @@ export class PostComposer {
   private submitButton!: HTMLButtonElement;
   private charCount!: HTMLSpanElement;
   private selectedFile: File | null = null;
+  private selectedMedia: File[] = [];
+  private mediaHandles: AttachPreviewHandle[] = [];
   private selectedThumbnail: File | null = null;
   private previewHandle: AttachPreviewHandle | null = null;
   private isSubmitting = false;
@@ -139,6 +155,10 @@ export class PostComposer {
             </button>
             <button class="file-remove" type="button"><span class="action-icon" data-icon="close"></span></button>
           </div>
+        </div>
+        <div class="composer-media-list" style="display: none;">
+          <div class="media-list-items"></div>
+          <div class="media-list-meta"></div>
         </div>
         <div class="composer-thumbnail-section" style="display: none;">
           <div class="thumbnail-header">
@@ -411,15 +431,19 @@ export class PostComposer {
             ? '--audio'
             : '--image';
         this.fileInput.accept = accepts[modifier];
+        // Media picks are multi-select; games remain a single file
+        this.fileInput.multiple = modifier !== '--game';
         this.fileInput.click();
       });
     });
 
     // File selection - from both click and drop
     this.fileInput.addEventListener('change', (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (file) {
-        this.handleFileSelection(file);
+      const input = e.target as HTMLInputElement;
+      const files = Array.from(input.files || []);
+      input.value = '';
+      if (files.length > 0) {
+        void this.handleFiles(files);
       }
     });
 
@@ -797,7 +821,7 @@ export class PostComposer {
         e.preventDefault();
         const file = item.getAsFile();
         if (file) {
-          this.handleFileSelection(file);
+          void this.handleFiles([file]);
         }
         break;
       }
@@ -859,9 +883,7 @@ export class PostComposer {
 
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
-      // Only process the first file
-      const file = files[0];
-      this.handleFileSelection(file);
+      void this.handleFiles(Array.from(files));
     }
   }
 
@@ -870,8 +892,159 @@ export class PostComposer {
     this.errorDisplay.style.display = 'none';
   }
 
+  /**
+   * Entry point for every file pick (input, drop, paste).
+   * A single game file uses the legacy one-file flow; everything else is
+   * treated as a multi-media attachment (image / audio / video).
+   */
+  private async handleFiles(files: File[]): Promise<void> {
+    if (files.length === 0) return;
+    this.clearError();
+
+    const games = files.filter(isGameFile);
+    const media = files.filter((f) => !isGameFile(f));
+
+    if (games.length > 0) {
+      if (files.length > 1 || media.length > 0 || this.selectedMedia.length > 0) {
+        showToast(t('composer.error_media_game_mix'), true);
+        return;
+      }
+      await this.handleFileSelection(games[0]);
+      return;
+    }
+
+    if (this.selectedFile) {
+      showToast(t('composer.error_media_game_mix'), true);
+      return;
+    }
+
+    for (const file of media) {
+      const kind = detectAttachKind(file);
+      if (kind !== 'image' && kind !== 'audio' && kind !== 'video') {
+        showToast(t('composer.error_unsupported_type'), true);
+        continue;
+      }
+      if (this.selectedMedia.length >= MAX_MEDIA_ATTACHMENTS) {
+        showToast(t('composer.error_too_many_media', { max: MAX_MEDIA_ATTACHMENTS }), true);
+        break;
+      }
+
+      // Reject oversized images before the browser decodes/previews them
+      const dimError = await checkImageSizeLimit(file);
+      if (dimError) {
+        showToast(dimError, true);
+        continue;
+      }
+
+      const total = this.selectedMedia.reduce((sum, f) => sum + f.size, 0) + file.size;
+      if (total > MAX_MEDIA_TOTAL_BYTES) {
+        showToast(t('composer.error_total_too_large', { max: 50 }), true);
+        break;
+      }
+
+      // Non-blocking notice: posting requires ≤25MB — compress in the editor
+      if (file.size > MAX_MEDIA_FILE_BYTES) {
+        showToast(t('composer.attach_over_size'), false);
+      }
+
+      this.selectedMedia.push(file);
+    }
+
+    this.renderMediaList();
+    this.updateSubmitButton();
+  }
+
+  private clearMediaSelection(): void {
+    this.selectedMedia = [];
+    this.renderMediaList();
+    this.updateSubmitButton();
+  }
+
+  private renderMediaList(): void {
+    const container = this.element.querySelector('.composer-media-list') as HTMLElement | null;
+    if (!container) return;
+    const itemsEl = container.querySelector('.media-list-items') as HTMLElement;
+    const metaEl = container.querySelector('.media-list-meta') as HTMLElement;
+
+    for (const handle of this.mediaHandles) handle.destroy();
+    this.mediaHandles = [];
+    itemsEl.innerHTML = '';
+
+    if (this.selectedMedia.length === 0) {
+      container.style.display = 'none';
+      metaEl.textContent = '';
+      return;
+    }
+    container.style.display = 'block';
+
+    this.selectedMedia.forEach((file, index) => {
+      const item = document.createElement('div');
+      item.className = 'composer-media-item';
+
+      const body = document.createElement('div');
+      body.className = 'composer-media-item-body';
+      this.mediaHandles.push(renderFilePreview(file, body));
+      item.appendChild(body);
+
+      const nameEl = document.createElement('div');
+      nameEl.className = 'media-item-name';
+      nameEl.textContent = `${file.name} (${this.formatFileSize(file.size)})`;
+      item.appendChild(nameEl);
+
+      const actions = document.createElement('div');
+      actions.className = 'media-item-actions';
+
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'media-item-edit';
+      editBtn.title = t('editor.edit_button');
+      editBtn.innerHTML = '<span class="action-icon" data-icon="edit"></span>';
+      editBtn.addEventListener('click', () => void this.handleEditMedia(index));
+      actions.appendChild(editBtn);
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'media-item-remove';
+      removeBtn.title = t('composer.remove_media');
+      removeBtn.innerHTML = '<span class="action-icon" data-icon="close"></span>';
+      removeBtn.addEventListener('click', () => {
+        this.selectedMedia.splice(index, 1);
+        this.renderMediaList();
+        this.updateSubmitButton();
+      });
+      actions.appendChild(removeBtn);
+
+      item.appendChild(actions);
+      attachIcons(item);
+      itemsEl.appendChild(item);
+    });
+
+    const totalBytes = this.selectedMedia.reduce((sum, f) => sum + f.size, 0);
+    metaEl.textContent = t('composer.media_meta', {
+      count: this.selectedMedia.length,
+      max: MAX_MEDIA_ATTACHMENTS,
+      size: this.formatFileSize(totalBytes),
+    });
+  }
+
+  private async handleEditMedia(index: number): Promise<void> {
+    const file = this.selectedMedia[index];
+    if (!file) return;
+    const edited = await openMediaEditor(file);
+    if (edited) {
+      this.selectedMedia[index] = edited;
+      this.renderMediaList();
+      this.updateSubmitButton();
+    }
+  }
+
   private async handleFileSelection(file: File): Promise<void> {
     this.clearError();
+
+    if (this.selectedMedia.length > 0) {
+      showToast(t('composer.error_media_game_mix'), true);
+      return;
+    }
 
     const validation = this.validateFile(file);
     if (!validation.valid) {
@@ -1584,10 +1757,25 @@ export class PostComposer {
     const text = this.textarea.value.trim();
     if (!text) return;
 
-    // Enforce the upload cap at post time (attachment itself is unrestricted
-    // so oversized media can be compressed in the editor first).
-    if (this.selectedFile && this.selectedFile.size > 25 * 1024 * 1024) {
+    // Enforce the upload caps at post time (attachments themselves are
+    // unrestricted so oversized media can be compressed in the editor first).
+    if (this.selectedFile && this.selectedFile.size > MAX_MEDIA_FILE_BYTES) {
       showToast(t('composer.error_file_too_large'), true);
+      return;
+    }
+    if (this.selectedMedia.length > MAX_MEDIA_ATTACHMENTS) {
+      showToast(t('composer.error_too_many_media', { max: MAX_MEDIA_ATTACHMENTS }), true);
+      return;
+    }
+    const mediaTotal = this.selectedMedia.reduce((sum, f) => sum + f.size, 0);
+    for (const file of this.selectedMedia) {
+      if (file.size > MAX_MEDIA_FILE_BYTES) {
+        showToast(t('composer.error_file_too_large'), true);
+        return;
+      }
+    }
+    if (mediaTotal > MAX_MEDIA_TOTAL_BYTES) {
+      showToast(t('composer.error_total_too_large', { max: 50 }), true);
       return;
     }
 
@@ -1599,9 +1787,24 @@ export class PostComposer {
       let gifKey: string | undefined;
       let zipKey: string | undefined;
       let swfKey: string | undefined;
+      let attachments: Array<{ key: string; kind: string }> | undefined;
 
-      // Step 1: Prepare post if file is selected
-      if (this.selectedFile) {
+      // Step 1: Prepare post — multi-media attachments or a single game file
+      if (this.selectedMedia.length > 0) {
+        const prepared = await this.preparePostAttachments(this.selectedMedia);
+        if (!prepared) {
+          throw new Error('Failed to prepare post');
+        }
+        postId = prepared.postId;
+
+        const uploadResults = await Promise.all(
+          prepared.uploads.map((upload, i) => this.uploadFileDirect(this.selectedMedia[i], upload.uploadUrl)),
+        );
+        if (uploadResults.some((ok) => !ok)) {
+          throw new Error('Failed to upload files');
+        }
+        attachments = prepared.uploads.map((upload) => ({ key: upload.key, kind: upload.kind }));
+      } else if (this.selectedFile) {
         const prepareResult = await this.preparePost(this.selectedFile);
         if (!prepareResult) {
           throw new Error('Failed to prepare post');
@@ -1637,7 +1840,7 @@ export class PostComposer {
       let commitResult: { post: Post } | null;
       const poll = this.getPollData();
       if (this.selectedThumbnail) {
-        // Use multipart form data for thumbnail upload
+        // Use multipart form data for thumbnail upload (game posts only)
         const formData = new FormData();
         formData.append('text', text);
         if (postId) formData.append('postId', postId);
@@ -1669,7 +1872,7 @@ export class PostComposer {
         commitResult = await response.json();
       } else {
         // Use existing commit flow for posts without thumbnails
-        commitResult = await this.commitPost(postId, gifKey, zipKey, swfKey, text, poll);
+        commitResult = await this.commitPost(postId, gifKey, zipKey, swfKey, text, poll, attachments);
 
         if (!commitResult) {
           throw new Error('Failed to commit post');
@@ -1682,6 +1885,7 @@ export class PostComposer {
       this.textarea.value = '';
       this.charCount.textContent = t('composer.char_count', { current: 0, max: 200 });
       this.clearFileSelection();
+      this.clearMediaSelection();
       if (this.pollActive) this.togglePollSection();
 
       // Notify parent
@@ -1779,6 +1983,48 @@ export class PostComposer {
     }
   }
 
+  /** Step 1 for multi-media posts: reserve upload slots for up to 4 files. */
+  private async preparePostAttachments(
+    files: File[],
+  ): Promise<{ postId: string; uploads: Array<{ key: string; uploadUrl: string; kind: string }> } | null> {
+    try {
+      const response = await fetch('/api/posts/prepare', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          files: files.map((file) => ({
+            filename: file.name,
+            contentType: file.type || getMimeType(file.name) || undefined,
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        let errMsg = 'Failed to prepare post';
+        try {
+          const errBody = (await response.json()) as Record<string, unknown>;
+          if (errBody?.error) errMsg += `: ${errBody.error}`;
+        } catch {}
+        throw new Error(errMsg);
+      }
+
+      const result = (await response.json()) as {
+        postId: string;
+        uploads: Array<{ key: string; uploadUrl: string; kind: string }>;
+      };
+      if (!result.postId || !Array.isArray(result.uploads)) {
+        throw new Error('Invalid prepare response');
+      }
+      return result;
+    } catch (error) {
+      console.error('Prepare attachments failed:', error);
+      throw error;
+    }
+  }
+
   private async uploadFileDirect(file: File, uploadUrl: string): Promise<boolean> {
     try {
       console.log('Uploading file to:', uploadUrl, 'Type:', file.type, 'Size:', file.size);
@@ -1827,6 +2073,7 @@ export class PostComposer {
     swfKey: string | undefined,
     text: string,
     poll?: { question: string; options: string[]; multipleChoice: boolean; endsAt?: string } | null,
+    attachments?: Array<{ key: string; kind: string }>,
   ): Promise<{ post: Post } | null> {
     try {
       // Extract hashtags from text - support Japanese and other Unicode characters
@@ -1849,6 +2096,7 @@ export class PostComposer {
           gifKey: gifKey,
           zipKey: zipKey,
           swfKey: swfKey,
+          attachments,
           text,
           hashtags,
           poll: poll || undefined,

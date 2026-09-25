@@ -1569,6 +1569,72 @@ h1 {
   height: 200px;
 }
 
+/* Multi-media attachments: horizontal scroll-snap carousel */
+.post-stage--carousel {
+  cursor: default;
+  background: transparent;
+  border: none;
+  overflow: visible;
+}
+
+.media-carousel {
+  width: 100%;
+}
+
+.media-carousel-track {
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+}
+
+.media-carousel-track::-webkit-scrollbar {
+  display: none;
+}
+
+.media-carousel-slide {
+  flex: 0 0 100%;
+  min-width: 0;
+  scroll-snap-align: start;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.media-carousel-dots {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0 2px;
+}
+
+.media-carousel-dot {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--border);
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    transform 0.2s ease;
+}
+
+.media-carousel-dot:hover {
+  transform: scale(1.3);
+}
+
+.media-carousel-dot--active {
+  background: var(--accent);
+}
+
 .audio-preview,
 .image-preview,
 .gif-preview,
@@ -2799,6 +2865,95 @@ emoji-picker {
 
 .file-preview-body {
   margin-top: 0.75rem;
+}
+
+/* Multi-media attachment list in the composer */
+.composer-media-list {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.media-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.composer-media-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.composer-media-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.composer-media-item-body .file-preview-body {
+  margin-top: 0;
+}
+
+.media-item-name {
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-item-actions {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  display: flex;
+  gap: 0.35rem;
+  z-index: 2;
+}
+
+.media-item-edit,
+.media-item-remove {
+  background: rgba(0, 0, 0, 0.55);
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s ease;
+}
+
+.media-item-edit:hover,
+.media-item-remove:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.media-item-edit .action-icon,
+.media-item-remove .action-icon,
+.media-item-edit svg,
+.media-item-remove svg {
+  width: 14px;
+  height: 14px;
+}
+
+.media-list-meta {
+  font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-align: right;
 }
 
 .file-preview-image {

@@ -253,6 +253,34 @@ describe('POST /api/crowd/webhook — nsfw', () => {
     assert.equal(scans.length, 1, 'expected one scan row');
     assert.equal(scans[0].status, 'done');
     assert.equal(scans[0].scanned_at && scans[0].scanned_at.length > 0, true, 'scanned_at should be set');
+    assert.equal(scans[0].media_key, '', 'a callback without a key is attributed to the legacy image');
+  });
+
+  it('tracks one scan row per media key on the same post', async () => {
+    const cookie = await loginUnique();
+    const postId = await createTextPost(cookie);
+    const keys = [`gif/${postId}/1.png`, `gif/${postId}/2.png`];
+
+    for (const key of keys) {
+      await sendWebhook('nsfw', { taskId: `t-${key}`, status: 'done', result: { detections: [] } }, { postId, key });
+    }
+
+    const scans = await getNsfwScans(postId);
+    assert.equal(scans.length, 2, 'each media object needs its own verdict');
+    assert.deepEqual(scans.map((s) => s.media_key).sort(), [...keys].sort());
+  });
+
+  it('marks only the media key named by a failed callback', async () => {
+    const cookie = await loginUnique();
+    const postId = await createTextPost(cookie);
+
+    await sendWebhook('nsfw', { taskId: 't-k1', status: 'done', result: { detections: [] } }, { postId, key: 'k1' });
+    await sendWebhook('nsfw', { taskId: 't-k2', status: 'done', result: { detections: [] } }, { postId, key: 'k2' });
+    await sendWebhook('nsfw', { taskId: 't-k1', status: 'failed', error: 'boom' }, { postId, key: 'k1' });
+
+    const byKey = new Map((await getNsfwScans(postId)).map((s) => [s.media_key, s.status]));
+    assert.equal(byKey.get('k1'), 'failed');
+    assert.equal(byKey.get('k2'), 'done');
   });
 
   it('does not create a scan row for a task that failed without ever being submitted', async () => {

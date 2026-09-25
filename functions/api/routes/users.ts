@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../src/lib/vault/primitives';
 import { deleteAccount } from '../../lib/account-deletion';
+import { enrichPostsWithAttachments } from '../../lib/attachments';
 import { deleteSession, getMeWithSession, getSessionToken, verifySrpPassword } from '../../lib/auth';
 import { isSupportedSrpKdf } from '../../lib/srp';
 import { detectMimeType, isAllowedImageMime, requireAuth } from '../helpers';
@@ -499,6 +500,7 @@ users.get('/users/:username/pinned', async (c) => {
 
     const posts = [row as unknown as PostRow];
     await enrichPostsWithReactions(posts, c.env.DB, currentUserId);
+    await enrichPostsWithAttachments(posts, c.env.DB);
 
     return c.json({ post: posts[0] });
   } catch (error: unknown) {

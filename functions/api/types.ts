@@ -71,6 +71,7 @@ export type PostRow = {
   is_freshed?: boolean;
   is_bookmarked?: boolean;
   reactions?: Array<{ emoji: string; count: number; reacted: boolean }>;
+  attachments?: Array<{ r2_key: string; kind: 'image' | 'audio' | 'video'; position: number }>;
   poll?: {
     id: string;
     question: string;

@@ -145,16 +145,40 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 
 ### Prepare Upload
 `POST /api/posts/prepare`
-- Body: `{ contentType }`
-- Returns: `{ postId, uploadUrl, uploadKey }`
+- Single legacy file: body `{ filename }` → `{ postId, gifUploadUrl?, gifKey?, zipUploadUrl?, zipKey?, swfUploadUrl?, swfKey? }`
+- Multi-media attachments (up to 4 image/audio/video): body `{ files: [{ filename, contentType? }] }`
+  → `{ postId, uploads: [{ key, uploadUrl, kind }] }`
+- Game files (zip/swf/html/js/wasm) are rejected in the `files` list (400)
 
 ### Upload File
-`PUT /api/upload/:type/:postId`
-- Binary upload directly to R2
+`PUT /api/upload/:key`
+- Binary upload directly to R2 (requires auth; must own the pending/published post referenced by the key)
 
 ### Commit Post
 `POST /api/posts/commit`
-- Body: `{ postId }`
+- Body: `{ postId, text, gifKey?, zipKey?, swfKey?, attachments?: [{ key, kind }] }`
+- `attachments` is the full list (max 4, 25MB each / 50MB total); combining it
+  with legacy game keys returns 422
+
+### Add Attachment To Published Post
+`POST /api/posts/:id/prepare-media`
+- Body: `{ filename, contentType?, reservedKeys? }` — allocates the next free
+  slot (max 4). `reservedKeys` is the caller's full planned list for the save:
+  attachments it keeps plus keys already prepared in this session. Without it
+  each call in the same edit session would be handed the same slot.
+- Slots are taken from the position embedded in the R2 key, so a slot freed by
+  a removal is reusable immediately.
+- Returns: `{ uploadUrl, key, kind, position }`
+
+### Edit Post
+`PUT /api/posts/:id`
+- Body: `{ text?, gif_key?, payload_key?, swf_key?, thumbnail_key?, attachments? }`
+- `attachments` is a full replacement (`[]` clears all); 422 when it is not an
+  array or when combined with legacy media keys
+- Every edit reconciles NSFW screening: removed images drop their stored
+  verdict, and new images are submitted for screening
+- Returns `{ post }` including the enriched `attachments` list
+- `quoted_post` on any post read is enriched with its own `attachments` list
 
 ---
 

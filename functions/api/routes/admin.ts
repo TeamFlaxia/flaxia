@@ -859,23 +859,39 @@ admin.post('/backfill-nsfw', requireAuth, requireAdmin, async (c) => {
 
     await ensureNsfwScansTable(c.env.DB);
 
+    // One candidate per (post, image): a 4-image post needs 4 verdicts and
+    // post_nsfw_scans now tracks them individually.
     const candidates = (await c.env.DB.prepare(`
-      SELECT id, gif_key
-      FROM posts
-      WHERE gif_key IS NOT NULL
-        AND status = 'published'
-        AND (${IMAGE_EXTENSION_LIKE})
-        AND id NOT IN (SELECT post_id FROM post_nsfw_scans)
-      ORDER BY created_at DESC
+      SELECT post_id, media_key
+      FROM (
+        SELECT id AS post_id, gif_key AS media_key, created_at
+        FROM posts
+        WHERE gif_key IS NOT NULL
+          AND status = 'published'
+          AND (${IMAGE_EXTENSION_LIKE})
+        UNION ALL
+        SELECT p.id, a.r2_key AS media_key, p.created_at
+        FROM posts p
+        JOIN post_attachments a ON a.post_id = p.id AND a.kind = 'image'
+        WHERE p.status = 'published'
+      ) cand
+      WHERE NOT EXISTS (
+        SELECT 1 FROM post_nsfw_scans s
+        WHERE s.post_id = cand.post_id AND s.media_key = cand.media_key
+      )
+      GROUP BY post_id, media_key
+      ORDER BY MAX(created_at) DESC
       LIMIT ?
     `)
       .bind(limit)
-      .all()) as { results: Array<{ id: string; gif_key: string }> };
+      .all()) as { results: Array<{ post_id: string; media_key: string }> };
 
+    // The global 10s ceiling lets one image through per call by default;
+    // ?throttle=false is the admin's explicit way to flush a backlog.
+    const respectThrottle = url.searchParams.get('throttle') !== 'false';
     let submitted = 0;
-    for (const post of candidates.results) {
-      await submitDetectNsfw(c.env.DB, c.env, post.id, post.gif_key);
-      submitted++;
+    for (const cand of candidates.results) {
+      if (await submitDetectNsfw(c.env.DB, c.env, cand.post_id, cand.media_key, { respectThrottle })) submitted++;
     }
 
     return c.json({ success: true, submitted, remaining: candidates.results.length - submitted });

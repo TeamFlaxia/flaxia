@@ -46,7 +46,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   // Add click handler for overlay display
   img.onclick = (e) => {
     e.stopPropagation();
-    createImageOverlay(imageUrl, props.postId);
+    createImageOverlay(imageUrl, props.postId, props.gallery, props.galleryIndex ?? 0);
   };
 
   // Forced 16:9 preview: fix the box ratio and center-crop the image into it.
@@ -229,8 +229,10 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   return container;
 }
 
-// Create image overlay modal with pinch-to-zoom and pan
-function createImageOverlay(imageUrl: string, postId: string): void {
+// Create image overlay modal with pinch-to-zoom and pan.
+// When `gallery` (image attachment keys) has more than one entry, prev/next
+// controls navigate between the post's images.
+function createImageOverlay(imageUrl: string, postId: string, gallery?: string[], galleryIndex = 0): void {
   const overlay = document.createElement('div');
   overlay.style.cssText = `
     position: fixed;
@@ -542,11 +544,13 @@ function createImageOverlay(imageUrl: string, postId: string): void {
   closeButton.onmouseout = () => (closeButton.style.background = 'rgba(255, 255, 255, 0.2)');
 
   const unregister = registerModal();
+  let navKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   const closeOverlay = () => {
     unregister();
     document.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseup', onMouseUp);
     document.removeEventListener('keydown', handleEsc);
+    if (navKeyHandler) document.removeEventListener('keydown', navKeyHandler);
     safeRemoveFromBody(overlay);
   };
 
@@ -568,11 +572,104 @@ function createImageOverlay(imageUrl: string, postId: string): void {
   };
   document.addEventListener('keydown', handleEsc);
 
+  // Gallery navigation (multiple image attachments)
+  const hasGallery = !!gallery && gallery.length > 1;
+  let currentIndex = hasGallery ? Math.min(Math.max(galleryIndex, 0), (gallery?.length || 1) - 1) : 0;
+
+  const navButtons: HTMLElement[] = [];
+  const counter = document.createElement('div');
+
+  const updateCounter = () => {
+    counter.textContent = `${currentIndex + 1} / ${gallery?.length || 1}`;
+  };
+
+  const resetZoom = () => {
+    scale = 1;
+    translateX = 0;
+    translateY = 0;
+    zoomWrapper.style.cursor = 'default';
+    applyTransform();
+  };
+
+  const showIndex = (next: number) => {
+    if (!hasGallery || !gallery) return;
+    currentIndex = (next + gallery.length) % gallery.length;
+    resetZoom();
+    fullImage.src = `/api/images/${gallery[currentIndex]}`;
+    updateCounter();
+  };
+
+  if (hasGallery) {
+    const makeNav = (label: string, dir: -1 | 1) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = label;
+      btn.style.cssText = `
+        position: fixed;
+        top: 50%;
+        transform: translateY(-50%);
+        ${dir === -1 ? 'left: 12px;' : 'right: 12px;'}
+        background: rgba(255, 255, 255, 0.15);
+        border: none;
+        color: white;
+        font-size: 28px;
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1001;
+        transition: background 0.2s ease;
+      `;
+      btn.onmouseover = () => (btn.style.background = 'rgba(255, 255, 255, 0.3)');
+      btn.onmouseout = () => (btn.style.background = 'rgba(255, 255, 255, 0.15)');
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        showIndex(currentIndex + dir);
+      };
+      navButtons.push(btn);
+      return btn;
+    };
+    makeNav('‹', -1);
+    makeNav('›', 1);
+
+    counter.style.cssText = `
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.6);
+      color: white;
+      font-size: 13px;
+      padding: 4px 12px;
+      border-radius: 12px;
+      z-index: 1001;
+      pointer-events: none;
+    `;
+    updateCounter();
+
+    const handleNavKeys = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft') {
+        e.stopPropagation();
+        showIndex(currentIndex - 1);
+      } else if (e.key === 'ArrowRight') {
+        e.stopPropagation();
+        showIndex(currentIndex + 1);
+      }
+    };
+    document.addEventListener('keydown', handleNavKeys);
+    navKeyHandler = handleNavKeys;
+  }
+
   // Assemble
   zoomWrapper.appendChild(fullImage);
   imageContainer.appendChild(zoomWrapper);
   overlay.appendChild(imageContainer);
   overlay.appendChild(closeButton);
+  for (const btn of navButtons) overlay.appendChild(btn);
+  if (hasGallery) overlay.appendChild(counter);
   document.body.appendChild(overlay);
 }
 
