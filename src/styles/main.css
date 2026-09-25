@@ -713,6 +713,10 @@ h1 {
   margin: 0 auto;
 }
 
+.main-container > :not(.left-nav):not(.right-panel) {
+  min-width: 0;
+}
+
 .main-content {
   flex: 1;
   max-width: 600px;
