@@ -5,6 +5,22 @@ import { isAdmin } from '../../../src/lib/admin';
 import { copyHtmlToWvfs, extractFileFromZip, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
 import type { ReportCategory } from '../../../src/types/post';
 import { buildCreateActivity, buildDeleteActivity, buildNoteObject } from '../../lib/activitypub/note';
+import {
+  type AttachmentInput,
+  type AttachmentKind,
+  type AttachmentRecord,
+  buildAttachmentKey,
+  collectAttachmentKeys,
+  deleteAttachmentRows,
+  enrichPostsWithAttachments,
+  firstImageKey,
+  kindFromUpload,
+  MAX_ATTACHMENTS,
+  parseAttachmentKey,
+  sequenceAttachments,
+  sumAttachmentSizes,
+  validateAttachmentInputs,
+} from '../../lib/attachments';
 import { getMeWithSession, getSessionToken } from '../../lib/auth';
 import { embedPost, submitDetectNsfw } from '../../lib/crowd';
 import { validateImageDimensions } from '../../lib/image-dimensions';
@@ -157,6 +173,7 @@ posts.get('/posts', async (c) => {
         }
         await enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId);
         await enrichPostsWithQuotes(posts as PostRow[], c.env.DB);
+        await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
         await enrichPostsWithReactions(posts as PostRow[], c.env.DB, currentUserId);
         return c.json({ posts });
       }
@@ -273,6 +290,7 @@ posts.get('/posts', async (c) => {
       enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId),
       // Quote enrichment
       enrichPostsWithQuotes(posts as PostRow[], c.env.DB),
+      enrichPostsWithAttachments(posts as PostRow[], c.env.DB),
       // Reaction enrichment
       enrichPostsWithReactions(posts as PostRow[], c.env.DB, currentUserId),
       // Vector embedding check for unprocessed posts
@@ -369,6 +387,7 @@ posts.get('/posts/trending', async (c) => {
         }
         await enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId);
         await enrichPostsWithQuotes(posts as PostRow[], c.env.DB);
+        await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
         await enrichPostsWithReactions(posts as PostRow[], c.env.DB, currentUserId);
         return c.json({ posts });
       }
@@ -500,6 +519,7 @@ posts.get('/posts/trending', async (c) => {
 
     await enrichPostsWithPolls(visiblePosts as PostRow[], c.env.DB, currentUserId);
     await enrichPostsWithQuotes(visiblePosts as PostRow[], c.env.DB);
+    await enrichPostsWithAttachments(visiblePosts as PostRow[], c.env.DB);
     await enrichPostsWithReactions(visiblePosts as PostRow[], c.env.DB, currentUserId);
 
     // Write to cache (non-cursor only)
@@ -884,6 +904,7 @@ async function enrichRecommendedPosts(
   }
   await enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId);
   await enrichPostsWithQuotes(posts as PostRow[], c.env.DB);
+  await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
   await enrichPostsWithReactions(posts as PostRow[], c.env.DB, currentUserId);
   return posts;
 }
@@ -968,6 +989,7 @@ posts.get('/posts/:id/similar', async (c) => {
 
     await enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId);
     await enrichPostsWithQuotes(posts as PostRow[], c.env.DB);
+    await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
     await enrichPostsWithReactions(posts as PostRow[], c.env.DB, currentUserId);
 
     return c.json({ posts });
@@ -1123,10 +1145,110 @@ posts.post('/posts/:id/prepare-attachment', requireAuth, async (c) => {
   }
 });
 
+// POST /api/posts/:id/prepare-media — reserve an upload slot for one more
+// image/audio/video attachment on an existing published post (protected).
+posts.post('/posts/:id/prepare-media', requireAuth, async (c) => {
+  try {
+    const user = c.get('user');
+    if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    const postId = c.req.param('id');
+    const { filename, contentType } = (await c.req.json()) as {
+      filename?: string;
+      contentType?: string;
+    };
+
+    if (!postId) return c.json({ error: 'Missing post id' }, 400);
+    if (!filename) return c.json({ error: 'Missing filename' }, 400);
+    if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
+
+    const kind = kindFromUpload(filename, contentType);
+    if (!kind) return c.json({ error: 'Only image, audio, and video files are allowed' }, 400);
+
+    const post = await c.env.DB.prepare('SELECT id, user_id, status FROM posts WHERE id = ?')
+      .bind(postId)
+      .first<{ id: string; user_id: string; status: string } | null>();
+    if (!post) return c.json({ error: 'Post not found' }, 404);
+    if (post.user_id !== user.id) return c.json({ error: 'Forbidden' }, 403);
+    if (post.status !== 'published') return c.json({ error: 'Cannot edit this post' }, 400);
+
+    const existing = await c.env.DB.prepare('SELECT position, r2_key FROM post_attachments WHERE post_id = ?')
+      .bind(postId)
+      .all<{ position: number; r2_key: string }>();
+    const rows = existing.results || [];
+    if (rows.length >= MAX_ATTACHMENTS) {
+      return c.json({ error: `Maximum ${MAX_ATTACHMENTS} attachments allowed` }, 400);
+    }
+    const usedPositions = new Set(rows.map((r) => r.position));
+    const usedKeys = new Set(rows.map((r) => r.r2_key));
+    let position = 0;
+    for (let p = 1; p <= MAX_ATTACHMENTS; p++) {
+      if (!usedPositions.has(p)) {
+        position = p;
+        break;
+      }
+    }
+    if (position === 0) return c.json({ error: `Maximum ${MAX_ATTACHMENTS} attachments allowed` }, 400);
+
+    const key = buildAttachmentKey(postId, position, filename);
+    if (!key || usedKeys.has(key)) return c.json({ error: 'Invalid filename' }, 400);
+
+    return c.json({ uploadUrl: `${new URL(c.req.url).origin}/api/upload/${key}`, key, kind, position });
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    console.error('Prepare media error:', error);
+    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+  }
+});
+
 // Step 1 — POST /api/posts/prepare (protected)
 posts.post('/posts/prepare', requireAuth, async (c) => {
   try {
-    const { filename } = await c.req.json();
+    const body = (await c.req.json()) as {
+      filename?: string;
+      files?: Array<{ filename?: string; contentType?: string }>;
+    };
+    const { filename, files } = body;
+
+    // Multi-media attachments (image/audio/video only, max 4, no html/swf/zip)
+    if (Array.isArray(files)) {
+      if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
+      if (files.length === 0 || files.length > MAX_ATTACHMENTS) {
+        return c.json({ error: `Attachments must be 1-${MAX_ATTACHMENTS} files` }, 400);
+      }
+
+      const postId = crypto.randomUUID();
+      const uploads: Array<{ key: string; uploadUrl: string; kind: AttachmentKind }> = [];
+      for (const file of files) {
+        const name = file?.filename;
+        if (typeof name !== 'string' || !name) {
+          return c.json({ error: 'Missing filename' }, 400);
+        }
+        const kind = kindFromUpload(name, file.contentType);
+        if (!kind) {
+          return c.json({ error: 'Only image, audio, and video files are allowed' }, 400);
+        }
+        const key = buildAttachmentKey(postId, uploads.length + 1, name);
+        if (!key) return c.json({ error: 'Invalid filename' }, 400);
+        uploads.push({
+          key,
+          uploadUrl: `${new URL(c.req.url).origin}/api/upload/${key}`,
+          kind,
+        });
+      }
+
+      const result = await c.env.DB.prepare(
+        `INSERT INTO posts (id, user_id, username, text, hashtags, engagement_hotness, status)
+         VALUES (?, ?, ?, ?, ?, 1.0, 'pending')`,
+      )
+        .bind(postId, c.get('user')?.id || '', c.get('user')?.username || 'anonymous', '', '[]')
+        .run();
+
+      if (!result.success) {
+        return c.json({ error: 'Failed to create pending post' }, 500);
+      }
+
+      return c.json({ postId, uploads });
+    }
 
     if (!filename) {
       return c.json({ error: 'Missing filename' }, 400);
@@ -1297,6 +1419,7 @@ posts.post('/posts/commit', requireAuth, async (c) => {
     let zipKey: string | undefined;
     let thumbnailKey: string | undefined;
     let quotedPostId: string | undefined;
+    let attachmentInputs: AttachmentInput[] | undefined;
 
     if (contentType?.includes('multipart/form-data')) {
       const formData = await c.req.formData();
@@ -1308,6 +1431,8 @@ posts.post('/posts/commit', requireAuth, async (c) => {
       quotedPostId = (formData.get('quotedPostId') as string) || undefined;
       const pollStr = formData.get('poll') as string;
       pollData = pollStr ? JSON.parse(pollStr) : undefined;
+      const attachmentsStr = formData.get('attachments') as string | null;
+      if (attachmentsStr) attachmentInputs = JSON.parse(attachmentsStr);
 
       const thumbnailFile = (formData.get('thumbnail') as File | null) || undefined;
       if (thumbnailFile && thumbnailFile.size > 0) {
@@ -1341,10 +1466,30 @@ posts.post('/posts/commit', requireAuth, async (c) => {
       zipKey = body.zipKey;
       thumbnailKey = body.thumbnailKey;
       quotedPostId = body.quotedPostId;
+      attachmentInputs = body.attachments;
     }
     const payloadKey = zipKey;
     const userId = c.get('user')?.id || '';
     const username = c.get('user')?.username || 'anonymous';
+
+    // Validate multi-media attachments (image/audio/video, max 4)
+    if (attachmentInputs !== undefined) {
+      const attachmentError = validateAttachmentInputs(attachmentInputs);
+      if (attachmentError) return c.json({ error: attachmentError }, 422);
+      if (gifKey || swfKey || payloadKey || thumbnailKey) {
+        return c.json({ error: 'Cannot combine attachments with game payloads' }, 422);
+      }
+    }
+
+    // Reject overwriting another user's post through the upsert path
+    if (postId) {
+      const existingOwner = (await c.env.DB.prepare('SELECT user_id FROM posts WHERE id = ?')
+        .bind(postId)
+        .first<{ user_id: string }>()) as { user_id: string } | null;
+      if (existingOwner && existingOwner.user_id !== userId) {
+        return c.json({ error: 'Forbidden' }, 403);
+      }
+    }
 
     // Validate text (empty allowed only for quotes)
     const hasQuote = Boolean(quotedPostId);
@@ -1410,6 +1555,21 @@ posts.post('/posts/commit', requireAuth, async (c) => {
 
     if (!postId) postId = crypto.randomUUID();
 
+    // Attachments must target this post and fit the total size budget
+    const attachments = attachmentInputs !== undefined ? sequenceAttachments(attachmentInputs) : [];
+    if (attachments.length > 0) {
+      for (const att of attachments) {
+        if (parseAttachmentKey(att.r2_key)?.postId !== postId) {
+          return c.json({ error: 'Attachment does not belong to this post' }, 422);
+        }
+      }
+      const sizeCheck = await sumAttachmentSizes(
+        c.env.BUCKET,
+        attachments.map((a) => a.r2_key),
+      );
+      if (sizeCheck.error) return c.json({ error: sizeCheck.error }, 413);
+    }
+
     const result = await c.env.DB.prepare(`
       INSERT INTO posts (id, user_id, username, text, hashtags, mentions, payload_key, gif_key, swf_key, thumbnail_key, quoted_post_id, engagement_hotness, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1.0, 'published')
@@ -1442,6 +1602,20 @@ posts.post('/posts/commit', requireAuth, async (c) => {
     if (!result.success) {
       console.error('Database insert failed:', result);
       return c.json({ error: 'Failed to create post', details: result }, 500);
+    }
+
+    // Persist multi-media attachments (full replacement for idempotent commits)
+    if (attachments.length > 0) {
+      await c.env.DB.prepare('DELETE FROM post_attachments WHERE post_id = ?').bind(postId).run();
+      const attStmts = attachments.map((att) =>
+        c.env.DB.prepare('INSERT INTO post_attachments (post_id, r2_key, kind, position) VALUES (?, ?, ?, ?)').bind(
+          postId,
+          att.r2_key,
+          att.kind,
+          att.position,
+        ),
+      );
+      await c.env.DB.batch(attStmts);
     }
 
     // Create poll if poll data was provided
@@ -1608,11 +1782,12 @@ posts.post('/posts/commit', requireAuth, async (c) => {
     }
 
     await enrichPostsWithQuotes([fullPost], c.env.DB);
+    await enrichPostsWithAttachments([fullPost], c.env.DB);
     await enrichPostsWithReactions([fullPost], c.env.DB, c.get('user')?.id);
 
     embedPost(c.env.DB, c.env, fullPost.id, fullPost.text).catch((e) => console.error('Background embed failed:', e));
 
-    submitDetectNsfw(c.env.DB, c.env, fullPost.id, fullPost.gif_key);
+    submitDetectNsfw(c.env.DB, c.env, fullPost.id, fullPost.gif_key || firstImageKey(fullPost.attachments));
 
     // Pre-extract ZIP to R2 for WVFS persistent caching
     if (payloadKey && payloadKey.endsWith('.zip')) {
@@ -1927,6 +2102,7 @@ posts.get('/bookmarks', requireAuth, async (c) => {
     });
 
     await enrichPostsWithQuotes(posts as PostRow[], c.env.DB);
+    await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
     await enrichPostsWithReactions(posts as PostRow[], c.env.DB, userId);
 
     const nextCursor = posts.length === limit ? posts[posts.length - 1].created_at : null;
@@ -2002,6 +2178,7 @@ posts.get('/freshs', requireAuth, async (c) => {
     }
 
     await enrichPostsWithReactions(posts as PostRow[], c.env.DB, userId);
+    await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
 
     const nextCursor = posts.length === limit ? posts[posts.length - 1].created_at : null;
 
@@ -2312,14 +2489,17 @@ posts.get('/posts/:id/replies', async (c) => {
 
     await enrichPostsWithPolls(replies as PostRow[], c.env.DB, currentUserId);
     await enrichPostsWithQuotes(replies as PostRow[], c.env.DB);
+    await enrichPostsWithAttachments(replies as PostRow[], c.env.DB);
     await enrichPostsWithReactions(replies as PostRow[], c.env.DB, currentUserId);
 
     // Add poll data
     await enrichPostsWithPolls([parentPost as PostRow], c.env.DB, currentUserId);
     await enrichPostsWithQuotes([parentPost as PostRow], c.env.DB);
+    await enrichPostsWithAttachments([parentPost as PostRow], c.env.DB);
     await enrichPostsWithReactions([parentPost as PostRow], c.env.DB, currentUserId);
     await enrichPostsWithPolls(replies as PostRow[], c.env.DB, currentUserId);
     await enrichPostsWithQuotes(replies as PostRow[], c.env.DB);
+    await enrichPostsWithAttachments(replies as PostRow[], c.env.DB);
     await enrichPostsWithReactions(replies as PostRow[], c.env.DB, currentUserId);
 
     // Trigger vector embedding for unprocessed posts in background
@@ -2429,9 +2609,11 @@ posts.get('/posts/:id/thread', async (c) => {
 
     await enrichPostsWithPolls([rootPost as PostRow], c.env.DB, currentUserId);
     await enrichPostsWithQuotes([rootPost as PostRow], c.env.DB);
+    await enrichPostsWithAttachments([rootPost as PostRow], c.env.DB);
     await enrichPostsWithReactions([rootPost as PostRow], c.env.DB, currentUserId);
     await enrichPostsWithPolls(replies as PostRow[], c.env.DB, currentUserId);
     await enrichPostsWithQuotes(replies as PostRow[], c.env.DB);
+    await enrichPostsWithAttachments(replies as PostRow[], c.env.DB);
     await enrichPostsWithReactions(replies as PostRow[], c.env.DB, currentUserId);
 
     const allPosts2 = [rootPost as Record<string, unknown>, ...(replies as Array<Record<string, unknown>>)];
@@ -3016,6 +3198,7 @@ posts.get('/search', async (c) => {
       .all();
 
     await enrichPostsWithQuotes((posts.results || []) as PostRow[], c.env.DB);
+    await enrichPostsWithAttachments((posts.results || []) as PostRow[], c.env.DB);
     await enrichPostsWithReactions((posts.results || []) as PostRow[], c.env.DB, c.get('user')?.id);
 
     // Also fetch matching users for posts search (type=posts)
@@ -3089,6 +3272,13 @@ posts.delete('/posts/:id', requireAuth, async (c) => {
 
     // Delete associated files from R2
     if (c.env.BUCKET) {
+      for (const key of await collectAttachmentKeys(c.env.DB, [post.id])) {
+        try {
+          await c.env.BUCKET.delete(key);
+        } catch (e) {
+          console.error('Failed to delete attachment file:', e);
+        }
+      }
       if (post.gif_key) {
         try {
           await c.env.BUCKET.delete(post.gif_key);
@@ -3140,6 +3330,16 @@ posts.delete('/posts/:id', requireAuth, async (c) => {
 
     // Delete descendant reply files from R2
     if (c.env.BUCKET) {
+      for (const key of await collectAttachmentKeys(
+        c.env.DB,
+        descendants.map((r) => r.id),
+      )) {
+        try {
+          await c.env.BUCKET.delete(key);
+        } catch (e) {
+          console.error('Failed to delete descendant attachment file:', e);
+        }
+      }
       for (const desc of descendants) {
         if (desc.gif_key) {
           try {
@@ -3179,6 +3379,8 @@ posts.delete('/posts/:id', requireAuth, async (c) => {
         .bind(...descendantIds)
         .run();
     }
+
+    await deleteAttachmentRows(c.env.DB, [post.id, ...descendantIds]);
 
     // Delete the post
     const result = await c.env.DB.prepare('DELETE FROM posts WHERE id = ?').bind(postId).run();
@@ -3315,6 +3517,7 @@ posts.put('/posts/:id', async (c) => {
       payload_key?: string | null;
       swf_key?: string | null;
       thumbnail_key?: string | null;
+      attachments?: AttachmentInput[];
     };
 
     const now = new Date().toISOString();
@@ -3380,6 +3583,60 @@ posts.put('/posts/:id', async (c) => {
       Promise.all(keysToDelete.map((k) => c.env.BUCKET.delete(k).catch(() => {}))).catch(() => {});
     }
 
+    // Handle multi-media attachments (full list replacement; [] clears them)
+    let attachmentsChanged = false;
+    let newAttachments: AttachmentRecord[] = [];
+    if (body.attachments !== undefined) {
+      if (body.attachments.length > 0) {
+        const attachmentError = validateAttachmentInputs(body.attachments);
+        if (attachmentError) return c.json({ error: attachmentError }, 422);
+        newAttachments = sequenceAttachments(body.attachments);
+        if (updatedGifKey || updatedPayloadKey || updatedSwfKey || updatedThumbnailKey) {
+          return c.json({ error: 'Cannot combine attachments with legacy media keys' }, 422);
+        }
+        for (const att of newAttachments) {
+          if (parseAttachmentKey(att.r2_key)?.postId !== postId) {
+            return c.json({ error: 'Attachment does not belong to this post' }, 422);
+          }
+        }
+        const sizeCheck = await sumAttachmentSizes(
+          c.env.BUCKET,
+          newAttachments.map((a) => a.r2_key),
+        );
+        if (sizeCheck.error) return c.json({ error: sizeCheck.error }, 413);
+      }
+
+      const existingRows =
+        (
+          await c.env.DB.prepare('SELECT r2_key FROM post_attachments WHERE post_id = ? ORDER BY position')
+            .bind(postId)
+            .all<{ r2_key: string }>()
+        ).results || [];
+      const existingKeys = existingRows.map((r) => r.r2_key);
+      const nextKeys = newAttachments.map((a) => a.r2_key);
+      attachmentsChanged = existingKeys.length !== nextKeys.length || existingKeys.some((k, i) => k !== nextKeys[i]);
+
+      if (attachmentsChanged) {
+        const nextKeySet = new Set(nextKeys);
+        const removed = existingKeys.filter((k) => !nextKeySet.has(k));
+        if (removed.length > 0 && c.env.BUCKET) {
+          Promise.all(removed.map((k) => c.env.BUCKET.delete(k).catch(() => {}))).catch(() => {});
+        }
+        await c.env.DB.prepare('DELETE FROM post_attachments WHERE post_id = ?').bind(postId).run();
+        if (newAttachments.length > 0) {
+          const attStmts = newAttachments.map((att) =>
+            c.env.DB.prepare('INSERT INTO post_attachments (post_id, r2_key, kind, position) VALUES (?, ?, ?, ?)').bind(
+              postId,
+              att.r2_key,
+              att.kind,
+              att.position,
+            ),
+          );
+          await c.env.DB.batch(attStmts);
+        }
+      }
+    }
+
     await c.env.DB.prepare(
       'UPDATE posts SET text = ?, hashtags = ?, mentions = ?, gif_key = ?, payload_key = ?, swf_key = ?, thumbnail_key = ?, edited_at = ? WHERE id = ?',
     )
@@ -3391,7 +3648,7 @@ posts.put('/posts/:id', async (c) => {
         updatedPayloadKey || null,
         updatedSwfKey || null,
         updatedThumbnailKey || null,
-        textChanged || keysToDelete.length > 0 ? now : post.edited_at || null,
+        textChanged || keysToDelete.length > 0 || attachmentsChanged ? now : post.edited_at || null,
         postId,
       )
       .run();
@@ -3403,9 +3660,12 @@ posts.put('/posts/:id', async (c) => {
       .bind(postId)
       .first()) as Record<string, unknown> | null;
 
+    await enrichPostsWithQuotes([updated as PostRow], c.env.DB);
+    await enrichPostsWithAttachments([updated as PostRow], c.env.DB);
+
     return c.json({ post: updated });
   } catch (error: unknown) {
-    const err = error as { message?: string; stack?: string };
+    const err = error as { message: string; stack?: string };
     console.error('Edit post error:', error);
     return c.json({ error: 'Failed to edit post', details: err.message || String(error), stack: err.stack }, 500);
   }
@@ -3473,6 +3733,7 @@ posts.get('/posts/:id', async (c) => {
     }
 
     await enrichPostsWithQuotes([post as PostRow], c.env.DB);
+    await enrichPostsWithAttachments([post as PostRow], c.env.DB);
     await enrichPostsWithReactions([post as PostRow], c.env.DB, c.get('user')?.id);
 
     return c.json(post);

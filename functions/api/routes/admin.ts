@@ -861,11 +861,19 @@ admin.post('/backfill-nsfw', requireAuth, requireAdmin, async (c) => {
 
     const candidates = (await c.env.DB.prepare(`
       SELECT id, gif_key
-      FROM posts
-      WHERE gif_key IS NOT NULL
-        AND status = 'published'
-        AND (${IMAGE_EXTENSION_LIKE})
-        AND id NOT IN (SELECT post_id FROM post_nsfw_scans)
+      FROM (
+        SELECT id, gif_key, created_at
+        FROM posts
+        WHERE gif_key IS NOT NULL
+          AND status = 'published'
+          AND (${IMAGE_EXTENSION_LIKE})
+        UNION ALL
+        SELECT p.id, a.r2_key AS gif_key, p.created_at
+        FROM posts p
+        JOIN post_attachments a ON a.post_id = p.id AND a.kind = 'image'
+        WHERE p.status = 'published'
+      )
+      WHERE id NOT IN (SELECT post_id FROM post_nsfw_scans)
       ORDER BY created_at DESC
       LIMIT ?
     `)

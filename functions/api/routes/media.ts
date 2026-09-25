@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { Hono } from 'hono';
+import { parseAttachmentKey } from '../../lib/attachments';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import {
@@ -51,6 +52,9 @@ media.put('/upload/*', requireAuth, async (c) => {
       return c.json({ error: 'File too large. Maximum size is 25MB' }, 413);
     }
 
+    // Multi-media attachment keys: gif|audio|video/{postId}/{position}{ext}
+    const attachment = parseAttachmentKey(key);
+
     // Verify the user owns a pending or published post with this storage key
     // For published posts, extract the postId from the key path to verify ownership
     const ownedPost = (await c.env.DB.prepare(
@@ -60,8 +64,20 @@ media.put('/upload/*', requireAuth, async (c) => {
       .first()) as { id: string } | null;
 
     if (!ownedPost) {
-      // Versioned game uploads live under versions/<postId>/<versionId>.zip
-      if (key.startsWith('versions/')) {
+      if (attachment) {
+        // Multi-media attachment keys: gif|audio|video/{postId}/{position}{ext}.
+        // The row is only written at commit time, so ownership is verified
+        // against the post itself (pending during upload, published on edit).
+        const attachmentPost = (await c.env.DB.prepare(
+          'SELECT id FROM posts WHERE id = ? AND user_id = ? AND status IN (?, ?)',
+        )
+          .bind(attachment.postId, user.id, 'pending', 'published')
+          .first()) as { id: string } | null;
+        if (!attachmentPost) {
+          return c.json({ error: 'No post found for this key' }, 403);
+        }
+      } else if (key.startsWith('versions/')) {
+        // Versioned game uploads live under versions/<postId>/<versionId>.zip
         const postId = key.split('/')[1];
         if (!postId) return c.json({ error: 'Invalid key' }, 400);
         const publishedPost = (await c.env.DB.prepare(
@@ -127,6 +143,20 @@ media.put('/upload/*', requireAuth, async (c) => {
     // Sanity check: declared content-type should be consistent (relaxed for zip/swf which may use generic types)
     if (declaredContentType && detectedMime.startsWith('image/') && !declaredContentType.startsWith('image/')) {
       return c.json({ error: 'Declared Content-Type does not match actual file content' }, 400);
+    }
+
+    // Multi-media attachment slots only accept media of the declared kind.
+    // This rejects html/swf/zip masquerading in gif|audio|video keys.
+    if (attachment) {
+      const kindMatches =
+        attachment.kind === 'image'
+          ? isAllowedImageMime(detectedMime)
+          : attachment.kind === 'audio'
+            ? detectedMime.startsWith('audio/') || detectedMime === 'video/webm' || detectedMime === 'video/mp4'
+            : detectedMime.startsWith('video/');
+      if (!kindMatches) {
+        return c.json({ error: 'File type does not match attachment type' }, 400);
+      }
     }
 
     // Reject oversized images to prevent renderer OOM crashes when decoded in the browser
