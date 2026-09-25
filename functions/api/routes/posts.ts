@@ -16,12 +16,14 @@ import {
   imageAttachmentKeys,
   kindFromUpload,
   MAX_ATTACHMENTS,
+  MAX_ATTACHMENTS_PLUS,
   parseAttachmentKey,
   sequenceAttachments,
   sumAttachmentSizes,
   validateAttachmentInputs,
 } from '../../lib/attachments';
 import { getMeWithSession, getSessionToken } from '../../lib/auth';
+import { getUserPlan } from '../../lib/billing';
 import { embedPost, isImageKey, screenPostImages } from '../../lib/crowd';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { sendPushToAll } from '../../lib/notify';
@@ -41,6 +43,16 @@ import {
 } from './recommender';
 
 const posts = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+/**
+ * Per-post attachment ceiling for a user: Flaxia+ subscribers get the larger
+ * cap, everyone else the free limit.
+ */
+async function resolveAttachmentLimit(env: Bindings, userId: string): Promise<number> {
+  if (!userId) return MAX_ATTACHMENTS;
+  const plan = await getUserPlan(env, userId);
+  return plan.isActive ? MAX_ATTACHMENTS_PLUS : MAX_ATTACHMENTS;
+}
 
 async function ensureReactionsTable(db: D1Database): Promise<void> {
   try {
@@ -1189,8 +1201,10 @@ posts.post('/posts/:id/prepare-media', requireAuth, async (c) => {
       plannedKeys.push(...(existing.results || []).map((r) => r.r2_key));
     }
 
-    if (plannedKeys.length + 1 > MAX_ATTACHMENTS) {
-      return c.json({ error: `Maximum ${MAX_ATTACHMENTS} attachments allowed` }, 400);
+    const maxAttachments = await resolveAttachmentLimit(c.env, user.id);
+
+    if (plannedKeys.length + 1 > maxAttachments) {
+      return c.json({ error: `Maximum ${maxAttachments} attachments allowed` }, 400);
     }
 
     // Occupancy comes from the slot embedded in the R2 key, not the
@@ -1203,7 +1217,7 @@ posts.post('/posts/:id/prepare-media', requireAuth, async (c) => {
     }
 
     let key: string | null = null;
-    for (let p = 1; p <= MAX_ATTACHMENTS && !key; p++) {
+    for (let p = 1; p <= maxAttachments && !key; p++) {
       if (usedSlots.has(p)) continue;
       const candidate = buildAttachmentKey(postId, p, filename, contentType);
       if (!candidate) return c.json({ error: 'Invalid filename' }, 400);
@@ -1213,7 +1227,7 @@ posts.post('/posts/:id/prepare-media', requireAuth, async (c) => {
       if (c.env.BUCKET && (await c.env.BUCKET.head(candidate))) continue;
       key = candidate;
     }
-    if (!key) return c.json({ error: `Maximum ${MAX_ATTACHMENTS} attachments allowed` }, 400);
+    if (!key) return c.json({ error: `Maximum ${maxAttachments} attachments allowed` }, 400);
 
     const position = parseAttachmentKey(key)?.position ?? 0;
     return c.json({ uploadUrl: `${new URL(c.req.url).origin}/api/upload/${key}`, key, kind, position });
@@ -1233,11 +1247,12 @@ posts.post('/posts/prepare', requireAuth, async (c) => {
     };
     const { filename, files } = body;
 
-    // Multi-media attachments (image/audio/video only, max 4, no html/swf/zip)
+    // Multi-media attachments (image/audio/video only, plan-dependent max, no html/swf/zip)
     if (Array.isArray(files)) {
       if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
-      if (files.length === 0 || files.length > MAX_ATTACHMENTS) {
-        return c.json({ error: `Attachments must be 1-${MAX_ATTACHMENTS} files` }, 400);
+      const maxAttachments = await resolveAttachmentLimit(c.env, c.get('user')?.id || '');
+      if (files.length === 0 || files.length > maxAttachments) {
+        return c.json({ error: `Attachments must be 1-${maxAttachments} files` }, 400);
       }
 
       const postId = crypto.randomUUID();
@@ -1496,9 +1511,10 @@ posts.post('/posts/commit', requireAuth, async (c) => {
     const userId = c.get('user')?.id || '';
     const username = c.get('user')?.username || 'anonymous';
 
-    // Validate multi-media attachments (image/audio/video, max 4)
+    // Validate multi-media attachments (image/audio/video, plan-dependent max)
     if (attachmentInputs !== undefined) {
-      const attachmentError = validateAttachmentInputs(attachmentInputs);
+      const maxAttachments = await resolveAttachmentLimit(c.env, userId);
+      const attachmentError = validateAttachmentInputs(attachmentInputs, maxAttachments);
       if (attachmentError) return c.json({ error: attachmentError }, 422);
       if (gifKey || swfKey || payloadKey || thumbnailKey) {
         return c.json({ error: 'Cannot combine attachments with game payloads' }, 422);
@@ -3636,8 +3652,20 @@ posts.put('/posts/:id', async (c) => {
       if (!Array.isArray(body.attachments)) {
         return c.json({ error: 'attachments must be an array' }, 422);
       }
+      // Existing rows also bound the list: a subscription that lapsed must
+      // still be able to keep or shrink an over-limit attachment set. Only
+      // growth beyond the current plan is rejected.
+      const existingRows =
+        (
+          await c.env.DB.prepare('SELECT r2_key FROM post_attachments WHERE post_id = ? ORDER BY position')
+            .bind(postId)
+            .all<{ r2_key: string }>()
+        ).results || [];
+      const existingKeys = existingRows.map((r) => r.r2_key);
+
       if (body.attachments.length > 0) {
-        const attachmentError = validateAttachmentInputs(body.attachments);
+        const planLimit = await resolveAttachmentLimit(c.env, post.user_id);
+        const attachmentError = validateAttachmentInputs(body.attachments, Math.max(planLimit, existingKeys.length));
         if (attachmentError) return c.json({ error: attachmentError }, 422);
         newAttachments = sequenceAttachments(body.attachments);
         if (updatedGifKey || updatedPayloadKey || updatedSwfKey || updatedThumbnailKey) {
@@ -3655,13 +3683,6 @@ posts.put('/posts/:id', async (c) => {
         if (sizeCheck.error) return c.json({ error: sizeCheck.error }, 413);
       }
 
-      const existingRows =
-        (
-          await c.env.DB.prepare('SELECT r2_key FROM post_attachments WHERE post_id = ? ORDER BY position')
-            .bind(postId)
-            .all<{ r2_key: string }>()
-        ).results || [];
-      const existingKeys = existingRows.map((r) => r.r2_key);
       const nextKeys = newAttachments.map((a) => a.r2_key);
       attachmentsChanged = existingKeys.length !== nextKeys.length || existingKeys.some((k, i) => k !== nextKeys[i]);
 

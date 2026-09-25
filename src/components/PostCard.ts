@@ -1,3 +1,4 @@
+import { maxMediaAttachmentsForUser } from '../lib/entitlements.js';
 import { t } from '../lib/i18n.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { loadLinkPreview } from '../lib/link-preview.js';
@@ -1212,6 +1213,7 @@ export class PostCard {
       // Multi-media attachments: list kept/new items with add/remove
       this.editAttachmentList = [...post.attachments!];
       this.editNewMediaFiles = [];
+      const maxAttachments = maxMediaAttachmentsForUser(this.props.currentUser);
 
       const listEl = document.createElement('div');
       listEl.style.cssText = 'display:flex;flex-direction:column;gap:0.35rem;margin-bottom:0.5rem;';
@@ -1222,7 +1224,7 @@ export class PostCard {
       const renderList = () => {
         listEl.innerHTML = '';
         const total = this.editAttachmentList.length + this.editNewMediaFiles.length;
-        countLabel.textContent = t('post.edit_attachment_count', { count: total, max: 4 });
+        countLabel.textContent = t('post.edit_attachment_count', { count: total, max: maxAttachments });
 
         if (total === 0) {
           const empty = document.createElement('div');
@@ -1298,8 +1300,8 @@ export class PostCard {
         fileInput.value = '';
         for (const file of files) {
           const total = this.editAttachmentList.length + this.editNewMediaFiles.length;
-          if (total >= 4) {
-            showToast(t('composer.error_too_many_media', { max: 4 }), true);
+          if (total >= maxAttachments) {
+            showToast(t('composer.error_too_many_media', { max: maxAttachments }), true);
             break;
           }
           this.editNewMediaFiles.push(file);

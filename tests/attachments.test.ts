@@ -3,6 +3,7 @@ import { beforeEach, describe, it } from 'node:test';
 import {
   buildAttachmentKey,
   MAX_ATTACHMENTS,
+  MAX_ATTACHMENTS_PLUS,
   parseAttachmentKey,
   sequenceAttachments,
   validateAttachmentInputs,
@@ -31,6 +32,19 @@ async function uploadTo(url: string, cookie: string): Promise<number> {
     body: PNG,
   });
   return res.status;
+}
+
+async function seedSubscription(username: string, data: { planId?: string; status?: string } = {}): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/test/subscription`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, ...data }),
+  });
+  assert.ok(res.ok, `seed subscription failed: ${res.status}`);
+}
+
+function filenames(count: number): string[] {
+  return Array.from({ length: count }, (_, i) => `pic${i}.png`);
 }
 
 /** Prepare + upload a post with `count` image attachments and commit it. */
@@ -64,12 +78,14 @@ describe('attachment helpers (unit)', () => {
     assert.equal(buildAttachmentKey('p1', 2, 'a.png'), 'gif/p1/2.png');
     assert.equal(buildAttachmentKey('p1', 1, 'a.mp3'), 'audio/p1/1.mp3');
     assert.equal(buildAttachmentKey('p1', 3, 'a.mp4'), 'video/p1/3.mp4');
-    assert.equal(buildAttachmentKey('p1', 9, 'a.png'), null, 'position out of range');
+    assert.equal(buildAttachmentKey('p1', MAX_ATTACHMENTS_PLUS, 'a.png'), 'gif/p1/32.png');
+    assert.equal(buildAttachmentKey('p1', MAX_ATTACHMENTS_PLUS + 1, 'a.png'), null, 'position out of range');
     assert.equal(buildAttachmentKey('p1', 1, 'a.zip'), null, 'games are not attachments');
 
     const parsed = parseAttachmentKey('video/p1/4.webm');
     assert.deepEqual(parsed, { postId: 'p1', position: 4, kind: 'video', ext: '.webm' });
-    assert.equal(parseAttachmentKey('gif/p1/5.png'), null, 'position must be 1-4');
+    assert.equal(parseAttachmentKey('gif/p1/5.png')?.position, 5, 'plus-tier slots stay parseable');
+    assert.equal(parseAttachmentKey('gif/p1/33.png'), null, 'position must be 1-32');
     assert.equal(parseAttachmentKey('payload/p1.png'), null, 'legacy keys are not attachments');
   });
 
@@ -85,6 +101,21 @@ describe('attachment helpers (unit)', () => {
     assert.equal(
       validateAttachmentInputs(Array.from({ length: MAX_ATTACHMENTS + 1 }, (_, i) => ({ key: `gif/p/${i + 1}.png` }))),
       `Maximum ${MAX_ATTACHMENTS} attachments allowed`,
+    );
+    assert.equal(
+      validateAttachmentInputs(
+        Array.from({ length: MAX_ATTACHMENTS_PLUS }, (_, i) => ({ key: `gif/p/${i + 1}.png` })),
+        MAX_ATTACHMENTS_PLUS,
+      ),
+      null,
+      'the plan-aware ceiling admits plus-tier lists',
+    );
+    assert.equal(
+      validateAttachmentInputs(
+        Array.from({ length: MAX_ATTACHMENTS_PLUS + 1 }, (_, i) => ({ key: `gif/p/${i + 1}.png` })),
+        MAX_ATTACHMENTS_PLUS,
+      ),
+      `Maximum ${MAX_ATTACHMENTS_PLUS} attachments allowed`,
     );
     assert.equal(
       validateAttachmentInputs([{ key: 'gif/p/1.png', kind: 'video' }]),
@@ -471,5 +502,110 @@ describe('quoted posts carry attachments', () => {
     const get = await fetch(`${BASE_URL}/api/posts/${post.id}`);
     const fetched = (await get.json()) as { quoted_post?: { attachments?: unknown[] } | null };
     assert.equal(fetched.quoted_post?.attachments?.length, 2);
+  });
+});
+
+describe('attachment limit — Flaxia+ entitlement', () => {
+  beforeEach(resetDb);
+
+  it('free plan accepts 4 files and rejects 5 → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    assert.equal((await prepareMulti(cookie, filenames(MAX_ATTACHMENTS))).status, 200);
+    assert.equal((await prepareMulti(cookie, filenames(MAX_ATTACHMENTS + 1))).status, 400);
+  });
+
+  it('active Flaxia+ accepts 32 files and rejects 33 → 400', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedSubscription(username, { planId: 'flaxia_plus', status: 'active' });
+
+    const ok = await prepareMulti(cookie, filenames(MAX_ATTACHMENTS_PLUS));
+    assert.equal(ok.status, 200);
+    assert.equal((ok.data.uploads as unknown[]).length, MAX_ATTACHMENTS_PLUS);
+    assert.equal((await prepareMulti(cookie, filenames(MAX_ATTACHMENTS_PLUS + 1))).status, 400);
+  });
+
+  it('past_due Flaxia+ keeps the free limit', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedSubscription(username, { planId: 'flaxia_plus', status: 'past_due' });
+    assert.equal((await prepareMulti(cookie, filenames(MAX_ATTACHMENTS))).status, 200);
+    assert.equal((await prepareMulti(cookie, filenames(MAX_ATTACHMENTS + 1))).status, 400);
+  });
+
+  it('Flaxia+ can commit 32 attachments', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedSubscription(username, { planId: 'flaxia_plus', status: 'active' });
+
+    const { postId, keys } = await createMediaPost(cookie, MAX_ATTACHMENTS_PLUS);
+    assert.equal(keys.length, MAX_ATTACHMENTS_PLUS);
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}`);
+    const post = (await res.json()) as { attachments?: unknown[] };
+    assert.equal(post.attachments?.length, MAX_ATTACHMENTS_PLUS);
+  });
+
+  it('Flaxia+ edit accepts a 32-attachment list → 200', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedSubscription(username, { planId: 'flaxia_plus', status: 'active' });
+    const { postId, keys } = await createMediaPost(cookie, MAX_ATTACHMENTS_PLUS);
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ attachments: keys.map((key) => ({ key, kind: 'image' })) }),
+    });
+    assert.equal(res.status, 200);
+    const updated = (await res.json()) as { post: { attachments?: unknown[] } };
+    assert.equal(updated.post.attachments?.length, MAX_ATTACHMENTS_PLUS);
+  });
+
+  it('Flaxia+ can reserve a 5th slot via prepare-media', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedSubscription(username, { planId: 'flaxia_plus', status: 'active' });
+    const { postId, keys } = await createMediaPost(cookie, MAX_ATTACHMENTS);
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}/prepare-media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ filename: 'fifth.png', contentType: 'image/png', reservedKeys: keys }),
+    });
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as { position: number };
+    assert.equal(data.position, 5);
+  });
+
+  it('a lapsed Flaxia+ can keep or shrink an over-limit list, but not grow', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedSubscription(username, { planId: 'flaxia_plus', status: 'active' });
+    const { postId, keys } = await createMediaPost(cookie, 8);
+
+    // Downgrade (past_due is visible but inactive): now over the free cap.
+    await seedSubscription(username, { planId: 'flaxia_plus', status: 'past_due' });
+
+    // Keeping all 8 must still succeed, or text edits would lock the post.
+    let res = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        text: 'edited after lapse',
+        attachments: keys.map((key) => ({ key, kind: 'image' })),
+      }),
+    });
+    assert.equal(res.status, 200);
+
+    // Shrinking is allowed…
+    res = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ attachments: keys.slice(0, 2).map((key) => ({ key, kind: 'image' })) }),
+    });
+    assert.equal(res.status, 200);
+
+    // …but growing back past the free cap is not.
+    res = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ attachments: keys.map((key) => ({ key, kind: 'image' })) }),
+    });
+    assert.equal(res.status, 422);
   });
 });

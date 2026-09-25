@@ -14,6 +14,7 @@ export interface PostComposerProps {
 }
 
 import { attachPlusBadge } from '../lib/avatar.js';
+import { maxMediaAttachmentsForUser } from '../lib/entitlements.js';
 import { getMimeType } from '../lib/file-extensions.js';
 import { AttachPreviewHandle, checkImageSizeLimit, detectAttachKind, renderFilePreview } from '../lib/file-preview.js';
 import { formatCount } from '../lib/format.js';
@@ -27,8 +28,8 @@ import { openMediaEditor } from './MediaEditorModal.js';
 import { closeStampPicker, openStampPicker } from './StampPicker.js';
 import { createVideoPlayer } from './VideoPlayer.js';
 
-// Multi-media attachment limits (mirrors functions/lib/attachments.ts)
-const MAX_MEDIA_ATTACHMENTS = 4;
+// Multi-media attachment size limits (mirrors functions/lib/attachments.ts).
+// The count limit is plan-dependent — see src/lib/entitlements.ts.
 const MAX_MEDIA_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_MEDIA_TOTAL_BYTES = 50 * 1024 * 1024;
 const GAME_EXTENSIONS = new Set(['zip', 'swf', 'rsp', 'js', 'wasm']);
@@ -74,9 +75,11 @@ export class PostComposer {
   private loadedDraftId: string | null = null;
   private draftsDropdown!: HTMLElement;
   private boundCloseDrafts!: (e: MouseEvent) => void;
+  private maxMediaAttachments: number;
 
   constructor(props: PostComposerProps) {
     this.props = props;
+    this.maxMediaAttachments = maxMediaAttachmentsForUser(props.currentUser);
     this.element = this.createElement();
     this.setupEventListeners();
   }
@@ -924,8 +927,8 @@ export class PostComposer {
         showToast(t('composer.error_unsupported_type'), true);
         continue;
       }
-      if (this.selectedMedia.length >= MAX_MEDIA_ATTACHMENTS) {
-        showToast(t('composer.error_too_many_media', { max: MAX_MEDIA_ATTACHMENTS }), true);
+      if (this.selectedMedia.length >= this.maxMediaAttachments) {
+        showToast(t('composer.error_too_many_media', { max: this.maxMediaAttachments }), true);
         break;
       }
 
@@ -1022,7 +1025,7 @@ export class PostComposer {
     const totalBytes = this.selectedMedia.reduce((sum, f) => sum + f.size, 0);
     metaEl.textContent = t('composer.media_meta', {
       count: this.selectedMedia.length,
-      max: MAX_MEDIA_ATTACHMENTS,
+      max: this.maxMediaAttachments,
       size: this.formatFileSize(totalBytes),
     });
   }
@@ -1763,8 +1766,8 @@ export class PostComposer {
       showToast(t('composer.error_file_too_large'), true);
       return;
     }
-    if (this.selectedMedia.length > MAX_MEDIA_ATTACHMENTS) {
-      showToast(t('composer.error_too_many_media', { max: MAX_MEDIA_ATTACHMENTS }), true);
+    if (this.selectedMedia.length > this.maxMediaAttachments) {
+      showToast(t('composer.error_too_many_media', { max: this.maxMediaAttachments }), true);
       return;
     }
     const mediaTotal = this.selectedMedia.reduce((sum, f) => sum + f.size, 0);
@@ -1983,7 +1986,7 @@ export class PostComposer {
     }
   }
 
-  /** Step 1 for multi-media posts: reserve upload slots for up to 4 files. */
+  /** Step 1 for multi-media posts: reserve upload slots for the plan's file cap. */
   private async preparePostAttachments(
     files: File[],
   ): Promise<{ postId: string; uploads: Array<{ key: string; uploadUrl: string; kind: string }> } | null> {

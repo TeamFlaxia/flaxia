@@ -35,7 +35,7 @@ export interface QuotedPost {
 
 export type MediaAttachmentKind = 'image' | 'audio' | 'video';
 
-/** One media file attached to a post (multi-media attachments, max 4). */
+/** One media file attached to a post (multi-media attachments, max 4; 32 for Flaxia+). */
 export interface PostAttachment {
   r2_key: string;
   kind: MediaAttachmentKind;

@@ -47,7 +47,7 @@ Flaxia uses Cloudflare D1 (SQLite-compatible) with migrations in `migrations/`.
 | created_at | TEXT | ISO 8601 |
 
 ### `post_attachments`
-Multiple image/audio/video files per post (max 4). Game payloads (zip/swf/html)
+Multiple image/audio/video files per post (max 4, or 32 for Flaxia+). Game payloads (zip/swf/html)
 keep using the legacy single-key columns on `posts`.
 
 | Column | Type | Notes |

@@ -1,7 +1,8 @@
 /**
  * Shared helpers for multi-media post attachments (image / audio / video).
  *
- * One post can carry up to MAX_ATTACHMENTS files (50MB total, 25MB each).
+ * One post can carry up to MAX_ATTACHMENTS files (50MB total, 25MB each);
+ * active Flaxia+ subscribers raise the count to MAX_ATTACHMENTS_PLUS.
  * Game payloads (zip / swf / html) are NOT part of this system — they keep
  * using the legacy gif_key / payload_key / swf_key / thumbnail_key columns.
  *
@@ -11,7 +12,10 @@
 
 export type AttachmentKind = 'image' | 'audio' | 'video';
 
+/** Free-plan ceiling. */
 export const MAX_ATTACHMENTS = 4;
+/** Flaxia+ ceiling. Also the hard cap baked into R2 key slots. */
+export const MAX_ATTACHMENTS_PLUS = 32;
 export const MAX_ATTACHMENT_FILE_BYTES = 25 * 1024 * 1024;
 export const MAX_ATTACHMENT_TOTAL_BYTES = 50 * 1024 * 1024;
 
@@ -41,8 +45,8 @@ const EXT_MAP: Record<string, string> = {
   mov: '.mov',
 };
 
-/** Matches multi-media attachment keys: gif|audio|video/{postId}/{1-4}{ext} */
-const ATTACHMENT_KEY_RE = /^(gif|audio|video)\/([^/]+)\/([1-4])(\.[A-Za-z0-9]+)$/;
+/** Matches multi-media attachment keys: gif|audio|video/{postId}/{1-32}{ext} */
+const ATTACHMENT_KEY_RE = /^(gif|audio|video)\/([^/]+)\/(\d{1,2})(\.[A-Za-z0-9]+)$/;
 
 export function normalizeExt(filename: string): string | null {
   const ext = filename.toLowerCase().match(/\.(\w+)$/)?.[1];
@@ -83,7 +87,7 @@ export function buildAttachmentKey(
   if (!kind) return null;
   const ext = normalizeExt(filename);
   if (!ext) return null;
-  if (!Number.isInteger(position) || position < 1 || position > MAX_ATTACHMENTS) return null;
+  if (!Number.isInteger(position) || position < 1 || position > MAX_ATTACHMENTS_PLUS) return null;
   return `${KIND_PREFIX[kind]}/${postId}/${position}.${ext}`;
 }
 
@@ -94,7 +98,7 @@ export function parseAttachmentKey(
   if (!m) return null;
   const prefix = m[1];
   const position = Number(m[3]);
-  if (!Number.isInteger(position) || position < 1 || position > MAX_ATTACHMENTS) return null;
+  if (!Number.isInteger(position) || position < 1 || position > MAX_ATTACHMENTS_PLUS) return null;
   const kind: AttachmentKind = prefix === 'gif' ? 'image' : prefix === 'audio' ? 'audio' : 'video';
   return { postId: m[2], position, kind, ext: m[4] };
 }
@@ -112,12 +116,14 @@ export interface AttachmentRecord {
 
 /**
  * Validate a client-supplied attachment list (order = position).
+ * `max` is the plan-dependent ceiling resolved by the caller (defaults to the
+ * free-plan limit so existing callers stay safe).
  * Returns an error message, or null when valid.
  */
-export function validateAttachmentInputs(inputs: unknown): string | null {
+export function validateAttachmentInputs(inputs: unknown, max: number = MAX_ATTACHMENTS): string | null {
   if (!Array.isArray(inputs)) return 'attachments must be an array';
   if (inputs.length === 0) return 'attachments must not be empty';
-  if (inputs.length > MAX_ATTACHMENTS) return `Maximum ${MAX_ATTACHMENTS} attachments allowed`;
+  if (inputs.length > max) return `Maximum ${max} attachments allowed`;
 
   const seenPositions = new Set<number>();
   for (const item of inputs as AttachmentInput[]) {
