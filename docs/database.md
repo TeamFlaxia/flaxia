@@ -47,17 +47,23 @@ Flaxia uses Cloudflare D1 (SQLite-compatible) with migrations in `migrations/`.
 | created_at | TEXT | ISO 8601 |
 
 ### `post_attachments`
-Multiple image/audio/video files per post (max 4, or 32 for Flaxia+). Game payloads (zip/swf/html)
-keep using the legacy single-key columns on `posts`.
+Multiple image/audio/video/PDF files per post (max 4, or 32 for Flaxia+). Game payloads
+(zip/swf/html) keep using the legacy single-key columns on `posts`.
 
 | Column | Type | Notes |
 |---|---|---|
 | id | INTEGER | autoincrement, PK |
 | post_id | TEXT | FK → posts(id), ON DELETE CASCADE |
-| r2_key | TEXT | `gif\|audio\|video/{postId}/{position}{ext}` |
-| kind | TEXT | 'image', 'audio', 'video' (CHECK) |
+| r2_key | TEXT | `gif\|audio\|video\|docs/{postId}/{position}{ext}` |
+| kind | TEXT | 'image', 'audio', 'video', 'document' (CHECK) |
 | position | INTEGER | 1..4 display order |
 | created_at | INTEGER | unixepoch |
+
+`kind` is derived from the `r2_key` prefix, not stored independently: `gif` → `image`,
+`audio` → `audio`, `video` → `video`, `docs` → `document` (PDF). Served by
+`/api/images|audio|video|documents/*` respectively. The CHECK constraint was widened to
+include `document` by migration `0096_attachment_documents.sql`, which rebuilds the table
+(SQLite cannot `ALTER` a CHECK constraint).
 
 Index: `idx_post_attachments_post (post_id, position)`
 

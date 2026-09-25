@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { Hono } from 'hono';
+import type { AttachmentKind } from '../../lib/attachments';
 import { parseAttachmentKey } from '../../lib/attachments';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
@@ -33,6 +34,28 @@ async function canAccessMediaKey(_c: MediaContext, key: string): Promise<boolean
  * based and do not require a signed token.
  */
 const MEDIA_CACHE_CONTROL = 'public, max-age=86400, s-maxage=86400';
+
+/**
+ * Does a detected MIME type belong in an attachment slot of this kind?
+ *
+ * Exhaustive over AttachmentKind on purpose: the previous nested ternary
+ * defaulted to the video check, so a new kind would have silently accepted
+ * (or rejected) the wrong files instead of failing the type check.
+ */
+function mimeMatchesAttachmentKind(kind: AttachmentKind, mime: string): boolean {
+  switch (kind) {
+    case 'image':
+      return isAllowedImageMime(mime);
+    case 'audio':
+      // .webm uploads are stored as video/webm or audio/webm depending on the
+      // client's content type, so both containers are valid in an audio slot.
+      return mime.startsWith('audio/') || mime === 'video/webm' || mime === 'video/mp4';
+    case 'video':
+      return mime.startsWith('video/');
+    case 'document':
+      return mime === 'application/pdf';
+  }
+}
 
 // PUT /api/upload/:key — direct file upload endpoint (requires auth + ownership of pending post)
 media.put('/upload/*', requireAuth, async (c) => {
@@ -134,6 +157,7 @@ media.put('/upload/*', requireAuth, async (c) => {
       !isAllowedImageMime(detectedMime) &&
       !detectedMime.startsWith('audio/') &&
       !detectedMime.startsWith('video/') &&
+      detectedMime !== 'application/pdf' &&
       detectedMime !== 'application/zip' &&
       detectedMime !== 'application/x-shockwave-flash' &&
       detectedMime !== 'text/html'
@@ -146,14 +170,9 @@ media.put('/upload/*', requireAuth, async (c) => {
     }
 
     // Multi-media attachment slots only accept media of the declared kind.
-    // This rejects html/swf/zip masquerading in gif|audio|video keys.
+    // This rejects html/swf/zip masquerading in gif|audio|video|docs keys.
     if (attachment) {
-      const kindMatches =
-        attachment.kind === 'image'
-          ? isAllowedImageMime(detectedMime)
-          : attachment.kind === 'audio'
-            ? detectedMime.startsWith('audio/') || detectedMime === 'video/webm' || detectedMime === 'video/mp4'
-            : detectedMime.startsWith('video/');
+      const kindMatches = mimeMatchesAttachmentKind(attachment.kind, detectedMime);
       if (!kindMatches) {
         return c.json({ error: 'File type does not match attachment type' }, 400);
       }
@@ -357,6 +376,58 @@ media.get('/video/*', async (c) => {
   } catch (error: unknown) {
     console.error('Video proxy error:', error);
     return c.json({ error: 'Failed to fetch video' }, 500);
+  }
+});
+
+// GET /api/documents/* - proxy PDF attachments from R2
+//
+// Unlike the other media proxies this one overrides two shared headers:
+//   - Content-Type is forced to application/pdf, because the browser's built-in
+//     viewer only takes over for a real PDF content type. Forcing it means the
+//     key must be validated first, so a png/swf/html key requested through this
+//     route can never be served as a PDF.
+//   - X-Frame-Options becomes SAMEORIGIN (the shared value is DENY) so the
+//     post can embed the document. A framed PDF gets an opaque, plugin-scoped
+//     document — it cannot reach our DOM, cookies or storage.
+media.get('/documents/*', async (c) => {
+  try {
+    const key = c.req.path.replace('/api/documents/', '');
+
+    if (!key) {
+      return c.json({ error: 'Missing document key' }, 400);
+    }
+
+    // Only keys the server itself minted for a document slot are servable here.
+    if (parseAttachmentKey(key)?.kind !== 'document') {
+      return c.json({ error: 'Document not found' }, 404);
+    }
+
+    if (!(await canAccessMediaKey(c, key))) {
+      return c.json({ error: 'Document not found' }, 404);
+    }
+
+    // Rate limit: 60 requests per minute per IP
+    const clientIp = getClientIp(c.req.raw);
+    if (!(await checkRateLimit(c.env.CACHE, `doc:${clientIp}`, { maxRequests: 60, windowSeconds: 60 }))) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
+
+    if (!c.env.BUCKET) {
+      return c.json({ error: 'Storage not available' }, 500);
+    }
+
+    const object = await c.env.BUCKET.get(key);
+
+    if (!object) {
+      return c.json({ error: 'Document not found' }, 404);
+    }
+
+    return handleRangeRequest(c, key, object, 'application/pdf', {
+      'X-Frame-Options': 'SAMEORIGIN',
+    });
+  } catch (error: unknown) {
+    console.error('Document proxy error:', error);
+    return c.json({ error: 'Failed to fetch document' }, 500);
   }
 });
 

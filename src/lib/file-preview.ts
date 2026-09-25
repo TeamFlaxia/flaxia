@@ -3,7 +3,7 @@ import { executeFlash } from '../components/FlashPlayer.js';
 import { createVideoPlayer } from '../components/VideoPlayer.js';
 import { t } from './i18n.js';
 
-export type AttachPreviewKind = 'image' | 'audio' | 'video' | 'game';
+export type AttachPreviewKind = 'image' | 'audio' | 'video' | 'game' | 'document';
 
 export interface AttachPreviewHandle {
   destroy: () => void;
@@ -58,6 +58,9 @@ export function detectAttachKind(file: File): AttachPreviewKind | null {
   if (name.endsWith('.zip') || name.endsWith('.swf')) {
     return 'game';
   }
+  if (name.endsWith('.pdf')) {
+    return 'document';
+  }
   return null;
 }
 
@@ -65,7 +68,7 @@ export function detectAttachKind(file: File): AttachPreviewKind | null {
  * Renders an inline preview of a selected attachment inside the composer's
  * file preview area. Images, audio and video are shown as compact inline
  * media; games (.zip / .swf) render as a chip with a play button that executes
- * the game once clicked.
+ * the game once clicked; documents (.pdf) render as a chip with an open button.
  */
 export function renderFilePreview(file: File, previewContainer: HTMLElement): AttachPreviewHandle {
   const kind = detectAttachKind(file);
@@ -141,6 +144,36 @@ export function renderFilePreview(file: File, previewContainer: HTMLElement): At
 
     body.appendChild(chip);
     body.appendChild(gameStage);
+  } else if (kind === 'document') {
+    // Documents are not rasterised in the composer: a chip with an explicit
+    // open action keeps the preview cheap and avoids a nested PDF plugin
+    // while the post is still being written.
+    const url = URL.createObjectURL(file);
+    revokeUrls.push(() => URL.revokeObjectURL(url));
+
+    const chip = document.createElement('div');
+    chip.className = 'file-preview-doc-chip';
+
+    const icon = document.createElement('span');
+    icon.className = 'file-preview-doc-icon';
+    icon.textContent = '📄';
+
+    const label = document.createElement('span');
+    label.className = 'file-preview-doc-label';
+    label.textContent = `${file.name} (${formatPreviewSize(file.size)})`;
+
+    const openBtn = document.createElement('button');
+    openBtn.type = 'button';
+    openBtn.className = 'file-preview-doc-open';
+    openBtn.textContent = t('composer.preview_open_document');
+    openBtn.addEventListener('click', () => {
+      window.open(url, '_blank', 'noopener,noreferrer');
+    });
+
+    chip.appendChild(icon);
+    chip.appendChild(label);
+    chip.appendChild(openBtn);
+    body.appendChild(chip);
   } else {
     const text = document.createElement('div');
     text.className = 'file-preview-plain';

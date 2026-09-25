@@ -146,9 +146,13 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 ### Prepare Upload
 `POST /api/posts/prepare`
 - Single legacy file: body `{ filename }` → `{ postId, gifUploadUrl?, gifKey?, zipUploadUrl?, zipKey?, swfUploadUrl?, swfKey? }`
-- Multi-media attachments (image/audio/video; up to 4, or 32 for Flaxia+): body `{ files: [{ filename, contentType? }] }`
+- Multi-media attachments (image/audio/video/PDF; up to 4, or 32 for Flaxia+): body `{ files: [{ filename, contentType? }] }`
   → `{ postId, uploads: [{ key, uploadUrl, kind }] }`
 - Game files (zip/swf/html/js/wasm) are rejected in the `files` list (400)
+- `kind` is `image` | `audio` | `video` | `document`; the R2 key prefix is
+  `gif`/`audio`/`video`/`docs` respectively and is the authoritative source of
+  the kind at read time. A `.pdf` upload is detected by its `%PDF-` magic bytes,
+  not by its extension or the declared `Content-Type`.
 
 ### Upload File
 `PUT /api/upload/:key`

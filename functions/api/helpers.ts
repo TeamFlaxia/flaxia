@@ -26,6 +26,7 @@ export const authMiddleware = async (c: Context<{ Bindings: Bindings; Variables:
     (path.startsWith('/api/images/') ||
       path.startsWith('/api/audio/') ||
       path.startsWith('/api/video/') ||
+      path.startsWith('/api/documents/') ||
       path === '/api/link-preview' ||
       path === '/api/games' ||
       (path.startsWith('/api/ads/') && path.endsWith('/payload')) ||
@@ -111,7 +112,20 @@ export function parseRange(rangeHeader: string, fileSize: number): { start: numb
   return { start, end };
 }
 
-export async function handleRangeRequest(c: any, key: string, object: any, contentType: string): Promise<Response> {
+/**
+ * Serve an R2 object, honouring HTTP Range requests.
+ *
+ * `extraHeaders` is applied after MEDIA_SECURITY_HEADERS so a route can relax a
+ * single default (e.g. /api/documents allows same-origin framing so the browser
+ * PDF viewer can be embedded) without losing the rest of the hardening.
+ */
+export async function handleRangeRequest(
+  c: any,
+  key: string,
+  object: any,
+  contentType: string,
+  extraHeaders: Record<string, string> = {},
+): Promise<Response> {
   const fileSize = object.size || 0;
   const rangeHeader = c.req.header('Range');
 
@@ -124,6 +138,7 @@ export async function handleRangeRequest(c: any, key: string, object: any, conte
         'Accept-Ranges': 'bytes',
         'Content-Length': fileSize.toString(),
         ...MEDIA_SECURITY_HEADERS,
+        ...extraHeaders,
       },
     });
   }
@@ -144,7 +159,7 @@ export async function handleRangeRequest(c: any, key: string, object: any, conte
   });
 
   if (!ranged) {
-    return c.json({ error: 'Video not found' }, 404);
+    return c.json({ error: 'Media not found' }, 404);
   }
 
   return new Response(ranged.body, {
@@ -157,6 +172,7 @@ export async function handleRangeRequest(c: any, key: string, object: any, conte
       'Access-Control-Allow-Origin': 'https://flaxia.app',
       'Accept-Ranges': 'bytes',
       ...MEDIA_SECURITY_HEADERS,
+      ...extraHeaders,
     },
   });
 }
@@ -193,6 +209,10 @@ const MAGIC_TYPES: { offset: number; bytes: number[]; mime: string }[] = [
   { offset: 0, bytes: [0xff, 0xd8, 0xff], mime: 'image/jpeg' },
   { offset: 0, bytes: [0x89, 0x50, 0x4e, 0x47], mime: 'image/png' },
   { offset: 0, bytes: [0x47, 0x49, 0x46, 0x38], mime: 'image/gif' },
+  // %PDF- must be the first thing in the file. Some writers prepend junk,
+  // but accepting a header found anywhere in the prefix would let a
+  // polyglot (e.g. HTML+PDF) be treated as a PDF, so offset 0 only.
+  { offset: 0, bytes: [0x25, 0x50, 0x44, 0x46, 0x2d], mime: 'application/pdf' },
   { offset: 0, bytes: [0x50, 0x4b, 0x03, 0x04], mime: 'application/zip' },
   { offset: 0, bytes: [0x50, 0x4b, 0x05, 0x06], mime: 'application/zip' },
   { offset: 0, bytes: [0x43, 0x57, 0x53], mime: 'application/x-shockwave-flash' },

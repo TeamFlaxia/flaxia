@@ -6,6 +6,7 @@ import {
   Copy,
   createElement,
   Eye,
+  FileText,
   Flag,
   Gamepad2,
   Home,
@@ -49,6 +50,7 @@ export type IconName =
   | 'smile-plus'
   | 'image-video'
   | 'audio'
+  | 'document'
   | 'game'
   | 'home'
   | 'search'
@@ -83,6 +85,7 @@ const ICON_NODES: Record<IconName, IconNode> = {
   'smile-plus': SmilePlus,
   'image-video': ImagePlus,
   audio: Music2,
+  document: FileText,
   game: Gamepad2,
   home: Home,
   search: Search,
