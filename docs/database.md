@@ -46,6 +46,21 @@ Flaxia uses Cloudflare D1 (SQLite-compatible) with migrations in `migrations/`.
 | share_count | INTEGER | Denormalized share count |
 | created_at | TEXT | ISO 8601 |
 
+### `post_attachments`
+Multiple image/audio/video files per post (max 4). Game payloads (zip/swf/html)
+keep using the legacy single-key columns on `posts`.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | INTEGER | autoincrement, PK |
+| post_id | TEXT | FK → posts(id), ON DELETE CASCADE |
+| r2_key | TEXT | `gif\|audio\|video/{postId}/{position}{ext}` |
+| kind | TEXT | 'image', 'audio', 'video' (CHECK) |
+| position | INTEGER | 1..4 display order |
+| created_at | INTEGER | unixepoch |
+
+Index: `idx_post_attachments_post (post_id, position)`
+
 ### `freshs` (Likes)
 | Column | Type | Notes |
 |---|---|---|
