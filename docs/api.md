@@ -162,15 +162,23 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 
 ### Add Attachment To Published Post
 `POST /api/posts/:id/prepare-media`
-- Body: `{ filename, contentType? }` — reserves the next free slot (max 4)
+- Body: `{ filename, contentType?, reservedKeys? }` — allocates the next free
+  slot (max 4). `reservedKeys` is the caller's full planned list for the save:
+  attachments it keeps plus keys already prepared in this session. Without it
+  each call in the same edit session would be handed the same slot.
+- Slots are taken from the position embedded in the R2 key, so a slot freed by
+  a removal is reusable immediately.
 - Returns: `{ uploadUrl, key, kind, position }`
 
 ### Edit Post
 `PUT /api/posts/:id`
 - Body: `{ text?, gif_key?, payload_key?, swf_key?, thumbnail_key?, attachments? }`
-- `attachments` is a full replacement (`[]` clears all); 422 when combined with
-  legacy media keys
+- `attachments` is a full replacement (`[]` clears all); 422 when it is not an
+  array or when combined with legacy media keys
+- Every edit reconciles NSFW screening: removed images drop their stored
+  verdict, and new images are submitted for screening
 - Returns `{ post }` including the enriched `attachments` list
+- `quoted_post` on any post read is enriched with its own `attachments` list
 
 ---
 

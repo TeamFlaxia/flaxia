@@ -71,8 +71,15 @@ export function kindFromUpload(filename: string, contentType?: string): Attachme
   return null;
 }
 
-export function buildAttachmentKey(postId: string, position: number, filename: string): string | null {
-  const kind = kindFromUpload(filename);
+export function buildAttachmentKey(
+  postId: string,
+  position: number,
+  filename: string,
+  contentType?: string,
+): string | null {
+  // contentType must reach kindFromUpload so the key prefix matches the kind
+  // reported to the client (.webm can be audio or video).
+  const kind = kindFromUpload(filename, contentType);
   if (!kind) return null;
   const ext = normalizeExt(filename);
   if (!ext) return null;
@@ -197,13 +204,14 @@ export async function enrichPostsWithAttachments<T extends AttachmentsEnrichable
   }
 }
 
-/** First image key for a post's attachments (NSFW scan / crowd push). */
-export function firstImageKey(attachments: unknown): string | null {
-  if (!Array.isArray(attachments) || attachments.length === 0) return null;
+/** Every image key in an attachment list (audio/video are never screened). */
+export function imageAttachmentKeys(attachments: unknown): string[] {
+  if (!Array.isArray(attachments)) return [];
+  const keys: string[] = [];
   for (const item of attachments as AttachmentRecord[]) {
-    if (item?.kind === 'image' && typeof item.r2_key === 'string') return item.r2_key;
+    if (item?.kind === 'image' && typeof item.r2_key === 'string') keys.push(item.r2_key);
   }
-  return null;
+  return keys;
 }
 
 /** Delete attachment rows for a post (and optionally its descendant replies). */

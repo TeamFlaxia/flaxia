@@ -1440,12 +1440,20 @@ export class PostCard {
           // full replacement list ([] removes every attachment)
           if (multiAttachmentsChanged) {
             const uploaded: Array<{ key: string; kind: string }> = [];
+            // prepare-media allocates one slot per call, so it has to know
+            // every key this save will end up holding — attachments we keep
+            // plus the ones already prepared in this session.
+            const reservedKeys = this.editAttachmentList.map((a) => a.r2_key);
             for (const file of this.editNewMediaFiles) {
               const prepRes = await fetch(`/api/posts/${post.id}/prepare-media`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
-                body: JSON.stringify({ filename: file.name, contentType: file.type || undefined }),
+                body: JSON.stringify({
+                  filename: file.name,
+                  contentType: file.type || undefined,
+                  reservedKeys,
+                }),
               });
               if (!prepRes.ok) {
                 const err = await prepRes.json().catch(() => ({}));
@@ -1462,6 +1470,7 @@ export class PostCard {
               if (!uploadRes.ok) throw new Error('Failed to upload media');
 
               uploaded.push({ key: prep.key, kind: prep.kind });
+              reservedKeys.push(prep.key);
             }
             body.attachments = [...this.editAttachmentList.map((a) => ({ key: a.r2_key, kind: a.kind })), ...uploaded];
           }

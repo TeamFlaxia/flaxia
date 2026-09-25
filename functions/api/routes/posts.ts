@@ -13,7 +13,7 @@ import {
   collectAttachmentKeys,
   deleteAttachmentRows,
   enrichPostsWithAttachments,
-  firstImageKey,
+  imageAttachmentKeys,
   kindFromUpload,
   MAX_ATTACHMENTS,
   parseAttachmentKey,
@@ -22,7 +22,7 @@ import {
   validateAttachmentInputs,
 } from '../../lib/attachments';
 import { getMeWithSession, getSessionToken } from '../../lib/auth';
-import { embedPost, submitDetectNsfw } from '../../lib/crowd';
+import { embedPost, isImageKey, screenPostImages } from '../../lib/crowd';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { sendPushToAll } from '../../lib/notify';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
@@ -1152,9 +1152,10 @@ posts.post('/posts/:id/prepare-media', requireAuth, async (c) => {
     const user = c.get('user');
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
     const postId = c.req.param('id');
-    const { filename, contentType } = (await c.req.json()) as {
+    const { filename, contentType, reservedKeys } = (await c.req.json()) as {
       filename?: string;
       contentType?: string;
+      reservedKeys?: unknown;
     };
 
     if (!postId) return c.json({ error: 'Missing post id' }, 400);
@@ -1171,27 +1172,50 @@ posts.post('/posts/:id/prepare-media', requireAuth, async (c) => {
     if (post.user_id !== user.id) return c.json({ error: 'Forbidden' }, 403);
     if (post.status !== 'published') return c.json({ error: 'Cannot edit this post' }, 400);
 
-    const existing = await c.env.DB.prepare('SELECT position, r2_key FROM post_attachments WHERE post_id = ?')
-      .bind(postId)
-      .all<{ position: number; r2_key: string }>();
-    const rows = existing.results || [];
-    if (rows.length >= MAX_ATTACHMENTS) {
+    // Slots already spoken for. `reservedKeys` is the client's full planned
+    // list for this edit session (attachments it keeps plus slots it has
+    // already prepared but not yet committed) — without it every call in one
+    // session would be handed the same slot. Falls back to the stored rows
+    // for callers that do not send the list.
+    const plannedKeys: string[] = [];
+    if (Array.isArray(reservedKeys)) {
+      for (const k of reservedKeys) {
+        if (typeof k === 'string' && parseAttachmentKey(k)?.postId === postId) plannedKeys.push(k);
+      }
+    } else {
+      const existing = await c.env.DB.prepare('SELECT r2_key FROM post_attachments WHERE post_id = ?')
+        .bind(postId)
+        .all<{ r2_key: string }>();
+      plannedKeys.push(...(existing.results || []).map((r) => r.r2_key));
+    }
+
+    if (plannedKeys.length + 1 > MAX_ATTACHMENTS) {
       return c.json({ error: `Maximum ${MAX_ATTACHMENTS} attachments allowed` }, 400);
     }
-    const usedPositions = new Set(rows.map((r) => r.position));
-    const usedKeys = new Set(rows.map((r) => r.r2_key));
-    let position = 0;
-    for (let p = 1; p <= MAX_ATTACHMENTS; p++) {
-      if (!usedPositions.has(p)) {
-        position = p;
-        break;
-      }
+
+    // Occupancy comes from the slot embedded in the R2 key, not the
+    // position column: sequenceAttachments renumbers positions on save while
+    // keys keep their original slot, so the two drift after any removal.
+    const usedSlots = new Set<number>();
+    for (const planned of plannedKeys) {
+      const parsed = parseAttachmentKey(planned);
+      if (parsed) usedSlots.add(parsed.position);
     }
-    if (position === 0) return c.json({ error: `Maximum ${MAX_ATTACHMENTS} attachments allowed` }, 400);
 
-    const key = buildAttachmentKey(postId, position, filename);
-    if (!key || usedKeys.has(key)) return c.json({ error: 'Invalid filename' }, 400);
+    let key: string | null = null;
+    for (let p = 1; p <= MAX_ATTACHMENTS && !key; p++) {
+      if (usedSlots.has(p)) continue;
+      const candidate = buildAttachmentKey(postId, p, filename, contentType);
+      if (!candidate) return c.json({ error: 'Invalid filename' }, 400);
+      // Skip a slot whose object still exists in R2 but is not planned for
+      // the save (dropped attachment not committed yet, or a stale orphan) so
+      // the upload cannot clobber a post that is still referencing it.
+      if (c.env.BUCKET && (await c.env.BUCKET.head(candidate))) continue;
+      key = candidate;
+    }
+    if (!key) return c.json({ error: `Maximum ${MAX_ATTACHMENTS} attachments allowed` }, 400);
 
+    const position = parseAttachmentKey(key)?.position ?? 0;
     return c.json({ uploadUrl: `${new URL(c.req.url).origin}/api/upload/${key}`, key, kind, position });
   } catch (error: unknown) {
     const err = error as { message?: string };
@@ -1227,7 +1251,7 @@ posts.post('/posts/prepare', requireAuth, async (c) => {
         if (!kind) {
           return c.json({ error: 'Only image, audio, and video files are allowed' }, 400);
         }
-        const key = buildAttachmentKey(postId, uploads.length + 1, name);
+        const key = buildAttachmentKey(postId, uploads.length + 1, name, file.contentType);
         if (!key) return c.json({ error: 'Invalid filename' }, 400);
         uploads.push({
           key,
@@ -1606,15 +1630,28 @@ posts.post('/posts/commit', requireAuth, async (c) => {
 
     // Persist multi-media attachments (full replacement for idempotent commits)
     if (attachments.length > 0) {
-      await c.env.DB.prepare('DELETE FROM post_attachments WHERE post_id = ?').bind(postId).run();
-      const attStmts = attachments.map((att) =>
-        c.env.DB.prepare('INSERT INTO post_attachments (post_id, r2_key, kind, position) VALUES (?, ?, ?, ?)').bind(
-          postId,
-          att.r2_key,
-          att.kind,
-          att.position,
+      const previous =
+        (
+          await c.env.DB.prepare('SELECT r2_key FROM post_attachments WHERE post_id = ?')
+            .bind(postId)
+            .all<{ r2_key: string }>()
+        ).results || [];
+      const nextKeySet = new Set(attachments.map((a) => a.r2_key));
+      const dropped = previous.map((r) => r.r2_key).filter((k) => !nextKeySet.has(k));
+      if (dropped.length > 0 && c.env.BUCKET) {
+        await Promise.all(dropped.map((k) => c.env.BUCKET.delete(k).catch(() => {})));
+      }
+      const attStmts = [
+        c.env.DB.prepare('DELETE FROM post_attachments WHERE post_id = ?').bind(postId),
+        ...attachments.map((att) =>
+          c.env.DB.prepare('INSERT INTO post_attachments (post_id, r2_key, kind, position) VALUES (?, ?, ?, ?)').bind(
+            postId,
+            att.r2_key,
+            att.kind,
+            att.position,
+          ),
         ),
-      );
+      ];
       await c.env.DB.batch(attStmts);
     }
 
@@ -1787,7 +1824,12 @@ posts.post('/posts/commit', requireAuth, async (c) => {
 
     embedPost(c.env.DB, c.env, fullPost.id, fullPost.text).catch((e) => console.error('Background embed failed:', e));
 
-    submitDetectNsfw(c.env.DB, c.env, fullPost.id, fullPost.gif_key || firstImageKey(fullPost.attachments));
+    // Screen every image the post carries, not just the first: reconcile the
+    // scan rows with the current key list, then submit what the throttle allows.
+    screenPostImages(c.env.DB, c.env, fullPost.id, [
+      ...(isImageKey(fullPost.gif_key) ? [fullPost.gif_key] : []),
+      ...imageAttachmentKeys(fullPost.attachments),
+    ]).catch((e) => console.error('Background NSFW screen failed:', e));
 
     // Pre-extract ZIP to R2 for WVFS persistent caching
     if (payloadKey && payloadKey.endsWith('.zip')) {
@@ -3070,7 +3112,9 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
     }
 
     if (gifKey) {
-      submitDetectNsfw(c.env.DB, c.env, replyId, gifKey);
+      screenPostImages(c.env.DB, c.env, replyId, [gifKey]).catch((e) =>
+        console.error('Background NSFW screen failed:', e),
+      );
     }
 
     return c.json({ reply });
@@ -3587,6 +3631,11 @@ posts.put('/posts/:id', async (c) => {
     let attachmentsChanged = false;
     let newAttachments: AttachmentRecord[] = [];
     if (body.attachments !== undefined) {
+      // A non-array (e.g. `{}`) has no usable length, so it would otherwise
+      // slip past validation below and wipe every attachment with a 200.
+      if (!Array.isArray(body.attachments)) {
+        return c.json({ error: 'attachments must be an array' }, 422);
+      }
       if (body.attachments.length > 0) {
         const attachmentError = validateAttachmentInputs(body.attachments);
         if (attachmentError) return c.json({ error: attachmentError }, 422);
@@ -3620,11 +3669,15 @@ posts.put('/posts/:id', async (c) => {
         const nextKeySet = new Set(nextKeys);
         const removed = existingKeys.filter((k) => !nextKeySet.has(k));
         if (removed.length > 0 && c.env.BUCKET) {
-          Promise.all(removed.map((k) => c.env.BUCKET.delete(k).catch(() => {}))).catch(() => {});
+          // Awaited: prepare-media probes R2 for a free slot, and a deferred
+          // delete could make it skip the slot this edit just freed.
+          await Promise.all(removed.map((k) => c.env.BUCKET.delete(k).catch(() => {})));
         }
-        await c.env.DB.prepare('DELETE FROM post_attachments WHERE post_id = ?').bind(postId).run();
-        if (newAttachments.length > 0) {
-          const attStmts = newAttachments.map((att) =>
+        // One batch = one implicit transaction, so a failed insert cannot
+        // leave the post with no attachments after the DELETE.
+        const statements = [c.env.DB.prepare('DELETE FROM post_attachments WHERE post_id = ?').bind(postId)];
+        for (const att of newAttachments) {
+          statements.push(
             c.env.DB.prepare('INSERT INTO post_attachments (post_id, r2_key, kind, position) VALUES (?, ?, ?, ?)').bind(
               postId,
               att.r2_key,
@@ -3632,8 +3685,8 @@ posts.put('/posts/:id', async (c) => {
               att.position,
             ),
           );
-          await c.env.DB.batch(attStmts);
         }
+        await c.env.DB.batch(statements);
       }
     }
 
@@ -3662,6 +3715,15 @@ posts.put('/posts/:id', async (c) => {
 
     await enrichPostsWithQuotes([updated as PostRow], c.env.DB);
     await enrichPostsWithAttachments([updated as PostRow], c.env.DB);
+
+    // Re-screen on every edit: a swapped-in image kept the old post's verdict,
+    // because submitDetectNsfw skips objects already marked done. Reconciling
+    // here also drops rows for images that were removed.
+    const currentGif = typeof updated?.gif_key === 'string' ? updated.gif_key : null;
+    await screenPostImages(c.env.DB, c.env, postId, [
+      ...(isImageKey(currentGif) ? [currentGif] : []),
+      ...imageAttachmentKeys(updated?.attachments),
+    ]);
 
     return c.json({ post: updated });
   } catch (error: unknown) {
@@ -3928,6 +3990,14 @@ async function enrichPostsWithPolls(posts: PostRow[], db: D1Database, currentUse
   }
 }
 
+/** Quoted post row: the SELECT shape plus an index signature for enrichment. */
+type QuotedPostRow = {
+  id: string;
+  status: string;
+  hidden: number | null;
+  [key: string]: unknown;
+};
+
 /**
  * Batch-fetch quoted posts referenced by the given posts and attach them as
  * `quoted_post`. Only embeds 1 level deep (never recurses) to avoid infinite
@@ -3946,7 +4016,7 @@ async function enrichPostsWithQuotes(posts: PostRow[], db: D1Database): Promise<
 
   const links = linksResult.results || [];
   const quotedIds = [...new Set(links.map((r) => r.quoted_post_id))];
-  const quotedMap = new Map<string, Record<string, unknown>>();
+  const quotedMap = new Map<string, QuotedPostRow>();
 
   if (quotedIds.length > 0) {
     const placeholders = quotedIds.map(() => '?').join(',');
@@ -3961,13 +4031,15 @@ async function enrichPostsWithQuotes(posts: PostRow[], db: D1Database): Promise<
        WHERE p.id IN (${placeholders})`,
       )
       .bind(...quotedIds)
-      .all<Record<string, unknown>>();
+      .all<QuotedPostRow>();
 
-    for (const quoted of result.results || []) {
-      if (quoted.status === 'published' && !quoted.hidden) {
-        quotedMap.set(quoted.id as string, quoted);
-      }
+    const visible = (result.results || []).filter((quoted) => quoted.status === 'published' && !quoted.hidden);
+    for (const quoted of visible) {
+      quotedMap.set(quoted.id, quoted);
     }
+    // Quote cards render attachments, so the quoted post needs the same
+    // enrichment the timeline gives its own posts.
+    await enrichPostsWithAttachments(visible, db);
   }
 
   for (const post of posts) {

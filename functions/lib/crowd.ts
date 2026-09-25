@@ -40,11 +40,20 @@ export interface CrowdConfig {
 
 export const IMAGE_KEY_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
 
+/** True when an R2 key points at an image (the only thing NudeNet can screen). */
+export function isImageKey(key: string | null | undefined): key is string {
+  if (!key) return false;
+  const lower = key.toLowerCase();
+  return IMAGE_KEY_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
 const NSFW_RATE_LIMIT_MS = 10_000;
 const EMBED_RATE_LIMIT_MS = 10_000;
 const PENDING_EMBED_MAX_ATTEMPTS = 5;
 
-const NSFW_SCAN_SCHEMA = `post_id TEXT PRIMARY KEY, task_id TEXT, status TEXT NOT NULL DEFAULT 'submitted' CHECK(status IN ('submitted', 'done', 'failed')), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), scanned_at TEXT`;
+// One row per (post, media object): a post with 4 image attachments needs 4
+// verdicts, and a post_id-only key could only ever hold one.
+const NSFW_SCAN_SCHEMA = `post_id TEXT NOT NULL, media_key TEXT NOT NULL DEFAULT '', task_id TEXT, status TEXT NOT NULL DEFAULT 'submitted' CHECK(status IN ('submitted', 'done', 'failed')), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), scanned_at TEXT, PRIMARY KEY (post_id, media_key)`;
 const PENDING_EMBEDS_SCHEMA = `post_id TEXT PRIMARY KEY, text TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), last_error TEXT`;
 
 // In-flight / rate-limit guards. Kept module-scoped so every route bundled into
@@ -94,78 +103,133 @@ export async function ensurePendingEmbedsTable(db: D1Database): Promise<void> {
 
 // ── NSFW screening (NudeNet) ──
 
-async function markNsfwScan(db: D1Database, postId: string, status: string, taskId?: string): Promise<void> {
+async function markNsfwScan(
+  db: D1Database,
+  postId: string,
+  mediaKey: string,
+  status: string,
+  taskId?: string,
+): Promise<void> {
   try {
     if (status === 'submitted') {
       await db
-        .prepare('INSERT OR IGNORE INTO post_nsfw_scans (post_id, status) VALUES (?, ?)')
-        .bind(postId, status)
+        .prepare('INSERT OR IGNORE INTO post_nsfw_scans (post_id, media_key, status) VALUES (?, ?, ?)')
+        .bind(postId, mediaKey, status)
         .run();
+      if (taskId) {
+        await db
+          .prepare('UPDATE post_nsfw_scans SET task_id = ? WHERE post_id = ? AND media_key = ?')
+          .bind(taskId, postId, mediaKey)
+          .run();
+      }
     } else {
       await db
-        .prepare('UPDATE post_nsfw_scans SET status = ?, scanned_at = ? WHERE post_id = ?')
-        .bind(status, new Date().toISOString(), postId)
+        .prepare('UPDATE post_nsfw_scans SET status = ?, scanned_at = ? WHERE post_id = ? AND media_key = ?')
+        .bind(status, new Date().toISOString(), postId, mediaKey)
         .run();
     }
-    if (taskId && status === 'submitted') {
-      await db.prepare('UPDATE post_nsfw_scans SET task_id = ? WHERE post_id = ?').bind(taskId, postId).run();
-    }
   } catch (e) {
-    console.error(`Failed to record NSFW scan state for post ${postId}:`, e);
+    console.error(`Failed to record NSFW scan state for post ${postId} [${mediaKey}]:`, e);
   }
 }
 
+export interface SubmitNsfwOptions {
+  /** Set false to skip the global 10s ceiling (admin backfill only). */
+  respectThrottle?: boolean;
+}
+
 /**
- * Submit an image post for NudeNet screening. Best-effort: skips when Crowd is
- * unconfigured, when the attachment is not an image, or when rate-limited.
+ * Submit one image for NudeNet screening. Best-effort: skips when Crowd is
+ * unconfigured, when the key is not an image, when this object already has a
+ * verdict, or when rate-limited. Returns true only when a task was actually
+ * handed to the orchestrator.
  */
 export async function submitDetectNsfw(
   db: D1Database,
   env: CrowdEnv,
   postId: string,
-  gifKey: string | null,
-): Promise<void> {
+  mediaKey: string | null,
+  opts: SubmitNsfwOptions = {},
+): Promise<boolean> {
   const config = crowdConfig(env);
-  if (!config.configured || !gifKey) return;
+  if (!config.configured || !mediaKey || !isImageKey(mediaKey)) return false;
 
-  const lower = gifKey.toLowerCase();
-  if (!IMAGE_KEY_EXTENSIONS.some((ext) => lower.endsWith(ext))) return;
-
-  if (nsfwScanPosts.has(postId)) return;
-  nsfwScanPosts.add(postId);
-
-  const now = Date.now();
-  if (now - lastNsfwSubmitTime < NSFW_RATE_LIMIT_MS) {
-    nsfwScanPosts.delete(postId);
-    return;
-  }
-  lastNsfwSubmitTime = now;
+  const dedupeKey = postId + ' ' + mediaKey;
+  if (nsfwScanPosts.has(dedupeKey)) return false;
+  nsfwScanPosts.add(dedupeKey);
 
   try {
     await ensureNsfwScansTable(db);
 
+    // Checked before the throttle: an already-screened image must not consume
+    // the shared budget when a caller walks a post's image list.
     const existing = (await db
-      .prepare('SELECT status FROM post_nsfw_scans WHERE post_id = ?')
-      .bind(postId)
+      .prepare('SELECT status FROM post_nsfw_scans WHERE post_id = ? AND media_key = ?')
+      .bind(postId, mediaKey)
       .first()) as { status: string } | null;
-    if (existing?.status === 'done') return;
+    if (existing?.status === 'done') return false;
+
+    if (opts.respectThrottle !== false && Date.now() - lastNsfwSubmitTime < NSFW_RATE_LIMIT_MS) return false;
 
     const client = getCrowdClient(config);
-    if (!client) return;
+    if (!client) return false;
 
-    const callbackUrl = buildCallbackUrl({ baseUrl: config.baseUrl, type: 'nsfw', params: { postId } });
+    lastNsfwSubmitTime = Date.now();
+    // `key` says which object of the post this verdict belongs to.
+    // buildCallbackUrl omits empty params, so legacy callbacks stay postId-only.
+    const callbackUrl = buildCallbackUrl({ baseUrl: config.baseUrl, type: 'nsfw', params: { postId, key: mediaKey } });
     const res = await client.submit({
       workload: 'nudenet',
-      payload: { imageUrl: `${config.baseUrl}/api/images/${gifKey}` },
+      payload: { imageUrl: `${config.baseUrl}/api/images/${mediaKey}` },
       callbackUrl,
       timeoutMs: DEFAULT_WORKLOAD_TIMEOUT_MS.nudenet,
     });
-    await markNsfwScan(db, postId, 'submitted', res.taskId);
-    console.log(`NSFW detection task submitted for post ${postId} (task ${res.taskId})`);
+    await markNsfwScan(db, postId, mediaKey, 'submitted', res.taskId);
+    console.log(`NSFW detection task submitted for post ${postId} [${mediaKey}] (task ${res.taskId})`);
+    return true;
   } catch (err) {
-    console.error(`NSFW detection submission failed for post ${postId}:`, err);
+    console.error(`NSFW detection submission failed for post ${postId} (${mediaKey}):`, err);
+    return false;
   } finally {
-    nsfwScanPosts.delete(postId);
+    nsfwScanPosts.delete(dedupeKey);
+  }
+}
+
+/**
+ * Reconcile a post's scan rows with the images it currently carries, then try
+ * each one. The global throttle lets a single new image through per call, so
+ * the rest are picked up by a later write or by the admin backfill.
+ */
+export async function screenPostImages(
+  db: D1Database,
+  env: CrowdEnv,
+  postId: string,
+  imageKeys: string[],
+): Promise<void> {
+  try {
+    await ensureNsfwScansTable(db);
+
+    const wanted = [...new Set(imageKeys.filter(isImageKey))];
+    const storedResult = await db
+      .prepare('SELECT media_key FROM post_nsfw_scans WHERE post_id = ?')
+      .bind(postId)
+      .all<{ media_key: string }>();
+    const stored = storedResult.results || [];
+    const wantedSet = new Set(wanted);
+    const stale = stored.map((r) => r.media_key).filter((k) => !wantedSet.has(k));
+    if (stale.length > 0) {
+      const placeholders = stale.map(() => '?').join(',');
+      await db
+        .prepare(`DELETE FROM post_nsfw_scans WHERE post_id = ? AND media_key IN (${placeholders})`)
+        .bind(postId, ...stale)
+        .run();
+    }
+
+    for (const key of wanted) {
+      await submitDetectNsfw(db, env, postId, key);
+    }
+  } catch (e) {
+    console.error(`Failed to screen images for post ${postId}:`, e);
   }
 }
 
@@ -310,6 +374,8 @@ function json(body: Record<string, unknown>): Response {
 
 async function handleNsfwResult(url: URL, event: CrowdWebhookEvent, db: D1Database): Promise<void> {
   const postId = url.searchParams.get('postId');
+  // Older callbacks carry no key: they screened the post's single legacy image.
+  const mediaKey = url.searchParams.get('key') ?? '';
   const detections = (event.result?.detections as NudeNetDetection[] | undefined) ?? [];
   if (!postId) return;
 
@@ -317,12 +383,14 @@ async function handleNsfwResult(url: URL, event: CrowdWebhookEvent, db: D1Databa
   const applied = await applyNsfwTags(db, postId, tags);
   await db
     .prepare(
-      `INSERT INTO post_nsfw_scans (post_id, status, scanned_at) VALUES (?, 'done', ?)
-       ON CONFLICT(post_id) DO UPDATE SET status = 'done', scanned_at = excluded.scanned_at`,
+      `INSERT INTO post_nsfw_scans (post_id, media_key, status, scanned_at) VALUES (?, ?, 'done', ?)
+       ON CONFLICT(post_id, media_key) DO UPDATE SET status = 'done', scanned_at = excluded.scanned_at`,
     )
-    .bind(postId, new Date().toISOString())
+    .bind(postId, mediaKey, new Date().toISOString())
     .run();
-  console.log(`NSFW webhook for post ${postId}: nsfw=${nsfw}, tags=${tags.join(',') || 'none'}, applied=${applied}`);
+  console.log(
+    `NSFW webhook for post ${postId} [${mediaKey}]: nsfw=${nsfw}, tags=${tags.join(',') || 'none'}, applied=${applied}`,
+  );
 }
 
 async function loadBanditConfig(env: CrowdEnv) {
@@ -405,10 +473,11 @@ export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1
       );
       if (callbackType === 'nsfw') {
         const postId = url.searchParams.get('postId');
+        const mediaKey = url.searchParams.get('key') ?? '';
         if (postId) {
           await db
-            .prepare('UPDATE post_nsfw_scans SET status = ?, scanned_at = ? WHERE post_id = ?')
-            .bind('failed', new Date().toISOString(), postId)
+            .prepare('UPDATE post_nsfw_scans SET status = ?, scanned_at = ? WHERE post_id = ? AND media_key = ?')
+            .bind('failed', new Date().toISOString(), postId, mediaKey)
             .run();
         }
       }

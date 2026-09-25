@@ -265,3 +265,5 @@ first device has a row that can be revoked.
 - `hidden_posts` — Hidden/moderated posts
 - `post_thumbnails` — Generated thumbnails for ZIP/SWF posts
 - `polls` — Poll options and votes
+- `post_nsfw_scans` — NudeNet screening progress, one row per (post, media_key)
+  (migration 0095); multi-image posts get a verdict per attached image

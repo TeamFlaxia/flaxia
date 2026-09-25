@@ -73,6 +73,12 @@ describe('attachment helpers (unit)', () => {
     assert.equal(parseAttachmentKey('payload/p1.png'), null, 'legacy keys are not attachments');
   });
 
+  it('derives the .webm key prefix from the content type', () => {
+    assert.equal(buildAttachmentKey('p1', 1, 'clip.webm', 'audio/webm'), 'audio/p1/1.webm');
+    assert.equal(buildAttachmentKey('p1', 1, 'clip.webm', 'video/webm'), 'video/p1/1.webm');
+    assert.equal(buildAttachmentKey('p1', 1, 'clip.webm'), 'video/p1/1.webm');
+  });
+
   it('validates client-supplied lists', () => {
     assert.equal(validateAttachmentInputs('nope'), 'attachments must be an array');
     assert.equal(validateAttachmentInputs([]), 'attachments must not be empty');
@@ -274,6 +280,22 @@ describe('PUT /api/posts/:id — attachment edits', () => {
     assert.equal(post.attachments?.length ?? 0, 0);
   });
 
+  it('rejects a non-array attachments value instead of clearing → 422', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId } = await createMediaPost(cookie, 2);
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ attachments: {} }),
+    });
+    assert.equal(res.status, 422);
+
+    const get = await fetch(`${BASE_URL}/api/posts/${postId}`);
+    const post = (await get.json()) as { attachments?: unknown[] };
+    assert.equal(post.attachments?.length, 2, 'a malformed list must not wipe attachments');
+  });
+
   it('rejects attachments on a post that still has legacy keys → 422', async () => {
     const { cookie } = await seedUserAndLogin('1');
     const { postId } = await legacyImagePost(cookie);
@@ -338,6 +360,73 @@ describe('POST /api/posts/:id/prepare-media', () => {
     });
     assert.equal(res.status, 400);
   });
+
+  it('hands out distinct slots for several files prepared in one session → 200', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId, keys } = await createMediaPost(cookie, 1);
+
+    const reserved = [keys[0]];
+    const prepared: Array<{ key: string; position: number; uploadUrl: string }> = [];
+    for (const name of ['b.png', 'c.png']) {
+      const res = await fetch(`${BASE_URL}/api/posts/${postId}/prepare-media`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ filename: name, contentType: 'image/png', reservedKeys: reserved }),
+      });
+      assert.equal(res.status, 200);
+      const data = (await res.json()) as { key: string; position: number; uploadUrl: string };
+      prepared.push(data);
+      reserved.push(data.key);
+    }
+    assert.deepEqual(
+      prepared.map((p) => p.position),
+      [2, 3],
+      'each prepared file must get its own slot',
+    );
+
+    for (const p of prepared) {
+      assert.equal(await uploadTo(p.uploadUrl, cookie), 200);
+    }
+
+    // Without per-call reservations every slot came back as 2 and this PUT
+    // failed with "Duplicate attachment position".
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        attachments: [{ key: keys[0], kind: 'image' }, ...prepared.map((p) => ({ key: p.key, kind: 'image' }))],
+      }),
+    });
+    const text = await res.text();
+    assert.equal(res.status, 200, `edit failed: ${text}`);
+    const updated = JSON.parse(text) as { post: { attachments?: unknown[] } };
+    assert.equal(updated.post.attachments?.length, 3);
+  });
+
+  it('allocates from the slot embedded in the key after a removal → 200', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId, keys } = await createMediaPost(cookie, 2);
+
+    // Drop the first attachment: the survivor keeps key .../2.png but is
+    // re-sequenced to position 1.
+    const put = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ attachments: [{ key: keys[1], kind: 'image' }] }),
+    });
+    assert.equal(put.status, 200);
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}/prepare-media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ filename: 'third.png', contentType: 'image/png' }),
+    });
+    assert.equal(res.status, 200, 'the freed slot must be reusable');
+    const data = (await res.json()) as { key: string; position: number };
+    assert.equal(data.position, 1, 'slot 1 was freed by the removal');
+    assert.notEqual(data.key, keys[1]);
+    assert.equal(parseAttachmentKey(data.key)?.postId, postId);
+  });
 });
 
 describe('PUT /api/upload/:key — attachment ownership', () => {
@@ -351,5 +440,36 @@ describe('PUT /api/upload/:key — attachment ownership', () => {
 
     assert.equal(await uploadTo(uploads[0].uploadUrl, bob), 403);
     assert.equal(await uploadTo(uploads[0].uploadUrl, alice), 200);
+  });
+});
+
+describe('quoted posts carry attachments', () => {
+  beforeEach(resetDb);
+
+  it('enriches quoted_post with the quoted post’s attachments', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId, keys } = await createMediaPost(cookie, 2);
+
+    const res = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ text: 'quoting media', quotedPostId: postId }),
+    });
+    const text = await res.text();
+    assert.ok(res.status === 200 || res.status === 201, `commit failed: ${text}`);
+    const created = JSON.parse(text) as {
+      post: { id: string; quoted_post?: { attachments?: Array<{ r2_key: string }> } | null };
+    };
+    const post = created.post;
+
+    assert.ok(post.quoted_post, 'quoted_post must be present');
+    assert.deepEqual(
+      post.quoted_post!.attachments?.map((a) => a.r2_key),
+      keys,
+    );
+
+    const get = await fetch(`${BASE_URL}/api/posts/${post.id}`);
+    const fetched = (await get.json()) as { quoted_post?: { attachments?: unknown[] } | null };
+    assert.equal(fetched.quoted_post?.attachments?.length, 2);
   });
 });
