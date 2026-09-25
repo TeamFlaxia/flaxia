@@ -6,7 +6,13 @@ import { openPostModal } from '../lib/post-modal.js';
 import { useSandboxBridge } from '../lib/sandbox-bridge.js';
 import { getShowNsfw } from '../lib/settings.js';
 import { showToast } from '../lib/toast.js';
-import { PostCardMode, type PostCardProps, type QuotedPost, type ReactionSummary } from '../types/post.js';
+import {
+  type PostAttachment,
+  PostCardMode,
+  type PostCardProps,
+  type QuotedPost,
+  type ReactionSummary,
+} from '../types/post.js';
 import { openCounterNoticeModal } from './CounterNoticeModal.js';
 import { openGameUpdateModal } from './GameUpdateModal.js';
 import { createPollElement } from './PollWidget.js';
@@ -56,6 +62,8 @@ export class PostCard {
   private editAttachmentFile: File | null = null;
   private editNewAttachmentKey: string | null = null;
   private editRemoveAttachment: boolean = false;
+  private editAttachmentList: PostAttachment[] = [];
+  private editNewMediaFiles: File[] = [];
   private currentVersionId: string | null = null;
   private impressionObserver?: IntersectionObserver;
 
@@ -234,7 +242,8 @@ export class PostCard {
       this.props.post.gif_key ||
       this.props.post.payload_key ||
       this.props.post.swf_key ||
-      this.props.post.thumbnail_key
+      this.props.post.thumbnail_key ||
+      (this.props.post.attachments && this.props.post.attachments.length > 0)
     ) {
       this.postStageElement = createPostStage({
         post: this.props.post,
@@ -368,7 +377,9 @@ export class PostCard {
         const closestTextarea = target.closest('textarea');
         const closestLink = target.closest('a');
         const closestPollOption = target.closest('.poll-option');
-        const closestMediaPlayer = target.closest('.video-player, .audio-player, .image-preview');
+        const closestMediaPlayer = target.closest(
+          '.video-player, .audio-player, .image-preview, .media-carousel-dots, .media-carousel-track',
+        );
 
         // Check if text is being selected
         const selection = window.getSelection();
@@ -1195,75 +1206,182 @@ export class PostCard {
     `;
 
     const currentAttachmentKey = post.gif_key || post.payload_key || post.swf_key;
-    const attachmentType = post.gif_key ? 'Image/Audio' : post.payload_key ? 'ZIP' : post.swf_key ? 'SWF' : null;
-    const attachmentFileName = currentAttachmentKey
-      ? currentAttachmentKey.split('/').pop() || currentAttachmentKey
-      : null;
+    const hasMultiAttachments = !!post.attachments && post.attachments.length > 0;
 
-    const attachmentLabel = document.createElement('span');
-    attachmentLabel.style.cssText = 'color: var(--text-muted); margin-right: 0.5rem;';
-    attachmentLabel.textContent = attachmentFileName
-      ? `📎 ${attachmentType}: ${attachmentFileName}`
-      : t('post.edit_attachment_none');
-    attachmentSection.appendChild(attachmentLabel);
+    if (hasMultiAttachments) {
+      // Multi-media attachments: list kept/new items with add/remove
+      this.editAttachmentList = [...post.attachments!];
+      this.editNewMediaFiles = [];
 
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file';
-    fileInput.style.display = 'none';
-    fileInput.accept = '.gif,.png,.jpg,.jpeg,.swf,.zip,.mp3,.wav,.ogg,.m4a,.webm,.mp4,.mov';
-    attachmentSection.appendChild(fileInput);
+      const listEl = document.createElement('div');
+      listEl.style.cssText = 'display:flex;flex-direction:column;gap:0.35rem;margin-bottom:0.5rem;';
 
-    const changeBtn = document.createElement('button');
-    changeBtn.textContent = t('post.edit_attachment_change');
-    changeBtn.style.cssText = `
-      padding: 4px 10px;
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      background: var(--bg-primary);
-      color: var(--text-primary);
-      cursor: pointer;
-      font-size: 0.8rem;
-      margin-right: 0.25rem;
-    `;
-    changeBtn.addEventListener('click', () => fileInput.click());
+      const countLabel = document.createElement('div');
+      countLabel.style.cssText = 'color: var(--text-muted);';
 
-    const removeBtn = document.createElement('button');
-    removeBtn.textContent = t('post.edit_attachment_remove');
-    removeBtn.style.cssText = `
-      padding: 4px 10px;
-      border: 1px solid var(--danger, #e74c3c);
-      border-radius: 4px;
-      background: transparent;
-      color: var(--danger, #e74c3c);
-      cursor: pointer;
-      font-size: 0.8rem;
-    `;
-    removeBtn.addEventListener('click', () => {
-      this.editRemoveAttachment = true;
-      this.editAttachmentFile = null;
-      this.editNewAttachmentKey = null;
-      attachmentLabel.textContent = t('post.edit_attachment_removed');
-      changeBtn.disabled = true;
-      removeBtn.disabled = true;
-      changeBtn.style.opacity = '0.5';
-      removeBtn.style.opacity = '0.5';
-    });
+      const renderList = () => {
+        listEl.innerHTML = '';
+        const total = this.editAttachmentList.length + this.editNewMediaFiles.length;
+        countLabel.textContent = t('post.edit_attachment_count', { count: total, max: 4 });
 
-    if (currentAttachmentKey) {
-      attachmentSection.appendChild(changeBtn);
-      attachmentSection.appendChild(removeBtn);
+        if (total === 0) {
+          const empty = document.createElement('div');
+          empty.style.cssText = 'color: var(--text-muted);';
+          empty.textContent = t('post.edit_attachment_none');
+          listEl.appendChild(empty);
+        }
+
+        this.editAttachmentList.forEach((att, index) => {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:0.5rem;';
+          const name = document.createElement('span');
+          name.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+          name.textContent = `📎 ${att.r2_key.split('/').pop() || att.r2_key} (${att.kind})`;
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.textContent = '✕';
+          remove.style.cssText =
+            'background:transparent;border:none;color:var(--danger,#e74c3c);cursor:pointer;padding:2px 6px;';
+          remove.addEventListener('click', () => {
+            this.editAttachmentList.splice(index, 1);
+            renderList();
+          });
+          row.appendChild(name);
+          row.appendChild(remove);
+          listEl.appendChild(row);
+        });
+
+        this.editNewMediaFiles.forEach((file, index) => {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:0.5rem;';
+          const name = document.createElement('span');
+          name.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+          name.textContent = `📎 ${file.name} ★`;
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.textContent = '✕';
+          remove.style.cssText =
+            'background:transparent;border:none;color:var(--danger,#e74c3c);cursor:pointer;padding:2px 6px;';
+          remove.addEventListener('click', () => {
+            this.editNewMediaFiles.splice(index, 1);
+            renderList();
+          });
+          row.appendChild(name);
+          row.appendChild(remove);
+          listEl.appendChild(row);
+        });
+      };
+      renderList();
+
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.multiple = true;
+      fileInput.style.display = 'none';
+      fileInput.accept = '.gif,.png,.jpg,.jpeg,.mp3,.wav,.ogg,.m4a,.webm,.mp4,.mov';
+
+      const addBtn = document.createElement('button');
+      addBtn.type = 'button';
+      addBtn.textContent = t('post.edit_attachment_change');
+      addBtn.style.cssText = `
+        padding: 4px 10px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        cursor: pointer;
+        font-size: 0.8rem;
+      `;
+      addBtn.addEventListener('click', () => fileInput.click());
+
+      fileInput.addEventListener('change', () => {
+        const files = Array.from(fileInput.files || []);
+        fileInput.value = '';
+        for (const file of files) {
+          const total = this.editAttachmentList.length + this.editNewMediaFiles.length;
+          if (total >= 4) {
+            showToast(t('composer.error_too_many_media', { max: 4 }), true);
+            break;
+          }
+          this.editNewMediaFiles.push(file);
+        }
+        renderList();
+      });
+
+      attachmentSection.appendChild(countLabel);
+      attachmentSection.appendChild(listEl);
+      attachmentSection.appendChild(fileInput);
+      attachmentSection.appendChild(addBtn);
     } else {
-      attachmentSection.appendChild(changeBtn);
-    }
+      const attachmentType = post.gif_key ? 'Image/Audio' : post.payload_key ? 'ZIP' : post.swf_key ? 'SWF' : null;
+      const attachmentFileName = currentAttachmentKey
+        ? currentAttachmentKey.split('/').pop() || currentAttachmentKey
+        : null;
 
-    fileInput.addEventListener('change', () => {
-      const file = fileInput.files?.[0];
-      if (!file) return;
-      this.editAttachmentFile = file;
-      this.editRemoveAttachment = false;
-      attachmentLabel.textContent = `📎 ${file.name}`;
+      const attachmentLabel = document.createElement('span');
+      attachmentLabel.style.cssText = 'color: var(--text-muted); margin-right: 0.5rem;';
+      attachmentLabel.textContent = attachmentFileName
+        ? `📎 ${attachmentType}: ${attachmentFileName}`
+        : t('post.edit_attachment_none');
+      attachmentSection.appendChild(attachmentLabel);
+
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.style.display = 'none';
+      fileInput.accept = '.gif,.png,.jpg,.jpeg,.swf,.zip,.mp3,.wav,.ogg,.m4a,.webm,.mp4,.mov';
+      attachmentSection.appendChild(fileInput);
+
+      const changeBtn = document.createElement('button');
       changeBtn.textContent = t('post.edit_attachment_change');
-    });
+      changeBtn.style.cssText = `
+        padding: 4px 10px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        cursor: pointer;
+        font-size: 0.8rem;
+        margin-right: 0.25rem;
+      `;
+      changeBtn.addEventListener('click', () => fileInput.click());
+
+      const removeBtn = document.createElement('button');
+      removeBtn.textContent = t('post.edit_attachment_remove');
+      removeBtn.style.cssText = `
+        padding: 4px 10px;
+        border: 1px solid var(--danger, #e74c3c);
+        border-radius: 4px;
+        background: transparent;
+        color: var(--danger, #e74c3c);
+        cursor: pointer;
+        font-size: 0.8rem;
+      `;
+      removeBtn.addEventListener('click', () => {
+        this.editRemoveAttachment = true;
+        this.editAttachmentFile = null;
+        this.editNewAttachmentKey = null;
+        attachmentLabel.textContent = t('post.edit_attachment_removed');
+        changeBtn.disabled = true;
+        removeBtn.disabled = true;
+        changeBtn.style.opacity = '0.5';
+        removeBtn.style.opacity = '0.5';
+      });
+
+      if (currentAttachmentKey) {
+        attachmentSection.appendChild(changeBtn);
+        attachmentSection.appendChild(removeBtn);
+      } else {
+        attachmentSection.appendChild(changeBtn);
+      }
+
+      fileInput.addEventListener('change', () => {
+        const file = fileInput.files?.[0];
+        if (!file) return;
+        this.editAttachmentFile = file;
+        this.editRemoveAttachment = false;
+        attachmentLabel.textContent = `📎 ${file.name}`;
+        changeBtn.textContent = t('post.edit_attachment_change');
+      });
+    }
 
     const buttonRow = document.createElement('div');
     buttonRow.style.cssText = `
@@ -1302,7 +1420,10 @@ export class PostCard {
     saveBtn.addEventListener('click', async () => {
       if (saving) return;
       const newText = textarea.value.trim();
-      const hasAttachmentChanges = this.editAttachmentFile || this.editRemoveAttachment;
+      const multiAttachmentsChanged =
+        hasMultiAttachments &&
+        (this.editNewMediaFiles.length > 0 || this.editAttachmentList.length !== (post.attachments?.length ?? 0));
+      const hasAttachmentChanges = !!(this.editAttachmentFile || this.editRemoveAttachment || multiAttachmentsChanged);
       if ((!newText || newText === currentText) && !hasAttachmentChanges) {
         this.cancelEdit();
         return;
@@ -1311,12 +1432,41 @@ export class PostCard {
       saveBtn.disabled = true;
       saveBtn.textContent = '...';
       try {
-        // Upload new attachment if selected
-        let newGifKey: string | undefined;
-        let newPayloadKey: string | undefined;
-        let newSwfKey: string | undefined;
+        const body: Record<string, unknown> = {};
+        if (newText && newText !== currentText) body.text = newText;
 
-        if (this.editAttachmentFile) {
+        if (hasMultiAttachments) {
+          // Multi-media flow: upload new files via prepare-media, then send the
+          // full replacement list ([] removes every attachment)
+          if (multiAttachmentsChanged) {
+            const uploaded: Array<{ key: string; kind: string }> = [];
+            for (const file of this.editNewMediaFiles) {
+              const prepRes = await fetch(`/api/posts/${post.id}/prepare-media`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({ filename: file.name, contentType: file.type || undefined }),
+              });
+              if (!prepRes.ok) {
+                const err = await prepRes.json().catch(() => ({}));
+                throw new Error((err as { error?: string })?.error || 'Failed to prepare media upload');
+              }
+              const prep = (await prepRes.json()) as { uploadUrl: string; key: string; kind: string };
+
+              const uploadRes = await fetch(prep.uploadUrl, {
+                method: 'PUT',
+                body: file,
+                headers: { 'Content-Type': file.type || 'application/octet-stream' },
+                credentials: 'include',
+              });
+              if (!uploadRes.ok) throw new Error('Failed to upload media');
+
+              uploaded.push({ key: prep.key, kind: prep.kind });
+            }
+            body.attachments = [...this.editAttachmentList.map((a) => ({ key: a.r2_key, kind: a.kind })), ...uploaded];
+          }
+        } else if (this.editAttachmentFile) {
+          // Legacy single-file flow (image/audio/zip/swf on the post itself)
           const file = this.editAttachmentFile;
           const prepareRes = await fetch(`/api/posts/${post.id}/prepare-attachment`, {
             method: 'POST',
@@ -1340,19 +1490,12 @@ export class PostCard {
           if (!uploadRes.ok) throw new Error('Failed to upload attachment');
 
           this.editNewAttachmentKey = prepareData.key;
-          if (prepareData.keyType === 'gif') newGifKey = prepareData.key;
-          else if (prepareData.keyType === 'payload') newPayloadKey = prepareData.key;
-          else if (prepareData.keyType === 'swf') newSwfKey = prepareData.key;
-        }
-
-        const body: Record<string, unknown> = {};
-        if (newText && newText !== currentText) body.text = newText;
-        if (this.editNewAttachmentKey) {
-          if (newGifKey) body.gif_key = newGifKey;
-          else if (newPayloadKey) body.payload_key = newPayloadKey;
-          else if (newSwfKey) body.swf_key = newSwfKey;
-        }
-        if (this.editRemoveAttachment) {
+          if (this.editNewAttachmentKey) {
+            if (prepareData.keyType === 'gif') body.gif_key = this.editNewAttachmentKey;
+            else if (prepareData.keyType === 'payload') body.payload_key = this.editNewAttachmentKey;
+            else if (prepareData.keyType === 'swf') body.swf_key = this.editNewAttachmentKey;
+          }
+        } else if (this.editRemoveAttachment) {
           if (post.gif_key) body.gif_key = null;
           if (post.payload_key) body.payload_key = null;
           if (post.swf_key) body.swf_key = null;
@@ -1369,7 +1512,14 @@ export class PostCard {
           throw new Error((err as { error?: string })?.error || 'Edit failed');
         }
         const data = (await res.json()) as {
-          post: { text: string; edited_at: string; gif_key?: string; payload_key?: string; swf_key?: string };
+          post: {
+            text: string;
+            edited_at: string;
+            gif_key?: string;
+            payload_key?: string;
+            swf_key?: string;
+            attachments?: PostAttachment[];
+          };
         };
         this.originalText = data.post.text;
         this.props.post.text = data.post.text;
@@ -1377,7 +1527,9 @@ export class PostCard {
         if (data.post.gif_key !== undefined) this.props.post.gif_key = data.post.gif_key;
         if (data.post.payload_key !== undefined) this.props.post.payload_key = data.post.payload_key;
         if (data.post.swf_key !== undefined) this.props.post.swf_key = data.post.swf_key;
+        if (data.post.attachments !== undefined) this.props.post.attachments = data.post.attachments;
         this.cancelEdit();
+        this.refreshStage();
         showToast(t('post.edit_saved'));
       } catch (_err) {
         showToast(t('post.edit_failed'), true);
@@ -1388,6 +1540,8 @@ export class PostCard {
         this.editAttachmentFile = null;
         this.editNewAttachmentKey = null;
         this.editRemoveAttachment = false;
+        this.editAttachmentList = [];
+        this.editNewMediaFiles = [];
       }
     });
 
@@ -1409,12 +1563,50 @@ export class PostCard {
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
   }
 
+  /** Rebuild the media stage after an edit changes attachments/keys. */
+  private refreshStage(): void {
+    const post = this.props.post;
+    const hasMedia = !!(
+      post.gif_key ||
+      post.payload_key ||
+      post.swf_key ||
+      post.thumbnail_key ||
+      (post.attachments && post.attachments.length > 0)
+    );
+    const oldStage = this.postStageElement;
+
+    if (!hasMedia) {
+      oldStage?.remove();
+      this.postStageElement = undefined;
+      return;
+    }
+
+    const newStage = createPostStage({
+      post,
+      mode: this.mode,
+      sandboxOrigin: this.props.sandboxOrigin,
+      versionId: this.currentVersionId ?? undefined,
+      onModeChange: (newMode) => this.handleModeChange(newMode),
+    });
+
+    if (oldStage && oldStage.parentNode) {
+      oldStage.replaceWith(newStage);
+    } else {
+      const anchor = this.element.querySelector('.post-actions') || this.element.lastElementChild;
+      if (anchor) this.element.insertBefore(newStage, anchor);
+      else this.element.appendChild(newStage);
+    }
+    this.postStageElement = newStage;
+  }
+
   private cancelEdit(): void {
     if (!this.isEditing || !this.editContainer || !this.postTextContainer) return;
     this.isEditing = false;
     this.editAttachmentFile = null;
     this.editNewAttachmentKey = null;
     this.editRemoveAttachment = false;
+    this.editAttachmentList = [];
+    this.editNewMediaFiles = [];
 
     const textElement = document.createElement('div');
     textElement.className = 'post-text';

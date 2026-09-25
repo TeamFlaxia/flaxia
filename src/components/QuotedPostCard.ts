@@ -3,6 +3,7 @@ import { t } from '../lib/i18n.js';
 import type { QuotedPost } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
+import { createMediaCarousel } from './MediaCarousel.js';
 import { isZipGame } from './PostStage.js';
 import { createVideoPlayer } from './VideoPlayer.js';
 
@@ -13,7 +14,13 @@ export interface QuotedPostCardProps {
 }
 
 function createQuotedPostAttachment(quoted: QuotedPost): HTMLElement | null {
-  if (!quoted.gif_key && !quoted.payload_key && !quoted.swf_key && !quoted.thumbnail_key) {
+  if (
+    !quoted.gif_key &&
+    !quoted.payload_key &&
+    !quoted.swf_key &&
+    !quoted.thumbnail_key &&
+    !(quoted.attachments && quoted.attachments.length > 0)
+  ) {
     return null;
   }
 
@@ -25,6 +32,11 @@ function createQuotedPostAttachment(quoted: QuotedPost): HTMLElement | null {
     overflow: hidden;
     position: relative;
   `;
+
+  if (quoted.attachments && quoted.attachments.length > 0) {
+    wrap.appendChild(createMediaCarousel({ postId: quoted.id, attachments: quoted.attachments }));
+    return wrap;
+  }
 
   const gifKey = quoted.gif_key || '';
   if (gifKey.startsWith('video/')) {

@@ -4,6 +4,7 @@ import { PostCardMode, PostStageProps } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { executeFlash } from './FlashPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
+import { createMediaCarousel } from './MediaCarousel.js';
 import { createVideoPlayer } from './VideoPlayer.js';
 
 // Create SWF execution button (similar to ZIP but for Flash)
@@ -298,6 +299,11 @@ export function createPostStage(props: PostStageProps): HTMLElement {
   // Click handler to toggle between preview and execution modes
   // Only for post types that have execution modes (ZIP/SWF)
   container.addEventListener('click', (e) => {
+    // Media-only posts have no execution mode — never toggle away from them
+    if (props.post.attachments?.length) {
+      return;
+    }
+
     // Don't toggle mode if clicking on execution button (ZIP or SWF)
     if ((e.target as HTMLElement).closest('.zip-execution-button')) {
       return;
@@ -324,13 +330,29 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
   // Clear existing content
   container.innerHTML = '';
 
+  const attachments = props.post.attachments || [];
+
   // Only show content if there are attachments or a thumbnail
-  if (!props.post.gif_key && !props.post.payload_key && !props.post.swf_key && !props.post.thumbnail_key) {
+  if (
+    attachments.length === 0 &&
+    !props.post.gif_key &&
+    !props.post.payload_key &&
+    !props.post.swf_key &&
+    !props.post.thumbnail_key
+  ) {
     return;
   }
 
   if (props.mode === PostCardMode.PREVIEW) {
     let mediaElement: HTMLElement = null!;
+
+    if (attachments.length > 0) {
+      // Multi-media attachments render as a horizontal scroll carousel
+      container.classList.add('post-stage--carousel');
+      mediaElement = createMediaCarousel({ postId: props.post.id, attachments });
+      container.appendChild(mediaElement);
+      return;
+    }
 
     if (isZipGame(props.post.payload_key)) {
       container.classList.add('post-stage--zip'); // Add zip class for 16:9
@@ -413,7 +435,12 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
       container.appendChild(hint);
     }
   } else {
-    if (isZipGame(props.post.payload_key)) {
+    if (attachments.length > 0) {
+      // Attachments have no execution mode — keep showing the carousel even if
+      // the stage somehow ended up in EXECUTING mode.
+      container.classList.add('post-stage--carousel');
+      container.appendChild(createMediaCarousel({ postId: props.post.id, attachments }));
+    } else if (isZipGame(props.post.payload_key)) {
       // The executeZipAuto function will handle creating the iframe and cleanup
       executeZipAuto(props.post.id, container, undefined, props.versionId).catch((error: Error) => {
         console.error('Failed to execute ZIP:', error);
