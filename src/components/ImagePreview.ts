@@ -332,6 +332,9 @@ function createImageOverlay(imageUrl: string, postId: string, gallery?: string[]
   function initImage(): void {
     containerW = imageContainer.clientWidth;
     containerH = imageContainer.clientHeight;
+    if (!fullImage.naturalWidth || !fullImage.naturalHeight || !containerW || !containerH) {
+      return;
+    }
     const imgAspect = fullImage.naturalWidth / fullImage.naturalHeight;
     const cAspect = containerW / containerH;
     if (imgAspect > cAspect) {
@@ -343,13 +346,27 @@ function createImageOverlay(imageUrl: string, postId: string, gallery?: string[]
     }
     fullImage.style.width = `${imgW}px`;
     fullImage.style.height = `${imgH}px`;
+    fullImage.style.visibility = 'visible';
     centerImage();
   }
 
+  // Hide and collapse the currently decoded frame so the previous image does
+  // not linger while the next one is being fetched/decoded.
+  function clearImage(): void {
+    imgW = 0;
+    imgH = 0;
+    fullImage.style.visibility = 'hidden';
+    fullImage.style.width = '0px';
+    fullImage.style.height = '0px';
+  }
+
   fullImage.onload = initImage;
+  fullImage.onerror = clearImage;
   fullImage.src = imageUrl;
   if (fullImage.complete && fullImage.naturalWidth > 0) {
     initImage();
+  } else {
+    clearImage();
   }
 
   // Touch event state
@@ -595,7 +612,11 @@ function createImageOverlay(imageUrl: string, postId: string, gallery?: string[]
     if (!hasGallery || !gallery) return;
     currentIndex = (next + gallery.length) % gallery.length;
     resetZoom();
+    clearImage();
     fullImage.src = `/api/images/${gallery[currentIndex]}`;
+    if (fullImage.complete && fullImage.naturalWidth > 0) {
+      initImage();
+    }
     updateCounter();
   };
 
@@ -671,6 +692,12 @@ function createImageOverlay(imageUrl: string, postId: string, gallery?: string[]
   for (const btn of navButtons) overlay.appendChild(btn);
   if (hasGallery) overlay.appendChild(counter);
   document.body.appendChild(overlay);
+
+  // The image may have finished loading before the overlay was in the DOM
+  // (container size was 0), so size it now that layout is available.
+  if (fullImage.complete && fullImage.naturalWidth > 0) {
+    initImage();
+  }
 }
 
 // Legacy export for backward compatibility
