@@ -2,6 +2,7 @@ import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
 import {
   buildAttachmentKey,
+  kindFromUpload,
   MAX_ATTACHMENTS,
   MAX_ATTACHMENTS_PLUS,
   parseAttachmentKey,
@@ -16,6 +17,29 @@ const PNG = Buffer.from(
   'base64',
 );
 
+// Minimal single-page PDF. The header is what detectMimeType keys on.
+const PDF = Buffer.from(
+  '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n' +
+    '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n',
+  'latin1',
+);
+
+// A file that is NOT a PDF but declares itself as one. The server must trust
+// the magic bytes, not the extension or the declared Content-Type.
+const FAKE_PDF = Buffer.from('<html><script>alert(1)</script></html>', 'utf8');
+
+async function prepareFiles(
+  cookie: string,
+  files: Array<{ filename: string; contentType?: string }>,
+): Promise<{ status: number; data: Record<string, unknown> }> {
+  const res = await fetch(`${BASE_URL}/api/posts/prepare`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ files }),
+  });
+  return { status: res.status, data: (await res.json()) as Record<string, unknown> };
+}
+
 async function prepareMulti(cookie: string, filenames: string[]) {
   const res = await fetch(`${BASE_URL}/api/posts/prepare`, {
     method: 'POST',
@@ -23,6 +47,16 @@ async function prepareMulti(cookie: string, filenames: string[]) {
     body: JSON.stringify({ files: filenames.map((filename) => ({ filename, contentType: 'image/png' })) }),
   });
   return { status: res.status, data: (await res.json()) as Record<string, unknown> };
+}
+
+/** PUT a raw body to an upload URL with an explicit declared Content-Type. */
+async function putBytes(url: string, cookie: string, body: Buffer, contentType: string): Promise<number> {
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType, Cookie: cookie },
+    body,
+  });
+  return res.status;
 }
 
 async function uploadTo(url: string, cookie: string): Promise<number> {
@@ -78,6 +112,7 @@ describe('attachment helpers (unit)', () => {
     assert.equal(buildAttachmentKey('p1', 2, 'a.png'), 'gif/p1/2.png');
     assert.equal(buildAttachmentKey('p1', 1, 'a.mp3'), 'audio/p1/1.mp3');
     assert.equal(buildAttachmentKey('p1', 3, 'a.mp4'), 'video/p1/3.mp4');
+    assert.equal(buildAttachmentKey('p1', 1, 'a.pdf'), 'docs/p1/1.pdf');
     assert.equal(buildAttachmentKey('p1', MAX_ATTACHMENTS_PLUS, 'a.png'), 'gif/p1/32.png');
     assert.equal(buildAttachmentKey('p1', MAX_ATTACHMENTS_PLUS + 1, 'a.png'), null, 'position out of range');
     assert.equal(buildAttachmentKey('p1', 1, 'a.zip'), null, 'games are not attachments');
@@ -87,6 +122,27 @@ describe('attachment helpers (unit)', () => {
     assert.equal(parseAttachmentKey('gif/p1/5.png')?.position, 5, 'plus-tier slots stay parseable');
     assert.equal(parseAttachmentKey('gif/p1/33.png'), null, 'position must be 1-32');
     assert.equal(parseAttachmentKey('payload/p1.png'), null, 'legacy keys are not attachments');
+  });
+
+  it('round-trips the document kind through the key', () => {
+    assert.deepEqual(parseAttachmentKey('docs/p1/2.pdf'), {
+      postId: 'p1',
+      position: 2,
+      kind: 'document',
+      ext: '.pdf',
+    });
+    // The upper-case extension is normalised by kindFromUpload, so a .PDF
+    // upload still lands in the docs bucket.
+    assert.equal(buildAttachmentKey('p1', 1, 'REPORT.PDF'), 'docs/p1/1.pdf');
+    assert.equal(kindFromUpload('REPORT.PDF'), 'document');
+  });
+
+  it('rejects a document key that claims another kind', () => {
+    assert.equal(
+      validateAttachmentInputs([{ key: 'docs/p1/1.pdf', kind: 'image' }]),
+      'Attachment kind mismatch for docs/p1/1.pdf',
+    );
+    assert.equal(validateAttachmentInputs([{ key: 'docs/p1/1.pdf', kind: 'document' }]), null);
   });
 
   it('derives the .webm key prefix from the content type', () => {
@@ -471,6 +527,151 @@ describe('PUT /api/upload/:key — attachment ownership', () => {
 
     assert.equal(await uploadTo(uploads[0].uploadUrl, bob), 403);
     assert.equal(await uploadTo(uploads[0].uploadUrl, alice), 200);
+  });
+});
+
+describe('PDF attachments (kind = document)', () => {
+  beforeEach(resetDb);
+
+  it('prepares, uploads, commits and serves a PDF → 201', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+
+    const { status, data } = await prepareFiles(cookie, [{ filename: 'notes.pdf', contentType: 'application/pdf' }]);
+    assert.equal(status, 200);
+    const postId = data.postId as string;
+    const uploads = data.uploads as Array<{ key: string; uploadUrl: string; kind: string }>;
+    assert.equal(uploads.length, 1);
+    assert.equal(uploads[0].kind, 'document');
+    assert.equal(uploads[0].key, `docs/${postId}/1.pdf`);
+    assert.equal(uploads[0].uploadUrl, `${BASE_URL}/api/upload/docs/${postId}/1.pdf`);
+
+    assert.equal(await putBytes(uploads[0].uploadUrl, cookie, PDF, 'application/pdf'), 200);
+
+    const commitRes = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        postId,
+        text: 'a document',
+        attachments: [{ key: uploads[0].key, kind: 'document' }],
+      }),
+    });
+    const commitText = await commitRes.text();
+    assert.ok(commitRes.status === 200 || commitRes.status === 201, `commit failed: ${commitText}`);
+    const created = JSON.parse(commitText) as { post: { attachments: Array<{ r2_key: string; kind: string }> } };
+    assert.deepEqual(created.post.attachments, [{ r2_key: `docs/${postId}/1.pdf`, kind: 'document', position: 1 }]);
+
+    // The proxy serves it with a PDF type so the browser's built-in viewer
+    // takes over in the new tab; framing stays denied.
+    const docRes = await fetch(`${BASE_URL}/api/documents/docs/${postId}/1.pdf`);
+    assert.equal(docRes.status, 200);
+    assert.equal(docRes.headers.get('content-type'), 'application/pdf');
+    assert.equal(docRes.headers.get('x-frame-options'), 'DENY');
+    assert.equal(docRes.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(Buffer.from(await docRes.arrayBuffer()).toString('latin1'), PDF.toString('latin1'));
+  });
+
+  it('honours Range requests so the viewer can page through a large PDF', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { data } = await prepareFiles(cookie, [{ filename: 'a.pdf', contentType: 'application/pdf' }]);
+    const uploads = data.uploads as Array<{ key: string; uploadUrl: string }>;
+    assert.equal(await putBytes(uploads[0].uploadUrl, cookie, PDF, 'application/pdf'), 200);
+
+    const res = await fetch(`${BASE_URL}/api/documents/${uploads[0].key}`, {
+      headers: { Range: 'bytes=0-4' },
+    });
+    assert.equal(res.status, 206);
+    assert.equal(res.headers.get('content-range'), `bytes 0-4/${PDF.length}`);
+    assert.equal(await res.text(), '%PDF-');
+  });
+
+  it('rejects an HTML payload renamed to .pdf → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { data } = await prepareFiles(cookie, [{ filename: 'evil.pdf', contentType: 'application/pdf' }]);
+    const uploads = data.uploads as Array<{ uploadUrl: string }>;
+
+    // Magic bytes win over both the extension and the declared Content-Type.
+    assert.equal(await putBytes(uploads[0].uploadUrl, cookie, FAKE_PDF, 'application/pdf'), 400);
+  });
+
+  it('rejects a real PDF uploaded into an image slot → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { data } = await prepareFiles(cookie, [{ filename: 'a.png', contentType: 'image/png' }]);
+    const uploads = data.uploads as Array<{ uploadUrl: string }>;
+
+    assert.equal(await putBytes(uploads[0].uploadUrl, cookie, PDF, 'image/png'), 400);
+  });
+
+  it('rejects a PDF uploaded to a legacy (non-attachment) key → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId } = await createMediaPost(cookie, 1);
+
+    // payload/ keys are the legacy single-file column path: nothing parses
+    // them as an attachment, so only the upload-time MIME gate stops a PDF
+    // landing in a slot no renderer serves as a document.
+    const res = await fetch(`${BASE_URL}/api/upload/payload/${postId}.pdf`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/pdf', Cookie: cookie },
+      body: PDF,
+    });
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error?: string };
+    assert.match(body.error ?? '', /document attachments/);
+  });
+
+  it('does not serve a non-document key through /api/documents → 404', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    // A real image attachment, requested on the document route: the response
+    // must not be re-labelled as application/pdf.
+    const { postId, keys } = await createMediaPost(cookie, 1);
+    void postId;
+
+    const res = await fetch(`${BASE_URL}/api/documents/${keys[0]}`);
+    assert.equal(res.status, 404);
+    assert.notEqual(res.headers.get('content-type'), 'application/pdf');
+  });
+
+  it('rejects a PDF for a user who does not own the post → 403', async () => {
+    const { cookie: alice } = await seedUserAndLogin('1');
+    const { cookie: bob } = await seedUserAndLogin('2');
+    const { data } = await prepareFiles(alice, [{ filename: 'a.pdf', contentType: 'application/pdf' }]);
+    const uploads = data.uploads as Array<{ uploadUrl: string }>;
+
+    assert.equal(await putBytes(uploads[0].uploadUrl, bob, PDF, 'application/pdf'), 403);
+  });
+
+  it('adds a PDF to a published post via prepare-media → 200', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId } = await createMediaPost(cookie, 1);
+
+    const prepRes = await fetch(`${BASE_URL}/api/posts/${postId}/prepare-media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ filename: 'appendix.pdf', contentType: 'application/pdf' }),
+    });
+    assert.equal(prepRes.status, 200);
+    const prep = (await prepRes.json()) as { key: string; kind: string; uploadUrl: string };
+    assert.equal(prep.kind, 'document');
+    assert.equal(prep.key, `docs/${postId}/2.pdf`);
+
+    assert.equal(await putBytes(prep.uploadUrl, cookie, PDF, 'application/pdf'), 200);
+
+    const put = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        attachments: [
+          { key: `gif/${postId}/1.png`, kind: 'image' },
+          { key: prep.key, kind: 'document' },
+        ],
+      }),
+    });
+    assert.equal(put.status, 200);
+    const updated = (await put.json()) as { post: { attachments: Array<{ kind: string }> } };
+    assert.deepEqual(
+      updated.post.attachments.map((a) => a.kind),
+      ['image', 'document'],
+    );
   });
 });
 

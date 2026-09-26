@@ -68,3 +68,20 @@ export function validateFileType(filename: string): { allowed: boolean; mimeType
 
   return { allowed, mimeType };
 }
+
+/**
+ * MIME types for post attachments, used only as a fallback when the browser
+ * reports an empty `File.type`.
+ *
+ * Deliberately separate from ALLOWED_EXTENSIONS: that map also drives the
+ * sandbox's allowlist for files inside a game ZIP, which is not affected by
+ * the post attachment feature.
+ */
+const ATTACHMENT_MIME_TYPES: Record<string, string> = {
+  '.pdf': 'application/pdf',
+};
+
+export function attachmentMimeType(filename: string): string | undefined {
+  const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
+  return ATTACHMENT_MIME_TYPES[ext];
+}

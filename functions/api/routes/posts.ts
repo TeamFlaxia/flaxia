@@ -1175,7 +1175,7 @@ posts.post('/posts/:id/prepare-media', requireAuth, async (c) => {
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
 
     const kind = kindFromUpload(filename, contentType);
-    if (!kind) return c.json({ error: 'Only image, audio, and video files are allowed' }, 400);
+    if (!kind) return c.json({ error: 'Only image, audio, video, and PDF files are allowed' }, 400);
 
     const post = await c.env.DB.prepare('SELECT id, user_id, status FROM posts WHERE id = ?')
       .bind(postId)
@@ -1264,7 +1264,7 @@ posts.post('/posts/prepare', requireAuth, async (c) => {
         }
         const kind = kindFromUpload(name, file.contentType);
         if (!kind) {
-          return c.json({ error: 'Only image, audio, and video files are allowed' }, 400);
+          return c.json({ error: 'Only image, audio, video, and PDF files are allowed' }, 400);
         }
         const key = buildAttachmentKey(postId, uploads.length + 1, name, file.contentType);
         if (!key) return c.json({ error: 'Invalid filename' }, 400);

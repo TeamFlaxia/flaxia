@@ -15,7 +15,7 @@ export interface PostComposerProps {
 
 import { attachPlusBadge } from '../lib/avatar.js';
 import { maxMediaAttachmentsForUser } from '../lib/entitlements.js';
-import { getMimeType } from '../lib/file-extensions.js';
+import { attachmentMimeType, getMimeType } from '../lib/file-extensions.js';
 import { AttachPreviewHandle, checkImageSizeLimit, detectAttachKind, renderFilePreview } from '../lib/file-preview.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
@@ -108,13 +108,16 @@ export class PostComposer {
         <div class="composer-divider"></div>
         <div class="composer-footer">
           <div class="composer-actions">
-            <input type="file" class="composer-file-input" accept=".js,.wasm,.html,.gif,.png,.jpg,.jpeg,.mp3,.wav,.ogg,.m4a,.webm,.mp4,.mov,.zip,.swf" />
+            <input type="file" class="composer-file-input" accept=".js,.wasm,.html,.gif,.png,.jpg,.jpeg,.mp3,.wav,.ogg,.m4a,.webm,.mp4,.mov,.zip,.swf,.pdf" />
             <div class="composer-attach-group">
               <button class="composer-file-button composer-file-button--image" type="button" title="${t('composer.attach_image_video')}">
                 <span class="action-icon" data-icon="image-video"></span>
               </button>
               <button class="composer-file-button composer-file-button--audio" type="button" title="${t('composer.attach_audio')}">
                 <span class="action-icon" data-icon="audio"></span>
+              </button>
+              <button class="composer-file-button composer-file-button--document" type="button" title="${t('composer.attach_document')}">
+                <span class="action-icon" data-icon="document"></span>
               </button>
               <button class="composer-file-button composer-file-button--game" type="button" title="${t('composer.attach_game')}">
                 <span class="action-icon" data-icon="game"></span>
@@ -418,24 +421,24 @@ export class PostComposer {
       }
     });
 
-    // File button clicks - image/video, audio, game
+    // File button clicks - image/video, audio, document, game
     const fileButtons = this.element.querySelectorAll('.composer-file-button')!;
     const accepts: Record<string, string> = {
-      '--image': '.gif,.png,.jpg,.jpeg,.webm,.mp4,.mov',
-      '--audio': '.mp3,.wav,.ogg,.m4a',
-      '--game': '.zip,.swf,.rsp,.js,.wasm',
+      image: '.gif,.png,.jpg,.jpeg,.webm,.mp4,.mov',
+      audio: '.mp3,.wav,.ogg,.m4a',
+      document: '.pdf',
+      game: '.zip,.swf,.rsp,.js,.wasm',
     };
     fileButtons.forEach((btn) => {
       const btnEl = btn as HTMLElement;
       btnEl.addEventListener('click', () => {
-        const modifier = btnEl.classList.contains('composer-file-button--game')
-          ? '--game'
-          : btnEl.classList.contains('composer-file-button--audio')
-            ? '--audio'
-            : '--image';
-        this.fileInput.accept = accepts[modifier];
+        // Read the slot from the modifier class so a new attach button only
+        // needs an `accepts` entry, not a branch here.
+        const slot = /composer-file-button--([a-z]+)/.exec(btnEl.className)?.[1] ?? 'image';
+        const accept = accepts[slot] ?? accepts.image;
+        this.fileInput.accept = accept;
         // Media picks are multi-select; games remain a single file
-        this.fileInput.multiple = modifier !== '--game';
+        this.fileInput.multiple = slot !== 'game';
         this.fileInput.click();
       });
     });
@@ -898,7 +901,7 @@ export class PostComposer {
   /**
    * Entry point for every file pick (input, drop, paste).
    * A single game file uses the legacy one-file flow; everything else is
-   * treated as a multi-media attachment (image / audio / video).
+   * treated as a multi-media attachment (image / audio / video / document).
    */
   private async handleFiles(files: File[]): Promise<void> {
     if (files.length === 0) return;
@@ -923,7 +926,7 @@ export class PostComposer {
 
     for (const file of media) {
       const kind = detectAttachKind(file);
-      if (kind !== 'image' && kind !== 'audio' && kind !== 'video') {
+      if (kind !== 'image' && kind !== 'audio' && kind !== 'video' && kind !== 'document') {
         showToast(t('composer.error_unsupported_type'), true);
         continue;
       }
@@ -1003,6 +1006,11 @@ export class PostComposer {
       editBtn.title = t('editor.edit_button');
       editBtn.innerHTML = '<span class="action-icon" data-icon="edit"></span>';
       editBtn.addEventListener('click', () => void this.handleEditMedia(index));
+      // Same rule as the single-file preview: only image/audio/video can be
+      // opened in the editor (openMediaEditor no-ops for every other kind, so
+      // a PDF would show a button that does nothing).
+      const editKind = detectAttachKind(file);
+      editBtn.style.display = editKind === 'image' || editKind === 'audio' || editKind === 'video' ? '' : 'none';
       actions.appendChild(editBtn);
 
       const removeBtn = document.createElement('button');
@@ -2000,7 +2008,9 @@ export class PostComposer {
         body: JSON.stringify({
           files: files.map((file) => ({
             filename: file.name,
-            contentType: file.type || getMimeType(file.name) || undefined,
+            // Some browsers report an empty File.type for PDFs, so fall back to
+            // the attachment MIME map before the generic zip-oriented one.
+            contentType: file.type || attachmentMimeType(file.name) || getMimeType(file.name) || undefined,
           })),
         }),
       });
@@ -2036,7 +2046,7 @@ export class PostComposer {
         method: 'PUT',
         body: file,
         headers: {
-          'Content-Type': file.type,
+          'Content-Type': file.type || attachmentMimeType(file.name) || 'application/octet-stream',
         },
         credentials: 'include',
       });
