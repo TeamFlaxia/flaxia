@@ -188,61 +188,9 @@ export function makeCacheKey(prefix: string, c: any, extra?: string, includeUser
   return `${prefix}:${userPart}:${query}${extra ? ':' + extra : ''}`;
 }
 
-// MIME type detection
-const MAGIC_TYPES: { offset: number; bytes: number[]; mime: string }[] = [
-  { offset: 0, bytes: [0xff, 0xd8, 0xff], mime: 'image/jpeg' },
-  { offset: 0, bytes: [0x89, 0x50, 0x4e, 0x47], mime: 'image/png' },
-  { offset: 0, bytes: [0x47, 0x49, 0x46, 0x38], mime: 'image/gif' },
-  { offset: 0, bytes: [0x50, 0x4b, 0x03, 0x04], mime: 'application/zip' },
-  { offset: 0, bytes: [0x50, 0x4b, 0x05, 0x06], mime: 'application/zip' },
-  { offset: 0, bytes: [0x43, 0x57, 0x53], mime: 'application/x-shockwave-flash' },
-  { offset: 0, bytes: [0x46, 0x57, 0x53], mime: 'application/x-shockwave-flash' },
-  { offset: 0, bytes: [0x49, 0x44, 0x33], mime: 'audio/mpeg' },
-  { offset: 0, bytes: [0xff, 0xfb], mime: 'audio/mpeg' },
-  { offset: 0, bytes: [0xff, 0xf3], mime: 'audio/mpeg' },
-  { offset: 0, bytes: [0xff, 0xf2], mime: 'audio/mpeg' },
-  { offset: 0, bytes: [0xff, 0xe3], mime: 'audio/mpeg' },
-  { offset: 0, bytes: [0xff, 0xe2], mime: 'audio/mpeg' },
-  { offset: 8, bytes: [0x57, 0x41, 0x56, 0x45], mime: 'audio/wav' },
-  { offset: 0, bytes: [0x4f, 0x67, 0x67, 0x53], mime: 'audio/ogg' },
-  { offset: 0, bytes: [0x1a, 0x45, 0xdf, 0xa3], mime: 'video/webm' },
-  { offset: 4, bytes: [0x66, 0x74, 0x79, 0x70], mime: 'video/mp4' },
-];
-
-export function detectMimeType(data: ArrayBuffer): string | null {
-  const header = new Uint8Array(data, 0, 12);
-  if (
-    header[0] === 0x52 &&
-    header[1] === 0x49 &&
-    header[2] === 0x46 &&
-    header[3] === 0x46 &&
-    header[8] === 0x57 &&
-    header[9] === 0x45 &&
-    header[10] === 0x42 &&
-    header[11] === 0x50
-  ) {
-    return 'image/webp';
-  }
-  if (
-    (header[0] === 0x3c && header[1] === 0x21 && header[2] === 0x44 && header[3] === 0x4f) ||
-    (header[0] === 0x3c && header[1] === 0x68 && header[2] === 0x74 && header[3] === 0x6d) ||
-    (header[0] === 0x3c && header[1] === 0x48 && header[2] === 0x54 && header[3] === 0x4d)
-  ) {
-    return 'text/html';
-  }
-  for (const t of MAGIC_TYPES) {
-    if (t.bytes.every((b, i) => header[t.offset + i] === b)) {
-      return t.mime;
-    }
-  }
-  return null;
-}
-
-export function isAllowedImageMime(
-  mime: string | null,
-): mime is 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp' {
-  return !!mime && ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(mime);
-}
+// MIME type detection lives in the scan module so the file scanning pipeline
+// and the routes share one magic-byte table.
+export { detectMimeType, isAllowedImageMime } from '../lib/scan/mime';
 
 // Report helpers
 export type ReportCategory =
