@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { hashPassword } from '../../lib/auth.ts';
 import { badgeTypeForPlan } from '../../lib/billing.ts';
 import { ensureNsfwScansTable, ensurePendingEmbedsTable } from '../../lib/crowd.ts';
+import { ensureFileScansTable } from '../../lib/scan/db.ts';
 import type { Bindings, Variables } from '../types';
 
 async function ensureReactionsTable(db: D1Database): Promise<void> {
@@ -54,6 +55,7 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
     await ensureNsfwScansTable(db);
     await ensurePendingEmbedsTable(db);
     await ensureReactionsTable(db);
+    await ensureFileScansTable(db);
 
     const resetOrder = [
       'poll_votes',
@@ -75,6 +77,8 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
       'received_activities',
       'reports',
       'post_nsfw_scans',
+      'file_scans',
+      'file_blocklist',
       'pending_embeddings',
       'post_embeddings',
       'post_translations',
@@ -147,6 +151,32 @@ app.get('/api/test/nsfw-scans', requireTestEnvironment, async (c) => {
       status: string;
       created_at: string;
       scanned_at: string;
+    }>();
+  return c.json({ scans: rows.results || [] });
+});
+
+// GET /api/test/file-scans - inspect file_scans rows for integration tests.
+// Gated like /api/test/reset: only reachable from the test dev server.
+app.get('/api/test/file-scans', requireTestEnvironment, async (c) => {
+  const db = c.env.DB;
+  await ensureFileScansTable(db);
+  const rows = await db
+    .prepare(
+      `SELECT r2_key, sha256, kind, structure_hash, text_hash, phash, status, detail, task_id, created_at, scanned_at
+       FROM file_scans ORDER BY created_at DESC`,
+    )
+    .all<{
+      r2_key: string;
+      sha256: string;
+      kind: string;
+      structure_hash: string | null;
+      text_hash: string | null;
+      phash: string | null;
+      status: string;
+      detail: string | null;
+      task_id: string | null;
+      created_at: string;
+      scanned_at: string | null;
     }>();
   return c.json({ scans: rows.results || [] });
 });

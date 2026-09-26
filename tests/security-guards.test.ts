@@ -148,4 +148,24 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
       assert.ok(spec.includes(invariant), `docs/e2ee.md must state: ${invariant}`);
     }
   });
+
+  it('every route that writes to R2 runs the file scan pipeline', () => {
+    const routesDir = join(ROOT, 'functions/api/routes');
+    const offenders: string[] = [];
+    for (const file of readdirSync(routesDir)) {
+      if (!file.endsWith('.ts')) continue;
+      const src = readFileSync(join(routesDir, file), 'utf8');
+      if (!src.includes('BUCKET.put')) continue;
+      if (!src.includes('scanUploadSync')) {
+        offenders.push(file);
+        continue;
+      }
+      // A sink that scans must also hand the bytes to ClamAV afterwards.
+      assert.ok(
+        src.includes('submitFileScans'),
+        `${file} writes to R2 and scans synchronously but never submits the async ClamAV scan`,
+      );
+    }
+    assert.deepEqual(offenders, [], `upload sinks must run scanUploadSync: ${offenders.join(', ')}`);
+  });
 });
