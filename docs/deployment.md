@@ -98,8 +98,19 @@ curl -X POST "http://localhost:8791/__scheduled?cron=* * * * *"  # 手動トリ�
 
 1. **Database Migrations** (production):
    ```bash
-   pnpm migrate:prod
+   npm run migrate:prod
    ```
+
+   本番適用後は pending が 0 であることを必ず確認する:
+   ```bash
+   npx wrangler d1 migrations list flaxia --remote   # "No migrations to apply!" が出れば OK
+   ```
+
+   pending を残したままデプロイすると、サーバーが前提とするスキーマと本番 DB が
+   食い違う。例えば添付の `kind` に `'document'` を追加するマイグレーション
+   (`0096`) が未適用のまま `POST /api/posts/commit` が `document` を書き込もうと
+   すると `CHECK constraint failed: kind` で 500 になる。テストはローカル DB に
+   マイグレーションを適用した状態で走るため、この種のずれは CI では検出できない。
 
 2. **Verify**:
    - Main site: `https://flaxia.app`
