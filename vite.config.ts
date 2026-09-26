@@ -2,6 +2,7 @@ import { copyFileSync, existsSync, readdirSync, readFileSync, writeFileSync } fr
 import { join } from 'node:path';
 import { defineConfig } from 'vite';
 import { CROWD_NODE_VERSION } from './src/lib/crowd-node';
+import { pdfViewerAssetBody, pdfViewerAssetHeaders } from './src/lib/pdf-viewer-page';
 import { docsManifestPlugin } from './vite-docs-manifest';
 
 /** html file → entry chunk name (shared by rollup input and the preload plugin). */
@@ -107,6 +108,23 @@ export default defineConfig({
             res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
           }
           next();
+        });
+      },
+    },
+    {
+      // The PDF viewer normally lives on the sandbox origin (Worker route in
+      // src/sandbox-worker.ts). In dev, SANDBOX_ORIGIN=http://localhost:3000
+      // points at this server, so mirror the Worker's /pdf/* routes here.
+      name: 'pdf-viewer-dev',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          const path = (req.url ?? '').split('?')[0];
+          if (!path.startsWith('/pdf/')) return next();
+          const body = pdfViewerAssetBody(path.slice('/pdf/'.length));
+          const headers = pdfViewerAssetHeaders(path.slice('/pdf/'.length));
+          if (body === null || headers === null) return next();
+          for (const [key, value] of Object.entries(headers)) res.setHeader(key, value);
+          res.end(body);
         });
       },
     },
