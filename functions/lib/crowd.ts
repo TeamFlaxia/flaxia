@@ -17,6 +17,10 @@ import {
   resolveNsfwTags,
 } from '@flaxia/sdk';
 import { createProjection, parseBanditConfig, projConfigKey, project } from './linucb.ts';
+import { matchBlocklist } from './scan/blocklist.ts';
+import { clamavVerdict, parseContainerOutput, parseVideoPhashes } from './scan/container-result.ts';
+import { getFileScan, recordInfection, setScanPhash, setScanStatus } from './scan/db.ts';
+import type { FileFeatures } from './scan/features.ts';
 
 export interface CrowdEnv {
   CROWD_ORCHESTRATOR_URL?: string;
@@ -74,7 +78,7 @@ export function crowdConfig(env: CrowdEnv): CrowdConfig {
 }
 
 /** Build a client, or null when Crowd is unconfigured (calls become no-ops). */
-function getCrowdClient(config: CrowdConfig): FlaxiaClient | null {
+export function getCrowdClient(config: CrowdConfig): FlaxiaClient | null {
   if (!config.configured) return null;
   return new FlaxiaClient({ baseUrl: `${config.orchestratorUrl}/crowd`, apiKey: config.apiKey });
 }
@@ -448,6 +452,103 @@ async function handleVectorEmbedResult(
   console.log(`Vector embed webhook done for post ${postId}: dims=${dimensions}`);
 }
 
+/** SHA prefix a scan callback was submitted for; empty when absent. */
+function scanShaPrefix(url: URL): string | undefined {
+  const sha = url.searchParams.get('sha');
+  return sha || undefined;
+}
+
+/** The orchestrator reported the task itself failed (not a verdict). */
+async function handleFileScanTaskFailure(url: URL, event: CrowdWebhookEvent, db: D1Database): Promise<void> {
+  const r2Key = url.searchParams.get('key');
+  const kind = url.searchParams.get('kind') ?? 'clamav';
+  if (!r2Key) return;
+  if (kind !== 'clamav') return; // keyframe hashing is best-effort
+  const detail = (event.error || 'task_failed').slice(0, 300);
+  await setScanStatus(db, r2Key, 'failed', { detail, shaPrefix: scanShaPrefix(url) });
+}
+
+/**
+ * Apply a completed file-scan container task:
+ *   kind=clamav      -> clean / infected / failed (+ blocklist + KV on hit)
+ *   kind=video-phash -> store keyframe hashes, then re-run the blocklist
+ * The sha prefix ties the verdict to the exact content that was submitted, so
+ * a slow callback cannot mark re-uploaded bytes with a stale result.
+ */
+async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Database, env: CrowdEnv): Promise<void> {
+  const r2Key = url.searchParams.get('key');
+  const kind = url.searchParams.get('kind') ?? 'clamav';
+  if (!r2Key) return;
+
+  const shaPrefix = scanShaPrefix(url);
+  const output = parseContainerOutput(extractCallbackOutput(event));
+  if (!output) {
+    if (kind === 'clamav') {
+      await setScanStatus(db, r2Key, 'failed', { detail: 'malformed_result', shaPrefix });
+    }
+    return;
+  }
+
+  if (kind === 'video-phash') {
+    const hashes = parseVideoPhashes(output.stdout);
+    const row = await getFileScan(db, r2Key);
+    if (!hashes || !row) return;
+    const joined = hashes.join(',');
+    await setScanPhash(db, r2Key, joined);
+    const features: FileFeatures = {
+      sha256: row.sha256,
+      kind: row.kind as FileFeatures['kind'],
+      structureHash: row.structure_hash ?? undefined,
+      textHash: row.text_hash ?? undefined,
+      phash: joined,
+    };
+    try {
+      const hit = await matchBlocklist(db, features);
+      if (hit) {
+        await recordInfection(db, env.CACHE, r2Key, hit.signature ?? 'blocklist_phash', 'phash_blocklist');
+        console.log(`Video phash hit for ${r2Key} (entry #${hit.id})`);
+      }
+    } catch (e) {
+      // Fail open here: an outage must not permanently block a clean file.
+      console.error('Post-scan blocklist lookup failed:', e);
+    }
+    return;
+  }
+
+  const verdict = clamavVerdict(output);
+  if (verdict.status === 'infected') {
+    await recordInfection(db, env.CACHE, r2Key, verdict.signature, 'clamav');
+    console.log(`ClamAV infected ${r2Key}: ${verdict.signature}`);
+    return;
+  }
+  if (verdict.status === 'failed') {
+    await setScanStatus(db, r2Key, 'failed', { detail: verdict.detail ?? 'scan_error', shaPrefix });
+    return;
+  }
+
+  // Clean verdict: re-run the blocklist so entries added between upload and
+  // completion still take effect, then mark the row clean.
+  try {
+    const row = await getFileScan(db, r2Key);
+    if (row) {
+      const hit = await matchBlocklist(db, {
+        sha256: row.sha256,
+        kind: row.kind as FileFeatures['kind'],
+        structureHash: row.structure_hash ?? undefined,
+        textHash: row.text_hash ?? undefined,
+        phash: row.phash ?? undefined,
+      });
+      if (hit) {
+        await recordInfection(db, env.CACHE, r2Key, hit.signature, hit.reason ?? 'blocklist');
+        return;
+      }
+    }
+  } catch (e) {
+    console.error('Post-scan blocklist lookup failed:', e);
+  }
+  await setScanStatus(db, r2Key, 'clean', { shaPrefix });
+}
+
 /**
  * Handle an orchestrator callback. Returns the HTTP response for the route:
  * `400` for malformed payloads, `200 { received: true }` otherwise (including
@@ -466,6 +567,8 @@ export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1
         await handleNsfwResult(url, event, db);
       } else if (callbackType === 'vector-embed') {
         await handleVectorEmbedResult(url, event, db, env);
+      } else if (callbackType === 'file-scan') {
+        await handleFileScanResult(url, event, db, env);
       }
     } else if (event.status === 'failed') {
       console.log(
@@ -480,6 +583,8 @@ export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1
             .bind('failed', new Date().toISOString(), postId, mediaKey)
             .run();
         }
+      } else if (callbackType === 'file-scan') {
+        await handleFileScanTaskFailure(url, event, db);
       }
     }
 
