@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { MULTIPLAYER_SDK_IIFE } from './lib/multiplayer-sdk.generated';
+import { pdfViewerAssetBody, pdfViewerAssetHeaders } from './lib/pdf-viewer-page';
 import {
   copyHtmlToWvfs,
   ensureFileInWvfs,
@@ -194,6 +195,19 @@ app.get('/sdk/multiplayer.js', (c) => {
     'Content-Type': 'application/javascript; charset=utf-8',
     'Cache-Control': 'public, max-age=86400',
   });
+});
+
+// PDF viewer page and the pdf.js files it imports. The viewer runs *inside*
+// this origin so untrusted documents are parsed by pdf.js in a frame the main
+// origin does not own — the browser's built-in PDF plugin can never be shown
+// in a sandboxed frame (whatwg/html#6946), and main-origin parsing would turn
+// a pdf.js bug into site-wide XSS. See src/lib/pdf-viewer-page.ts.
+app.get('/pdf/*', (c) => {
+  const asset = c.req.path.slice('/pdf/'.length);
+  const body = pdfViewerAssetBody(asset);
+  const headers = pdfViewerAssetHeaders(asset);
+  if (body === null || headers === null) return c.text('Not found', 404);
+  return withCsp(new Response(body, { headers }));
 });
 
 app.notFound(async (c) => {
