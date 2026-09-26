@@ -1006,6 +1006,11 @@ export class PostComposer {
       editBtn.title = t('editor.edit_button');
       editBtn.innerHTML = '<span class="action-icon" data-icon="edit"></span>';
       editBtn.addEventListener('click', () => void this.handleEditMedia(index));
+      // Same rule as the single-file preview: only image/audio/video can be
+      // opened in the editor (openMediaEditor no-ops for every other kind, so
+      // a PDF would show a button that does nothing).
+      const editKind = detectAttachKind(file);
+      editBtn.style.display = editKind === 'image' || editKind === 'audio' || editKind === 'video' ? '' : 'none';
       actions.appendChild(editBtn);
 
       const removeBtn = document.createElement('button');

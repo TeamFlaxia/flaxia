@@ -114,18 +114,8 @@ export function parseRange(rangeHeader: string, fileSize: number): { start: numb
 
 /**
  * Serve an R2 object, honouring HTTP Range requests.
- *
- * `extraHeaders` is applied after MEDIA_SECURITY_HEADERS so a route can relax a
- * single default (e.g. /api/documents allows same-origin framing so the browser
- * PDF viewer can be embedded) without losing the rest of the hardening.
  */
-export async function handleRangeRequest(
-  c: any,
-  key: string,
-  object: any,
-  contentType: string,
-  extraHeaders: Record<string, string> = {},
-): Promise<Response> {
+export async function handleRangeRequest(c: any, key: string, object: any, contentType: string): Promise<Response> {
   const fileSize = object.size || 0;
   const rangeHeader = c.req.header('Range');
 
@@ -138,7 +128,6 @@ export async function handleRangeRequest(
         'Accept-Ranges': 'bytes',
         'Content-Length': fileSize.toString(),
         ...MEDIA_SECURITY_HEADERS,
-        ...extraHeaders,
       },
     });
   }
@@ -172,7 +161,6 @@ export async function handleRangeRequest(
       'Access-Control-Allow-Origin': 'https://flaxia.app',
       'Accept-Ranges': 'bytes',
       ...MEDIA_SECURITY_HEADERS,
-      ...extraHeaders,
     },
   });
 }

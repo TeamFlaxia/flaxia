@@ -561,12 +561,12 @@ describe('PDF attachments (kind = document)', () => {
     const created = JSON.parse(commitText) as { post: { attachments: Array<{ r2_key: string; kind: string }> } };
     assert.deepEqual(created.post.attachments, [{ r2_key: `docs/${postId}/1.pdf`, kind: 'document', position: 1 }]);
 
-    // The proxy serves it inline, framed by the same origin, with a PDF type
-    // so the browser's viewer takes over.
+    // The proxy serves it with a PDF type so the browser's built-in viewer
+    // takes over in the new tab; framing stays denied.
     const docRes = await fetch(`${BASE_URL}/api/documents/docs/${postId}/1.pdf`);
     assert.equal(docRes.status, 200);
     assert.equal(docRes.headers.get('content-type'), 'application/pdf');
-    assert.equal(docRes.headers.get('x-frame-options'), 'SAMEORIGIN');
+    assert.equal(docRes.headers.get('x-frame-options'), 'DENY');
     assert.equal(docRes.headers.get('x-content-type-options'), 'nosniff');
     assert.equal(Buffer.from(await docRes.arrayBuffer()).toString('latin1'), PDF.toString('latin1'));
   });
@@ -600,6 +600,23 @@ describe('PDF attachments (kind = document)', () => {
     const uploads = data.uploads as Array<{ uploadUrl: string }>;
 
     assert.equal(await putBytes(uploads[0].uploadUrl, cookie, PDF, 'image/png'), 400);
+  });
+
+  it('rejects a PDF uploaded to a legacy (non-attachment) key → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId } = await createMediaPost(cookie, 1);
+
+    // payload/ keys are the legacy single-file column path: nothing parses
+    // them as an attachment, so only the upload-time MIME gate stops a PDF
+    // landing in a slot no renderer serves as a document.
+    const res = await fetch(`${BASE_URL}/api/upload/payload/${postId}.pdf`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/pdf', Cookie: cookie },
+      body: PDF,
+    });
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error?: string };
+    assert.match(body.error ?? '', /document attachments/);
   });
 
   it('does not serve a non-document key through /api/documents → 404', async () => {

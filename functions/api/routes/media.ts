@@ -164,6 +164,14 @@ media.put('/upload/*', requireAuth, async (c) => {
     ) {
       return c.json({ error: 'File type not allowed' }, 400);
     }
+    // PDFs live only in a multi-media document slot (docs/{postId}/{n}.pdf).
+    // The legacy gif/payload/swf keys feed other renderers and are never
+    // served by /api/documents, so bytes stored there would be unreachable,
+    // and this route is the only place that can tell what the file actually
+    // is — the key and the declared Content-Type both come from the client.
+    if (detectedMime === 'application/pdf' && attachment?.kind !== 'document') {
+      return c.json({ error: 'PDF files are only allowed as document attachments' }, 400);
+    }
     // Sanity check: declared content-type should be consistent (relaxed for zip/swf which may use generic types)
     if (declaredContentType && detectedMime.startsWith('image/') && !declaredContentType.startsWith('image/')) {
       return c.json({ error: 'Declared Content-Type does not match actual file content' }, 400);
@@ -381,14 +389,15 @@ media.get('/video/*', async (c) => {
 
 // GET /api/documents/* - proxy PDF attachments from R2
 //
-// Unlike the other media proxies this one overrides two shared headers:
-//   - Content-Type is forced to application/pdf, because the browser's built-in
-//     viewer only takes over for a real PDF content type. Forcing it means the
-//     key must be validated first, so a png/swf/html key requested through this
-//     route can never be served as a PDF.
-//   - X-Frame-Options becomes SAMEORIGIN (the shared value is DENY) so the
-//     post can embed the document. A framed PDF gets an opaque, plugin-scoped
-//     document — it cannot reach our DOM, cookies or storage.
+// Content-Type is forced to application/pdf so the browser's built-in viewer
+// takes over when the link is opened in a new tab. Forcing it means the key
+// must be validated first, so a png/swf/html key requested through this route
+// can never be served as a PDF.
+//
+// Framing stays denied (X-Frame-Options: DENY from MEDIA_SECURITY_HEADERS):
+// the timeline opens documents as top-level tabs, and a PDF framed inside a
+// sandboxed iframe would be blocked by the browser anyway (the spec forbids
+// plugin content — which includes PDFs — in sandboxed frames, whatwg/html#6946).
 media.get('/documents/*', async (c) => {
   try {
     const key = c.req.path.replace('/api/documents/', '');
@@ -422,9 +431,7 @@ media.get('/documents/*', async (c) => {
       return c.json({ error: 'Document not found' }, 404);
     }
 
-    return handleRangeRequest(c, key, object, 'application/pdf', {
-      'X-Frame-Options': 'SAMEORIGIN',
-    });
+    return handleRangeRequest(c, key, object, 'application/pdf');
   } catch (error: unknown) {
     console.error('Document proxy error:', error);
     return c.json({ error: 'Failed to fetch document' }, 500);

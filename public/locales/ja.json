@@ -170,7 +170,6 @@
   "composer.preview_playing": "読み込み中...",
   "composer.preview_play_failed": "ゲームのプレビューを読み込めませんでした",
   "composer.preview_open_document": "開く",
-  "document_viewer.title": "PDF添付ファイル",
   "document_viewer.open": "PDFを開く",
   "document_viewer.hint": "クリックして閲覧",
   "document_viewer.open_new_tab": "新しいタブで開く",

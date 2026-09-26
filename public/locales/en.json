@@ -170,7 +170,6 @@
   "composer.preview_playing": "Loading...",
   "composer.preview_play_failed": "Failed to load the game preview",
   "composer.preview_open_document": "Open",
-  "document_viewer.title": "PDF attachment",
   "document_viewer.open": "Open PDF",
   "document_viewer.hint": "Click to read",
   "document_viewer.open_new_tab": "Open in new tab",

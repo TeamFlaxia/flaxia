@@ -157,6 +157,7 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 ### Upload File
 `PUT /api/upload/:key`
 - Binary upload directly to R2 (requires auth; must own the pending/published post referenced by the key)
+- A file whose magic bytes say PDF is accepted only for a `docs/{postId}/{n}.pdf` key (400 otherwise)
 
 ### Commit Post
 `POST /api/posts/commit`

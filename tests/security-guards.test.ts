@@ -18,19 +18,24 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 /**
- * Source split into lines with comment-only lines removed.
+ * Source with comment-only lines removed, rejoined as one string.
  *
- * Only whole-line comments are dropped (`//` or block-comment `*` bodies), so
- * prose that quotes the banned token in a comment never trips a guard, while an
- * inline trailing comment on a real statement is still scanned. Deliberately
- * avoids stripping comments mid-line: a naive strip would truncate a line at a
+ * Dropping whole-line comments (`//` or block-comment `*` bodies) keeps prose
+ * that quotes the banned token from tripping a guard; matching the rejoined
+ * text (instead of each line separately) keeps violations that span lines —
+ * an attribute opened on one line with the banned token on the next is still
+ * one match, since `\s*` spans newlines. Inline trailing comments on real
+ * statements stay in: a naive full-comment strip would truncate a line at a
  * `//` inside a string literal and could hide a real violation.
  */
-function scanableSource(source: string): string[] {
-  return source.split('\n').filter((line) => {
-    const trimmed = line.trim();
-    return !trimmed.startsWith('//') && !trimmed.startsWith('*') && !trimmed.startsWith('/*');
-  });
+function scanableSource(source: string): string {
+  return source
+    .split('\n')
+    .filter((line) => {
+      const trimmed = line.trim();
+      return !trimmed.startsWith('//') && !trimmed.startsWith('*') && !trimmed.startsWith('/*');
+    })
+    .join('\n');
 }
 
 describe('security guards', () => {
@@ -42,7 +47,7 @@ describe('security guards', () => {
     const pattern =
       /sandbox\s*=\s*["'][^"']*allow-same-origin|setAttribute\(\s*["']sandbox["']\s*,\s*["'][^"']*allow-same-origin/;
     const offenders = files
-      .filter((file) => scanableSource(readFileSync(file, 'utf8')).some((line) => pattern.test(line)))
+      .filter((file) => pattern.test(scanableSource(readFileSync(file, 'utf8'))))
       .map((file) => relative(ROOT, file));
     assert.deepEqual(offenders, [], `allow-same-origin is banned: ${offenders.join(', ')}`);
   });
