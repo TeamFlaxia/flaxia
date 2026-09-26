@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { getUserPlan } from '../../lib/billing';
+import { submitFileScans } from '../../lib/scan/clamav';
+import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { detectMimeType, isAllowedImageMime, requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
@@ -126,9 +128,24 @@ stamps.post('/stamps', requireAuth, async (c) => {
     const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
     const r2Key = `stamp/${userId}/${hashHex}.${ext}`;
 
+    // Sync scan: declared type check, features, blocklist match. The key's
+    // extension is derived from the sniffed MIME, so no name check is needed.
+    const verdict = await scanUploadSync(c.env.DB, {
+      bytes: fileData,
+      declaredType: file.type,
+      r2Key,
+      detectedMime,
+    });
+    if (!verdict.ok) {
+      return c.json({ error: verdict.error, code: verdict.code }, verdict.status);
+    }
+
     await c.env.BUCKET.put(r2Key, fileData, {
       httpMetadata: { contentType: detectedMime },
     });
+
+    // Step 1 (ClamAV) after the response.
+    runInBackground(c, () => submitFileScans(c.env.DB, c.env, r2Key, detectedMime, fileData));
 
     const stampId = nanoid();
     await c.env.DB.prepare('INSERT INTO custom_stamps (id, user_id, name, image_key) VALUES (?, ?, ?, ?)')
