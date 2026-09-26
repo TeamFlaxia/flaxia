@@ -17,12 +17,32 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/**
+ * Source split into lines with comment-only lines removed.
+ *
+ * Only whole-line comments are dropped (`//` or block-comment `*` bodies), so
+ * prose that quotes the banned token in a comment never trips a guard, while an
+ * inline trailing comment on a real statement is still scanned. Deliberately
+ * avoids stripping comments mid-line: a naive strip would truncate a line at a
+ * `//` inside a string literal and could hide a real violation.
+ */
+function scanableSource(source: string): string[] {
+  return source.split('\n').filter((line) => {
+    const trimmed = line.trim();
+    return !trimmed.startsWith('//') && !trimmed.startsWith('*') && !trimmed.startsWith('/*');
+  });
+}
+
 describe('security guards', () => {
   it('never sandboxes untrusted content with allow-same-origin', () => {
     const files = [...walk(join(ROOT, 'src')), ...walk(join(ROOT, 'functions'))];
-    const pattern = /sandbox\s*=\s*["'][^"']*allow-same-origin/;
+    // Both spellings count: the HTML/JSX attribute form and the imperative
+    // setAttribute form. Matching only `sandbox = "..."` let a violation through
+    // whenever the attribute was set from script.
+    const pattern =
+      /sandbox\s*=\s*["'][^"']*allow-same-origin|setAttribute\(\s*["']sandbox["']\s*,\s*["'][^"']*allow-same-origin/;
     const offenders = files
-      .filter((file) => pattern.test(readFileSync(file, 'utf8')))
+      .filter((file) => scanableSource(readFileSync(file, 'utf8')).some((line) => pattern.test(line)))
       .map((file) => relative(ROOT, file));
     assert.deepEqual(offenders, [], `allow-same-origin is banned: ${offenders.join(', ')}`);
   });

@@ -19,11 +19,11 @@ export function documentUrl(r2Key: string): string {
  * only mounted once the viewer is opened. That also keeps a text-only post
  * from loading a PDF engine it will never display.
  *
- * The frame is same-origin and the response is served as
+ * The frame loads a same-origin URL, and the response is served as
  * `application/pdf` with `X-Frame-Options: SAMEORIGIN`, so the browser's
- * built-in viewer renders it. The plugin document is opaque to the page — it
- * cannot read our DOM, cookies or storage. Clicking the overlay must not fall
- * through to the post, hence stopPropagation.
+ * built-in viewer renders it. The sandbox (see below) puts the framed document
+ * in an opaque origin, so it cannot reach our DOM, cookies or storage. Clicking
+ * the overlay must not fall through to the post, hence stopPropagation.
  */
 export function createDocumentViewer(props: DocumentViewerProps): HTMLElement {
   const container = document.createElement('div');
@@ -38,11 +38,15 @@ export function createDocumentViewer(props: DocumentViewerProps): HTMLElement {
   const frame = document.createElement('iframe');
   frame.className = 'document-viewer-frame';
   frame.src = url;
-  // The response is always a magic-byte-validated PDF served as
-  // application/pdf with nosniff, so this frame can never host active content
-  // — allow-same-origin keeps the plugin document happy and allow-scripts is
-  // inert here, while top-navigation and popups stay blocked.
-  frame.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+  // Fully sandboxed: no tokens at all. `allow-same-origin` is permanently
+  // banned on every iframe in this project (see AGENTS.md), and pairing it with
+  // `allow-scripts` would be the classic sandbox escape on a same-origin frame.
+  // The native PDF viewer needs none of them — it renders plugin content
+  // happily inside an opaque origin, and the response is already restricted to
+  // magic-byte-validated PDFs served as application/pdf with nosniff.
+  // The iframe's one job is rendering, not interaction, so everything else
+  // (top-navigation, popups, forms, storage) stays blocked.
+  frame.setAttribute('sandbox', '');
   frame.setAttribute('title', t('document_viewer.title'));
   frameWrap.appendChild(frame);
 
