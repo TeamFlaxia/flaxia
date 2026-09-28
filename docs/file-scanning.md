@@ -38,15 +38,30 @@ object never reaches R2 (no `file_scans` row either):
 | # | Check | Code |
 |---|---|---|
 | 1 | Sniffed MIME (magic bytes, `detectMimeType`) is in the image/audio/video allowlist | `unrecognized_type` |
-| 2 | Declared `Content-Type` == sniffed == key extension == attachment slot kind | `type_mismatch` |
+| 2 | Declared `Content-Type` and key extension are compatible with the sniffed MIME; attachment slot kind matches it | `type_mismatch` |
 | 3 | Dimensions sane for images (PNG/GIF/JPEG structure parse) | `type_mismatch` |
 | 4 | Blocklist match on any extracted feature | `file_blocked` |
 
-Check 2 compares MIME types, not just strings: the sniffer cannot tell an
-audio track from a video one, so `video/mp4`/`audio/mp4`/`video/quicktime` are
-accepted for each other, as are `video/webm`/`audio/webm` (`CONTAINER_FAMILIES`
-in `functions/lib/scan/mime.ts`). Without that, the `.m4a`, `.mov` and
-audio-only `.webm` files the composer advertises would all fail as masquerades.
+Check 2 compares MIME types, not just strings, and never demands an exact
+match:
+
+- `video/mp4`/`audio/mp4`/`video/quicktime` are accepted for each other, as are
+  `video/webm`/`audio/webm` (`CONTAINER_FAMILIES` in
+  `functions/lib/scan/mime.ts`). The sniffer cannot tell an audio track from a
+  video one, so without this the `.m4a`, `.mov` and audio-only `.webm` files
+  the composer advertises would all fail as masquerades.
+- `DECLARED_ALIASES` maps the spellings browsers actually send — `audio/x-m4a`
+  (Safari/macOS, Chrome on Windows) and `audio/x-wav` / `audio/wave` — onto
+  the types the sniffer reports.
+- Two allowlisted images agree with each other. `file.type` comes from the
+  extension, so a JPEG re-saved as `.png` (or PNG bytes behind a `.gif` key)
+  declares one image type and sniffs as another; both decode anywhere, so it is
+  not a masquerade. SVG never gets this tolerance — it has no magic bytes and
+  always sniffs as `text/html`.
+- Anything else across classes (image/audio/video declared over HTML, SWF or
+  foreign bytes, or an extension from another class) is a `type_mismatch`.
+  ZIP content stays exempt from the *declared* check because game uploads carry
+  page/form content types; the key's extension still judges those.
 
 On success the Worker extracts features, inserts a `file_scans` row
 (`status = pending`), writes the object, and schedules `submitFileScans` via

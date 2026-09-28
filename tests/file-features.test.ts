@@ -9,7 +9,7 @@ import { decodeJpegLuma } from '../functions/lib/scan/decode-jpeg.ts';
 import { decodePngLuma } from '../functions/lib/scan/decode-png.ts';
 import { extractFileFeatures } from '../functions/lib/scan/features.ts';
 import { extractPdfText } from '../functions/lib/scan/pdf.ts';
-import { computePhash, hammingDistance } from '../functions/lib/scan/phash.ts';
+import { hammingDistance } from '../functions/lib/scan/phash.ts';
 
 const encoder = new TextEncoder();
 
@@ -370,19 +370,6 @@ describe('extractPdfText', () => {
   it('terminates when a backtick appears outside a string', () => {
     const text = extractPdfText(makePdf('a) Tj ` (b'));
     assert.equal(text, 'a b');
-  });
-});
-
-describe('pHash math', () => {
-  it('produces the documented 16-hex format and stable distances', () => {
-    const gray = new Uint8Array(32 * 32);
-    for (let i = 0; i < gray.length; i++) gray[i] = i % 256;
-    const hash = computePhash(gray, 32, 32);
-    assert.match(hash, /^[0-9a-f]{16}$/);
-    assert.equal(hash, computePhash(gray, 32, 32));
-    assert.equal(hammingDistance(hash, hash), 0);
-    assert.equal(hammingDistance('ffffffffffffffff', '0000000000000000'), 64);
-    assert.equal(hammingDistance('ffffffffffffffff', 'nothex0000000000'), 64);
   });
 });
 

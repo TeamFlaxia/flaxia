@@ -1,5 +1,9 @@
 // Perceptual hash (pHash) for step 3: a 64-bit DCT hash over the 8x8
-// low-frequency sub-block of a 32x32 grayscale downscale.
+// low-frequency coefficients of the DCT of a 32x32 grayscale downscale.
+//
+// The transform runs over the whole 32x32 plane — the low-frequency block is
+// selected *after* the DCT, so every region of the image contributes. Taking
+// an 8x8 corner of the plane instead would hash only the top rows.
 //
 // Decoders in this folder produce plain luma planes; everything here is pure
 // math so it is unit-testable without fixtures.
@@ -29,34 +33,55 @@ export function resizeBox(gray: Uint8Array, width: number, height: number, size:
   return out;
 }
 
-const COS: Float64Array[] = (() => {
+/** Cosine table for an N-point DCT-II: `table[u][x] = cos((2x+1)uπ / 2N)`. */
+const COS_TABLES = new Map<number, Float64Array[]>();
+
+function cosTable(size: number): Float64Array[] {
+  const cached = COS_TABLES.get(size);
+  if (cached) return cached;
   const table: Float64Array[] = [];
-  for (let u = 0; u < 8; u++) {
-    const row = new Float64Array(8);
-    for (let x = 0; x < 8; x++) {
-      row[x] = Math.cos(((2 * x + 1) * u * Math.PI) / 16);
+  for (let u = 0; u < size; u++) {
+    const row = new Float64Array(size);
+    for (let x = 0; x < size; x++) {
+      row[x] = Math.cos(((2 * x + 1) * u * Math.PI) / (2 * size));
     }
     table.push(row);
   }
+  COS_TABLES.set(size, table);
   return table;
-})();
+}
 
 function cFactor(u: number): number {
   return u === 0 ? Math.SQRT1_2 : 1;
 }
 
-/** Orthonormal 2D DCT-II of an 8x8 block (row-major). */
-export function dct8x8(block: Float64Array): Float64Array {
-  const out = new Float64Array(64);
-  for (let u = 0; u < 8; u++) {
-    for (let v = 0; v < 8; v++) {
+/**
+ * Top-left `outSize` x `outSize` coefficients of the orthonormal 2D DCT-II of
+ * a `size` x `size` row-major plane. Separable: an N-point transform across
+ * each row, then the same across each column, so the 32x32 → 8x8 case costs
+ * 2 * N * outSize * N adds instead of N^4.
+ */
+export function dctLowFrequencies(plane: Float64Array, size: number, outSize = 8): Float64Array {
+  const cos = cosTable(size);
+  const rows = new Float64Array(size * outSize);
+  for (let y = 0; y < size; y++) {
+    const src = y * size;
+    const dst = y * outSize;
+    for (let u = 0; u < outSize; u++) {
+      const kernel = cos[u];
       let sum = 0;
-      for (let y = 0; y < 8; y++) {
-        for (let x = 0; x < 8; x++) {
-          sum += block[y * 8 + x] * COS[u][x] * COS[v][y];
-        }
-      }
-      out[v * 8 + u] = 0.25 * cFactor(u) * cFactor(v) * sum;
+      for (let x = 0; x < size; x++) sum += plane[src + x] * kernel[x];
+      rows[dst + u] = sum;
+    }
+  }
+  const out = new Float64Array(outSize * outSize);
+  const scale = 2 / size;
+  for (let v = 0; v < outSize; v++) {
+    const kernel = cos[v];
+    for (let u = 0; u < outSize; u++) {
+      let sum = 0;
+      for (let y = 0; y < size; y++) sum += rows[y * outSize + u] * kernel[y];
+      out[v * outSize + u] = scale * cFactor(u) * cFactor(v) * sum;
     }
   }
   return out;
@@ -69,14 +94,16 @@ function median(values: Float64Array): number {
 }
 
 /**
- * Compute the 64-bit pHash of a grayscale image. Returns 16 lowercase hex
- * chars: bit i is set when DCT coefficient i exceeds the median of the 8x8
- * low-frequency block (DC included). Deterministic and self-consistent —
- * only hashes produced by this function should be compared against each other.
+ * Compute the 64-bit pHash of a grayscale image. The plane is box-downscaled
+ * to 32x32, transformed with a 2D DCT, and the top-left 8x8 low-frequency
+ * coefficients are kept. Returns 16 lowercase hex chars: bit i is set when
+ * coefficient i exceeds the median of those 64 coefficients (DC included).
+ * Deterministic and self-consistent — only hashes produced by this function
+ * should be compared against each other.
  */
 export function computePhash(gray: Uint8Array, width: number, height: number): string {
   const small = resizeBox(gray, width, height, 32);
-  const coeffs = dct8x8(small);
+  const coeffs = dctLowFrequencies(small, 32);
   const threshold = median(coeffs);
   let hi = 0;
   let lo = 0;

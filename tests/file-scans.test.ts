@@ -116,6 +116,27 @@ async function clearShaEntry(cookie: string, sha: string): Promise<void> {
   }
 }
 
+async function adminAdd(cookie: string, kind: string, value: string): Promise<number> {
+  const res = await fetch(`${BASE_URL}/api/admin/file-blocklist`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ kind, value, reason: 'integration test' }),
+  });
+  return res.status;
+}
+
+async function clearEntries(cookie: string, kind: string): Promise<void> {
+  for (const entry of await adminList(cookie)) {
+    if (entry.kind === kind) await adminDelete(cookie, entry.id);
+  }
+}
+
+/** Flip exactly `count` low bits of a 16-hex hash, for distance tests. */
+function flipLowBits(hash: string, count: number): string {
+  const flipped = BigInt(`0x${hash}`) ^ ((1n << BigInt(count)) - 1n);
+  return flipped.toString(16).padStart(16, '0');
+}
+
 async function postWebhook(params: Record<string, string>, body: unknown): Promise<number> {
   const query = new URLSearchParams({ type: 'file-scan', ...params }).toString();
   const res = await fetch(`${BASE_URL}/api/crowd/webhook?${query}`, {
@@ -148,6 +169,24 @@ describe('file scanning pipeline', () => {
     assert.equal(img.status, 200, 'clean image must be served');
   });
 
+  it('accepts the browser spellings for .m4a and .wav', async () => {
+    const { cookie } = await seedUserAndLogin(`alias${Date.now() % 100000}`);
+
+    // .m4a reported as audio/x-m4a: an ftyp box always sniffs as video/mp4.
+    const m4a = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x20]), Buffer.from('ftypM4A '), Buffer.alloc(64)]);
+    const m4aPrepared = await prepare(cookie, 'clip.m4a', 'audio/x-m4a');
+    assert.equal(m4aPrepared.status, 200, 'prepare must accept the .m4a kind');
+    const m4aPut = await upload(m4aPrepared.uploadUrl, cookie, m4a, 'audio/x-m4a');
+    assert.equal(m4aPut.status, 200, `audio/x-m4a must upload: ${JSON.stringify(m4aPut.json)}`);
+
+    // .wav reported as audio/x-wav: RIFF....WAVE.
+    const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(4), Buffer.from('WAVE'), Buffer.alloc(64)]);
+    const wavPrepared = await prepare(cookie, 'clip.wav', 'audio/x-wav');
+    assert.equal(wavPrepared.status, 200, 'prepare must accept the .wav kind');
+    const wavPut = await upload(wavPrepared.uploadUrl, cookie, wav, 'audio/x-wav');
+    assert.equal(wavPut.status, 200, `audio/x-wav must upload: ${JSON.stringify(wavPut.json)}`);
+  });
+
   it('rejects type mismatches before the object reaches R2', async () => {
     const { cookie } = await seedUserAndLogin(`mism${Date.now() % 100000}`);
 
@@ -160,15 +199,29 @@ describe('file scanning pipeline', () => {
     assert.equal(await findScan(htmlPrepared.key, 1500), null, 'rejected uploads leave no scan row');
     assert.equal((await fetch(`${BASE_URL}/api/images/${htmlPrepared.key}`)).status, 404);
 
-    // PNG bytes declared as image/gif: passes the attachment kind check, then
-    // the declared Content-Type mismatch is reported with a typed code.
-    const gifPrepared = await prepare(cookie, 'pic2.gif', 'image/gif');
-    assert.equal(gifPrepared.status, 200);
-    const gifPut = await upload(gifPrepared.uploadUrl, cookie, PNG, 'image/gif');
-    assert.equal(gifPut.status, 400, 'a wrong declared Content-Type must be rejected');
-    assert.equal(gifPut.json.code, 'type_mismatch');
-    assert.equal(await findScan(gifPrepared.key, 1500), null);
-    assert.equal((await fetch(`${BASE_URL}/api/images/${gifPrepared.key}`)).status, 404);
+    // PNG bytes in a .gif key declared as audio/mpeg: the attachment kind
+    // check passes (the bytes sniff as an image), so the declared
+    // Content-Type mismatch is what rejects them, with a typed code.
+    const mismatchPrepared = await prepare(cookie, 'pic2.gif', 'image/gif');
+    assert.equal(mismatchPrepared.status, 200);
+    const mismatchPut = await upload(mismatchPrepared.uploadUrl, cookie, PNG, 'audio/mpeg');
+    assert.equal(mismatchPut.status, 400, 'a cross-class declared Content-Type must be rejected');
+    assert.equal(mismatchPut.json.code, 'type_mismatch');
+    assert.equal(await findScan(mismatchPrepared.key, 1500), null);
+    assert.equal((await fetch(`${BASE_URL}/api/images/${mismatchPrepared.key}`)).status, 404);
+
+    // The same bytes with their real declared type do upload: file.type comes
+    // from the extension, so a JPEG saved as .png (or PNG in a .gif key) is a
+    // common, harmless disagreement between name and content.
+    const renamedPrepared = await prepare(cookie, 'pic3.gif', 'image/gif');
+    assert.equal(renamedPrepared.status, 200);
+    const renamedPut = await upload(renamedPrepared.uploadUrl, cookie, PNG, 'image/png');
+    assert.equal(
+      renamedPut.status,
+      200,
+      `image content behind a .gif key must be accepted: ${JSON.stringify(renamedPut.json)}`,
+    );
+    assert.ok(await findScan(renamedPrepared.key), 'the accepted upload must still be scanned');
   });
 
   it('blocks a blocklisted sha256 synchronously and supports admin CRUD', async () => {
@@ -205,6 +258,35 @@ describe('file scanning pipeline', () => {
     const retryPrepared = await prepare(cookie, 'again.png', 'image/png');
     const retry = await upload(retryPrepared.uploadUrl, cookie, PNG, 'image/png');
     assert.equal(retry.status, 200, 'uploads must recover once the entry is deleted');
+  });
+
+  it('matches phash entries end-to-end at the distance boundary', async () => {
+    const admin = await loginAdmin();
+
+    const { cookie } = await seedUserAndLogin(`phash${Date.now() % 100000}`);
+    const first = await prepare(cookie, 'pic.png', 'image/png');
+    const firstPut = await upload(first.uploadUrl, cookie, PNG, 'image/png');
+    assert.equal(firstPut.status, 200, 'the fixture must upload clean first');
+
+    const row = await findScan(first.key);
+    assert.ok(row, 'the scan row carries the phash');
+    const hash = String(row.phash);
+    assert.match(hash, /^[0-9a-f]{16}$/, 'the fixture PNG must produce a phash');
+
+    // Distance 8 is the threshold: a similar image is blocked.
+    assert.equal(await adminAdd(admin, 'phash', flipLowBits(hash, 8)), 201);
+    const near = await prepare(cookie, 'near.png', 'image/png');
+    const nearPut = await upload(near.uploadUrl, cookie, PNG, 'image/png');
+    assert.equal(nearPut.status, 400, 'a distance-8 phash must block');
+    assert.equal(nearPut.json.code, 'file_blocked');
+    await clearEntries(admin, 'phash');
+
+    // Distance 9 is outside it: the same bytes upload again.
+    assert.equal(await adminAdd(admin, 'phash', flipLowBits(hash, 9)), 201);
+    const far = await prepare(cookie, 'far.png', 'image/png');
+    const farPut = await upload(far.uploadUrl, cookie, PNG, 'image/png');
+    assert.equal(farPut.status, 200, 'a distance-9 phash must not block');
+    await clearEntries(admin, 'phash');
   });
 
   it('blocks serving and auto-blocklists once ClamAV reports infected', async () => {

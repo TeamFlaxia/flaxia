@@ -114,16 +114,26 @@ const CONTAINER_FAMILIES: readonly (readonly string[])[] = [
   ['video/webm', 'audio/webm'],
 ];
 
-/** True when both MIME types denote the same bytes, container family aside. */
+/**
+ * True when both MIME types denote bytes that are safe to treat alike:
+ * identical, in the same container family, or both an allowlisted image.
+ *
+ * Image formats tolerate each other because a JPEG re-saved under a `.png`
+ * name (common for downloads and thumbnails) still decodes everywhere, and no
+ * image type the sniffer can produce is executable — SVG has no magic bytes,
+ * so it always reads as `text/html` and never reaches this branch.
+ */
 function mimesCompatible(a: string, b: string): boolean {
   if (a === b) return true;
-  return CONTAINER_FAMILIES.some((family) => family.includes(a) && family.includes(b));
+  if (CONTAINER_FAMILIES.some((family) => family.includes(a) && family.includes(b))) return true;
+  return isAllowedImageMime(a) && isAllowedImageMime(b);
 }
 
 /**
- * Masquerade check: the extension on the storage key/filename must agree with
- * the magic-byte verdict. Returns an error message, or null when consistent.
- * Unknown or absent extensions are left for the caller's allowlist.
+ * Masquerade check: the extension on the storage key/filename must not
+ * contradict the magic-byte verdict. Returns an error message, or null when
+ * consistent. Unknown or absent extensions are left for the caller's
+ * allowlist; two allowlisted images are consistent with each other.
  */
 export function checkExtensionMatchesMime(name: string, detectedMime: string): string | null {
   const ext = extensionOf(name);
@@ -148,6 +158,13 @@ const DECLARED_ALIASES: Record<string, string> = {
   'application/x-shockwave-flash': 'application/x-shockwave-flash',
   'audio/mp3': 'audio/mpeg',
   'audio/mpeg3': 'audio/mpeg',
+  // Browsers derive file.type from the extension, and these spellings are the
+  // ones Safari/macOS and Chrome-on-Windows report for .m4a and .wav files.
+  'audio/m4a': 'audio/mp4',
+  'audio/x-m4a': 'audio/mp4',
+  'audio/wave': 'audio/wav',
+  'audio/x-wav': 'audio/wav',
+  'audio/vnd.wave': 'audio/wav',
   'video/x-matroska': 'video/webm',
   'text/html; charset=utf-8': 'text/html',
 };
@@ -159,10 +176,11 @@ function normalizeDeclared(declared: string): string {
 
 /**
  * Consistency check between the client-declared Content-Type and the bytes.
- * Stricter than the historical "top-level image/ vs not" rule: the declared
- * type must now equal the detected one (after alias normalization and within
- * the same container family), except for generic binary declarations. Returns
- * an error message or null.
+ * The declared type must line up with the detected one — after alias
+ * normalization, within a container family, or both allowlisted images —
+ * except for generic binary declarations. A declaration from another class
+ * (image/audio/video over HTML or SWF bytes, audio over image bytes) is a
+ * masquerade. Returns an error message or null.
  */
 export function checkDeclaredType(declared: string | null | undefined, detectedMime: string): string | null {
   if (!declared) return null;
