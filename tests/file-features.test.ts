@@ -335,6 +335,24 @@ describe('image decoders', () => {
     assert.equal(decodeJpegLuma(progressive), null);
     assert.equal(decodeJpegLuma(new Uint8Array([0xff, 0xd8, 0xff])), null);
   });
+
+  it('rejects JPEGs whose declared dimensions exceed the pixel cap', () => {
+    const jpeg = makeBaselineJpeg();
+    let sof = -1;
+    for (let i = 0; i < jpeg.length - 1; i++) {
+      if (jpeg[i] === 0xff && jpeg[i + 1] === 0xc0) {
+        sof = i;
+        break;
+      }
+    }
+    assert.ok(sof >= 0, 'SOF0 marker expected');
+    const segStart = sof + 4; // marker (2) + segment length (2)
+    jpeg[segStart + 1] = 0xff; // height hi
+    jpeg[segStart + 2] = 0xff; // height lo
+    jpeg[segStart + 3] = 0xff; // width hi
+    jpeg[segStart + 4] = 0xff; // width lo
+    assert.equal(decodeJpegLuma(jpeg), null);
+  });
 });
 
 describe('extractPdfText', () => {
@@ -347,6 +365,11 @@ describe('extractPdfText', () => {
     assert.equal(extractPdfText(encoder.encode('just text')), null);
     const empty = makePdf('x');
     assert.ok(extractPdfText(empty) !== null);
+  });
+
+  it('terminates when a backtick appears outside a string', () => {
+    const text = extractPdfText(makePdf('a) Tj ` (b'));
+    assert.equal(text, 'a b');
   });
 });
 

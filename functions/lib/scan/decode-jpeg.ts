@@ -11,6 +11,9 @@ export interface GrayImage {
   height: number;
 }
 
+/** Cap on decoded luma pixels, matching the GIF decoder's budget. */
+export const MAX_JPEG_PIXELS = 16_000_000;
+
 /** zigzag scan position -> natural (row-major) index in an 8x8 block */
 const ZZ_TO_NATURAL = [
   0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28,
@@ -221,6 +224,7 @@ function decode(bytes: Uint8Array): GrayImage | null {
       width = readU16(segStart + 3);
       const ncomp = bytes[segStart + 5];
       if (width <= 0 || height <= 0 || ncomp < 1) return null;
+      if (width * height > MAX_JPEG_PIXELS) return null;
       components = [];
       for (let i = 0; i < ncomp; i++) {
         const p = segStart + 6 + i * 3;

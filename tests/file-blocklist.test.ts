@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   type BlocklistEntry,
   matchBlocklistEntries,
+  matchSignatureEntry,
   PHASH_MAX_DISTANCE,
   validateBlocklistEntry,
 } from '../functions/lib/scan/blocklist.ts';
@@ -72,6 +73,23 @@ describe('matchBlocklistEntries', () => {
   it('ignores reserved signature entries during sync matching', () => {
     const found = matchBlocklistEntries(features({ sha256: sha }), [entry('signature', 'Win.Trojan.Test')]);
     assert.equal(found, null);
+  });
+});
+
+describe('matchSignatureEntry', () => {
+  const entries: BlocklistEntry[] = [
+    { id: 1, kind: 'sha256', value: 'a'.repeat(64), signature: null, reason: null },
+    { id: 2, kind: 'signature', value: 'Trojan.Win32', signature: null, reason: 'family block' },
+  ];
+
+  it('matches a signature entry as a case-insensitive substring of the verdict', () => {
+    assert.equal(matchSignatureEntry('Win.Trojan.Win32.Agent-123', entries)?.id, 2);
+    assert.equal(matchSignatureEntry('Eicar-Test-Signature', entries), null);
+  });
+
+  it('never matches non-signature entries and tolerates a null verdict', () => {
+    assert.equal(matchSignatureEntry(null, entries), null);
+    assert.equal(matchSignatureEntry('aaaaaaaa', entries), null);
   });
 });
 

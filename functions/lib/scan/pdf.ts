@@ -146,7 +146,7 @@ function extractText(content: string): string[] {
       while (i < content.length && content[i] !== '\n' && content[i] !== '\r') i++;
       continue;
     }
-    if (/[A-Za-z'"`]/.test(c)) {
+    if (/[A-Za-z'"]/.test(c)) {
       let j = i;
       while (j < content.length && /[A-Za-z0-9'"*]/.test(content[j])) j++;
       const op = content.slice(i, j);

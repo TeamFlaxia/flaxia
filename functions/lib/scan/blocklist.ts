@@ -84,6 +84,21 @@ export async function matchBlocklist(db: D1Database, features: FileFeatures): Pr
   return matchBlocklistEntries(features, entries);
 }
 
+/**
+ * Match a ClamAV verdict signature against admin-curated `signature` entries.
+ * The entry value is a case-insensitive substring of the verdict name. This is
+ * only meaningful after a scan produced a signature, so it runs at verdict time
+ * rather than in the synchronous feature matcher.
+ */
+export function matchSignatureEntry(signature: string | null, entries: BlocklistEntry[]): BlocklistEntry | null {
+  if (!signature) return null;
+  const needle = signature.toLowerCase();
+  for (const entry of entries) {
+    if (entry.kind === 'signature' && needle.includes(entry.value.toLowerCase())) return entry;
+  }
+  return null;
+}
+
 // ─── Admin CRUD (mounted at /api/admin/file-blocklist) ───────────────────────
 
 export interface BlocklistAdminRow extends BlocklistEntry {

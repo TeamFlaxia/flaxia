@@ -119,6 +119,15 @@ Input: `files: { [name]: base64 }` in the `submit` payload. Output envelope:
 | failed / task failure | row → `failed` with reason; serving fails open |
 | clean/infected never downgrades: re-upload of the same bytes keeps the verdict (sha-aware upsert) | |
 
+A `signature` blocklist entry is matched at verdict time against the ClamAV
+signature name (case-insensitive substring); a match supplies the `reason`
+recorded on the auto-added sha256 entry. Blocking itself does not depend on the
+entry — any infected verdict is blocked.
+
+A clean verdict also clears the key's `fileblk:` marker when the callback's
+`sha` prefix matches the current row, so reused keys (thumbnails, attachment
+slots, ad payloads) recover once clean bytes replace an infected upload.
+
 Status lifecycle: `pending` → `submitted` (written by `setScanTask` once the
 orchestrator accepts the task) → `clean` / `infected` / `failed` / `skipped`.
 `submitted` must appear in the `file_scans.status` CHECK **both** in

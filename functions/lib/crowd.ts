@@ -18,9 +18,9 @@ import {
   resolveNsfwTags,
 } from '@flaxia/sdk';
 import { createProjection, parseBanditConfig, projConfigKey, project } from './linucb.ts';
-import { matchBlocklist } from './scan/blocklist.ts';
+import { loadBlocklist, matchBlocklist, matchSignatureEntry } from './scan/blocklist.ts';
 import { clamavVerdict, parseContainerOutput, parseVideoPhashes } from './scan/container-result.ts';
-import { getFileScan, recordInfection, setScanPhash, setScanStatus } from './scan/db.ts';
+import { clearKeyBlocked, getFileScan, recordInfection, setScanPhash, setScanStatus } from './scan/db.ts';
 import type { FileFeatures } from './scan/features.ts';
 
 export interface CrowdEnv {
@@ -597,7 +597,16 @@ async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Da
 
   const verdict = clamavVerdict(output);
   if (verdict.status === 'infected') {
-    await recordInfection(db, env.CACHE, r2Key, verdict.signature, 'clamav', shaPrefix);
+    // A curated `signature` entry matching the verdict name supplies the
+    // recorded reason; blocking happens either way.
+    let reason = 'clamav';
+    try {
+      const hit = matchSignatureEntry(verdict.signature, await loadBlocklist(db));
+      if (hit?.reason) reason = hit.reason;
+    } catch (e) {
+      console.error('Signature blocklist lookup failed:', e);
+    }
+    await recordInfection(db, env.CACHE, r2Key, verdict.signature, reason, shaPrefix);
     console.log(`ClamAV infected ${r2Key}: ${verdict.signature}`);
     return;
   }
@@ -621,6 +630,12 @@ async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Da
       if (hit) {
         await recordInfection(db, env.CACHE, r2Key, hit.signature, hit.reason ?? 'blocklist', shaPrefix);
         return;
+      }
+      // Clean re-scan of bytes reused at this key clears a marker left by an
+      // earlier infection. Guarded by the content prefix so a stale callback
+      // cannot unblock freshly re-uploaded bytes.
+      if (!shaPrefix || row.sha256.startsWith(shaPrefix)) {
+        await clearKeyBlocked(env.CACHE, r2Key);
       }
     }
   } catch (e) {
