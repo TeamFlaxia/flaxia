@@ -190,5 +190,9 @@ substring of the ClamAV verdict name).
   decode unsupported) — `phashNote` records why.
 - pHash distance 8 is tuned for the 64-bit hash, not for adversarial
   perturbations; ClamAV remains the primary malware gate.
+- pHash drops coefficients below `1e-9` of the strongest before the median and
+  the bit decisions (same floor as the comparison margin). Without it, a flat
+  or symmetric image hashes its own floating-point rounding noise, so identical
+  pictures could land far apart.
 - `feature/pdf-attachments` is a pending branch that also touches
   `helpers.ts`/`media.ts` and claims migration `0096`.

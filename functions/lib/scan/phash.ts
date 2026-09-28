@@ -94,21 +94,45 @@ function median(values: Float64Array): number {
 }
 
 /**
+ * Drop coefficients that are negligible next to the strongest one and return
+ * the floor used. A flat plane only has DC energy and a perfectly symmetric
+ * one only a handful of terms, but the separable transform leaves ~1e-13 of
+ * rounding noise everywhere else. Compared against a median of ~0 that noise
+ * decides bits, so two visually identical images can hash far apart and the
+ * same image can hash differently under a trivial resample. A coefficient
+ * this far below the peak carries no perceptible signal, so it is dropped.
+ */
+function suppressNoise(coeffs: Float64Array): number {
+  let strongest = 0;
+  for (let i = 0; i < coeffs.length; i++) strongest = Math.max(strongest, Math.abs(coeffs[i]));
+  const floor = strongest * 1e-9;
+  if (floor > 0) {
+    for (let i = 0; i < coeffs.length; i++) {
+      if (Math.abs(coeffs[i]) <= floor) coeffs[i] = 0;
+    }
+  }
+  return floor;
+}
+
+/**
  * Compute the 64-bit pHash of a grayscale image. The plane is box-downscaled
  * to 32x32, transformed with a 2D DCT, and the top-left 8x8 low-frequency
- * coefficients are kept. Returns 16 lowercase hex chars: bit i is set when
- * coefficient i exceeds the median of those 64 coefficients (DC included).
- * Deterministic and self-consistent — only hashes produced by this function
- * should be compared against each other.
+ * coefficients are kept. Coefficients below a threshold relative to the
+ * strongest are treated as zero. Bit i is then set when coefficient i clears
+ * the median of the 64 by more than that same floor, which keeps a
+ * coefficient sitting exactly on the median from flipping on rounding noise.
+ * Returns 16 lowercase hex chars. Deterministic and self-consistent — only
+ * hashes produced by this function should be compared against each other.
  */
 export function computePhash(gray: Uint8Array, width: number, height: number): string {
   const small = resizeBox(gray, width, height, 32);
   const coeffs = dctLowFrequencies(small, 32);
+  const floor = suppressNoise(coeffs);
   const threshold = median(coeffs);
   let hi = 0;
   let lo = 0;
   for (let i = 0; i < 64; i++) {
-    if (coeffs[i] > threshold) {
+    if (coeffs[i] > threshold + floor) {
       if (i < 32) hi |= 1 << (31 - i);
       else lo |= 1 << (63 - i);
     }

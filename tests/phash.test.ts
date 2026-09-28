@@ -61,28 +61,30 @@ function referenceResize(gray: Uint8Array, width: number, height: number, size: 
   return out;
 }
 
-/** The documented pHash pipeline's bit decisions, from the references above. */
-function referenceHash(
-  gray: Uint8Array,
-  width: number,
-  height: number,
-): { bits: boolean[]; coeffs: Float64Array; median: number } {
+/** Coefficients below this fraction of the strongest are treated as zero. */
+const NOISE_FLOOR = 1e-9;
+
+/** The documented pHash pipeline, assembled from the references above. */
+function referenceHash(gray: Uint8Array, width: number, height: number): string {
   const coeffs = referenceDct(referenceResize(gray, width, height, 32), 32);
+  let strongest = 0;
+  for (const value of coeffs) strongest = Math.max(strongest, Math.abs(value));
+  const floor = strongest * NOISE_FLOOR;
+  for (let i = 0; i < 64; i++) {
+    if (Math.abs(coeffs[i]) <= floor) coeffs[i] = 0;
+  }
   const sorted = Float64Array.from(coeffs).sort();
   const median = (sorted[31] + sorted[32]) / 2;
-  const bits: boolean[] = [];
-  for (let i = 0; i < 64; i++) bits.push(coeffs[i] > median);
-  return { bits, coeffs, median };
-}
-
-/** Expand a 16-hex hash into its 64 bits, most significant first. */
-function hashBits(hash: string): boolean[] {
-  const bits: boolean[] = [];
+  let hi = 0;
+  let lo = 0;
   for (let i = 0; i < 64; i++) {
-    const nibble = Number.parseInt(hash[Math.floor(i / 4)], 16);
-    bits.push(((nibble >> (3 - (i % 4))) & 1) === 1);
+    if (coeffs[i] > median + floor) {
+      if (i < 32) hi |= 1 << (31 - i);
+      else lo |= 1 << (63 - i);
+    }
   }
-  return bits;
+  const hex = (n: number) => (n >>> 0).toString(16).padStart(8, '0');
+  return hex(hi) + hex(lo);
 }
 
 function assertClose(actual: Float64Array, expected: Float64Array, tolerance = 1e-9): void {
@@ -269,35 +271,45 @@ describe('computePhash', () => {
     assert.equal(hash, computePhash(gray, 32, 32));
   });
 
-  it('matches the independent reference wherever the coefficient is not on the median', () => {
-    // Two summation orders (separable vs the O(N^4) reference) can disagree in
-    // the last bits when a coefficient sits exactly on the median, so those
-    // coefficients are excluded. Every decisive coefficient must still agree,
-    // which is what catches a changed scale, resize or bit-packing.
+  it('matches the independent reference exactly', () => {
+    // The reference shares the noise floor rule, which is what keeps the two
+    // summation orders from disagreeing on a coefficient that lands on the
+    // median (the stripes case below does exactly that).
     const cases: Array<[string, Uint8Array, number, number]> = [
       ['blob', blob(64, 64), 64, 64],
       ['stripes', stripes(64, 64), 64, 64],
       ['random', Uint8Array.from(pseudoRandom(48 * 40, 11), (v) => Math.round(v * 255)), 48, 40],
-      ['constant', new Uint8Array(32 * 32).fill(128), 32, 32],
+      ['flat', new Uint8Array(32 * 32).fill(128), 32, 32],
+      ['black', new Uint8Array(32 * 32), 32, 32],
     ];
     for (const [name, gray, width, height] of cases) {
-      const { bits, coeffs, median } = referenceHash(gray, width, height);
-      const actual = hashBits(computePhash(gray, width, height));
-      let decisive = 0;
-      for (let i = 0; i < 64; i++) {
-        if (Math.abs(coeffs[i] - median) <= 1e-6) continue;
-        decisive++;
-        assert.equal(actual[i], bits[i], `${name}: bit ${i} should follow the reference`);
-      }
-      assert.ok(decisive > 0, `${name}: at least one coefficient must be decisive`);
+      assert.equal(computePhash(gray, width, height), referenceHash(gray, width, height), name);
     }
   });
 
-  it('is deterministic and DC-driven for a flat image', () => {
-    const flat = new Uint8Array(32 * 32).fill(128);
-    const hash = computePhash(flat, 32, 32);
-    assert.equal(hash, computePhash(flat, 32, 32));
-    assert.ok((Number.parseInt(hash[0], 16) & 0x8) !== 0, 'the DC coefficient exceeds the zero median');
+  it('canonicalizes flat images', () => {
+    // Without the noise floor the flat plane's rounding noise decided the bits.
+    assert.equal(computePhash(new Uint8Array(32 * 32).fill(128), 32, 32), '8000000000000000');
+    assert.equal(computePhash(new Uint8Array(32 * 32).fill(1), 32, 32), '8000000000000000');
+    assert.equal(computePhash(new Uint8Array(32 * 32), 32, 32), '0000000000000000');
+    // Only DC moves with brightness, so the hash is unchanged.
+    assert.equal(
+      hammingDistance(
+        computePhash(new Uint8Array(32 * 32).fill(128), 32, 32),
+        computePhash(new Uint8Array(32 * 32).fill(200), 32, 32),
+      ),
+      0,
+    );
+  });
+
+  it('does not let a coefficient exactly on the median flip on rounding noise', () => {
+    // Diagonal stripes produce a pair of coefficients equal to the median; the
+    // hash must equal the independently computed one (see the reference test
+    // above) and stay stable when the plane is recomputed.
+    const photo = stripes(64, 64);
+    const hash = computePhash(photo, 64, 64);
+    assert.equal(hash, referenceHash(photo, 64, 64));
+    assert.equal(hash, computePhash(stripes(64, 64), 64, 64));
   });
 
   it('reads the whole image, not only its top rows', () => {
