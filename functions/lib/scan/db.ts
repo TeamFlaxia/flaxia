@@ -10,7 +10,7 @@ const FILE_SCANS_SCHEMA = `r2_key TEXT PRIMARY KEY,
   structure_hash TEXT,
   text_hash TEXT,
   phash TEXT,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'clean', 'infected', 'failed', 'skipped')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'submitted', 'clean', 'infected', 'failed', 'skipped')),
   detail TEXT,
   task_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -149,15 +149,32 @@ export async function setScanTask(db: D1Database, r2Key: string, taskId: string)
     .run();
 }
 
-/** Store video keyframe hashes delivered by the orchestrator. */
-export async function setScanPhash(db: D1Database, r2Key: string, phash: string): Promise<void> {
-  await db.prepare('UPDATE file_scans SET phash = ? WHERE r2_key = ?').bind(phash, r2Key).run();
+/**
+ * Store video keyframe hashes delivered by the orchestrator. Only applies when
+ * the row still hashes to `shaPrefix`, so a late callback for bytes A cannot
+ * overwrite the hashes of re-uploaded bytes B.
+ */
+export async function setScanPhash(db: D1Database, r2Key: string, phash: string, shaPrefix?: string): Promise<void> {
+  let sql = 'UPDATE file_scans SET phash = ? WHERE r2_key = ?';
+  const binds: unknown[] = [phash, r2Key];
+  if (shaPrefix) {
+    sql += ' AND sha256 LIKE ?';
+    binds.push(`${shaPrefix}%`);
+  }
+  await db
+    .prepare(sql)
+    .bind(...(binds as [string, string, ...string[]]))
+    .run();
 }
 
 /**
  * Record a confirmed malicious file: mark the row infected, add its sha256 to
  * the blocklist (so re-uploads are rejected synchronously) and flag the key in
  * KV so the media routes stop serving it.
+ *
+ * `shaPrefix` ties the callback to the content it was issued for. The row is
+ * read first and re-checked by `setScanStatus`, so a stale or forged callback
+ * for different bytes neither blocklists the current sha nor marks the row.
  */
 export async function recordInfection(
   db: D1Database,
@@ -165,19 +182,20 @@ export async function recordInfection(
   r2Key: string,
   signature: string | null,
   reason: string,
+  shaPrefix?: string,
 ): Promise<void> {
   const row = await getFileScan(db, r2Key);
-  await setScanStatus(db, r2Key, 'infected', { detail: signature ?? reason });
-  if (row) {
-    await db
-      .prepare(
-        `INSERT INTO file_blocklist (kind, value, signature, reason, added_by)
-         VALUES ('sha256', ?, ?, ?, 'system')
-         ON CONFLICT(kind, value) DO UPDATE SET signature = excluded.signature, reason = excluded.reason`,
-      )
-      .bind(row.sha256, signature, reason)
-      .run();
-  }
+  if (!row) return;
+  if (shaPrefix && !row.sha256.startsWith(shaPrefix)) return;
+  await setScanStatus(db, r2Key, 'infected', { detail: signature ?? reason, shaPrefix });
+  await db
+    .prepare(
+      `INSERT INTO file_blocklist (kind, value, signature, reason, added_by)
+       VALUES ('sha256', ?, ?, ?, 'system')
+       ON CONFLICT(kind, value) DO UPDATE SET signature = excluded.signature, reason = excluded.reason`,
+    )
+    .bind(row.sha256, signature, reason)
+    .run();
   await markKeyBlocked(cache, r2Key);
 }
 

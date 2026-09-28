@@ -104,6 +104,29 @@ describe('security guards', () => {
       assert.ok(headers.includes(header), `_headers missing ${header}`);
     }
   });
+
+  it('authenticates orchestrator callbacks', () => {
+    // /api/crowd/webhook is a standalone Pages Function: no Hono middleware,
+    // no session, no CSRF. An unsigned callback could post an `infected`
+    // verdict for any public media key and blocklist it permanently.
+    const crowd = readFileSync(join(ROOT, 'functions/lib/crowd.ts'), 'utf8');
+    assert.ok(crowd.includes('verifyCallbackSignature'), 'the webhook must verify the callback signature');
+    assert.match(
+      crowd,
+      /if \(!\(await verifyCallbackSignature\(url, crowdConfig\(env\)\)\)\)/,
+      'the signature must be checked before the payload is parsed',
+    );
+
+    // Every URL handed to the orchestrator must go through the signer.
+    for (const file of ['functions/lib/crowd.ts', 'functions/lib/scan/clamav.ts']) {
+      const src = readFileSync(join(ROOT, file), 'utf8');
+      assert.ok(
+        !/callbackUrl:\s*buildCallbackUrl\(/.test(src),
+        `${file} hands the orchestrator an unsigned callback URL`,
+      );
+      assert.ok(src.includes('signedCallbackUrl'), `${file} must sign its callback URLs`);
+    }
+  });
 });
 
 // The invariants of docs/e2ee.md that are cheap to break and expensive to

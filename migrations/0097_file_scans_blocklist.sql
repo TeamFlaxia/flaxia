@@ -3,7 +3,14 @@
 -- Every uploaded object gets one file_scans row holding the features extracted
 -- synchronously in the Worker (sha256, zip entry-list hash, pdf text hash,
 -- image phash) plus the asynchronous ClamAV verdict delivered by the Crowd
--- orchestrator callback (status: pending -> clean|infected|failed|skipped).
+-- orchestrator callback (status: pending -> submitted -> clean|infected|
+-- failed|skipped).
+--
+-- The status CHECK is duplicated verbatim in FILE_SCANS_SCHEMA in
+-- functions/lib/scan/db.ts (the runtime bootstrap for databases created
+-- outside the migration path). SQLite cannot ALTER a CHECK constraint: if a
+-- database already holds a file_scans built from an older copy of this file,
+-- drop both tables here (or rebuild them) before re-running migrations.
 --
 -- file_blocklist is the admin-curated deny list. Entries match by exact value
 -- for sha256/structure_hash/text_hash/signature, and by hamming distance for
@@ -18,7 +25,7 @@ CREATE TABLE file_scans (
   -- One 16-hex-char hash, or a comma-separated list for video keyframes.
   phash          TEXT,
   status         TEXT NOT NULL DEFAULT 'pending'
-    CHECK(status IN ('pending', 'clean', 'infected', 'failed', 'skipped')),
+    CHECK(status IN ('pending', 'submitted', 'clean', 'infected', 'failed', 'skipped')),
   -- ClamAV signature name when infected, or the skip/failure reason.
   detail         TEXT,
   task_id        TEXT,

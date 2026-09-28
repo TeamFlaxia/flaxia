@@ -272,7 +272,7 @@ asynchronous ClamAV verdict (migration 0097).
 | structure_hash | TEXT | ZIP entry-list hash (zip only) |
 | text_hash | TEXT | Normalized text hash (PDF only) |
 | phash | TEXT | 16-hex image hash, or comma-separated video keyframes |
-| status | TEXT | `pending` → `clean` / `infected` / `failed` / `skipped` |
+| status | TEXT | `pending` → `submitted` → `clean` / `infected` / `failed` / `skipped` |
 | detail | TEXT | ClamAV signature name, or the skip/failure reason |
 | task_id | TEXT | Orchestrator container task id |
 | created_at | TEXT | |

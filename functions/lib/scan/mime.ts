@@ -81,6 +81,8 @@ const EXT_MIME_MAP: Record<string, string> = {
   oga: 'audio/ogg',
   mp4: 'video/mp4',
   m4v: 'video/mp4',
+  m4a: 'audio/mp4',
+  mov: 'video/quicktime',
   webm: 'video/webm',
   zip: 'application/zip',
   swf: 'application/x-shockwave-flash',
@@ -101,6 +103,24 @@ export function extensionOf(name: string): string | null {
 }
 
 /**
+ * Container families that magic-byte sniffing cannot tell apart: an `ftyp` box
+ * is reported as `video/mp4` and an EBML header as `video/webm`, regardless of
+ * whether the file carries audio or video tracks. All members of a family are
+ * accepted for each other so `.m4a`, `.mov` and audio-only `.webm` uploads —
+ * which the composer advertises — do not read as masquerades.
+ */
+const CONTAINER_FAMILIES: readonly (readonly string[])[] = [
+  ['video/mp4', 'audio/mp4', 'video/quicktime'],
+  ['video/webm', 'audio/webm'],
+];
+
+/** True when both MIME types denote the same bytes, container family aside. */
+function mimesCompatible(a: string, b: string): boolean {
+  if (a === b) return true;
+  return CONTAINER_FAMILIES.some((family) => family.includes(a) && family.includes(b));
+}
+
+/**
  * Masquerade check: the extension on the storage key/filename must agree with
  * the magic-byte verdict. Returns an error message, or null when consistent.
  * Unknown or absent extensions are left for the caller's allowlist.
@@ -110,9 +130,7 @@ export function checkExtensionMatchesMime(name: string, detectedMime: string): s
   if (!ext) return null;
   const expected = EXT_MIME_MAP[ext];
   if (!expected) return null;
-  if (expected === detectedMime) return null;
-  // JPEG aliases: some tools write .jpg for image/jpg-declared files.
-  if (expected === 'image/jpeg' && detectedMime === 'image/jpeg') return null;
+  if (mimesCompatible(expected, detectedMime)) return null;
   return `File extension .${ext} does not match actual file content (${detectedMime})`;
 }
 
@@ -142,14 +160,15 @@ function normalizeDeclared(declared: string): string {
 /**
  * Consistency check between the client-declared Content-Type and the bytes.
  * Stricter than the historical "top-level image/ vs not" rule: the declared
- * type must now equal the detected one (after alias normalization), except for
- * generic binary declarations. Returns an error message or null.
+ * type must now equal the detected one (after alias normalization and within
+ * the same container family), except for generic binary declarations. Returns
+ * an error message or null.
  */
 export function checkDeclaredType(declared: string | null | undefined, detectedMime: string): string | null {
   if (!declared) return null;
   const normalized = normalizeDeclared(declared);
   if (GENERIC_DECLARED.has(normalized)) return null;
-  if (normalized === detectedMime) return null;
+  if (mimesCompatible(normalized, detectedMime)) return null;
   // ZIP games are routinely uploaded with a page's or form's content type.
   if (detectedMime === 'application/zip') return null;
   return `Declared Content-Type does not match actual file content`;

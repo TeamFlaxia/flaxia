@@ -34,6 +34,9 @@ STRIPE_PRICE_FLXIA_PLUS = "price_1UI3sxGMn6YcUp3x8rC58pdt"  # Stripe Price ID „Å
 
 # To set CROWD_API_KEY secret:
 #   npx wrangler secret put CROWD_API_KEY
+# Callbacks on POST /api/crowd/webhook are signed with CROWD_API_KEY by
+# default; set CROWD_WEBHOOK_SECRET only to rotate the signing key separately:
+#   npx wrangler pages secret put CROWD_WEBHOOK_SECRET --project-name flaxia
 
 [[r2_buckets]]
 binding = "BUCKET"

@@ -75,6 +75,16 @@ describe('checkExtensionMatchesMime', () => {
     assert.equal(checkExtensionMatchesMime('unknown.xyz', 'text/html'), null, 'unknown ext is not judged');
     assert.equal(checkExtensionMatchesMime('avatar/deadbeef', 'text/html'), null, 'no ext is not judged');
   });
+
+  it('accepts container families the sniffer cannot split', () => {
+    // ftyp always sniffs as video/mp4, EBML always as video/webm — the tracks
+    // a file actually carries are invisible to the magic bytes.
+    assert.equal(checkExtensionMatchesMime('clip.m4a', 'video/mp4'), null, '.m4a sniffs as video/mp4');
+    assert.equal(checkExtensionMatchesMime('clip.mov', 'video/mp4'), null, '.mov sniffs as video/mp4');
+    assert.equal(checkExtensionMatchesMime('clip.webm', 'video/webm'), null, 'audio .webm sniffs as video/webm');
+    assert.ok(checkExtensionMatchesMime('clip.m4a', 'text/html'), 'the family rule does not weaken the check');
+    assert.ok(checkExtensionMatchesMime('clip.mov', 'video/webm'), 'ISO-BMFF and EBML stay distinct');
+  });
 });
 
 describe('checkDeclaredType', () => {
@@ -99,6 +109,20 @@ describe('checkDeclaredType', () => {
 
   it('stays relaxed for ZIP payloads uploaded with generic form types', () => {
     assert.equal(checkDeclaredType('text/html', 'application/zip'), null);
+  });
+
+  it('accepts the declared types the composer actually sends', () => {
+    // PostComposer's allowedTypes ships file.type as-is; these three are all
+    // in its accept list and all upload successfully.
+    assert.equal(checkDeclaredType('audio/mp4', 'video/mp4'), null, '.m4a declares audio/mp4, sniffs video/mp4');
+    assert.equal(checkDeclaredType('video/quicktime', 'video/mp4'), null, '.mov declares video/quicktime');
+    assert.equal(checkDeclaredType('audio/webm', 'video/webm'), null, 'recorded .webm declares audio/webm');
+  });
+
+  it('does not extend the container families across container formats', () => {
+    assert.ok(checkDeclaredType('audio/mp4', 'video/webm'), 'an MP4 declared over WebM bytes is still a mismatch');
+    assert.ok(checkDeclaredType('audio/webm', 'video/mp4'), 'a WebM declared over MP4 bytes is still a mismatch');
+    assert.ok(checkDeclaredType('audio/mp4', 'text/html'), 'family tolerance must not cover HTML');
   });
 });
 

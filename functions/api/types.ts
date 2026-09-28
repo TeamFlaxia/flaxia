@@ -13,6 +13,8 @@ export type Bindings = {
   AP_DELIVERY_QUEUE: Queue;
   CROWD_ORCHESTRATOR_URL: string;
   CROWD_API_KEY: string;
+  /** Optional dedicated secret for signing orchestrator callbacks. */
+  CROWD_WEBHOOK_SECRET?: string;
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   CF_ACCESS_AUD: string;

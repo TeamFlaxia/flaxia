@@ -42,6 +42,12 @@ object never reaches R2 (no `file_scans` row either):
 | 3 | Dimensions sane for images (PNG/GIF/JPEG structure parse) | `type_mismatch` |
 | 4 | Blocklist match on any extracted feature | `file_blocked` |
 
+Check 2 compares MIME types, not just strings: the sniffer cannot tell an
+audio track from a video one, so `video/mp4`/`audio/mp4`/`video/quicktime` are
+accepted for each other, as are `video/webm`/`audio/webm` (`CONTAINER_FAMILIES`
+in `functions/lib/scan/mime.ts`). Without that, the `.m4a`, `.mov` and
+audio-only `.webm` files the composer advertises would all fail as masquerades.
+
 On success the Worker extracts features, inserts a `file_scans` row
 (`status = pending`), writes the object, and schedules `submitFileScans` via
 `waitUntil`.
@@ -78,8 +84,18 @@ GIF ≤ 16 MP, PDF text ≤ 256 KB.
 - The callback URL carries `type=file-scan`, `key=<r2Key>`, `kind=clamav|video-phash`
   and `sha=<first 16 hex of sha256>`; a callback whose sha prefix no longer
   matches the row is ignored (guards stale verdicts after re-upload).
-- `POST /api/crowd/webhook` (auth: none — it only mutates scan rows keyed by
-  the unguessable R2 key + sha prefix) → `{ received: true }`.
+- `POST /api/crowd/webhook` → `{ received: true }`. The route is a standalone
+  Pages Function, so no Hono middleware runs on it; instead every callback URL
+  is signed with `sig=<HMAC-SHA256>` over the canonical path+query
+  (`signedCallbackUrl` / `verifyCallbackSignature` in `functions/lib/crowd.ts`)
+  and an invalid or missing signature is rejected `401` before the body is read.
+  The key defaults to `CROWD_API_KEY` (set `CROWD_WEBHOOK_SECRET` to rotate it
+  independently) and is empty while Crowd is unconfigured, which is what keeps
+  local dev and the integration suites working unsigned.
+- Because the `sha` param is attacker-controllable, it is also checked against
+  the row on every destructive path — `recordInfection` and `setScanPhash` both
+  refuse a prefix that does not match, so a replayed or forged callback can
+  neither blocklist the current bytes nor downgrade a re-uploaded file.
 
 ### Container contract
 
@@ -102,6 +118,14 @@ Input: `files: { [name]: base64 }` in the `submit` payload. Output envelope:
 | infected | row → `infected` + signature in `detail`, KV `fileblk:{key}=1`, **auto-adds sha256 to `file_blocklist`** (`added_by = system`) |
 | failed / task failure | row → `failed` with reason; serving fails open |
 | clean/infected never downgrades: re-upload of the same bytes keeps the verdict (sha-aware upsert) | |
+
+Status lifecycle: `pending` → `submitted` (written by `setScanTask` once the
+orchestrator accepts the task) → `clean` / `infected` / `failed` / `skipped`.
+`submitted` must appear in the `file_scans.status` CHECK **both** in
+`migrations/0097_file_scans_blocklist.sql` and in the runtime bootstrap in
+`functions/lib/scan/db.ts`; SQLite rejects the write otherwise and the whole
+submission path silently fails. `tests/file-scan-schema.test.ts` pins the two
+copies together.
 
 ## Enforcement
 

@@ -7,8 +7,7 @@
 // payload cap the scan row becomes `skipped` with a reason instead of silently
 // staying pending.
 
-import { buildCallbackUrl } from '@flaxia/sdk';
-import { type CrowdEnv, crowdConfig, getCrowdClient } from '../crowd.ts';
+import { type CrowdEnv, crowdConfig, getCrowdClient, signedCallbackUrl } from '../crowd.ts';
 import { ensureFileScansTable, getFileScan, setScanStatus, setScanTask } from './db.ts';
 import { extensionOf } from './mime.ts';
 
@@ -82,7 +81,7 @@ export async function submitFileScans(
           command: ['clamscan', '--infected', '--no-summary', fileName],
           files: { [fileName]: payload },
         },
-        callbackUrl: buildCallbackUrl({
+        callbackUrl: await signedCallbackUrl(config, {
           baseUrl: config.baseUrl,
           type: 'file-scan',
           params: { key: r2Key, kind: 'clamav', sha: shaPrefix },
@@ -121,7 +120,7 @@ async function submitVideoPhash(
         command: ['video-phash', 'input.mp4'],
         files: { 'input.mp4': toBase64(raw) },
       },
-      callbackUrl: buildCallbackUrl({
+      callbackUrl: await signedCallbackUrl(config, {
         baseUrl: config.baseUrl,
         type: 'file-scan',
         params: { key: r2Key, kind: 'video-phash', sha: shaPrefix },

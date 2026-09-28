@@ -7,6 +7,7 @@
 // independently through `@flaxia/sdk`.
 import {
   buildCallbackUrl,
+  type CallbackUrlOptions,
   type CrowdWebhookEvent,
   callbackTypeFromUrl,
   DEFAULT_WORKLOAD_TIMEOUT_MS,
@@ -25,6 +26,8 @@ import type { FileFeatures } from './scan/features.ts';
 export interface CrowdEnv {
   CROWD_ORCHESTRATOR_URL?: string;
   CROWD_API_KEY?: string;
+  /** Optional dedicated callback secret; falls back to the API key. */
+  CROWD_WEBHOOK_SECRET?: string;
   BASE_URL?: string;
   CACHE?: KVNamespace;
   VECTORIZE?: VectorizeLike;
@@ -39,6 +42,8 @@ export interface CrowdConfig {
   orchestratorUrl: string;
   apiKey: string;
   baseUrl: string;
+  /** Secret callbacks are signed with; empty when Crowd is unconfigured. */
+  webhookSecret: string;
   configured: boolean;
 }
 
@@ -74,13 +79,77 @@ export function crowdConfig(env: CrowdEnv): CrowdConfig {
   const orchestratorUrl = (env.CROWD_ORCHESTRATOR_URL || '').replace(/\/+$/, '');
   const apiKey = env.CROWD_API_KEY || '';
   const baseUrl = (env.BASE_URL || 'https://flaxia.app').replace(/\/+$/, '');
-  return { orchestratorUrl, apiKey, baseUrl, configured: Boolean(orchestratorUrl && apiKey) };
+  const configured = Boolean(orchestratorUrl && apiKey);
+  // Reusing the API key keeps verification active in exactly the deployments
+  // that can submit tasks, with no extra secret to provision; set
+  // CROWD_WEBHOOK_SECRET to rotate it independently of the API key.
+  const webhookSecret = configured ? env.CROWD_WEBHOOK_SECRET || apiKey : '';
+  return { orchestratorUrl, apiKey, baseUrl, webhookSecret, configured };
 }
 
 /** Build a client, or null when Crowd is unconfigured (calls become no-ops). */
 export function getCrowdClient(config: CrowdConfig): FlaxiaClient | null {
   if (!config.configured) return null;
   return new FlaxiaClient({ baseUrl: `${config.orchestratorUrl}/crowd`, apiKey: config.apiKey });
+}
+
+// ── Callback signing ──
+//
+// `/api/crowd/webhook` is a standalone Pages Function: it never passes through
+// the Hono middleware in functions/api/[[route]].ts, so nothing authenticates
+// the caller. Every callback URL we hand the orchestrator therefore carries
+// `sig=<HMAC-SHA256 of the canonical path+query>` and the receiver recomputes
+// it before touching a row. Without this, anyone who knows a public media key
+// could post an `infected` verdict, permanently blocklisting that file.
+
+/** Message a signature covers: path plus query with `sig` stripped and sorted. */
+function signingMessage(url: URL): string {
+  const params = new URLSearchParams(url.search);
+  params.delete('sig');
+  params.sort();
+  const query = params.toString();
+  return query ? `${url.pathname}?${query}` : url.pathname;
+}
+
+async function hmacHex(secret: string, message: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, [
+    'sign',
+  ]);
+  const mac = await crypto.subtle.sign('HMAC', key, encoder.encode(message));
+  return [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Length-independent byte compare so a wrong signature cannot be brute-forced by timing. */
+function signatureEquals(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/**
+ * Build a callback URL and sign it for `config.webhookSecret`. An empty secret
+ * (Crowd unconfigured — local dev and tests) returns the URL unsigned.
+ */
+export async function signedCallbackUrl(config: CrowdConfig, options: CallbackUrlOptions): Promise<string> {
+  const url = buildCallbackUrl(options);
+  if (!config.webhookSecret) return url;
+  const parsed = new URL(url);
+  parsed.searchParams.set('sig', await hmacHex(config.webhookSecret, signingMessage(parsed)));
+  return parsed.toString();
+}
+
+/**
+ * True when the callback carries a signature matching `config.webhookSecret`.
+ * An empty secret disables verification rather than breaking the callback flow
+ * in environments where Crowd cannot submit anything in the first place.
+ */
+export async function verifyCallbackSignature(url: URL, config: CrowdConfig): Promise<boolean> {
+  if (!config.webhookSecret) return true;
+  const provided = url.searchParams.get('sig');
+  if (!provided) return false;
+  return signatureEquals(provided, await hmacHex(config.webhookSecret, signingMessage(url)));
 }
 
 // ── Schema bootstrap ──
@@ -181,7 +250,11 @@ export async function submitDetectNsfw(
     lastNsfwSubmitTime = Date.now();
     // `key` says which object of the post this verdict belongs to.
     // buildCallbackUrl omits empty params, so legacy callbacks stay postId-only.
-    const callbackUrl = buildCallbackUrl({ baseUrl: config.baseUrl, type: 'nsfw', params: { postId, key: mediaKey } });
+    const callbackUrl = await signedCallbackUrl(config, {
+      baseUrl: config.baseUrl,
+      type: 'nsfw',
+      params: { postId, key: mediaKey },
+    });
     const res = await client.submit({
       workload: 'nudenet',
       payload: { imageUrl: `${config.baseUrl}/api/images/${mediaKey}` },
@@ -268,7 +341,11 @@ async function submitEmbedTask(config: CrowdConfig, postId: string, text: string
   const client = getCrowdClient(config);
   if (!client) return false;
 
-  const callbackUrl = buildCallbackUrl({ baseUrl: config.baseUrl, type: 'vector-embed', params: { postId } });
+  const callbackUrl = await signedCallbackUrl(config, {
+    baseUrl: config.baseUrl,
+    type: 'vector-embed',
+    params: { postId },
+  });
   try {
     await client.submit({
       workload: 'vector-embed',
@@ -493,8 +570,11 @@ async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Da
     const hashes = parseVideoPhashes(output.stdout);
     const row = await getFileScan(db, r2Key);
     if (!hashes || !row) return;
+    // A keyframe callback issued for bytes A must not overwrite the hashes of
+    // re-uploaded bytes B, nor have B's sha matched against A's blocklist entry.
+    if (shaPrefix && !row.sha256.startsWith(shaPrefix)) return;
     const joined = hashes.join(',');
-    await setScanPhash(db, r2Key, joined);
+    await setScanPhash(db, r2Key, joined, shaPrefix);
     const features: FileFeatures = {
       sha256: row.sha256,
       kind: row.kind as FileFeatures['kind'],
@@ -505,7 +585,7 @@ async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Da
     try {
       const hit = await matchBlocklist(db, features);
       if (hit) {
-        await recordInfection(db, env.CACHE, r2Key, hit.signature ?? 'blocklist_phash', 'phash_blocklist');
+        await recordInfection(db, env.CACHE, r2Key, hit.signature ?? 'blocklist_phash', 'phash_blocklist', shaPrefix);
         console.log(`Video phash hit for ${r2Key} (entry #${hit.id})`);
       }
     } catch (e) {
@@ -517,7 +597,7 @@ async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Da
 
   const verdict = clamavVerdict(output);
   if (verdict.status === 'infected') {
-    await recordInfection(db, env.CACHE, r2Key, verdict.signature, 'clamav');
+    await recordInfection(db, env.CACHE, r2Key, verdict.signature, 'clamav', shaPrefix);
     console.log(`ClamAV infected ${r2Key}: ${verdict.signature}`);
     return;
   }
@@ -539,7 +619,7 @@ async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Da
         phash: row.phash ?? undefined,
       });
       if (hit) {
-        await recordInfection(db, env.CACHE, r2Key, hit.signature, hit.reason ?? 'blocklist');
+        await recordInfection(db, env.CACHE, r2Key, hit.signature, hit.reason ?? 'blocklist', shaPrefix);
         return;
       }
     }
@@ -551,14 +631,21 @@ async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Da
 
 /**
  * Handle an orchestrator callback. Returns the HTTP response for the route:
- * `400` for malformed payloads, `200 { received: true }` otherwise (including
- * failures, so the orchestrator does not retry a callback we already observed).
+ * `401` for a missing or invalid callback signature, `400` for malformed
+ * payloads, `200 { received: true }` otherwise (including failures, so the
+ * orchestrator does not retry a callback we already observed).
  */
 export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1Database): Promise<Response> {
   const url = new URL(request.url);
   const callbackType = callbackTypeFromUrl(url);
 
   try {
+    // Verified before the body is read: an unsigned caller must not be able to
+    // touch scan rows, embeds or NSFW tags at all.
+    if (!(await verifyCallbackSignature(url, crowdConfig(env)))) {
+      return new Response('Forbidden', { status: 401 });
+    }
+
     const event = parseCrowdWebhook(await request.json());
     if (!event) return new Response('Bad Request', { status: 400 });
 
