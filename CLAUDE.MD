@@ -48,7 +48,7 @@ docs/                       # Developer documentation
 
 ## Constraints (NON-NEGOTIABLE)
 - Post text ≤ 200 chars, payload ≤ 10MB
-- Timeline: only (`ORDER BY created_at DESC`)
+- Global and Following timelines: reverse chronological (`GET /api/posts`). For You: ranked recommendations (`GET /api/posts/recommended`); see `docs/architecture.md`.
 - `allow-same-origin` banned on all iframes
 - `Sponsored` label mandatory on all ad cards
 - `click_url` with `javascript:` scheme must be rejected
