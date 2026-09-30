@@ -122,7 +122,7 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
 // The payload must come from the client test; the server only records ciphertext.
 app.post('/api/test/vault-item', requireTestEnvironment, async (c) => {
   const token = getSessionToken(c.req.raw);
-  const session = token ? await getMeWithSession(c.env, token, c.env.CACHE) : null;
+  const session = token ? await getMeWithSession(c.env, token) : null;
   const user = session?.user;
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
   const body = (await c.req.json().catch(() => ({}))) as {

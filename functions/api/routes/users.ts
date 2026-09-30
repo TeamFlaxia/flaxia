@@ -90,7 +90,7 @@ async function enrichPostsWithReactions(
 users.get('/users/suggestions', async (c) => {
   try {
     const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token, c.env.CACHE) : null;
+    const sessionData = token ? await getMeWithSession(c.env, token) : null;
 
     if (!sessionData || !c.env.DB) {
       return c.json({ users: [] });
@@ -435,7 +435,7 @@ users.get('/users/:username', async (c) => {
     let is_following = false;
     let is_blocked = false;
     const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token, c.env.CACHE) : null;
+    const sessionData = token ? await getMeWithSession(c.env, token) : null;
     if (sessionData && sessionData.user.id !== user.id) {
       const followResult = await c.env.DB.prepare('SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?')
         .bind(sessionData.user.id, user.id)
@@ -487,7 +487,7 @@ users.get('/users/:username/pinned', async (c) => {
     }
 
     const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token, c.env.CACHE) : null;
+    const sessionData = token ? await getMeWithSession(c.env, token) : null;
     const currentUserId = sessionData?.user.id ?? null;
 
     const row = await c.env.DB.prepare(
@@ -597,7 +597,7 @@ users.get('/users/:username/followers', async (c) => {
 
     let currentUserId: string | null = null;
     const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token, c.env.CACHE) : null;
+    const sessionData = token ? await getMeWithSession(c.env, token) : null;
     if (sessionData) {
       currentUserId = sessionData.user.id;
     }
@@ -710,7 +710,7 @@ users.get('/users/:username/following', async (c) => {
 
     let currentUserId: string | null = null;
     const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token, c.env.CACHE) : null;
+    const sessionData = token ? await getMeWithSession(c.env, token) : null;
     if (sessionData) {
       currentUserId = sessionData.user.id;
     }

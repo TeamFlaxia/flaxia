@@ -28,6 +28,7 @@ import {
   getVaultKey,
   isVaultUnlocked,
   lockVault,
+  revokeDeviceWithRotation,
   subscribeVault,
   unlockVault,
 } from '../src/lib/vault/session.ts';
@@ -43,6 +44,8 @@ const realFetch = globalThis.fetch.bind(globalThis);
 let sessionCookie = '';
 /** Throw on the next vault-keys request instead of reaching the server. */
 let failNextKeys = false;
+/** Return a transient server error for the next wrapped-item inventory request. */
+let failNextVaultItems = false;
 /** One-shot response body for the next vault-keys request. */
 let overrideKeysBody: unknown = null;
 
@@ -65,6 +68,13 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       });
     }
   }
+  if (raw === '/api/vault/items' && failNextVaultItems) {
+    failNextVaultItems = false;
+    return new Response(JSON.stringify({ error: 'temporary failure' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
   const headers = new Headers(init?.headers);
   if (sessionCookie) headers.set('Cookie', sessionCookie);
   return realFetch(url, { ...init, headers });
@@ -81,11 +91,128 @@ function readJson(path: string): Promise<KeysResponse> {
 
 beforeEach(async () => {
   failNextKeys = false;
+  failNextVaultItems = false;
   overrideKeysBody = null;
   lockVault();
   await resetDb();
   const seeded = await seedUserAndLogin('1');
   sessionCookie = seeded.cookie;
+});
+
+test('device revocation refuses to rotate VK when item-key inventory cannot be fetched', async (t) => {
+  assert.deepEqual(await enableVault(PASSWORD, PHRASE), { ok: true });
+  const oldVk = getVaultKey();
+  assert.ok(oldVk);
+
+  const seeded = await fetch('/api/test/vault-item', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      item_id: 'keep-me',
+      item_key_wrapped: 'old-wrapped-item-key',
+      payload: 'encrypted-payload',
+    }),
+  });
+  assert.equal(seeded.status, 201);
+
+  const currentDevice = (await (await fetch('/api/vault/devices')).json()) as {
+    devices: Array<{ id: string; state: string }>;
+  };
+  const currentDeviceId = currentDevice.devices.find((device) => device.state === 'active')?.id;
+  assert.ok(currentDeviceId);
+
+  // Create a second active device, which is the one being revoked.
+  const joiner = generateEphemeralKeyPair();
+  const created = await fetch('/api/vault/devices', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ label: 'Second device', peer_pub: encodeB64(joiner.publicKey) }),
+  });
+  assert.equal(created.status, 201);
+  const { id: deviceToRevoke } = (await created.json()) as { id: string };
+  const approver = generateEphemeralKeyPair();
+  const wrappedVk = await wrapVaultKeyForPairing(oldVk, approver.secretKey, joiner.publicKey, deviceToRevoke);
+  const approved = await fetch(`/api/vault/devices/${deviceToRevoke}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ approved_pub: encodeB64(approver.publicKey), wrapped_vk: wrappedVk }),
+  });
+  assert.equal(approved.status, 200);
+
+  // Node has no IndexedDB; expose the server-registered current device id to
+  // the client code so this test exercises the same revocation path as a browser.
+  const priorLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const priorIndexedDb = Object.getOwnPropertyDescriptor(globalThis, 'indexedDB');
+  const storedDevices = new Map<string, unknown>();
+  const requestFor = <T>(value: () => T) => {
+    const request: { result?: T; onsuccess?: () => void; onerror?: () => void } = {};
+    queueMicrotask(() => {
+      request.result = value();
+      request.onsuccess?.();
+    });
+    return request;
+  };
+  const memoryIndexedDb = {
+    open: () => {
+      const request: { result?: unknown; onsuccess?: () => void; onerror?: () => void } = {};
+      queueMicrotask(() => {
+        request.result = {
+          objectStoreNames: { contains: () => true },
+          transaction: () => ({
+            objectStore: () => ({
+              get: (id: string) => requestFor(() => storedDevices.get(id)),
+              put: (device: { id: string }) =>
+                requestFor(() => {
+                  storedDevices.set(device.id, device);
+                  return device.id;
+                }),
+            }),
+          }),
+          close: () => {},
+        };
+        request.onsuccess?.();
+      });
+      return request;
+    },
+  } as unknown as IDBFactory;
+  Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: memoryIndexedDb });
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (key: string) => (key === 'flaxia.current_device_id' ? currentDeviceId : null),
+      setItem: () => {},
+      removeItem: () => {},
+    },
+  });
+  t.after(() => {
+    if (priorLocalStorage) Object.defineProperty(globalThis, 'localStorage', priorLocalStorage);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
+    if (priorIndexedDb) Object.defineProperty(globalThis, 'indexedDB', priorIndexedDb);
+    else Reflect.deleteProperty(globalThis, 'indexedDB');
+  });
+
+  const before = (await (await fetch('/api/vault/keys')).json()) as { vk_version: number };
+  failNextVaultItems = true;
+  const rotated = await revokeDeviceWithRotation(deviceToRevoke, PASSWORD, PHRASE);
+  const after = (await (await fetch('/api/vault/keys')).json()) as { vk_version: number };
+  const items = (await (await fetch('/api/vault/items')).json()) as {
+    items: Array<{ id: string; item_key_wrapped: string; vk_version: number }>;
+  };
+  assert.deepEqual(
+    {
+      rotationAccepted: rotated,
+      sessionKeptOldVk: encodeB64(getVaultKey() ?? new Uint8Array()) === encodeB64(oldVk),
+      serverVkVersion: after.vk_version,
+      items: items.items.map(({ id, item_key_wrapped, vk_version }) => ({ id, item_key_wrapped, vk_version })),
+    },
+    {
+      rotationAccepted: false,
+      sessionKeptOldVk: true,
+      serverVkVersion: before.vk_version,
+      items: [{ id: 'keep-me', item_key_wrapped: 'old-wrapped-item-key', vk_version: 1 }],
+    },
+    'failed inventory retrieval must not rotate VK while leaving item keys under the old VK',
+  );
 });
 
 // ─── enable ─────────────────────────────────────────────────────────────────

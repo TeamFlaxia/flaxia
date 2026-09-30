@@ -50,7 +50,7 @@ games.get('/games', async (c) => {
         const parsed = JSON.parse(cachedData);
 
         const token = getSessionToken(c.req.raw);
-        const sessionData = token ? await getMeWithSession(c.env, token, c.env.CACHE) : null;
+        const sessionData = token ? await getMeWithSession(c.env, token) : null;
         const currentUserId = sessionData?.user?.id;
 
         if (currentUserId && parsed.games.length > 0) {
@@ -68,7 +68,7 @@ games.get('/games', async (c) => {
     }
 
     const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token, c.env.CACHE) : null;
+    const sessionData = token ? await getMeWithSession(c.env, token) : null;
     const currentUserId = sessionData?.user?.id;
 
     if (shuffle) {

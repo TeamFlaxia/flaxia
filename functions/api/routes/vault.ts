@@ -310,9 +310,23 @@ vault.post('/vault/keys/revoke-device', requireAuth, async (c) => {
   if (itemKeys.some((item) => !isValidVaultItemId(item.item_id) || !isValidWrappedKey(item.item_key_wrapped))) {
     return c.json({ error: 'Invalid vault item keys' }, 400);
   }
+  const submittedItemIds = itemKeys.map((item) => item.item_id as string);
+  if (new Set(submittedItemIds).size !== submittedItemIds.length) {
+    return c.json({ error: 'Invalid vault item keys' }, 400);
+  }
 
   const current = await readEnvelope(c, user.id);
   if (!current) return c.json({ error: 'Vault not enabled' }, 404);
+  const inventory = await c.env.DB.prepare('SELECT id FROM vault_items WHERE user_id = ?')
+    .bind(user.id)
+    .all<{ id: string }>();
+  const existingItemIds = (inventory.results ?? []).map((item) => item.id);
+  if (
+    existingItemIds.length !== submittedItemIds.length ||
+    existingItemIds.some((itemId) => !submittedItemIds.includes(itemId))
+  ) {
+    return c.json({ error: 'Vault item key inventory is incomplete' }, 409);
+  }
   if (!(await verifyProof(c.env, user.id, body.current_srp))) {
     return c.json({ error: 'Current password is incorrect' }, 401);
   }

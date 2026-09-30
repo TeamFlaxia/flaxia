@@ -425,19 +425,34 @@ describe('POST /api/vault/keys/revoke-device', () => {
     const proof = await createSrpProof(cookie, PASSWORD);
     assert.ok(proof);
 
+    const requestBody = {
+      current_srp: proof,
+      device_id: id,
+      current_device_id: currentDeviceId,
+      vk_version: oldKeys.vk_version,
+      salt: encodeB64(salt),
+      recovery_salt: oldKeys.recovery_salt,
+      kdf_params: oldKeys.kdf_params,
+      wrapped_vk: wrapped,
+      recovery_blob: recovery,
+    };
+    const incomplete = await fetch(`${BASE_URL}/api/vault/keys/revoke-device`, {
+      method: 'POST',
+      headers: headers(cookie),
+      body: JSON.stringify({ ...requestBody, item_keys: [] }),
+    });
+    assert.equal(incomplete.status, 409, 'the server must reject a rotation that omits an existing item key');
+    const unchanged = (await (await fetch(`${BASE_URL}/api/vault/keys`, { headers: headers(cookie) })).json()) as {
+      vk_version: number;
+    };
+    assert.equal(unchanged.vk_version, oldKeys.vk_version, 'an incomplete rotation must not advance the envelope');
+    assert.equal((await getPairing(cookie, id)).status, 200, 'an incomplete rotation must not revoke the device');
+
     const res = await fetch(`${BASE_URL}/api/vault/keys/revoke-device`, {
       method: 'POST',
       headers: headers(cookie),
       body: JSON.stringify({
-        current_srp: proof,
-        device_id: id,
-        current_device_id: currentDeviceId,
-        vk_version: oldKeys.vk_version,
-        salt: encodeB64(salt),
-        recovery_salt: oldKeys.recovery_salt,
-        kdf_params: oldKeys.kdf_params,
-        wrapped_vk: wrapped,
-        recovery_blob: recovery,
+        ...requestBody,
         item_keys: [{ item_id: itemId, item_key_wrapped: rewrapped }],
       }),
     });
