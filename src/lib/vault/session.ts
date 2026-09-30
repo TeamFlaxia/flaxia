@@ -9,7 +9,7 @@
 import { generateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { createSrpProof } from '../auth-srp.ts';
-import { fetchVaultKeys } from './client.ts';
+import { fetchVaultItemKeys, fetchVaultKeys, revokeDeviceAndRotate, rewrapItemKeyForVaultKey } from './client.ts';
 import {
   createDevice,
   detectDeviceLabel,
@@ -23,9 +23,14 @@ import { unwrapVaultKeyForPairing } from './pairing.ts';
 import {
   createVaultEnvelope,
   decodeB64,
+  encodeB64,
+  generateVaultKey,
+  generateVaultSalt,
   isEnvelopeShapeError,
   isValidRecoveryPhrase,
   normalizeRecoveryPhrase,
+  rewrapVaultKeyForPassword,
+  rewrapVaultKeyForRecovery,
   unlockVaultWithPassword,
 } from './primitives.ts';
 
@@ -214,4 +219,57 @@ export async function adoptPairedVaultKey(
   } catch {
     return false;
   }
+}
+
+/**
+ * Revoke a device and rotate VK. The caller must already hold VK (the settings
+ * UI only shows this on an unlocked device); every item key is re-wrapped under
+ * the new VK before the server swaps the envelope and deletes the row. Payloads
+ * are intentionally never rewritten.
+ */
+export async function revokeDeviceWithRotation(deviceId: string, password: string, recoveryPhrase: string): Promise<boolean> {
+  const currentVk = getVaultKey();
+  const keys = await fetchVaultKeys();
+  if (!currentVk || !keys?.enabled || !keys.vk_version || !keys.recovery_salt || !keys.recovery_blob || !keys.kdf_params) return false;
+  const currentDeviceId = getCurrentDeviceId();
+  if (!currentDeviceId || currentDeviceId === deviceId) return false;
+
+  const proof = await createSrpProof(password);
+  if (!proof) return false;
+
+  const items = await fetchVaultItemKeys();
+  const newVk = generateVaultKey();
+  const rewrapped = await Promise.all(
+    items.map(async (item) => ({
+      item_id: item.id,
+      item_key_wrapped: await rewrapItemKeyForVaultKey(currentVk, newVk, item.id, item.item_key_wrapped),
+    })),
+  );
+
+  const salt = generateVaultSalt();
+  const wrapped_vk = await rewrapVaultKeyForPassword(newVk, password, salt, keys.kdf_params);
+  const recovery_blob = await rewrapVaultKeyForRecovery(
+    newVk,
+    recoveryPhrase,
+    decodeB64(keys.recovery_salt),
+    keys.kdf_params,
+  );
+  const ok = await revokeDeviceAndRotate({
+    current_srp: proof,
+    device_id: deviceId,
+    current_device_id: currentDeviceId,
+    vk_version: keys.vk_version,
+    salt: encodeB64(salt),
+    recovery_salt: keys.recovery_salt,
+    kdf_params: keys.kdf_params,
+    wrapped_vk,
+    recovery_blob,
+    item_keys: rewrapped,
+  });
+  if (!ok) return false;
+
+  setVaultKey(newVk);
+  const device = await getOrCreateCurrentDevice();
+  await saveVaultKeyForDevice(device, newVk);
+  return true;
 }

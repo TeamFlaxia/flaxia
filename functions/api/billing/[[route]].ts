@@ -32,7 +32,7 @@ export async function onRequest(context: {
     }
 
     if (method === 'POST' && path === 'webhook') {
-      return await handleWebhook(context.request, env, context.waitUntil);
+      return await handleWebhook(context.request, env);
     }
 
     if (method === 'POST' && path === 'portal') {
@@ -197,11 +197,7 @@ async function handleGetTransactions(request: Request, env: BillingEnv): Promise
 // Webhook
 // ---------------------------------------------------------------------------
 
-async function handleWebhook(
-  request: Request,
-  env: BillingEnv,
-  waitUntil: (p: Promise<unknown>) => void,
-): Promise<Response> {
+async function handleWebhook(request: Request, env: BillingEnv): Promise<Response> {
   const signature = request.headers.get('stripe-signature');
   if (!signature) return jsonResponse({ error: 'Missing signature' }, 400);
 
@@ -230,13 +226,14 @@ async function handleWebhook(
     return jsonResponse({ received: true, duplicate: true });
   }
 
-  waitUntil(
-    processWebhookEvent(event, env).catch(async (err) => {
-      console.error(`Webhook event ${event.id} (${event.type}) processing failed:`, err);
-      // Allow Stripe to retry by removing the idempotency marker.
-      await env.DB.prepare('DELETE FROM stripe_events WHERE id = ?').bind(event.id).run();
-    }),
-  );
+  try {
+    await processWebhookEvent(event, env);
+  } catch (err) {
+    console.error(`Webhook event ${event.id} (${event.type}) processing failed:`, err);
+    // Allow Stripe to retry by removing the idempotency marker.
+    await env.DB.prepare('DELETE FROM stripe_events WHERE id = ?').bind(event.id).run();
+    return jsonResponse({ error: 'Webhook processing failed' }, 500);
+  }
 
   return jsonResponse({ received: true });
 }

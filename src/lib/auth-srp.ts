@@ -112,8 +112,7 @@ export async function loginWithSrp(email: string, password: string): Promise<boo
       body: JSON.stringify({ email, password }),
     });
     if (!legacy.ok) return false;
-    await upgradeSrp(password);
-    return true;
+    return await upgradeSrp(password);
   }
 
   const salt = unb64(s.salt!);
@@ -138,10 +137,16 @@ export async function loginWithSrp(email: string, password: string): Promise<boo
 // Upgrade a legacy account to SRP, or migrate a v1 verifier to v2. Both only
 // happen while the browser still holds the plaintext password, which is the
 // only moment x can be re-derived.
-async function upgradeSrp(password: string): Promise<void> {
+async function upgradeSrp(password: string, includeProof = false): Promise<boolean> {
+  let current_srp: SrpProof | undefined;
+  if (includeProof) {
+    const proof = await createSrpProof(password);
+    if (!proof) return false;
+    current_srp = proof;
+  }
   const salt = generateSalt();
   const verifier = await computeVerifier(password, salt, DEFAULT_SRP_KDF);
-  await fetch('/api/auth/upgrade-srp', {
+  const response = await fetch('/api/auth/upgrade-srp', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
@@ -150,9 +155,12 @@ async function upgradeSrp(password: string): Promise<void> {
       srp_verifier: b64(verifier),
       srp_group: '2048',
       srp_kdf: DEFAULT_SRP_KDF,
+      ...(current_srp ? { current_srp } : {}),
     }),
   });
+  if (!response.ok) return false;
   storeSrpSalt(salt);
+  return true;
 }
 
 export interface SrpProof {

@@ -8,6 +8,7 @@ import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import {
   isValidB64,
+  isValidVaultItemId,
   isValidVaultKdfParams,
   isValidWrappedKey,
   PAIRING_ID_PATTERN,
@@ -237,7 +238,7 @@ vault.put('/vault/keys', requireAuth, async (c) => {
     `UPDATE vault_keys
      SET salt = ?, recovery_salt = ?, kdf_params = ?, wrapped_vk = ?, recovery_blob = ?,
          vk_version = vk_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-     WHERE user_id = ?`,
+     WHERE user_id = ? AND vk_version = ?`,
   )
     .bind(
       body.salt as string,
@@ -246,12 +247,98 @@ vault.put('/vault/keys', requireAuth, async (c) => {
       body.wrapped_vk as string,
       body.recovery_blob as string,
       user.id,
+      body.vk_version,
     )
     .run();
   if (!result.success) return c.json({ error: 'Failed to update vault keys' }, 500);
-  if (result.meta.changes === 0) return c.json({ error: 'Vault not found' }, 404);
+  if (result.meta.changes === 0) return c.json({ error: 'Vault key version conflict' }, 409);
 
   return c.json({ enabled: true });
+});
+
+// GET /vault/items — wrapped item-key blobs needed for VK rotation.
+// Payloads are deliberately omitted: the server never needs to inspect or
+// return ciphertext bodies for a re-wrap, and the client has the item ids.
+vault.get('/vault/items', requireAuth, async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+
+  const result = await c.env.DB.prepare(
+    'SELECT id, item_key_wrapped, kind, vk_version, created_at, updated_at FROM vault_items WHERE user_id = ? ORDER BY created_at',
+  )
+    .bind(user.id)
+    .all<{ id: string; item_key_wrapped: string; kind: string; vk_version: number; created_at: string; updated_at: string }>();
+  return c.json({ items: result.results ?? [] });
+});
+
+// POST /vault/keys/revoke-device — rotate VK and remove the revoked device.
+// The client sends the new envelope and every item key re-wrapped under the new
+// VK; the server only swaps opaque blobs and deletes the revoked row atomically.
+vault.post('/vault/keys/revoke-device', requireAuth, async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+
+  const body = (await c.req.json().catch(() => ({}))) as EnvelopeBody & {
+    current_srp?: SrpProofBody;
+    vk_version?: unknown;
+    device_id?: unknown;
+    current_device_id?: unknown;
+    item_keys?: unknown;
+  };
+  const envelopeError = validateEnvelope(body);
+  if (envelopeError) return c.json({ error: envelopeError }, 400);
+  if (!Number.isInteger(body.vk_version)) return c.json({ error: 'Invalid vault key version' }, 400);
+  if (!hasProofShape(body.current_srp)) {
+    return c.json({ error: 'Current password proof is required' }, 400);
+  }
+  if (!PAIRING_ID_PATTERN.test(String(body.device_id ?? ''))) {
+    return c.json({ error: 'Invalid device registration' }, 400);
+  }
+  if (!PAIRING_ID_PATTERN.test(String(body.current_device_id ?? ''))) {
+    return c.json({ error: 'Invalid current device id' }, 400);
+  }
+  if (body.device_id === body.current_device_id) return c.json({ error: 'Cannot revoke the current device' }, 400);
+  if (!Array.isArray(body.item_keys)) return c.json({ error: 'Invalid vault item keys' }, 400);
+  const itemKeys = body.item_keys as Array<{ item_id?: unknown; item_key_wrapped?: unknown }>;
+  if (itemKeys.some((item) => !isValidVaultItemId(item.item_id) || !isValidWrappedKey(item.item_key_wrapped))) {
+    return c.json({ error: 'Invalid vault item keys' }, 400);
+  }
+
+  const current = await readEnvelope(c, user.id);
+  if (!current) return c.json({ error: 'Vault not enabled' }, 404);
+  if (!(await verifyProof(c.env, user.id, body.current_srp))) {
+    return c.json({ error: 'Current password is incorrect' }, 401);
+  }
+
+  const version = body.vk_version as number;
+  const statements: D1PreparedStatement[] = [
+    c.env.DB.prepare(
+      `UPDATE vault_keys
+       SET salt = ?, recovery_salt = ?, kdf_params = ?, wrapped_vk = ?, recovery_blob = ?,
+           vk_version = vk_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+       WHERE user_id = ? AND vk_version = ?`,
+    ).bind(
+      body.salt as string,
+      body.recovery_salt as string,
+      JSON.stringify(body.kdf_params),
+      body.wrapped_vk as string,
+      (body.recovery_blob ?? current.recovery_blob) as string,
+      user.id,
+      version,
+    ),
+    c.env.DB.prepare('DELETE FROM device_keys WHERE user_id = ? AND id <> ?').bind(user.id, String(body.current_device_id)),
+  ];
+  for (const item of itemKeys) statements.push(
+    c.env.DB.prepare('UPDATE vault_items SET item_key_wrapped = ?, vk_version = ? WHERE user_id = ? AND id = ?').bind(
+      item.item_key_wrapped as string, version + 1, user.id, item.item_id as string,
+    ),
+  );
+
+  const results = await c.env.DB.batch(statements);
+  if (results.some((result) => !result.success)) return c.json({ error: 'Failed to revoke device' }, 500);
+  if ((results[0].meta?.changes ?? 0) === 0) return c.json({ error: 'Vault key version conflict' }, 409);
+  if ((results[1].meta?.changes ?? 0) === 0) return c.json({ error: 'Pairing not found' }, 404);
+  return c.json({ enabled: true, vk_version: version + 1 });
 });
 
 // ─── QR device pairing ────────────────────────────────────────────────────────

@@ -173,4 +173,23 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
       assert.ok(spec.includes(invariant), `docs/e2ee.md must state: ${invariant}`);
     }
   });
+  it('keeps KV expiration TTLs at or above Cloudflare\'s 60 second floor', () => {
+    const offenders: string[] = [];
+    for (const file of walk(join(ROOT, 'functions'))) {
+      const src = readFileSync(file, 'utf8');
+      for (const match of src.matchAll(/expirationTtl:\s*(\d+)/g)) {
+        if (Number(match[1]) < 60) offenders.push(`${relative(ROOT, file)}:${match[1]}`);
+      }
+      for (const match of src.matchAll(/kvCacheSet\([^;]+,\s*(\d+)\s*\)/g)) {
+        if (Number(match[1]) < 60) offenders.push(`${relative(ROOT, file)}:${match[1]}`);
+      }
+    }
+    assert.deepEqual(offenders, [], `KV expirationTtl must be >= 60: ${offenders.join(', ')}`);
+  });
+
+  it('keys user-specific timelines by user', () => {
+    const src = readFileSync(join(ROOT, 'functions/api/routes/posts.ts'), 'utf8');
+    assert.ok(src.includes('following || Boolean(username)'), 'following/profile timelines must not share another user\'s cache');
+  });
+
 });

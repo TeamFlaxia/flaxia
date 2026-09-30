@@ -938,3 +938,22 @@ describe('DELETE /api/posts/:id', () => {
     assert.equal(res.status, 404);
   });
 });
+
+describe('GET /api/posts?username= — visibility', () => {
+  beforeEach(resetDb);
+
+  it('does not expose pending uploads on a public profile query', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    const prepared = await fetch(`${BASE_URL}/api/posts/prepare`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ filename: 'hidden.html' }),
+    });
+    const { postId } = (await prepared.json()) as { postId: string };
+
+    const res = await fetch(`${BASE_URL}/api/posts?username=${username}`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { posts: Array<{ id: string }> };
+    assert.ok(!body.posts.some((post) => post.id === postId), 'pending posts must stay private');
+  });
+});

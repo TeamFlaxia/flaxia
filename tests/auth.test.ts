@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
 import { computeVerifier, generateSalt } from '../src/lib/srp.ts';
-import { BASE_URL, loginUser, registerUser, resetDb, seedLegacyUser } from './helpers/setup.ts';
+import { BASE_URL, loginUser, registerUser, resetDb, seedLegacyUser, seedUserAndLogin } from './helpers/setup.ts';
 
 function b64(b: Uint8Array): string {
   return Buffer.from(b).toString('base64');
@@ -367,6 +367,72 @@ describe('POST /api/auth/login', () => {
     await seedLegacyUser('legacy2@test.com', 'legacy-password-2', 'legacypw2');
     const { res } = await loginUser('legacy2@test.com', 'not-the-password');
     assert.equal(res.status, 401);
+  });
+});
+
+describe('SRP migration hardening', () => {
+  beforeEach(resetDb);
+
+  it('does not replace an existing SRP verifier without a proof → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const salt = generateSalt();
+    const verifier = await computeVerifier('attacker-password-1', salt, 'pbkdf2-600k-v2');
+    const res = await fetch(`${BASE_URL}/api/auth/upgrade-srp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        srp_salt: b64(salt),
+        srp_verifier: b64(verifier),
+        srp_group: '2048',
+        srp_kdf: 'pbkdf2-600k-v2',
+      }),
+    });
+    assert.equal(res.status, 400);
+
+    const stillOriginal = await loginUser('user1@test.com', 'password123');
+    assert.equal(stillOriginal.res.status, 200);
+  });
+
+  it('refuses a legacy upgrade from an ordinary SRP session without proof → 400', async () => {
+    const { cookie } = await seedUserAndLogin('ordinary');
+    const salt = generateSalt();
+    const verifier = await computeVerifier('ordinary-new-password', salt, 'pbkdf2-600k-v2');
+    const res = await fetch(`${BASE_URL}/api/auth/upgrade-srp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        srp_salt: b64(salt),
+        srp_verifier: b64(verifier),
+        srp_group: '2048',
+        srp_kdf: 'pbkdf2-600k-v2',
+      }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it('deletes the legacy hash when a pre-SRP account migrates', async () => {
+    await seedLegacyUser('legacy-migrate@test.com', 'legacy-password-3', 'legacymig');
+    const { cookie } = await loginUser('legacy-migrate@test.com', 'legacy-password-3');
+    const salt = generateSalt();
+    const verifier = await computeVerifier('legacy-password-3', salt, 'pbkdf2-600k-v2');
+    const migrated = await fetch(`${BASE_URL}/api/auth/upgrade-srp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        srp_salt: b64(salt),
+        srp_verifier: b64(verifier),
+        srp_group: '2048',
+        srp_kdf: 'pbkdf2-600k-v2',
+      }),
+    });
+    assert.equal(migrated.status, 200);
+
+    const legacyAgain = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'legacy-migrate@test.com', password: 'legacy-password-3' }),
+    });
+    assert.equal(legacyAgain.status, 401);
   });
 });
 

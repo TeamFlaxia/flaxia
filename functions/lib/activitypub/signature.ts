@@ -32,6 +32,8 @@ function parseSignatureHeader(signatureHeader: string): SignatureHeader {
     throw new Error('Invalid signature header format: missing required fields');
   }
 
+  const headers = (result.headers as string[]).map((header) => header.toLowerCase());
+  result.headers = headers;
   return result as unknown as SignatureHeader;
 }
 
@@ -69,6 +71,12 @@ export async function verifyHttpSignature(request: Request, publicKeyPem: string
     if (Math.abs(now - requestTime) > thirtyMinutes) {
       return false;
     }
+
+    const required =
+      request.method === 'POST'
+        ? ['(request-target)', 'host', 'date', 'digest']
+        : ['(request-target)', 'host', 'date'];
+    if (!required.every((header) => parsed.headers.includes(header))) return false;
 
     const signingString = buildSigningString(request, parsed.headers);
     const publicKey = await importPublicKey(publicKeyPem);
@@ -111,16 +119,17 @@ function buildSigningString(request: Request, headers: string[]): string {
   const lines: string[] = [];
 
   for (const header of headers) {
-    if (header === '(request-target)') {
+    const normalized = header.toLowerCase();
+    if (normalized === '(request-target)') {
       const method = request.method.toLowerCase();
       const path = url.pathname + url.search;
       lines.push(`(request-target): ${method} ${path}`);
     } else {
-      const value = request.headers.get(header);
+      const value = request.headers.get(normalized);
       if (value === null) {
-        throw new Error(`Missing required header: ${header}`);
+        throw new Error(`Missing required header: ${normalized}`);
       }
-      lines.push(`${header}: ${value}`);
+      lines.push(`${normalized}: ${value}`);
     }
   }
 
@@ -139,7 +148,7 @@ export async function verifyDigest(request: Request, body: string): Promise<bool
     }
 
     // Parse Digest header (e.g., "SHA-256=xyz123...")
-    const match = digestHeader.match(/SHA-256=([A-Za-z0-9+/=]+)/);
+    const match = digestHeader.match(/sha-256=([A-Za-z0-9+/=]+)/i);
     if (!match) {
       console.error('Invalid Digest header format');
       return false;

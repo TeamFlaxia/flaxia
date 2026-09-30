@@ -8,6 +8,7 @@ import {
   encodeB64,
   generateVaultSalt,
   isEnvelopeShapeError,
+  rewrapItemKeyForVaultKey,
   rewrapVaultKeyForPassword,
   unlockVaultWithPassword,
   type VaultKdfParams,
@@ -178,14 +179,48 @@ export async function cancelPairing(id: string): Promise<void> {
   }
 }
 
-export async function revokeDevice(id: string): Promise<boolean> {
+/** Wrapped item keys are all the client needs to rotate VK after revocation. */
+export interface VaultItemKeySummary {
+  id: string;
+  item_key_wrapped: string;
+  kind: string;
+  vk_version: number;
+}
+
+export async function fetchVaultItemKeys(): Promise<VaultItemKeySummary[]> {
   try {
-    const res = await fetch(`/api/vault/devices/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
+    const res = await fetch('/api/vault/items', { credentials: 'include' });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { items?: VaultItemKeySummary[] };
+    return data.items ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export async function revokeDeviceAndRotate(body: {
+  current_srp: { challenge_id: string; A: string; M1: string };
+  device_id: string;
+  current_device_id: string;
+  vk_version: number;
+  salt: string;
+  recovery_salt: string;
+  kdf_params: VaultKdfParams;
+  wrapped_vk: string;
+  recovery_blob?: string;
+  item_keys: Array<{ item_id: string; item_key_wrapped: string }>;
+}): Promise<boolean> {
+  try {
+    const res = await fetch('/api/vault/keys/revoke-device', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
+      body: JSON.stringify(body),
     });
     return res.ok;
   } catch {
     return false;
   }
 }
+
+export { rewrapItemKeyForVaultKey };

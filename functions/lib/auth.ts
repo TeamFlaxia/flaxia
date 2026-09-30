@@ -21,6 +21,7 @@ export interface Session {
   id: string;
   user_id: string;
   expires_at: string;
+  srp_upgrade_allowed?: number;
 }
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
@@ -88,15 +89,19 @@ function generateSessionToken(): string {
 }
 
 // Create session
-export async function createSession(env: Env, userId: string): Promise<Session> {
+export async function createSession(
+  env: Env,
+  userId: string,
+  options: { srpUpgradeAllowed?: boolean } = {},
+): Promise<Session> {
   const sessionId = generateSessionToken();
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
 
   const result = await env.DB.prepare(`
-    INSERT INTO sessions (id, user_id, expires_at)
-    VALUES (?, ?, ?)
+    INSERT INTO sessions (id, user_id, expires_at, srp_upgrade_allowed)
+    VALUES (?, ?, ?, ?)
   `)
-    .bind(sessionId, userId, expiresAt)
+    .bind(sessionId, userId, expiresAt, options.srpUpgradeAllowed ? 1 : 0)
     .run();
 
   if (!result.success) {
@@ -107,6 +112,7 @@ export async function createSession(env: Env, userId: string): Promise<Session> 
     id: sessionId,
     user_id: userId,
     expires_at: expiresAt,
+    srp_upgrade_allowed: options.srpUpgradeAllowed ? 1 : 0,
   };
 }
 
@@ -175,7 +181,8 @@ export async function getMeWithSession(env: Env, token: string, cache?: KVNamesp
   // Cache the result in KV (30s TTL)
   if (cache) {
     try {
-      await cache.put(cacheKey, JSON.stringify({ user: result }), { expirationTtl: 30 });
+      // Cloudflare KV rejects expirationTtl values below 60 seconds.
+      await cache.put(cacheKey, JSON.stringify({ user: result }), { expirationTtl: 60 });
     } catch {
       // Ignore cache write errors
     }
@@ -330,6 +337,13 @@ export async function verifySrpLogin(
     .first()) as { user_id: string; b_scalar: string; b_pub: string } | null;
   if (!hs) return null;
 
+  const consumed = await env.DB.prepare(
+    "DELETE FROM srp_handshakes WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+  )
+    .bind(challengeId)
+    .run();
+  if (!consumed.success || (consumed.meta?.changes ?? 0) === 0) return null;
+
   const user = (await env.DB.prepare(`
     SELECT id, email, srp_salt, srp_verifier, username, display_name, bio, avatar_key, badge_type, created_at
     FROM users WHERE id = ?
@@ -356,8 +370,6 @@ export async function verifySrpLogin(
   const result = await serverStep2(A_bytes, B, BigInt(hs.b_scalar), v, M1_bytes);
   if (!result) return null;
 
-  await env.DB.prepare('DELETE FROM srp_handshakes WHERE id = ?').bind(challengeId).run();
-
   const session = await createSession(env, user.id);
   const safeUser: User = {
     id: user.id,
@@ -381,7 +393,8 @@ export async function upgradeSrp(env: Env, userId: string, srp: SrpRegistration)
   if (base64ToUint8Array(srp.salt).length !== 16) throw new Error('Invalid SRP salt');
   if (base64ToUint8Array(srp.verifier).length !== 256) throw new Error('Invalid SRP verifier');
   const result = await env.DB.prepare(
-    'UPDATE users SET srp_salt = ?, srp_verifier = ?, srp_group = ?, srp_kdf = ? WHERE id = ?',
+    `UPDATE users SET password_hash = '', srp_salt = ?, srp_verifier = ?, srp_group = ?, srp_kdf = ?
+     WHERE id = ?`,
   )
     .bind(srp.salt, srp.verifier, srp.group, srp.kdf, userId)
     .run();
@@ -399,11 +412,20 @@ export async function verifySrpPassword(
   M1: string,
 ): Promise<boolean> {
   const hs = (await env.DB.prepare(
-    "SELECT * FROM srp_handshakes WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+    "SELECT * FROM srp_handshakes WHERE id = ? AND user_id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
   )
-    .bind(challengeId)
+    .bind(challengeId, userId)
     .first()) as { user_id: string; b_scalar: string; b_pub: string } | null;
-  if (!hs || hs.user_id !== userId) return false;
+  if (!hs) return false;
+
+  // Consume the challenge before doing the expensive proof. D1 serializes
+  // writes, so exactly one concurrent verifier can delete this row.
+  const consumed = await env.DB.prepare(
+    "DELETE FROM srp_handshakes WHERE id = ? AND user_id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+  )
+    .bind(challengeId, userId)
+    .run();
+  if (!consumed.success || (consumed.meta?.changes ?? 0) === 0) return false;
 
   const user = (await env.DB.prepare('SELECT srp_salt, srp_verifier FROM users WHERE id = ?').bind(userId).first()) as {
     srp_salt: string | null;
@@ -416,16 +438,14 @@ export async function verifySrpPassword(
   const A_bytes = base64ToUint8Array(A);
   const M1_bytes = base64ToUint8Array(M1);
 
-  const result = await serverStep2(A_bytes, B, BigInt(hs.b_scalar), v, M1_bytes);
-  await env.DB.prepare('DELETE FROM srp_handshakes WHERE id = ?').bind(challengeId).run();
-  return !!result;
+  return !!(await serverStep2(A_bytes, B, BigInt(hs.b_scalar), v, M1_bytes));
 }
 
 // Login user
 export async function loginUser(env: Env, email: string, password: string): Promise<{ user: User; session: Session }> {
   // Get user with password hash
   const userWithPassword = (await env.DB.prepare(`
-    SELECT id, email, password_hash, username, display_name, bio, avatar_key, badge_type, created_at
+    SELECT id, email, password_hash, srp_salt, srp_verifier, username, display_name, bio, avatar_key, badge_type, created_at
     FROM users WHERE email = ?
   `)
     .bind(email)
@@ -433,6 +453,8 @@ export async function loginUser(env: Env, email: string, password: string): Prom
     id: string;
     email: string;
     password_hash: string;
+    srp_salt: string | null;
+    srp_verifier: string | null;
     username: string;
     display_name: string;
     bio: string;
@@ -444,6 +466,12 @@ export async function loginUser(env: Env, email: string, password: string): Prom
     throw new Error('Invalid credentials');
   }
 
+  // The legacy plaintext endpoint is only for accounts that have never been
+  // migrated to SRP. Once a verifier exists, the old hash must not stay usable.
+  if (userWithPassword.srp_verifier || userWithPassword.srp_salt) {
+    throw new Error('Invalid credentials');
+  }
+
   // Verify password
   const isValid = await verifyPassword(password, userWithPassword.password_hash);
   if (!isValid) {
@@ -451,7 +479,7 @@ export async function loginUser(env: Env, email: string, password: string): Prom
   }
 
   // Create session
-  const session = await createSession(env, userWithPassword.id);
+  const session = await createSession(env, userWithPassword.id, { srpUpgradeAllowed: true });
 
   // Return user without password hash
   const user: User = {

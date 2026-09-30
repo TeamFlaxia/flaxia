@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
-import { verifyHttpSignature } from '../functions/lib/activitypub/signature.ts';
+import { verifyDigest, verifyHttpSignature } from '../functions/lib/activitypub/signature.ts';
 
 describe('HTTP Signature Verification', () => {
   it('should reject requests without a Signature header', async () => {
@@ -97,6 +97,29 @@ describe('HTTP Signature Verification', () => {
     });
     const result = await verifyHttpSignature(request, 'public-key-pem');
     assert.strictEqual(result, false);
+  });
+
+  it('should reject a POST signature that omits digest from the signed headers', async () => {
+    const request = new Request('https://example.com/inbox', {
+      method: 'POST',
+      headers: {
+        Signature: 'keyId="https://example.com#key",headers="(request-target) host date",signature="abc123"',
+        Date: new Date().toUTCString(),
+        Digest: 'SHA-256=abc',
+      },
+    });
+    const result = await verifyHttpSignature(request, 'public-key-pem');
+    assert.strictEqual(result, false);
+  });
+
+  it('accepts lowercase sha-256 in Digest', async () => {
+    const body = '{"type":"Follow"}';
+    const digest = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body))).toString('base64');
+    const request = new Request('https://example.com/inbox', {
+      method: 'POST',
+      headers: { Digest: `sha-256=${digest}` },
+    });
+    assert.equal(await verifyDigest(request, body), true);
   });
 
   it('should reject requests with GET method on inbox', async () => {
