@@ -87,7 +87,10 @@ All cross-origin communication between main and sandbox uses a typed bridge (`sr
 
 ## Database (D1 / SQLite)
 
-35 migration files covering:
+The schema evolves through the SQL migrations in [`migrations/`](../migrations/).
+See that directory for the current migration history rather than relying on a
+fixed file count. Major areas include:
+
 - `posts` — Post content, text, payload keys, hashtags
 - `users` — User profiles, sessions
 - `follows` — Follower relationships
@@ -109,7 +112,7 @@ All cross-origin communication between main and sandbox uses a typed bridge (`sr
 ## SPA Routing
 
 The client-side SPA (`src/main.ts`) manages routing with the following views:
-- **Timeline** — Post feed with ad injection
+- **Timeline** — Global, Following, and For You feeds with ad injection
 - **Thread** — Post detail with replies
 - **Profile** — User profile with their posts
 - **Arcade** — Browse playable game posts
@@ -117,6 +120,26 @@ The client-side SPA (`src/main.ts`) manages routing with the following views:
 - **Bookmarks** — Bookmarked posts
 - **Notifications** — Activity notifications
 - **Admin** — Admin panel (alerts, hidden posts, users, ads)
+
+## Timeline and Recommendations
+
+The feed mode in `src/components/Timeline.ts` selects the API endpoint:
+
+| Feed | Endpoint | Ordering |
+|---|---|---|
+| Global | `GET /api/posts` | Reverse chronological |
+| Following | `GET /api/posts?following=true` | Reverse chronological, filtered to followed users |
+| For You | `GET /api/posts/recommended` | Ranked recommendations |
+
+`functions/api/routes/posts.ts` implements both chronological and recommended
+post retrieval. Recommendations combine engagement and quality signals with
+vector similarity when available. The shared interest-vector and LinUCB helpers
+live in `functions/api/routes/recommender.ts` and `functions/lib/linucb.ts`.
+
+Arcade recommendations are implemented separately in
+`functions/api/routes/games.ts` (`GET /api/games?recommended=true`) and use
+game-play dwell signals as well as personalization. See
+[`docs/recommendation-rl.md`](recommendation-rl.md) for the recommendation model.
 
 ## Layout
 
