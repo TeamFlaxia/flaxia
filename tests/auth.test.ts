@@ -449,6 +449,12 @@ describe('POST /api/auth/logout', () => {
       headers: { Cookie: cookie },
     });
     assert.equal(res.status, 200);
+
+    // The logout request populates the session cache before deleting the D1
+    // row. Reusing the old cookie must fail immediately, even while that cache
+    // entry would otherwise still be live.
+    const afterLogout = await fetch(`${BASE_URL}/api/me`, { headers: { Cookie: cookie } });
+    assert.equal(afterLogout.status, 401, 'a logged-out session must not authenticate from stale KV cache');
   });
 
   it('rejects unauthenticated logout → 401', async () => {

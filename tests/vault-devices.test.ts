@@ -424,20 +424,50 @@ describe('POST /api/vault/keys/revoke-device', () => {
     });
     const proof = await createSrpProof(cookie, PASSWORD);
     assert.ok(proof);
+    const staleVk = generateVaultKey();
+    const staleSalt = generateVaultSalt();
+    const staleWrapped = await rewrapVaultKeyForPassword(staleVk, PASSWORD, staleSalt, {
+      alg: 'PBKDF2-SHA256',
+      iterations: 600_000,
+    });
+    const staleRecovery = await rewrapVaultKeyForRecovery(
+      staleVk,
+      PHRASE,
+      Buffer.from(oldKeys.recovery_salt, 'base64'),
+      { alg: 'PBKDF2-SHA256', iterations: 600_000 },
+    );
+    const staleRewrapped = await rewrapItemKeyForVaultKey(vk, staleVk, itemId, item.item_key_wrapped);
+    const staleProof = await createSrpProof(cookie, PASSWORD);
+    assert.ok(staleProof);
+
+    const requestBody = {
+      current_srp: proof,
+      device_id: id,
+      current_device_id: currentDeviceId,
+      vk_version: oldKeys.vk_version,
+      salt: encodeB64(salt),
+      recovery_salt: oldKeys.recovery_salt,
+      kdf_params: oldKeys.kdf_params,
+      wrapped_vk: wrapped,
+      recovery_blob: recovery,
+    };
+    const incomplete = await fetch(`${BASE_URL}/api/vault/keys/revoke-device`, {
+      method: 'POST',
+      headers: headers(cookie),
+      body: JSON.stringify({ ...requestBody, item_keys: [] }),
+    });
+    assert.equal(incomplete.status, 409, 'the server must reject a rotation that omits an existing item key');
+    const unchanged = (await (await fetch(`${BASE_URL}/api/vault/keys`, { headers: headers(cookie) })).json()) as {
+      vk_version: number;
+    };
+    assert.equal(unchanged.vk_version, oldKeys.vk_version, 'an incomplete rotation must not advance the envelope');
+    assert.equal((await getPairing(cookie, id)).status, 200, 'an incomplete rotation must not revoke the device');
 
     const res = await fetch(`${BASE_URL}/api/vault/keys/revoke-device`, {
       method: 'POST',
       headers: headers(cookie),
       body: JSON.stringify({
-        current_srp: proof,
-        device_id: id,
-        current_device_id: currentDeviceId,
-        vk_version: oldKeys.vk_version,
-        salt: encodeB64(salt),
-        recovery_salt: oldKeys.recovery_salt,
-        kdf_params: oldKeys.kdf_params,
-        wrapped_vk: wrapped,
-        recovery_blob: recovery,
+        ...requestBody,
         item_keys: [{ item_id: itemId, item_key_wrapped: rewrapped }],
       }),
     });
@@ -451,6 +481,39 @@ describe('POST /api/vault/keys/revoke-device', () => {
     assert.equal((await getPairing(cookie, id)).status, 404, 'the revoked device row must disappear');
     const body = await decryptVaultItem(newVk, itemId, rewrapped, item.payload);
     assert.equal(new TextDecoder().decode(body), 'secret', 'the item key must move to the new VK');
+
+    const staleRes = await fetch(`${BASE_URL}/api/vault/keys/revoke-device`, {
+      method: 'POST',
+      headers: headers(cookie),
+      body: JSON.stringify({
+        current_srp: staleProof,
+        device_id: id,
+        current_device_id: currentDeviceId,
+        vk_version: oldKeys.vk_version,
+        salt: encodeB64(staleSalt),
+        recovery_salt: oldKeys.recovery_salt,
+        kdf_params: oldKeys.kdf_params,
+        wrapped_vk: staleWrapped,
+        recovery_blob: staleRecovery,
+        item_keys: [{ item_id: itemId, item_key_wrapped: staleRewrapped }],
+      }),
+    });
+    assert.equal(staleRes.status, 409, 'a stale rotation must report a version conflict');
+
+    const afterConflict = (await (await fetch(`${BASE_URL}/api/vault/items`, { headers: headers(cookie) })).json()) as {
+      items: Array<{ id: string; item_key_wrapped: string; vk_version: number }>;
+    };
+    assert.deepEqual(
+      afterConflict.items.map(({ id: storedId, item_key_wrapped, vk_version }) => ({
+        id: storedId,
+        item_key_wrapped,
+        vk_version,
+      })),
+      [{ id: itemId, item_key_wrapped: rewrapped, vk_version: oldKeys.vk_version + 1 }],
+      'a rejected stale rotation must leave every item key at the committed version',
+    );
+    const stillReadable = await decryptVaultItem(newVk, itemId, afterConflict.items[0].item_key_wrapped, item.payload);
+    assert.equal(new TextDecoder().decode(stillReadable), 'secret');
   });
 });
 

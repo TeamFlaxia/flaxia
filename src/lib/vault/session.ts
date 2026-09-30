@@ -250,6 +250,9 @@ export async function revokeDeviceWithRotation(
   if (!proof) return false;
 
   const items = await fetchVaultItemKeys();
+  // Rotation must include every item. Treat an unavailable inventory as a
+  // failed operation rather than sending an empty rewrap list to the server.
+  if (!items) return false;
   const newVk = generateVaultKey();
   const rewrapped = await Promise.all(
     items.map(async (item) => ({

@@ -25,7 +25,7 @@ polls.get('/polls/:postId', async (c) => {
 
     let userVote: string | null = null;
     const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token, c.env.CACHE) : null;
+    const sessionData = token ? await getMeWithSession(c.env, token) : null;
     if (sessionData) {
       const vote = (await c.env.DB.prepare('SELECT option_id FROM poll_votes WHERE poll_id = ? AND user_id = ?')
         .bind(poll.id, sessionData.user.id)

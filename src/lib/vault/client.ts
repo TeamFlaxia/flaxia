@@ -187,14 +187,14 @@ export interface VaultItemKeySummary {
   vk_version: number;
 }
 
-export async function fetchVaultItemKeys(): Promise<VaultItemKeySummary[]> {
+export async function fetchVaultItemKeys(): Promise<VaultItemKeySummary[] | null> {
   try {
     const res = await fetch('/api/vault/items', { credentials: 'include' });
-    if (!res.ok) return [];
+    if (!res.ok) return null;
     const data = (await res.json()) as { items?: VaultItemKeySummary[] };
-    return data.items ?? [];
+    return Array.isArray(data.items) ? data.items : null;
   } catch {
-    return [];
+    return null;
   }
 }
 

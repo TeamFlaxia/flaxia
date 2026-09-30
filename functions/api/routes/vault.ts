@@ -310,9 +310,23 @@ vault.post('/vault/keys/revoke-device', requireAuth, async (c) => {
   if (itemKeys.some((item) => !isValidVaultItemId(item.item_id) || !isValidWrappedKey(item.item_key_wrapped))) {
     return c.json({ error: 'Invalid vault item keys' }, 400);
   }
+  const submittedItemIds = itemKeys.map((item) => item.item_id as string);
+  if (new Set(submittedItemIds).size !== submittedItemIds.length) {
+    return c.json({ error: 'Invalid vault item keys' }, 400);
+  }
 
   const current = await readEnvelope(c, user.id);
   if (!current) return c.json({ error: 'Vault not enabled' }, 404);
+  const inventory = await c.env.DB.prepare('SELECT id FROM vault_items WHERE user_id = ?')
+    .bind(user.id)
+    .all<{ id: string }>();
+  const existingItemIds = (inventory.results ?? []).map((item) => item.id);
+  if (
+    existingItemIds.length !== submittedItemIds.length ||
+    existingItemIds.some((itemId) => !submittedItemIds.includes(itemId))
+  ) {
+    return c.json({ error: 'Vault item key inventory is incomplete' }, 409);
+  }
   if (!(await verifyProof(c.env, user.id, body.current_srp))) {
     return c.json({ error: 'Current password is incorrect' }, 401);
   }
@@ -323,7 +337,8 @@ vault.post('/vault/keys/revoke-device', requireAuth, async (c) => {
       `UPDATE vault_keys
        SET salt = ?, recovery_salt = ?, kdf_params = ?, wrapped_vk = ?, recovery_blob = ?,
            vk_version = vk_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-       WHERE user_id = ? AND vk_version = ?`,
+       WHERE user_id = ? AND vk_version = ?
+         AND EXISTS (SELECT 1 FROM device_keys WHERE user_id = ? AND id = ?)`,
     ).bind(
       body.salt as string,
       body.recovery_salt as string,
@@ -332,25 +347,44 @@ vault.post('/vault/keys/revoke-device', requireAuth, async (c) => {
       (body.recovery_blob ?? current.recovery_blob) as string,
       user.id,
       version,
-    ),
-    c.env.DB.prepare('DELETE FROM device_keys WHERE user_id = ? AND id <> ?').bind(
       user.id,
-      String(body.current_device_id),
+      String(body.device_id),
     ),
+    c.env.DB.prepare(
+      `DELETE FROM device_keys
+       WHERE user_id = ? AND id <> ?
+         AND EXISTS (
+           SELECT 1 FROM vault_keys WHERE user_id = ? AND vk_version = ? AND wrapped_vk = ?
+         )`,
+    ).bind(user.id, String(body.current_device_id), user.id, version + 1, body.wrapped_vk as string),
   ];
   for (const item of itemKeys)
     statements.push(
-      c.env.DB.prepare('UPDATE vault_items SET item_key_wrapped = ?, vk_version = ? WHERE user_id = ? AND id = ?').bind(
+      c.env.DB.prepare(
+        `UPDATE vault_items SET item_key_wrapped = ?, vk_version = ?
+         WHERE user_id = ? AND id = ?
+           AND EXISTS (
+             SELECT 1 FROM vault_keys WHERE user_id = ? AND vk_version = ? AND wrapped_vk = ?
+           )`,
+      ).bind(
         item.item_key_wrapped as string,
         version + 1,
         user.id,
         item.item_id as string,
+        user.id,
+        version + 1,
+        body.wrapped_vk as string,
       ),
     );
 
   const results = await c.env.DB.batch(statements);
   if (results.some((result) => !result.success)) return c.json({ error: 'Failed to revoke device' }, 500);
-  if ((results[0].meta?.changes ?? 0) === 0) return c.json({ error: 'Vault key version conflict' }, 409);
+  if ((results[0].meta?.changes ?? 0) === 0) {
+    const latest = await readEnvelope(c, user.id);
+    if (!latest) return c.json({ error: 'Vault not enabled' }, 404);
+    if (latest.vk_version !== version) return c.json({ error: 'Vault key version conflict' }, 409);
+    return c.json({ error: 'Pairing not found' }, 404);
+  }
   if ((results[1].meta?.changes ?? 0) === 0) return c.json({ error: 'Pairing not found' }, 404);
   return c.json({ enabled: true, vk_version: version + 1 });
 });

@@ -36,7 +36,7 @@ export const authMiddleware = async (c: Context<{ Bindings: Bindings; Variables:
     return;
   }
   const token = getSessionToken(c.req.raw);
-  const sessionData = token ? await getMeWithSession(c.env, token, c.env.CACHE) : null;
+  const sessionData = token ? await getMeWithSession(c.env, token) : null;
   c.set('user', sessionData?.user || null);
   await next();
 };

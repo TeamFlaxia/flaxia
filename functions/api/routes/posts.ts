@@ -152,7 +152,7 @@ posts.get('/posts', async (c) => {
     // Get current user ID for fresh status (optional for all tabs, required for Following tab)
     let currentUserId: string | null = null;
     const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token, c.env.CACHE) : null;
+    const sessionData = token ? await getMeWithSession(c.env, token) : null;
     if (sessionData) {
       currentUserId = sessionData.user.id;
     }
@@ -379,7 +379,7 @@ posts.get('/posts/trending', async (c) => {
     // Get current user for fresh status
     let currentUserId: string | null = null;
     const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token, c.env.CACHE) : null;
+    const sessionData = token ? await getMeWithSession(c.env, token) : null;
     if (sessionData) {
       currentUserId = sessionData.user.id;
     }
@@ -2513,7 +2513,7 @@ posts.get('/posts/:id/replies', async (c) => {
 
     // Get current user ID from session (optional)
     const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token, c.env.CACHE) : null;
+    const sessionData = token ? await getMeWithSession(c.env, token) : null;
     const currentUserId = sessionData?.user?.id || null;
 
     if (!c.env.DB) {
@@ -2608,7 +2608,7 @@ posts.get('/posts/:id/thread', async (c) => {
     const postId = c.req.param('id');
 
     const token = getSessionToken(c.req.raw);
-    const sessionData = token ? await getMeWithSession(c.env, token, c.env.CACHE) : null;
+    const sessionData = token ? await getMeWithSession(c.env, token) : null;
     const currentUserId = sessionData?.user?.id || null;
 
     if (!c.env.DB) {
