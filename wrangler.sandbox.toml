@@ -16,3 +16,7 @@ bucket_name = "flaxia-content"
 binding = "DB"
 database_name = "flaxia"
 database_id = "7c99f35f-69a0-4644-96a1-34c716a3e82d"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "c78f7711cd9d45738678474d884734c1"

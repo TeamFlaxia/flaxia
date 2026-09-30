@@ -20,7 +20,7 @@ import {
 import { createProjection, parseBanditConfig, projConfigKey, project } from './linucb.ts';
 import { loadBlocklist, matchBlocklist, matchSignatureEntry } from './scan/blocklist.ts';
 import { clamavVerdict, parseContainerOutput, parseVideoPhashes } from './scan/container-result.ts';
-import { clearKeyBlocked, getFileScan, recordInfection, setScanPhash, setScanStatus } from './scan/db.ts';
+import { getFileScan, recordInfection, setScanPhash, setScanStatus } from './scan/db.ts';
 import type { FileFeatures } from './scan/features.ts';
 
 export interface CrowdEnv {
@@ -28,6 +28,8 @@ export interface CrowdEnv {
   CROWD_API_KEY?: string;
   /** Optional dedicated callback secret; falls back to the API key. */
   CROWD_WEBHOOK_SECRET?: string;
+  FILE_SCAN_CLAMAV_IMAGE?: string;
+  FILE_SCAN_VIDEO_PHASH_IMAGE?: string;
   BASE_URL?: string;
   CACHE?: KVNamespace;
   VECTORIZE?: VectorizeLike;
@@ -631,12 +633,10 @@ async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Da
         await recordInfection(db, env.CACHE, r2Key, hit.signature, hit.reason ?? 'blocklist', shaPrefix);
         return;
       }
-      // Clean re-scan of bytes reused at this key clears a marker left by an
-      // earlier infection. Guarded by the content prefix so a stale callback
-      // cannot unblock freshly re-uploaded bytes.
-      if (!shaPrefix || row.sha256.startsWith(shaPrefix)) {
-        await clearKeyBlocked(env.CACHE, r2Key);
-      }
+      // No marker is cleared here: another container task for the same bytes
+      // (for example the video pHash scan) may mark them infected between this
+      // blocklist read and the status update. The serve-time gate clears a
+      // stale marker itself once the row is verifiably not infected.
     }
   } catch (e) {
     console.error('Post-scan blocklist lookup failed:', e);

@@ -7,6 +7,8 @@
 // payload cap the scan row becomes `skipped` with a reason instead of silently
 // staying pending.
 
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex } from '@noble/hashes/utils.js';
 import { type CrowdEnv, crowdConfig, getCrowdClient, signedCallbackUrl } from '../crowd.ts';
 import { ensureFileScansTable, getFileScan, setScanStatus, setScanTask } from './db.ts';
 import { extensionOf } from './mime.ts';
@@ -17,9 +19,13 @@ import { extensionOf } from './mime.ts';
  */
 export const CLAMAV_MAX_BYTES = 20 * 1024 * 1024;
 
-/** WASM images expected from the orchestrator (documented in docs/file-scanning.md). */
-export const CLAMAV_IMAGE = 'clamav.wasm';
-export const VIDEO_PHASH_IMAGE = 'flaxia-video-phash.wasm';
+/**
+ * WASM images the browser node fetches for container tasks. The node rejects
+ * bare names and requires HTTPS URLs (it also blocks localhost/private hosts),
+ * so these must be full, publicly reachable URLs.
+ */
+export const CLAMAV_IMAGE_ENV = 'FILE_SCAN_CLAMAV_IMAGE';
+export const VIDEO_PHASH_IMAGE_ENV = 'FILE_SCAN_VIDEO_PHASH_IMAGE';
 
 const CONTAINER_TIMEOUT_MS = 120_000;
 
@@ -53,31 +59,46 @@ export async function submitFileScans(
 
     const config = crowdConfig(env);
     if (!config.configured) {
-      await setScanStatus(db, r2Key, 'skipped', { detail: 'orchestrator_unconfigured' });
+      await setScanStatus(db, r2Key, 'skipped', { detail: 'orchestrator_unconfigured', sha256: row.sha256 });
       return;
     }
 
     const raw = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     if (raw.byteLength > CLAMAV_MAX_BYTES) {
-      await setScanStatus(db, r2Key, 'skipped', { detail: 'too_large' });
+      await setScanStatus(db, r2Key, 'skipped', { detail: 'too_large', sha256: row.sha256 });
       return;
     }
+
+    // Bind the submission to the bytes we actually hold. The background task
+    // may run after the same key has been re-uploaded; using only the row's
+    // current sha would scan bytes A while labelling the callback as bytes B,
+    // and B would inherit A's verdict.
+    const submittedSha = bytesToHex(sha256(raw));
+    if (row.sha256 !== submittedSha) return;
 
     const client = getCrowdClient(config);
     if (!client) return;
 
     // The sha prefix ties the eventual verdict back to this exact content, so
     // a slow callback cannot mark a re-uploaded file with a stale result.
-    const shaPrefix = row.sha256.slice(0, 16);
+    const shaPrefix = submittedSha.slice(0, 16);
     const payload = toBase64(raw);
     const ext = extensionOf(r2Key) ?? 'bin';
     const fileName = `input.${ext}`;
+    const clamavImage = (env[CLAMAV_IMAGE_ENV] || '').trim();
+    if (!clamavImage) {
+      // Failing closed here would make every upload unusable until the
+      // deployment is configured. Record the configuration gap explicitly so
+      // the un-scanned state is visible instead of silently staying pending.
+      await setScanStatus(db, r2Key, 'skipped', { detail: 'scan_image_unconfigured', sha256: submittedSha });
+      return;
+    }
 
     try {
       const res = await client.submit({
         workload: 'container',
         payload: {
-          image: CLAMAV_IMAGE,
+          image: clamavImage,
           command: ['clamscan', '--infected', '--no-summary', fileName],
           files: { [fileName]: payload },
         },
@@ -88,15 +109,16 @@ export async function submitFileScans(
         }),
         timeoutMs: CONTAINER_TIMEOUT_MS,
       });
-      await setScanTask(db, r2Key, res.taskId);
+      await setScanTask(db, r2Key, res.taskId, submittedSha);
     } catch (err) {
       console.error(`ClamAV submission failed for ${r2Key}:`, err);
-      await setScanStatus(db, r2Key, 'failed', { detail: 'submission_error' });
+      await setScanStatus(db, r2Key, 'failed', { detail: 'submission_error', sha256: submittedSha });
       return;
     }
 
-    if (mime.startsWith('video/')) {
-      await submitVideoPhash(config, r2Key, shaPrefix, raw);
+    const videoPhashImage = (env[VIDEO_PHASH_IMAGE_ENV] || '').trim();
+    if (mime.startsWith('video/') && videoPhashImage) {
+      await submitVideoPhash(config, r2Key, shaPrefix, raw, videoPhashImage);
     }
   } catch (e) {
     console.error(`File scan submission failed for ${r2Key}:`, e);
@@ -109,6 +131,7 @@ async function submitVideoPhash(
   r2Key: string,
   shaPrefix: string,
   raw: Uint8Array,
+  image: string,
 ): Promise<void> {
   try {
     const client = getCrowdClient(config);
@@ -116,7 +139,7 @@ async function submitVideoPhash(
     await client.submit({
       workload: 'container',
       payload: {
-        image: VIDEO_PHASH_IMAGE,
+        image,
         command: ['video-phash', 'input.mp4'],
         files: { 'input.mp4': toBase64(raw) },
       },

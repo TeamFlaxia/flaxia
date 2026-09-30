@@ -90,12 +90,16 @@ GIF ≤ 16 MP, PDF text ≤ 256 KB.
 
 | Image | Command | Purpose |
 |---|---|---|
-| `clamav.wasm` | `clamscan --infected --no-summary <file>` | signature scan |
-| `flaxia-video-phash.wasm` | `video-phash input.mp4` | keyframe pHashes (video only, best-effort) |
+| `FILE_SCAN_CLAMAV_IMAGE` | `clamscan --infected --no-summary <file>` | signature scan |
+| `FILE_SCAN_VIDEO_PHASH_IMAGE` | `video-phash input.mp4` | keyframe pHashes (video only, best-effort) |
 
 - Both use the shared Crowd env (`CROWD_ORCHESTRATOR_URL`, `CROWD_API_KEY`) —
-  no new secrets. With the orchestrator unconfigured (local dev) the row is
-  marked `skipped / orchestrator_unconfigured`.
+  plus the two `FILE_SCAN_*_IMAGE` variables holding full HTTPS URLs of the
+  browser-node WASM images. The container workload rejects bare filenames and
+  local/private hosts. With the orchestrator unconfigured (local dev) the row
+  is marked `skipped / orchestrator_unconfigured`; with an orchestrator but no
+  ClamAV image it is marked `skipped / scan_image_unconfigured` so the gap is
+  visible instead of leaving uploads pending forever.
 - The callback URL carries `type=file-scan`, `key=<r2Key>`, `kind=clamav|video-phash`
   and `sha=<first 16 hex of sha256>`; a callback whose sha prefix no longer
   matches the row is ignored (guards stale verdicts after re-upload).
@@ -107,6 +111,11 @@ GIF ≤ 16 MP, PDF text ≤ 256 KB.
   The key defaults to `CROWD_API_KEY` (set `CROWD_WEBHOOK_SECRET` to rotate it
   independently) and is empty while Crowd is unconfigured, which is what keeps
   local dev and the integration suites working unsigned.
+- The submission path binds the callback to the bytes it actually holds: the
+  sha is computed from the same buffer that is base64'd into the task, and the
+  task id is only written when the row still has that exact sha. Without this,
+  a background task that runs after a re-upload could scan bytes A while
+  labelling the callback as bytes B.
 - Because the `sha` param is attacker-controllable, it is also checked against
   the row on every destructive path — `recordInfection` and `setScanPhash` both
   refuse a prefix that does not match, so a replayed or forged callback can
@@ -139,9 +148,11 @@ signature name (case-insensitive substring); a match supplies the `reason`
 recorded on the auto-added sha256 entry. Blocking itself does not depend on the
 entry — any infected verdict is blocked.
 
-A clean verdict also clears the key's `fileblk:` marker when the callback's
-`sha` prefix matches the current row, so reused keys (thumbnails, attachment
-slots, ad payloads) recover once clean bytes replace an infected upload.
+A clean verdict never clears the key's `fileblk:` marker itself. Another
+container task for the same bytes (the video pHash scan) can mark them infected
+between the clean path's blocklist read and its status write; clearing there
+would reopen the file. The marker instead clears lazily at serve time once the
+row is verifiably not `infected`, so reused keys recover without a race.
 
 Status lifecycle: `pending` → `submitted` (written by `setScanTask` once the
 orchestrator accepts the task) → `clean` / `infected` / `failed` / `skipped`.
@@ -155,10 +166,14 @@ copies together.
 
 - **Upload (fail closed):** stage-1 checks block anything known-bad before
   storage; the synchronous blocklist match is the hard gate.
-- **Serve (asynchronous):** `canAccessMediaKey` checks the KV `fileblk:{key}`
-  marker on `/api/images/*`, `/api/zip/:postId`, `/api/thumbnail/:id`,
-  `/api/swf/:postId` → `404`. Infected content becomes invisible even if it
-  was uploaded before the signature existed.
+- **Serve (asynchronous):** every path that returns bytes checks the KV
+  `fileblk:{key}` marker → `404`: `/api/images/*`, `/api/audio/*`,
+  `/api/video/*`, `/api/zip/:postId`, `/api/thumbnail/:id`, `/api/swf/:postId`,
+  `/api/ads/:id/payload`, and the sandbox's `wvfs/` and `zip/` lookups. The
+  sandbox checks the source archive before serving any CDN-cached extracted
+  file, so a blocked ZIP cannot keep leaking through `wvfs/`. When the marker
+  exists but the row is no longer `infected`, the marker is deleted and the
+  current bytes are served; an unverifiable marker fails closed.
 - **Post-verdict (fail open):** orchestrator/DB outages mark rows
   `failed`/`skipped` — serving continues, next re-upload re-evaluates.
 

@@ -29,7 +29,7 @@ type MediaContext = Context<{ Bindings: Bindings; Variables: Variables }>;
  */
 async function canAccessMediaKey(c: MediaContext, key: string): Promise<boolean> {
   if (key.startsWith('dm/')) return false;
-  if (await isKeyBlocked(c.env.CACHE, key)) return false;
+  if (await isKeyBlocked(c.env.CACHE, key, c.env.DB)) return false;
   return true;
 }
 
@@ -469,7 +469,7 @@ media.get('/thumbnail/:id', async (c) => {
 
     // Get thumbnail object from R2
     const thumbKey = post.thumbnail_key as string;
-    if (await isKeyBlocked(c.env.CACHE, thumbKey)) {
+    if (await isKeyBlocked(c.env.CACHE, thumbKey, c.env.DB)) {
       return c.json({ error: 'Thumbnail not found' }, 404);
     }
     const object = await c.env.BUCKET.get(thumbKey);

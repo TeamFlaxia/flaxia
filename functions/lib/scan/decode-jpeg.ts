@@ -138,7 +138,14 @@ function decodeHuff(reader: BitReader, table: HuffTable | undefined): number {
   return -1;
 }
 
-/** Orthonormal 8x8 IDCT into an 8x8 region of `out` (clamped, level-shifted). */
+/**
+ * Orthonormal 8x8 IDCT into an 8x8 region of `out` (clamped, level-shifted).
+ *
+ *   f(x,y) = 1/4 * sum_u sum_v C(u) C(v) F(u,v) cos((2x+1)uπ/16) cos((2y+1)vπ/16)
+ *
+ * The `natural` block is indexed row-major as F(v,u), so both the coefficient
+ * and the cosine use the same frequency index.
+ */
 function idctBlock(
   natural: Float64Array,
   out: Uint8Array,
@@ -147,25 +154,20 @@ function idctBlock(
   availCols: number,
   availRows: number,
 ): void {
-  const block = new Float64Array(64);
-  for (let v = 0; v < 8; v++) {
-    for (let u = 0; u < 8; u++) {
-      let sum = 0;
-      for (let y = 0; y < 8; y++) {
-        for (let x = 0; x < 8; x++) {
-          sum += natural[y * 8 + x] * COS[u][x] * COS[v][y];
-        }
-      }
-      block[v * 8 + u] = 0.25 * C_FACTOR[u] * C_FACTOR[v] * sum;
-    }
-  }
   const cols = Math.min(8, availCols);
   const rows = Math.min(8, availRows);
   for (let y = 0; y < rows; y++) {
     const rowStart = offset + y * stride;
     for (let x = 0; x < cols; x++) {
-      const value = block[y * 8 + x] + 128;
-      out[rowStart + x] = value < 0 ? 0 : value > 255 ? 255 : value;
+      let sum = 0;
+      for (let v = 0; v < 8; v++) {
+        const cosY = COS[v][y];
+        for (let u = 0; u < 8; u++) {
+          sum += C_FACTOR[u] * C_FACTOR[v] * natural[v * 8 + u] * COS[u][x] * cosY;
+        }
+      }
+      const value = sum * 0.25 + 128;
+      out[rowStart + x] = value < 0 ? 0 : value > 255 ? 255 : Math.round(value);
     }
   }
 }

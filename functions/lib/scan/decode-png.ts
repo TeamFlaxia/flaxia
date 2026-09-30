@@ -136,12 +136,19 @@ export function decodePngLuma(bytes: Uint8Array): GrayImage | null {
     if (!raw || raw.length < rawSize) return null;
     unfilter(raw, width, height, channels);
 
+    // Each scanline is prefixed with its filter byte, so the channel data for
+    // row y starts at y * (stride + 1) + 1 — not at the filter byte itself.
     const gray = new Uint8Array(width * height);
-    for (let i = 0, p = 0; i < gray.length; i++, p += channels) {
+    for (let y = 0; y < height; y++) {
+      const rowStart = y * (width * channels + 1) + 1;
+      const outStart = y * width;
       if (channels === 1 || channels === 2) {
-        gray[i] = raw[p];
+        for (let x = 0; x < width; x++) gray[outStart + x] = raw[rowStart + x * channels];
       } else {
-        gray[i] = (raw[p] * 77 + raw[p + 1] * 150 + raw[p + 2] * 29) >> 8;
+        for (let x = 0; x < width; x++) {
+          const p = rowStart + x * channels;
+          gray[outStart + x] = (raw[p] * 77 + raw[p + 1] * 150 + raw[p + 2] * 29) >> 8;
+        }
       }
     }
     return { data: gray, width, height };
