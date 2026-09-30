@@ -217,7 +217,7 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
     assert.deepEqual(offenders, [], `upload sinks must run scanUploadSync: ${offenders.join(', ')}`);
   });
 
-  it('keeps KV expiration TTLs at or above Cloudflare\'s 60 second floor', () => {
+  it("keeps KV expiration TTLs at or above Cloudflare's 60 second floor", () => {
     const offenders: string[] = [];
     for (const file of walk(join(ROOT, 'functions'))) {
       const src = readFileSync(file, 'utf8');
@@ -233,7 +233,9 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
 
   it('keys user-specific timelines by user', () => {
     const src = readFileSync(join(ROOT, 'functions/api/routes/posts.ts'), 'utf8');
-    assert.ok(src.includes('following || Boolean(username)'), 'following/profile timelines must not share another user\'s cache');
+    assert.ok(
+      src.includes('following || Boolean(username)'),
+      "following/profile timelines must not share another user's cache",
+    );
   });
-
 });

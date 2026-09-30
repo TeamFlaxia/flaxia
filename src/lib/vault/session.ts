@@ -227,10 +227,22 @@ export async function adoptPairedVaultKey(
  * the new VK before the server swaps the envelope and deletes the row. Payloads
  * are intentionally never rewritten.
  */
-export async function revokeDeviceWithRotation(deviceId: string, password: string, recoveryPhrase: string): Promise<boolean> {
+export async function revokeDeviceWithRotation(
+  deviceId: string,
+  password: string,
+  recoveryPhrase: string,
+): Promise<boolean> {
   const currentVk = getVaultKey();
   const keys = await fetchVaultKeys();
-  if (!currentVk || !keys?.enabled || !keys.vk_version || !keys.recovery_salt || !keys.recovery_blob || !keys.kdf_params) return false;
+  if (
+    !currentVk ||
+    !keys?.enabled ||
+    !keys.vk_version ||
+    !keys.recovery_salt ||
+    !keys.recovery_blob ||
+    !keys.kdf_params
+  )
+    return false;
   const currentDeviceId = getCurrentDeviceId();
   if (!currentDeviceId || currentDeviceId === deviceId) return false;
 

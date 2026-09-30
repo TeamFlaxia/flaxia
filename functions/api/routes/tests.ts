@@ -130,7 +130,11 @@ app.post('/api/test/vault-item', requireTestEnvironment, async (c) => {
     item_key_wrapped?: unknown;
     payload?: unknown;
   };
-  if (typeof body.item_id !== 'string' || typeof body.item_key_wrapped !== 'string' || typeof body.payload !== 'string') {
+  if (
+    typeof body.item_id !== 'string' ||
+    typeof body.item_key_wrapped !== 'string' ||
+    typeof body.payload !== 'string'
+  ) {
     return c.json({ error: 'Invalid vault item' }, 400);
   }
   await c.env.DB.prepare(

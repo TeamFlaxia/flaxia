@@ -73,9 +73,7 @@ export async function verifyHttpSignature(request: Request, publicKeyPem: string
     }
 
     const required =
-      request.method === 'POST'
-        ? ['(request-target)', 'host', 'date', 'digest']
-        : ['(request-target)', 'host', 'date'];
+      request.method === 'POST' ? ['(request-target)', 'host', 'date', 'digest'] : ['(request-target)', 'host', 'date'];
     if (!required.every((header) => parsed.headers.includes(header))) return false;
 
     const signingString = buildSigningString(request, parsed.headers);
