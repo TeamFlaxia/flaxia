@@ -15,6 +15,7 @@
       "!!**/android",
       "!!**/ios",
       "!!**/migrations",
+      "!!src/lib/pdfjs.generated.ts",
       "!!**/*.pem",
       "!!**/*.zip",
       "!!worker-configuration.d.ts",

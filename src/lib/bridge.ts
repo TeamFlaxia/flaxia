@@ -28,6 +28,9 @@ export type ParentMessage =
   | { type: 'REQUEST_FULLSCREEN' }
   | { type: 'REQUEST_FRESH' }
   | { type: 'POST_SCORE'; score: number; label: string }
+  | { type: 'DOCUMENT_READY'; requestId: string }
+  | { type: 'VIEWER_CLOSE'; requestId: string }
+  | { type: 'VIEWER_DOWNLOAD'; requestId: string }
   | { type: 'CAPTURE_READY'; ok: boolean }
   | { type: 'CAPTURE_FRAME_RESULT'; requestId: string; mime: string; data: ArrayBuffer }
   | { type: 'CAPTURE_GIF_RESULT'; requestId: string; frames: CaptureFrame[] }
@@ -52,6 +55,7 @@ export type SandboxMessage =
   | { type: 'FRESH_GRANTED' }
   | { type: 'FRESH_DENIED' }
   | { type: 'SCORE_SUBMITTED'; score: number; label: string }
+  | { type: 'DOCUMENT_DATA'; requestId: string; bytes: ArrayBuffer }
   | { type: 'CAPTURE_INIT' }
   | { type: 'CAPTURE_FRAME'; requestId: string }
   | { type: 'CAPTURE_GIF'; requestId: string }
@@ -77,6 +81,10 @@ export function isParentMessage(msg: unknown): msg is ParentMessage {
       return true;
     case 'POST_SCORE':
       return typeof msg.score === 'number' && !Number.isNaN(msg.score) && typeof msg.label === 'string';
+    case 'DOCUMENT_READY':
+    case 'VIEWER_CLOSE':
+    case 'VIEWER_DOWNLOAD':
+      return typeof msg.requestId === 'string';
     case 'CAPTURE_READY':
       return typeof msg.ok === 'boolean';
     case 'CAPTURE_FRAME_RESULT':
@@ -118,6 +126,8 @@ export function isSandboxMessage(msg: unknown): msg is SandboxMessage {
       return true;
     case 'SCORE_SUBMITTED':
       return typeof msg.score === 'number' && !Number.isNaN(msg.score) && typeof msg.label === 'string';
+    case 'DOCUMENT_DATA':
+      return typeof msg.requestId === 'string' && msg.bytes instanceof ArrayBuffer;
     case 'CAPTURE_INIT':
       return true;
     case 'CAPTURE_FRAME':

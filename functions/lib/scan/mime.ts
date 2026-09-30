@@ -193,8 +193,9 @@ export function checkDeclaredType(declared: string | null | undefined, detectedM
 }
 
 /** Map a detected MIME to the attachment kind it may occupy, or null if none. */
-export function attachmentKindForMime(mime: string): 'image' | 'audio' | 'video' | null {
+export function attachmentKindForMime(mime: string): 'image' | 'audio' | 'video' | 'document' | null {
   if (isAllowedImageMime(mime)) return 'image';
+  if (mime === 'application/pdf') return 'document';
   if (mime === 'application/zip' || mime === 'application/x-shockwave-flash' || mime === 'text/html') {
     return null;
   }

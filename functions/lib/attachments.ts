@@ -1,5 +1,5 @@
 /**
- * Shared helpers for multi-media post attachments (image / audio / video).
+ * Shared helpers for multi-media post attachments (image / audio / video / document).
  *
  * One post can carry up to MAX_ATTACHMENTS files (50MB total, 25MB each);
  * active Flaxia+ subscribers raise the count to MAX_ATTACHMENTS_PLUS.
@@ -7,10 +7,10 @@
  * using the legacy gif_key / payload_key / swf_key / thumbnail_key columns.
  *
  * R2 key layout: {bucketPrefix}/{postId}/{position}{ext}
- *   bucketPrefix: gif (images) | audio | video
+ *   bucketPrefix: gif (images) | audio | video | docs (pdf)
  */
 
-export type AttachmentKind = 'image' | 'audio' | 'video';
+export type AttachmentKind = 'image' | 'audio' | 'video' | 'document';
 
 /** Free-plan ceiling. */
 export const MAX_ATTACHMENTS = 4;
@@ -22,12 +22,23 @@ export const MAX_ATTACHMENT_TOTAL_BYTES = 50 * 1024 * 1024;
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp'] as const;
 const AUDIO_EXTS = ['mp3', 'wav', 'ogg', 'm4a', 'opus'] as const;
 const VIDEO_EXTS = ['mp4', 'webm', 'mov'] as const;
+const DOCUMENT_EXTS = ['pdf'] as const;
 
 const KIND_PREFIX: Record<AttachmentKind, string> = {
   image: 'gif',
   audio: 'audio',
   video: 'video',
+  document: 'docs',
 };
+
+/**
+ * Reverse of KIND_PREFIX, derived so a new kind can never silently fall
+ * through to a wrong bucket in parseAttachmentKey. Keys are the only source
+ * of truth for a kind at read time (the client sends only a key + kind).
+ */
+const PREFIX_KIND = new Map<string, AttachmentKind>(
+  (Object.entries(KIND_PREFIX) as [AttachmentKind, string][]).map(([kind, prefix]) => [prefix, kind]),
+);
 
 const EXT_MAP: Record<string, string> = {
   png: '.png',
@@ -43,10 +54,11 @@ const EXT_MAP: Record<string, string> = {
   mp4: '.mp4',
   webm: '.webm',
   mov: '.mov',
+  pdf: '.pdf',
 };
 
-/** Matches multi-media attachment keys: gif|audio|video/{postId}/{1-32}{ext} */
-const ATTACHMENT_KEY_RE = /^(gif|audio|video)\/([^/]+)\/(\d{1,2})(\.[A-Za-z0-9]+)$/;
+/** Matches multi-media attachment keys: gif|audio|video|docs/{postId}/{1-32}{ext} */
+const ATTACHMENT_KEY_RE = /^(gif|audio|video|docs)\/([^/]+)\/(\d{1,2})(\.[A-Za-z0-9]+)$/;
 
 export function normalizeExt(filename: string): string | null {
   const ext = filename.toLowerCase().match(/\.(\w+)$/)?.[1];
@@ -72,6 +84,7 @@ export function kindFromUpload(filename: string, contentType?: string): Attachme
 
   if ((AUDIO_EXTS as readonly string[]).includes(ext)) return 'audio';
   if ((VIDEO_EXTS as readonly string[]).includes(ext)) return 'video';
+  if ((DOCUMENT_EXTS as readonly string[]).includes(ext)) return 'document';
   return null;
 }
 
@@ -99,7 +112,8 @@ export function parseAttachmentKey(
   const prefix = m[1];
   const position = Number(m[3]);
   if (!Number.isInteger(position) || position < 1 || position > MAX_ATTACHMENTS_PLUS) return null;
-  const kind: AttachmentKind = prefix === 'gif' ? 'image' : prefix === 'audio' ? 'audio' : 'video';
+  const kind = PREFIX_KIND.get(prefix);
+  if (!kind) return null;
   return { postId: m[2], position, kind, ext: m[4] };
 }
 
@@ -210,7 +224,7 @@ export async function enrichPostsWithAttachments<T extends AttachmentsEnrichable
   }
 }
 
-/** Every image key in an attachment list (audio/video are never screened). */
+/** Every image key in an attachment list (audio/video/documents are never screened). */
 export function imageAttachmentKeys(attachments: unknown): string[] {
   if (!Array.isArray(attachments)) return [];
   const keys: string[] = [];

@@ -26,6 +26,7 @@ export const authMiddleware = async (c: Context<{ Bindings: Bindings; Variables:
     (path.startsWith('/api/images/') ||
       path.startsWith('/api/audio/') ||
       path.startsWith('/api/video/') ||
+      path.startsWith('/api/documents/') ||
       path === '/api/link-preview' ||
       path === '/api/games' ||
       (path.startsWith('/api/ads/') && path.endsWith('/payload')) ||
@@ -111,6 +112,9 @@ export function parseRange(rangeHeader: string, fileSize: number): { start: numb
   return { start, end };
 }
 
+/**
+ * Serve an R2 object, honouring HTTP Range requests.
+ */
 export async function handleRangeRequest(c: any, key: string, object: any, contentType: string): Promise<Response> {
   const fileSize = object.size || 0;
   const rangeHeader = c.req.header('Range');
@@ -144,7 +148,7 @@ export async function handleRangeRequest(c: any, key: string, object: any, conte
   });
 
   if (!ranged) {
-    return c.json({ error: 'Video not found' }, 404);
+    return c.json({ error: 'Media not found' }, 404);
   }
 
   return new Response(ranged.body, {

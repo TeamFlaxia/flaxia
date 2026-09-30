@@ -1,5 +1,6 @@
 import type { PostAttachment } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
+import { createDocumentViewer } from './DocumentViewer.js';
 import { createImagePreview } from './ImagePreview.js';
 import { createVideoPlayer } from './VideoPlayer.js';
 
@@ -8,21 +9,29 @@ export interface MediaCarouselProps {
   attachments: PostAttachment[];
 }
 
-/** R2 key → browser URL for an attachment. */
+/**
+ * R2 key → browser URL for an attachment.
+ *
+ * The `image` branch is a deliberate fallback rather than a `default:` case so
+ * that a kind added to MediaAttachmentKind without a URL here fails the build
+ * instead of silently 404ing behind an image request.
+ */
 export function attachmentUrl(att: PostAttachment): string {
   switch (att.kind) {
     case 'audio':
       return `/api/audio/${att.r2_key}`;
     case 'video':
       return `/api/video/${att.r2_key}`;
-    default:
+    case 'document':
+      return `/api/documents/${att.r2_key}`;
+    case 'image':
       return `/api/images/${att.r2_key}`;
   }
 }
 
 /**
  * Horizontal scroll-snap carousel rendering every media attachment of a post:
- * images, videos and audio players side by side with page dots.
+ * images, videos, audio players and PDF viewers side by side with page dots.
  */
 export function createMediaCarousel(props: MediaCarouselProps): HTMLElement {
   const root = document.createElement('div');
@@ -50,6 +59,8 @@ export function createMediaCarousel(props: MediaCarouselProps): HTMLElement {
       );
     } else if (att.kind === 'video') {
       slide.appendChild(createVideoPlayer({ gifKey: att.r2_key, postId: props.postId }));
+    } else if (att.kind === 'document') {
+      slide.appendChild(createDocumentViewer({ r2Key: att.r2_key }));
     } else {
       slide.appendChild(createAudioPlayer({ gifKey: att.r2_key, postId: props.postId }));
     }

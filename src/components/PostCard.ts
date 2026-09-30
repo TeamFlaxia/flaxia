@@ -1,4 +1,5 @@
 import { maxMediaAttachmentsForUser } from '../lib/entitlements.js';
+import { attachmentMimeType } from '../lib/file-extensions.js';
 import { t } from '../lib/i18n.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { loadLinkPreview } from '../lib/link-preview.js';
@@ -1279,7 +1280,7 @@ export class PostCard {
       fileInput.type = 'file';
       fileInput.multiple = true;
       fileInput.style.display = 'none';
-      fileInput.accept = '.gif,.png,.jpg,.jpeg,.mp3,.wav,.ogg,.m4a,.webm,.mp4,.mov';
+      fileInput.accept = '.gif,.png,.jpg,.jpeg,.mp3,.wav,.ogg,.m4a,.webm,.mp4,.mov,.pdf';
 
       const addBtn = document.createElement('button');
       addBtn.type = 'button';
@@ -1453,7 +1454,7 @@ export class PostCard {
                 credentials: 'include',
                 body: JSON.stringify({
                   filename: file.name,
-                  contentType: file.type || undefined,
+                  contentType: file.type || attachmentMimeType(file.name),
                   reservedKeys,
                 }),
               });
@@ -1466,7 +1467,7 @@ export class PostCard {
               const uploadRes = await fetch(prep.uploadUrl, {
                 method: 'PUT',
                 body: file,
-                headers: { 'Content-Type': file.type || 'application/octet-stream' },
+                headers: { 'Content-Type': file.type || attachmentMimeType(file.name) || 'application/octet-stream' },
                 credentials: 'include',
               });
               if (!uploadRes.ok) throw new Error('Failed to upload media');

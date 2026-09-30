@@ -13,7 +13,7 @@
 pnpm install
 
 # Run local migrations (creates local D1 database)
-pnpm migrate:local
+npm run migrate:local
 
 # Start dev server (build + wrangler pages dev)
 pnpm dev
@@ -61,11 +61,14 @@ Additional vars are defined in `vite.config.ts`:
 
 ```bash
 # Apply migrations locally
-pnpm migrate:local
+npm run migrate:local
 
 # Apply migrations to production
-pnpm migrate:prod
+npm run migrate:prod
 ```
+
+`migrate:prod` keeps `--remote` on purpose: without it wrangler applies
+migrations to the **local** database and production silently stays behind.
 
 Migrations live in `migrations/` as SQL files (e.g., `0001_init.sql`).
 
