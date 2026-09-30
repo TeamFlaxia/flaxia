@@ -15,8 +15,8 @@ import {
 import {
   createVaultEnvelope,
   decryptVaultItem,
-  encryptVaultItem,
   encodeB64,
+  encryptVaultItem,
   generateVaultKey,
   generateVaultSalt,
   rewrapItemKeyForVaultKey,
@@ -387,7 +387,10 @@ describe('POST /api/vault/keys/revoke-device', () => {
 
   it('rotates VK and re-wraps item keys instead of only deleting the row', async () => {
     const { cookie } = await seedUserAndLogin('1');
-    const currentDeviceId = encodeB64(crypto.getRandomValues(new Uint8Array(16))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const currentDeviceId = encodeB64(crypto.getRandomValues(new Uint8Array(16)))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/, '');
     const { vk } = await enableVault(cookie, currentDeviceId);
     const joiner = generateEphemeralKeyPair();
     const created = await createPairing(cookie, { label: 'Revoked laptop', peer_pub: encodeB64(joiner.publicKey) });
@@ -415,12 +418,10 @@ describe('POST /api/vault/keys/revoke-device', () => {
       alg: 'PBKDF2-SHA256',
       iterations: 600_000,
     });
-    const recovery = await rewrapVaultKeyForRecovery(
-      newVk,
-      PHRASE,
-      Buffer.from(oldKeys.recovery_salt, 'base64'),
-      { alg: 'PBKDF2-SHA256', iterations: 600_000 },
-    );
+    const recovery = await rewrapVaultKeyForRecovery(newVk, PHRASE, Buffer.from(oldKeys.recovery_salt, 'base64'), {
+      alg: 'PBKDF2-SHA256',
+      iterations: 600_000,
+    });
     const proof = await createSrpProof(cookie, PASSWORD);
     assert.ok(proof);
 
@@ -443,7 +444,9 @@ describe('POST /api/vault/keys/revoke-device', () => {
     assert.equal(res.status, 200);
     assert.equal(((await res.json()) as { vk_version: number }).vk_version, oldKeys.vk_version + 1);
 
-    const after = (await (await fetch(`${BASE_URL}/api/vault/keys`, { headers: headers(cookie) })).json()) as { vk_version: number };
+    const after = (await (await fetch(`${BASE_URL}/api/vault/keys`, { headers: headers(cookie) })).json()) as {
+      vk_version: number;
+    };
     assert.equal(after.vk_version, oldKeys.vk_version + 1, 'the envelope version must advance');
     assert.equal((await getPairing(cookie, id)).status, 404, 'the revoked device row must disappear');
     const body = await decryptVaultItem(newVk, itemId, rewrapped, item.payload);

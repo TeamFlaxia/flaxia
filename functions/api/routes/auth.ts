@@ -245,7 +245,9 @@ auth.post('/upgrade-srp', requireAuth, async (c) => {
     }
     const userId = c.get('user')?.id;
     if (!userId) return c.json({ error: 'Unauthorized' }, 401);
-    const existing = (await c.env.DB.prepare('SELECT srp_verifier, srp_salt FROM users WHERE id = ?').bind(userId).first()) as {
+    const existing = (await c.env.DB.prepare('SELECT srp_verifier, srp_salt FROM users WHERE id = ?')
+      .bind(userId)
+      .first()) as {
       srp_verifier: string | null;
       srp_salt: string | null;
     } | null;

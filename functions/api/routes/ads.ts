@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
+import { isKeyBlocked } from '../../lib/scan/db';
 import { requireAdmin } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
@@ -32,6 +33,10 @@ ads.get('/ads/:id/payload', async (c) => {
 
     if (!ad.payload_key) {
       return c.json({ error: 'No payload available' }, 404);
+    }
+
+    if (await isKeyBlocked(c.env.CACHE, ad.payload_key as string, c.env.DB)) {
+      return c.json({ error: 'Payload not found' }, 404);
     }
 
     // Get object from R2

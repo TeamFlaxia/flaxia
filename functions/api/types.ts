@@ -13,6 +13,12 @@ export type Bindings = {
   AP_DELIVERY_QUEUE: Queue;
   CROWD_ORCHESTRATOR_URL: string;
   CROWD_API_KEY: string;
+  /** Optional dedicated secret for signing orchestrator callbacks. */
+  CROWD_WEBHOOK_SECRET?: string;
+  /** HTTPS URL of the ClamAV WASM image used by the browser container. */
+  FILE_SCAN_CLAMAV_IMAGE?: string;
+  /** Optional HTTPS URL of the video keyframe pHash WASM image. */
+  FILE_SCAN_VIDEO_PHASH_IMAGE?: string;
   VAPID_PUBLIC_KEY?: string;
   VAPID_PRIVATE_KEY?: string;
   CF_ACCESS_AUD: string;

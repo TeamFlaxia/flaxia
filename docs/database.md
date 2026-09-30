@@ -264,6 +264,52 @@ first device has a row that can be revoked.
 | kind | TEXT | `draft` / `note` / `settings` |
 | vk_version | INTEGER | VK version at wrap time |
 
+## File Security Tables
+
+### `file_scans`
+One row per uploaded R2 object — features extracted in the Worker plus the
+asynchronous ClamAV verdict (migration 0097).
+
+| Column | Type | Notes |
+|---|---|---|
+| r2_key | TEXT | PK — the R2 object key |
+| sha256 | TEXT | Full-content digest (always present) |
+| kind | TEXT | `image` / `zip` / `pdf` / `video` / `audio` / `other` |
+| structure_hash | TEXT | ZIP entry-list hash (zip only) |
+| text_hash | TEXT | Normalized text hash (PDF only) |
+| phash | TEXT | 16-hex image hash, or comma-separated video keyframes |
+| status | TEXT | `pending` → `submitted` → `clean` / `infected` / `failed` / `skipped` |
+| detail | TEXT | ClamAV signature name, or the skip/failure reason |
+| task_id | TEXT | Orchestrator container task id |
+| created_at | TEXT | |
+| scanned_at | TEXT | Set when a verdict lands |
+
+Indexes: `idx_file_scans_sha256`, `idx_file_scans_status (status, created_at)`.
+
+The sha-aware upsert means re-uploading identical bytes preserves a
+`clean`/`infected` verdict (no duplicate orchestrator work); different bytes
+reset the row to `pending`. All checks are exact-match lookups — there is no
+pruning, rows live as long as the object.
+
+### `file_blocklist`
+The admin-curated deny list that upload and verdicts are matched against
+(migration 0097).
+
+| Column | Type | Notes |
+|---|---|---|
+| id | INTEGER | PK |
+| kind | TEXT | `sha256` / `structure_hash` / `text_hash` / `phash` / `signature` |
+| value | TEXT | Match target: 64-hex digest, 16-hex phash, or signature text |
+| signature | TEXT | Display name reported when this entry matches |
+| reason | TEXT | Free text (≤ 500 chars) |
+| added_by | TEXT | Admin user id, or `system` for auto-blocked ClamAV hits |
+| created_at | TEXT | |
+
+`UNIQUE(kind, value)` — re-adding refreshes the row instead of duplicating.
+`sha256` / `structure_hash` / `text_hash` / `signature` match by exact value;
+`phash` matches by Hamming distance ≤ 8, computed in JS (SQLite has no
+popcount and the table stays small).
+
 ## Other Tables
 
 - `reports` — User reports with reason and status

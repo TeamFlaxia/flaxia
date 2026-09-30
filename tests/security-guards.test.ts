@@ -129,6 +129,29 @@ describe('security guards', () => {
       assert.ok(headers.includes(header), `_headers missing ${header}`);
     }
   });
+
+  it('authenticates orchestrator callbacks', () => {
+    // /api/crowd/webhook is a standalone Pages Function: no Hono middleware,
+    // no session, no CSRF. An unsigned callback could post an `infected`
+    // verdict for any public media key and blocklist it permanently.
+    const crowd = readFileSync(join(ROOT, 'functions/lib/crowd.ts'), 'utf8');
+    assert.ok(crowd.includes('verifyCallbackSignature'), 'the webhook must verify the callback signature');
+    assert.match(
+      crowd,
+      /if \(!\(await verifyCallbackSignature\(url, crowdConfig\(env\)\)\)\)/,
+      'the signature must be checked before the payload is parsed',
+    );
+
+    // Every URL handed to the orchestrator must go through the signer.
+    for (const file of ['functions/lib/crowd.ts', 'functions/lib/scan/clamav.ts']) {
+      const src = readFileSync(join(ROOT, file), 'utf8');
+      assert.ok(
+        !/callbackUrl:\s*buildCallbackUrl\(/.test(src),
+        `${file} hands the orchestrator an unsigned callback URL`,
+      );
+      assert.ok(src.includes('signedCallbackUrl'), `${file} must sign its callback URLs`);
+    }
+  });
 });
 
 // The invariants of docs/e2ee.md that are cheap to break and expensive to
@@ -173,7 +196,28 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
       assert.ok(spec.includes(invariant), `docs/e2ee.md must state: ${invariant}`);
     }
   });
-  it('keeps KV expiration TTLs at or above Cloudflare\'s 60 second floor', () => {
+
+  it('every route that writes to R2 runs the file scan pipeline', () => {
+    const routesDir = join(ROOT, 'functions/api/routes');
+    const offenders: string[] = [];
+    for (const file of readdirSync(routesDir)) {
+      if (!file.endsWith('.ts')) continue;
+      const src = readFileSync(join(routesDir, file), 'utf8');
+      if (!src.includes('BUCKET.put')) continue;
+      if (!src.includes('scanUploadSync')) {
+        offenders.push(file);
+        continue;
+      }
+      // A sink that scans must also hand the bytes to ClamAV afterwards.
+      assert.ok(
+        src.includes('submitFileScans'),
+        `${file} writes to R2 and scans synchronously but never submits the async ClamAV scan`,
+      );
+    }
+    assert.deepEqual(offenders, [], `upload sinks must run scanUploadSync: ${offenders.join(', ')}`);
+  });
+
+  it("keeps KV expiration TTLs at or above Cloudflare's 60 second floor", () => {
     const offenders: string[] = [];
     for (const file of walk(join(ROOT, 'functions'))) {
       const src = readFileSync(file, 'utf8');
@@ -189,7 +233,9 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
 
   it('keys user-specific timelines by user', () => {
     const src = readFileSync(join(ROOT, 'functions/api/routes/posts.ts'), 'utf8');
-    assert.ok(src.includes('following || Boolean(username)'), 'following/profile timelines must not share another user\'s cache');
+    assert.ok(
+      src.includes('following || Boolean(username)'),
+      "following/profile timelines must not share another user's cache",
+    );
   });
-
 });

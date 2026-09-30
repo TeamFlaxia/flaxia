@@ -41,7 +41,13 @@ async function srpLogin(email: string, password: string): Promise<{ status: numb
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email }),
   });
-  const s = (await start.json()) as { srp: boolean; challenge_id?: string; salt?: string; B?: string; srp_kdf?: string };
+  const s = (await start.json()) as {
+    srp: boolean;
+    challenge_id?: string;
+    salt?: string;
+    B?: string;
+    srp_kdf?: string;
+  };
   if (!s.srp || !s.challenge_id || !s.salt || !s.B) throw new Error('SRP start did not return handshake');
 
   const salt = unb64(s.salt);
@@ -122,7 +128,12 @@ describe('SRP-6a authentication (server never sees plaintext password)', () => {
     const noProof = await fetch(`${BASE_URL}/api/auth/upgrade-srp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: login.cookie },
-      body: JSON.stringify({ srp_salt: b64(newSalt), srp_verifier: b64(newVerifier), srp_group: '2048', srp_kdf: DEFAULT_SRP_KDF }),
+      body: JSON.stringify({
+        srp_salt: b64(newSalt),
+        srp_verifier: b64(newVerifier),
+        srp_group: '2048',
+        srp_kdf: DEFAULT_SRP_KDF,
+      }),
     });
     assert.equal(noProof.status, 400);
 

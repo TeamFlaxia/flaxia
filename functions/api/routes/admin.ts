@@ -5,6 +5,14 @@ import { extractFileFromZip } from '../../../src/lib/wvfs-zip-server';
 import { deleteAccount } from '../../lib/account-deletion';
 import { drainPendingEmbeds, enqueuePendingEmbed, ensureNsfwScansTable, submitDetectNsfw } from '../../lib/crowd';
 import { validateImageDimensions } from '../../lib/image-dimensions';
+import {
+  addBlocklistEntry,
+  listBlocklist,
+  removeBlocklistEntry,
+  validateBlocklistEntry,
+} from '../../lib/scan/blocklist';
+import { submitFileScans } from '../../lib/scan/clamav';
+import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { requireAdmin, requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
@@ -560,18 +568,33 @@ admin.post('/ads', requireAuth, async (c) => {
 
       // Upload to R2
       const r2Key = `ad/payload/${adId}`;
+      const fileBuffer = await payloadFile.arrayBuffer();
+
+      // Sync scan: the stored payload_type is chosen from this filename's
+      // extension, so the extension ↔ magic-byte check runs against it. The
+      // stored Content-Type switches to the sniffed type instead of trusting
+      // the multipart header.
+      const verdict = await scanUploadSync(c.env.DB, {
+        bytes: fileBuffer,
+        declaredType: payloadFile.type,
+        name: payloadFile.name,
+        r2Key,
+      });
+      if (!verdict.ok) {
+        return c.json({ error: verdict.error, code: verdict.code }, verdict.status);
+      }
+      const payloadMime = verdict.detectedMime;
 
       if (payload_type === 'zip') {
-        const fileBuffer = await payloadFile.arrayBuffer();
         await c.env.BUCKET.put(r2Key, fileBuffer);
       } else {
-        const fileBuffer = await payloadFile.arrayBuffer();
         await c.env.BUCKET.put(r2Key, fileBuffer, {
           httpMetadata: {
-            contentType: payloadFile.type,
+            contentType: payloadMime,
           },
         });
       }
+      runInBackground(c, () => submitFileScans(c.env.DB, c.env, r2Key, payloadMime, fileBuffer));
 
       payload_key = r2Key;
     }
@@ -595,15 +618,28 @@ admin.post('/ads', requireAuth, async (c) => {
       // Upload thumbnail to R2
       const thumbnailR2Key = `ad/thumbnail/${adId}.${ext}`;
       const thumbnailBuffer = await thumbnailFile.arrayBuffer();
-      const thumbnailDimError = validateImageDimensions(thumbnailBuffer, thumbnailFile.type);
+
+      const verdict = await scanUploadSync(c.env.DB, {
+        bytes: thumbnailBuffer,
+        declaredType: thumbnailFile.type,
+        name: thumbnailR2Key,
+        r2Key: thumbnailR2Key,
+      });
+      if (!verdict.ok) {
+        return c.json({ error: verdict.error, code: verdict.code }, verdict.status);
+      }
+      const thumbMime = verdict.detectedMime;
+
+      const thumbnailDimError = validateImageDimensions(thumbnailBuffer, thumbMime);
       if (thumbnailDimError) {
         return c.json({ error: `Thumbnail too large. ${thumbnailDimError}` }, 413);
       }
       await c.env.BUCKET.put(thumbnailR2Key, thumbnailBuffer, {
         httpMetadata: {
-          contentType: thumbnailFile.type,
+          contentType: thumbMime,
         },
       });
+      runInBackground(c, () => submitFileScans(c.env.DB, c.env, thumbnailR2Key, thumbMime, thumbnailBuffer));
 
       thumbnail_key = thumbnailR2Key;
     }
@@ -1011,6 +1047,67 @@ admin.get('/auth-migration', requireAuth, requireAdmin, async (c) => {
   } catch (error: unknown) {
     console.error('Auth migration stats error:', error);
     return c.json({ error: 'Failed to read migration stats' }, 500);
+  }
+});
+
+// ─── File blocklist ──────────────────────────────────────────────────────────
+
+// GET /api/admin/file-blocklist — list all entries.
+admin.get('/file-blocklist', requireAuth, requireAdmin, async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+    const entries = await listBlocklist(c.env.DB);
+    return c.json({ entries });
+  } catch (error: unknown) {
+    console.error('File blocklist list error:', error);
+    return c.json({ error: 'Failed to list blocklist' }, 500);
+  }
+});
+
+// POST /api/admin/file-blocklist — add (or refresh) one entry.
+admin.post('/file-blocklist', requireAuth, requireAdmin, async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+    const body = await c.req.json<{ kind?: unknown; value?: unknown; signature?: unknown; reason?: unknown }>();
+    const parsed = validateBlocklistEntry(body.kind, body.value);
+    if ('error' in parsed) {
+      return c.json({ error: parsed.error }, 400);
+    }
+    await addBlocklistEntry(c.env.DB, {
+      ...parsed,
+      signature: typeof body.signature === 'string' ? body.signature.slice(0, 200) : null,
+      reason: typeof body.reason === 'string' ? body.reason.slice(0, 500) : null,
+      addedBy: c.get('user')?.id ?? 'admin',
+    });
+    return c.json({ ok: true, ...parsed }, 201);
+  } catch (error: unknown) {
+    console.error('File blocklist add error:', error);
+    return c.json({ error: 'Failed to add blocklist entry' }, 500);
+  }
+});
+
+// DELETE /api/admin/file-blocklist/:id — remove one entry.
+admin.delete('/file-blocklist/:id', requireAuth, requireAdmin, async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+    const id = Number(c.req.param('id'));
+    if (!Number.isInteger(id) || id <= 0) {
+      return c.json({ error: 'Invalid id' }, 400);
+    }
+    const removed = await removeBlocklistEntry(c.env.DB, id);
+    if (!removed) {
+      return c.json({ error: 'Entry not found' }, 404);
+    }
+    return c.json({ ok: true });
+  } catch (error: unknown) {
+    console.error('File blocklist delete error:', error);
+    return c.json({ error: 'Failed to delete blocklist entry' }, 500);
   }
 });
 

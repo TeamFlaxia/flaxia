@@ -4,6 +4,8 @@ import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../s
 import { deleteAccount } from '../../lib/account-deletion';
 import { enrichPostsWithAttachments } from '../../lib/attachments';
 import { deleteSession, getMeWithSession, getSessionToken, verifySrpPassword } from '../../lib/auth';
+import { submitFileScans } from '../../lib/scan/clamav';
+import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { isSupportedSrpKdf } from '../../lib/srp';
 import { detectMimeType, isAllowedImageMime, requireAuth } from '../helpers';
 import type { Bindings, PostRow, SrpProofBody, Variables } from '../types';
@@ -848,6 +850,17 @@ users.patch('/users/me', requireAuth, async (c) => {
         const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 
         const existingKey = `avatar/${hashHex}`;
+
+        const verdict = await scanUploadSync(c.env.DB, {
+          bytes: fileBuffer,
+          declaredType: avatarFile.type,
+          r2Key: existingKey,
+          detectedMime: detected,
+        });
+        if (!verdict.ok) {
+          return c.json({ error: verdict.error, code: verdict.code }, verdict.status);
+        }
+
         const existingObject = await c.env.BUCKET.head(existingKey);
 
         let avatarKey: string;
@@ -863,6 +876,8 @@ users.patch('/users/me', requireAuth, async (c) => {
           });
           console.log('Uploaded new avatar file:', avatarKey);
         }
+
+        runInBackground(c, () => submitFileScans(c.env.DB, c.env, avatarKey, detected, fileBuffer));
 
         await c.env.DB.prepare('UPDATE users SET avatar_key = ? WHERE id = ?').bind(avatarKey, userId).run();
       }
@@ -892,6 +907,17 @@ users.patch('/users/me', requireAuth, async (c) => {
         const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 
         const existingKey = `header/${hashHex}`;
+
+        const verdict = await scanUploadSync(c.env.DB, {
+          bytes: fileBuffer,
+          declaredType: headerFile.type,
+          r2Key: existingKey,
+          detectedMime: detected,
+        });
+        if (!verdict.ok) {
+          return c.json({ error: verdict.error, code: verdict.code }, verdict.status);
+        }
+
         const existingObject = await c.env.BUCKET.head(existingKey);
 
         let headerKey: string;
@@ -907,6 +933,8 @@ users.patch('/users/me', requireAuth, async (c) => {
           });
           console.log('Uploaded new header file:', headerKey);
         }
+
+        runInBackground(c, () => submitFileScans(c.env.DB, c.env, headerKey, detected, fileBuffer));
 
         await c.env.DB.prepare('UPDATE users SET header_key = ? WHERE id = ?').bind(headerKey, userId).run();
       } else if (removeHeader) {
@@ -1246,7 +1274,22 @@ users.post('/users/me/avatar', requireAuth, async (c) => {
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
     const existingKey = `avatar/${hashHex}`;
+
+    const verdict = await scanUploadSync(c.env.DB, {
+      bytes: fileData,
+      declaredType: contentType,
+      r2Key: existingKey,
+      detectedMime: detected,
+    });
+    if (!verdict.ok) {
+      return c.json({ error: verdict.error, code: verdict.code }, verdict.status);
+    }
+
     const existingObject = await c.env.BUCKET.head(existingKey);
 
     let avatarKey: string;
@@ -1263,9 +1306,7 @@ users.post('/users/me/avatar', requireAuth, async (c) => {
       console.log('Uploaded new avatar file:', avatarKey);
     }
 
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500);
-    }
+    runInBackground(c, () => submitFileScans(c.env.DB, c.env, avatarKey, detected, fileData));
 
     const result = await c.env.DB.prepare('UPDATE users SET avatar_key = ? WHERE id = ?').bind(avatarKey, userId).run();
 

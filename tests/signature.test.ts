@@ -114,7 +114,9 @@ describe('HTTP Signature Verification', () => {
 
   it('accepts lowercase sha-256 in Digest', async () => {
     const body = '{"type":"Follow"}';
-    const digest = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body))).toString('base64');
+    const digest = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body))).toString(
+      'base64',
+    );
     const request = new Request('https://example.com/inbox', {
       method: 'POST',
       headers: { Digest: `sha-256=${digest}` },

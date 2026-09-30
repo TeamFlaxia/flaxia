@@ -27,6 +27,8 @@ import { getUserPlan } from '../../lib/billing';
 import { embedPost, isImageKey, screenPostImages } from '../../lib/crowd';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { sendPushToAll } from '../../lib/notify';
+import { submitFileScans } from '../../lib/scan/clamav';
+import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
 import { batchGetFreshAndBookmarkStatus, kvCacheGet, kvCacheSet, makeCacheKey, requireAuth } from '../helpers';
 import type { ActorData, Bindings, PollOptionRow, PollRow, PostRow, Variables } from '../types';
@@ -1485,13 +1487,26 @@ posts.post('/posts/commit', requireAuth, async (c) => {
         }
         const thumbnailR2Key = `payload/${postId || crypto.randomUUID()}.thumb.${ext}`;
         const thumbnailBuffer = await thumbnailFile.arrayBuffer();
-        const thumbnailDimError = validateImageDimensions(thumbnailBuffer, thumbnailFile.type);
+
+        const verdict = await scanUploadSync(c.env.DB, {
+          bytes: thumbnailBuffer,
+          declaredType: thumbnailFile.type,
+          name: thumbnailR2Key,
+          r2Key: thumbnailR2Key,
+        });
+        if (!verdict.ok) {
+          return c.json({ error: verdict.error, code: verdict.code }, verdict.status);
+        }
+        const thumbMime = verdict.detectedMime;
+
+        const thumbnailDimError = validateImageDimensions(thumbnailBuffer, thumbMime);
         if (thumbnailDimError) {
           return c.json({ error: `Thumbnail too large. ${thumbnailDimError}` }, 413);
         }
         await c.env.BUCKET.put(thumbnailR2Key, thumbnailBuffer, {
-          httpMetadata: { contentType: thumbnailFile.type },
+          httpMetadata: { contentType: thumbMime },
         });
+        runInBackground(c, () => submitFileScans(c.env.DB, c.env, thumbnailR2Key, thumbMime, thumbnailBuffer));
         thumbnailKey = thumbnailR2Key;
       }
     } else {

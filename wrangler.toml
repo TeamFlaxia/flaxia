@@ -28,12 +28,21 @@ SANDBOX_ORIGIN = "https://sandbox.flaxia.app"
 BASE_URL = "https://flaxia.app"
 ENVIRONMENT = "production"
 CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
+# Full HTTPS URLs of the browser-node WASM images used by the file scan
+# pipeline. The container workload rejects bare filenames and local/private
+# hosts, so these must be publicly reachable. While empty, uploads are stored
+# but recorded as `skipped / scan_image_unconfigured` instead of being scanned.
+# FILE_SCAN_CLAMAV_IMAGE = "https://<host>/<path>/clamav.wasm"
+# FILE_SCAN_VIDEO_PHASH_IMAGE = "https://<host>/<path>/flaxia-video-phash.wasm"
 ADMIN_USERNAMES = "remydrescarlet"
 STRIPE_PRICE_FLXIA_PLUS = "price_1UI3sxGMn6YcUp3x8rC58pdt"  # Stripe Price ID は公開識別子なので vars で管理（secret ではない）
 
 
 # To set CROWD_API_KEY secret:
 #   npx wrangler secret put CROWD_API_KEY
+# Callbacks on POST /api/crowd/webhook are signed with CROWD_API_KEY by
+# default; set CROWD_WEBHOOK_SECRET only to rotate the signing key separately:
+#   npx wrangler pages secret put CROWD_WEBHOOK_SECRET --project-name flaxia
 
 [[r2_buckets]]
 binding = "BUCKET"

@@ -267,7 +267,14 @@ vault.get('/vault/items', requireAuth, async (c) => {
     'SELECT id, item_key_wrapped, kind, vk_version, created_at, updated_at FROM vault_items WHERE user_id = ? ORDER BY created_at',
   )
     .bind(user.id)
-    .all<{ id: string; item_key_wrapped: string; kind: string; vk_version: number; created_at: string; updated_at: string }>();
+    .all<{
+      id: string;
+      item_key_wrapped: string;
+      kind: string;
+      vk_version: number;
+      created_at: string;
+      updated_at: string;
+    }>();
   return c.json({ items: result.results ?? [] });
 });
 
@@ -326,13 +333,20 @@ vault.post('/vault/keys/revoke-device', requireAuth, async (c) => {
       user.id,
       version,
     ),
-    c.env.DB.prepare('DELETE FROM device_keys WHERE user_id = ? AND id <> ?').bind(user.id, String(body.current_device_id)),
-  ];
-  for (const item of itemKeys) statements.push(
-    c.env.DB.prepare('UPDATE vault_items SET item_key_wrapped = ?, vk_version = ? WHERE user_id = ? AND id = ?').bind(
-      item.item_key_wrapped as string, version + 1, user.id, item.item_id as string,
+    c.env.DB.prepare('DELETE FROM device_keys WHERE user_id = ? AND id <> ?').bind(
+      user.id,
+      String(body.current_device_id),
     ),
-  );
+  ];
+  for (const item of itemKeys)
+    statements.push(
+      c.env.DB.prepare('UPDATE vault_items SET item_key_wrapped = ?, vk_version = ? WHERE user_id = ? AND id = ?').bind(
+        item.item_key_wrapped as string,
+        version + 1,
+        user.id,
+        item.item_id as string,
+      ),
+    );
 
   const results = await c.env.DB.batch(statements);
   if (results.some((result) => !result.success)) return c.json({ error: 'Failed to revoke device' }, 500);

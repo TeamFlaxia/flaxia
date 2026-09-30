@@ -158,6 +158,15 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 `PUT /api/upload/:key`
 - Binary upload directly to R2 (requires auth; must own the pending/published post referenced by the key)
 - A file whose magic bytes say PDF is accepted only for a `docs/{postId}/{n}.pdf` key (400 otherwise)
+- The file-scan pipeline runs synchronously before the object is stored. On a
+  block the object never reaches R2 and no `file_scans` row is written; the
+  same codes appear on every upload sink (stamps, avatars, headers,
+  thumbnails, ad payloads):
+  - `400 unrecognized_type` — sniffed type not in the image/audio/video/document allowlist
+  - `400 type_mismatch` — sniffed bytes disagree with the declared
+    `Content-Type`, the key extension, or the attachment slot
+  - `400 file_blocked` — sha256 / structure hash / text hash / pHash matches
+    `file_blocklist` (response includes `reason`)
 
 ### Commit Post
 `POST /api/posts/commit`
@@ -326,6 +335,9 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 | DELETE | `/api/admin/hidden-posts/:id` | Unhide post |
 | GET | `/api/admin/users` | List all users |
 | PATCH | `/api/admin/users/:id` | Update user status |
+| GET | `/api/admin/file-blocklist` | List file blocklist entries |
+| POST | `/api/admin/file-blocklist` | Add/refresh an entry `{ kind, value, signature?, reason? }` |
+| DELETE | `/api/admin/file-blocklist/:id` | Remove an entry |
 
 ---
 

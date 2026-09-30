@@ -4,6 +4,9 @@ import type { AttachmentKind } from '../../lib/attachments';
 import { parseAttachmentKey } from '../../lib/attachments';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
+import { submitFileScans } from '../../lib/scan/clamav';
+import { isKeyBlocked } from '../../lib/scan/db';
+import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import {
   allowedOrigins,
   detectMimeType,
@@ -21,10 +24,13 @@ type MediaContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 
 /**
  * Legacy DM media keys (`dm/...`) are no longer served — the direct-message
- * feature has been removed. All other media keys are public and always allowed.
+ * feature has been removed. Keys flagged by an async scan verdict (ClamAV /
+ * blocklist callback) are also withheld: the verdict writes a KV marker, so
+ * this costs one KV read on top of the rate-limit read already on this path.
  */
-async function canAccessMediaKey(_c: MediaContext, key: string): Promise<boolean> {
+async function canAccessMediaKey(c: MediaContext, key: string): Promise<boolean> {
   if (key.startsWith('dm/')) return false;
+  if (await isKeyBlocked(c.env.CACHE, key, c.env.DB)) return false;
   return true;
 }
 
@@ -173,9 +179,8 @@ media.put('/upload/*', requireAuth, async (c) => {
       return c.json({ error: 'PDF files are only allowed as document attachments' }, 400);
     }
     // Sanity check: declared content-type should be consistent (relaxed for zip/swf which may use generic types)
-    if (declaredContentType && detectedMime.startsWith('image/') && !declaredContentType.startsWith('image/')) {
-      return c.json({ error: 'Declared Content-Type does not match actual file content' }, 400);
-    }
+    // — replaced by the full scan pipeline below, which checks the declared
+    // type, the key extension, the features and the blocklist in one place.
 
     // Multi-media attachment slots only accept media of the declared kind.
     // This rejects html/swf/zip masquerading in gif|audio|video|docs keys.
@@ -192,12 +197,28 @@ media.put('/upload/*', requireAuth, async (c) => {
       return c.json({ error: dimError }, 413);
     }
 
+    // Steps 2-4 of the file scanning pipeline: masquerade checks, feature
+    // extraction and the synchronous blocklist match. A hit never reaches R2.
+    const verdict = await scanUploadSync(c.env.DB, {
+      bytes: fileData,
+      declaredType: declaredContentType,
+      name: key,
+      r2Key: key,
+      detectedMime,
+    });
+    if (!verdict.ok) {
+      return c.json({ error: verdict.error, code: verdict.code }, verdict.status);
+    }
+
     // Upload to R2 with detected content type
     await c.env.BUCKET.put(key, fileData, {
       httpMetadata: {
         contentType: detectedMime,
       },
     });
+
+    // Step 1 (ClamAV) runs after the response; a later hit blocks serving.
+    runInBackground(c, () => submitFileScans(c.env.DB, c.env, key, detectedMime, fileData));
 
     return c.json({ success: true, key });
   } catch (error: unknown) {
@@ -463,6 +484,10 @@ media.get('/zip/:postId', async (c) => {
 
     const publicKey = `zip/${postId}.zip`;
 
+    if (!(await canAccessMediaKey(c, publicKey))) {
+      return c.json({ error: 'ZIP not found' }, 404);
+    }
+
     const object = await c.env.BUCKET.get(publicKey);
 
     if (!object) {
@@ -525,7 +550,11 @@ media.get('/thumbnail/:id', async (c) => {
     }
 
     // Get thumbnail object from R2
-    const object = await c.env.BUCKET.get(post.thumbnail_key as string);
+    const thumbKey = post.thumbnail_key as string;
+    if (await isKeyBlocked(c.env.CACHE, thumbKey, c.env.DB)) {
+      return c.json({ error: 'Thumbnail not found' }, 404);
+    }
+    const object = await c.env.BUCKET.get(thumbKey);
 
     if (!object) {
       return c.json({ error: 'Thumbnail file not found' }, 404);
@@ -533,7 +562,7 @@ media.get('/thumbnail/:id', async (c) => {
 
     // Determine content type based on file extension
     let contentType = 'image/jpeg'; // default
-    const key = post.thumbnail_key as string;
+    const key = thumbKey;
     const extension = key.split('.').pop()?.toLowerCase();
 
     switch (extension) {
@@ -585,6 +614,10 @@ media.get('/swf/:postId', async (c) => {
 
     // SWF key
     const publicKey = `swf/${postId}.swf`;
+
+    if (!(await canAccessMediaKey(c, publicKey))) {
+      return c.json({ error: 'SWF not found' }, 404);
+    }
 
     const object = await c.env.BUCKET.get(publicKey);
 

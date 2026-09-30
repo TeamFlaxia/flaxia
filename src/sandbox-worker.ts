@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { isKeyBlocked } from '../functions/lib/scan/db';
 import { MULTIPLAYER_SDK_IIFE } from './lib/multiplayer-sdk.generated';
 import { pdfViewerAssetBody, pdfViewerAssetHeaders } from './lib/pdf-viewer-page';
 import {
@@ -14,6 +15,7 @@ import {
 type Bindings = {
   BUCKET: R2Bucket;
   DB: D1Database;
+  CACHE?: KVNamespace;
 };
 
 const SANDBOX_CSP = [
@@ -54,9 +56,9 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
       return c.json({ error: 'Storage not available' }, 500);
     }
 
-    // Resolve the latest version before hitting the R2 / in-memory caches so
-    // the correct version-specific path is used.  Without this, stale files
-    // from an older version under wvfs/<postId>/ would be served.
+    // 1. Find the ZIP/payload key and fail closed before any fast path. The
+    // CDN-cached WVFS files are immutable, so a blocked archive can otherwise
+    // keep serving extracted bytes after the scan verdict lands.
     let zipKey: string | null = null;
 
     if (!versionId && c.env.DB) {
@@ -68,10 +70,9 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
           const escapedPostId = postId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           const versionMatch = postResult.payload_key.match(new RegExp(`^versions/${escapedPostId}/([^/]+)\\.zip$`));
           if (versionMatch) {
-            // Redirect to the version-specific lookup path
+            // Resolve to the version-specific lookup path.
             versionId = versionMatch[1];
           } else {
-            // Non-versioned payload — use directly
             const obj = await c.env.BUCKET.head(postResult.payload_key);
             if (obj) zipKey = postResult.payload_key;
           }
@@ -81,15 +82,6 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
       }
     }
 
-    // 1. Try pre-extracted R2 files (fast path — persists across workers, CDN-cacheable)
-    let response = await serveFileFromR2(c.env.BUCKET, postId, filePath, versionId);
-    if (response) return withCsp(response);
-
-    // 2. Try in-memory cache (second fast path)
-    response = await serveFileFromWvfs(postId, filePath, versionId);
-    if (response) return withCsp(response);
-
-    // 3. Find the ZIP key in R2
     if (c.env.DB && versionId) {
       try {
         const versionResult = (await c.env.DB.prepare(
@@ -139,6 +131,18 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
     if (!zipKey) {
       return c.text('Not found', 404);
     }
+
+    if (await isKeyBlocked(c.env.CACHE, zipKey, c.env.DB)) {
+      return c.text('Not found', 404);
+    }
+
+    // 2. Try pre-extracted R2 files (fast path — persists across workers, CDN-cacheable)
+    let response = await serveFileFromR2(c.env.BUCKET, postId, filePath, versionId);
+    if (response) return withCsp(response);
+
+    // 3. Try in-memory cache (second fast path)
+    response = await serveFileFromWvfs(postId, filePath, versionId);
+    if (response) return withCsp(response);
 
     // 3a. Direct HTML file — serve from R2 directly (not a ZIP)
     if (zipKey.endsWith('.html')) {
