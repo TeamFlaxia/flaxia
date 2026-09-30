@@ -69,7 +69,7 @@ CI run with npm).
 ## Important Constraints
 - Post text: ≤ 200 characters
 - Payload size: ≤ 10MB (post), ≤ 200MB (ads)
-- Timeline: only, no algorithmic sorting
+- Global and Following timelines: reverse chronological (`GET /api/posts`). For You: ranked recommendations (`GET /api/posts/recommended`); see `docs/architecture.md`.
 - `allow-same-origin` banned on all iframes
 - CSP enforced via HTTP headers (not `<meta>`)
 - 3-column layout (240px / 600px / 350px)
