@@ -41,13 +41,14 @@ async function srpLogin(email: string, password: string): Promise<{ status: numb
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email }),
   });
-  const s = (await start.json()) as { srp: boolean; challenge_id?: string; salt?: string; B?: string };
+  const s = (await start.json()) as { srp: boolean; challenge_id?: string; salt?: string; B?: string; srp_kdf?: string };
   if (!s.srp || !s.challenge_id || !s.salt || !s.B) throw new Error('SRP start did not return handshake');
 
   const salt = unb64(s.salt);
   const B = unb64(s.B);
   const { A, a } = await clientStep1(password, salt);
-  const finish = await clientStep2(password, salt, a, B);
+  const kdf = s.srp_kdf === 'sha256-v1' || s.srp_kdf === DEFAULT_SRP_KDF ? s.srp_kdf : DEFAULT_SRP_KDF;
+  const finish = await clientStep2(password, salt, a, B, kdf);
 
   const verify = await fetch(`${BASE_URL}/api/auth/login/verify`, {
     method: 'POST',
@@ -95,6 +96,56 @@ describe('SRP-6a authentication (server never sees plaintext password)', () => {
       body: JSON.stringify({ email: 'srp2@example.com', challenge_id: s.challenge_id, A: b64(A), M1: b64(finish.M1) }),
     });
     assert.equal(verify.status, 401);
+  });
+
+  it('migrates a v1 verifier only with a current-password proof', async () => {
+    const oldSalt = generateSalt();
+    const oldVerifier = await computeVerifier('v1-password-123', oldSalt, 'sha256-v1');
+    await fetch(`${BASE_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'v1@example.com',
+        username: 'v1user',
+        display_name: 'V1 User',
+        srp_salt: b64(oldSalt),
+        srp_verifier: b64(oldVerifier),
+        srp_group: '2048',
+        srp_kdf: 'sha256-v1',
+      }),
+    });
+    const login = await srpLogin('v1@example.com', 'v1-password-123');
+    assert.equal(login.status, 200);
+
+    const newSalt = generateSalt();
+    const newVerifier = await computeVerifier('v1-password-123', newSalt, DEFAULT_SRP_KDF);
+    const noProof = await fetch(`${BASE_URL}/api/auth/upgrade-srp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: login.cookie },
+      body: JSON.stringify({ srp_salt: b64(newSalt), srp_verifier: b64(newVerifier), srp_group: '2048', srp_kdf: DEFAULT_SRP_KDF }),
+    });
+    assert.equal(noProof.status, 400);
+
+    const reauth = await fetch(`${BASE_URL}/api/auth/reauth/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: login.cookie },
+    });
+    const challenge = (await reauth.json()) as { challenge_id: string; salt: string; B: string };
+    const salt = unb64(challenge.salt);
+    const first = await clientStep1('v1-password-123', salt);
+    const finish = await clientStep2('v1-password-123', salt, first.a, unb64(challenge.B), 'sha256-v1');
+    const upgraded = await fetch(`${BASE_URL}/api/auth/upgrade-srp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: login.cookie },
+      body: JSON.stringify({
+        srp_salt: b64(newSalt),
+        srp_verifier: b64(newVerifier),
+        srp_group: '2048',
+        srp_kdf: DEFAULT_SRP_KDF,
+        current_srp: { challenge_id: challenge.challenge_id, A: b64(first.A), M1: b64(finish.M1) },
+      }),
+    });
+    assert.equal(upgraded.status, 200);
   });
 
   it('legacy /login/start signals fallback for non-SRP accounts', async () => {

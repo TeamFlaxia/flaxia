@@ -4,6 +4,7 @@ import {
   clearSessionCookie,
   createSession,
   deleteSession,
+  getSession,
   getSessionToken,
   loginUser,
   registerUser,
@@ -15,7 +16,7 @@ import {
 } from '../../lib/auth';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { requireAuth } from '../helpers';
-import type { Bindings, Variables } from '../types';
+import type { Bindings, SrpProofBody, Variables } from '../types';
 
 const auth = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -238,18 +239,41 @@ auth.post('/reauth/verify', requireAuth, async (c) => {
 // and this handler only stores the result.
 auth.post('/upgrade-srp', requireAuth, async (c) => {
   try {
-    const { srp_salt, srp_verifier, srp_group, srp_kdf } = await c.req.json();
+    const { srp_salt, srp_verifier, srp_group, srp_kdf, current_srp } = await c.req.json();
     if (!srp_salt || !srp_verifier || !srp_group || !srp_kdf) {
       return c.json({ error: 'Missing SRP parameters' }, 400);
     }
     const userId = c.get('user')?.id;
     if (!userId) return c.json({ error: 'Unauthorized' }, 401);
+    const existing = (await c.env.DB.prepare('SELECT srp_verifier, srp_salt FROM users WHERE id = ?').bind(userId).first()) as {
+      srp_verifier: string | null;
+      srp_salt: string | null;
+    } | null;
+    if (existing?.srp_verifier || existing?.srp_salt) {
+      const proof = current_srp as SrpProofBody | undefined;
+      if (!proof?.challenge_id || !proof.A || !proof.M1) {
+        return c.json({ error: 'Current password proof is required' }, 400);
+      }
+      if (!(await verifySrpPassword(c.env, userId, proof.challenge_id, proof.A, proof.M1))) {
+        return c.json({ error: 'Current password is incorrect' }, 401);
+      }
+    } else {
+      const token = getSessionToken(c.req.raw);
+      const session = token ? await getSession(c.env, token) : null;
+      if (!session?.session.srp_upgrade_allowed) {
+        return c.json({ error: 'Legacy login required for SRP upgrade' }, 403);
+      }
+    }
     await upgradeSrp(c.env, userId, {
       salt: srp_salt,
       verifier: srp_verifier,
       group: srp_group,
       kdf: srp_kdf,
     });
+    const token = getSessionToken(c.req.raw);
+    if (token) {
+      await c.env.DB.prepare('UPDATE sessions SET srp_upgrade_allowed = 0 WHERE id = ?').bind(token).run();
+    }
     return c.json({ success: true });
   } catch (error: unknown) {
     console.error('SRP upgrade error:', error);

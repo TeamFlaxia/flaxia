@@ -275,8 +275,12 @@ media.get('/images/*', async (c) => {
       return c.json({ error: 'Image not found' }, 404);
     }
 
-    // Get content type from object metadata or default to image/jpeg
+    // Never serve a non-image R2 key from the image proxy. A user-uploaded
+    // HTML/SVG document returned inline here would run on the main origin.
     const contentType = object.httpMetadata?.contentType || 'image/jpeg';
+    if (!isAllowedImageMime(contentType)) {
+      return c.json({ error: 'Image not found' }, 404);
+    }
 
     // Return the image with proper headers
     return new Response(object.body, {

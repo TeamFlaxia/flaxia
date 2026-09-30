@@ -12,7 +12,17 @@ import {
   unwrapVaultKeyForPairing,
   wrapVaultKeyForPairing,
 } from '../src/lib/vault/pairing.ts';
-import { createVaultEnvelope, encodeB64 } from '../src/lib/vault/primitives.ts';
+import {
+  createVaultEnvelope,
+  decryptVaultItem,
+  encryptVaultItem,
+  encodeB64,
+  generateVaultKey,
+  generateVaultSalt,
+  rewrapItemKeyForVaultKey,
+  rewrapVaultKeyForPassword,
+  rewrapVaultKeyForRecovery,
+} from '../src/lib/vault/primitives.ts';
 import { BASE_URL, createSrpProof, resetDb, seedUserAndLogin } from './helpers/setup.ts';
 
 const PASSWORD = 'password123';
@@ -22,14 +32,18 @@ function headers(cookie: string): Record<string, string> {
   return { 'Content-Type': 'application/json', Cookie: cookie };
 }
 
-async function enableVault(cookie: string): Promise<{ vk: Uint8Array }> {
+async function enableVault(cookie: string, deviceId?: string): Promise<{ vk: Uint8Array }> {
   const { envelope, vk } = await createVaultEnvelope(PASSWORD, PHRASE);
   const proof = await createSrpProof(cookie, PASSWORD);
   assert.ok(proof, 'should be able to prove the current password');
   const res = await fetch(`${BASE_URL}/api/vault/keys`, {
     method: 'POST',
     headers: headers(cookie),
-    body: JSON.stringify({ current_srp: proof, ...envelope }),
+    body: JSON.stringify({
+      current_srp: proof,
+      ...envelope,
+      ...(deviceId ? { device_id: deviceId, device_label: 'Current test device' } : {}),
+    }),
   });
   assert.equal(res.status, 201);
   return { vk };
@@ -365,6 +379,75 @@ describe('device management', () => {
       ).status,
       404,
     );
+  });
+});
+
+describe('POST /api/vault/keys/revoke-device', () => {
+  beforeEach(resetDb);
+
+  it('rotates VK and re-wraps item keys instead of only deleting the row', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const currentDeviceId = encodeB64(crypto.getRandomValues(new Uint8Array(16))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const { vk } = await enableVault(cookie, currentDeviceId);
+    const joiner = generateEphemeralKeyPair();
+    const created = await createPairing(cookie, { label: 'Revoked laptop', peer_pub: encodeB64(joiner.publicKey) });
+    const { id } = (await created.json()) as { id: string };
+
+    const itemId = 'review_item_abc123';
+    const item = await encryptVaultItem(vk, itemId, new TextEncoder().encode('secret'));
+    const seeded = await fetch(`${BASE_URL}/api/test/vault-item`, {
+      method: 'POST',
+      headers: headers(cookie),
+      body: JSON.stringify({ item_id: itemId, item_key_wrapped: item.item_key_wrapped, payload: item.payload }),
+    });
+    assert.equal(seeded.status, 201);
+
+    const oldKeys = (await (await fetch(`${BASE_URL}/api/vault/keys`, { headers: headers(cookie) })).json()) as {
+      vk_version: number;
+      recovery_salt: string;
+      kdf_params: unknown;
+      recovery_blob: string;
+    };
+    const newVk = generateVaultKey();
+    const rewrapped = await rewrapItemKeyForVaultKey(vk, newVk, itemId, item.item_key_wrapped);
+    const salt = generateVaultSalt();
+    const wrapped = await rewrapVaultKeyForPassword(newVk, PASSWORD, salt, {
+      alg: 'PBKDF2-SHA256',
+      iterations: 600_000,
+    });
+    const recovery = await rewrapVaultKeyForRecovery(
+      newVk,
+      PHRASE,
+      Buffer.from(oldKeys.recovery_salt, 'base64'),
+      { alg: 'PBKDF2-SHA256', iterations: 600_000 },
+    );
+    const proof = await createSrpProof(cookie, PASSWORD);
+    assert.ok(proof);
+
+    const res = await fetch(`${BASE_URL}/api/vault/keys/revoke-device`, {
+      method: 'POST',
+      headers: headers(cookie),
+      body: JSON.stringify({
+        current_srp: proof,
+        device_id: id,
+        current_device_id: currentDeviceId,
+        vk_version: oldKeys.vk_version,
+        salt: encodeB64(salt),
+        recovery_salt: oldKeys.recovery_salt,
+        kdf_params: oldKeys.kdf_params,
+        wrapped_vk: wrapped,
+        recovery_blob: recovery,
+        item_keys: [{ item_id: itemId, item_key_wrapped: rewrapped }],
+      }),
+    });
+    assert.equal(res.status, 200);
+    assert.equal(((await res.json()) as { vk_version: number }).vk_version, oldKeys.vk_version + 1);
+
+    const after = (await (await fetch(`${BASE_URL}/api/vault/keys`, { headers: headers(cookie) })).json()) as { vk_version: number };
+    assert.equal(after.vk_version, oldKeys.vk_version + 1, 'the envelope version must advance');
+    assert.equal((await getPairing(cookie, id)).status, 404, 'the revoked device row must disappear');
+    const body = await decryptVaultItem(newVk, itemId, rewrapped, item.payload);
+    assert.equal(new TextDecoder().decode(body), 'secret', 'the item key must move to the new VK');
   });
 });
 

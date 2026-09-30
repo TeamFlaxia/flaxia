@@ -858,5 +858,6 @@
   "crowd.consent_privacy_link": "プライバシーポリシー",
   "crowd.consent_accept": "同意して協力",
   "crowd.consent_reject": "協力しない",
-  "badge.flaxia_plus": "Flaxia+ メンバー"
+  "badge.flaxia_plus": "Flaxia+ メンバー",
+  "settings.vault_revoke_failed": "端末を失効できませんでした。もう一度お試しください。"
 }

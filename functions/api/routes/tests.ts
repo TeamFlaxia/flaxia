@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { Hono } from 'hono';
-import { hashPassword } from '../../lib/auth.ts';
+import { getMeWithSession, getSessionToken, hashPassword } from '../../lib/auth.ts';
 import { badgeTypeForPlan } from '../../lib/billing.ts';
 import { ensureNsfwScansTable, ensurePendingEmbedsTable } from '../../lib/crowd.ts';
 import { ensureFileScansTable } from '../../lib/scan/db.ts';
@@ -116,6 +116,29 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
     }
   }
   return c.json({ ok: true });
+});
+
+// POST /api/test/vault-item - seed an encrypted vault item for rotation tests.
+// The payload must come from the client test; the server only records ciphertext.
+app.post('/api/test/vault-item', requireTestEnvironment, async (c) => {
+  const token = getSessionToken(c.req.raw);
+  const session = token ? await getMeWithSession(c.env, token, c.env.CACHE) : null;
+  const user = session?.user;
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  const body = (await c.req.json().catch(() => ({}))) as {
+    item_id?: unknown;
+    item_key_wrapped?: unknown;
+    payload?: unknown;
+  };
+  if (typeof body.item_id !== 'string' || typeof body.item_key_wrapped !== 'string' || typeof body.payload !== 'string') {
+    return c.json({ error: 'Invalid vault item' }, 400);
+  }
+  await c.env.DB.prepare(
+    'INSERT OR REPLACE INTO vault_items (id, user_id, item_key_wrapped, payload, kind, vk_version) VALUES (?, ?, ?, ?, ?, 1)',
+  )
+    .bind(body.item_id, user.id, body.item_key_wrapped, body.payload, 'text')
+    .run();
+  return c.json({ ok: true }, 201);
 });
 
 // GET /api/test/game-plays - inspect user_game_plays rows for integration tests.

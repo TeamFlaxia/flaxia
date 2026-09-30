@@ -168,7 +168,7 @@ posts.get('/posts', async (c) => {
         'timeline',
         c,
         `${limit}:${hashtag || ''}:${following ? 'following' : ''}:${username || ''}`,
-        !following,
+        following || Boolean(username),
       );
       const cached = await kvCacheGet<{ posts: Record<string, unknown>[] }>(c, cacheKey);
       if (cached) {
@@ -251,11 +251,11 @@ posts.get('/posts', async (c) => {
       // Username filter - show posts from specific user
       if (cursor) {
         query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
+          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
         params = [username, cursor, limit];
       } else {
         query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 ORDER BY p.created_at DESC LIMIT ?";
+          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ORDER BY p.created_at DESC LIMIT ?";
         params = [username, limit];
       }
     } else {
@@ -334,12 +334,12 @@ posts.get('/posts', async (c) => {
         'timeline',
         c,
         `${limit}:${hashtag || ''}:${following ? 'following' : ''}:${username || ''}`,
-        !following,
+        following || Boolean(username),
       );
       const cacheData = {
         posts: (rawPosts as Record<string, unknown>[]).map((p) => ({ ...p, is_freshed: false, is_bookmarked: false })),
       };
-      await kvCacheSet(c, cacheKey, cacheData, 15);
+      await kvCacheSet(c, cacheKey, cacheData, 60);
     }
 
     // Return total count when filtering by hashtag
@@ -546,7 +546,7 @@ posts.get('/posts/trending', async (c) => {
             ? `${(posts[posts.length - 1] as Record<string, unknown>).score},${(posts[posts.length - 1] as Record<string, unknown>).created_at},${(posts[posts.length - 1] as Record<string, unknown>).id}`
             : null,
       };
-      await kvCacheSet(c, cacheKey, cacheData, 30);
+      await kvCacheSet(c, cacheKey, cacheData, 60);
     }
 
     const nextCursor =
@@ -3300,7 +3300,7 @@ posts.get('/search', async (c) => {
       results: posts.results || [],
       users: usersResult,
     };
-    await kvCacheSet(c, cacheKey, responseData, 30);
+    await kvCacheSet(c, cacheKey, responseData, 60);
     return c.json(responseData);
   } catch (error: unknown) {
     const err = error as { message?: string };

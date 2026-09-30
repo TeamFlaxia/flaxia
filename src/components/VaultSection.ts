@@ -21,7 +21,6 @@ import {
   fetchVaultKeys,
   listDevices,
   pollPairing,
-  revokeDevice,
   startPairing,
 } from '../lib/vault/client.js';
 import { detectDeviceLabel, getCurrentDeviceId } from '../lib/vault/device.js';
@@ -40,6 +39,7 @@ import {
   getVaultKey,
   isVaultUnlocked,
   lockVault,
+  revokeDeviceWithRotation,
   tryDeviceUnlock,
   unlockVault,
 } from '../lib/vault/session.js';
@@ -536,12 +536,19 @@ export function createVaultSection() {
         revoke.addEventListener('click', () => {
           void (async () => {
             if (!(await createConfirmDialog(t('settings.vault_revoke_confirm')))) return;
+            const password = window.prompt(t('settings.vault_password')) ?? '';
+            if (!password) return;
+            const phrase = window.prompt(t('settings.vault_phrase_title')) ?? '';
+            if (!phrase) return;
             revoke.disabled = true;
-            if (await revokeDevice(device.id)) {
+            if (await revokeDeviceWithRotation(device.id, password, phrase)) {
               devices = await listDevices();
               render();
             } else {
               revoke.disabled = false;
+              messageKind = 'error';
+              message = t('settings.vault_revoke_failed');
+              render();
             }
           })();
         });
