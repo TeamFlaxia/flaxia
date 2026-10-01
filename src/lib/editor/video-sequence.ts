@@ -1,5 +1,6 @@
 import { type AudioTimelineClip, mixAudioTimeline } from './audio-mixer.ts';
 import { probeFFmpegStreams, runFFmpeg } from './ffmpeg-client.ts';
+import { imageLayerCanvasFilter } from './image-adjustments.ts';
 import type { StudioImageLayer, StudioVideoClip } from './studio-project-store.ts';
 
 const MAX_INPUT_BYTES = 80 * 1024 * 1024;
@@ -60,6 +61,7 @@ async function renderLayerOverlay(files: File[], layers: StudioImageLayer[]): Pr
       if (!file || !file.type.startsWith('image/')) throw new Error('A video overlay layer is not an image');
       const bitmap = await createImageBitmap(file);
       try {
+        context.filter = imageLayerCanvasFilter(layer);
         context.drawImage(
           bitmap,
           (-layer.width * scale) / 2,

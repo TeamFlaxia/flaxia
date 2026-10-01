@@ -58,6 +58,9 @@ export interface StudioImageLayer {
   height: number;
   rotation: number;
   opacity: number;
+  brightness?: number;
+  contrast?: number;
+  saturation?: number;
   visible: boolean;
   blend: 'normal' | 'multiply' | 'screen';
   text?: string;
@@ -247,6 +250,18 @@ function decodeFiles(plaintext: Uint8Array): {
       x: Math.max(-8192, Math.min(8192, layer.x)),
       y: Math.max(-8192, Math.min(8192, layer.y)),
       opacity: Math.max(0, Math.min(1, layer.opacity)),
+      brightness:
+        typeof layer.brightness === 'number' && Number.isFinite(layer.brightness)
+          ? Math.max(0, Math.min(200, layer.brightness))
+          : 100,
+      contrast:
+        typeof layer.contrast === 'number' && Number.isFinite(layer.contrast)
+          ? Math.max(0, Math.min(200, layer.contrast))
+          : 100,
+      saturation:
+        typeof layer.saturation === 'number' && Number.isFinite(layer.saturation)
+          ? Math.max(0, Math.min(200, layer.saturation))
+          : 100,
       rotation: Number.isFinite(layer.rotation) ? Math.max(-3600, Math.min(3600, layer.rotation)) : 0,
     }));
   return { files, audioClips, videoClips, imageLayers };

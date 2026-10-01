@@ -1,4 +1,5 @@
 import { type AudioTimelineClip, mixAudioTimeline } from '../lib/editor/audio-mixer.ts';
+import { imageLayerCanvasFilter } from '../lib/editor/image-adjustments.ts';
 import { saveStudioHandoff } from '../lib/editor/studio-handoff.js';
 import {
   exportStudioProject,
@@ -1285,6 +1286,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           const bitmap = await getBitmap(layer.fileIndex);
           if (revision !== imageDrawRevision) return;
           context.save();
+          context.filter = imageLayerCanvasFilter(layer);
           context.globalAlpha = layer.opacity;
           context.globalCompositeOperation = layer.blend === 'normal' ? 'source-over' : layer.blend;
           context.translate(layer.x + layer.width / 2, layer.y + layer.height / 2);
@@ -1329,12 +1331,20 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         layer.kind === 'text'
           ? `<label class="studio-composer-text-label">Text<textarea data-prop="text" maxlength="2000">${escapeHtml(layer.text ?? '')}</textarea></label><label class="studio-composer-field">Color<input data-prop="color" type="color" value="${layer.color ?? '#ffffff'}"></label><label class="studio-composer-field">Font size<input data-prop="fontSize" type="number" min="8" max="256" value="${layer.fontSize ?? 72}"></label><label class="studio-composer-field">Font<select data-prop="fontFamily"><option value="sans-serif" ${(layer.fontFamily ?? 'sans-serif') === 'sans-serif' ? 'selected' : ''}>Sans serif</option><option value="serif" ${layer.fontFamily === 'serif' ? 'selected' : ''}>Serif</option><option value="monospace" ${layer.fontFamily === 'monospace' ? 'selected' : ''}>Monospace</option></select></label>`
           : '';
-      properties.innerHTML = `<div class="studio-composer-title">TRANSFORM</div><div class="studio-composer-layer-name">${escapeHtml(layerName)}</div>${textControls}<div class="studio-composer-grid"><label>X<input data-prop="x" type="number" value="${Math.round(layer.x)}"></label><label>Y<input data-prop="y" type="number" value="${Math.round(layer.y)}"></label><label>Width<input data-prop="width" type="number" min="1" max="4096" value="${Math.round(layer.width)}"></label><label>Height<input data-prop="height" type="number" min="1" max="4096" value="${Math.round(layer.height)}"></label></div><label class="studio-composer-range">Opacity <output>${Math.round(layer.opacity * 100)}%</output><input data-prop="opacity" type="range" min="0" max="100" value="${Math.round(layer.opacity * 100)}"></label><label class="studio-composer-field">Rotation<input data-prop="rotation" type="number" min="-360" max="360" value="${Math.round(layer.rotation)}">°</label><label class="studio-composer-field">Blend mode<select data-prop="blend"><option value="normal" ${layer.blend === 'normal' ? 'selected' : ''}>Normal</option><option value="multiply" ${layer.blend === 'multiply' ? 'selected' : ''}>Multiply</option><option value="screen" ${layer.blend === 'screen' ? 'selected' : ''}>Screen</option></select></label><div class="studio-composer-order"><button class="studio-composer-down" type="button">Send backward</button><button class="studio-composer-up" type="button">Bring forward</button></div><button class="studio-composer-remove" type="button">Remove layer</button>`;
+      const adjustmentControls =
+        layer.kind === 'image'
+          ? `<div class="studio-composer-title">IMAGE ADJUSTMENTS</div><label class="studio-composer-range">Brightness <output data-value="brightness">${Math.round(layer.brightness ?? 100)}%</output><input data-prop="brightness" type="range" min="0" max="200" value="${Math.round(layer.brightness ?? 100)}"></label><label class="studio-composer-range">Contrast <output data-value="contrast">${Math.round(layer.contrast ?? 100)}%</output><input data-prop="contrast" type="range" min="0" max="200" value="${Math.round(layer.contrast ?? 100)}"></label><label class="studio-composer-range">Saturation <output data-value="saturation">${Math.round(layer.saturation ?? 100)}%</output><input data-prop="saturation" type="range" min="0" max="200" value="${Math.round(layer.saturation ?? 100)}"></label>`
+          : '';
+      properties.innerHTML = `<div class="studio-composer-title">TRANSFORM</div><div class="studio-composer-layer-name">${escapeHtml(layerName)}</div>${textControls}${adjustmentControls}<div class="studio-composer-grid"><label>X<input data-prop="x" type="number" value="${Math.round(layer.x)}"></label><label>Y<input data-prop="y" type="number" value="${Math.round(layer.y)}"></label><label>Width<input data-prop="width" type="number" min="1" max="4096" value="${Math.round(layer.width)}"></label><label>Height<input data-prop="height" type="number" min="1" max="4096" value="${Math.round(layer.height)}"></label></div><label class="studio-composer-range">Opacity <output data-value="opacity">${Math.round(layer.opacity * 100)}%</output><input data-prop="opacity" type="range" min="0" max="100" value="${Math.round(layer.opacity * 100)}"></label><label class="studio-composer-field">Rotation<input data-prop="rotation" type="number" min="-360" max="360" value="${Math.round(layer.rotation)}">°</label><label class="studio-composer-field">Blend mode<select data-prop="blend"><option value="normal" ${layer.blend === 'normal' ? 'selected' : ''}>Normal</option><option value="multiply" ${layer.blend === 'multiply' ? 'selected' : ''}>Multiply</option><option value="screen" ${layer.blend === 'screen' ? 'selected' : ''}>Screen</option></select></label><div class="studio-composer-order"><button class="studio-composer-down" type="button">Send backward</button><button class="studio-composer-up" type="button">Bring forward</button></div><button class="studio-composer-remove" type="button">Remove layer</button>`;
       const updateProperty = (property: string, value: string): void => {
         if (property === 'blend') layer.blend = value as StudioImageLayer['blend'];
         else if (property === 'opacity') {
           layer.opacity = Number(value) / 100;
-          properties.querySelector('output')!.textContent = `${value}%`;
+          properties.querySelector('[data-value="opacity"]')!.textContent = `${value}%`;
+        } else if (property === 'brightness' || property === 'contrast' || property === 'saturation') {
+          const adjustment = Math.max(0, Math.min(200, Number(value) || 0));
+          layer[property] = adjustment;
+          properties.querySelector(`[data-value="${property}"]`)!.textContent = `${adjustment}%`;
         } else if (property === 'x' || property === 'y') {
           layer[property] = Math.max(-8192, Math.min(8192, Number(value) || 0));
         } else if (property === 'width' || property === 'height') {
@@ -1463,6 +1473,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           height,
           rotation: 0,
           opacity: 1,
+          brightness: 100,
+          contrast: 100,
+          saturation: 100,
           visible: true,
           blend: 'normal',
         };
