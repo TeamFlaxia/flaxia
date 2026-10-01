@@ -1050,6 +1050,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     });
     area.addEventListener('scroll', updateGutter);
     area.addEventListener('keydown', (event) => {
+      if (event.isComposing) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
         event.preventDefault();
         if (codeDirty) exportButton.click();
@@ -1061,11 +1062,74 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           event.preventDefault();
           runButton.click();
         }
+        return;
       }
       if (event.key === 'Tab') {
         event.preventDefault();
         area.setRangeText('  ', area.selectionStart, area.selectionEnd, 'end');
         area.dispatchEvent(new Event('input'));
+        return;
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        const start = area.selectionStart;
+        const end = area.selectionEnd;
+        const lineStart = area.value.lastIndexOf('\n', start - 1) + 1;
+        const indent = area.value.slice(lineStart, start).match(/^[\t ]*/)?.[0] ?? '';
+        if (area.value[start - 1] === '{' && area.value[end] === '}') {
+          const inserted = `\n${indent}  \n${indent}`;
+          area.setRangeText(inserted, start, end, 'end');
+          const caret = start + indent.length + 3;
+          area.setSelectionRange(caret, caret);
+        } else {
+          area.setRangeText(`\n${indent}`, start, end, 'end');
+        }
+        area.dispatchEvent(new Event('input'));
+        return;
+      }
+      if (event.key === '}' && area.selectionStart === area.selectionEnd) {
+        const cursor = area.selectionStart;
+        const lineStart = area.value.lastIndexOf('\n', cursor - 1) + 1;
+        const indent = area.value.slice(lineStart, cursor);
+        const remaining = area.value.slice(cursor).match(/^\n[\t ]*\}/);
+        if (/^[\t ]+$/.test(indent) && remaining && indent.endsWith('  ')) {
+          const baseIndent = indent.slice(0, -2);
+          const replaceEnd = cursor + remaining[0].length;
+          area.setRangeText(`${baseIndent}}`, lineStart, replaceEnd, 'end');
+          const caret = lineStart + baseIndent.length + 1;
+          area.setSelectionRange(caret, caret);
+          event.preventDefault();
+          area.dispatchEvent(new Event('input'));
+          return;
+        }
+      }
+      if ([')', ']', '}', '"', "'", '`'].includes(event.key) && area.selectionStart === area.selectionEnd) {
+        const cursor = area.selectionStart;
+        if (area.value[cursor] === event.key) {
+          event.preventDefault();
+          area.setSelectionRange(cursor + 1, cursor + 1);
+          return;
+        }
+      }
+      const closingPairs: Record<string, string> = {
+        '(': ')',
+        '[': ']',
+        '{': '}',
+        '"': '"',
+        "'": "'",
+        '`': '`',
+      };
+      const closing = closingPairs[event.key];
+      if (closing && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        const start = area.selectionStart;
+        const end = area.selectionEnd;
+        if (!(event.key === "'" || event.key === '"' || event.key === '`') || area.value[start - 1] !== '\\') {
+          event.preventDefault();
+          const selected = area.value.slice(start, end);
+          area.setRangeText(`${event.key}${selected}${closing}`, start, end, 'end');
+          area.setSelectionRange(start + 1, start + 1 + selected.length);
+          area.dispatchEvent(new Event('input'));
+        }
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
         event.preventDefault();
