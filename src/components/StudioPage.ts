@@ -138,6 +138,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let imageDrawRevision = 0;
   const audioDurations = new Map<number, number>();
   const audioPeaks = new Map<number, Float32Array>();
+  const audioPeakTasks = new Map<number, Promise<{ duration: number; peaks: Float32Array }>>();
   const videoDurations = new Map<number, number>();
   const videoFilmstrips = new Map<string, Promise<string>>();
   let audioTrackCount = 1;
@@ -475,6 +476,16 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 
   const manuallyPlacedVideoClips = new Set<string>();
 
+  const renderAudioWaveform = (container: HTMLElement, peaks: Float32Array): void => {
+    const bucketCount = 72;
+    container.dataset.state = 'ready';
+    container.setAttribute('aria-label', 'Decoded audio waveform');
+    container.innerHTML = Array.from({ length: bucketCount }, (_, index) => {
+      const peak = peaks[Math.min(peaks.length - 1, Math.floor((index * peaks.length) / bucketCount))] ?? 0;
+      return `<i style="height:${Math.max(2, Math.min(100, Math.round(peak * 100)))}%"></i>`;
+    }).join('');
+  };
+
   const ensureAudioClip = (fileIndex: number, useFullDuration = false): void => {
     const file = files[fileIndex];
     if (!file || kindOf(file) !== 'audio') return;
@@ -499,11 +510,15 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       audioTrackCount = Math.max(audioTrackCount, track + 1);
     }
     if (audioDurations.has(fileIndex)) return;
-    void computeAudioPeaks(file)
+    const peaksTask = computeAudioPeaks(file);
+    audioPeakTasks.set(fileIndex, peaksTask);
+    void peaksTask
       .then(({ duration, peaks }) => {
         if (destroyed) return;
         audioDurations.set(fileIndex, duration);
         audioPeaks.set(fileIndex, peaks);
+        const waveform = preview.querySelector<HTMLElement>('.studio-waveform');
+        if (activeIndex === fileIndex && waveform) renderAudioWaveform(waveform, peaks);
         const audioClip = audioClips.find((item) => item.fileIndex === fileIndex);
         if (audioClip && expandToSource) audioClip.sourceEnd = duration;
         renderAudioTimeline();
@@ -514,6 +529,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         if (destroyed) return;
         audioDurations.set(fileIndex, 1);
         renderAudioTimeline();
+      })
+      .finally(() => {
+        if (audioPeakTasks.get(fileIndex) === peaksTask) audioPeakTasks.delete(fileIndex);
       });
   };
 
@@ -2170,10 +2188,25 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       content.appendChild(audio);
       const wave = document.createElement('div');
       wave.className = 'studio-waveform';
-      wave.innerHTML = Array.from(
-        { length: 72 },
-        (_, i) => `<i style="height:${12 + ((i * 37 + file.size) % 62)}%"></i>`,
-      ).join('');
+      const peaks = audioPeaks.get(index);
+      if (peaks) renderAudioWaveform(wave, peaks);
+      else {
+        wave.dataset.state = audioPeakTasks.has(index) ? 'loading' : 'unavailable';
+        wave.setAttribute('aria-label', 'Audio waveform is being decoded');
+        const task = audioPeakTasks.get(index);
+        if (task) {
+          void task
+            .then(({ peaks: decodedPeaks }) => {
+              if (activeIndex === index && wave.isConnected) renderAudioWaveform(wave, decodedPeaks);
+            })
+            .catch(() => {
+              if (wave.isConnected) {
+                wave.dataset.state = 'unavailable';
+                wave.setAttribute('aria-label', 'Audio waveform unavailable');
+              }
+            });
+        }
+      }
       content.appendChild(wave);
       const audioName = document.createElement('div');
       audioName.className = 'studio-audio-name';
