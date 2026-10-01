@@ -800,7 +800,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   };
 
   const videoClipCssFilter = (clip: StudioVideoClip): string =>
-    `brightness(${clip.brightness ?? 100}%) contrast(${clip.contrast ?? 100}%) saturate(${clip.saturation ?? 100}%)`;
+    `brightness(${clip.brightness ?? 100}%) contrast(${clip.contrast ?? 100}%) saturate(${clip.saturation ?? 100}%) hue-rotate(${clip.hueDeg ?? 0}deg) blur(${clip.blurPx ?? 0}px)`;
 
   const createVideoFilmstrip = async (file: File, sourceStart: number, sourceEnd: number): Promise<string> => {
     const video = document.createElement('video');
@@ -1400,11 +1400,20 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const videoFile = videoClip ? files[videoClip.fileIndex] : null;
     if (videoClip && videoFile) {
       const duration = videoDurations.get(videoClip.fileIndex) ?? videoClip.sourceEnd;
-      const colorControl = (name: 'brightness' | 'contrast' | 'saturation', label: string): string => {
-        const value = videoClip[name] ?? 100;
-        return `<label class="studio-property studio-gain-property"><span>${label}</span><input class="studio-video-color" data-color="${name}" type="range" min="0" max="200" value="${value}"><small>${value}%</small></label>`;
+      const colorControl = (
+        name: 'brightness' | 'contrast' | 'saturation' | 'hueDeg' | 'blurPx',
+        label: string,
+      ): string => {
+        const special = name === 'hueDeg' || name === 'blurPx';
+        const value = videoClip[name] ?? (special ? 0 : 100);
+        const min = name === 'hueDeg' ? -180 : 0;
+        const max = name === 'hueDeg' ? 180 : name === 'blurPx' ? 24 : 200;
+        const step = name === 'blurPx' ? 0.5 : 1;
+        const suffix = name === 'hueDeg' ? '°' : name === 'blurPx' ? ' px' : '%';
+        const display = name === 'blurPx' ? value.toFixed(1) : String(Math.round(value));
+        return `<label class="studio-property studio-gain-property"><span>${label}</span><input class="studio-video-color" data-color="${name}" type="range" min="${min}" max="${max}" step="${step}" value="${value}"><small>${display}${suffix}</small></label>`;
       };
-      const colorControls = `${colorControl('brightness', 'Brightness')}${colorControl('contrast', 'Contrast')}${colorControl('saturation', 'Saturation')}`;
+      const colorControls = `${colorControl('brightness', 'Brightness')}${colorControl('contrast', 'Contrast')}${colorControl('saturation', 'Saturation')}${colorControl('hueDeg', 'Hue')}${colorControl('blurPx', 'Blur')}`;
       const clipDuration = videoClipTimelineDuration(videoClip);
       inspectorBody.innerHTML = `<div class="studio-inspector-icon">▶</div><h2>${escapeHtml(videoFile.name)}</h2><p>Video clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-video-position" type="number" min="0" step="0.1" value="${videoClip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Framing</span><select class="studio-video-fit"><option value="contain" ${videoClip.fit !== 'cover' ? 'selected' : ''}>Fit · show whole frame</option><option value="cover" ${videoClip.fit === 'cover' ? 'selected' : ''}>Fill · crop to frame</option></select></label><label class="studio-property"><span>Speed</span><select class="studio-video-speed">${[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => `<option value="${speed}" ${videoClipSpeed(videoClip) === speed ? 'selected' : ''}>${speed}×</option>`).join('')}</select></label>${colorControls}<label class="studio-property"><span>Trim in</span><input class="studio-video-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-video-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade in</span><input class="studio-video-fade-in" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeIn ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade out</span><input class="studio-video-fade-out" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeOut ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Clip audio</span><input class="studio-video-gain" type="range" min="0" max="100" value="${Math.round((videoClip.gain ?? 1) * 100)}"><small class="studio-video-gain-value">${Math.round((videoClip.gain ?? 1) * 100)}%</small></label><label class="studio-property studio-mute-property"><input class="studio-video-muted" type="checkbox" ${videoClip.muted ? 'checked' : ''}><span>Mute source audio</span></label><p class="studio-video-hint">Speed, framing, color, and fade adjustments apply to sequence preview and MP4 export.</p><button class="studio-button studio-remove-video" type="button">Remove from timeline</button>`;
       const update = (selector: string, set: (value: number) => void): void => {
@@ -1440,10 +1449,13 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       });
       inspectorBody.querySelectorAll<HTMLInputElement>('.studio-video-color').forEach((input) => {
         input.addEventListener('input', () => {
-          const color = input.dataset.color as 'brightness' | 'contrast' | 'saturation';
-          videoClip[color] = Number(input.value);
+          const color = input.dataset.color as 'brightness' | 'contrast' | 'saturation' | 'hueDeg' | 'blurPx';
+          const value = Number(input.value);
+          videoClip[color] = value;
           const output = input.parentElement?.querySelector('small');
-          if (output) output.textContent = `${input.value}%`;
+          if (output) {
+            output.textContent = `${color === 'blurPx' ? value.toFixed(1) : Math.round(value)}${color === 'hueDeg' ? '°' : color === 'blurPx' ? ' px' : '%'}`;
+          }
           if (videoSequencePlayer?.dataset.clipId === videoClip.id) {
             videoSequencePlayer.style.filter = videoClipCssFilter(videoClip);
           }

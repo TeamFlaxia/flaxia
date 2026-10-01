@@ -30,6 +30,23 @@ export function videoClipOpacityAt(time: number, duration: number, fadeIn = 0, f
   return opacity;
 }
 
+/** Build the per-clip image adjustments shared by video sequence exports. */
+export function videoClipColorFilters(
+  clip: Pick<StudioVideoClip, 'brightness' | 'contrast' | 'saturation' | 'hueDeg' | 'blurPx'>,
+): string[] {
+  const brightness = Number.isFinite(clip.brightness) ? Math.max(0, Math.min(200, clip.brightness!)) : 100;
+  const contrast = Number.isFinite(clip.contrast) ? Math.max(0, Math.min(200, clip.contrast!)) : 100;
+  const saturation = Number.isFinite(clip.saturation) ? Math.max(0, Math.min(200, clip.saturation!)) : 100;
+  const hue = Number.isFinite(clip.hueDeg) ? Math.max(-180, Math.min(180, clip.hueDeg!)) : 0;
+  const blur = Number.isFinite(clip.blurPx) ? Math.max(0, Math.min(24, clip.blurPx!)) : 0;
+  const filters = [
+    `eq=brightness=${((brightness - 100) / 100).toFixed(3)}:contrast=${(contrast / 100).toFixed(3)}:saturation=${(saturation / 100).toFixed(3)}`,
+  ];
+  if (hue !== 0) filters.push(`hue=h=${((hue * Math.PI) / 180).toFixed(3)}`);
+  if (blur > 0) filters.push(`gblur=sigma=${Math.max(0.5, blur).toFixed(1)}`);
+  return filters;
+}
+
 function inputName(index: number, file: File): string {
   const extension =
     file.name
@@ -220,9 +237,15 @@ export async function renderVideoSequence(
       clip.fit === 'cover'
         ? 'scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720'
         : 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2';
-    const color = `eq=brightness=${(((clip.brightness ?? 100) - 100) / 100).toFixed(3)}:contrast=${((clip.contrast ?? 100) / 100).toFixed(3)}:saturation=${((clip.saturation ?? 100) / 100).toFixed(3)}`;
     const fades = videoClipFadeFilters(clipDuration, clip.fadeIn, clip.fadeOut);
-    const videoFilters = [framing, color, ...fades, 'setsar=1', 'fps=30', 'format=yuv420p'].join(',');
+    const videoFilters = [
+      framing,
+      ...videoClipColorFilters(clip),
+      ...fades,
+      'setsar=1',
+      'fps=30',
+      'format=yuv420p',
+    ].join(',');
     filters.push(
       `[${index}:v:0]trim=duration=${sourceDuration.toFixed(3)},setpts=(PTS-STARTPTS)/${speed.toFixed(3)},${videoFilters}[v${index}]`,
     );

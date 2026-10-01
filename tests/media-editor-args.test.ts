@@ -23,7 +23,7 @@ import {
   resolveOutputSize,
   type VideoMeta,
 } from '../src/lib/editor/video-editor.ts';
-import { videoClipFadeFilters, videoClipOpacityAt } from '../src/lib/editor/video-sequence.ts';
+import { videoClipColorFilters, videoClipFadeFilters, videoClipOpacityAt } from '../src/lib/editor/video-sequence.ts';
 
 describe('audio solo preview', () => {
   it('moves only the selected clip to time zero and preserves its trims and mix controls', () => {
@@ -153,6 +153,20 @@ describe('video sequence fades', () => {
     assert.equal(videoClipOpacityAt(0.5, 8, 1, 2), 0.5);
     assert.equal(videoClipOpacityAt(7, 8, 1, 2), 0.5);
     assert.equal(videoClipOpacityAt(3, 8, 1, 2), 1);
+  });
+});
+
+describe('video clip image adjustments', () => {
+  it('omits hue and blur filters at their neutral values', () => {
+    assert.deepEqual(videoClipColorFilters({}), ['eq=brightness=0.000:contrast=1.000:saturation=1.000']);
+  });
+
+  it('clamps color controls and emits FFmpeg hue and blur filters', () => {
+    assert.deepEqual(videoClipColorFilters({ brightness: 250, contrast: -10, hueDeg: 90, blurPx: 0.1 }), [
+      'eq=brightness=1.000:contrast=0.000:saturation=1.000',
+      'hue=h=1.571',
+      'gblur=sigma=0.5',
+    ]);
   });
 });
 

@@ -50,6 +50,8 @@ export interface StudioVideoClip {
   brightness?: number;
   contrast?: number;
   saturation?: number;
+  hueDeg?: number;
+  blurPx?: number;
   fadeIn?: number;
   fadeOut?: number;
   gain?: number;
@@ -252,6 +254,12 @@ function decodeFiles(plaintext: Uint8Array): {
         typeof clip.saturation === 'number' && Number.isFinite(clip.saturation)
           ? Math.max(0, Math.min(200, clip.saturation))
           : 100,
+      hueDeg:
+        typeof clip.hueDeg === 'number' && Number.isFinite(clip.hueDeg)
+          ? Math.max(-180, Math.min(180, clip.hueDeg))
+          : 0,
+      blurPx:
+        typeof clip.blurPx === 'number' && Number.isFinite(clip.blurPx) ? Math.max(0, Math.min(24, clip.blurPx)) : 0,
       fadeIn: typeof clip.fadeIn === 'number' && Number.isFinite(clip.fadeIn) ? Math.max(0, clip.fadeIn) : 0,
       fadeOut: typeof clip.fadeOut === 'number' && Number.isFinite(clip.fadeOut) ? Math.max(0, clip.fadeOut) : 0,
       gain: typeof clip.gain === 'number' && Number.isFinite(clip.gain) ? Math.max(0, Math.min(1, clip.gain)) : 1,
