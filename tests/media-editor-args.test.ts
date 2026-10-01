@@ -7,6 +7,8 @@ import {
   audioClipEqSettings,
   audioClipGainAutomation,
   audioClipGainEnvelope,
+  audioClipSpeed,
+  audioClipTimelineDuration,
   audioTrackMixSettings,
   soloAudioTimelineClip,
   splitAudioClipGainEnvelope,
@@ -40,6 +42,7 @@ describe('audio solo preview', () => {
       start: 12.5,
       sourceStart: 1.25,
       sourceEnd: 8.75,
+      speed: 1.5,
       gain: 0.6,
       fadeIn: 0.4,
       fadeOut: 1.2,
@@ -104,6 +107,17 @@ describe('audio track mixer controls', () => {
       gain: 1,
       pan: 0,
     });
+  });
+});
+
+describe('audio clip playback speed', () => {
+  it('changes placed duration while preserving the trimmed source range', () => {
+    const clip = { sourceStart: 2, sourceEnd: 10, speed: 2 };
+    assert.equal(audioClipSpeed(clip), 2);
+    assert.equal(audioClipTimelineDuration(clip), 4);
+    assert.equal(audioClipSpeed({ speed: 0.1 }), 0.5);
+    assert.equal(audioClipTimelineDuration({ sourceStart: 0, sourceEnd: 6, speed: 0.5 }), 12);
+    assert.equal(audioClipSpeed({ speed: Number.NaN }), 1);
   });
 });
 

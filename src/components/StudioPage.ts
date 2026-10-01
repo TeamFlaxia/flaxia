@@ -5,6 +5,8 @@ import {
   audibleAudioTimelineClips,
   audioClipEqSettings,
   audioClipGainEnvelope,
+  audioClipSpeed,
+  audioClipTimelineDuration,
   audioTrackMixSettings,
   mixAudioTimeline,
   soloAudioTimelineClip,
@@ -514,7 +516,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const clip = audioClips[clipIndex];
       if (!clip) return;
       const offset = timelinePlayheadTime - clip.start;
-      const duration = clip.sourceEnd - clip.sourceStart;
+      const duration = audioClipTimelineDuration(clip);
       if (offset <= 0.05 || offset >= duration - 0.05) return;
       const originalFadeOut = clip.fadeOut;
       const splitEnvelope = splitAudioClipGainEnvelope(clip, offset / duration);
@@ -522,7 +524,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         ...clip,
         id: crypto.randomUUID(),
         start: timelinePlayheadTime,
-        sourceStart: clip.sourceStart + offset,
+        sourceStart: clip.sourceStart + offset * audioClipSpeed(clip),
         fadeIn: 0,
         fadeOut: originalFadeOut,
         gainEnvelope: splitEnvelope.right,
@@ -585,7 +587,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           0,
           ...audioClips
             .filter((item) => item.track === audioClip.track)
-            .map((item) => item.start + item.sourceEnd - item.sourceStart),
+            .map((item) => item.start + audioClipTimelineDuration(item)),
         ),
       };
       audioClips.push(duplicate);
@@ -628,6 +630,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         start: 0,
         sourceStart: 0,
         sourceEnd: 1,
+        speed: 1,
         gain: 1,
         fadeIn: 0,
         fadeOut: 0,
@@ -798,7 +801,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     }
     for (const clip of audioClips) {
       if (clip.id === ignoredId) continue;
-      anchors.push(clip.start, clip.start + clip.sourceEnd - clip.sourceStart);
+      anchors.push(clip.start, clip.start + audioClipTimelineDuration(clip));
     }
     for (const layer of imageLayers) {
       if (layer.id === ignoredId) continue;
@@ -1146,7 +1149,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const soloedTracks = new Set(audioClips.filter((clip) => clip.trackSolo).map((clip) => clip.track));
     const ruler = document.createElement('div');
     ruler.className = 'studio-audio-ruler';
-    const end = Math.max(30, ...audioClips.map((clip) => clip.start + clip.sourceEnd - clip.sourceStart + 5));
+    const end = Math.max(30, ...audioClips.map((clip) => clip.start + audioClipTimelineDuration(clip) + 5));
     const contentWidth = Math.max(1200, end * timelinePixelsPerSecond);
     ruler.style.width = `${contentWidth}px`;
     ruler.style.backgroundSize = `${timelinePixelsPerSecond * 5}px 100%`;
@@ -1212,7 +1215,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       for (const clip of trackClips) {
         const file = files[clip.fileIndex];
         if (!file) continue;
-        const duration = Math.max(0.1, clip.sourceEnd - clip.sourceStart);
+        const duration = Math.max(0.1, audioClipTimelineDuration(clip));
         const block = document.createElement('button');
         block.type = 'button';
         block.draggable = true;
@@ -1228,7 +1231,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           : [];
         const envelope = audioClipGainEnvelope(clip);
         const envelopeY = (value: number): number => 18 - value * 8;
-        block.innerHTML = `<span class="studio-audio-trim studio-audio-trim-left" aria-label="Trim start"></span><span class="studio-audio-clip-name">${escapeHtml(file.name)}</span><span class="studio-audio-clip-wave">${bars.map((peak) => `<i style="height:${Math.max(8, Math.min(100, peak * 100))}%"></i>`).join('')}</span><svg class="studio-audio-envelope" viewBox="0 0 100 20" preserveAspectRatio="none" aria-label="Volume automation, drag points to adjust"><polyline points="0,${envelopeY(envelope.start)} 50,${envelopeY(envelope.middle)} 100,${envelopeY(envelope.end)}"></polyline>${(['start', 'middle', 'end'] as const).map((point, index) => `<circle class="studio-audio-envelope-point" data-point="${point}" cx="${index * 50}" cy="${envelopeY(envelope[point])}" r="2.2" aria-label="${point} volume"></circle>`).join('')}</svg><span class="studio-audio-trim studio-audio-trim-right" aria-label="Trim end"></span>`;
+        const speed = audioClipSpeed(clip);
+        block.innerHTML = `<span class="studio-audio-trim studio-audio-trim-left" aria-label="Trim start"></span><span class="studio-audio-clip-name">${escapeHtml(file.name)}${speed === 1 ? '' : ` · ${speed}×`}</span><span class="studio-audio-clip-wave">${bars.map((peak) => `<i style="height:${Math.max(8, Math.min(100, peak * 100))}%"></i>`).join('')}</span><svg class="studio-audio-envelope" viewBox="0 0 100 20" preserveAspectRatio="none" aria-label="Volume automation, drag points to adjust"><polyline points="0,${envelopeY(envelope.start)} 50,${envelopeY(envelope.middle)} 100,${envelopeY(envelope.end)}"></polyline>${(['start', 'middle', 'end'] as const).map((point, index) => `<circle class="studio-audio-envelope-point" data-point="${point}" cx="${index * 50}" cy="${envelopeY(envelope[point])}" r="2.2" aria-label="${point} volume"></circle>`).join('')}</svg><span class="studio-audio-trim studio-audio-trim-right" aria-label="Trim end"></span>`;
         const envelopeSvg = block.querySelector<SVGSVGElement>('.studio-audio-envelope')!;
         envelopeSvg.querySelectorAll<SVGCircleElement>('.studio-audio-envelope-point').forEach((pointElement) => {
           pointElement.addEventListener('pointerdown', (event) => {
@@ -1299,23 +1303,25 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
             const updateClip = (moveEvent: PointerEvent): void => {
               const delta = (moveEvent.clientX - pointerStart) / zoomAtDrag;
               if (edge === 'start') {
-                const minDelta = -Math.min(initialSourceStart, initialStart);
-                const maxDelta = initialSourceEnd - initialSourceStart - 0.1;
+                const speed = audioClipSpeed(clip);
+                const minDelta = -Math.min(initialSourceStart / speed, initialStart);
+                const maxDelta = (initialSourceEnd - initialSourceStart - 0.1) / speed;
                 const snappedStart = snapTimelineTime(initialStart + delta, clip.id);
                 const applied = Math.max(minDelta, Math.min(maxDelta, snappedStart - initialStart));
-                clip.sourceStart = initialSourceStart + applied;
+                clip.sourceStart = initialSourceStart + applied * speed;
                 clip.start = initialStart + applied;
               } else {
-                const initialTimelineEnd = initialStart + initialSourceEnd - initialSourceStart;
+                const speed = audioClipSpeed(clip);
+                const initialTimelineEnd = initialStart + audioClipTimelineDuration(clip);
                 const snappedEnd = snapTimelineTime(initialTimelineEnd + delta, clip.id);
                 const applied = snappedEnd - initialTimelineEnd;
                 clip.sourceEnd = Math.max(
                   initialSourceStart + 0.1,
-                  Math.min(sourceDuration, initialSourceEnd + applied),
+                  Math.min(sourceDuration, initialSourceEnd + applied * speed),
                 );
               }
               block.style.left = `${clip.start * timelinePixelsPerSecond}px`;
-              block.style.width = `${Math.max(48, (clip.sourceEnd - clip.sourceStart) * timelinePixelsPerSecond)}px`;
+              block.style.width = `${Math.max(48, audioClipTimelineDuration(clip) * timelinePixelsPerSecond)}px`;
               const startField = inspectorBody.querySelector<HTMLInputElement>('.studio-clip-in');
               const endField = inspectorBody.querySelector<HTMLInputElement>('.studio-clip-out');
               const positionField = inspectorBody.querySelector<HTMLInputElement>('.studio-clip-position');
@@ -1556,6 +1562,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       return;
     }
     const duration = audioDurations.get(clip.fileIndex) ?? clip.sourceEnd;
+    const timelineDuration = audioClipTimelineDuration(clip);
     const eqSettings = audioClipEqSettings(clip);
     const gainEnvelope = audioClipGainEnvelope(clip);
     const eqControls = (
@@ -1571,6 +1578,39 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       )
       .join('');
     inspectorBody.innerHTML = `<div class="studio-inspector-icon">♫</div><h2>${escapeHtml(file.name)}</h2><p>Audio clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-clip-position" type="number" min="0" step="0.1" value="${clip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim in</span><input class="studio-clip-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${clip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-clip-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${clip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Gain</span><input class="studio-clip-gain" type="range" min="0" max="200" value="${Math.round(clip.gain * 100)}"><small class="studio-gain-value">${Math.round(clip.gain * 100)}%</small></label><label class="studio-property studio-gain-property"><span>Pan</span><input class="studio-clip-pan" type="range" min="-100" max="100" value="${Math.round(clip.pan * 100)}"><small class="studio-pan-value">${clip.pan === 0 ? 'Center' : `${Math.abs(Math.round(clip.pan * 100))}% ${clip.pan < 0 ? 'L' : 'R'}`}</small></label><div class="studio-inspector-divider"></div><div class="studio-format-title">VOLUME AUTOMATION</div><label class="studio-property studio-gain-property"><span>Start</span><input class="studio-clip-envelope" data-point="start" type="range" min="0" max="200" value="${Math.round(gainEnvelope.start * 100)}"><small>${Math.round(gainEnvelope.start * 100)}%</small></label><label class="studio-property studio-gain-property"><span>Middle</span><input class="studio-clip-envelope" data-point="middle" type="range" min="0" max="200" value="${Math.round(gainEnvelope.middle * 100)}"><small>${Math.round(gainEnvelope.middle * 100)}%</small></label><label class="studio-property studio-gain-property"><span>End</span><input class="studio-clip-envelope" data-point="end" type="range" min="0" max="200" value="${Math.round(gainEnvelope.end * 100)}"><small>${Math.round(gainEnvelope.end * 100)}%</small></label><p class="studio-eq-hint">Automation is interpolated across the clip and shown on its waveform.</p><div class="studio-inspector-divider"></div><div class="studio-format-title">3-BAND EQ</div>${eqControls}<p class="studio-eq-hint">EQ is applied when previewing or exporting the mix.</p><label class="studio-property"><span>Fade in</span><input class="studio-clip-fade-in" type="number" min="0" max="${(clip.sourceEnd - clip.sourceStart).toFixed(1)}" step="0.1" value="${clip.fadeIn.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade out</span><input class="studio-clip-fade-out" type="number" min="0" max="${(clip.sourceEnd - clip.sourceStart).toFixed(1)}" step="0.1" value="${clip.fadeOut.toFixed(1)}"><small>s</small></label><label class="studio-property studio-mute-property"><input class="studio-clip-muted" type="checkbox" ${clip.muted ? 'checked' : ''}><span>Mute clip</span></label><div class="studio-inspector-divider"></div><button class="studio-button studio-remove-audio" type="button">Remove from timeline</button>`;
+    inspectorBody.querySelector('h2 + p')!.textContent =
+      `Audio clip · ${(clip.sourceEnd - clip.sourceStart).toFixed(1)}s source → ${timelineDuration.toFixed(1)}s timeline`;
+    inspectorBody.querySelectorAll<HTMLInputElement>('.studio-clip-fade-in, .studio-clip-fade-out').forEach((input) => {
+      input.max = timelineDuration.toFixed(1);
+    });
+    const speedField = document.createElement('label');
+    speedField.className = 'studio-property';
+    const speedLabel = document.createElement('span');
+    speedLabel.textContent = 'Speed · pitch';
+    const speedSelect = document.createElement('select');
+    speedSelect.className = 'studio-clip-speed';
+    speedSelect.setAttribute('aria-label', 'Audio playback speed');
+    for (const rate of [0.5, 0.75, 1, 1.25, 1.5, 2]) {
+      const option = document.createElement('option');
+      option.value = String(rate);
+      option.textContent = `${rate}×`;
+      option.selected = audioClipSpeed(clip) === rate;
+      speedSelect.appendChild(option);
+    }
+    speedField.appendChild(speedLabel);
+    speedField.appendChild(speedSelect);
+    inspectorBody
+      .querySelector<HTMLInputElement>('.studio-clip-position')
+      ?.parentElement?.insertAdjacentElement('beforebegin', speedField);
+    speedSelect.addEventListener('change', (event) => {
+      clip.speed = audioClipSpeed({ speed: Number((event.currentTarget as HTMLSelectElement).value) });
+      const nextDuration = audioClipTimelineDuration(clip);
+      clip.fadeIn = Math.min(clip.fadeIn, nextDuration);
+      clip.fadeOut = Math.min(clip.fadeOut, nextDuration);
+      renderAudioTimeline();
+      renderInspector();
+      scheduleAutosave();
+    });
     const numeric = (selector: string, update: (value: number) => void): void => {
       const input = inspectorBody.querySelector<HTMLInputElement>(selector)!;
       input.addEventListener('change', () => {
@@ -1637,10 +1677,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       input.addEventListener('change', () => scheduleAutosave());
     });
     numeric('.studio-clip-fade-in', (value) => {
-      clip.fadeIn = Math.max(0, Math.min(value, clip.sourceEnd - clip.sourceStart));
+      clip.fadeIn = Math.max(0, Math.min(value, audioClipTimelineDuration(clip)));
     });
     numeric('.studio-clip-fade-out', (value) => {
-      clip.fadeOut = Math.max(0, Math.min(value, clip.sourceEnd - clip.sourceStart));
+      clip.fadeOut = Math.max(0, Math.min(value, audioClipTimelineDuration(clip)));
     });
     inspectorBody.querySelector<HTMLInputElement>('.studio-clip-muted')!.addEventListener('change', (event) => {
       clip.muted = (event.currentTarget as HTMLInputElement).checked;
@@ -3769,6 +3809,7 @@ const studioCss = `
 .studio-sequence-overlays{position:absolute;z-index:6;inset:6% 8%;width:84%;height:88%;pointer-events:none}
 .studio-composer-preview-controls{display:flex;align-items:center;gap:16px;min-height:38px;padding:4px 18px;border-bottom:1px solid #30333a;background:#15161b;color:#aeb3bd;font-size:10px}.studio-composer-preview-controls label{display:flex;align-items:center;gap:7px;white-space:nowrap}.studio-composer-preview-controls label:last-child{flex:1}.studio-composer-preview-controls input[type=checkbox]{accent-color:#b8ef6a}.studio-composer-preview-controls input[type=range]{flex:1;min-width:80px;max-width:460px;accent-color:#b8ef6a}.studio-composer-preview-controls output{min-width:40px;color:#e9ebef;font-variant-numeric:tabular-nums}
 .studio-video-clip.muted{filter:saturate(.35);border-style:dashed}
+.studio-clip-speed{max-width:116px;padding:5px 7px;border:1px solid var(--studio-border);border-radius:4px;background:#111216;color:var(--studio-text);font:11px system-ui,sans-serif}
 .studio-composer-position-lock{width:23px;flex:0 0 23px;padding:4px 0;border:0;border-radius:4px;background:transparent;color:#9da3ad;font-size:12px;cursor:pointer}.studio-composer-position-lock:hover,.studio-composer-position-lock[aria-pressed=true]{background:#30343c;color:#b8ef6a}.studio-composer-position-lock:focus-visible{outline:1px solid #b8ef6a}
 .studio-audio-track-label{box-sizing:border-box;flex:0 0 142px;display:flex;flex-direction:column;justify-content:center;gap:3px;padding:4px 7px}.studio-audio-track-heading{display:flex;align-items:center;justify-content:space-between}.studio-audio-track-controls{display:flex;gap:3px}.studio-audio-track-controls button{width:20px;height:16px;padding:0;border:1px solid #3b3d44;border-radius:3px;background:#24262c;color:#999;font-size:9px}.studio-audio-track-controls button.active,.studio-audio-track-controls button[aria-pressed=true]{background:#327365;color:#d8fff4}.studio-audio-track-controls button[data-action=mute][aria-pressed=true]{background:#805c32;color:#fff0c2}.studio-audio-mixer-control{display:flex;align-items:center;gap:4px;height:12px;color:#888e9a;font-size:8px}.studio-audio-mixer-control input{flex:1;min-width:0;height:10px;margin:0;accent-color:#9bd77b}.studio-audio-mixer-control output{width:28px;color:#b9bec8;text-align:right;font-size:8px;font-variant-numeric:tabular-nums}
 .studio-image-overlay-lane{min-height:42px}.studio-image-overlay-canvas{min-height:41px}.studio-image-overlay-clip{position:absolute;top:5px;height:31px;overflow:hidden;border:1px solid #597b48;border-radius:5px;background:#293b27;color:#e2f2d7;text-align:left;cursor:grab;touch-action:none}.studio-image-overlay-clip.text{border-color:#547c91;background:#243844;color:#dceefa}.studio-image-overlay-clip.active{outline:1px solid #b8ef6a}.studio-image-overlay-clip.hidden{opacity:.45;border-style:dashed}.studio-image-overlay-label{display:block;padding:0 11px;overflow:hidden;line-height:29px;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}.studio-image-overlay-trim{position:absolute;z-index:2;top:0;bottom:0;width:8px;background:#d9efac55;cursor:ew-resize;touch-action:none}.studio-image-overlay-trim:hover{background:#b8ef6a}.studio-image-overlay-trim-left{left:0}.studio-image-overlay-trim-right{right:0}

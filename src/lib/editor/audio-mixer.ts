@@ -5,6 +5,7 @@ export interface AudioTimelineClip {
   start: number;
   sourceStart: number;
   sourceEnd: number;
+  speed?: number;
   gain: number;
   fadeIn: number;
   fadeOut: number;
@@ -18,6 +19,18 @@ export interface AudioTimelineClip {
   trackGain?: number;
   trackPan?: number;
   muted: boolean;
+}
+
+/** Normalize source playback speed; changing it also changes pitch. */
+export function audioClipSpeed(clip: Pick<AudioTimelineClip, 'speed'>): number {
+  return typeof clip.speed === 'number' && Number.isFinite(clip.speed) ? Math.max(0.5, Math.min(2, clip.speed)) : 1;
+}
+
+/** Return the placed timeline duration for a trimmed source clip. */
+export function audioClipTimelineDuration(
+  clip: Pick<AudioTimelineClip, 'sourceStart' | 'sourceEnd' | 'speed'>,
+): number {
+  return Math.max(0, clip.sourceEnd - clip.sourceStart) / audioClipSpeed(clip);
 }
 
 /** Normalize the shared mixer controls stored on each clip in a track. */
@@ -190,7 +203,7 @@ export async function mixAudioTimeline(
 ): Promise<File> {
   const active = audibleAudioTimelineClips(clips);
   if (active.length === 0) throw new Error('Add an audible clip to the audio tracks first');
-  const duration = Math.max(...active.map((clip) => clip.start + clip.sourceEnd - clip.sourceStart));
+  const duration = Math.max(...active.map((clip) => clip.start + audioClipTimelineDuration(clip)));
   if (!Number.isFinite(duration) || duration <= 0 || duration > 240) {
     throw new Error('Audio mixdowns must be between 0 and 4 minutes');
   }
@@ -220,6 +233,8 @@ export async function mixAudioTimeline(
       if (sourceEnd <= sourceStart) continue;
       const source = offline.createBufferSource();
       source.buffer = buffer;
+      const speed = audioClipSpeed(clip);
+      source.playbackRate.value = speed;
       const eq = audioClipEqSettings(clip);
       const lowEq = offline.createBiquadFilter();
       lowEq.type = 'lowshelf';
@@ -235,7 +250,10 @@ export async function mixAudioTimeline(
       highEq.frequency.value = 8_000;
       highEq.gain.value = eq.highEqDb;
       const gain = offline.createGain();
-      const clipDuration = Math.min(sourceEnd - sourceStart, Math.max(0, duration - Math.max(0, clip.start)));
+      const clipDuration = Math.min(
+        audioClipTimelineDuration({ ...clip, sourceStart, sourceEnd }),
+        Math.max(0, duration - Math.max(0, clip.start)),
+      );
       const startAt = Math.max(0, clip.start);
       const fadeIn = Math.min(clipDuration, Math.max(0, clip.fadeIn));
       const fadeOut = Math.min(Math.max(0, clipDuration - fadeIn), Math.max(0, clip.fadeOut));
@@ -257,7 +275,7 @@ export async function mixAudioTimeline(
       panner.pan.value = Math.max(-1, Math.min(1, clip.pan + trackMix.pan));
       gain.connect(panner);
       panner.connect(offline.destination);
-      source.start(startAt, sourceStart, clipDuration);
+      source.start(startAt, sourceStart, clipDuration * speed);
     }
     const mixed = await offline.startRendering();
     return new File([encodeWav(mixed)], name, { type: 'audio/wav' });
