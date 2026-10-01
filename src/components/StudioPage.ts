@@ -1916,7 +1916,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     void Promise.resolve()
       .then(async () => {
         const { loadStudioMonaco } = await import('../lib/editor/monaco-editor.ts');
-        return loadStudioMonaco();
+        return loadStudioMonaco(studioMonacoLanguage(fileName));
       })
       .then((monaco) => {
         if (!workbench.isConnected || destroyed) return;
