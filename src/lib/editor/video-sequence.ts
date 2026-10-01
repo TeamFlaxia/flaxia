@@ -1,7 +1,12 @@
 import { type AudioTimelineClip, audibleAudioTimelineClips, mixAudioTimeline } from './audio-mixer.ts';
 import { probeFFmpegStreams, runFFmpeg } from './ffmpeg-client.ts';
 import { drawStudioImageLayer } from './image-layer-canvas.ts';
-import type { StudioImageLayer, StudioVideoClip, StudioVideoFormat } from './studio-project-store.ts';
+import type {
+  StudioImageLayer,
+  StudioVideoClip,
+  StudioVideoFormat,
+  StudioVideoTransition,
+} from './studio-project-store.ts';
 import { rippleOverlappingVideoClips } from './video-timeline.ts';
 
 const MAX_INPUT_BYTES = 80 * 1024 * 1024;
@@ -32,6 +37,7 @@ export interface VideoSequenceJoinSegment {
   audio: string;
   start: number;
   duration: number;
+  transition?: StudioVideoTransition;
 }
 
 /** Build the filter graph that joins clips and gaps, dissolving any timed overlap. */
@@ -59,7 +65,7 @@ export function buildVideoSequenceJoinFilters(segments: VideoSequenceJoinSegment
     if (overlap > 0.04) {
       const transitionStart = Math.max(0, composedDuration - overlap);
       filters.push(
-        `[${composedVideo}][${segment.video}]xfade=transition=fade:duration=${overlap.toFixed(3)}:offset=${transitionStart.toFixed(3)}[${videoOutput}]`,
+        `[${composedVideo}][${segment.video}]xfade=transition=${segment.transition ?? 'fade'}:duration=${overlap.toFixed(3)}:offset=${transitionStart.toFixed(3)}[${videoOutput}]`,
       );
       filters.push(
         `[${composedAudio}][${segment.audio}]acrossfade=d=${overlap.toFixed(3)}:c1=tri:c2=tri[${audioOutput}]`,
@@ -384,6 +390,10 @@ export async function renderVideoSequence(
       ...segmentLabels[index],
       start: segment.start,
       duration: segment.duration,
+      transition:
+        segment.kind === 'clip' && segment.clipIndex > 0
+          ? (ordered[segment.clipIndex - 1].transitionType ?? 'fade')
+          : undefined,
     })),
   );
   filters.push(...sequenceJoin.filters);

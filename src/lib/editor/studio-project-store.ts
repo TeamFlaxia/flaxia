@@ -48,6 +48,7 @@ interface StudioProjectManifest {
 }
 
 export type StudioVideoFormat = 'landscape' | 'square' | 'portrait';
+export type StudioVideoTransition = 'fade' | 'wipeleft' | 'wiperight';
 
 export interface StudioVideoClip {
   id: string;
@@ -65,6 +66,7 @@ export interface StudioVideoClip {
   fadeIn?: number;
   fadeOut?: number;
   transitionOut?: number;
+  transitionType?: StudioVideoTransition;
   gain?: number;
   muted?: boolean;
 }
@@ -289,6 +291,10 @@ function decodeFiles(plaintext: Uint8Array): {
         typeof clip.transitionOut === 'number' && Number.isFinite(clip.transitionOut)
           ? Math.max(0, Math.min(2, clip.transitionOut))
           : 0,
+      transitionType:
+        clip.transitionType === 'wipeleft' || clip.transitionType === 'wiperight'
+          ? clip.transitionType
+          : ('fade' as StudioVideoTransition),
       gain: typeof clip.gain === 'number' && Number.isFinite(clip.gain) ? Math.max(0, Math.min(1, clip.gain)) : 1,
       muted: typeof clip.muted === 'boolean' ? clip.muted : false,
     }));

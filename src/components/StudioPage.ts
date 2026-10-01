@@ -972,7 +972,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         const transitionMark = document.createElement('span');
         transitionMark.className = 'studio-video-transition-mark';
         transitionMark.style.width = `${transitionDuration * timelinePixelsPerSecond}px`;
-        transitionMark.title = `${transitionDuration.toFixed(1)}s cross-dissolve`;
+        transitionMark.title = `${transitionDuration.toFixed(1)}s ${clip.transitionType ?? 'fade'}`;
         block.appendChild(transitionMark);
       }
       block.appendChild(leftHandle);
@@ -1558,7 +1558,17 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
             `<option value="${value}" ${(videoClip.transitionOut ?? 0) === value ? 'selected' : ''}>${label}</option>`,
         )
         .join('')}</select></label>`;
-      inspectorBody.innerHTML = `<div class="studio-inspector-icon">▶</div><h2>${escapeHtml(videoFile.name)}</h2><p>Video clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-video-position" type="number" min="0" step="0.1" value="${videoClip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Framing</span><select class="studio-video-fit"><option value="contain" ${videoClip.fit !== 'cover' ? 'selected' : ''}>Fit · show whole frame</option><option value="cover" ${videoClip.fit === 'cover' ? 'selected' : ''}>Fill · crop to frame</option></select></label><label class="studio-property"><span>Speed</span><select class="studio-video-speed">${[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => `<option value="${speed}" ${videoClipSpeed(videoClip) === speed ? 'selected' : ''}>${speed}×</option>`).join('')}</select></label>${transitionControl}${colorControls}<label class="studio-property"><span>Trim in</span><input class="studio-video-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-video-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade in</span><input class="studio-video-fade-in" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeIn ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade out</span><input class="studio-video-fade-out" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeOut ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Clip audio</span><input class="studio-video-gain" type="range" min="0" max="100" value="${Math.round((videoClip.gain ?? 1) * 100)}"><small class="studio-video-gain-value">${Math.round((videoClip.gain ?? 1) * 100)}%</small></label><label class="studio-property studio-mute-property"><input class="studio-video-muted" type="checkbox" ${videoClip.muted ? 'checked' : ''}><span>Mute source audio</span></label><p class="studio-video-hint">Cross-dissolve blends adjacent video and source audio in preview and MP4 export.</p><button class="studio-button studio-remove-video" type="button">Remove from timeline</button>`;
+      const transitionStyleControl = `<label class="studio-property"><span>Style</span><select class="studio-video-transition-style" ${nextVideoClip ? '' : 'disabled'}>${[
+        ['fade', 'Cross-dissolve'],
+        ['wipeleft', 'Wipe left'],
+        ['wiperight', 'Wipe right'],
+      ]
+        .map(
+          ([value, label]) =>
+            `<option value="${value}" ${(videoClip.transitionType ?? 'fade') === value ? 'selected' : ''}>${label}</option>`,
+        )
+        .join('')}</select></label>`;
+      inspectorBody.innerHTML = `<div class="studio-inspector-icon">▶</div><h2>${escapeHtml(videoFile.name)}</h2><p>Video clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-video-position" type="number" min="0" step="0.1" value="${videoClip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Framing</span><select class="studio-video-fit"><option value="contain" ${videoClip.fit !== 'cover' ? 'selected' : ''}>Fit · show whole frame</option><option value="cover" ${videoClip.fit === 'cover' ? 'selected' : ''}>Fill · crop to frame</option></select></label><label class="studio-property"><span>Speed</span><select class="studio-video-speed">${[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => `<option value="${speed}" ${videoClipSpeed(videoClip) === speed ? 'selected' : ''}>${speed}×</option>`).join('')}</select></label>${transitionControl}${transitionStyleControl}${colorControls}<label class="studio-property"><span>Trim in</span><input class="studio-video-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-video-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade in</span><input class="studio-video-fade-in" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeIn ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade out</span><input class="studio-video-fade-out" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeOut ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Clip audio</span><input class="studio-video-gain" type="range" min="0" max="100" value="${Math.round((videoClip.gain ?? 1) * 100)}"><small class="studio-video-gain-value">${Math.round((videoClip.gain ?? 1) * 100)}%</small></label><label class="studio-property studio-mute-property"><input class="studio-video-muted" type="checkbox" ${videoClip.muted ? 'checked' : ''}><span>Mute source audio</span></label><p class="studio-video-hint">Transitions blend adjacent video and source audio in preview and MP4 export.</p><button class="studio-button studio-remove-video" type="button">Remove from timeline</button>`;
       const update = (selector: string, set: (value: number) => void): void => {
         inspectorBody.querySelector<HTMLInputElement>(selector)!.addEventListener('change', (event) => {
           const input = event.currentTarget as HTMLInputElement;
@@ -1633,6 +1643,15 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         const next = ordered[ordered.findIndex((item) => item.id === videoClip.id) + 1];
         if (next && transition > 0) next.start = videoClip.start + videoClipTimelineDuration(videoClip);
         rippleOverlappingVideoClips(videoClips);
+        stopVideoSequence();
+        renderVideoTimeline();
+        renderInspector();
+        scheduleAutosave();
+      });
+      inspectorBody.querySelector('select.studio-video-transition-style')!.addEventListener('change', (event) => {
+        const transitionType = (event.currentTarget as HTMLSelectElement).value;
+        if (transitionType !== 'fade' && transitionType !== 'wipeleft' && transitionType !== 'wiperight') return;
+        videoClip.transitionType = transitionType;
         stopVideoSequence();
         renderVideoTimeline();
         renderInspector();
@@ -3801,6 +3820,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       videoSequenceTransitionUrl = null;
       transitionPlayer.style.visibility = 'hidden';
       transitionPlayer.style.opacity = '0';
+      transitionPlayer.style.clipPath = 'none';
       transitionPlayer.volume = 0;
       transitionPlayer.muted = true;
       const incomingClip = sequence[index];
@@ -3857,10 +3877,18 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         activeClip.fadeIn,
         activeClip.fadeOut,
       );
-      player.style.opacity = String((1 - progress) * outgoingFade);
+      const transitionType = activeClip.transitionType ?? 'fade';
+      const isDissolve = transitionType === 'fade';
+      player.style.opacity = String((isDissolve ? 1 - progress : 1) * outgoingFade);
       player.volume = Math.max(0, Math.min(1, activeClip.gain ?? 1)) * (1 - progress) * outgoingFade;
       transitionPlayer.style.visibility = 'visible';
-      transitionPlayer.style.opacity = String(progress * incomingFade);
+      transitionPlayer.style.opacity = String((isDissolve ? progress : 1) * incomingFade);
+      transitionPlayer.style.clipPath =
+        transitionType === 'wipeleft'
+          ? `inset(0 0 0 ${(1 - progress) * 100}%)`
+          : transitionType === 'wiperight'
+            ? `inset(0 ${(1 - progress) * 100}% 0 0)`
+            : 'none';
       transitionPlayer.muted = incomingClip.muted ?? false;
       transitionPlayer.volume = Math.max(0, Math.min(1, incomingClip.gain ?? 1)) * progress * incomingFade;
       if (playing && transitionPlayer.paused) void transitionPlayer.play().catch(() => undefined);
@@ -3890,6 +3918,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       transitionPlayer.pause();
       transitionPlayer.style.visibility = 'hidden';
       transitionPlayer.style.opacity = '0';
+      transitionPlayer.style.clipPath = 'none';
       if (overlapBefore(index + 1) > 0.04) prepareTransition(index + 1);
       const file = files[activeClip.fileIndex];
       if (!file) {
@@ -3928,6 +3957,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       transitionPlayer.pause();
       transitionPlayer.style.visibility = 'hidden';
       transitionPlayer.style.opacity = '0';
+      transitionPlayer.style.clipPath = 'none';
       mixStatus.textContent = `Gap · ${gapDuration.toFixed(1)}s`;
       const gapStartedAt = performance.now();
       const updateGap = (): void => {

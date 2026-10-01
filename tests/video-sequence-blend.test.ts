@@ -67,14 +67,24 @@ describe('video sequence joins', () => {
   it('crossfades overlapping clips and mixes their source audio', () => {
     const result = buildVideoSequenceJoinFilters([
       { video: 'v0', audio: 'a0', start: 0, duration: 4 },
-      { video: 'v1', audio: 'a1', start: 3, duration: 4 },
+      { video: 'v1', audio: 'a1', start: 3, duration: 4, transition: 'wipeleft' },
     ]);
     assert.deepEqual(result, {
       filters: [
-        '[v0][v1]xfade=transition=fade:duration=1.000:offset=3.000[outvbase]',
+        '[v0][v1]xfade=transition=wipeleft:duration=1.000:offset=3.000[outvbase]',
         '[a0][a1]acrossfade=d=1.000:c1=tri:c2=tri[outa]',
       ],
       duration: 7,
     });
+  });
+
+  it('maps wipe transitions to matching FFmpeg presets', () => {
+    for (const transition of ['wipeleft', 'wiperight'] as const) {
+      const result = buildVideoSequenceJoinFilters([
+        { video: 'v0', audio: 'a0', start: 0, duration: 4 },
+        { video: 'v1', audio: 'a1', start: 3, duration: 4, transition },
+      ]);
+      assert.match(result.filters[0], new RegExp(`xfade=transition=${transition}:`));
+    }
   });
 });
