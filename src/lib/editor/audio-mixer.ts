@@ -66,34 +66,194 @@ export interface AudioGainEnvelope {
   start: number;
   middle: number;
   end: number;
+  points?: AudioGainEnvelopePoint[];
 }
 
-/** Normalize the three editable clip-volume control points (0–200%). */
-export function audioClipGainEnvelope(clip: { gainEnvelope?: AudioGainEnvelope }): Required<AudioGainEnvelope> {
-  const normalize = (value: number | undefined): number =>
-    typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(2, value)) : 1;
+export interface AudioGainEnvelopePoint {
+  position: number;
+  gain: number;
+}
+
+const normalizeEnvelopeGain = (value: number | undefined): number =>
+  typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(2, value)) : 1;
+
+function baseAudioClipGainEnvelope(clip: {
+  gainEnvelope?: AudioGainEnvelope;
+}): Required<Pick<AudioGainEnvelope, 'start' | 'middle' | 'end'>> {
   return {
-    start: normalize(clip.gainEnvelope?.start),
-    middle: normalize(clip.gainEnvelope?.middle),
-    end: normalize(clip.gainEnvelope?.end),
+    start: normalizeEnvelopeGain(clip.gainEnvelope?.start),
+    middle: normalizeEnvelopeGain(clip.gainEnvelope?.middle),
+    end: normalizeEnvelopeGain(clip.gainEnvelope?.end),
   };
 }
 
-/** Interpolate the saved three-point gain curve at a clip position from 0 to 1. */
-export function audioClipGainEnvelopeAt(clip: { gainEnvelope?: AudioGainEnvelope }, position: number): number {
-  const envelope = audioClipGainEnvelope(clip);
+function normalizeAudioGainEnvelopePoints(
+  rawPoints: AudioGainEnvelopePoint[] | undefined,
+  fallback: Required<Pick<AudioGainEnvelope, 'start' | 'middle' | 'end'>>,
+): AudioGainEnvelopePoint[] {
+  const points = Array.isArray(rawPoints)
+    ? rawPoints
+        .slice(0, 256)
+        .filter(
+          (point) =>
+            typeof point === 'object' &&
+            point !== null &&
+            typeof point.position === 'number' &&
+            Number.isFinite(point.position) &&
+            typeof point.gain === 'number' &&
+            Number.isFinite(point.gain),
+        )
+        .map((point) => ({
+          position: Math.max(0, Math.min(1, point.position)),
+          gain: Math.max(0, Math.min(2, point.gain)),
+        }))
+    : [];
+  if (points.length === 0) {
+    return [
+      { position: 0, gain: fallback.start },
+      { position: 0.5, gain: fallback.middle },
+      { position: 1, gain: fallback.end },
+    ];
+  }
+  points.sort((left, right) => left.position - right.position);
+  const unique: AudioGainEnvelopePoint[] = [];
+  for (const point of points) {
+    if (unique.at(-1)?.position === point.position) unique[unique.length - 1] = point;
+    else unique.push(point);
+  }
+  if (unique[0].position > 0) unique.unshift({ position: 0, gain: fallback.start });
+  if (unique.at(-1)?.position !== 1) unique.push({ position: 1, gain: fallback.end });
+  if (unique.length > 64) return [unique[0], ...unique.slice(1, 63), unique.at(-1)!];
+  return unique;
+}
+
+function interpolateAudioGainEnvelope(points: AudioGainEnvelopePoint[], position: number): number {
   const fraction = Math.max(0, Math.min(1, Number.isFinite(position) ? position : 0));
-  return fraction <= 0.5
-    ? envelope.start + (envelope.middle - envelope.start) * fraction * 2
-    : envelope.middle + (envelope.end - envelope.middle) * (fraction - 0.5) * 2;
+  for (let index = 1; index < points.length; index++) {
+    const right = points[index];
+    if (fraction > right.position) continue;
+    const left = points[index - 1];
+    const span = right.position - left.position;
+    return span <= 0 ? right.gain : left.gain + (right.gain - left.gain) * ((fraction - left.position) / span);
+  }
+  return points.at(-1)?.gain ?? 1;
+}
+
+function audioGainEnvelopeFromPoints(points: AudioGainEnvelopePoint[]): AudioGainEnvelope {
+  const normalized = normalizeAudioGainEnvelopePoints(points, { start: 1, middle: 1, end: 1 });
+  return {
+    start: interpolateAudioGainEnvelope(normalized, 0),
+    middle: interpolateAudioGainEnvelope(normalized, 0.5),
+    end: interpolateAudioGainEnvelope(normalized, 1),
+    points: normalized,
+  };
+}
+
+/** Normalize the clip-volume control points to the 0–200% range. */
+export function audioClipGainEnvelope(clip: {
+  gainEnvelope?: AudioGainEnvelope;
+}): Required<Pick<AudioGainEnvelope, 'start' | 'middle' | 'end'>> {
+  const fallback = baseAudioClipGainEnvelope(clip);
+  if (!Array.isArray(clip.gainEnvelope?.points) || clip.gainEnvelope.points.length === 0) return fallback;
+  const points = normalizeAudioGainEnvelopePoints(clip.gainEnvelope.points, fallback);
+  return {
+    start: normalizeEnvelopeGain(interpolateAudioGainEnvelope(points, 0)),
+    middle: normalizeEnvelopeGain(interpolateAudioGainEnvelope(points, 0.5)),
+    end: normalizeEnvelopeGain(interpolateAudioGainEnvelope(points, 1)),
+  };
+}
+
+/** Return the normalized volume automation points, expanding legacy clips to their three original points. */
+export function audioClipGainEnvelopePoints(clip: { gainEnvelope?: AudioGainEnvelope }): AudioGainEnvelopePoint[] {
+  return normalizeAudioGainEnvelopePoints(clip.gainEnvelope?.points, baseAudioClipGainEnvelope(clip));
+}
+
+/** Interpolate the saved gain curve at a clip position from 0 to 1. */
+export function audioClipGainEnvelopeAt(clip: { gainEnvelope?: AudioGainEnvelope }, position: number): number {
+  return interpolateAudioGainEnvelope(audioClipGainEnvelopePoints(clip), position);
+}
+
+/** Add or update a volume point at a normalized clip position. */
+export function setAudioClipGainEnvelopePoint(
+  clip: { gainEnvelope?: AudioGainEnvelope },
+  position: number,
+  gain: number,
+): AudioGainEnvelope {
+  const normalizedPosition = Math.max(0, Math.min(1, Number.isFinite(position) ? position : 0));
+  const points = audioClipGainEnvelopePoints(clip);
+  const existing = points.findIndex((point) => Math.abs(point.position - normalizedPosition) < 0.001);
+  const point = {
+    position: normalizedPosition,
+    gain: Math.max(0, Math.min(2, Number.isFinite(gain) ? gain : 1)),
+  };
+  if (existing >= 0) points[existing] = point;
+  else if (points.length < 64) points.push(point);
+  points.sort((left, right) => left.position - right.position);
+  return audioGainEnvelopeFromPoints(points);
+}
+
+/** Move one existing point while keeping neighboring points in order. */
+export function moveAudioClipGainEnvelopePoint(
+  clip: { gainEnvelope?: AudioGainEnvelope },
+  index: number,
+  position: number,
+  gain: number,
+): AudioGainEnvelope {
+  const points = audioClipGainEnvelopePoints(clip);
+  const safeIndex = Math.max(0, Math.min(points.length - 1, Number.isFinite(index) ? Math.floor(index) : 0));
+  const first = safeIndex === 0;
+  const last = safeIndex === points.length - 1;
+  const minimum = first ? 0 : points[safeIndex - 1].position + 0.0005;
+  const maximum = last ? 1 : points[safeIndex + 1].position - 0.0005;
+  points[safeIndex] = {
+    position: first
+      ? 0
+      : last
+        ? 1
+        : Math.max(minimum, Math.min(maximum, Number.isFinite(position) ? position : points[safeIndex].position)),
+    gain: Math.max(0, Math.min(2, Number.isFinite(gain) ? gain : 1)),
+  };
+  return audioGainEnvelopeFromPoints(points);
+}
+
+/** Remove an interior volume point while retaining the curve endpoints. */
+export function removeAudioClipGainEnvelopePoint(
+  clip: { gainEnvelope?: AudioGainEnvelope },
+  index: number,
+): AudioGainEnvelope {
+  const points = audioClipGainEnvelopePoints(clip);
+  if (index > 0 && index < points.length - 1) points.splice(index, 1);
+  return audioGainEnvelopeFromPoints(points);
 }
 
 /** Preserve a clip's piecewise-linear volume curve when splitting it. */
 export function splitAudioClipGainEnvelope(
   clip: { gainEnvelope?: AudioGainEnvelope },
   position: number,
-): { left: Required<AudioGainEnvelope>; right: Required<AudioGainEnvelope> } {
+): { left: AudioGainEnvelope; right: AudioGainEnvelope } {
   const split = Math.max(0, Math.min(1, Number.isFinite(position) ? position : 0));
+  if (Array.isArray(clip.gainEnvelope?.points) && clip.gainEnvelope.points.length > 0) {
+    const sourcePoints = audioClipGainEnvelopePoints(clip);
+    const splitGain = interpolateAudioGainEnvelope(sourcePoints, split);
+    const leftPoints = [
+      { position: 0, gain: interpolateAudioGainEnvelope(sourcePoints, 0) },
+      ...sourcePoints
+        .filter((point) => point.position > 0 && point.position < split)
+        .map((point) => ({ position: point.position / Math.max(split, Number.EPSILON), gain: point.gain })),
+      { position: 1, gain: splitGain },
+    ];
+    const rightPoints = [
+      { position: 0, gain: splitGain },
+      ...sourcePoints
+        .filter((point) => point.position > split && point.position < 1)
+        .map((point) => ({
+          position: (point.position - split) / Math.max(1 - split, Number.EPSILON),
+          gain: point.gain,
+        })),
+      { position: 1, gain: interpolateAudioGainEnvelope(sourcePoints, 1) },
+    ];
+    return { left: audioGainEnvelopeFromPoints(leftPoints), right: audioGainEnvelopeFromPoints(rightPoints) };
+  }
   return {
     left: {
       start: audioClipGainEnvelopeAt(clip, 0),
@@ -114,19 +274,22 @@ export function audioClipGainAutomation(
   duration: number,
 ): Array<{ time: number; gain: number }> {
   if (!Number.isFinite(duration) || duration <= 0) return [];
-  const envelope = audioClipGainEnvelope(clip);
+  const envelopePoints = audioClipGainEnvelopePoints(clip);
   const fadeIn = Math.min(duration, Math.max(0, Number.isFinite(clip.fadeIn) ? clip.fadeIn : 0));
   const fadeOut = Math.min(duration, Math.max(0, Number.isFinite(clip.fadeOut) ? clip.fadeOut : 0));
   const baseGain = Math.max(0, Math.min(4, Number.isFinite(clip.gain) ? clip.gain : 0));
   const middleTime = duration / 2;
   const gainAt = (time: number): number => {
     const fraction = Math.max(0, Math.min(1, time / duration));
-    const envelopeGain = audioClipGainEnvelopeAt({ gainEnvelope: envelope }, fraction);
+    const envelopeGain = audioClipGainEnvelopeAt(clip, fraction);
     const fadeInGain = fadeIn > 0 ? Math.min(1, time / fadeIn) : 1;
     const fadeOutGain = fadeOut > 0 ? Math.min(1, (duration - time) / fadeOut) : 1;
     return baseGain * envelopeGain * fadeInGain * fadeOutGain;
   };
-  const times = new Set([0, middleTime, duration]);
+  const times = new Set(envelopePoints.map((point) => point.position * duration));
+  times.add(0);
+  times.add(middleTime);
+  times.add(duration);
   if (fadeIn > 0) times.add(fadeIn);
   if (fadeOut > 0) times.add(duration - fadeOut);
   return [...times].sort((left, right) => left - right).map((time) => ({ time, gain: gainAt(time) }));

@@ -24,6 +24,16 @@ describe('portable Studio projects', () => {
         fadeIn: 0.5,
         fadeOut: 0.75,
         pan: -0.2,
+        gainEnvelope: {
+          start: 1,
+          middle: 0.75,
+          end: 1.5,
+          points: [
+            { position: 0, gain: 1 },
+            { position: 0.3, gain: 0.25 },
+            { position: 1, gain: 1.5 },
+          ],
+        },
         muted: false,
       },
     ];
@@ -107,6 +117,11 @@ describe('portable Studio projects', () => {
     }
     assert.equal(restored.audioClips[0].fileIndex, 3);
     assert.equal(restored.audioClips[0].speed, 1.25);
+    assert.deepEqual(restored.audioClips[0].gainEnvelope?.points, [
+      { position: 0, gain: 1 },
+      { position: 0.3, gain: 0.25 },
+      { position: 1, gain: 1.5 },
+    ]);
     assert.equal(restored.videoClips[0].fileIndex, 4);
     assert.equal(restored.videoClips[0].fit, 'cover');
     assert.equal(restored.videoClips[0].transitionOut, 1.2);

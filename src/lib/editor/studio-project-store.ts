@@ -11,6 +11,7 @@ import {
   type AudioTimelineClip,
   audioClipEqSettings,
   audioClipGainEnvelope,
+  audioClipGainEnvelopePoints,
   audioClipSpeed,
   audioTrackMixSettings,
 } from './audio-mixer.ts';
@@ -252,7 +253,10 @@ function decodeFiles(plaintext: Uint8Array): {
       trackGain: audioTrackMixSettings(clip).gain,
       trackPan: audioTrackMixSettings(clip).pan,
       ...audioClipEqSettings(clip),
-      gainEnvelope: audioClipGainEnvelope(clip),
+      gainEnvelope:
+        Array.isArray(clip.gainEnvelope?.points) && clip.gainEnvelope.points.length > 0
+          ? { ...audioClipGainEnvelope(clip), points: audioClipGainEnvelopePoints(clip) }
+          : audioClipGainEnvelope(clip),
     }));
   const videoClips = (Array.isArray(manifest.videoClips) ? manifest.videoClips : [])
     .filter(
