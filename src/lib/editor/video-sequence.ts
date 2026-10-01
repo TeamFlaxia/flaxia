@@ -83,6 +83,27 @@ interface TimedOverlay {
   end: number;
   fadeIn: number;
   fadeOut: number;
+  blend: StudioImageLayer['blend'];
+}
+
+const ffmpegBlendModes: Record<StudioImageLayer['blend'], string | null> = {
+  normal: null,
+  multiply: 'multiply',
+  screen: 'screen',
+  overlay: 'overlay',
+  darken: 'darken',
+  lighten: 'lighten',
+  'color-dodge': 'dodge',
+  'color-burn': 'burn',
+  'hard-light': 'hardlight',
+  'soft-light': 'softlight',
+  difference: 'difference',
+  exclusion: 'exclusion',
+};
+
+/** Map the canvas layer blend mode to FFmpeg's blend filter mode. */
+export function videoOverlayBlendMode(mode: StudioImageLayer['blend']): string | null {
+  return ffmpegBlendModes[mode];
 }
 
 async function renderLayerOverlayFrame(
@@ -146,6 +167,7 @@ async function renderTimedLayerOverlays(
         end,
         fadeIn,
         fadeOut,
+        blend: layer.blend,
       })),
     );
   } finally {
@@ -296,7 +318,26 @@ export async function renderVideoSequence(
       filters.push(
         `[${clipSources.length + index}:v:0]format=rgba,setpts=PTS-STARTPTS${fades.length > 0 ? `,${fades.join(',')}` : ''}[${overlayLabel}]`,
       );
-      filters.push(`[${inputLabel}][${overlayLabel}]overlay=shortest=1:format=auto:enable='${enable}'[${outputLabel}]`);
+      const blendMode = videoOverlayBlendMode(overlay.blend);
+      if (blendMode === null) {
+        filters.push(
+          `[${inputLabel}][${overlayLabel}]overlay=shortest=1:format=auto:enable='${enable}'[${outputLabel}]`,
+        );
+      } else {
+        const colorBase = `blend-base-${index}`;
+        const maskBase = `blend-mask-base-${index}`;
+        const colorSource = `blend-color-source-${index}`;
+        const maskSource = `blend-mask-source-${index}`;
+        const blended = `blend-result-${index}`;
+        const mask = `blend-mask-${index}`;
+        const result = index === overlays.length - 1 ? outputLabel : `outv${index}`;
+        filters.push(`[${inputLabel}]format=rgb24,split[${colorBase}][${maskBase}]`);
+        filters.push(`[${overlayLabel}]split[${colorSource}][${maskSource}]`);
+        filters.push(`[${colorSource}]format=rgb24[blend-top-${index}]`);
+        filters.push(`[blend-top-${index}][${colorBase}]blend=all_mode=${blendMode}:shortest=1[${blended}]`);
+        filters.push(`[${maskSource}]alphaextract[${mask}]`);
+        filters.push(`[${maskBase}][${blended}][${mask}]maskedmerge=shortest=1:enable='${enable}'[${result}]`);
+      }
       inputLabel = outputLabel;
     });
   }

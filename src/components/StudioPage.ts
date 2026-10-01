@@ -256,7 +256,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let videoSequenceUrl: string | null = null;
   let videoSequenceAudio: HTMLAudioElement | null = null;
   let videoSequenceAudioUrl: string | null = null;
-  let videoSequenceOverlayCanvas: HTMLCanvasElement | null = null;
+  let videoSequenceOverlayCanvas: HTMLElement | null = null;
   let videoSequenceOverlayRevision = 0;
   const videoSequenceOverlayBitmaps = new Map<number, Promise<ImageBitmap>>();
   let videoSequenceIndex = -1;
@@ -3472,18 +3472,16 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     player.playsInline = true;
     player.setAttribute('aria-label', 'Video sequence preview');
     stage.appendChild(player);
-    const overlayCanvas = document.createElement('canvas');
-    overlayCanvas.className = 'studio-sequence-overlays';
-    overlayCanvas.width = 1280;
-    overlayCanvas.height = 720;
-    overlayCanvas.setAttribute('aria-hidden', 'true');
-    stage.appendChild(overlayCanvas);
-    videoSequenceOverlayCanvas = overlayCanvas;
-    const overlayContext = overlayCanvas.getContext('2d');
+    const overlayStack = document.createElement('div');
+    overlayStack.className = 'studio-sequence-overlays';
+    overlayStack.setAttribute('aria-hidden', 'true');
+    stage.appendChild(overlayStack);
+    videoSequenceOverlayCanvas = overlayStack;
+    const overlayCanvases = new Map<string, HTMLCanvasElement>();
     const drawLiveLayers = async (time: number): Promise<void> => {
-      if (!overlayContext || !videoSequenceOverlayCanvas) return;
+      if (!videoSequenceOverlayCanvas) return;
       const revision = ++videoSequenceOverlayRevision;
-      overlayContext.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      const activeLayerIds = new Set<string>();
       for (const layer of imageLayers) {
         if (!layer.visible || time < (layer.start ?? 0) || time >= (layer.end ?? sequenceEnd)) continue;
         let bitmap: ImageBitmap | null = null;
@@ -3503,11 +3501,28 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           }
         }
         if (revision !== videoSequenceOverlayRevision || !videoSequenceOverlayCanvas) return;
-        drawStudioImageLayer(overlayContext, layer, bitmap, {
+        activeLayerIds.add(layer.id);
+        let layerCanvas = overlayCanvases.get(layer.id);
+        if (!layerCanvas) {
+          layerCanvas = document.createElement('canvas');
+          layerCanvas.width = 1280;
+          layerCanvas.height = 720;
+          videoSequenceOverlayCanvas.appendChild(layerCanvas);
+          overlayCanvases.set(layer.id, layerCanvas);
+        }
+        videoSequenceOverlayCanvas.appendChild(layerCanvas);
+        layerCanvas.style.mixBlendMode = layer.blend === 'normal' ? 'normal' : layer.blend;
+        const context = layerCanvas.getContext('2d');
+        if (!context) continue;
+        context.clearRect(0, 0, layerCanvas.width, layerCanvas.height);
+        drawStudioImageLayer(context, layer, bitmap, {
           scale: 2 / 3,
           offsetX: 280,
           opacity: imageLayerOpacityAt(layer, time, sequenceEnd),
         });
+      }
+      for (const [id, layerCanvas] of overlayCanvases) {
+        layerCanvas.hidden = !activeLayerIds.has(id);
       }
     };
     videoSequencePlayer = player;
@@ -3806,7 +3821,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 const studioCss = `
 .studio-timeline-head{overflow-x:auto;scrollbar-width:thin}.studio-history-undo,.studio-history-redo{min-width:28px;padding:4px 6px!important;font-size:14px!important}
 .studio-timeline-playhead{position:absolute;z-index:4;top:0;bottom:0;width:2px;background:#f2f687;box-shadow:0 0 6px #f2f687;pointer-events:none}
-.studio-sequence-overlays{position:absolute;z-index:6;inset:6% 8%;width:84%;height:88%;pointer-events:none}
+.studio-sequence-overlays{position:absolute;z-index:6;inset:6% 8%;width:84%;height:88%;pointer-events:none}.studio-sequence-overlays canvas{position:absolute;inset:0;width:100%;height:100%}
 .studio-composer-preview-controls{display:flex;align-items:center;gap:16px;min-height:38px;padding:4px 18px;border-bottom:1px solid #30333a;background:#15161b;color:#aeb3bd;font-size:10px}.studio-composer-preview-controls label{display:flex;align-items:center;gap:7px;white-space:nowrap}.studio-composer-preview-controls label:last-child{flex:1}.studio-composer-preview-controls input[type=checkbox]{accent-color:#b8ef6a}.studio-composer-preview-controls input[type=range]{flex:1;min-width:80px;max-width:460px;accent-color:#b8ef6a}.studio-composer-preview-controls output{min-width:40px;color:#e9ebef;font-variant-numeric:tabular-nums}
 .studio-video-clip.muted{filter:saturate(.35);border-style:dashed}
 .studio-clip-speed{max-width:116px;padding:5px 7px;border:1px solid var(--studio-border);border-radius:4px;background:#111216;color:var(--studio-text);font:11px system-ui,sans-serif}
