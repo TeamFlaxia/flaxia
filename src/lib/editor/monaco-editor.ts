@@ -8,10 +8,28 @@ import '../../../node_modules/monaco-editor/esm/vs/language/html/monaco.contribu
 import '../../../node_modules/monaco-editor/esm/vs/language/json/monaco.contribution.js';
 import '../../../node_modules/monaco-editor/esm/vs/language/typescript/monaco.contribution.js';
 import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/css/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/cpp/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/csharp/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/dockerfile/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/go/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/graphql/register.js';
 import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/html/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/ini/register.js';
 import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/javascript/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/java/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/lua/register.js';
 import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/markdown/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/php/register.js';
 import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/python/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/ruby/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/rust/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/shell/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/sql/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/swift/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/typescript/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/wgsl/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/xml/register.js';
+import '../../../node_modules/monaco-editor/esm/vs/languages/definitions/yaml/register.js';
 import '../../../node_modules/monaco-editor/min/vs/editor/editor.main.css';
 
 export async function loadStudioMonaco(): Promise<typeof import('monaco-editor')> {

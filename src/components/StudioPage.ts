@@ -53,7 +53,59 @@ function kindOf(file: File): StudioKind {
   if (file.type.startsWith('image/')) return 'image';
   if (file.type.startsWith('video/')) return 'video';
   if (file.type.startsWith('audio/')) return 'audio';
-  if (['html', 'htm', 'css', 'js', 'mjs', 'json', 'txt', 'md', 'glsl', 'wgsl', 'rsp'].includes(ext)) {
+  if (
+    [
+      'html',
+      'htm',
+      'css',
+      'scss',
+      'less',
+      'js',
+      'mjs',
+      'cjs',
+      'jsx',
+      'ts',
+      'tsx',
+      'json',
+      'jsonc',
+      'txt',
+      'md',
+      'mdx',
+      'glsl',
+      'vert',
+      'frag',
+      'wgsl',
+      'rsp',
+      'py',
+      'pyw',
+      'yaml',
+      'yml',
+      'xml',
+      'sh',
+      'bash',
+      'sql',
+      'rs',
+      'go',
+      'java',
+      'c',
+      'h',
+      'cc',
+      'cpp',
+      'cxx',
+      'hpp',
+      'cs',
+      'lua',
+      'php',
+      'rb',
+      'swift',
+      'graphql',
+      'gql',
+      'toml',
+      'conf',
+      'dockerfile',
+      'ini',
+    ].includes(ext)
+  ) {
     return ['html', 'htm'].includes(ext) ? 'game' : 'code';
   }
   if (['zip', 'swf', 'wasm'].includes(ext)) return 'game';
@@ -111,8 +163,26 @@ function studioMonacoLanguage(fileName: string): string {
   if (['html', 'htm'].includes(extension)) return 'html';
   if (['css', 'scss', 'less'].includes(extension)) return extension;
   if (['json', 'jsonc'].includes(extension)) return 'json';
-  if (['md', 'markdown'].includes(extension)) return 'markdown';
+  if (['md', 'markdown', 'mdx'].includes(extension)) return 'markdown';
   if (['py', 'pyw'].includes(extension)) return 'python';
+  if (['glsl', 'vert', 'frag', 'c', 'h', 'cc', 'cpp', 'cxx', 'hpp'].includes(extension)) return 'cpp';
+  if (['yaml', 'yml'].includes(extension)) return 'yaml';
+  if (['sh', 'bash'].includes(extension)) return 'shell';
+  if (['xml'].includes(extension)) return 'xml';
+  if (['rs'].includes(extension)) return 'rust';
+  if (['go'].includes(extension)) return 'go';
+  if (['java'].includes(extension)) return 'java';
+  if (['cs'].includes(extension)) return 'csharp';
+  if (['lua'].includes(extension)) return 'lua';
+  if (['php'].includes(extension)) return 'php';
+  if (['rb'].includes(extension)) return 'ruby';
+  if (['swift'].includes(extension)) return 'swift';
+  if (['graphql', 'gql'].includes(extension)) return 'graphql';
+  if (['toml'].includes(extension)) return 'ini';
+  if (['sql'].includes(extension)) return 'sql';
+  if (['wgsl'].includes(extension)) return 'wgsl';
+  if (['dockerfile'].includes(extension)) return 'dockerfile';
+  if (['ini', 'conf'].includes(extension)) return 'ini';
   return 'plaintext';
 }
 
