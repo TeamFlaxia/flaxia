@@ -269,6 +269,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let videoSequenceUrl: string | null = null;
   let videoSequenceTransitionPlayer: HTMLVideoElement | null = null;
   let videoSequenceTransitionUrl: string | null = null;
+  let videoSequencePipPlayer: HTMLVideoElement | null = null;
+  let videoSequencePipUrl: string | null = null;
   let videoSequenceAudio: HTMLAudioElement | null = null;
   let videoSequenceAudioUrl: string | null = null;
   let videoSequenceOverlayCanvas: HTMLElement | null = null;
@@ -326,7 +328,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       <section class="studio-center">
         <div class="studio-tabs"><button class="studio-tab studio-workspace-tab active" type="button">⌂ &nbsp;Workspace</button><div class="studio-document-tabs"></div><button class="studio-tab-open" type="button" aria-label="Open files">＋</button><span class="studio-center-spacer"></span><button class="studio-shortcut" type="button" title="Import files">⌘ O</button></div>
         <div class="studio-stage"><div class="studio-empty"><div class="studio-empty-art"><div class="studio-orbit studio-orbit-one"></div><div class="studio-orbit studio-orbit-two"></div><div class="studio-empty-glyph">✳</div><span class="studio-float studio-float-image">▧</span><span class="studio-float studio-float-audio">♫</span><span class="studio-float studio-float-code">&lt;/&gt;</span><span class="studio-float studio-float-game">◇</span></div><h1>Your ideas, in one studio.</h1><p>Bring images, sound, video, code, and games into one creative workspace.</p><button class="studio-button studio-open studio-primary" type="button">Import files</button><small>or drop files anywhere in the workspace</small></div><div class="studio-preview"></div></div>
-        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag to arrange · trims ripple · clips snap to playhead and edges</span><button class="studio-history-undo" type="button" disabled title="Undo (⌘Z / Ctrl+Z)">↶</button><button class="studio-history-redo" type="button" disabled title="Redo (⌘⇧Z / Ctrl+Y)">↷</button><button class="studio-video-split" type="button" disabled>Split selected clip</button><button class="studio-clip-duplicate" type="button" disabled>Duplicate clip</button><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-audio-solo" type="button" disabled>▶ Solo clip</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
+        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag clips between V1/V2 · V2 is picture-in-picture</span><button class="studio-history-undo" type="button" disabled title="Undo (⌘Z / Ctrl+Z)">↶</button><button class="studio-history-redo" type="button" disabled title="Redo (⌘⇧Z / Ctrl+Y)">↷</button><button class="studio-video-split" type="button" disabled>Split selected clip</button><button class="studio-clip-duplicate" type="button" disabled>Duplicate clip</button><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-audio-solo" type="button" disabled>▶ Solo clip</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
       </section>
       <aside class="studio-inspector"><div class="studio-inspector-tabs"><span class="active">Inspector</span><span>Publish</span></div><div class="studio-inspector-body"><div class="studio-inspector-icon">✳</div><h2>Make something living</h2><p>Flaxia posts can hold playable games and interactive media. Import an asset to preview, edit, and prepare it for sharing.</p><div class="studio-inspector-divider"></div><div class="studio-format-title">SUPPORTED CREATIVE FILES</div><div class="studio-format-list"><span>IMAGE</span><small>PNG · JPG · GIF · WEBP</small><span>VIDEO</span><small>MP4 · WEBM · MOV</small><span>AUDIO</span><small>MP3 · WAV · OGG · M4A</small><span>CODE / GAME</span><small>HTML · JS · ZIP · SWF · WASM</small></div><div class="studio-local-badge">◉ &nbsp;Private by default</div></div></aside>
     </div>
@@ -467,6 +469,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     videoSequenceTransitionPlayer?.pause();
     videoSequenceTransitionPlayer?.remove();
     videoSequenceTransitionPlayer = null;
+    videoSequencePipPlayer?.pause();
+    videoSequencePipPlayer?.remove();
+    videoSequencePipPlayer = null;
     videoSequenceAudio?.pause();
     videoSequenceAudio = null;
     if (videoSequenceAudioUrl) URL.revokeObjectURL(videoSequenceAudioUrl);
@@ -475,20 +480,27 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     videoSequenceUrl = null;
     if (videoSequenceTransitionUrl) URL.revokeObjectURL(videoSequenceTransitionUrl);
     videoSequenceTransitionUrl = null;
+    if (videoSequencePipUrl) URL.revokeObjectURL(videoSequencePipUrl);
+    videoSequencePipUrl = null;
     videoSequenceIndex = -1;
     videoPlayButton.textContent = '▶ Preview video';
   };
 
   const updateSplitButton = (): void => {
-    const clip =
-      videoClips.find((item) => item.id === selectedVideoClipId) ??
-      audioClips.find((item) => item.id === selectedAudioClipId);
+    const videoClip = videoClips.find((item) => item.id === selectedVideoClipId);
+    const audioClip = audioClips.find((item) => item.id === selectedAudioClipId);
     const imageLayer = imageLayers.find((item) => item.id === selectedImageLayerId);
+    const clipStart = videoClip?.start ?? audioClip?.start;
+    const clipDuration = videoClip
+      ? videoClipTimelineDuration(videoClip)
+      : audioClip
+        ? audioClipTimelineDuration(audioClip)
+        : 0;
     videoSplitButton.disabled =
-      !clip ||
-      timelinePlayheadTime <= clip.start + 0.05 ||
-      timelinePlayheadTime >= clip.start + videoClipTimelineDuration(clip) - 0.05;
-    duplicateClipButton.disabled = !clip && !imageLayer;
+      clipStart === undefined ||
+      timelinePlayheadTime <= clipStart + 0.05 ||
+      timelinePlayheadTime >= clipStart + clipDuration - 0.05;
+    duplicateClipButton.disabled = !videoClip && !audioClip && !imageLayer;
   };
 
   const updateTimelinePlayhead = (time: number): void => {
@@ -502,7 +514,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   };
 
   const requestVideoSeek = (time: number): void => {
-    if (videoClips.length === 0) {
+    if (!videoClips.some((clip) => clip.track !== 'overlay')) {
       updateTimelinePlayhead(time);
       if (mixPreview) {
         const wasPlaying = !mixPreview.paused;
@@ -605,7 +617,12 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const duplicate: StudioVideoClip = {
         ...videoClip,
         id: crypto.randomUUID(),
-        start: Math.max(0, ...videoClips.map((item) => item.start + videoClipTimelineDuration(item))),
+        start: Math.max(
+          0,
+          ...videoClips
+            .filter((item) => (item.track === 'overlay') === (videoClip.track === 'overlay'))
+            .map((item) => item.start + videoClipTimelineDuration(item)),
+        ),
       };
       videoClips.push(duplicate);
       manuallyPlacedVideoClips.add(duplicate.id);
@@ -723,7 +740,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       clip = {
         id: crypto.randomUUID(),
         fileIndex,
-        start: videoClips.reduce((end, item) => Math.max(end, item.start + videoClipTimelineDuration(item)), 0),
+        start: videoClips
+          .filter((item) => item.track !== 'overlay')
+          .reduce((end, item) => Math.max(end, item.start + videoClipTimelineDuration(item)), 0),
         sourceStart: 0,
         sourceEnd: 1,
       };
@@ -737,10 +756,14 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         const videoClip = videoClips.find((item) => item.fileIndex === fileIndex);
         if (videoClip && expandToSource) {
           videoClip.sourceEnd = meta.duration;
-          const clipIndex = videoClips.indexOf(videoClip);
-          for (let index = clipIndex + 1; index < videoClips.length; index++) {
-            const previous = videoClips[index - 1];
-            const following = videoClips[index];
+          const trackClips = videoClips.filter(
+            (item) =>
+              (item.track === 'overlay' ? 'overlay' : 'main') === (videoClip.track === 'overlay' ? 'overlay' : 'main'),
+          );
+          const clipIndex = trackClips.indexOf(videoClip);
+          for (let index = clipIndex + 1; index < trackClips.length; index++) {
+            const previous = trackClips[index - 1];
+            const following = trackClips[index];
             if (!manuallyPlacedVideoClips.has(following.id)) {
               following.start = previous.start + videoClipTimelineDuration(previous);
             }
@@ -936,7 +959,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     canvas.className = 'studio-video-lane-canvas';
     canvas.style.width = `${contentWidth}px`;
     canvas.style.backgroundSize = `${timelinePixelsPerSecond}px 100%`;
-    for (const clip of [...videoClips].sort((left, right) => left.start - right.start)) {
+    const mainVideoClips = videoClips
+      .filter((clip) => clip.track !== 'overlay')
+      .sort((left, right) => left.start - right.start);
+    for (const clip of mainVideoClips) {
       const file = files[clip.fileIndex];
       if (!file) continue;
       const block = document.createElement('button');
@@ -956,9 +982,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const rightHandle = document.createElement('span');
       rightHandle.className = 'studio-video-trim studio-video-trim-right';
       rightHandle.setAttribute('aria-label', 'Trim end');
-      const orderedClips = [...videoClips].sort((left, right) => left.start - right.start);
-      const clipIndex = orderedClips.findIndex((item) => item.id === clip.id);
-      const nextClip = orderedClips[clipIndex + 1];
+      const clipIndex = mainVideoClips.findIndex((item) => item.id === clip.id);
+      const nextClip = mainVideoClips[clipIndex + 1];
       const transitionDuration = nextClip
         ? Math.max(
             0,
@@ -1085,8 +1110,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const clipId = event.dataTransfer?.getData('application/x-flaxia-video-clip');
       const clip = videoClips.find((item) => item.id === clipId);
       if (!clip) return;
+      if (clip.track !== 'overlay' && videoClips.filter((item) => item.track !== 'overlay').length <= 1) return;
       event.preventDefault();
       const rect = canvas.getBoundingClientRect();
+      clip.track = 'main';
       clip.start = snapTimelineTime((event.clientX - rect.left) / timelinePixelsPerSecond, clip.id);
       rippleOverlappingVideoClips(videoClips);
       manuallyPlacedVideoClips.add(clip.id);
@@ -1099,6 +1126,87 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       scheduleAutosave();
     });
     videoTimeline.appendChild(lane);
+    const pictureLane = document.createElement('div');
+    pictureLane.className = 'studio-video-lane studio-picture-track-lane';
+    const pictureLabel = document.createElement('div');
+    pictureLabel.className = 'studio-video-track-label';
+    pictureLabel.textContent = 'V2';
+    pictureLabel.title = 'Picture-in-picture overlay track';
+    const pictureCanvas = document.createElement('div');
+    pictureCanvas.className = 'studio-video-lane-canvas';
+    pictureCanvas.style.width = `${contentWidth}px`;
+    pictureCanvas.style.backgroundSize = `${timelinePixelsPerSecond}px 100%`;
+    for (const clip of videoClips
+      .filter((item) => item.track === 'overlay')
+      .sort((left, right) => left.start - right.start)) {
+      const file = files[clip.fileIndex];
+      if (!file) continue;
+      const block = document.createElement('button');
+      block.type = 'button';
+      block.draggable = true;
+      block.className = `studio-video-clip studio-picture-clip ${clip.id === selectedVideoClipId ? 'active' : ''} ${clip.muted ? 'muted' : ''}`;
+      block.dataset.clipId = clip.id;
+      block.style.left = `${clip.start * timelinePixelsPerSecond}px`;
+      block.style.width = `${Math.max(54, videoClipTimelineDuration(clip) * timelinePixelsPerSecond)}px`;
+      block.textContent = `${file.name} · ${videoClipTimelineDuration(clip).toFixed(1)}s`;
+      block.title = `${file.name} · picture-in-picture`;
+      block.addEventListener('click', () => {
+        select(clip.fileIndex);
+        selectedVideoClipId = clip.id;
+        selectedAudioClipId = null;
+        selectedImageLayerId = null;
+        renderVideoTimeline();
+        renderInspector();
+      });
+      block.addEventListener('dragstart', (event) => {
+        event.dataTransfer?.setData('application/x-flaxia-video-clip', clip.id);
+        if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+      });
+      pictureCanvas.appendChild(block);
+      const filmstripKey = `${clip.fileIndex}:${clip.sourceStart.toFixed(3)}:${clip.sourceEnd.toFixed(3)}`;
+      let filmstrip = videoFilmstrips.get(filmstripKey);
+      if (!filmstrip) {
+        filmstrip = createVideoFilmstrip(file, clip.sourceStart, clip.sourceEnd);
+        videoFilmstrips.set(filmstripKey, filmstrip);
+        void filmstrip.catch(() => videoFilmstrips.delete(filmstripKey));
+      }
+      void filmstrip
+        .then((image) => {
+          if (block.isConnected && !destroyed) {
+            block.style.backgroundImage = `linear-gradient(#0006,#0006),url("${image}")`;
+            block.style.backgroundRepeat = 'no-repeat,repeat-x';
+            block.style.backgroundSize = 'auto,240px 35px';
+          }
+        })
+        .catch(() => undefined);
+    }
+    pictureLane.appendChild(pictureLabel);
+    pictureLane.appendChild(pictureCanvas);
+    pictureLane.addEventListener('dragover', (event) => {
+      if (event.dataTransfer?.types.includes('application/x-flaxia-video-clip')) event.preventDefault();
+    });
+    pictureLane.addEventListener('drop', (event) => {
+      const clipId = event.dataTransfer?.getData('application/x-flaxia-video-clip');
+      const clip = videoClips.find((item) => item.id === clipId);
+      if (!clip) return;
+      if (clip.track !== 'overlay' && videoClips.filter((item) => item.track !== 'overlay').length <= 1) return;
+      event.preventDefault();
+      const rect = pictureCanvas.getBoundingClientRect();
+      clip.track = 'overlay';
+      clip.transitionOut = 0;
+      clip.start = snapTimelineTime((event.clientX - rect.left) / timelinePixelsPerSecond, clip.id);
+      rippleOverlappingVideoClips(videoClips);
+      manuallyPlacedVideoClips.add(clip.id);
+      select(clip.fileIndex);
+      selectedVideoClipId = clip.id;
+      selectedAudioClipId = null;
+      selectedImageLayerId = null;
+      stopVideoSequence();
+      renderVideoTimeline();
+      renderInspector();
+      scheduleAutosave();
+    });
+    videoTimeline.appendChild(pictureLane);
     const openLayerEnd = sequenceEnd > 0 ? sequenceEnd : Math.max(30, ...imageLayers.map((layer) => layer.start ?? 0));
     imageLayers.forEach((layer, index) => {
       const overlayLane = document.createElement('div');
@@ -1198,8 +1306,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       overlayLane.appendChild(overlayCanvas);
       videoTimeline.appendChild(overlayLane);
     });
-    videoPlayButton.disabled = videoClips.length === 0;
-    videoExportButton.disabled = videoClips.length === 0;
+    const hasMainVideo = videoClips.some((clip) => clip.track !== 'overlay');
+    videoPlayButton.disabled = !hasMainVideo;
+    videoExportButton.disabled = !hasMainVideo;
     updateSplitButton();
     updateTimelinePlayhead(timelinePlayheadTime);
   };
@@ -1544,8 +1653,11 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       };
       const colorControls = `${colorControl('brightness', 'Brightness')}${colorControl('contrast', 'Contrast')}${colorControl('saturation', 'Saturation')}${colorControl('hueDeg', 'Hue')}${colorControl('blurPx', 'Blur')}`;
       const clipDuration = videoClipTimelineDuration(videoClip);
-      const orderedVideoClips = [...videoClips].sort((left, right) => left.start - right.start);
+      const orderedVideoClips = videoClips
+        .filter((item) => item.track !== 'overlay')
+        .sort((left, right) => left.start - right.start);
       const nextVideoClip = orderedVideoClips[orderedVideoClips.findIndex((item) => item.id === videoClip.id) + 1];
+      const trackControl = `<label class="studio-property"><span>Video track</span><select class="studio-video-track-select"><option value="main" ${videoClip.track !== 'overlay' ? 'selected' : ''}>V1 · Main</option><option value="overlay" ${videoClip.track === 'overlay' ? 'selected' : ''}>V2 · Picture-in-picture</option></select></label>`;
       const transitionControl = `<label class="studio-property"><span>Transition out</span><select class="studio-video-transition" ${nextVideoClip ? '' : 'disabled'}>${[
         [0, 'Off'],
         [0.5, 'Cross-dissolve · 0.5s'],
@@ -1568,7 +1680,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
             `<option value="${value}" ${(videoClip.transitionType ?? 'fade') === value ? 'selected' : ''}>${label}</option>`,
         )
         .join('')}</select></label>`;
-      inspectorBody.innerHTML = `<div class="studio-inspector-icon">▶</div><h2>${escapeHtml(videoFile.name)}</h2><p>Video clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-video-position" type="number" min="0" step="0.1" value="${videoClip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Framing</span><select class="studio-video-fit"><option value="contain" ${videoClip.fit !== 'cover' ? 'selected' : ''}>Fit · show whole frame</option><option value="cover" ${videoClip.fit === 'cover' ? 'selected' : ''}>Fill · crop to frame</option></select></label><label class="studio-property"><span>Speed</span><select class="studio-video-speed">${[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => `<option value="${speed}" ${videoClipSpeed(videoClip) === speed ? 'selected' : ''}>${speed}×</option>`).join('')}</select></label>${transitionControl}${transitionStyleControl}${colorControls}<label class="studio-property"><span>Trim in</span><input class="studio-video-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-video-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade in</span><input class="studio-video-fade-in" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeIn ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade out</span><input class="studio-video-fade-out" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeOut ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Clip audio</span><input class="studio-video-gain" type="range" min="0" max="100" value="${Math.round((videoClip.gain ?? 1) * 100)}"><small class="studio-video-gain-value">${Math.round((videoClip.gain ?? 1) * 100)}%</small></label><label class="studio-property studio-mute-property"><input class="studio-video-muted" type="checkbox" ${videoClip.muted ? 'checked' : ''}><span>Mute source audio</span></label><p class="studio-video-hint">Transitions blend adjacent video and source audio in preview and MP4 export.</p><button class="studio-button studio-remove-video" type="button">Remove from timeline</button>`;
+      inspectorBody.innerHTML = `<div class="studio-inspector-icon">▶</div><h2>${escapeHtml(videoFile.name)}</h2><p>Video clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-video-position" type="number" min="0" step="0.1" value="${videoClip.start.toFixed(1)}"><small>s</small></label>${trackControl}<label class="studio-property"><span>Framing</span><select class="studio-video-fit"><option value="contain" ${videoClip.fit !== 'cover' ? 'selected' : ''}>Fit · show whole frame</option><option value="cover" ${videoClip.fit === 'cover' ? 'selected' : ''}>Fill · crop to frame</option></select></label><label class="studio-property"><span>Speed</span><select class="studio-video-speed">${[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => `<option value="${speed}" ${videoClipSpeed(videoClip) === speed ? 'selected' : ''}>${speed}×</option>`).join('')}</select></label>${transitionControl}${transitionStyleControl}${colorControls}<label class="studio-property"><span>Trim in</span><input class="studio-video-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-video-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade in</span><input class="studio-video-fade-in" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeIn ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade out</span><input class="studio-video-fade-out" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeOut ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Clip audio</span><input class="studio-video-gain" type="range" min="0" max="100" value="${Math.round((videoClip.gain ?? 1) * 100)}"><small class="studio-video-gain-value">${Math.round((videoClip.gain ?? 1) * 100)}%</small></label><label class="studio-property studio-mute-property"><input class="studio-video-muted" type="checkbox" ${videoClip.muted ? 'checked' : ''}><span>Mute source audio</span></label><p class="studio-video-hint">V2 overlays the clip as picture-in-picture; its source audio is mixed into the export unless muted.</p><button class="studio-button studio-remove-video" type="button">Remove from timeline</button>`;
       const update = (selector: string, set: (value: number) => void): void => {
         inspectorBody.querySelector<HTMLInputElement>(selector)!.addEventListener('change', (event) => {
           const input = event.currentTarget as HTMLInputElement;
@@ -1585,6 +1697,28 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         manuallyPlacedVideoClips.add(videoClip.id);
         videoClip.start = Math.max(0, Math.min(value, 14_400));
       });
+      (inspectorBody.querySelector('.studio-video-track-select') as unknown as HTMLSelectElement).addEventListener(
+        'change',
+        (event) => {
+          const track = (event.currentTarget as HTMLSelectElement).value;
+          if (track !== 'main' && track !== 'overlay') return;
+          if (
+            track === 'overlay' &&
+            videoClip.track !== 'overlay' &&
+            videoClips.filter((item) => item.track !== 'overlay').length <= 1
+          ) {
+            (event.currentTarget as HTMLSelectElement).value = 'main';
+            return;
+          }
+          videoClip.track = track;
+          if (track === 'overlay') videoClip.transitionOut = 0;
+          rippleOverlappingVideoClips(videoClips);
+          stopVideoSequence();
+          renderVideoTimeline();
+          renderInspector();
+          scheduleAutosave();
+        },
+      );
       inspectorBody.querySelector('select.studio-video-fit')!.addEventListener('change', (event) => {
         videoClip.fit = (event.currentTarget as HTMLSelectElement).value === 'cover' ? 'cover' : 'contain';
         if (videoSequencePlayer?.dataset.clipId === videoClip.id) {
@@ -1592,6 +1726,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         }
         if (videoSequenceTransitionPlayer?.dataset.clipId === videoClip.id) {
           videoSequenceTransitionPlayer.style.objectFit = videoClip.fit;
+        }
+        if (videoSequencePipPlayer?.dataset.clipId === videoClip.id) {
+          videoSequencePipPlayer.style.objectFit = videoClip.fit;
         }
         scheduleAutosave();
       });
@@ -1620,6 +1757,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           if (videoSequenceTransitionPlayer?.dataset.clipId === videoClip.id) {
             videoSequenceTransitionPlayer.style.filter = videoClipCssFilter(videoClip);
           }
+          if (videoSequencePipPlayer?.dataset.clipId === videoClip.id) {
+            videoSequencePipPlayer.style.filter = videoClipCssFilter(videoClip);
+          }
         });
         input.addEventListener('change', () => scheduleAutosave());
       });
@@ -1639,7 +1779,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         const transition = Number((event.currentTarget as HTMLSelectElement).value);
         if (![0, 0.5, 1, 1.5, 2].includes(transition)) return;
         videoClip.transitionOut = transition;
-        const ordered = [...videoClips].sort((left, right) => left.start - right.start);
+        const ordered = videoClips
+          .filter((item) => item.track !== 'overlay')
+          .sort((left, right) => left.start - right.start);
         const next = ordered[ordered.findIndex((item) => item.id === videoClip.id) + 1];
         if (next && transition > 0) next.start = videoClip.start + videoClipTimelineDuration(videoClip);
         rippleOverlappingVideoClips(videoClips);
@@ -1667,6 +1809,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         if (videoSequenceTransitionPlayer?.dataset.clipId === videoClip.id) {
           videoSequenceTransitionPlayer.volume = videoClip.gain;
         }
+        if (videoSequencePipPlayer?.dataset.clipId === videoClip.id) {
+          videoSequencePipPlayer.volume = videoClip.gain;
+        }
       });
       videoGain.addEventListener('change', () => scheduleAutosave());
       inspectorBody.querySelector<HTMLInputElement>('.studio-video-muted')!.addEventListener('change', (event) => {
@@ -1676,6 +1821,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         }
         if (videoSequenceTransitionPlayer?.dataset.clipId === videoClip.id) {
           videoSequenceTransitionPlayer.muted = videoClip.muted;
+        }
+        if (videoSequencePipPlayer?.dataset.clipId === videoClip.id) {
+          videoSequencePipPlayer.muted = videoClip.muted;
         }
         scheduleAutosave();
       });
@@ -3679,8 +3827,16 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       stopVideoSequence();
       return;
     }
-    const sequence = videoClips.map((clip) => ({ ...clip })).sort((left, right) => left.start - right.start);
+    const sequence = videoClips
+      .filter((clip) => clip.track !== 'overlay')
+      .map((clip) => ({ ...clip }))
+      .sort((left, right) => left.start - right.start);
+    const pictureSequence = videoClips
+      .filter((clip) => clip.track === 'overlay')
+      .map((clip) => ({ ...clip }))
+      .sort((left, right) => left.start - right.start);
     rippleOverlappingVideoClips(sequence);
+    rippleOverlappingVideoClips(pictureSequence);
     if (sequence.length === 0) return;
     let sequenceAudio: HTMLAudioElement | null = null;
     if (audioClips.some((clip) => !clip.muted && clip.sourceEnd > clip.sourceStart)) {
@@ -3703,6 +3859,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       startTimes.push(clipStart);
       sequenceEnd = Math.max(sequenceEnd, clipStart + videoClipTimelineDuration(clip));
     }
+    for (const clip of pictureSequence) {
+      sequenceEnd = Math.max(sequenceEnd, Math.max(0, clip.start) + videoClipTimelineDuration(clip));
+    }
     const requestedStartTime = videoSequenceStartTime;
     videoSequenceStartTime = 0;
     const stage = root.querySelector<HTMLElement>('.studio-stage')!;
@@ -3720,6 +3879,14 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     transitionPlayer.setAttribute('aria-hidden', 'true');
     stage.appendChild(transitionPlayer);
     videoSequenceTransitionPlayer = transitionPlayer;
+    const picturePlayer = document.createElement('video');
+    picturePlayer.className = 'studio-sequence-pip-player';
+    picturePlayer.playsInline = true;
+    picturePlayer.preload = 'auto';
+    picturePlayer.setAttribute('aria-hidden', 'true');
+    picturePlayer.style.visibility = 'hidden';
+    stage.appendChild(picturePlayer);
+    videoSequencePipPlayer = picturePlayer;
     const overlayStack = document.createElement('div');
     overlayStack.className = 'studio-sequence-overlays';
     overlayStack.setAttribute('aria-hidden', 'true');
@@ -3742,13 +3909,62 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         element.style.width = `${width}px`;
         element.style.height = `${height}px`;
       }
+      const pictureWidth = Math.max(1, Math.round(width * 0.38));
+      const sourceAspect = picturePlayer.videoWidth > 0 ? picturePlayer.videoWidth / picturePlayer.videoHeight : 16 / 9;
+      const pictureHeight = Math.max(1, Math.min(Math.round(height * 0.38), Math.round(pictureWidth / sourceAspect)));
+      const margin = Math.max(8, Math.round(Math.min(width, height) * 0.025));
+      picturePlayer.style.left = `${left + width - pictureWidth - margin}px`;
+      picturePlayer.style.top = `${top + height - pictureHeight - margin}px`;
+      picturePlayer.style.width = `${pictureWidth}px`;
+      picturePlayer.style.height = `${pictureHeight}px`;
     };
     layoutVideoFrame();
     videoSequenceFrameObserver = new ResizeObserver(layoutVideoFrame);
     videoSequenceFrameObserver.observe(stage);
     videoSequenceOverlayCanvas = overlayStack;
     const overlayCanvases = new Map<string, HTMLCanvasElement>();
-    const drawLiveLayers = async (time: number): Promise<void> => {
+    let previewShouldPlay = false;
+    const syncPictureInPicture = (time: number, playing: boolean): void => {
+      previewShouldPlay = playing;
+      const clip = pictureSequence.find(
+        (item) => time >= item.start && time < item.start + videoClipTimelineDuration(item),
+      );
+      if (!clip) {
+        picturePlayer.pause();
+        picturePlayer.style.visibility = 'hidden';
+        return;
+      }
+      const file = files[clip.fileIndex];
+      if (!file) return;
+      if (picturePlayer.dataset.clipId !== clip.id) {
+        picturePlayer.pause();
+        if (videoSequencePipUrl) URL.revokeObjectURL(videoSequencePipUrl);
+        videoSequencePipUrl = URL.createObjectURL(file);
+        picturePlayer.dataset.clipId = clip.id;
+        picturePlayer.playbackRate = videoClipSpeed(clip);
+        picturePlayer.style.objectFit = clip.fit === 'cover' ? 'cover' : 'contain';
+        picturePlayer.style.filter = videoClipCssFilter(clip);
+        picturePlayer.volume = Math.max(0, Math.min(1, clip.gain ?? 1));
+        picturePlayer.muted = clip.muted ?? false;
+        picturePlayer.src = videoSequencePipUrl;
+        picturePlayer.onloadedmetadata = () => syncPictureInPicture(timelinePlayheadTime, previewShouldPlay);
+      }
+      picturePlayer.style.visibility = 'visible';
+      picturePlayer.playbackRate = videoClipSpeed(clip);
+      picturePlayer.volume = Math.max(0, Math.min(1, clip.gain ?? 1));
+      picturePlayer.muted = clip.muted ?? false;
+      if (picturePlayer.readyState >= 1) {
+        const expectedTime = Math.min(
+          clip.sourceStart + (time - clip.start) * videoClipSpeed(clip),
+          picturePlayer.duration || 0,
+        );
+        if (Math.abs(picturePlayer.currentTime - expectedTime) > 0.15) picturePlayer.currentTime = expectedTime;
+        if (playing && picturePlayer.paused) void picturePlayer.play().catch(() => undefined);
+        else if (!playing && !picturePlayer.paused) picturePlayer.pause();
+      }
+      layoutVideoFrame();
+    };
+    const drawLiveLayers = async (time: number, playing = !player.paused): Promise<void> => {
       if (!videoSequenceOverlayCanvas) return;
       const revision = ++videoSequenceOverlayRevision;
       const activeLayerIds = new Set<string>();
@@ -3793,6 +4009,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       for (const [id, layerCanvas] of overlayCanvases) {
         layerCanvas.hidden = !activeLayerIds.has(id);
       }
+      syncPictureInPicture(time, playing);
     };
     videoSequencePlayer = player;
     videoPlayButton.textContent = '■ Stop preview';
@@ -3801,7 +4018,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     let playAt: (index: number) => void = () => undefined;
     let syncTransition: (time: number, playing: boolean) => void = () => undefined;
     const overlapBefore = (index: number): number =>
-      index <= 0
+      index <= 0 || index >= sequence.length
         ? 0
         : Math.max(
             0,
@@ -3902,6 +4119,12 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     };
     const playClip = (index: number, offset = 0): void => {
       if (index >= sequence.length || !videoSequencePlayer) {
+        const mainEnd = Math.max(0, ...sequence.map((clip) => clip.start + videoClipTimelineDuration(clip)));
+        if (index >= sequence.length && sequenceEnd > mainEnd + 0.04) {
+          activeClip = null;
+          waitThroughGap(sequence.length, mainEnd, sequenceEnd - mainEnd);
+          return;
+        }
         mixStatus.textContent = 'Video sequence finished';
         stopVideoSequence();
         return;
@@ -3934,7 +4157,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         advancing = false;
         const initialTimelineTime = startTimes[index] + offset;
         updateTimelinePlayhead(initialTimelineTime);
-        void drawLiveLayers(initialTimelineTime);
+        void drawLiveLayers(initialTimelineTime, true);
         syncSequenceAudio(initialTimelineTime, true);
         player.currentTime = Math.min(
           sequence[index].sourceStart + offset * videoClipSpeed(sequence[index]),
@@ -3962,13 +4185,17 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const gapStartedAt = performance.now();
       const updateGap = (): void => {
         const elapsed = Math.min(gapDuration, (performance.now() - gapStartedAt) / 1000);
-        const time = Math.min(startTimes[index], gapStart + elapsed);
+        const gapEnd = index < startTimes.length ? startTimes[index] : gapStart + gapDuration;
+        const time = Math.min(gapEnd, gapStart + elapsed);
         updateTimelinePlayhead(time);
-        void drawLiveLayers(time);
+        void drawLiveLayers(time, true);
         syncSequenceAudio(time, true);
         if (elapsed >= gapDuration) {
           videoSequenceTimer = null;
-          playClip(index);
+          if (index >= sequence.length) {
+            mixStatus.textContent = 'Video sequence finished';
+            stopVideoSequence();
+          } else playClip(index);
           return;
         }
         videoSequenceTimer = setTimeout(updateGap, Math.min(50, (gapDuration - elapsed) * 1000));
@@ -4002,8 +4229,13 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         (clip, clipIndex) => time < startTimes[clipIndex] + videoClipTimelineDuration(clip),
       );
       if (index < 0) {
-        mixStatus.textContent = 'Video sequence finished';
-        stopVideoSequence();
+        if (time < sequenceEnd) {
+          activeClip = null;
+          waitThroughGap(sequence.length, time, sequenceEnd - time);
+        } else {
+          mixStatus.textContent = 'Video sequence finished';
+          stopVideoSequence();
+        }
         return;
       }
       videoSequenceIndex = index;
@@ -4027,7 +4259,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           videoClipOpacityAt(clipTime, videoClipTimelineDuration(activeClip), activeClip.fadeIn, activeClip.fadeOut),
         );
         updateTimelinePlayhead(timelineTime);
-        void drawLiveLayers(timelineTime);
+        void drawLiveLayers(timelineTime, !player.paused);
         syncSequenceAudio(timelineTime, !player.paused);
         syncTransition(timelineTime, !player.paused);
       }
@@ -4037,18 +4269,24 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     player.addEventListener('pause', () => {
       syncSequenceAudio(timelinePlayheadTime, false);
       syncTransition(timelinePlayheadTime, false);
+      syncPictureInPicture(timelinePlayheadTime, false);
     });
     player.addEventListener('play', () => {
       syncSequenceAudio(timelinePlayheadTime, true);
       syncTransition(timelinePlayheadTime, true);
+      syncPictureInPicture(timelinePlayheadTime, true);
     });
     startAt(requestedStartTime);
   });
   videoExportButton.addEventListener('click', async () => {
-    if (videoClips.length === 0) return;
+    if (!videoClips.some((clip) => clip.track !== 'overlay')) return;
     stopVideoSequence();
     videoExportButton.disabled = true;
-    mixStatus.textContent = `Compositing ${imageLayers.some((layer) => layer.visible) ? 'visible layers and ' : ''}encoding MP4 · 0%`;
+    const compositionParts = [
+      videoClips.some((clip) => clip.track === 'overlay') ? 'picture-in-picture' : '',
+      imageLayers.some((layer) => layer.visible) ? 'visible layers' : '',
+    ].filter(Boolean);
+    mixStatus.textContent = `Compositing ${compositionParts.length ? `${compositionParts.join(', ')} and ` : ''}encoding MP4 · 0%`;
     try {
       const output = await renderVideoSequence(
         files,
@@ -4065,7 +4303,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     } catch (error) {
       mixStatus.textContent = error instanceof Error ? error.message : 'Could not export video sequence';
     } finally {
-      videoExportButton.disabled = videoClips.length === 0;
+      videoExportButton.disabled = !videoClips.some((clip) => clip.track !== 'overlay');
     }
   });
   root.addEventListener('dragover', (event) => {
@@ -4103,8 +4341,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       event.preventDefault();
       const step = event.shiftKey ? 1 : 0.1;
       const nextTime = Math.max(0, timelinePlayheadTime + (event.key === 'ArrowRight' ? step : -step));
-      if (videoSequencePlayer || (videoClips.length === 0 && mixPreview)) requestVideoSeek(nextTime);
-      else {
+      if (videoSequencePlayer || (!videoClips.some((clip) => clip.track !== 'overlay') && mixPreview)) {
+        requestVideoSeek(nextTime);
+      } else {
         videoSequenceStartTime = nextTime;
         updateTimelinePlayhead(nextTime);
       }
@@ -4140,7 +4379,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     }
     if (event.code === 'Space' && !target.closest('button, a, video, audio')) {
       event.preventDefault();
-      if (videoClips.length > 0) videoPlayButton.click();
+      if (videoClips.some((clip) => clip.track !== 'overlay')) videoPlayButton.click();
       else if (audioClips.length > 0) mixPlayButton.click();
     }
   };
@@ -4251,6 +4490,13 @@ const studioCss = `
 if (!document.getElementById('studio-page-styles')) {
   const style = document.createElement('style');
   style.id = 'studio-page-styles';
-  style.textContent = studioCss;
+  style.textContent = `${studioCss}
+.studio-timeline-head{flex-wrap:nowrap;white-space:nowrap}
+.studio-timeline-head>button,.studio-timeline-hint{flex:0 0 auto;white-space:nowrap}
+.studio-video-workarea{max-height:150px}
+.studio-picture-clip{border-color:#3d7599;background-color:#244259;color:#e0f4ff}
+.studio-sequence-pip-player{position:absolute;z-index:6;background:#000;border:2px solid #fff;border-radius:8px;box-shadow:0 8px 28px #000a;pointer-events:none}
+@media(max-width:768px){.studio-video-workarea{max-height:108px}}
+`;
   document.head.appendChild(style);
 }

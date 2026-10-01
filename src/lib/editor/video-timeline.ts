@@ -15,27 +15,36 @@ export function videoClipTransitionDuration(clip: StudioVideoClip, nextClip: Stu
   return duration > 0.04 ? duration : 0;
 }
 
-/** Keep clips on the single video lane sequential, pushing later clips forward when edits collide. */
+/** Keep each video lane sequential, pushing later clips forward when edits collide. */
 export function rippleOverlappingVideoClips(clips: StudioVideoClip[]): boolean {
-  const ordered = [...clips].sort((left, right) => left.start - right.start);
-  let timelineEnd = 0;
-  let previous: StudioVideoClip | null = null;
   let changed = false;
-  for (const clip of ordered) {
-    const proposedStart = Number.isFinite(clip.start) ? Math.max(0, clip.start) : timelineEnd;
-    const transition = previous ? videoClipTransitionDuration(previous, clip) : 0;
-    const nextStart =
-      proposedStart > timelineEnd + 0.04
-        ? proposedStart
-        : proposedStart >= timelineEnd - 0.04
-          ? timelineEnd - transition
-          : Math.max(timelineEnd - transition, proposedStart);
-    if (clip.start !== nextStart) {
-      clip.start = nextStart;
-      changed = true;
+  const tracks = new Map<'main' | 'overlay', StudioVideoClip[]>();
+  for (const clip of clips) {
+    const track = clip.track === 'overlay' ? 'overlay' : 'main';
+    const trackClips = tracks.get(track) ?? [];
+    trackClips.push(clip);
+    tracks.set(track, trackClips);
+  }
+  for (const [track, trackClips] of tracks) {
+    const ordered = [...trackClips].sort((left, right) => left.start - right.start);
+    let timelineEnd = 0;
+    let previous: StudioVideoClip | null = null;
+    for (const clip of ordered) {
+      const proposedStart = Number.isFinite(clip.start) ? Math.max(0, clip.start) : timelineEnd;
+      const transition = track === 'main' && previous ? videoClipTransitionDuration(previous, clip) : 0;
+      const nextStart =
+        proposedStart > timelineEnd + 0.04
+          ? proposedStart
+          : proposedStart >= timelineEnd - 0.04
+            ? timelineEnd - transition
+            : Math.max(timelineEnd - transition, proposedStart);
+      if (clip.start !== nextStart) {
+        clip.start = nextStart;
+        changed = true;
+      }
+      timelineEnd = Math.max(timelineEnd, nextStart + videoClipDuration(clip));
+      previous = clip;
     }
-    timelineEnd = Math.max(timelineEnd, nextStart + videoClipDuration(clip));
-    previous = clip;
   }
   return changed;
 }

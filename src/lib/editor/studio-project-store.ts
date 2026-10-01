@@ -49,6 +49,7 @@ interface StudioProjectManifest {
 
 export type StudioVideoFormat = 'landscape' | 'square' | 'portrait';
 export type StudioVideoTransition = 'fade' | 'wipeleft' | 'wiperight';
+export type StudioVideoTrack = 'main' | 'overlay';
 
 export interface StudioVideoClip {
   id: string;
@@ -56,6 +57,7 @@ export interface StudioVideoClip {
   start: number;
   sourceStart: number;
   sourceEnd: number;
+  track?: StudioVideoTrack;
   speed?: number;
   fit?: 'contain' | 'cover';
   brightness?: number;
@@ -265,6 +267,7 @@ function decodeFiles(plaintext: Uint8Array): {
     )
     .map((clip) => ({
       ...clip,
+      track: clip.track === 'overlay' ? ('overlay' as const) : ('main' as const),
       speed: typeof clip.speed === 'number' && Number.isFinite(clip.speed) ? Math.max(0.5, Math.min(2, clip.speed)) : 1,
       fit: clip.fit === 'cover' ? ('cover' as const) : ('contain' as const),
       brightness:
@@ -288,7 +291,7 @@ function decodeFiles(plaintext: Uint8Array): {
       fadeIn: typeof clip.fadeIn === 'number' && Number.isFinite(clip.fadeIn) ? Math.max(0, clip.fadeIn) : 0,
       fadeOut: typeof clip.fadeOut === 'number' && Number.isFinite(clip.fadeOut) ? Math.max(0, clip.fadeOut) : 0,
       transitionOut:
-        typeof clip.transitionOut === 'number' && Number.isFinite(clip.transitionOut)
+        clip.track !== 'overlay' && typeof clip.transitionOut === 'number' && Number.isFinite(clip.transitionOut)
           ? Math.max(0, Math.min(2, clip.transitionOut))
           : 0,
       transitionType:

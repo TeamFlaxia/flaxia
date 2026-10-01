@@ -263,15 +263,20 @@ export async function renderVideoSequence(
   onProgress?: (ratio: number) => void,
   videoFormat: StudioVideoFormat = 'landscape',
 ): Promise<File> {
-  const ordered = clips.map((clip) => ({ ...clip })).sort((left, right) => left.start - right.start);
-  rippleOverlappingVideoClips(ordered);
+  const allOrdered = clips.map((clip) => ({ ...clip })).sort((left, right) => left.start - right.start);
+  rippleOverlappingVideoClips(allOrdered);
+  const ordered = allOrdered.filter((clip) => clip.track !== 'overlay');
+  const pictureInPicture = allOrdered.filter((clip) => clip.track === 'overlay');
   if (ordered.length === 0) throw new Error('Add a video clip to the timeline first');
-  if (ordered.length > 12) throw new Error('Video sequences support up to 12 clips per export');
+  if (allOrdered.length > 12) throw new Error('Video sequences support up to 12 clips per export');
   const sourceDurations = ordered.map((clip) => clip.sourceEnd - clip.sourceStart);
   const speeds = ordered.map((clip) => Math.max(0.5, Math.min(2, clip.speed ?? 1)));
   const durations = sourceDurations.map((length, index) => length / speeds[index]);
+  const pictureDurations = pictureInPicture.map((clip) => clip.sourceEnd - clip.sourceStart);
+  const pictureSpeeds = pictureInPicture.map((clip) => Math.max(0.5, Math.min(2, clip.speed ?? 1)));
+  const pictureTimelineDurations = pictureDurations.map((length, index) => length / pictureSpeeds[index]);
   const { width: frameWidth, height: frameHeight } = studioVideoFrameSize(videoFormat);
-  if (sourceDurations.some((length) => !Number.isFinite(length) || length <= 0)) {
+  if ([...sourceDurations, ...pictureDurations].some((length) => !Number.isFinite(length) || length <= 0)) {
     throw new Error('Video sequences must be between 0 and 3 minutes');
   }
   const timelineSegments: Array<
@@ -286,6 +291,15 @@ export async function renderVideoSequence(
     timelineSegments.push({ kind: 'clip', clipIndex: index, start: clipStart, duration: durations[index] });
     duration = Math.max(duration, clipStart + durations[index]);
   }
+  const mainDuration = duration;
+  const pictureEnd = Math.max(
+    mainDuration,
+    ...pictureInPicture.map((clip, index) => Math.max(0, clip.start) + pictureTimelineDurations[index]),
+  );
+  if (pictureEnd > duration + 0.04) {
+    timelineSegments.push({ kind: 'gap', start: duration, duration: pictureEnd - duration });
+    duration = pictureEnd;
+  }
   if (duration > MAX_DURATION_SECONDS) throw new Error('Video sequences must be between 0 and 3 minutes');
 
   const overlayImageIndices = [
@@ -298,12 +312,13 @@ export async function renderVideoSequence(
         .map((layer) => layer.fileIndex),
     ),
   ];
-  const uniqueFiles = [...new Set([...ordered.map((clip) => clip.fileIndex), ...overlayImageIndices])];
+  const allVideoClips = [...ordered, ...pictureInPicture];
+  const uniqueFiles = [...new Set([...allVideoClips.map((clip) => clip.fileIndex), ...overlayImageIndices])];
   const fileBytes = new Map<number, Uint8Array>();
   let totalBytes = 0;
   for (const index of uniqueFiles) {
     const file = files[index];
-    const isVideo = ordered.some((clip) => clip.fileIndex === index);
+    const isVideo = allVideoClips.some((clip) => clip.fileIndex === index);
     if (!file || (isVideo ? !file.type.startsWith('video/') : !file.type.startsWith('image/')))
       throw new Error('A timeline layer has an unsupported media type');
     if (file.size > MAX_INPUT_BYTES - totalBytes) throw new Error('Video sequence inputs exceed 80 MB');
@@ -325,11 +340,48 @@ export async function renderVideoSequence(
     sourceInputs.push({ name, data: fileBytes.get(clip.fileIndex)!.slice() });
     return { clip, name, hasAudio: hasAudio[fileIndex] };
   });
+  const pictureSources = pictureInPicture.map((clip, sourceOrdinal) => {
+    const fileIndex = indexByFile.get(clip.fileIndex)!;
+    const name = `picture-${sourceOrdinal}.${inputs[fileIndex].name.split('.').pop()}`;
+    sourceInputs.push({ name, data: fileBytes.get(clip.fileIndex)!.slice() });
+    return { clip, name, hasAudio: hasAudio[fileIndex] };
+  });
+  let pictureAudioTrack = Math.max(-1, ...audioClips.map((clip) => clip.track)) + 1;
+  const pictureAudioClips: AudioTimelineClip[] = pictureSources
+    .filter(({ clip, hasAudio }) => hasAudio && !clip.muted)
+    .map(({ clip }) => ({
+      id: `picture-audio-${clip.id}`,
+      fileIndex: clip.fileIndex,
+      track: pictureAudioTrack,
+      start: clip.start,
+      sourceStart: clip.sourceStart,
+      sourceEnd: clip.sourceEnd,
+      speed: clip.speed,
+      gain: clip.gain ?? 1,
+      fadeIn: clip.fadeIn ?? 0,
+      fadeOut: clip.fadeOut ?? 0,
+      pan: 0,
+      lowEqDb: 0,
+      midEqDb: 0,
+      highEqDb: 0,
+      gainEnvelope: { start: 1, middle: 1, end: 1 },
+      trackMuted: false,
+      trackSolo: false,
+      trackGain: 1,
+      trackPan: 0,
+      muted: false,
+    }));
+  pictureAudioTrack++;
+  const sequenceAudioClips = [...audioClips, ...pictureAudioClips];
   // Build a distinct input per timeline clip so each trim can use its own seek.
   const args: string[] = [];
   for (let index = 0; index < clipSources.length; index++) {
     const { clip, name } = clipSources[index];
     args.push('-ss', clip.sourceStart.toFixed(3), '-t', sourceDurations[index].toFixed(3), '-i', name);
+  }
+  for (let index = 0; index < pictureSources.length; index++) {
+    const { clip, name } = pictureSources[index];
+    args.push('-ss', clip.sourceStart.toFixed(3), '-t', pictureDurations[index].toFixed(3), '-i', name);
   }
   for (const overlay of overlays) {
     sourceInputs.push({ name: overlay.name, data: overlay.data });
@@ -397,11 +449,48 @@ export async function renderVideoSequence(
     })),
   );
   filters.push(...sequenceJoin.filters);
-  if (overlays.length === 0) filters.push('[outvbase]null[outv]');
+  let compositedVideo = 'outvbase';
+  const pictureWidth = Math.max(2, Math.floor((frameWidth * 0.38) / 2) * 2);
+  const pictureHeight = Math.max(
+    2,
+    Math.min(Math.floor((frameHeight * 0.38) / 2) * 2, Math.floor((pictureWidth * 9) / 32) * 2),
+  );
+  const pictureMargin = Math.max(8, Math.round(Math.min(frameWidth, frameHeight) * 0.025));
+  pictureSources.forEach(({ clip }, index) => {
+    const sourceDuration = pictureDurations[index];
+    const clipDuration = pictureTimelineDurations[index];
+    const speed = pictureSpeeds[index];
+    const start = Math.max(0, clip.start);
+    const end = Math.min(duration, start + clipDuration);
+    const framing =
+      clip.fit === 'cover'
+        ? `scale=${pictureWidth}:${pictureHeight}:force_original_aspect_ratio=increase,crop=${pictureWidth}:${pictureHeight}`
+        : `scale=${pictureWidth}:${pictureHeight}:force_original_aspect_ratio=decrease,pad=${pictureWidth}:${pictureHeight}:(ow-iw)/2:(oh-ih)/2:color=black`;
+    const videoFilters = [
+      framing,
+      ...videoClipColorFilters(clip),
+      ...videoClipFadeFilters(clipDuration, clip.fadeIn, clip.fadeOut),
+      'setsar=1',
+      'fps=30',
+      'format=yuv420p',
+      'drawbox=x=0:y=0:w=iw:h=ih:color=white@0.8:t=2',
+    ].join(',');
+    const overlayLabel = `picture-source-${index}`;
+    filters.push(
+      `[${ordered.length + index}:v:0]trim=duration=${sourceDuration.toFixed(3)},setpts=(PTS-STARTPTS)/${speed.toFixed(3)},${videoFilters},setpts=PTS+${start.toFixed(3)}/TB[${overlayLabel}]`,
+    );
+    const outputLabel = `picture-composite-${index}`;
+    const enable = `gte(t,${start.toFixed(3)})*lt(t,${end.toFixed(3)})`;
+    filters.push(
+      `[${compositedVideo}][${overlayLabel}]overlay=x=W-w-${pictureMargin}:y=H-h-${pictureMargin}:eof_action=pass:repeatlast=0:format=auto:enable='${enable}'[${outputLabel}]`,
+    );
+    compositedVideo = outputLabel;
+  });
+  if (overlays.length === 0) filters.push(`[${compositedVideo}]null[outv]`);
   else {
-    let inputLabel = 'outvbase';
+    let inputLabel = compositedVideo;
     overlays.forEach((overlay, index) => {
-      const outputLabel = index === overlays.length - 1 ? 'outv' : `outv${index}`;
+      const outputLabel = index === overlays.length - 1 ? 'outv' : `image-composite-${index}`;
       const overlayLabel = `overlay-source-${index}`;
       const enable = `gte(t,${overlay.start.toFixed(3)})*lt(t,${overlay.end.toFixed(3)})`;
       const fades: string[] = [];
@@ -414,7 +503,7 @@ export async function renderVideoSequence(
         );
       }
       filters.push(
-        `[${clipSources.length + index}:v:0]format=rgba,setpts=PTS-STARTPTS${fades.length > 0 ? `,${fades.join(',')}` : ''}[${overlayLabel}]`,
+        `[${clipSources.length + pictureSources.length + index}:v:0]format=rgba,setpts=PTS-STARTPTS${fades.length > 0 ? `,${fades.join(',')}` : ''}[${overlayLabel}]`,
       );
       const blendMode = videoOverlayBlendMode(overlay.blend);
       if (blendMode === null) {
@@ -428,7 +517,7 @@ export async function renderVideoSequence(
         const maskSource = `blend-mask-source-${index}`;
         const blended = `blend-result-${index}`;
         const mask = `blend-mask-${index}`;
-        const result = index === overlays.length - 1 ? outputLabel : `outv${index}`;
+        const result = outputLabel;
         filters.push(`[${inputLabel}]format=rgb24,split[${colorBase}][${maskBase}]`);
         filters.push(`[${overlayLabel}]split[${colorSource}][${maskSource}]`);
         filters.push(`[${colorSource}]format=rgb24[blend-top-${index}]`);
@@ -475,12 +564,12 @@ export async function renderVideoSequence(
       'studio-sequence.mp4',
     ],
     outputName: 'studio-sequence.mp4',
-    onProgress: onProgress ? (ratio) => onProgress(ratio * (audioClips.length ? 0.72 : 1)) : undefined,
+    onProgress: onProgress ? (ratio) => onProgress(ratio * (sequenceAudioClips.length ? 0.72 : 1)) : undefined,
   });
   let finalBytes = outputBytes;
-  const hasAudioMix = audibleAudioTimelineClips(audioClips).length > 0;
+  const hasAudioMix = audibleAudioTimelineClips(sequenceAudioClips).length > 0;
   if (hasAudioMix) {
-    const mixedAudio = await mixAudioTimeline(files, audioClips);
+    const mixedAudio = await mixAudioTimeline(files, sequenceAudioClips);
     const audioBytes = new Uint8Array(await mixedAudio.arrayBuffer());
     finalBytes = await runFFmpeg({
       inputs: [

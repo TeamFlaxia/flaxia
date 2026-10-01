@@ -68,4 +68,24 @@ describe('video timeline ripple layout', () => {
       [0, 2],
     );
   });
+
+  it('ripples main and picture-in-picture lanes independently', () => {
+    const clips = [
+      { ...clip('main-first', 0, 4), transitionOut: 1 },
+      { ...clip('pip-first', 0, 2), track: 'overlay' as const, transitionOut: 1 },
+      clip('main-second', 4, 3),
+      { ...clip('pip-second', 1, 2), track: 'overlay' as const },
+    ];
+
+    assert.equal(rippleOverlappingVideoClips(clips), true);
+    assert.deepEqual(
+      clips.map((item) => [item.id, item.start]),
+      [
+        ['main-first', 0],
+        ['pip-first', 0],
+        ['main-second', 3],
+        ['pip-second', 2],
+      ],
+    );
+  });
 });

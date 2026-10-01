@@ -39,6 +39,15 @@ describe('portable Studio projects', () => {
         transitionOut: 1.2,
         transitionType: 'wipeleft' as const,
       },
+      {
+        id: 'video-pip',
+        fileIndex: 4,
+        start: 1.5,
+        sourceStart: 0.5,
+        sourceEnd: 3.5,
+        track: 'overlay' as const,
+        transitionOut: 1,
+      },
     ];
     const imageLayers = [
       {
@@ -101,6 +110,9 @@ describe('portable Studio projects', () => {
     assert.equal(restored.videoClips[0].fit, 'cover');
     assert.equal(restored.videoClips[0].transitionOut, 1.2);
     assert.equal(restored.videoClips[0].transitionType, 'wipeleft');
+    assert.equal(restored.videoClips[0].track, 'main');
+    assert.equal(restored.videoClips[1].track, 'overlay');
+    assert.equal(restored.videoClips[1].transitionOut, 0);
     assert.equal(restored.videoFormat, 'portrait');
     assert.equal(restored.imageLayers[0].fileIndex, 2);
     assert.equal(restored.imageLayers[0].blend, 'screen');
