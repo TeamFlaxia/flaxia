@@ -1350,7 +1350,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         layer.kind === 'image'
           ? `<div class="studio-composer-title">SOURCE CROP</div><label class="studio-composer-range">Left <output data-value="cropX">${Math.round((layer.cropX ?? 0) * 100)}%</output><input data-prop="cropX" type="range" min="0" max="99" value="${Math.round((layer.cropX ?? 0) * 100)}"></label><label class="studio-composer-range">Top <output data-value="cropY">${Math.round((layer.cropY ?? 0) * 100)}%</output><input data-prop="cropY" type="range" min="0" max="99" value="${Math.round((layer.cropY ?? 0) * 100)}"></label><label class="studio-composer-range">Width <output data-value="cropWidth">${Math.round((layer.cropWidth ?? 1) * 100)}%</output><input data-prop="cropWidth" type="range" min="1" max="100" value="${Math.round((layer.cropWidth ?? 1) * 100)}"></label><label class="studio-composer-range">Height <output data-value="cropHeight">${Math.round((layer.cropHeight ?? 1) * 100)}%</output><input data-prop="cropHeight" type="range" min="1" max="100" value="${Math.round((layer.cropHeight ?? 1) * 100)}"></label>`
           : '';
-      properties.innerHTML = `<div class="studio-composer-title">TRANSFORM</div><div class="studio-composer-layer-name">${escapeHtml(layerName)}</div>${textControls}${adjustmentControls}${cropControls}<div class="studio-composer-grid"><label>X<input data-prop="x" type="number" value="${Math.round(layer.x)}"></label><label>Y<input data-prop="y" type="number" value="${Math.round(layer.y)}"></label><label>Width<input data-prop="width" type="number" min="1" max="4096" value="${Math.round(layer.width)}"></label><label>Height<input data-prop="height" type="number" min="1" max="4096" value="${Math.round(layer.height)}"></label></div><label class="studio-composer-range">Opacity <output data-value="opacity">${Math.round(layer.opacity * 100)}%</output><input data-prop="opacity" type="range" min="0" max="100" value="${Math.round(layer.opacity * 100)}"></label><label class="studio-composer-field">Rotation<input data-prop="rotation" type="number" min="-360" max="360" value="${Math.round(layer.rotation)}">°</label><label class="studio-composer-field">Blend mode<select data-prop="blend"><option value="normal" ${layer.blend === 'normal' ? 'selected' : ''}>Normal</option><option value="multiply" ${layer.blend === 'multiply' ? 'selected' : ''}>Multiply</option><option value="screen" ${layer.blend === 'screen' ? 'selected' : ''}>Screen</option></select></label><div class="studio-composer-order"><button class="studio-composer-down" type="button">Send backward</button><button class="studio-composer-up" type="button">Bring forward</button></div><button class="studio-composer-remove" type="button">Remove layer</button>`;
+      const timingControls = `<div class="studio-composer-title">VIDEO TIMING</div><label class="studio-composer-field">Start (s)<input data-prop="startTime" type="number" min="0" max="14399.9" step="0.1" value="${(layer.start ?? 0).toFixed(1)}"></label><label class="studio-composer-field">End (s)<input data-prop="endTime" type="number" min="0.1" max="14400" step="0.1" placeholder="Video end" value="${layer.end === undefined ? '' : layer.end.toFixed(1)}"></label>`;
+      properties.innerHTML = `<div class="studio-composer-title">TRANSFORM</div><div class="studio-composer-layer-name">${escapeHtml(layerName)}</div>${textControls}${adjustmentControls}${cropControls}${timingControls}<div class="studio-composer-grid"><label>X<input data-prop="x" type="number" value="${Math.round(layer.x)}"></label><label>Y<input data-prop="y" type="number" value="${Math.round(layer.y)}"></label><label>Width<input data-prop="width" type="number" min="1" max="4096" value="${Math.round(layer.width)}"></label><label>Height<input data-prop="height" type="number" min="1" max="4096" value="${Math.round(layer.height)}"></label></div><label class="studio-composer-range">Opacity <output data-value="opacity">${Math.round(layer.opacity * 100)}%</output><input data-prop="opacity" type="range" min="0" max="100" value="${Math.round(layer.opacity * 100)}"></label><label class="studio-composer-field">Rotation<input data-prop="rotation" type="number" min="-360" max="360" value="${Math.round(layer.rotation)}">°</label><label class="studio-composer-field">Blend mode<select data-prop="blend"><option value="normal" ${layer.blend === 'normal' ? 'selected' : ''}>Normal</option><option value="multiply" ${layer.blend === 'multiply' ? 'selected' : ''}>Multiply</option><option value="screen" ${layer.blend === 'screen' ? 'selected' : ''}>Screen</option></select></label><div class="studio-composer-order"><button class="studio-composer-down" type="button">Send backward</button><button class="studio-composer-up" type="button">Bring forward</button></div><button class="studio-composer-remove" type="button">Remove layer</button>`;
       const updateProperty = (property: string, value: string): void => {
         if (property === 'blend') layer.blend = value as StudioImageLayer['blend'];
         else if (property === 'opacity') {
@@ -1373,6 +1374,12 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           const offset = property === 'cropWidth' ? (layer.cropX ?? 0) : (layer.cropY ?? 0);
           const crop = Math.max(0.01, Math.min(1 - offset, (Number(value) || 1) / 100));
           layer[property] = crop;
+        } else if (property === 'startTime') {
+          layer.start = Math.max(0, Math.min(14_399.9, Number(value) || 0));
+          if (layer.end !== undefined && layer.end <= layer.start) layer.end = Math.min(14_400, layer.start + 0.1);
+        } else if (property === 'endTime') {
+          if (value.trim() === '') delete layer.end;
+          else layer.end = Math.max((layer.start ?? 0) + 0.1, Math.min(14_400, Number(value) || 0));
         } else if (property === 'x' || property === 'y') {
           layer[property] = Math.max(-8192, Math.min(8192, Number(value) || 0));
         } else if (property === 'width' || property === 'height') {
@@ -1404,6 +1411,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           control.value = String(Math.round(cropValue * 100));
           properties.querySelector(`[data-value="${cropProperty}"]`)!.textContent = `${control.value}%`;
         }
+        const startControl = properties.querySelector<HTMLInputElement>('input[data-prop="startTime"]')!;
+        const endControl = properties.querySelector<HTMLInputElement>('input[data-prop="endTime"]')!;
+        startControl.value = (layer.start ?? 0).toFixed(1);
+        endControl.value = layer.end === undefined ? '' : layer.end.toFixed(1);
         renderLayers();
         void draw();
         scheduleAutosave();
@@ -1520,6 +1531,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           cropY: 0,
           cropWidth: 1,
           cropHeight: 1,
+          start: 0,
           visible: true,
           blend: 'normal',
         };
@@ -1548,6 +1560,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         height: 140,
         rotation: 0,
         opacity: 1,
+        start: 0,
         visible: true,
         blend: 'normal',
         text: 'Your title',

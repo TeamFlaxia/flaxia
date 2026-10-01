@@ -22,16 +22,24 @@ async function probeAudioStreams(inputs: Array<{ name: string; data: Uint8Array 
   return inputs.map((_, index) => new RegExp(`Stream #${index}:\\d+.*Audio:`).test(logs));
 }
 
-async function renderLayerOverlay(files: File[], layers: StudioImageLayer[]): Promise<Uint8Array | null> {
-  const visibleLayers = layers.filter((layer) => layer.visible);
-  if (visibleLayers.length === 0) return null;
+interface TimedOverlay {
+  name: string;
+  data: Uint8Array;
+  start: number;
+  end: number;
+}
+
+async function renderLayerOverlayFrame(
+  layers: StudioImageLayer[],
+  bitmaps: Map<number, ImageBitmap>,
+): Promise<Uint8Array> {
   const canvas = document.createElement('canvas');
   canvas.width = 1280;
   canvas.height = 720;
   const context = canvas.getContext('2d');
   if (!context) throw new Error('Could not create the video overlay canvas');
   const scale = 2 / 3;
-  for (const layer of visibleLayers) {
+  for (const layer of layers) {
     context.save();
     context.globalAlpha = layer.opacity;
     context.globalCompositeOperation = layer.blend === 'normal' ? 'source-over' : layer.blend;
@@ -57,26 +65,21 @@ async function renderLayerOverlay(files: File[], layers: StudioImageLayer[]): Pr
           );
         });
     } else {
-      const file = files[layer.fileIndex];
-      if (!file || !file.type.startsWith('image/')) throw new Error('A video overlay layer is not an image');
-      const bitmap = await createImageBitmap(file);
-      try {
-        context.filter = imageLayerCanvasFilter(layer);
-        const source = imageLayerSourceRect(layer, bitmap.width, bitmap.height);
-        context.drawImage(
-          bitmap,
-          source.x,
-          source.y,
-          source.width,
-          source.height,
-          (-layer.width * scale) / 2,
-          (-layer.height * scale) / 2,
-          layer.width * scale,
-          layer.height * scale,
-        );
-      } finally {
-        bitmap.close();
-      }
+      const bitmap = bitmaps.get(layer.fileIndex);
+      if (!bitmap) throw new Error('A video overlay layer is not an image');
+      context.filter = imageLayerCanvasFilter(layer);
+      const source = imageLayerSourceRect(layer, bitmap.width, bitmap.height);
+      context.drawImage(
+        bitmap,
+        source.x,
+        source.y,
+        source.width,
+        source.height,
+        (-layer.width * scale) / 2,
+        (-layer.height * scale) / 2,
+        layer.width * scale,
+        layer.height * scale,
+      );
     }
     context.restore();
   }
@@ -87,6 +90,56 @@ async function renderLayerOverlay(files: File[], layers: StudioImageLayer[]): Pr
     );
   });
   return new Uint8Array(await blob.arrayBuffer());
+}
+
+async function renderTimedLayerOverlays(
+  files: File[],
+  layers: StudioImageLayer[],
+  duration: number,
+): Promise<TimedOverlay[]> {
+  const visibleLayers = layers.filter(
+    (layer) => layer.visible && (layer.start ?? 0) < duration && (layer.end ?? duration) > 0,
+  );
+  if (visibleLayers.length === 0) return [];
+  const bitmaps = new Map<number, ImageBitmap>();
+  try {
+    for (const layer of visibleLayers) {
+      if (layer.kind !== 'image' || bitmaps.has(layer.fileIndex)) continue;
+      const file = files[layer.fileIndex];
+      if (!file || !file.type.startsWith('image/')) throw new Error('A video overlay layer is not an image');
+      bitmaps.set(layer.fileIndex, await createImageBitmap(file));
+    }
+    const boundaries = [
+      ...new Set([
+        0,
+        duration,
+        ...visibleLayers.flatMap((layer) => [
+          Math.max(0, Math.min(duration, layer.start ?? 0)),
+          Math.max(0, Math.min(duration, layer.end ?? duration)),
+        ]),
+      ]),
+    ].sort((left, right) => left - right);
+    const overlays: TimedOverlay[] = [];
+    for (let index = 0; index < boundaries.length - 1; index++) {
+      const start = boundaries[index];
+      const end = boundaries[index + 1];
+      if (end - start <= 0.001) continue;
+      const midpoint = start + (end - start) / 2;
+      const active = visibleLayers.filter(
+        (layer) => midpoint >= (layer.start ?? 0) && midpoint < (layer.end ?? duration),
+      );
+      if (active.length === 0) continue;
+      overlays.push({
+        name: `studio-overlay-${overlays.length}.png`,
+        data: await renderLayerOverlayFrame(active, bitmaps),
+        start,
+        end,
+      });
+    }
+    return overlays;
+  } finally {
+    for (const bitmap of bitmaps.values()) bitmap.close();
+  }
 }
 
 /** Encode ordered, trimmed video clips, audio, and image/text overlays into one MP4 on-device. */
@@ -116,7 +169,14 @@ export async function renderVideoSequence(
   if (duration > MAX_DURATION_SECONDS) throw new Error('Video sequences must be between 0 and 3 minutes');
 
   const overlayImageIndices = [
-    ...new Set(imageLayers.filter((layer) => layer.visible && layer.kind === 'image').map((layer) => layer.fileIndex)),
+    ...new Set(
+      imageLayers
+        .filter(
+          (layer) =>
+            layer.visible && layer.kind === 'image' && (layer.start ?? 0) < duration && (layer.end ?? duration) > 0,
+        )
+        .map((layer) => layer.fileIndex),
+    ),
   ];
   const uniqueFiles = [...new Set([...ordered.map((clip) => clip.fileIndex), ...overlayImageIndices])];
   const fileBytes = new Map<number, Uint8Array>();
@@ -137,7 +197,7 @@ export async function renderVideoSequence(
     data: fileBytes.get(fileIndex)!,
   }));
   const hasAudio = await probeAudioStreams(inputs);
-  const overlayPng = await renderLayerOverlay(files, imageLayers);
+  const overlays = await renderTimedLayerOverlays(files, imageLayers, duration);
   const sourceInputs: Array<{ name: string; data: Uint8Array }> = [];
   const clipSources = ordered.map((clip, sourceOrdinal) => {
     const fileIndex = indexByFile.get(clip.fileIndex)!;
@@ -151,9 +211,9 @@ export async function renderVideoSequence(
     const { clip, name } = clipSources[index];
     args.push('-ss', clip.sourceStart.toFixed(3), '-t', (clip.sourceEnd - clip.sourceStart).toFixed(3), '-i', name);
   }
-  if (overlayPng) {
-    sourceInputs.push({ name: 'studio-overlay.png', data: overlayPng });
-    args.push('-loop', '1', '-framerate', '30', '-i', 'studio-overlay.png');
+  for (const overlay of overlays) {
+    sourceInputs.push({ name: overlay.name, data: overlay.data });
+    args.push('-loop', '1', '-framerate', '30', '-i', overlay.name);
   }
 
   const filters: string[] = [];
@@ -182,11 +242,23 @@ export async function renderVideoSequence(
       filters.push(`anullsrc=channel_layout=stereo:sample_rate=44100:d=${clipDuration.toFixed(3)}[silence${index}]`);
     }
     concatInputs.push(`[v${index}]`);
-    concatInputs.push(clipSources[index].hasAudio ? `[a${index}]` : `[silence${index}]`);
+    concatInputs.push(
+      clipSources[index].hasAudio && !clipSources[index].clip.muted ? `[a${index}]` : `[silence${index}]`,
+    );
   }
   filters.push(`${concatInputs.join('')}concat=n=${timelineSegments.length}:v=1:a=1[outvbase][outa]`);
-  if (overlayPng) filters.push(`[outvbase][${clipSources.length}:v:0]overlay=shortest=1:format=auto[outv]`);
-  else filters.push('[outvbase]null[outv]');
+  if (overlays.length === 0) filters.push('[outvbase]null[outv]');
+  else {
+    let inputLabel = 'outvbase';
+    overlays.forEach((overlay, index) => {
+      const outputLabel = index === overlays.length - 1 ? 'outv' : `outv${index}`;
+      const enable = `gte(t,${overlay.start.toFixed(3)})*lt(t,${overlay.end.toFixed(3)})`;
+      filters.push(
+        `[${inputLabel}][${clipSources.length + index}:v:0]overlay=shortest=1:format=auto:enable='${enable}'[${outputLabel}]`,
+      );
+      inputLabel = outputLabel;
+    });
+  }
   const audioBitrate = 96;
   const videoBitrate = Math.max(
     350,

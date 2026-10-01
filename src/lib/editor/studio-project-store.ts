@@ -65,6 +65,8 @@ export interface StudioImageLayer {
   cropY?: number;
   cropWidth?: number;
   cropHeight?: number;
+  start?: number;
+  end?: number;
   visible: boolean;
   blend: 'normal' | 'multiply' | 'screen';
   text?: string;
@@ -253,6 +255,10 @@ function decodeFiles(plaintext: Uint8Array): {
         typeof layer.cropX === 'number' && Number.isFinite(layer.cropX) ? Math.max(0, Math.min(0.99, layer.cropX)) : 0;
       const cropY =
         typeof layer.cropY === 'number' && Number.isFinite(layer.cropY) ? Math.max(0, Math.min(0.99, layer.cropY)) : 0;
+      const start =
+        typeof layer.start === 'number' && Number.isFinite(layer.start)
+          ? Math.max(0, Math.min(14_399.9, layer.start))
+          : 0;
       return {
         ...layer,
         kind: (layer.kind === 'text' ? 'text' : 'image') as StudioImageLayer['kind'],
@@ -281,6 +287,11 @@ function decodeFiles(plaintext: Uint8Array): {
           typeof layer.cropHeight === 'number' && Number.isFinite(layer.cropHeight)
             ? Math.max(0.01, Math.min(1 - cropY, layer.cropHeight))
             : 1 - cropY,
+        start,
+        end:
+          typeof layer.end === 'number' && Number.isFinite(layer.end)
+            ? Math.max(start + 0.1, Math.min(14_400, layer.end))
+            : undefined,
         rotation: Number.isFinite(layer.rotation) ? Math.max(-3600, Math.min(3600, layer.rotation)) : 0,
       };
     });
