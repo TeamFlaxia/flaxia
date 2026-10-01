@@ -125,6 +125,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let videoSequenceIndex = -1;
   let videoSequenceTimer: ReturnType<typeof setTimeout> | null = null;
   let timelinePixelsPerSecond = 42;
+  let videoSequenceStartTime = 0;
+  let timelinePlayheadTime = 0;
+  let videoPlayheadElement: HTMLElement | null = null;
+  let audioPlayheadElements: HTMLElement[] = [];
 
   const root = document.createElement('main');
   root.className = 'studio-page';
@@ -252,6 +256,23 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     videoSequenceUrl = null;
     videoSequenceIndex = -1;
     videoPlayButton.textContent = '▶ Preview video';
+  };
+
+  const updateTimelinePlayhead = (time: number): void => {
+    timelinePlayheadTime = Math.max(0, time);
+    const left = `${timelinePlayheadTime * timelinePixelsPerSecond}px`;
+    if (videoPlayheadElement) videoPlayheadElement.style.left = left;
+    audioPlayheadElements.forEach((element) => {
+      element.style.left = left;
+    });
+  };
+
+  const requestVideoSeek = (time: number): void => {
+    if (videoClips.length === 0) return;
+    if (videoSequencePlayer) stopVideoSequence();
+    const sequenceEnd = Math.max(0, ...videoClips.map((clip) => clip.start + clip.sourceEnd - clip.sourceStart));
+    videoSequenceStartTime = Math.max(0, Math.min(time, sequenceEnd));
+    videoPlayButton.click();
   };
 
   const manuallyPlacedVideoClips = new Set<string>();
@@ -405,6 +426,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 
   const renderVideoTimeline = (): void => {
     videoTimeline.innerHTML = '';
+    videoPlayheadElement = null;
     const end = Math.max(30, ...videoClips.map((clip) => clip.start + clip.sourceEnd - clip.sourceStart + 5));
     const contentWidth = Math.max(1200, end * timelinePixelsPerSecond);
     const ruler = document.createElement('div');
@@ -417,6 +439,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       tick.textContent = `${Math.floor(second / 60)}:${String(second % 60).padStart(2, '0')}`;
       ruler.appendChild(tick);
     }
+    ruler.addEventListener('click', (event) => {
+      const rect = ruler.getBoundingClientRect();
+      requestVideoSeek(Math.max(0, (event.clientX - rect.left) / timelinePixelsPerSecond));
+    });
     videoTimeline.appendChild(ruler);
     const lane = document.createElement('div');
     lane.className = 'studio-video-lane';
@@ -504,6 +530,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       });
       canvas.appendChild(block);
     }
+    videoPlayheadElement = document.createElement('div');
+    videoPlayheadElement.className = 'studio-timeline-playhead';
+    videoPlayheadElement.setAttribute('aria-hidden', 'true');
+    canvas.appendChild(videoPlayheadElement);
     lane.appendChild(label);
     lane.appendChild(canvas);
     lane.addEventListener('dragover', (event) => {
@@ -524,10 +554,12 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     videoTimeline.appendChild(lane);
     videoPlayButton.disabled = videoClips.length === 0;
     videoExportButton.disabled = videoClips.length === 0;
+    updateTimelinePlayhead(timelinePlayheadTime);
   };
 
   const renderAudioTimeline = (): void => {
     audioTimeline.innerHTML = '';
+    audioPlayheadElements = [];
     const ruler = document.createElement('div');
     ruler.className = 'studio-audio-ruler';
     const end = Math.max(30, ...audioClips.map((clip) => clip.start + clip.sourceEnd - clip.sourceStart + 5));
@@ -540,6 +572,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       tick.textContent = `${Math.floor(second / 60)}:${String(second % 60).padStart(2, '0')}`;
       ruler.appendChild(tick);
     }
+    ruler.addEventListener('click', (event) => {
+      const rect = ruler.getBoundingClientRect();
+      requestVideoSeek(Math.max(0, (event.clientX - rect.left) / timelinePixelsPerSecond));
+    });
     audioTimeline.appendChild(ruler);
     for (let track = 0; track < audioTrackCount; track++) {
       const lane = document.createElement('div');
@@ -618,6 +654,11 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         });
         canvas.appendChild(block);
       }
+      const playhead = document.createElement('div');
+      playhead.className = 'studio-timeline-playhead';
+      playhead.setAttribute('aria-hidden', 'true');
+      audioPlayheadElements.push(playhead);
+      canvas.appendChild(playhead);
       lane.addEventListener('dragover', (event) => {
         if (event.dataTransfer?.types.includes('application/x-flaxia-audio-clip')) event.preventDefault();
       });
@@ -642,6 +683,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     audioTimeline.appendChild(empty);
     mixPlayButton.disabled = audioClips.length === 0;
     mixExportButton.disabled = audioClips.length === 0;
+    updateTimelinePlayhead(timelinePlayheadTime);
   };
 
   zoomInput.addEventListener('input', () => {
@@ -1837,6 +1879,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const output = await renderMixdown();
       mixPreviewUrl = URL.createObjectURL(output);
       mixPreview = new Audio(mixPreviewUrl);
+      mixPreview.addEventListener('timeupdate', () => {
+        updateTimelinePlayhead(mixPreview?.currentTime ?? 0);
+      });
       mixPreview.addEventListener('ended', () => {
         mixPlayButton.textContent = '▶ Play mix';
         mixStatus.textContent = 'Mix finished';
@@ -1863,6 +1908,15 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     }
     const sequence = [...videoClips].sort((left, right) => left.start - right.start);
     if (sequence.length === 0) return;
+    const startTimes: number[] = [];
+    let sequenceEnd = 0;
+    for (const clip of sequence) {
+      const clipStart = Math.max(sequenceEnd, clip.start);
+      startTimes.push(clipStart);
+      sequenceEnd = clipStart + clip.sourceEnd - clip.sourceStart;
+    }
+    const requestedStartTime = videoSequenceStartTime;
+    videoSequenceStartTime = 0;
     const stage = root.querySelector<HTMLElement>('.studio-stage')!;
     const player = document.createElement('video');
     player.className = 'studio-sequence-player';
@@ -1875,7 +1929,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     let activeClip: StudioVideoClip | null = null;
     let advancing = false;
     let playAt: (index: number) => void = () => undefined;
-    const playClip = (index: number): void => {
+    const playClip = (index: number, offset = 0): void => {
       if (index >= sequence.length || !videoSequencePlayer) {
         mixStatus.textContent = 'Video sequence finished';
         stopVideoSequence();
@@ -1895,7 +1949,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       player.onloadedmetadata = () => {
         if (videoSequenceIndex !== index) return;
         advancing = false;
-        player.currentTime = Math.min(activeClip?.sourceStart ?? 0, player.duration || 0);
+        player.currentTime = Math.min((activeClip?.sourceStart ?? 0) + offset, player.duration || 0);
         void player.play().catch(() => {
           mixStatus.textContent = 'Press play in the video preview to continue';
         });
@@ -1907,10 +1961,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         playClip(index);
         return;
       }
-      const clip = sequence[index];
-      const previous = index > 0 ? sequence[index - 1] : null;
-      const previousEnd = previous ? previous.start + previous.sourceEnd - previous.sourceStart : 0;
-      const gap = Math.max(0, clip.start - previousEnd);
+      const previousEnd =
+        index > 0 ? startTimes[index - 1] + sequence[index - 1].sourceEnd - sequence[index - 1].sourceStart : 0;
+      const gap = Math.max(0, startTimes[index] - previousEnd);
       if (gap <= 0.04) {
         playClip(index);
         return;
@@ -1934,11 +1987,43 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         playAt(videoSequenceIndex + 1);
       }
     };
+    const startAt = (time: number): void => {
+      const index = sequence.findIndex(
+        (clip, clipIndex) => time < startTimes[clipIndex] + clip.sourceEnd - clip.sourceStart,
+      );
+      if (index < 0) {
+        mixStatus.textContent = 'Video sequence finished';
+        stopVideoSequence();
+        return;
+      }
+      videoSequenceIndex = index;
+      const timeIntoSegment = time - startTimes[index];
+      if (timeIntoSegment < 0) {
+        player.pause();
+        player.removeAttribute('src');
+        player.load();
+        if (videoSequenceUrl) URL.revokeObjectURL(videoSequenceUrl);
+        videoSequenceUrl = null;
+        player.style.visibility = 'hidden';
+        mixStatus.textContent = `Gap · ${(-timeIntoSegment).toFixed(1)}s`;
+        videoSequenceTimer = setTimeout(() => {
+          videoSequenceTimer = null;
+          playClip(index);
+        }, -timeIntoSegment * 1000);
+        return;
+      }
+      playClip(index, timeIntoSegment);
+    };
     player.addEventListener('timeupdate', () => {
+      if (activeClip && videoSequenceIndex >= 0) {
+        updateTimelinePlayhead(
+          startTimes[videoSequenceIndex] + Math.max(0, player.currentTime - activeClip.sourceStart),
+        );
+      }
       if (activeClip && player.currentTime >= activeClip.sourceEnd - 0.04) advance();
     });
     player.addEventListener('ended', advance);
-    playAt(0);
+    startAt(requestedStartTime);
   });
   videoExportButton.addEventListener('click', async () => {
     if (videoClips.length === 0) return;
@@ -2009,6 +2094,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 }
 
 const studioCss = `
+.studio-timeline-playhead{position:absolute;z-index:4;top:0;bottom:0;width:2px;background:#f2f687;box-shadow:0 0 6px #f2f687;pointer-events:none}
 .studio-timeline-zoom-control{display:flex;align-items:center;gap:4px;color:var(--studio-muted);font-size:9px;white-space:nowrap}.studio-timeline-zoom-control input{width:76px;accent-color:var(--studio-accent)}.studio-timeline-zoom-control output{min-width:40px;color:#c8ccd4;font-variant-numeric:tabular-nums}
 .studio-video-trim,.studio-audio-trim{position:absolute;z-index:3;top:0;bottom:0;width:9px;background:#d9efac55;cursor:ew-resize;touch-action:none}.studio-video-trim:hover,.studio-audio-trim:hover{background:#b8ef6a}.studio-video-trim-left,.studio-audio-trim-left{left:0;border-radius:4px 0 0 4px}.studio-video-trim-right,.studio-audio-trim-right{right:0;border-radius:0 4px 4px 0}.studio-video-clip-label{display:block;position:relative;z-index:1;padding:0 11px;overflow:hidden;line-height:33px;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}
 .studio-code-surface{position:relative;flex:1;min-width:0;min-height:260px;overflow:hidden}.studio-code-highlight{position:absolute;z-index:0;top:0;left:0;width:max-content;min-width:100%;min-height:100%;box-sizing:border-box;margin:0;padding:12px;overflow:visible;color:#dce2ec;font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2;white-space:pre;pointer-events:none;will-change:transform}.studio-code-surface>.studio-code-editor{position:absolute;z-index:1;inset:0;width:100%;height:100%;min-height:100%;box-sizing:border-box;resize:none;background:transparent;color:transparent;-webkit-text-fill-color:transparent;overflow:auto}.studio-code-surface>.studio-code-editor::selection{background:#71834c66;color:transparent}.studio-token-comment{color:#76836d}.studio-token-string{color:#d8a878}.studio-token-keyword{color:#c792ea}.studio-token-literal{color:#f78c6c}.studio-token-number{color:#f78c6c}.studio-token-function{color:#82aaff}.studio-token-tag{color:#e06c75}.studio-token-color{color:#c3e88d}.studio-token-property{color:#80cbc4}.studio-token-heading{color:#82aaff;font-weight:700}
