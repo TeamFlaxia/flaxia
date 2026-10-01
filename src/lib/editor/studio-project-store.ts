@@ -44,6 +44,7 @@ export interface StudioVideoClip {
   start: number;
   sourceStart: number;
   sourceEnd: number;
+  speed?: number;
   fit?: 'contain' | 'cover';
   brightness?: number;
   contrast?: number;
@@ -226,6 +227,7 @@ function decodeFiles(plaintext: Uint8Array): {
     )
     .map((clip) => ({
       ...clip,
+      speed: typeof clip.speed === 'number' && Number.isFinite(clip.speed) ? Math.max(0.5, Math.min(2, clip.speed)) : 1,
       fit: clip.fit === 'cover' ? ('cover' as const) : ('contain' as const),
       brightness:
         typeof clip.brightness === 'number' && Number.isFinite(clip.brightness)

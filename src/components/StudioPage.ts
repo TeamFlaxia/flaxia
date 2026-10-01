@@ -18,6 +18,15 @@ import { executeFlash, type FlashPlayerHandle } from './FlashPlayer.js';
 import { openMediaEditor } from './MediaEditorModal.js';
 
 type StudioKind = 'image' | 'video' | 'audio' | 'code' | 'game' | 'other';
+
+function videoClipSpeed(clip: StudioVideoClip): number {
+  return Math.max(0.5, Math.min(2, clip.speed ?? 1));
+}
+
+function videoClipTimelineDuration(clip: StudioVideoClip): number {
+  return (clip.sourceEnd - clip.sourceStart) / videoClipSpeed(clip);
+}
+
 type StudioEditHistorySnapshot = {
   audioClips: AudioTimelineClip[];
   videoClips: StudioVideoClip[];
@@ -300,7 +309,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     videoSplitButton.disabled =
       !clip ||
       timelinePlayheadTime <= clip.start + 0.05 ||
-      timelinePlayheadTime >= clip.start + clip.sourceEnd - clip.sourceStart - 0.05;
+      timelinePlayheadTime >= clip.start + videoClipTimelineDuration(clip) - 0.05;
     duplicateClipButton.disabled = !clip && !imageLayer;
   };
 
@@ -320,7 +329,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       return;
     }
     if (videoSequencePlayer) stopVideoSequence();
-    const sequenceEnd = Math.max(0, ...videoClips.map((clip) => clip.start + clip.sourceEnd - clip.sourceStart));
+    const sequenceEnd = Math.max(0, ...videoClips.map((clip) => clip.start + videoClipTimelineDuration(clip)));
     videoSequenceStartTime = Math.max(0, Math.min(time, sequenceEnd));
     videoPlayButton.click();
   };
@@ -330,13 +339,13 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     if (clipIndex >= 0) {
       const clip = videoClips[clipIndex];
       const offset = timelinePlayheadTime - clip.start;
-      const duration = clip.sourceEnd - clip.sourceStart;
+      const duration = videoClipTimelineDuration(clip);
       if (offset <= 0.05 || offset >= duration - 0.05) return;
       const rightClip: StudioVideoClip = {
         ...clip,
         id: crypto.randomUUID(),
         start: timelinePlayheadTime,
-        sourceStart: clip.sourceStart + offset,
+        sourceStart: clip.sourceStart + offset * videoClipSpeed(clip),
       };
       clip.sourceEnd = rightClip.sourceStart;
       videoClips.splice(clipIndex + 1, 0, rightClip);
@@ -396,7 +405,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const duplicate: StudioVideoClip = {
         ...videoClip,
         id: crypto.randomUUID(),
-        start: Math.max(0, ...videoClips.map((item) => item.start + item.sourceEnd - item.sourceStart)),
+        start: Math.max(0, ...videoClips.map((item) => item.start + videoClipTimelineDuration(item))),
       };
       videoClips.push(duplicate);
       manuallyPlacedVideoClips.add(duplicate.id);
@@ -488,7 +497,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       clip = {
         id: crypto.randomUUID(),
         fileIndex,
-        start: videoClips.reduce((end, item) => Math.max(end, item.start + item.sourceEnd - item.sourceStart), 0),
+        start: videoClips.reduce((end, item) => Math.max(end, item.start + videoClipTimelineDuration(item)), 0),
         sourceStart: 0,
         sourceEnd: 1,
       };
@@ -507,7 +516,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
             const previous = videoClips[index - 1];
             const following = videoClips[index];
             if (!manuallyPlacedVideoClips.has(following.id)) {
-              following.start = previous.start + previous.sourceEnd - previous.sourceStart;
+              following.start = previous.start + videoClipTimelineDuration(previous);
             }
           }
         }
@@ -605,7 +614,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const anchors = [0, timelinePlayheadTime];
     for (const clip of videoClips) {
       if (clip.id === ignoredId) continue;
-      anchors.push(clip.start, clip.start + clip.sourceEnd - clip.sourceStart);
+      anchors.push(clip.start, clip.start + videoClipTimelineDuration(clip));
     }
     for (const clip of audioClips) {
       if (clip.id === ignoredId) continue;
@@ -672,11 +681,11 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     videoPlayheadElement = null;
     const sequenceEnd = [...videoClips]
       .sort((a, b) => a.start - b.start)
-      .reduce((cursor, clip) => Math.max(cursor, clip.start) + clip.sourceEnd - clip.sourceStart, 0);
+      .reduce((cursor, clip) => Math.max(cursor, clip.start) + videoClipTimelineDuration(clip), 0);
     const end = Math.max(
       30,
       sequenceEnd + 5,
-      ...videoClips.map((clip) => clip.start + clip.sourceEnd - clip.sourceStart + 5),
+      ...videoClips.map((clip) => clip.start + videoClipTimelineDuration(clip) + 5),
       ...imageLayers.map((layer) => Math.max(layer.start ?? 0, layer.end ?? 0) + 5),
     );
     const contentWidth = Math.max(1200, end * timelinePixelsPerSecond);
@@ -713,14 +722,14 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       block.className = `studio-video-clip ${clip.id === selectedVideoClipId ? 'active' : ''} ${clip.muted ? 'muted' : ''}`;
       block.dataset.clipId = clip.id;
       block.style.left = `${clip.start * timelinePixelsPerSecond}px`;
-      block.style.width = `${Math.max(54, (clip.sourceEnd - clip.sourceStart) * timelinePixelsPerSecond)}px`;
+      block.style.width = `${Math.max(54, videoClipTimelineDuration(clip) * timelinePixelsPerSecond)}px`;
       const duration = videoDurations.get(clip.fileIndex);
       const leftHandle = document.createElement('span');
       leftHandle.className = 'studio-video-trim studio-video-trim-left';
       leftHandle.setAttribute('aria-label', 'Trim start');
       const labelText = document.createElement('span');
       labelText.className = 'studio-video-clip-label';
-      labelText.textContent = `${file.name} · ${duration ? `${(clip.sourceEnd - clip.sourceStart).toFixed(1)}s` : '…'}`;
+      labelText.textContent = `${file.name} · ${duration ? `${videoClipTimelineDuration(clip).toFixed(1)}s${videoClipSpeed(clip) === 1 ? '' : ` · ${videoClipSpeed(clip)}×`}` : '…'}`;
       const rightHandle = document.createElement('span');
       rightHandle.className = 'studio-video-trim studio-video-trim-right';
       rightHandle.setAttribute('aria-label', 'Trim end');
@@ -745,26 +754,30 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           const initialStart = clip.start;
           const initialSourceStart = clip.sourceStart;
           const initialSourceEnd = clip.sourceEnd;
+          const speed = videoClipSpeed(clip);
           const sourceDuration = videoDurations.get(clip.fileIndex) ?? clip.sourceEnd;
           handle.setPointerCapture(event.pointerId);
           const updateClip = (moveEvent: PointerEvent): void => {
             const delta = (moveEvent.clientX - pointerStart) / zoomAtDrag;
             if (edge === 'start') {
-              const minDelta = -Math.min(initialSourceStart, initialStart);
-              const maxDelta = initialSourceEnd - initialSourceStart - 0.1;
+              const minDelta = -Math.min(initialSourceStart / speed, initialStart);
+              const maxDelta = (initialSourceEnd - initialSourceStart - 0.1) / speed;
               const snappedStart = snapTimelineTime(initialStart + delta, clip.id);
-              const applied = Math.max(minDelta, Math.min(maxDelta, snappedStart - initialStart));
-              clip.sourceStart = initialSourceStart + applied;
-              clip.start = initialStart + applied;
+              const appliedTimeline = Math.max(minDelta, Math.min(maxDelta, snappedStart - initialStart));
+              clip.sourceStart = initialSourceStart + appliedTimeline * speed;
+              clip.start = initialStart + appliedTimeline;
             } else {
-              const initialTimelineEnd = initialStart + initialSourceEnd - initialSourceStart;
+              const initialTimelineEnd = initialStart + (initialSourceEnd - initialSourceStart) / speed;
               const snappedEnd = snapTimelineTime(initialTimelineEnd + delta, clip.id);
-              const applied = snappedEnd - initialTimelineEnd;
-              clip.sourceEnd = Math.max(initialSourceStart + 0.1, Math.min(sourceDuration, initialSourceEnd + applied));
+              const appliedTimeline = snappedEnd - initialTimelineEnd;
+              clip.sourceEnd = Math.max(
+                initialSourceStart + 0.1,
+                Math.min(sourceDuration, initialSourceEnd + appliedTimeline * speed),
+              );
             }
             block.style.left = `${clip.start * timelinePixelsPerSecond}px`;
-            block.style.width = `${Math.max(54, (clip.sourceEnd - clip.sourceStart) * timelinePixelsPerSecond)}px`;
-            labelText.textContent = `${file.name} · ${(clip.sourceEnd - clip.sourceStart).toFixed(1)}s`;
+            block.style.width = `${Math.max(54, videoClipTimelineDuration(clip) * timelinePixelsPerSecond)}px`;
+            labelText.textContent = `${file.name} · ${videoClipTimelineDuration(clip).toFixed(1)}s${videoClipSpeed(clip) === 1 ? '' : ` · ${videoClipSpeed(clip)}×`}`;
             const startField = inspectorBody.querySelector<HTMLInputElement>('.studio-video-in');
             const endField = inspectorBody.querySelector<HTMLInputElement>('.studio-video-out');
             const positionField = inspectorBody.querySelector<HTMLInputElement>('.studio-video-position');
@@ -1158,7 +1171,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         return `<label class="studio-property studio-gain-property"><span>${label}</span><input class="studio-video-color" data-color="${name}" type="range" min="0" max="200" value="${value}"><small>${value}%</small></label>`;
       };
       const colorControls = `${colorControl('brightness', 'Brightness')}${colorControl('contrast', 'Contrast')}${colorControl('saturation', 'Saturation')}`;
-      inspectorBody.innerHTML = `<div class="studio-inspector-icon">▶</div><h2>${escapeHtml(videoFile.name)}</h2><p>Video clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-video-position" type="number" min="0" step="0.1" value="${videoClip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Framing</span><select class="studio-video-fit"><option value="contain" ${videoClip.fit !== 'cover' ? 'selected' : ''}>Fit · show whole frame</option><option value="cover" ${videoClip.fit === 'cover' ? 'selected' : ''}>Fill · crop to frame</option></select></label>${colorControls}<label class="studio-property"><span>Trim in</span><input class="studio-video-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-video-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Clip audio</span><input class="studio-video-gain" type="range" min="0" max="100" value="${Math.round((videoClip.gain ?? 1) * 100)}"><small class="studio-video-gain-value">${Math.round((videoClip.gain ?? 1) * 100)}%</small></label><label class="studio-property studio-mute-property"><input class="studio-video-muted" type="checkbox" ${videoClip.muted ? 'checked' : ''}><span>Mute source audio</span></label><p class="studio-video-hint">Framing and color adjustments apply to sequence preview and MP4 export.</p><button class="studio-button studio-remove-video" type="button">Remove from timeline</button>`;
+      inspectorBody.innerHTML = `<div class="studio-inspector-icon">▶</div><h2>${escapeHtml(videoFile.name)}</h2><p>Video clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-video-position" type="number" min="0" step="0.1" value="${videoClip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Framing</span><select class="studio-video-fit"><option value="contain" ${videoClip.fit !== 'cover' ? 'selected' : ''}>Fit · show whole frame</option><option value="cover" ${videoClip.fit === 'cover' ? 'selected' : ''}>Fill · crop to frame</option></select></label><label class="studio-property"><span>Speed</span><select class="studio-video-speed">${[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => `<option value="${speed}" ${videoClipSpeed(videoClip) === speed ? 'selected' : ''}>${speed}×</option>`).join('')}</select></label>${colorControls}<label class="studio-property"><span>Trim in</span><input class="studio-video-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-video-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Clip audio</span><input class="studio-video-gain" type="range" min="0" max="100" value="${Math.round((videoClip.gain ?? 1) * 100)}"><small class="studio-video-gain-value">${Math.round((videoClip.gain ?? 1) * 100)}%</small></label><label class="studio-property studio-mute-property"><input class="studio-video-muted" type="checkbox" ${videoClip.muted ? 'checked' : ''}><span>Mute source audio</span></label><p class="studio-video-hint">Speed, framing, and color adjustments apply to sequence preview and MP4 export.</p><button class="studio-button studio-remove-video" type="button">Remove from timeline</button>`;
       const update = (selector: string, set: (value: number) => void): void => {
         inspectorBody.querySelector<HTMLInputElement>(selector)!.addEventListener('change', (event) => {
           const input = event.currentTarget as HTMLInputElement;
@@ -1179,6 +1192,15 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         if (videoSequencePlayer?.dataset.clipId === videoClip.id) {
           videoSequencePlayer.style.objectFit = videoClip.fit;
         }
+        scheduleAutosave();
+      });
+      inspectorBody.querySelector('select.studio-video-speed')!.addEventListener('change', (event) => {
+        const speed = Number((event.currentTarget as HTMLSelectElement).value);
+        if (![0.5, 0.75, 1, 1.25, 1.5, 2].includes(speed)) return;
+        videoClip.speed = speed;
+        stopVideoSequence();
+        renderVideoTimeline();
+        renderInspector();
         scheduleAutosave();
       });
       inspectorBody.querySelectorAll<HTMLInputElement>('.studio-video-color').forEach((input) => {
@@ -2586,7 +2608,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     for (const clip of sequence) {
       const clipStart = Math.max(sequenceEnd, clip.start);
       startTimes.push(clipStart);
-      sequenceEnd = clipStart + clip.sourceEnd - clip.sourceStart;
+      sequenceEnd = clipStart + videoClipTimelineDuration(clip);
     }
     const requestedStartTime = videoSequenceStartTime;
     videoSequenceStartTime = 0;
@@ -2611,6 +2633,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       videoSequenceIndex = index;
       activeClip = sequence[index];
       player.dataset.clipId = activeClip.id;
+      player.playbackRate = videoClipSpeed(activeClip);
       player.volume = Math.max(0, Math.min(1, activeClip.gain ?? 1));
       player.muted = activeClip.muted ?? false;
       player.style.objectFit = activeClip.fit === 'cover' ? 'cover' : 'contain';
@@ -2627,7 +2650,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       player.onloadedmetadata = () => {
         if (videoSequenceIndex !== index) return;
         advancing = false;
-        player.currentTime = Math.min((activeClip?.sourceStart ?? 0) + offset, player.duration || 0);
+        player.currentTime = Math.min(
+          sequence[index].sourceStart + offset * videoClipSpeed(sequence[index]),
+          player.duration || 0,
+        );
         void player.play().catch(() => {
           mixStatus.textContent = 'Press play in the video preview to continue';
         });
@@ -2639,8 +2665,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         playClip(index);
         return;
       }
-      const previousEnd =
-        index > 0 ? startTimes[index - 1] + sequence[index - 1].sourceEnd - sequence[index - 1].sourceStart : 0;
+      const previousEnd = index > 0 ? startTimes[index - 1] + videoClipTimelineDuration(sequence[index - 1]) : 0;
       const gap = Math.max(0, startTimes[index] - previousEnd);
       if (gap <= 0.04) {
         playClip(index);
@@ -2667,7 +2692,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     };
     const startAt = (time: number): void => {
       const index = sequence.findIndex(
-        (clip, clipIndex) => time < startTimes[clipIndex] + clip.sourceEnd - clip.sourceStart,
+        (clip, clipIndex) => time < startTimes[clipIndex] + videoClipTimelineDuration(clip),
       );
       if (index < 0) {
         mixStatus.textContent = 'Video sequence finished';
@@ -2695,7 +2720,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     player.addEventListener('timeupdate', () => {
       if (activeClip && videoSequenceIndex >= 0) {
         updateTimelinePlayhead(
-          startTimes[videoSequenceIndex] + Math.max(0, player.currentTime - activeClip.sourceStart),
+          startTimes[videoSequenceIndex] +
+            Math.max(0, player.currentTime - activeClip.sourceStart) / videoClipSpeed(activeClip),
         );
       }
       if (activeClip && player.currentTime >= activeClip.sourceEnd - 0.04) advance();

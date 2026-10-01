@@ -153,8 +153,10 @@ export async function renderVideoSequence(
   const ordered = [...clips].sort((left, right) => left.start - right.start);
   if (ordered.length === 0) throw new Error('Add a video clip to the timeline first');
   if (ordered.length > 12) throw new Error('Video sequences support up to 12 clips per export');
-  const durations = ordered.map((clip) => clip.sourceEnd - clip.sourceStart);
-  if (durations.some((length) => !Number.isFinite(length) || length <= 0)) {
+  const sourceDurations = ordered.map((clip) => clip.sourceEnd - clip.sourceStart);
+  const speeds = ordered.map((clip) => Math.max(0.5, Math.min(2, clip.speed ?? 1)));
+  const durations = sourceDurations.map((length, index) => length / speeds[index]);
+  if (sourceDurations.some((length) => !Number.isFinite(length) || length <= 0)) {
     throw new Error('Video sequences must be between 0 and 3 minutes');
   }
   const timelineSegments: Array<{ kind: 'clip'; clipIndex: number } | { kind: 'gap'; duration: number }> = [];
@@ -209,7 +211,7 @@ export async function renderVideoSequence(
   const args: string[] = [];
   for (let index = 0; index < clipSources.length; index++) {
     const { clip, name } = clipSources[index];
-    args.push('-ss', clip.sourceStart.toFixed(3), '-t', (clip.sourceEnd - clip.sourceStart).toFixed(3), '-i', name);
+    args.push('-ss', clip.sourceStart.toFixed(3), '-t', sourceDurations[index].toFixed(3), '-i', name);
   }
   for (const overlay of overlays) {
     sourceInputs.push({ name: overlay.name, data: overlay.data });
@@ -231,18 +233,20 @@ export async function renderVideoSequence(
     const index = segment.clipIndex;
     const clip = ordered[index];
     const clipDuration = durations[index];
+    const sourceDuration = sourceDurations[index];
+    const speed = speeds[index];
     const framing =
       clip.fit === 'cover'
         ? 'scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720'
         : 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2';
     const color = `eq=brightness=${(((clip.brightness ?? 100) - 100) / 100).toFixed(3)}:contrast=${((clip.contrast ?? 100) / 100).toFixed(3)}:saturation=${((clip.saturation ?? 100) / 100).toFixed(3)}`;
     filters.push(
-      `[${index}:v:0]trim=duration=${clipDuration.toFixed(3)},setpts=PTS-STARTPTS,${framing},${color},setsar=1,fps=30,format=yuv420p[v${index}]`,
+      `[${index}:v:0]trim=duration=${sourceDuration.toFixed(3)},setpts=(PTS-STARTPTS)/${speed.toFixed(3)},${framing},${color},setsar=1,fps=30,format=yuv420p[v${index}]`,
     );
     if (clipSources[index].hasAudio && !clipSources[index].clip.muted) {
       const gain = Math.max(0, Math.min(1, clipSources[index].clip.gain ?? 1));
       filters.push(
-        `[${index}:a:0]atrim=duration=${clipDuration.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo,volume=${gain.toFixed(3)}[a${index}]`,
+        `[${index}:a:0]atrim=duration=${sourceDuration.toFixed(3)},asetpts=PTS-STARTPTS,atempo=${speed.toFixed(3)},aformat=sample_rates=44100:channel_layouts=stereo,volume=${gain.toFixed(3)}[a${index}]`,
       );
     } else {
       filters.push(`anullsrc=channel_layout=stereo:sample_rate=44100:d=${clipDuration.toFixed(3)}[silence${index}]`);
