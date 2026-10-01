@@ -3519,6 +3519,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           startTimes[videoSequenceIndex] +
           Math.max(0, player.currentTime - activeClip.sourceStart) / videoClipSpeed(activeClip);
         const clipTime = timelineTime - startTimes[videoSequenceIndex];
+        player.volume =
+          Math.max(0, Math.min(1, activeClip.gain ?? 1)) *
+          videoClipOpacityAt(clipTime, videoClipTimelineDuration(activeClip), activeClip.fadeIn, activeClip.fadeOut);
         player.style.opacity = String(
           videoClipOpacityAt(clipTime, videoClipTimelineDuration(activeClip), activeClip.fadeIn, activeClip.fadeOut),
         );

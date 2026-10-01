@@ -19,6 +19,19 @@ export function videoClipFadeFilters(duration: number, fadeIn = 0, fadeOut = 0):
   return filters;
 }
 
+/** Build FFmpeg audio fades using the clip's post-speed timeline duration. */
+export function videoClipAudioFadeFilters(duration: number, fadeIn = 0, fadeOut = 0): string[] {
+  if (!Number.isFinite(duration) || duration <= 0) return [];
+  const safeFadeIn = Math.min(duration, Math.max(0, Number.isFinite(fadeIn) ? fadeIn : 0));
+  const safeFadeOut = Math.min(duration, Math.max(0, Number.isFinite(fadeOut) ? fadeOut : 0));
+  const filters: string[] = [];
+  if (safeFadeIn > 0) filters.push(`afade=t=in:st=0:d=${safeFadeIn.toFixed(3)}`);
+  if (safeFadeOut > 0) {
+    filters.push(`afade=t=out:st=${Math.max(0, duration - safeFadeOut).toFixed(3)}:d=${safeFadeOut.toFixed(3)}`);
+  }
+  return filters;
+}
+
 /** Return the video clip opacity at an offset on its timeline. */
 export function videoClipOpacityAt(time: number, duration: number, fadeIn = 0, fadeOut = 0): number {
   if (!Number.isFinite(time) || !Number.isFinite(duration) || duration <= 0) return 1;
@@ -251,8 +264,9 @@ export async function renderVideoSequence(
     );
     if (clipSources[index].hasAudio && !clipSources[index].clip.muted) {
       const gain = Math.max(0, Math.min(1, clipSources[index].clip.gain ?? 1));
+      const audioFades = videoClipAudioFadeFilters(clipDuration, clip.fadeIn, clip.fadeOut);
       filters.push(
-        `[${index}:a:0]atrim=duration=${sourceDuration.toFixed(3)},asetpts=PTS-STARTPTS,atempo=${speed.toFixed(3)},aformat=sample_rates=44100:channel_layouts=stereo,volume=${gain.toFixed(3)}[a${index}]`,
+        `[${index}:a:0]atrim=duration=${sourceDuration.toFixed(3)},asetpts=PTS-STARTPTS,atempo=${speed.toFixed(3)},aformat=sample_rates=44100:channel_layouts=stereo,volume=${gain.toFixed(3)}${audioFades.length ? `,${audioFades.join(',')}` : ''}[a${index}]`,
       );
     } else {
       filters.push(`anullsrc=channel_layout=stereo:sample_rate=44100:d=${clipDuration.toFixed(3)}[silence${index}]`);

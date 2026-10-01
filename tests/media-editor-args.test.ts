@@ -24,7 +24,12 @@ import {
   resolveOutputSize,
   type VideoMeta,
 } from '../src/lib/editor/video-editor.ts';
-import { videoClipColorFilters, videoClipFadeFilters, videoClipOpacityAt } from '../src/lib/editor/video-sequence.ts';
+import {
+  videoClipAudioFadeFilters,
+  videoClipColorFilters,
+  videoClipFadeFilters,
+  videoClipOpacityAt,
+} from '../src/lib/editor/video-sequence.ts';
 
 describe('audio solo preview', () => {
   it('moves only the selected clip to time zero and preserves its trims and mix controls', () => {
@@ -159,6 +164,15 @@ describe('video sequence fades', () => {
     assert.deepEqual(videoClipFadeFilters(8, 1.25, 2), ['fade=t=in:st=0:d=1.250', 'fade=t=out:st=6.000:d=2.000']);
     assert.deepEqual(videoClipFadeFilters(4, 8, -1), ['fade=t=in:st=0:d=4.000']);
     assert.deepEqual(videoClipFadeFilters(0), []);
+  });
+
+  it('builds matching source-audio fades on the post-speed timeline', () => {
+    assert.deepEqual(videoClipAudioFadeFilters(8, 1.25, 2), [
+      'afade=t=in:st=0:d=1.250',
+      'afade=t=out:st=6.000:d=2.000',
+    ]);
+    assert.deepEqual(videoClipAudioFadeFilters(4, 8, -1), ['afade=t=in:st=0:d=4.000']);
+    assert.deepEqual(videoClipAudioFadeFilters(0), []);
   });
 
   it('computes the preview opacity for both clip edges', () => {
