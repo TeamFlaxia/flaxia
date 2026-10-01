@@ -1599,9 +1599,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     if (videoClips.length === 0) return;
     stopVideoSequence();
     videoExportButton.disabled = true;
-    mixStatus.textContent = 'Encoding MP4 · 0%';
+    mixStatus.textContent = `Compositing ${imageLayers.some((layer) => layer.visible) ? 'visible layers and ' : ''}encoding MP4 · 0%`;
     try {
-      const output = await renderVideoSequence(files, videoClips, audioClips, (progress) => {
+      const output = await renderVideoSequence(files, videoClips, audioClips, imageLayers, (progress) => {
         mixStatus.textContent = `Encoding MP4 · ${Math.round(progress * 100)}%`;
       });
       download(output);

@@ -1,6 +1,6 @@
 import { type AudioTimelineClip, mixAudioTimeline } from './audio-mixer.ts';
 import { probeFFmpegStreams, runFFmpeg } from './ffmpeg-client.ts';
-import type { StudioVideoClip } from './studio-project-store.ts';
+import type { StudioImageLayer, StudioVideoClip } from './studio-project-store.ts';
 
 const MAX_INPUT_BYTES = 80 * 1024 * 1024;
 const MAX_DURATION_SECONDS = 180;
@@ -21,11 +21,70 @@ async function probeAudioStreams(inputs: Array<{ name: string; data: Uint8Array 
   return inputs.map((_, index) => new RegExp(`Stream #${index}:\\d+.*Audio:`).test(logs));
 }
 
-/** Encode ordered, trimmed video clips into one H.264/AAC MP4 on-device. */
+async function renderLayerOverlay(files: File[], layers: StudioImageLayer[]): Promise<Uint8Array | null> {
+  const visibleLayers = layers.filter((layer) => layer.visible);
+  if (visibleLayers.length === 0) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = 1280;
+  canvas.height = 720;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('Could not create the video overlay canvas');
+  const scale = 2 / 3;
+  for (const layer of visibleLayers) {
+    context.save();
+    context.globalAlpha = layer.opacity;
+    context.globalCompositeOperation = layer.blend === 'normal' ? 'source-over' : layer.blend;
+    context.translate(280 + (layer.x + layer.width / 2) * scale, (layer.y + layer.height / 2) * scale);
+    context.rotate((layer.rotation * Math.PI) / 180);
+    if (layer.kind === 'text') {
+      const fontSize = (layer.fontSize ?? 72) * scale;
+      context.fillStyle = layer.color ?? '#ffffff';
+      context.font = `${fontSize}px ${layer.fontFamily ?? 'sans-serif'}`;
+      context.textBaseline = 'middle';
+      (layer.text ?? '')
+        .split('\n')
+        .slice(0, 20)
+        .forEach((line, index) => {
+          context.fillText(
+            line,
+            (-layer.width * scale) / 2,
+            (-layer.height * scale) / 2 + fontSize * 0.7 + index * fontSize * 1.2,
+            layer.width * scale,
+          );
+        });
+    } else {
+      const file = files[layer.fileIndex];
+      if (!file || !file.type.startsWith('image/')) throw new Error('A video overlay layer is not an image');
+      const bitmap = await createImageBitmap(file);
+      try {
+        context.drawImage(
+          bitmap,
+          (-layer.width * scale) / 2,
+          (-layer.height * scale) / 2,
+          layer.width * scale,
+          layer.height * scale,
+        );
+      } finally {
+        bitmap.close();
+      }
+    }
+    context.restore();
+  }
+  const blob = await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (result) => (result ? resolve(result) : reject(new Error('Could not encode video overlay layers'))),
+      'image/png',
+    );
+  });
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+/** Encode ordered, trimmed video clips, audio, and image/text overlays into one MP4 on-device. */
 export async function renderVideoSequence(
   files: File[],
   clips: StudioVideoClip[],
   audioClips: AudioTimelineClip[],
+  imageLayers: StudioImageLayer[],
   onProgress?: (ratio: number) => void,
 ): Promise<File> {
   const ordered = [...clips].sort((left, right) => left.start - right.start);
@@ -46,12 +105,17 @@ export async function renderVideoSequence(
   }
   if (duration > MAX_DURATION_SECONDS) throw new Error('Video sequences must be between 0 and 3 minutes');
 
-  const uniqueFiles = [...new Set(ordered.map((clip) => clip.fileIndex))];
+  const overlayImageIndices = [
+    ...new Set(imageLayers.filter((layer) => layer.visible && layer.kind === 'image').map((layer) => layer.fileIndex)),
+  ];
+  const uniqueFiles = [...new Set([...ordered.map((clip) => clip.fileIndex), ...overlayImageIndices])];
   const fileBytes = new Map<number, Uint8Array>();
   let totalBytes = 0;
   for (const index of uniqueFiles) {
     const file = files[index];
-    if (!file || !file.type.startsWith('video/')) throw new Error('A timeline clip is not a playable video');
+    const isVideo = ordered.some((clip) => clip.fileIndex === index);
+    if (!file || (isVideo ? !file.type.startsWith('video/') : !file.type.startsWith('image/')))
+      throw new Error('A timeline layer has an unsupported media type');
     if (file.size > MAX_INPUT_BYTES - totalBytes) throw new Error('Video sequence inputs exceed 80 MB');
     totalBytes += file.size;
     fileBytes.set(index, new Uint8Array(await file.arrayBuffer()));
@@ -63,6 +127,7 @@ export async function renderVideoSequence(
     data: fileBytes.get(fileIndex)!,
   }));
   const hasAudio = await probeAudioStreams(inputs);
+  const overlayPng = await renderLayerOverlay(files, imageLayers);
   const sourceInputs: Array<{ name: string; data: Uint8Array }> = [];
   const clipSources = ordered.map((clip, sourceOrdinal) => {
     const fileIndex = indexByFile.get(clip.fileIndex)!;
@@ -75,6 +140,10 @@ export async function renderVideoSequence(
   for (let index = 0; index < clipSources.length; index++) {
     const { clip, name } = clipSources[index];
     args.push('-ss', clip.sourceStart.toFixed(3), '-t', (clip.sourceEnd - clip.sourceStart).toFixed(3), '-i', name);
+  }
+  if (overlayPng) {
+    sourceInputs.push({ name: 'studio-overlay.png', data: overlayPng });
+    args.push('-loop', '1', '-framerate', '30', '-i', 'studio-overlay.png');
   }
 
   const filters: string[] = [];
@@ -104,7 +173,9 @@ export async function renderVideoSequence(
     concatInputs.push(`[v${index}]`);
     concatInputs.push(clipSources[index].hasAudio ? `[a${index}]` : `[silence${index}]`);
   }
-  filters.push(`${concatInputs.join('')}concat=n=${timelineSegments.length}:v=1:a=1[outv][outa]`);
+  filters.push(`${concatInputs.join('')}concat=n=${timelineSegments.length}:v=1:a=1[outvbase][outa]`);
+  if (overlayPng) filters.push(`[outvbase][${clipSources.length}:v:0]overlay=shortest=1:format=auto[outv]`);
+  else filters.push('[outvbase]null[outv]');
   const audioBitrate = 96;
   const videoBitrate = Math.max(
     350,
