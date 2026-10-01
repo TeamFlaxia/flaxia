@@ -470,10 +470,9 @@ media.get('/documents/*', async (c) => {
     return new Response(object.body, {
       headers: {
         'Content-Type': 'application/octet-stream',
-        'Content-Disposition': `attachment; filename="${key.split('/').pop() || 'download.bin'}"`,
         'Cache-Control': MEDIA_CACHE_CONTROL,
-        'X-Content-Type-Options': 'nosniff',
         ...MEDIA_SECURITY_HEADERS,
+        'Content-Disposition': `attachment; filename="${key.split('/').pop() || 'download.bin'}"`,
       },
     });
   } catch (error: unknown) {

@@ -113,9 +113,12 @@ describe('attachment helpers (unit)', () => {
     assert.equal(buildAttachmentKey('p1', 1, 'a.mp3'), 'audio/p1/1.mp3');
     assert.equal(buildAttachmentKey('p1', 3, 'a.mp4'), 'video/p1/3.mp4');
     assert.equal(buildAttachmentKey('p1', 1, 'a.pdf'), 'docs/p1/1.pdf');
+    assert.equal(buildAttachmentKey('p1', 1, 'photo.jpeg'), 'gif/p1/1.jpg', 'aliases are canonicalized');
     assert.equal(buildAttachmentKey('p1', MAX_ATTACHMENTS_PLUS, 'a.png'), 'gif/p1/32.png');
     assert.equal(buildAttachmentKey('p1', MAX_ATTACHMENTS_PLUS + 1, 'a.png'), null, 'position out of range');
-    assert.equal(buildAttachmentKey('p1', 1, 'a.zip'), null, 'games are not attachments');
+    for (const gameFile of ['a.zip', 'a.swf', 'index.html', 'index.htm']) {
+      assert.equal(buildAttachmentKey('p1', 1, gameFile), null, `${gameFile} is not an attachment`);
+    }
 
     const parsed = parseAttachmentKey('video/p1/4.webm');
     assert.deepEqual(parsed, { postId: 'p1', position: 4, kind: 'video', ext: '.webm' });
@@ -542,9 +545,7 @@ describe('PDF attachments (kind = document)', () => {
     ];
 
     for (const file of files) {
-      const { status, data } = await prepareFiles(cookie, [
-        { filename: file.filename, contentType: file.contentType },
-      ]);
+      const { status, data } = await prepareFiles(cookie, [{ filename: file.filename, contentType: file.contentType }]);
       assert.equal(status, 200, `prepare failed for ${file.filename}`);
       const uploads = data.uploads as Array<{ key: string; uploadUrl: string; kind: string }>;
       assert.equal(uploads[0].kind, 'document');

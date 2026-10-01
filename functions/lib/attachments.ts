@@ -22,6 +22,7 @@ export const MAX_ATTACHMENT_TOTAL_BYTES = 50 * 1024 * 1024;
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp'] as const;
 const AUDIO_EXTS = ['mp3', 'wav', 'ogg', 'm4a', 'opus'] as const;
 const VIDEO_EXTS = ['mp4', 'webm', 'mov'] as const;
+const GAME_EXTS = ['zip', 'swf', 'html', 'htm'] as const;
 
 const KIND_PREFIX: Record<AttachmentKind, string> = {
   image: 'gif',
@@ -40,19 +41,19 @@ const PREFIX_KIND = new Map<string, AttachmentKind>(
 );
 
 const EXT_MAP: Record<string, string> = {
-  png: '.png',
-  jpg: '.jpg',
-  jpeg: '.jpg',
-  gif: '.gif',
-  webp: '.webp',
-  mp3: '.mp3',
-  wav: '.wav',
-  ogg: '.ogg',
-  m4a: '.m4a',
-  opus: '.opus',
-  mp4: '.mp4',
-  webm: '.webm',
-  mov: '.mov',
+  png: 'png',
+  jpg: 'jpg',
+  jpeg: 'jpg',
+  gif: 'gif',
+  webp: 'webp',
+  mp3: 'mp3',
+  wav: 'wav',
+  ogg: 'ogg',
+  m4a: 'm4a',
+  opus: 'opus',
+  mp4: 'mp4',
+  webm: 'webm',
+  mov: 'mov',
 };
 
 /** Matches multi-media attachment keys: gif|audio|video|docs/{postId}/{1-32}{ext} */
@@ -61,7 +62,7 @@ const ATTACHMENT_KEY_RE = /^(gif|audio|video|docs)\/([^/]+)\/(\d{1,2})(\.[A-Za-z
 export function normalizeExt(filename: string): string | null {
   const ext = filename.toLowerCase().match(/\.(\w+)$/)?.[1];
   if (!ext) return 'bin';
-  return EXT_MAP[ext] || /^[a-z0-9]{1,8}$/.test(ext) ? ext : null;
+  return EXT_MAP[ext] ?? (/^[a-z0-9]{1,8}$/.test(ext) ? ext : null);
 }
 
 /**
@@ -74,6 +75,7 @@ export function normalizeExt(filename: string): string | null {
 export function kindFromUpload(filename: string, contentType?: string): AttachmentKind | null {
   const ext = filename.toLowerCase().match(/\.(\w+)$/)?.[1];
   if (!ext) return 'document';
+  if ((GAME_EXTS as readonly string[]).includes(ext)) return null;
 
   if ((IMAGE_EXTS as readonly string[]).includes(ext)) return 'image';
 
