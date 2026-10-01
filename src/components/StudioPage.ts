@@ -1207,7 +1207,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
     overlay.setAttribute('aria-label', 'Image layer composer');
-    overlay.innerHTML = `<header class="studio-composer-header"><div><b>Image composition</b><small>Drag to move · drag lower-right handle to resize · Shift keeps ratio</small></div><div><button class="studio-composer-export" type="button">Export PNG</button><button class="studio-composer-close" type="button" aria-label="Close">×</button></div></header><div class="studio-composer-layout"><div class="studio-composer-board"><div class="studio-composer-canvas-wrap"><canvas class="studio-composer-canvas" width="1080" height="1080" aria-label="Layer composition canvas"></canvas></div><div class="studio-composer-status" aria-live="polite"></div></div><aside class="studio-composer-panel"><div class="studio-composer-section"><div class="studio-composer-title">IMAGE ASSETS</div><div class="studio-composer-assets"></div></div><div class="studio-composer-section"><div class="studio-composer-title">LAYERS <button class="studio-composer-add-text" type="button">＋ Text</button><span class="studio-composer-count"></span></div><div class="studio-composer-layers"></div></div><div class="studio-composer-properties"></div></aside></div>`;
+    overlay.innerHTML = `<header class="studio-composer-header"><div><b>Image composition</b><small>Drag to move · drag lower-right handle to resize · Shift keeps ratio</small></div><div><button class="studio-composer-export" type="button">Export PNG</button><button class="studio-composer-close" type="button" aria-label="Close">×</button></div></header><div class="studio-composer-preview-controls"><label><input class="studio-composer-preview-timing" type="checkbox"> Preview video timing</label><label>Time <input class="studio-composer-preview-time" type="range" min="0" max="180" step="0.1" value="${Math.min(180, timelinePlayheadTime).toFixed(1)}"><output>${Math.min(180, timelinePlayheadTime).toFixed(1)}s</output></label></div><div class="studio-composer-layout"><div class="studio-composer-board"><div class="studio-composer-canvas-wrap"><canvas class="studio-composer-canvas" width="1080" height="1080" aria-label="Layer composition canvas"></canvas></div><div class="studio-composer-status" aria-live="polite"></div></div><aside class="studio-composer-panel"><div class="studio-composer-section"><div class="studio-composer-title">IMAGE ASSETS</div><div class="studio-composer-assets"></div></div><div class="studio-composer-section"><div class="studio-composer-title">LAYERS <button class="studio-composer-add-text" type="button">＋ Text</button><span class="studio-composer-count"></span></div><div class="studio-composer-layers"></div></div><div class="studio-composer-properties"></div></aside></div>`;
     root.appendChild(overlay);
     imageComposerOverlay = overlay;
     const canvas = overlay.querySelector<HTMLCanvasElement>('.studio-composer-canvas')!;
@@ -1216,6 +1216,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const assetList = overlay.querySelector<HTMLElement>('.studio-composer-assets')!;
     const properties = overlay.querySelector<HTMLElement>('.studio-composer-properties')!;
     const status = overlay.querySelector<HTMLElement>('.studio-composer-status')!;
+    const timingPreviewToggle = overlay.querySelector<HTMLInputElement>('.studio-composer-preview-timing')!;
+    const timingPreviewInput = overlay.querySelector<HTMLInputElement>('.studio-composer-preview-time')!;
+    const timingPreviewOutput = overlay.querySelector<HTMLOutputElement>('.studio-composer-preview-controls output')!;
     const bitmaps = new Map<number, Promise<ImageBitmap>>();
     let drag: {
       id: string;
@@ -1248,14 +1251,18 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       }
       return bitmap;
     };
-    const draw = async (withSelection = true): Promise<void> => {
+    const currentPreviewTime = (): number | null =>
+      timingPreviewToggle.checked ? Number(timingPreviewInput.value) : null;
+    const isLayerVisibleAt = (layer: StudioImageLayer, time: number | null): boolean =>
+      layer.visible && (time === null || (time >= (layer.start ?? 0) && time < (layer.end ?? Infinity)));
+    const draw = async (withSelection = true, previewTime: number | null = currentPreviewTime()): Promise<void> => {
       const revision = ++imageDrawRevision;
       if (!context) return;
       context.clearRect(0, 0, canvas.width, canvas.height);
       status.textContent = '';
       try {
         for (const layer of imageLayers) {
-          if (!layer.visible) continue;
+          if (!isLayerVisibleAt(layer, previewTime)) continue;
           if (layer.kind === 'text') {
             context.save();
             context.globalAlpha = layer.opacity;
@@ -1305,7 +1312,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           );
           context.restore();
         }
-        const selected = withSelection ? imageLayers.find((layer) => layer.id === selectedImageLayerId) : null;
+        const selected =
+          withSelection &&
+          imageLayers.find((layer) => layer.id === selectedImageLayerId && isLayerVisibleAt(layer, previewTime));
         if (selected) {
           context.save();
           context.translate(selected.x + selected.width / 2, selected.y + selected.height / 2);
@@ -1323,6 +1332,16 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         status.textContent = error instanceof Error ? error.message : 'Could not load this image';
       }
     };
+    timingPreviewInput.addEventListener('input', () => {
+      const time = Math.max(0, Math.min(180, Number(timingPreviewInput.value) || 0));
+      timingPreviewOutput.textContent = `${time.toFixed(1)}s`;
+      updateTimelinePlayhead(time);
+      if (timingPreviewToggle.checked) void draw();
+    });
+    timingPreviewToggle.addEventListener('change', () => {
+      if (timingPreviewToggle.checked) updateTimelinePlayhead(Number(timingPreviewInput.value));
+      void draw();
+    });
     const selectLayer = (layerId: string): void => {
       selectedImageLayerId = layerId;
       renderLayers();
@@ -1602,7 +1621,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     };
     canvas.addEventListener('pointerdown', (event) => {
       const point = pointerPosition(event);
-      const selected = imageLayers.find((layer) => layer.id === selectedImageLayerId && layer.visible);
+      const previewTime = currentPreviewTime();
+      const selected = imageLayers.find(
+        (layer) => layer.id === selectedImageLayerId && isLayerVisibleAt(layer, previewTime),
+      );
       if (selected) {
         const local = localPosition(selected, point);
         if (Math.abs(local.x - selected.width / 2) <= 20 && Math.abs(local.y - selected.height / 2) <= 20) {
@@ -1623,7 +1645,11 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       }
       const hit = [...imageLayers].reverse().find((layer) => {
         const local = localPosition(layer, point);
-        return layer.visible && Math.abs(local.x) <= layer.width / 2 && Math.abs(local.y) <= layer.height / 2;
+        return (
+          isLayerVisibleAt(layer, previewTime) &&
+          Math.abs(local.x) <= layer.width / 2 &&
+          Math.abs(local.y) <= layer.height / 2
+        );
       });
       if (!hit) return;
       selectLayer(hit.id);
@@ -1707,7 +1733,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     exportButton.addEventListener('click', async () => {
       if (imageLayers.length === 0) return;
       exportButton.disabled = true;
-      await draw(false);
+      await draw(false, null);
       canvas.toBlob((blob) => {
         exportButton.disabled = false;
         void draw();
@@ -2431,6 +2457,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 
 const studioCss = `
 .studio-timeline-playhead{position:absolute;z-index:4;top:0;bottom:0;width:2px;background:#f2f687;box-shadow:0 0 6px #f2f687;pointer-events:none}
+.studio-composer-preview-controls{display:flex;align-items:center;gap:16px;min-height:38px;padding:4px 18px;border-bottom:1px solid #30333a;background:#15161b;color:#aeb3bd;font-size:10px}.studio-composer-preview-controls label{display:flex;align-items:center;gap:7px;white-space:nowrap}.studio-composer-preview-controls label:last-child{flex:1}.studio-composer-preview-controls input[type=checkbox]{accent-color:#b8ef6a}.studio-composer-preview-controls input[type=range]{flex:1;min-width:80px;max-width:460px;accent-color:#b8ef6a}.studio-composer-preview-controls output{min-width:40px;color:#e9ebef;font-variant-numeric:tabular-nums}
 .studio-video-clip.muted{filter:saturate(.35);border-style:dashed}
 .studio-timeline-zoom-control{display:flex;align-items:center;gap:4px;color:var(--studio-muted);font-size:9px;white-space:nowrap}.studio-timeline-zoom-control input{width:76px;accent-color:var(--studio-accent)}.studio-timeline-zoom-control output{min-width:40px;color:#c8ccd4;font-variant-numeric:tabular-nums}
 .studio-video-trim,.studio-audio-trim{position:absolute;z-index:3;top:0;bottom:0;width:9px;background:#d9efac55;cursor:ew-resize;touch-action:none}.studio-video-trim:hover,.studio-audio-trim:hover{background:#b8ef6a}.studio-video-trim-left,.studio-audio-trim-left{left:0;border-radius:4px 0 0 4px}.studio-video-trim-right,.studio-audio-trim-right{right:0;border-radius:0 4px 4px 0}.studio-video-clip-label{display:block;position:relative;z-index:1;padding:0 11px;overflow:hidden;line-height:33px;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}
@@ -2446,7 +2473,7 @@ const studioCss = `
 .studio-composer-button{border:1px solid #536843!important;background:#273323!important;color:#d8f3c2!important}.studio-composer-overlay{position:fixed;z-index:1000;inset:0;display:flex;flex-direction:column;background:#111216;color:#eceef2;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.studio-composer-header{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:58px;padding:8px 18px;border-bottom:1px solid #30333a;background:#181a1f}.studio-composer-header>div:first-child{display:flex;flex-direction:column;gap:4px}.studio-composer-header b{font-size:13px}.studio-composer-header small{color:#9298a3;font-size:10px}.studio-composer-header>div:last-child{display:flex;gap:8px}.studio-composer-header button,.studio-composer-order button,.studio-composer-remove{border:1px solid #393d46;border-radius:5px;background:#24272e;color:#e7e9ee;padding:7px 10px;font-size:11px;cursor:pointer}.studio-composer-export{background:#b8ef6a!important;border-color:#b8ef6a!important;color:#17200f!important;font-weight:700}.studio-composer-header .studio-composer-close{width:32px;padding:2px;font-size:21px}.studio-composer-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;flex:1;min-height:0}.studio-composer-board{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;min-height:0;padding:16px;background:#101115}.studio-composer-canvas-wrap{width:min(72vw,68vh);height:min(72vw,68vh);max-width:100%;max-height:100%;background-color:#202228;background-image:linear-gradient(45deg,#2b2d34 25%,transparent 25%),linear-gradient(-45deg,#2b2d34 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#2b2d34 75%),linear-gradient(-45deg,transparent 75%,#2b2d34 75%);background-size:24px 24px;background-position:0 0,0 12px,12px -12px,-12px 0}.studio-composer-canvas{display:block;width:100%;height:100%;touch-action:none;cursor:move}.studio-composer-status{min-height:22px;padding-top:8px;color:#f0a4a4;font-size:11px}.studio-composer-panel{min-width:0;overflow:auto;padding:12px;border-left:1px solid #30333a;background:#181a1f}.studio-composer-section{margin-bottom:17px}.studio-composer-title{display:flex;justify-content:space-between;margin-bottom:8px;color:#9298a3;font-size:9px;font-weight:700;letter-spacing:.08em}.studio-composer-count{color:#c1c5cd}.studio-composer-assets,.studio-composer-layers{display:flex;flex-direction:column;gap:4px;max-height:175px;overflow:auto}.studio-composer-asset,.studio-composer-layer{display:flex;align-items:center;gap:6px;min-width:0;border:1px solid transparent;border-radius:5px;background:#202229;color:#e4e6eb;font-size:10px}.studio-composer-asset{padding:7px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}.studio-composer-asset:hover{border-color:#61764d}.studio-composer-layer{padding:3px}.studio-composer-layer.active{border-color:#b8ef6a}.studio-composer-layer-select{flex:1;min-width:0;padding:5px;border:0;background:transparent;color:inherit;text-align:left;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:10px;cursor:pointer}.studio-composer-visibility{border:0;background:transparent;color:#c2c7d0;cursor:pointer}.studio-composer-properties{padding-top:3px}.studio-composer-layer-name{margin-bottom:9px;overflow:hidden;color:#dce0e7;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.studio-composer-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}.studio-composer-grid label,.studio-composer-field{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:6px 0;color:#aeb3bd;font-size:10px}.studio-composer-grid input,.studio-composer-field input,.studio-composer-field select{width:90px;padding:5px;border:1px solid #383c46;border-radius:4px;background:#111216;color:#e9ebef;font:11px system-ui,sans-serif}.studio-composer-field select{width:125px}.studio-composer-range{display:flex;flex-wrap:wrap;justify-content:space-between;gap:5px;margin:12px 0;color:#aeb3bd;font-size:10px}.studio-composer-range input{width:100%;accent-color:#b8ef6a}.studio-composer-range output{color:#e9ebef}.studio-composer-order{display:flex;gap:6px;margin:11px 0}.studio-composer-order button{flex:1;padding:6px 4px;font-size:9px}.studio-composer-remove{width:100%;margin-top:4px;border-color:#5c3737;color:#f0b8b8}.studio-composer-properties>p{color:#9298a3;font-size:10px}
 @media(max-width:1050px){.studio-workspace{grid-template-columns:58px 190px minmax(300px,1fr)}.studio-inspector{display:none}.studio-topbar{padding:0 12px}.studio-project-name{display:none}}
 @media(max-width:768px){.studio-page{width:100%;height:calc(100dvh - var(--bottom-nav-h, 62px));min-height:420px}.studio-workspace{grid-template-columns:48px minmax(0,1fr)}.studio-assets{display:none}.studio-rail{padding:10px 3px}.studio-tool{width:42px;height:47px}.studio-topbar{height:50px;flex-basis:50px;padding:0 8px}.studio-brand{font-size:13px}.studio-top-actions{gap:4px}.studio-top-actions .studio-button{padding:7px 8px;font-size:10px}.studio-empty-art{transform:scale(.8);margin:-12px 0}.studio-empty h1{font-size:16px}.studio-empty p{max-width:260px;line-height:1.5}.studio-timeline{height:205px;max-height:44vh}.studio-timeline-head{overflow-x:auto;flex:0 0 39px}.studio-timeline-hint{display:none}.studio-timeline-head>button{flex:0 0 auto}.studio-video-workarea{max-height:62px}.studio-video-ruler{height:17px}.studio-video-ruler>span{top:2px}.studio-video-lane{min-height:40px}.studio-video-track-label{padding:13px 7px}.studio-video-lane-canvas{min-height:39px}.studio-video-clip{height:30px}.studio-track{min-height:38px}.studio-audio-workarea{max-height:95px}.studio-audio-ruler{height:17px}.studio-audio-ruler>span{top:2px}.studio-audio-lane{min-height:40px}.studio-audio-track-label{padding:13px 7px}.studio-audio-lane-canvas{min-height:39px}.studio-audio-clip{height:30px}.studio-sequence-player{inset:8% 3%;width:94%;height:84%}}
-@media(max-width:768px){.studio-composer-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) 205px}.studio-composer-board{padding:8px}.studio-composer-canvas-wrap{width:min(78vw,48vh);height:min(78vw,48vh)}.studio-composer-panel{padding:8px;border-top:1px solid #30333a;border-left:0}.studio-composer-section{margin-bottom:9px}.studio-composer-assets,.studio-composer-layers{max-height:65px}}
+@media(max-width:768px){.studio-composer-preview-controls{gap:8px;padding:5px 9px}.studio-composer-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) 205px}.studio-composer-board{padding:8px}.studio-composer-canvas-wrap{width:min(78vw,48vh);height:min(78vw,48vh)}.studio-composer-panel{padding:8px;border-top:1px solid #30333a;border-left:0}.studio-composer-section{margin-bottom:9px}.studio-composer-assets,.studio-composer-layers{max-height:65px}}
 `;
 
 if (!document.getElementById('studio-page-styles')) {
