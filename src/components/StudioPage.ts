@@ -1407,6 +1407,13 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const replaceButton = document.createElement('button');
     replaceButton.type = 'button';
     replaceButton.textContent = 'Replace';
+    const replaceAllButton = document.createElement('button');
+    replaceAllButton.type = 'button';
+    replaceAllButton.textContent = 'Replace all';
+    const replaceStatus = document.createElement('span');
+    replaceStatus.className = 'studio-code-find-status';
+    replaceStatus.style.cssText = 'color:var(--studio-muted);font-size:10px';
+    replaceStatus.setAttribute('aria-live', 'polite');
     const lineInput = document.createElement('input');
     lineInput.type = 'number';
     lineInput.min = '1';
@@ -1418,6 +1425,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     toolbar.appendChild(search);
     toolbar.appendChild(replacement);
     toolbar.appendChild(replaceButton);
+    toolbar.appendChild(replaceAllButton);
+    toolbar.appendChild(replaceStatus);
     toolbar.appendChild(lineInput);
     toolbar.appendChild(goButton);
 
@@ -1455,6 +1464,25 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       onChange();
     });
     area.addEventListener('scroll', updateGutter);
+    search.addEventListener('input', () => {
+      replaceStatus.textContent = '';
+    });
+    replaceAllButton.addEventListener('click', () => {
+      const query = search.value;
+      if (!query) return;
+      const parts = area.value.split(query);
+      const count = parts.length - 1;
+      if (count === 0) {
+        replaceStatus.textContent = 'No matches';
+        return;
+      }
+      const cursor = area.selectionStart;
+      area.value = parts.join(replacement.value);
+      const nextCursor = Math.min(cursor, area.value.length);
+      area.setSelectionRange(nextCursor, nextCursor);
+      area.dispatchEvent(new Event('input'));
+      replaceStatus.textContent = `${count} replaced`;
+    });
     area.addEventListener('keydown', (event) => {
       if (event.isComposing) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
