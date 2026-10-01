@@ -191,6 +191,27 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   videoExportButton.parentNode?.insertBefore(zoomLabel, videoExportButton.nextSibling);
   const zoomInput = zoomLabel.querySelector<HTMLInputElement>('input')!;
   const zoomOutput = zoomLabel.querySelector<HTMLOutputElement>('output')!;
+  const videoTimelineViewport = root.querySelector<HTMLElement>('.studio-video-workarea')!;
+  const audioTimelineViewport = root.querySelector<HTMLElement>('.studio-audio-workarea')!;
+  let syncedViewport: HTMLElement | null = null;
+  let syncedViewportScrollLeft = 0;
+  const syncTimelineScroll = (source: HTMLElement, target: HTMLElement): void => {
+    if (syncedViewport === source && Math.abs(source.scrollLeft - syncedViewportScrollLeft) < 1) {
+      syncedViewport = null;
+      return;
+    }
+    syncedViewport = null;
+    if (Math.abs(source.scrollLeft - target.scrollLeft) < 1) return;
+    target.scrollLeft = source.scrollLeft;
+    syncedViewport = target;
+    syncedViewportScrollLeft = target.scrollLeft;
+  };
+  videoTimelineViewport.addEventListener('scroll', () =>
+    syncTimelineScroll(videoTimelineViewport, audioTimelineViewport),
+  );
+  audioTimelineViewport.addEventListener('scroll', () =>
+    syncTimelineScroll(audioTimelineViewport, videoTimelineViewport),
+  );
   workspaceTab.addEventListener('click', () => select(-1));
   const renderDocumentTabs = (): void => {
     workspaceTab.classList.toggle('active', activeIndex < 0);
