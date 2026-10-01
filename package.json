@@ -94,6 +94,7 @@
     "katex": "^0.16.0",
     "lucide": "^0.300.0",
     "markdown-it": "^14.0.0",
+    "monaco-editor": "^0.56.0",
     "nanoid": "^5.1.6",
     "pdfjs-dist": "^6.3.289",
     "qrcode": "^1.5.4",

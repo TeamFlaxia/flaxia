@@ -1,3 +1,4 @@
+import type * as Monaco from 'monaco-editor';
 import { type AudioTimelineClip, mixAudioTimeline } from '../lib/editor/audio-mixer.ts';
 import { imageLayerOpacityAt } from '../lib/editor/image-adjustments.ts';
 import { drawStudioImageLayer } from '../lib/editor/image-layer-canvas.ts';
@@ -103,6 +104,18 @@ function highlightCode(source: string, fileName: string): string {
   return output || ' ';
 }
 
+function studioMonacoLanguage(fileName: string): string {
+  const extension = fileName.toLowerCase().split('.').pop() ?? '';
+  if (['js', 'mjs', 'cjs', 'jsx'].includes(extension)) return 'javascript';
+  if (['ts', 'tsx'].includes(extension)) return 'typescript';
+  if (['html', 'htm'].includes(extension)) return 'html';
+  if (['css', 'scss', 'less'].includes(extension)) return extension;
+  if (['json', 'jsonc'].includes(extension)) return 'json';
+  if (['md', 'markdown'].includes(extension)) return 'markdown';
+  if (['py', 'pyw'].includes(extension)) return 'python';
+  return 'plaintext';
+}
+
 function sizeLabel(bytes: number): string {
   return bytes >= 1024 * 1024
     ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
@@ -144,6 +157,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let audioTrackCount = 1;
   let mixPreviewUrl: string | null = null;
   let mixPreview: HTMLAudioElement | null = null;
+  let codeEditorCleanup: (() => void) | null = null;
   let videoSequencePlayer: HTMLVideoElement | null = null;
   let videoSequenceUrl: string | null = null;
   let videoSequenceAudio: HTMLAudioElement | null = null;
@@ -1446,6 +1460,39 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     area.wrap = 'off';
     area.setAttribute('aria-label', `Edit ${fileName}`);
     area.value = text;
+    let monacoEditor: Monaco.editor.IStandaloneCodeEditor | null = null;
+    const currentValue = (): string => monacoEditor?.getValue() ?? area.value;
+    const findNextMatch = (query: string): boolean => {
+      if (!query) return false;
+      if (!monacoEditor) {
+        const from = area.selectionEnd;
+        const found = area.value.indexOf(query, from);
+        const start = found >= 0 ? found : area.value.indexOf(query);
+        if (start < 0) return false;
+        area.focus();
+        area.setSelectionRange(start, start + query.length);
+        return true;
+      }
+      const model = monacoEditor.getModel();
+      if (!model) return false;
+      const position = monacoEditor.getPosition();
+      const from = position ? model.getOffsetAt(position) : 0;
+      const value = monacoEditor.getValue();
+      const found = value.indexOf(query, from);
+      const start = found >= 0 ? found : value.indexOf(query);
+      if (start < 0) return false;
+      const first = model.getPositionAt(start);
+      const last = model.getPositionAt(start + query.length);
+      monacoEditor.setSelection({
+        startLineNumber: first.lineNumber,
+        startColumn: first.column,
+        endLineNumber: last.lineNumber,
+        endColumn: last.column,
+      });
+      monacoEditor.revealLineInCenter(first.lineNumber);
+      monacoEditor.focus();
+      return true;
+    };
     const updateGutter = (): void => {
       const lines = area.value.split('\n').length;
       gutter.textContent = Array.from({ length: lines }, (_, index) => String(index + 1)).join('\n');
@@ -1470,17 +1517,27 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     replaceAllButton.addEventListener('click', () => {
       const query = search.value;
       if (!query) return;
-      const parts = area.value.split(query);
+      const parts = currentValue().split(query);
       const count = parts.length - 1;
       if (count === 0) {
         replaceStatus.textContent = 'No matches';
         return;
       }
-      const cursor = area.selectionStart;
-      area.value = parts.join(replacement.value);
-      const nextCursor = Math.min(cursor, area.value.length);
-      area.setSelectionRange(nextCursor, nextCursor);
-      area.dispatchEvent(new Event('input'));
+      const nextValue = parts.join(replacement.value);
+      if (monacoEditor) {
+        const model = monacoEditor.getModel();
+        if (!model) return;
+        const cursor = model.getOffsetAt(monacoEditor.getPosition() ?? { lineNumber: 1, column: 1 });
+        monacoEditor.executeEdits('studio.replaceAll', [{ range: model.getFullModelRange(), text: nextValue }]);
+        monacoEditor.setPosition(model.getPositionAt(Math.min(cursor, nextValue.length)));
+        monacoEditor.focus();
+      } else {
+        const cursor = area.selectionStart;
+        area.value = nextValue;
+        const nextCursor = Math.min(cursor, area.value.length);
+        area.setSelectionRange(nextCursor, nextCursor);
+        area.dispatchEvent(new Event('input'));
+      }
       replaceStatus.textContent = `${count} replaced`;
     });
     area.addEventListener('keydown', (event) => {
@@ -1571,7 +1628,14 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       }
     });
     goButton.addEventListener('click', () => {
-      const line = Math.max(1, Math.min(Number(lineInput.value) || 1, area.value.split('\n').length));
+      const lines = monacoEditor?.getModel()?.getLineCount() ?? currentValue().split('\n').length;
+      const line = Math.max(1, Math.min(Number(lineInput.value) || 1, lines));
+      if (monacoEditor) {
+        monacoEditor.revealLineInCenter(line);
+        monacoEditor.setPosition({ lineNumber: line, column: 1 });
+        monacoEditor.focus();
+        return;
+      }
       const offset = area.value
         .split('\n')
         .slice(0, line - 1)
@@ -1585,17 +1649,19 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     search.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' || !search.value) return;
       event.preventDefault();
-      const query = search.value;
-      const from = area.selectionEnd;
-      const found = area.value.indexOf(query, from);
-      const start = found >= 0 ? found : area.value.indexOf(query);
-      if (start >= 0) {
-        area.focus();
-        area.setSelectionRange(start, start + query.length);
-      }
+      if (!findNextMatch(search.value)) replaceStatus.textContent = 'No matches';
     });
     replaceButton.addEventListener('click', () => {
       if (!search.value) return;
+      if (monacoEditor) {
+        const selection = monacoEditor.getSelection();
+        const model = monacoEditor.getModel();
+        if (!selection || !model) return;
+        if (model.getValueInRange(selection) === search.value) {
+          monacoEditor.executeEdits('studio.replace', [{ range: selection, text: replacement.value }]);
+        } else if (!findNextMatch(search.value)) replaceStatus.textContent = 'No matches';
+        return;
+      }
       const start = area.selectionStart;
       const end = area.selectionEnd;
       if (area.value.slice(start, end) === search.value) {
@@ -1612,6 +1678,68 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     workbench.appendChild(toolbar);
     workbench.appendChild(editorRow);
     updateGutter();
+    const monacoHost = document.createElement('div');
+    monacoHost.className = 'studio-code-monaco';
+    monacoHost.style.cssText = 'width:100%;height:100%;min-height:260px';
+    void Promise.resolve()
+      .then(async () => {
+        const { loadStudioMonaco } = await import('../lib/editor/monaco-editor.ts');
+        return loadStudioMonaco();
+      })
+      .then((monaco) => {
+        if (!workbench.isConnected || destroyed) return;
+        editorRow.replaceChildren(monacoHost);
+        try {
+          monacoEditor = monaco.editor.create(monacoHost, {
+            value: area.value,
+            language: studioMonacoLanguage(fileName),
+            theme: 'vs-dark',
+            automaticLayout: true,
+            minimap: { enabled: false },
+            fontSize: 12,
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            lineNumbers: 'on',
+            scrollBeyondLastLine: false,
+            wordWrap: 'off',
+            tabSize: 2,
+            insertSpaces: true,
+            renderLineHighlight: 'line',
+            bracketPairColorization: { enabled: true },
+            guides: { bracketPairs: true, indentation: true },
+            padding: { top: 12, bottom: 12 },
+          });
+        } catch (error) {
+          editorRow.replaceChildren(gutter, surface);
+          throw error;
+        }
+        const activeEditor = monacoEditor;
+        const modelChanges = activeEditor.onDidChangeModelContent(() => {
+          editorText = activeEditor.getValue();
+          codeDirty = true;
+          saveState.textContent = 'Unsaved changes';
+          exportButton.textContent = 'Save file';
+          renderDocumentTabs();
+          onChange();
+        });
+        activeEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+          if (codeDirty) exportButton.click();
+        });
+        activeEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+          workbench.parentElement?.querySelector<HTMLButtonElement>('.studio-code-run')?.click();
+        });
+        activeEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => search.focus());
+        codeEditorCleanup = () => {
+          modelChanges.dispose();
+          activeEditor.dispose();
+          if (monacoEditor === activeEditor) monacoEditor = null;
+        };
+        activeEditor.layout();
+      })
+      .catch(() => {
+        replaceStatus.textContent = 'Monaco could not load; using the basic editor';
+        if (!editorRow.contains(area)) editorRow.replaceChildren(gutter, surface);
+        updateGutter();
+      });
     return workbench;
   };
 
@@ -2176,6 +2304,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       interacted = true;
       scheduleAutosave();
     }
+    codeEditorCleanup?.();
+    codeEditorCleanup = null;
     stopVideoSequence();
     clearUrl();
     htmlEditing = false;
@@ -2974,6 +3104,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     getElement: () => root,
     destroy: () => {
       destroyed = true;
+      codeEditorCleanup?.();
+      codeEditorCleanup = null;
       if (autosaveTimer) clearTimeout(autosaveTimer);
       mixPreview?.pause();
       if (mixPreviewUrl) URL.revokeObjectURL(mixPreviewUrl);
