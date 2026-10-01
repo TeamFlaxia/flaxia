@@ -110,13 +110,13 @@ export class PostComposer {
           <div class="composer-actions">
             <input type="file" class="composer-file-input" />
             <div class="composer-attach-group">
-              <button class="composer-file-button composer-attach-menu-toggle" type="button" title="${t('composer.attach_button')}" aria-expanded="false">＋ ${t('composer.attach_button')}</button>
+              <button class="composer-file-button composer-attach-menu-toggle" type="button" title="${t('composer.attach_button')}" aria-label="${t('composer.attach_button')}" aria-expanded="false">＋</button>
               <div class="composer-attach-menu" style="display:none;">
-                <button class="composer-file-button composer-file-button--image" type="button">${t('composer.attach_image_video')}</button>
-                <button class="composer-file-button composer-file-button--audio" type="button">${t('composer.attach_audio')}</button>
-                <button class="composer-file-button composer-file-button--game" type="button">${t('composer.attach_game')}</button>
-                <button class="composer-file-button composer-poll-button" type="button">${t('poll.toggle_button')}</button>
-                <button class="composer-file-button composer-file-button--document" type="button">${t('composer.attach_document')}</button>
+                <button class="composer-file-button composer-file-button--image" type="button"><span class="action-icon" data-icon="image-video"></span>${t('composer.attach_image_video')}</button>
+                <button class="composer-file-button composer-file-button--audio" type="button"><span class="action-icon" data-icon="audio"></span>${t('composer.attach_audio')}</button>
+                <button class="composer-file-button composer-file-button--game" type="button"><span class="action-icon" data-icon="game"></span>${t('composer.attach_game')}</button>
+                <button class="composer-file-button composer-poll-button" type="button"><span class="action-icon" data-icon="poll"></span>${t('poll.toggle_button')}</button>
+                <button class="composer-file-button composer-file-button--document" type="button"><span class="action-icon" data-icon="document"></span>${t('composer.attach_document')}</button>
               </div>
             </div>
             <button class="composer-emoji-button" type="button" title="${t('composer.emoji_button')}">
@@ -417,7 +417,10 @@ export class PostComposer {
     // File button clicks - image/video, audio, document, game
     const fileButtons = this.element.querySelectorAll('.composer-file-button[class*="composer-file-button--"]')!;
     const accepts: Record<string, string> = {
-      image: 'image/*,video/*', audio: 'audio/*', document: '*/*', game: '.zip,.swf,.rsp,.js,.wasm',
+      image: 'image/*,video/*',
+      audio: 'audio/*',
+      document: '*/*',
+      game: '.zip,.swf,.rsp,.js,.wasm',
     };
     const attachToggle = this.element.querySelector('.composer-attach-menu-toggle') as HTMLButtonElement;
     const attachMenu = this.element.querySelector('.composer-attach-menu') as HTMLElement;

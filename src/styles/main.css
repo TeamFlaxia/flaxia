@@ -2835,7 +2835,7 @@ emoji-picker {
   position: absolute;
   z-index: 20;
   left: 0;
-  bottom: calc(100% + 0.5rem);
+  top: calc(100% + 0.5rem);
   min-width: 180px;
   padding: 0.35rem;
   border: 1px solid var(--border);
@@ -2861,6 +2861,15 @@ emoji-picker {
   border-radius: 6px;
   color: var(--text-primary);
   font-size: 0.875rem;
+}
+
+.composer-attach-menu .action-icon {
+  display: inline-flex;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin-right: 0.55rem;
+  color: var(--accent);
 }
 
 .composer-file-button:hover {
