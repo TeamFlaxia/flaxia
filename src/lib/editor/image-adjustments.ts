@@ -8,6 +8,18 @@ export function imageLayerCanvasFilter(layer: StudioImageLayer): string {
   return `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%)`;
 }
 
+/** Return the layer opacity at a timeline time, including its optional video fades. */
+export function imageLayerOpacityAt(layer: StudioImageLayer, time: number, duration = Infinity): number {
+  const start = layer.start ?? 0;
+  const end = Math.min(layer.end ?? duration, duration);
+  const fadeIn = Math.max(0, layer.fadeIn ?? 0);
+  const fadeOut = Math.max(0, layer.fadeOut ?? 0);
+  let opacity = layer.opacity;
+  if (fadeIn > 0) opacity *= Math.max(0, Math.min(1, (time - start) / fadeIn));
+  if (fadeOut > 0) opacity *= Math.max(0, Math.min(1, (end - time) / fadeOut));
+  return Math.max(0, Math.min(1, opacity));
+}
+
 /** Map a normalized, non-destructive crop rectangle to source bitmap pixels. */
 export function imageLayerSourceRect(
   layer: StudioImageLayer,

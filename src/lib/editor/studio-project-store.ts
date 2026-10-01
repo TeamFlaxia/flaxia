@@ -72,6 +72,8 @@ export interface StudioImageLayer {
   cropHeight?: number;
   start?: number;
   end?: number;
+  fadeIn?: number;
+  fadeOut?: number;
   visible: boolean;
   blend: 'normal' | 'multiply' | 'screen';
   text?: string;
@@ -311,6 +313,14 @@ function decodeFiles(plaintext: Uint8Array): {
           typeof layer.end === 'number' && Number.isFinite(layer.end)
             ? Math.max(start + 0.1, Math.min(14_400, layer.end))
             : undefined,
+        fadeIn:
+          typeof layer.fadeIn === 'number' && Number.isFinite(layer.fadeIn)
+            ? Math.max(0, Math.min(30, layer.fadeIn))
+            : 0,
+        fadeOut:
+          typeof layer.fadeOut === 'number' && Number.isFinite(layer.fadeOut)
+            ? Math.max(0, Math.min(30, layer.fadeOut))
+            : 0,
         rotation: Number.isFinite(layer.rotation) ? Math.max(-3600, Math.min(3600, layer.rotation)) : 0,
       };
     });

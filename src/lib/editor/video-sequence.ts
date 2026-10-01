@@ -27,6 +27,8 @@ interface TimedOverlay {
   data: Uint8Array;
   start: number;
   end: number;
+  fadeIn: number;
+  fadeOut: number;
 }
 
 async function renderLayerOverlayFrame(
@@ -97,46 +99,40 @@ async function renderTimedLayerOverlays(
   layers: StudioImageLayer[],
   duration: number,
 ): Promise<TimedOverlay[]> {
-  const visibleLayers = layers.filter(
-    (layer) => layer.visible && (layer.start ?? 0) < duration && (layer.end ?? duration) > 0,
-  );
+  const visibleLayers = layers
+    .filter((layer) => layer.visible && (layer.start ?? 0) < duration && (layer.end ?? duration) > 0)
+    .map((layer, index) => {
+      const start = Math.max(0, layer.start ?? 0);
+      const end = Math.min(duration, layer.end ?? duration);
+      return {
+        layer,
+        start,
+        end,
+        fadeIn: Math.min(Math.max(0, layer.fadeIn ?? 0), end - start),
+        fadeOut: Math.min(Math.max(0, layer.fadeOut ?? 0), end - start),
+        name: `studio-overlay-${index}.png`,
+      };
+    })
+    .filter((overlay) => overlay.end > overlay.start);
   if (visibleLayers.length === 0) return [];
   const bitmaps = new Map<number, ImageBitmap>();
   try {
-    for (const layer of visibleLayers) {
+    for (const { layer } of visibleLayers) {
       if (layer.kind !== 'image' || bitmaps.has(layer.fileIndex)) continue;
       const file = files[layer.fileIndex];
       if (!file || !file.type.startsWith('image/')) throw new Error('A video overlay layer is not an image');
       bitmaps.set(layer.fileIndex, await createImageBitmap(file));
     }
-    const boundaries = [
-      ...new Set([
-        0,
-        duration,
-        ...visibleLayers.flatMap((layer) => [
-          Math.max(0, Math.min(duration, layer.start ?? 0)),
-          Math.max(0, Math.min(duration, layer.end ?? duration)),
-        ]),
-      ]),
-    ].sort((left, right) => left - right);
-    const overlays: TimedOverlay[] = [];
-    for (let index = 0; index < boundaries.length - 1; index++) {
-      const start = boundaries[index];
-      const end = boundaries[index + 1];
-      if (end - start <= 0.001) continue;
-      const midpoint = start + (end - start) / 2;
-      const active = visibleLayers.filter(
-        (layer) => midpoint >= (layer.start ?? 0) && midpoint < (layer.end ?? duration),
-      );
-      if (active.length === 0) continue;
-      overlays.push({
-        name: `studio-overlay-${overlays.length}.png`,
-        data: await renderLayerOverlayFrame(active, bitmaps),
+    return Promise.all(
+      visibleLayers.map(async ({ layer, start, end, fadeIn, fadeOut, name }) => ({
+        name,
+        data: await renderLayerOverlayFrame([layer], bitmaps),
         start,
         end,
-      });
-    }
-    return overlays;
+        fadeIn,
+        fadeOut,
+      })),
+    );
   } finally {
     for (const bitmap of bitmaps.values()) bitmap.close();
   }
@@ -262,10 +258,21 @@ export async function renderVideoSequence(
     let inputLabel = 'outvbase';
     overlays.forEach((overlay, index) => {
       const outputLabel = index === overlays.length - 1 ? 'outv' : `outv${index}`;
+      const overlayLabel = `overlay-source-${index}`;
       const enable = `gte(t,${overlay.start.toFixed(3)})*lt(t,${overlay.end.toFixed(3)})`;
+      const fades: string[] = [];
+      if (overlay.fadeIn > 0) {
+        fades.push(`fade=t=in:st=${overlay.start.toFixed(3)}:d=${overlay.fadeIn.toFixed(3)}:alpha=1`);
+      }
+      if (overlay.fadeOut > 0) {
+        fades.push(
+          `fade=t=out:st=${Math.max(overlay.start, overlay.end - overlay.fadeOut).toFixed(3)}:d=${overlay.fadeOut.toFixed(3)}:alpha=1`,
+        );
+      }
       filters.push(
-        `[${inputLabel}][${clipSources.length + index}:v:0]overlay=shortest=1:format=auto:enable='${enable}'[${outputLabel}]`,
+        `[${clipSources.length + index}:v:0]format=rgba,setpts=PTS-STARTPTS${fades.length > 0 ? `,${fades.join(',')}` : ''}[${overlayLabel}]`,
       );
+      filters.push(`[${inputLabel}][${overlayLabel}]overlay=shortest=1:format=auto:enable='${enable}'[${outputLabel}]`);
       inputLabel = outputLabel;
     });
   }
