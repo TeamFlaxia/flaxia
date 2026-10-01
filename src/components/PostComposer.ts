@@ -108,24 +108,17 @@ export class PostComposer {
         <div class="composer-divider"></div>
         <div class="composer-footer">
           <div class="composer-actions">
-            <input type="file" class="composer-file-input" accept=".js,.wasm,.html,.gif,.png,.jpg,.jpeg,.mp3,.wav,.ogg,.m4a,.webm,.mp4,.mov,.zip,.swf,.pdf" />
+            <input type="file" class="composer-file-input" />
             <div class="composer-attach-group">
-              <button class="composer-file-button composer-file-button--image" type="button" title="${t('composer.attach_image_video')}">
-                <span class="action-icon" data-icon="image-video"></span>
-              </button>
-              <button class="composer-file-button composer-file-button--audio" type="button" title="${t('composer.attach_audio')}">
-                <span class="action-icon" data-icon="audio"></span>
-              </button>
-              <button class="composer-file-button composer-file-button--document" type="button" title="${t('composer.attach_document')}">
-                <span class="action-icon" data-icon="document"></span>
-              </button>
-              <button class="composer-file-button composer-file-button--game" type="button" title="${t('composer.attach_game')}">
-                <span class="action-icon" data-icon="game"></span>
-              </button>
+              <button class="composer-file-button composer-attach-menu-toggle" type="button" title="${t('composer.attach_button')}" aria-expanded="false">＋ ${t('composer.attach_button')}</button>
+              <div class="composer-attach-menu" style="display:none;">
+                <button class="composer-file-button composer-file-button--image" type="button">${t('composer.attach_image_video')}</button>
+                <button class="composer-file-button composer-file-button--audio" type="button">${t('composer.attach_audio')}</button>
+                <button class="composer-file-button composer-file-button--game" type="button">${t('composer.attach_game')}</button>
+                <button class="composer-file-button composer-poll-button" type="button">${t('poll.toggle_button')}</button>
+                <button class="composer-file-button composer-file-button--document" type="button">${t('composer.attach_document')}</button>
+              </div>
             </div>
-            <button class="composer-poll-button" type="button" title="${t('poll.toggle_button')}">
-              <span class="action-icon" data-icon="poll"></span>
-            </button>
             <button class="composer-emoji-button" type="button" title="${t('composer.emoji_button')}">
               <span class="action-icon" data-icon="emoji"></span>
             </button>
@@ -422,13 +415,23 @@ export class PostComposer {
     });
 
     // File button clicks - image/video, audio, document, game
-    const fileButtons = this.element.querySelectorAll('.composer-file-button')!;
+    const fileButtons = this.element.querySelectorAll('.composer-file-button[class*="composer-file-button--"]')!;
     const accepts: Record<string, string> = {
-      image: '.gif,.png,.jpg,.jpeg,.webm,.mp4,.mov',
-      audio: '.mp3,.wav,.ogg,.m4a',
-      document: '.pdf',
-      game: '.zip,.swf,.rsp,.js,.wasm',
+      image: 'image/*,video/*', audio: 'audio/*', document: '*/*', game: '.zip,.swf,.rsp,.js,.wasm',
     };
+    const attachToggle = this.element.querySelector('.composer-attach-menu-toggle') as HTMLButtonElement;
+    const attachMenu = this.element.querySelector('.composer-attach-menu') as HTMLElement;
+    attachToggle.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const open = attachMenu.style.display !== 'block';
+      attachMenu.style.display = open ? 'block' : 'none';
+      attachToggle.setAttribute('aria-expanded', String(open));
+    });
+    this.element.querySelector('.composer-poll-button')?.addEventListener('click', () => {
+      attachMenu.style.display = 'none';
+      attachToggle.setAttribute('aria-expanded', 'false');
+      this.togglePollSection();
+    });
     fileButtons.forEach((btn) => {
       const btnEl = btn as HTMLElement;
       btnEl.addEventListener('click', () => {
@@ -437,6 +440,8 @@ export class PostComposer {
         const slot = /composer-file-button--([a-z]+)/.exec(btnEl.className)?.[1] ?? 'image';
         const accept = accepts[slot] ?? accepts.image;
         this.fileInput.accept = accept;
+        attachMenu.style.display = 'none';
+        attachToggle.setAttribute('aria-expanded', 'false');
         // Media picks are multi-select; games remain a single file
         this.fileInput.multiple = slot !== 'game';
         this.fileInput.click();
@@ -488,12 +493,6 @@ export class PostComposer {
     // Submit button
     this.submitButton.addEventListener('click', () => {
       this.handleSubmit();
-    });
-
-    // Poll button toggle
-    const pollButton = this.element.querySelector('.composer-poll-button')!;
-    pollButton.addEventListener('click', () => {
-      this.togglePollSection();
     });
 
     // Emoji picker button
@@ -837,31 +836,6 @@ export class PostComposer {
   private validateFile(file: File): { valid: boolean; error?: string } {
     // Size is enforced at submit time (and by the server on upload) so users
     // can attach an oversized file and compress it in the editor first.
-
-    // Check file extension
-    const ext = file.name.toLowerCase().split('.').pop();
-    const allowedExts = [
-      'gif',
-      'jpg',
-      'jpeg',
-      'png',
-      'swf',
-      'js',
-      'wasm',
-      'zip',
-      'rsp',
-      'mp3',
-      'wav',
-      'ogg',
-      'm4a',
-      'webm',
-      'mp4',
-      'mov',
-    ];
-
-    if (!ext || !allowedExts.includes(ext)) {
-      return { valid: false, error: t('composer.error_unsupported_type') };
-    }
 
     return { valid: true };
   }
@@ -2010,7 +1984,7 @@ export class PostComposer {
             filename: file.name,
             // Some browsers report an empty File.type for PDFs, so fall back to
             // the attachment MIME map before the generic zip-oriented one.
-            contentType: file.type || attachmentMimeType(file.name) || getMimeType(file.name) || undefined,
+            contentType: file.type || attachmentMimeType(file.name) || 'application/octet-stream',
           })),
         }),
       });

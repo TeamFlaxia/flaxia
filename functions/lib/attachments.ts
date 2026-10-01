@@ -22,7 +22,6 @@ export const MAX_ATTACHMENT_TOTAL_BYTES = 50 * 1024 * 1024;
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp'] as const;
 const AUDIO_EXTS = ['mp3', 'wav', 'ogg', 'm4a', 'opus'] as const;
 const VIDEO_EXTS = ['mp4', 'webm', 'mov'] as const;
-const DOCUMENT_EXTS = ['pdf'] as const;
 
 const KIND_PREFIX: Record<AttachmentKind, string> = {
   image: 'gif',
@@ -54,7 +53,6 @@ const EXT_MAP: Record<string, string> = {
   mp4: '.mp4',
   webm: '.webm',
   mov: '.mov',
-  pdf: '.pdf',
 };
 
 /** Matches multi-media attachment keys: gif|audio|video|docs/{postId}/{1-32}{ext} */
@@ -62,19 +60,20 @@ const ATTACHMENT_KEY_RE = /^(gif|audio|video|docs)\/([^/]+)\/(\d{1,2})(\.[A-Za-z
 
 export function normalizeExt(filename: string): string | null {
   const ext = filename.toLowerCase().match(/\.(\w+)$/)?.[1];
-  if (!ext) return null;
-  return EXT_MAP[ext] ? ext : null;
+  if (!ext) return 'bin';
+  return EXT_MAP[ext] || /^[a-z0-9]{1,8}$/.test(ext) ? ext : null;
 }
 
 /**
- * Resolve the attachment kind for an upload. Returns null when the file type
- * is not allowed (html, swf, zip, js, unknown, ...).
+ * Resolve the attachment kind for an upload. Unrecognized extensions use the
+ * document slot and are served as downloads; executable game formats retain
+ * their dedicated legacy flow in the composer.
  *
  * `contentType` disambiguates .webm (audio vs video).
  */
 export function kindFromUpload(filename: string, contentType?: string): AttachmentKind | null {
   const ext = filename.toLowerCase().match(/\.(\w+)$/)?.[1];
-  if (!ext) return null;
+  if (!ext) return 'document';
 
   if ((IMAGE_EXTS as readonly string[]).includes(ext)) return 'image';
 
@@ -84,8 +83,7 @@ export function kindFromUpload(filename: string, contentType?: string): Attachme
 
   if ((AUDIO_EXTS as readonly string[]).includes(ext)) return 'audio';
   if ((VIDEO_EXTS as readonly string[]).includes(ext)) return 'video';
-  if ((DOCUMENT_EXTS as readonly string[]).includes(ext)) return 'document';
-  return null;
+  return 'document';
 }
 
 export function buildAttachmentKey(
@@ -101,7 +99,7 @@ export function buildAttachmentKey(
   const ext = normalizeExt(filename);
   if (!ext) return null;
   if (!Number.isInteger(position) || position < 1 || position > MAX_ATTACHMENTS_PLUS) return null;
-  return `${KIND_PREFIX[kind]}/${postId}/${position}.${ext}`;
+  return `${KIND_PREFIX[kind]}/${postId}/${position}.${ext || 'bin'}`;
 }
 
 export function parseAttachmentKey(

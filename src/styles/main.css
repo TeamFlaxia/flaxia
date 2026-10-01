@@ -2825,9 +2825,42 @@ emoji-picker {
 }
 
 .composer-attach-group {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0.125rem;
+}
+
+.composer-attach-menu {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  bottom: calc(100% + 0.5rem);
+  min-width: 180px;
+  padding: 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-primary);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 18%);
+}
+
+.composer-attach-menu-toggle {
+  width: auto;
+  min-width: 36px;
+  padding: 0 0.65rem;
+  border-radius: 9999px;
+  white-space: nowrap;
+}
+
+.composer-attach-menu .composer-file-button {
+  width: 100%;
+  height: auto;
+  min-height: 36px;
+  justify-content: flex-start;
+  padding: 0.45rem 0.65rem;
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 0.875rem;
 }
 
 .composer-file-button:hover {

@@ -61,7 +61,7 @@ export function detectAttachKind(file: File): AttachPreviewKind | null {
   if (name.endsWith('.pdf')) {
     return 'document';
   }
-  return null;
+  return 'document';
 }
 
 /**
@@ -167,7 +167,10 @@ export function renderFilePreview(file: File, previewContainer: HTMLElement): At
     openBtn.className = 'file-preview-doc-open';
     openBtn.textContent = t('composer.preview_open_document');
     openBtn.addEventListener('click', () => {
-      window.open(url, '_blank', 'noopener,noreferrer');
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = file.name;
+      link.click();
     });
 
     chip.appendChild(icon);

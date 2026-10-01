@@ -59,7 +59,7 @@ function mimeMatchesAttachmentKind(kind: AttachmentKind, mime: string): boolean 
     case 'video':
       return mime.startsWith('video/');
     case 'document':
-      return mime === 'application/pdf';
+      return true;
   }
 }
 
@@ -153,8 +153,14 @@ media.put('/upload/*', requireAuth, async (c) => {
       return c.json({ error: 'Storage not available' }, 500);
     }
 
-    // Validate magic bytes against declared content type
-    const detectedMime = detectMimeType(fileData);
+    // Validate magic bytes against declared content type. Document formats can
+    // use browser MIME values that differ from their container signature (for
+    // example, office files are ZIP containers), and unknown formats have no
+    // signature to compare. Their extension, magic-byte, and blocklist checks
+    // still run below.
+    const sniffedMime = detectMimeType(fileData);
+    const isDocumentAttachment = attachment?.kind === 'document';
+    const detectedMime = sniffedMime ?? (isDocumentAttachment ? 'application/octet-stream' : null);
     if (!detectedMime) {
       return c.json({ error: 'Unrecognized file format. Magic bytes do not match any allowed type.' }, 400);
     }
@@ -164,6 +170,7 @@ media.put('/upload/*', requireAuth, async (c) => {
       !detectedMime.startsWith('audio/') &&
       !detectedMime.startsWith('video/') &&
       detectedMime !== 'application/pdf' &&
+      detectedMime !== 'application/octet-stream' &&
       detectedMime !== 'application/zip' &&
       detectedMime !== 'application/x-shockwave-flash' &&
       detectedMime !== 'text/html'
@@ -201,7 +208,7 @@ media.put('/upload/*', requireAuth, async (c) => {
     // extraction and the synchronous blocklist match. A hit never reaches R2.
     const verdict = await scanUploadSync(c.env.DB, {
       bytes: fileData,
-      declaredType: declaredContentType,
+      declaredType: isDocumentAttachment ? undefined : declaredContentType,
       name: key,
       r2Key: key,
       detectedMime,
@@ -412,12 +419,10 @@ media.get('/video/*', async (c) => {
   }
 });
 
-// GET /api/documents/* - proxy PDF attachments from R2
+// GET /api/documents/* - download file attachments from R2
 //
-// Content-Type is forced to application/pdf so the browser's built-in viewer
-// takes over when the link is opened in a new tab. Forcing it means the key
-// must be validated first, so a png/swf/html key requested through this route
-// can never be served as a PDF.
+// Content-Disposition forces downloads, keeping arbitrary uploaded formats
+// away from the main origin's document renderer.
 //
 // Framing stays denied (X-Frame-Options: DENY from MEDIA_SECURITY_HEADERS):
 // the timeline opens documents as top-level tabs, and a PDF framed inside a
@@ -456,7 +461,21 @@ media.get('/documents/*', async (c) => {
       return c.json({ error: 'Document not found' }, 404);
     }
 
-    return handleRangeRequest(c, key, object, 'application/pdf');
+    // Preserve inline PDF viewing and partial-content support. Other document
+    // attachments always download as opaque bytes.
+    if (key.toLowerCase().endsWith('.pdf')) {
+      return handleRangeRequest(c, key, object, 'application/pdf');
+    }
+
+    return new Response(object.body, {
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        'Content-Disposition': `attachment; filename="${key.split('/').pop() || 'download.bin'}"`,
+        'Cache-Control': MEDIA_CACHE_CONTROL,
+        'X-Content-Type-Options': 'nosniff',
+        ...MEDIA_SECURITY_HEADERS,
+      },
+    });
   } catch (error: unknown) {
     console.error('Document proxy error:', error);
     return c.json({ error: 'Failed to fetch document' }, 500);

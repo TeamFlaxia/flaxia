@@ -3,6 +3,7 @@ import { createAudioPlayer } from './AudioPlayer.js';
 import { createDocumentViewer } from './DocumentViewer.js';
 import { createImagePreview } from './ImagePreview.js';
 import { createVideoPlayer } from './VideoPlayer.js';
+import { t } from '../lib/i18n.js';
 
 export interface MediaCarouselProps {
   postId: string;
@@ -60,7 +61,16 @@ export function createMediaCarousel(props: MediaCarouselProps): HTMLElement {
     } else if (att.kind === 'video') {
       slide.appendChild(createVideoPlayer({ gifKey: att.r2_key, postId: props.postId }));
     } else if (att.kind === 'document') {
-      slide.appendChild(createDocumentViewer({ r2Key: att.r2_key }));
+      if (att.r2_key.toLowerCase().endsWith('.pdf')) {
+        slide.appendChild(createDocumentViewer({ r2Key: att.r2_key }));
+      } else {
+        const link = document.createElement('a');
+        link.className = 'file-preview-doc-chip';
+        link.href = attachmentUrl(att);
+        link.textContent = `📄 ${att.r2_key.split('/').pop() || 'file'} · ${t('composer.download_file')}`;
+        link.setAttribute('download', '');
+        slide.appendChild(link);
+      }
     } else {
       slide.appendChild(createAudioPlayer({ gifKey: att.r2_key, postId: props.postId }));
     }

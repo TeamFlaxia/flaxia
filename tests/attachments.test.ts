@@ -533,6 +533,31 @@ describe('PUT /api/upload/:key — attachment ownership', () => {
 describe('PDF attachments (kind = document)', () => {
   beforeEach(resetDb);
 
+  it('uploads and serves text, CSV, and JSON files with browser-declared MIME types', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const files = [
+      { filename: 'notes.txt', contentType: 'text/plain', bytes: Buffer.from('plain text attachment\n') },
+      { filename: 'table.csv', contentType: 'text/csv', bytes: Buffer.from('name,count\nalpha,2\n') },
+      { filename: 'data.json', contentType: 'application/json', bytes: Buffer.from('{"ok":true}\n') },
+    ];
+
+    for (const file of files) {
+      const { status, data } = await prepareFiles(cookie, [
+        { filename: file.filename, contentType: file.contentType },
+      ]);
+      assert.equal(status, 200, `prepare failed for ${file.filename}`);
+      const uploads = data.uploads as Array<{ key: string; uploadUrl: string; kind: string }>;
+      assert.equal(uploads[0].kind, 'document');
+      assert.equal(await putBytes(uploads[0].uploadUrl, cookie, file.bytes, file.contentType), 200);
+
+      const download = await fetch(`${BASE_URL}/api/documents/${uploads[0].key}`);
+      assert.equal(download.status, 200, `download failed for ${file.filename}`);
+      assert.equal(download.headers.get('content-type'), 'application/octet-stream');
+      assert.match(download.headers.get('content-disposition') || '', /attachment/);
+      assert.deepEqual(Buffer.from(await download.arrayBuffer()), file.bytes);
+    }
+  });
+
   it('prepares, uploads, commits and serves a PDF → 201', async () => {
     const { cookie } = await seedUserAndLogin('1');
 
