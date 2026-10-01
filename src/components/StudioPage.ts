@@ -789,7 +789,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
     overlay.setAttribute('aria-label', 'Image layer composer');
-    overlay.innerHTML = `<header class="studio-composer-header"><div><b>Image composition</b><small>1080 × 1080 transparent canvas · drag layers to position</small></div><div><button class="studio-composer-export" type="button">Export PNG</button><button class="studio-composer-close" type="button" aria-label="Close">×</button></div></header><div class="studio-composer-layout"><div class="studio-composer-board"><div class="studio-composer-canvas-wrap"><canvas class="studio-composer-canvas" width="1080" height="1080" aria-label="Layer composition canvas"></canvas></div><div class="studio-composer-status" aria-live="polite"></div></div><aside class="studio-composer-panel"><div class="studio-composer-section"><div class="studio-composer-title">IMAGE ASSETS</div><div class="studio-composer-assets"></div></div><div class="studio-composer-section"><div class="studio-composer-title">LAYERS <button class="studio-composer-add-text" type="button">＋ Text</button><span class="studio-composer-count"></span></div><div class="studio-composer-layers"></div></div><div class="studio-composer-properties"></div></aside></div>`;
+    overlay.innerHTML = `<header class="studio-composer-header"><div><b>Image composition</b><small>Drag to move · drag lower-right handle to resize · Shift keeps ratio</small></div><div><button class="studio-composer-export" type="button">Export PNG</button><button class="studio-composer-close" type="button" aria-label="Close">×</button></div></header><div class="studio-composer-layout"><div class="studio-composer-board"><div class="studio-composer-canvas-wrap"><canvas class="studio-composer-canvas" width="1080" height="1080" aria-label="Layer composition canvas"></canvas></div><div class="studio-composer-status" aria-live="polite"></div></div><aside class="studio-composer-panel"><div class="studio-composer-section"><div class="studio-composer-title">IMAGE ASSETS</div><div class="studio-composer-assets"></div></div><div class="studio-composer-section"><div class="studio-composer-title">LAYERS <button class="studio-composer-add-text" type="button">＋ Text</button><span class="studio-composer-count"></span></div><div class="studio-composer-layers"></div></div><div class="studio-composer-properties"></div></aside></div>`;
     root.appendChild(overlay);
     imageComposerOverlay = overlay;
     const canvas = overlay.querySelector<HTMLCanvasElement>('.studio-composer-canvas')!;
@@ -799,7 +799,16 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const properties = overlay.querySelector<HTMLElement>('.studio-composer-properties')!;
     const status = overlay.querySelector<HTMLElement>('.studio-composer-status')!;
     const bitmaps = new Map<number, Promise<ImageBitmap>>();
-    let drag: { id: string; dx: number; dy: number } | null = null;
+    let drag: {
+      id: string;
+      mode: 'move' | 'resize';
+      dx: number;
+      dy: number;
+      startX: number;
+      startY: number;
+      startWidth: number;
+      startHeight: number;
+    } | null = null;
     const close = (): void => {
       imageDrawRevision++;
       for (const bitmapPromise of bitmaps.values()) {
@@ -835,6 +844,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
             context.globalCompositeOperation = layer.blend === 'normal' ? 'source-over' : layer.blend;
             context.translate(layer.x + layer.width / 2, layer.y + layer.height / 2);
             context.rotate((layer.rotation * Math.PI) / 180);
+            context.beginPath();
+            context.rect(-layer.width / 2, -layer.height / 2, layer.width, layer.height);
+            context.clip();
             const fontSize = layer.fontSize ?? 72;
             context.fillStyle = layer.color ?? '#ffffff';
             context.font = `${fontSize}px ${layer.fontFamily ?? 'sans-serif'}`;
@@ -872,6 +884,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           context.lineWidth = 2;
           context.setLineDash([8, 5]);
           context.strokeRect(-selected.width / 2, -selected.height / 2, selected.width, selected.height);
+          context.setLineDash([]);
+          context.fillStyle = '#b8ef6a';
+          context.fillRect(selected.width / 2 - 7, selected.height / 2 - 7, 14, 14);
           context.restore();
         }
       } catch (error) {
@@ -1081,32 +1096,108 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         y: ((event.clientY - rect.top) / rect.height) * canvas.height,
       };
     };
+    const localPosition = (layer: StudioImageLayer, point: { x: number; y: number }): { x: number; y: number } => {
+      const dx = point.x - (layer.x + layer.width / 2);
+      const dy = point.y - (layer.y + layer.height / 2);
+      const angle = (-layer.rotation * Math.PI) / 180;
+      return { x: dx * Math.cos(angle) - dy * Math.sin(angle), y: dx * Math.sin(angle) + dy * Math.cos(angle) };
+    };
     canvas.addEventListener('pointerdown', (event) => {
       const point = pointerPosition(event);
+      const selected = imageLayers.find((layer) => layer.id === selectedImageLayerId && layer.visible);
+      if (selected) {
+        const local = localPosition(selected, point);
+        if (Math.abs(local.x - selected.width / 2) <= 20 && Math.abs(local.y - selected.height / 2) <= 20) {
+          drag = {
+            id: selected.id,
+            mode: 'resize',
+            dx: point.x,
+            dy: point.y,
+            startX: selected.x,
+            startY: selected.y,
+            startWidth: selected.width,
+            startHeight: selected.height,
+          };
+          canvas.setPointerCapture(event.pointerId);
+          event.preventDefault();
+          return;
+        }
+      }
       const hit = [...imageLayers].reverse().find((layer) => {
-        const dx = point.x - (layer.x + layer.width / 2);
-        const dy = point.y - (layer.y + layer.height / 2);
-        const angle = (-layer.rotation * Math.PI) / 180;
-        const x = dx * Math.cos(angle) - dy * Math.sin(angle);
-        const y = dx * Math.sin(angle) + dy * Math.cos(angle);
-        return layer.visible && Math.abs(x) <= layer.width / 2 && Math.abs(y) <= layer.height / 2;
+        const local = localPosition(layer, point);
+        return layer.visible && Math.abs(local.x) <= layer.width / 2 && Math.abs(local.y) <= layer.height / 2;
       });
       if (!hit) return;
       selectLayer(hit.id);
-      drag = { id: hit.id, dx: point.x - hit.x, dy: point.y - hit.y };
+      drag = {
+        id: hit.id,
+        mode: 'move',
+        dx: point.x - hit.x,
+        dy: point.y - hit.y,
+        startX: hit.x,
+        startY: hit.y,
+        startWidth: hit.width,
+        startHeight: hit.height,
+      };
       canvas.setPointerCapture(event.pointerId);
     });
     canvas.addEventListener('pointermove', (event) => {
-      if (!drag) return;
+      if (!drag) {
+        const selected = imageLayers.find((layer) => layer.id === selectedImageLayerId && layer.visible);
+        if (selected) {
+          const local = localPosition(selected, pointerPosition(event));
+          canvas.style.cursor =
+            Math.abs(local.x - selected.width / 2) <= 20 && Math.abs(local.y - selected.height / 2) <= 20
+              ? 'nwse-resize'
+              : 'move';
+        }
+        return;
+      }
       const layer = imageLayers.find((item) => item.id === drag?.id);
       if (!layer) return;
       const point = pointerPosition(event);
-      layer.x = Math.round(point.x - drag.dx);
-      layer.y = Math.round(point.y - drag.dy);
+      if (drag.mode === 'move') {
+        layer.x = Math.round(point.x - drag.dx);
+        layer.y = Math.round(point.y - drag.dy);
+      } else {
+        const local = localPosition(layer, point);
+        const startLocal = localPosition(layer, { x: drag.dx, y: drag.dy });
+        let width = Math.max(8, Math.min(4096, drag.startWidth + local.x - startLocal.x));
+        let height = Math.max(8, Math.min(4096, drag.startHeight + local.y - startLocal.y));
+        if (event.shiftKey) {
+          const ratio = drag.startWidth / drag.startHeight;
+          if (Math.abs(width - drag.startWidth) >= Math.abs(height - drag.startHeight))
+            height = Math.max(8, Math.min(4096, width / ratio));
+          else width = Math.max(8, Math.min(4096, height * ratio));
+        }
+        const radians = (layer.rotation * Math.PI) / 180;
+        const fixedX =
+          drag.startX +
+          drag.startWidth / 2 -
+          (Math.cos(radians) * drag.startWidth) / 2 +
+          (Math.sin(radians) * drag.startHeight) / 2;
+        const fixedY =
+          drag.startY +
+          drag.startHeight / 2 -
+          (Math.sin(radians) * drag.startWidth) / 2 -
+          (Math.cos(radians) * drag.startHeight) / 2;
+        layer.width = Math.round(width);
+        layer.height = Math.round(height);
+        layer.x = Math.round(
+          fixedX - layer.width / 2 + (Math.cos(radians) * layer.width) / 2 - (Math.sin(radians) * layer.height) / 2,
+        );
+        layer.y = Math.round(
+          fixedY - layer.height / 2 + (Math.sin(radians) * layer.width) / 2 + (Math.cos(radians) * layer.height) / 2,
+        );
+      }
       const x = properties.querySelector<HTMLInputElement>('[data-prop="x"]');
       const y = properties.querySelector<HTMLInputElement>('[data-prop="y"]');
+      const width = properties.querySelector<HTMLInputElement>('[data-prop="width"]');
+      const height = properties.querySelector<HTMLInputElement>('[data-prop="height"]');
       if (x) x.value = String(layer.x);
       if (y) y.value = String(layer.y);
+      if (width) width.value = String(Math.round(layer.width));
+      if (height) height.value = String(Math.round(layer.height));
       void draw();
     });
     canvas.addEventListener('pointerup', () => {

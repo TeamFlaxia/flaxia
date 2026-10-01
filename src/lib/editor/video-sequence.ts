@@ -37,6 +37,9 @@ async function renderLayerOverlay(files: File[], layers: StudioImageLayer[]): Pr
     context.translate(280 + (layer.x + layer.width / 2) * scale, (layer.y + layer.height / 2) * scale);
     context.rotate((layer.rotation * Math.PI) / 180);
     if (layer.kind === 'text') {
+      context.beginPath();
+      context.rect((-layer.width * scale) / 2, (-layer.height * scale) / 2, layer.width * scale, layer.height * scale);
+      context.clip();
       const fontSize = (layer.fontSize ?? 72) * scale;
       context.fillStyle = layer.color ?? '#ffffff';
       context.font = `${fontSize}px ${layer.fontFamily ?? 'sans-serif'}`;
