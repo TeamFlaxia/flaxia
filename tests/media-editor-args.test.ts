@@ -26,8 +26,10 @@ import { computeVideoPlan } from '../src/lib/editor/render-preset.ts';
 import {
   buildVideoArgs,
   defaultVideoEditState,
+  isVideoStateDirty,
   resolveOutputSize,
   type VideoMeta,
+  videoFilterCss,
 } from '../src/lib/editor/video-editor.ts';
 import {
   videoClipAudioFadeFilters,
@@ -336,8 +338,16 @@ describe('video-editor args and sizing', () => {
     });
   });
 
-  it('omits scale when output matches source, adds eq when adjusting', () => {
-    const state = { ...defaultVideoEditState(meta), start: 2, end: 10, brightness: 120 };
+  it('omits scale when output matches source and exports full color adjustments', () => {
+    const state = {
+      ...defaultVideoEditState(meta),
+      start: 2,
+      end: 10,
+      brightness: 120,
+      saturation: 85,
+      hueDeg: -30,
+      blurPx: 2.5,
+    };
     const args = buildVideoArgs({
       state,
       videoKbps: 2500,
@@ -353,10 +363,19 @@ describe('video-editor args and sizing', () => {
     const vfIdx = args.indexOf('-vf');
     assert.ok(vfIdx > 0);
     assert.ok(!args[vfIdx + 1].includes('scale='), args[vfIdx + 1]);
-    assert.ok(args[vfIdx + 1].includes('eq=brightness=0.200:contrast=1.000'));
+    assert.ok(args[vfIdx + 1].includes('eq=brightness=0.200:contrast=1.000:saturation=0.850'));
+    assert.ok(args[vfIdx + 1].includes('hue=h=-0.524'));
+    assert.ok(args[vfIdx + 1].includes('gblur=sigma=2.5'));
     assert.ok(args.includes('libx264'));
     assert.ok(args.includes('+faststart'));
     assert.deepEqual(args.slice(0, 5), ['-ss', '2.000', '-t', '8.000', '-i']);
+  });
+
+  it('keeps live CSS previews and dirty state in sync with exported filters', () => {
+    const state = { ...defaultVideoEditState(meta), saturation: 75, hueDeg: 45, blurPx: 3 };
+    assert.equal(videoFilterCss(state), 'brightness(100%) contrast(100%) saturate(75%) hue-rotate(45deg) blur(3px)');
+    assert.equal(isVideoStateDirty(state), true);
+    assert.equal(isVideoStateDirty(defaultVideoEditState(meta)), false);
   });
 
   it('drops the audio track when muted and keeps aac otherwise', () => {

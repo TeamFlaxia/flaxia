@@ -201,6 +201,7 @@
   "editor.contrast": "Contrast",
   "editor.saturation": "Saturation",
   "editor.hue": "Hue",
+  "editor.blur": "Blur",
   "editor.volume": "Volume",
   "editor.mute": "Mute",
   "editor.aspect_free": "Free",

@@ -201,6 +201,7 @@
   "editor.contrast": "コントラスト",
   "editor.saturation": "彩度",
   "editor.hue": "色相",
+  "editor.blur": "ぼかし",
   "editor.volume": "音量",
   "editor.mute": "ミュート",
   "editor.aspect_free": "自由",

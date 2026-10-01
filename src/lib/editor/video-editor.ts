@@ -14,6 +14,11 @@ export interface VideoEditState {
   /** Percent, 100 = neutral (matches CSS filter semantics). */
   brightness: number;
   contrast: number;
+  saturation: number;
+  /** Hue rotation in degrees, -180..180. */
+  hueDeg: number;
+  /** Gaussian blur radius in pixels. */
+  blurPx: number;
   resolution: VideoResolutionChoice;
 }
 
@@ -32,6 +37,9 @@ export function defaultVideoEditState(meta: VideoMeta): VideoEditState {
     muted: false,
     brightness: 100,
     contrast: 100,
+    saturation: 100,
+    hueDeg: 0,
+    blurPx: 0,
     resolution: 'auto',
   };
 }
@@ -44,8 +52,17 @@ export function isVideoStateDirty(state: VideoEditState): boolean {
     state.muted ||
     state.brightness !== 100 ||
     state.contrast !== 100 ||
+    state.saturation !== 100 ||
+    state.hueDeg !== 0 ||
+    state.blurPx !== 0 ||
     state.resolution !== 'auto'
   );
+}
+
+export function videoFilterCss(
+  state: Pick<VideoEditState, 'brightness' | 'contrast' | 'saturation' | 'hueDeg' | 'blurPx'>,
+): string {
+  return `brightness(${state.brightness}%) contrast(${state.contrast}%) saturate(${state.saturation}%) hue-rotate(${state.hueDeg}deg) blur(${state.blurPx}px)`;
 }
 
 /** Probes duration and frame size via a throwaway video element. */
@@ -132,11 +149,14 @@ export function buildVideoArgs(options: {
   if (width !== options.sourceWidth || height !== options.sourceHeight) {
     vf.push(`scale=${width}:${height}`);
   }
-  if (state.brightness !== 100 || state.contrast !== 100) {
+  if (state.brightness !== 100 || state.contrast !== 100 || state.saturation !== 100) {
     const b = (state.brightness / 100 - 1).toFixed(3);
     const c = (state.contrast / 100).toFixed(3);
-    vf.push(`eq=brightness=${b}:contrast=${c}`);
+    const s = (state.saturation / 100).toFixed(3);
+    vf.push(`eq=brightness=${b}:contrast=${c}:saturation=${s}`);
   }
+  if (state.hueDeg !== 0) vf.push(`hue=h=${((state.hueDeg * Math.PI) / 180).toFixed(3)}`);
+  if (state.blurPx > 0) vf.push(`gblur=sigma=${Math.max(0.5, state.blurPx).toFixed(1)}`);
   if (vf.length > 0) args.push('-vf', vf.join(','));
 
   args.push(

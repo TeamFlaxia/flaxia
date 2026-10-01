@@ -24,6 +24,7 @@ import {
   probeVideo,
   type VideoEditState,
   type VideoMeta,
+  videoFilterCss,
 } from '../lib/editor/video-editor.ts';
 import { computeAudioPeaks } from '../lib/editor/waveform.ts';
 import { type AttachPreviewKind, detectAttachKind } from '../lib/file-preview.js';
@@ -1167,6 +1168,11 @@ class MediaEditorSession {
       video.preload = 'metadata';
       this.videoEl = video;
       preview.appendChild(video);
+      video.style.filter = videoFilterCss(this.videoState);
+
+      const updateVideoFilterPreview = (): void => {
+        if (this.videoState) video.style.filter = videoFilterCss(this.videoState);
+      };
 
       this.videoTimeline = createTrimTimeline({
         duration: meta.duration,
@@ -1246,7 +1252,7 @@ class MediaEditorSession {
         onInput: (v) => {
           if (!this.videoState) return;
           this.videoState = { ...this.videoState, brightness: v };
-          video.style.filter = `brightness(${v}%) contrast(${this.videoState.contrast}%)`;
+          updateVideoFilterPreview();
           this.updateVideoEstimate();
         },
       });
@@ -1259,7 +1265,47 @@ class MediaEditorSession {
         onInput: (v) => {
           if (!this.videoState) return;
           this.videoState = { ...this.videoState, contrast: v };
-          video.style.filter = `brightness(${this.videoState.brightness}%) contrast(${v}%)`;
+          updateVideoFilterPreview();
+          this.updateVideoEstimate();
+        },
+      });
+      const saturation = makeSlider({
+        label: t('editor.saturation'),
+        min: 0,
+        max: 200,
+        value: 100,
+        format: (v) => `${v}%`,
+        onInput: (v) => {
+          if (!this.videoState) return;
+          this.videoState = { ...this.videoState, saturation: v };
+          updateVideoFilterPreview();
+          this.updateVideoEstimate();
+        },
+      });
+      const hue = makeSlider({
+        label: t('editor.hue'),
+        min: -180,
+        max: 180,
+        value: 0,
+        format: (v) => `${v}°`,
+        onInput: (v) => {
+          if (!this.videoState) return;
+          this.videoState = { ...this.videoState, hueDeg: v };
+          updateVideoFilterPreview();
+          this.updateVideoEstimate();
+        },
+      });
+      const blur = makeSlider({
+        label: t('editor.blur'),
+        min: 0,
+        max: 24,
+        step: 0.5,
+        value: 0,
+        format: (v) => `${v.toFixed(1)} px`,
+        onInput: (v) => {
+          if (!this.videoState) return;
+          this.videoState = { ...this.videoState, blurPx: v };
+          updateVideoFilterPreview();
           this.updateVideoEstimate();
         },
       });
@@ -1302,6 +1348,9 @@ class MediaEditorSession {
       controls.appendChild(muteRow);
       controls.appendChild(brightness.row);
       controls.appendChild(contrast.row);
+      controls.appendChild(saturation.row);
+      controls.appendChild(hue.row);
+      controls.appendChild(blur.row);
       controls.appendChild(resRow);
       host.appendChild(controls);
 
