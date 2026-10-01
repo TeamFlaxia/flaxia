@@ -46,6 +46,43 @@ function escapeHtml(value: string): string {
   );
 }
 
+function highlightCode(source: string, fileName: string): string {
+  const extension = fileName.toLowerCase().split('.').pop() ?? '';
+  const pattern =
+    extension === 'html' || extension === 'htm'
+      ? /<!--[\s\S]*?-->|<\/?[a-z][^>]*>/gi
+      : extension === 'md'
+        ? /^#{1,6}[^\n]*|\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:true|false|null|undefined)\b/gm
+        : /\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|#[\da-f]{3,8}\b|\b\d+(?:\.\d+)?(?:px|rem|em|vh|vw|%)?\b|\b(?:async|await|break|case|catch|class|const|continue|default|else|export|extends|false|for|from|function|if|import|in|interface|let|new|null|of|return|static|switch|this|throw|true|try|type|undefined|var|while)\b/g;
+  let cursor = 0;
+  let output = '';
+  for (const match of source.matchAll(pattern)) {
+    const token = match[0];
+    const start = match.index ?? 0;
+    output += escapeHtml(source.slice(cursor, start));
+    let tokenClass = '';
+    if (token.startsWith('<!--') || token.startsWith('/*') || token.startsWith('//')) tokenClass = 'comment';
+    else if (token.startsWith('<')) tokenClass = 'tag';
+    else if (extension === 'md' && token.startsWith('#')) tokenClass = 'heading';
+    else if (token.startsWith('"') || token.startsWith("'") || token.startsWith('`')) tokenClass = 'string';
+    else if (token.startsWith('#')) tokenClass = 'color';
+    else if (/^\d/.test(token)) tokenClass = 'number';
+    else if (/^(true|false|null|undefined)$/.test(token)) tokenClass = 'literal';
+    else if (
+      /^(async|await|break|case|catch|class|const|continue|default|else|export|extends|for|from|function|if|import|in|interface|let|new|of|return|static|switch|this|throw|try|type|var|while)$/.test(
+        token,
+      )
+    )
+      tokenClass = 'keyword';
+    else if (extension === 'css' && /^\s*:/.test(source.slice(start + token.length))) tokenClass = 'property';
+    else if (/^\s*\(/.test(source.slice(start + token.length))) tokenClass = 'function';
+    output += tokenClass ? `<span class="studio-token-${tokenClass}">${escapeHtml(token)}</span>` : escapeHtml(token);
+    cursor = start + token.length;
+  }
+  output += escapeHtml(source.slice(cursor));
+  return output || ' ';
+}
+
 function sizeLabel(bytes: number): string {
   return bytes >= 1024 * 1024
     ? `${(bytes / 1024 / 1024).toFixed(1)} MB`
@@ -630,6 +667,11 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const gutter = document.createElement('div');
     gutter.className = 'studio-code-gutter';
     gutter.setAttribute('aria-hidden', 'true');
+    const surface = document.createElement('div');
+    surface.className = 'studio-code-surface';
+    const highlight = document.createElement('pre');
+    highlight.className = 'studio-code-highlight';
+    highlight.setAttribute('aria-hidden', 'true');
     const area = document.createElement('textarea');
     area.className = 'studio-code-editor';
     area.spellcheck = false;
@@ -641,6 +683,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       gutter.textContent = Array.from({ length: lines }, (_, index) => String(index + 1)).join('\n');
       gutter.scrollTop = area.scrollTop;
       lineInput.max = String(lines);
+      highlight.innerHTML = highlightCode(area.value, fileName);
+      highlight.style.transform = `translate(${-area.scrollLeft}px, ${-area.scrollTop}px)`;
     };
     area.addEventListener('input', () => {
       editorText = area.value;
@@ -710,8 +754,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       }
     });
+    surface.appendChild(highlight);
+    surface.appendChild(area);
     editorRow.appendChild(gutter);
-    editorRow.appendChild(area);
+    editorRow.appendChild(surface);
     workbench.appendChild(toolbar);
     workbench.appendChild(editorRow);
     updateGutter();
@@ -1701,6 +1747,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 }
 
 const studioCss = `
+.studio-code-surface{position:relative;flex:1;min-width:0;min-height:260px;overflow:hidden}.studio-code-highlight{position:absolute;z-index:0;top:0;left:0;width:max-content;min-width:100%;min-height:100%;box-sizing:border-box;margin:0;padding:12px;overflow:visible;color:#dce2ec;font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2;white-space:pre;pointer-events:none;will-change:transform}.studio-code-surface>.studio-code-editor{position:absolute;z-index:1;inset:0;width:100%;height:100%;min-height:100%;box-sizing:border-box;resize:none;background:transparent;color:transparent;-webkit-text-fill-color:transparent;overflow:auto}.studio-code-surface>.studio-code-editor::selection{background:#71834c66;color:transparent}.studio-token-comment{color:#76836d}.studio-token-string{color:#d8a878}.studio-token-keyword{color:#c792ea}.studio-token-literal{color:#f78c6c}.studio-token-number{color:#f78c6c}.studio-token-function{color:#82aaff}.studio-token-tag{color:#e06c75}.studio-token-color{color:#c3e88d}.studio-token-property{color:#80cbc4}.studio-token-heading{color:#82aaff;font-weight:700}
 .studio-tab{height:100%;padding:0 7px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--studio-muted);font:inherit;white-space:nowrap;cursor:pointer}.studio-tab.active{border-bottom-color:var(--studio-accent);color:var(--studio-text)}.studio-document-tabs{display:flex;align-items:center;gap:3px;min-width:0;height:100%;overflow:auto}.studio-document-tab-wrap{display:flex;align-items:center;max-width:190px;height:27px;border:1px solid transparent;border-radius:4px;background:#191b20}.studio-document-tab-wrap.active{border-color:#3c414c;background:#24262d}.studio-document-tab{min-width:0;padding:5px 7px;overflow:hidden;border:0;background:transparent;color:#aeb3bd;text-align:left;text-overflow:ellipsis;white-space:nowrap;font:10px system-ui,sans-serif;cursor:pointer}.studio-document-tab-wrap.active .studio-document-tab{color:#eceef2}.studio-document-tab-close{width:22px;height:22px;margin-right:3px;border:0;border-radius:3px;background:transparent;color:#888e9a;font-size:15px;cursor:pointer}.studio-document-tab-close:hover{background:#383b43;color:#fff}
 .studio-composer-add-text{padding:2px 5px;border:1px solid #393d46;border-radius:4px;background:#24272e;color:#dce0e7;font-size:9px;letter-spacing:0;cursor:pointer}.studio-composer-text-label{display:flex;flex-direction:column;gap:5px;margin:8px 0;color:#aeb3bd;font-size:10px}.studio-composer-text-label textarea{min-height:58px;resize:vertical;padding:6px;border:1px solid #383c46;border-radius:4px;background:#111216;color:#e9ebef;font:11px/1.4 system-ui,sans-serif}.studio-composer-field input[type=color]{width:42px;height:26px;padding:2px}
 .studio-layout{max-width:none}.studio-layout>.right-panel{display:none}.studio-page{--studio-bg:#101114;--studio-panel:#17191e;--studio-border:#282b33;--studio-muted:#888e9a;--studio-text:#eceef2;--studio-accent:#b8ef6a;display:flex;flex:1;flex-direction:column;width:calc(100% - 240px);min-width:0;height:100dvh;min-height:620px;background:var(--studio-bg);color:var(--studio-text);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow:hidden}
