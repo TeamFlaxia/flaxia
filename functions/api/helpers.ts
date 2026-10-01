@@ -63,7 +63,6 @@ export const allowedOrigins = new Set([
   'http://localhost:8787',
   'http://localhost:5173',
   'https://flaxia.app',
-  'https://sandbox.flaxia.app',
 ]);
 
 export function getBaseOrigin(c: any): string {
