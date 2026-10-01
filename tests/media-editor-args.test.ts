@@ -1,7 +1,7 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
 import { buildAudioArgs, defaultAudioEditState } from '../src/lib/editor/audio-editor.ts';
-import { type AudioTimelineClip, soloAudioTimelineClip } from '../src/lib/editor/audio-mixer.ts';
+import { type AudioTimelineClip, audioClipEqSettings, soloAudioTimelineClip } from '../src/lib/editor/audio-mixer.ts';
 import {
   buildGifEditArgs,
   defaultImageEditState,
@@ -35,6 +35,22 @@ describe('audio solo preview', () => {
     assert.deepEqual(soloAudioTimelineClip(clip), { ...clip, start: 0, muted: false });
     assert.equal(clip.start, 12.5);
     assert.equal(clip.muted, true);
+  });
+});
+
+describe('audio clip EQ', () => {
+  it('defaults missing controls to flat EQ and clamps saved values', () => {
+    assert.deepEqual(audioClipEqSettings({}), { lowEqDb: 0, midEqDb: 0, highEqDb: 0 });
+    assert.deepEqual(audioClipEqSettings({ lowEqDb: -24, midEqDb: 4, highEqDb: Number.NaN }), {
+      lowEqDb: -18,
+      midEqDb: 4,
+      highEqDb: 0,
+    });
+    assert.deepEqual(audioClipEqSettings({ lowEqDb: 22, midEqDb: -20, highEqDb: 18 }), {
+      lowEqDb: 18,
+      midEqDb: -18,
+      highEqDb: 18,
+    });
   });
 });
 

@@ -1,5 +1,10 @@
 import type * as Monaco from 'monaco-editor';
-import { type AudioTimelineClip, mixAudioTimeline, soloAudioTimelineClip } from '../lib/editor/audio-mixer.ts';
+import {
+  type AudioTimelineClip,
+  audioClipEqSettings,
+  mixAudioTimeline,
+  soloAudioTimelineClip,
+} from '../lib/editor/audio-mixer.ts';
 import { imageLayerOpacityAt } from '../lib/editor/image-adjustments.ts';
 import { drawStudioImageLayer } from '../lib/editor/image-layer-canvas.ts';
 import { saveStudioHandoff } from '../lib/editor/studio-handoff.js';
@@ -610,6 +615,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         fadeIn: 0,
         fadeOut: 0,
         pan: 0,
+        lowEqDb: 0,
+        midEqDb: 0,
+        highEqDb: 0,
         muted: false,
       };
       audioClips.push(clip);
@@ -1412,7 +1420,20 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       return;
     }
     const duration = audioDurations.get(clip.fileIndex) ?? clip.sourceEnd;
-    inspectorBody.innerHTML = `<div class="studio-inspector-icon">♫</div><h2>${escapeHtml(file.name)}</h2><p>Audio clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-clip-position" type="number" min="0" step="0.1" value="${clip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim in</span><input class="studio-clip-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${clip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-clip-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${clip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Gain</span><input class="studio-clip-gain" type="range" min="0" max="200" value="${Math.round(clip.gain * 100)}"><small class="studio-gain-value">${Math.round(clip.gain * 100)}%</small></label><label class="studio-property studio-gain-property"><span>Pan</span><input class="studio-clip-pan" type="range" min="-100" max="100" value="${Math.round(clip.pan * 100)}"><small class="studio-pan-value">${clip.pan === 0 ? 'Center' : `${Math.abs(Math.round(clip.pan * 100))}% ${clip.pan < 0 ? 'L' : 'R'}`}</small></label><label class="studio-property"><span>Fade in</span><input class="studio-clip-fade-in" type="number" min="0" max="${(clip.sourceEnd - clip.sourceStart).toFixed(1)}" step="0.1" value="${clip.fadeIn.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade out</span><input class="studio-clip-fade-out" type="number" min="0" max="${(clip.sourceEnd - clip.sourceStart).toFixed(1)}" step="0.1" value="${clip.fadeOut.toFixed(1)}"><small>s</small></label><label class="studio-property studio-mute-property"><input class="studio-clip-muted" type="checkbox" ${clip.muted ? 'checked' : ''}><span>Mute clip</span></label><div class="studio-inspector-divider"></div><button class="studio-button studio-remove-audio" type="button">Remove from timeline</button>`;
+    const eqSettings = audioClipEqSettings(clip);
+    const eqControls = (
+      [
+        ['lowEqDb', 'Low · 120 Hz'],
+        ['midEqDb', 'Mid · 1 kHz'],
+        ['highEqDb', 'High · 8 kHz'],
+      ] as const
+    )
+      .map(
+        ([band, label]) =>
+          `<label class="studio-property studio-gain-property"><span>${label}</span><input class="studio-clip-eq" data-eq="${band}" type="range" min="-18" max="18" step="1" value="${eqSettings[band]}"><small>${eqSettings[band]} dB</small></label>`,
+      )
+      .join('');
+    inspectorBody.innerHTML = `<div class="studio-inspector-icon">♫</div><h2>${escapeHtml(file.name)}</h2><p>Audio clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-clip-position" type="number" min="0" step="0.1" value="${clip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim in</span><input class="studio-clip-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${clip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-clip-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${clip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Gain</span><input class="studio-clip-gain" type="range" min="0" max="200" value="${Math.round(clip.gain * 100)}"><small class="studio-gain-value">${Math.round(clip.gain * 100)}%</small></label><label class="studio-property studio-gain-property"><span>Pan</span><input class="studio-clip-pan" type="range" min="-100" max="100" value="${Math.round(clip.pan * 100)}"><small class="studio-pan-value">${clip.pan === 0 ? 'Center' : `${Math.abs(Math.round(clip.pan * 100))}% ${clip.pan < 0 ? 'L' : 'R'}`}</small></label><div class="studio-inspector-divider"></div><div class="studio-format-title">3-BAND EQ</div>${eqControls}<p class="studio-eq-hint">EQ is applied when previewing or exporting the mix.</p><label class="studio-property"><span>Fade in</span><input class="studio-clip-fade-in" type="number" min="0" max="${(clip.sourceEnd - clip.sourceStart).toFixed(1)}" step="0.1" value="${clip.fadeIn.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade out</span><input class="studio-clip-fade-out" type="number" min="0" max="${(clip.sourceEnd - clip.sourceStart).toFixed(1)}" step="0.1" value="${clip.fadeOut.toFixed(1)}"><small>s</small></label><label class="studio-property studio-mute-property"><input class="studio-clip-muted" type="checkbox" ${clip.muted ? 'checked' : ''}><span>Mute clip</span></label><div class="studio-inspector-divider"></div><button class="studio-button studio-remove-audio" type="button">Remove from timeline</button>`;
     const numeric = (selector: string, update: (value: number) => void): void => {
       const input = inspectorBody.querySelector<HTMLInputElement>(selector)!;
       input.addEventListener('change', () => {
@@ -1447,6 +1468,16 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     pan.addEventListener('change', () => {
       renderAudioTimeline();
       scheduleAutosave();
+    });
+    inspectorBody.querySelectorAll<HTMLInputElement>('.studio-clip-eq').forEach((input) => {
+      input.addEventListener('input', () => {
+        const band = input.dataset.eq as 'lowEqDb' | 'midEqDb' | 'highEqDb';
+        const value = Math.max(-18, Math.min(18, Number(input.value)));
+        clip[band] = value;
+        const output = input.parentElement?.querySelector('small');
+        if (output) output.textContent = `${value} dB`;
+      });
+      input.addEventListener('change', () => scheduleAutosave());
     });
     numeric('.studio-clip-fade-in', (value) => {
       clip.fadeIn = Math.max(0, Math.min(value, clip.sourceEnd - clip.sourceStart));

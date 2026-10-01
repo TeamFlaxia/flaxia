@@ -9,7 +9,23 @@ export interface AudioTimelineClip {
   fadeIn: number;
   fadeOut: number;
   pan: number;
+  lowEqDb?: number;
+  midEqDb?: number;
+  highEqDb?: number;
   muted: boolean;
+}
+
+export interface AudioEqSettings {
+  lowEqDb?: number;
+  midEqDb?: number;
+  highEqDb?: number;
+}
+
+/** Clamp the saved three-band EQ controls to a useful, stable range. */
+export function audioClipEqSettings(clip: AudioEqSettings): Required<AudioEqSettings> {
+  const clamp = (value: number | undefined): number =>
+    typeof value === 'number' && Number.isFinite(value) ? Math.max(-18, Math.min(18, value)) : 0;
+  return { lowEqDb: clamp(clip.lowEqDb), midEqDb: clamp(clip.midEqDb), highEqDb: clamp(clip.highEqDb) };
 }
 
 /** Copy one clip for isolated audition while preserving its trims and mix controls. */
@@ -97,6 +113,20 @@ export async function mixAudioTimeline(
       if (sourceEnd <= sourceStart) continue;
       const source = offline.createBufferSource();
       source.buffer = buffer;
+      const eq = audioClipEqSettings(clip);
+      const lowEq = offline.createBiquadFilter();
+      lowEq.type = 'lowshelf';
+      lowEq.frequency.value = 120;
+      lowEq.gain.value = eq.lowEqDb;
+      const midEq = offline.createBiquadFilter();
+      midEq.type = 'peaking';
+      midEq.frequency.value = 1_000;
+      midEq.Q.value = 0.9;
+      midEq.gain.value = eq.midEqDb;
+      const highEq = offline.createBiquadFilter();
+      highEq.type = 'highshelf';
+      highEq.frequency.value = 8_000;
+      highEq.gain.value = eq.highEqDb;
       const gain = offline.createGain();
       const clipDuration = Math.min(sourceEnd - sourceStart, Math.max(0, duration - Math.max(0, clip.start)));
       const startAt = Math.max(0, clip.start);
@@ -109,7 +139,10 @@ export async function mixAudioTimeline(
         gain.gain.setValueAtTime(targetGain, startAt + clipDuration - fadeOut);
         gain.gain.linearRampToValueAtTime(0, startAt + clipDuration);
       }
-      source.connect(gain);
+      source.connect(lowEq);
+      lowEq.connect(midEq);
+      midEq.connect(highEq);
+      highEq.connect(gain);
       const panner = offline.createStereoPanner();
       panner.pan.value = Math.max(-1, Math.min(1, clip.pan));
       gain.connect(panner);

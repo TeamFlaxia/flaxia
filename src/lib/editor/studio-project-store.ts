@@ -7,7 +7,7 @@ import {
   VAULT_SALT_BYTES,
   type VaultItemCiphertext,
 } from '../vault/primitives.ts';
-import type { AudioTimelineClip } from './audio-mixer.ts';
+import { type AudioTimelineClip, audioClipEqSettings } from './audio-mixer.ts';
 
 const DATABASE_NAME = 'flaxia-studio';
 const DATABASE_VERSION = 3;
@@ -216,6 +216,7 @@ function decodeFiles(plaintext: Uint8Array): {
       fadeIn: Number.isFinite(clip.fadeIn) ? Math.max(0, clip.fadeIn) : 0,
       fadeOut: Number.isFinite(clip.fadeOut) ? Math.max(0, clip.fadeOut) : 0,
       pan: Number.isFinite(clip.pan) ? Math.max(-1, Math.min(1, clip.pan)) : 0,
+      ...audioClipEqSettings(clip),
     }));
   const videoClips = (Array.isArray(manifest.videoClips) ? manifest.videoClips : [])
     .filter(
