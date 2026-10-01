@@ -18,6 +18,15 @@ import { executeFlash, type FlashPlayerHandle } from './FlashPlayer.js';
 import { openMediaEditor } from './MediaEditorModal.js';
 
 type StudioKind = 'image' | 'video' | 'audio' | 'code' | 'game' | 'other';
+type StudioEditHistorySnapshot = {
+  audioClips: AudioTimelineClip[];
+  videoClips: StudioVideoClip[];
+  imageLayers: StudioImageLayer[];
+  audioTrackCount: number;
+  selectedAudioClipId: string | null;
+  selectedVideoClipId: string | null;
+  selectedImageLayerId: string | null;
+};
 
 const KIND_LABELS: Record<StudioKind, string> = {
   image: 'IMAGE',
@@ -133,6 +142,19 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let timelinePlayheadTime = 0;
   let videoPlayheadElement: HTMLElement | null = null;
   let audioPlayheadElements: HTMLElement[] = [];
+  const captureEditHistory = (): StudioEditHistorySnapshot => ({
+    audioClips: audioClips.map((clip) => ({ ...clip })),
+    videoClips: videoClips.map((clip) => ({ ...clip })),
+    imageLayers: imageLayers.map((layer) => ({ ...layer })),
+    audioTrackCount,
+    selectedAudioClipId,
+    selectedVideoClipId,
+    selectedImageLayerId,
+  });
+  let editHistoryBaseline = captureEditHistory();
+  const undoHistory: StudioEditHistorySnapshot[] = [];
+  const redoHistory: StudioEditHistorySnapshot[] = [];
+  let restoringHistory = false;
 
   const root = document.createElement('main');
   root.className = 'studio-page';
@@ -161,7 +183,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       <section class="studio-center">
         <div class="studio-tabs"><button class="studio-tab studio-workspace-tab active" type="button">⌂ &nbsp;Workspace</button><div class="studio-document-tabs"></div><button class="studio-tab-open" type="button" aria-label="Open files">＋</button><span class="studio-center-spacer"></span><button class="studio-shortcut" type="button" title="Import files">⌘ O</button></div>
         <div class="studio-stage"><div class="studio-empty"><div class="studio-empty-art"><div class="studio-orbit studio-orbit-one"></div><div class="studio-orbit studio-orbit-two"></div><div class="studio-empty-glyph">✳</div><span class="studio-float studio-float-image">▧</span><span class="studio-float studio-float-audio">♫</span><span class="studio-float studio-float-code">&lt;/&gt;</span><span class="studio-float studio-float-game">◇</span></div><h1>Your ideas, in one studio.</h1><p>Bring images, sound, video, code, and games into one creative workspace.</p><button class="studio-button studio-open studio-primary" type="button">Import files</button><small>or drop files anywhere in the workspace</small></div><div class="studio-preview"></div></div>
-        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag to arrange · trim edges · snaps to playhead and clip edges</span><button class="studio-video-split" type="button" disabled>Split selected clip</button><button class="studio-clip-duplicate" type="button" disabled>Duplicate clip</button><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
+        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag to arrange · trim edges · snaps to playhead and clip edges</span><button class="studio-history-undo" type="button" disabled title="Undo (⌘Z / Ctrl+Z)">↶</button><button class="studio-history-redo" type="button" disabled title="Redo (⌘⇧Z / Ctrl+Y)">↷</button><button class="studio-video-split" type="button" disabled>Split selected clip</button><button class="studio-clip-duplicate" type="button" disabled>Duplicate clip</button><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
       </section>
       <aside class="studio-inspector"><div class="studio-inspector-tabs"><span class="active">Inspector</span><span>Publish</span></div><div class="studio-inspector-body"><div class="studio-inspector-icon">✳</div><h2>Make something living</h2><p>Flaxia posts can hold playable games and interactive media. Import an asset to preview, edit, and prepare it for sharing.</p><div class="studio-inspector-divider"></div><div class="studio-format-title">SUPPORTED CREATIVE FILES</div><div class="studio-format-list"><span>IMAGE</span><small>PNG · JPG · GIF · WEBP</small><span>VIDEO</span><small>MP4 · WEBM · MOV</small><span>AUDIO</span><small>MP3 · WAV · OGG · M4A</small><span>CODE / GAME</span><small>HTML · JS · ZIP · SWF · WASM</small></div><div class="studio-local-badge">◉ &nbsp;Private by default</div></div></aside>
     </div>
@@ -194,6 +216,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const videoSplitButton = root.querySelector<HTMLButtonElement>('.studio-video-split')!;
   const duplicateClipButton = root.querySelector<HTMLButtonElement>('.studio-clip-duplicate')!;
   const videoExportButton = root.querySelector<HTMLButtonElement>('.studio-video-export')!;
+  const undoButton = root.querySelector<HTMLButtonElement>('.studio-history-undo')!;
+  const redoButton = root.querySelector<HTMLButtonElement>('.studio-history-redo')!;
   duplicateClipButton.title = 'Duplicate selected clip (⌘D / Ctrl+D)';
   videoSplitButton.title = 'Split selected clip at the playhead';
   videoPlayButton.title = 'Start or stop video preview (Space)';
@@ -516,7 +540,24 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
+  const updateHistoryControls = (): void => {
+    undoButton.disabled = undoHistory.length === 0;
+    redoButton.disabled = redoHistory.length === 0;
+  };
+
+  const recordHistoryChange = (): void => {
+    if (restoringHistory || !restoreFinished) return;
+    const next = captureEditHistory();
+    if (JSON.stringify(next) === JSON.stringify(editHistoryBaseline)) return;
+    undoHistory.push(editHistoryBaseline);
+    if (undoHistory.length > 100) undoHistory.shift();
+    editHistoryBaseline = next;
+    redoHistory.length = 0;
+    updateHistoryControls();
+  };
+
   const scheduleAutosave = (): void => {
+    recordHistoryChange();
     if (mixPreview || mixPreviewUrl) {
       mixPreview?.pause();
       mixPreview = null;
@@ -1056,6 +1097,40 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     mixExportButton.disabled = audioClips.length === 0;
     updateTimelinePlayhead(timelinePlayheadTime);
   };
+
+  const applyEditHistorySnapshot = (snapshot: StudioEditHistorySnapshot): void => {
+    restoringHistory = true;
+    audioClips = snapshot.audioClips.map((clip) => ({ ...clip }));
+    videoClips = snapshot.videoClips.map((clip) => ({ ...clip }));
+    imageLayers = snapshot.imageLayers.map((layer) => ({ ...layer }));
+    audioTrackCount = snapshot.audioTrackCount;
+    selectedAudioClipId = snapshot.selectedAudioClipId;
+    selectedVideoClipId = snapshot.selectedVideoClipId;
+    selectedImageLayerId = snapshot.selectedImageLayerId;
+    editHistoryBaseline = captureEditHistory();
+    stopVideoSequence();
+    renderVideoTimeline();
+    renderAudioTimeline();
+    renderInspector();
+    scheduleAutosave();
+    restoringHistory = false;
+    updateHistoryControls();
+  };
+
+  undoButton.addEventListener('click', () => {
+    const snapshot = undoHistory.pop();
+    if (!snapshot) return;
+    redoHistory.push(captureEditHistory());
+    if (redoHistory.length > 100) redoHistory.shift();
+    applyEditHistorySnapshot(snapshot);
+  });
+  redoButton.addEventListener('click', () => {
+    const snapshot = redoHistory.pop();
+    if (!snapshot) return;
+    undoHistory.push(captureEditHistory());
+    if (undoHistory.length > 100) undoHistory.shift();
+    applyEditHistorySnapshot(snapshot);
+  });
 
   zoomInput.addEventListener('input', () => {
     const oldZoom = timelinePixelsPerSecond;
@@ -2269,6 +2344,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       select(0);
     }
     restoreFinished = true;
+    undoHistory.length = 0;
+    redoHistory.length = 0;
+    editHistoryBaseline = captureEditHistory();
+    updateHistoryControls();
     if (pendingImports.length > 0) {
       const queuedFiles = pendingImports;
       pendingImports = [];
@@ -2311,6 +2390,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       activeIndex = -1;
       codeDirty = false;
       interacted = true;
+      undoHistory.length = 0;
+      redoHistory.length = 0;
+      editHistoryBaseline = captureEditHistory();
+      updateHistoryControls();
       saveState.textContent = 'Project opened · saving to this device…';
       render();
       if (files.length > 0) select(0);
@@ -2658,6 +2741,16 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const target = event.target;
     if (!(target instanceof Element) || !root.contains(target)) return;
     if (target.closest('input, textarea, select, [contenteditable="true"]')) return;
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
+      event.preventDefault();
+      (event.shiftKey ? redoButton : undoButton).click();
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'y') {
+      event.preventDefault();
+      redoButton.click();
+      return;
+    }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'd' && !duplicateClipButton.disabled) {
       event.preventDefault();
       duplicateClipButton.click();
@@ -2726,6 +2819,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 }
 
 const studioCss = `
+.studio-timeline-head{overflow-x:auto;scrollbar-width:thin}.studio-history-undo,.studio-history-redo{min-width:28px;padding:4px 6px!important;font-size:14px!important}
 .studio-timeline-playhead{position:absolute;z-index:4;top:0;bottom:0;width:2px;background:#f2f687;box-shadow:0 0 6px #f2f687;pointer-events:none}
 .studio-composer-preview-controls{display:flex;align-items:center;gap:16px;min-height:38px;padding:4px 18px;border-bottom:1px solid #30333a;background:#15161b;color:#aeb3bd;font-size:10px}.studio-composer-preview-controls label{display:flex;align-items:center;gap:7px;white-space:nowrap}.studio-composer-preview-controls label:last-child{flex:1}.studio-composer-preview-controls input[type=checkbox]{accent-color:#b8ef6a}.studio-composer-preview-controls input[type=range]{flex:1;min-width:80px;max-width:460px;accent-color:#b8ef6a}.studio-composer-preview-controls output{min-width:40px;color:#e9ebef;font-variant-numeric:tabular-nums}
 .studio-video-clip.muted{filter:saturate(.35);border-style:dashed}
