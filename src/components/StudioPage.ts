@@ -160,7 +160,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       <section class="studio-center">
         <div class="studio-tabs"><button class="studio-tab studio-workspace-tab active" type="button">⌂ &nbsp;Workspace</button><div class="studio-document-tabs"></div><button class="studio-tab-open" type="button" aria-label="Open files">＋</button><span class="studio-center-spacer"></span><button class="studio-shortcut" type="button" title="Import files">⌘ O</button></div>
         <div class="studio-stage"><div class="studio-empty"><div class="studio-empty-art"><div class="studio-orbit studio-orbit-one"></div><div class="studio-orbit studio-orbit-two"></div><div class="studio-empty-glyph">✳</div><span class="studio-float studio-float-image">▧</span><span class="studio-float studio-float-audio">♫</span><span class="studio-float studio-float-code">&lt;/&gt;</span><span class="studio-float studio-float-game">◇</span></div><h1>Your ideas, in one studio.</h1><p>Bring images, sound, video, code, and games into one creative workspace.</p><button class="studio-button studio-open studio-primary" type="button">Import files</button><small>or drop files anywhere in the workspace</small></div><div class="studio-preview"></div></div>
-        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag clips to arrange · drag clip edges to trim</span><button class="studio-video-split" type="button" disabled>Split selected clip</button><button class="studio-clip-duplicate" type="button" disabled>Duplicate clip</button><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
+        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag to arrange · trim edges · snaps to playhead and clip edges</span><button class="studio-video-split" type="button" disabled>Split selected clip</button><button class="studio-clip-duplicate" type="button" disabled>Duplicate clip</button><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
       </section>
       <aside class="studio-inspector"><div class="studio-inspector-tabs"><span class="active">Inspector</span><span>Publish</span></div><div class="studio-inspector-body"><div class="studio-inspector-icon">✳</div><h2>Make something living</h2><p>Flaxia posts can hold playable games and interactive media. Import an asset to preview, edit, and prepare it for sharing.</p><div class="studio-inspector-divider"></div><div class="studio-format-title">SUPPORTED CREATIVE FILES</div><div class="studio-format-list"><span>IMAGE</span><small>PNG · JPG · GIF · WEBP</small><span>VIDEO</span><small>MP4 · WEBM · MOV</small><span>AUDIO</span><small>MP3 · WAV · OGG · M4A</small><span>CODE / GAME</span><small>HTML · JS · ZIP · SWF · WASM</small></div><div class="studio-local-badge">◉ &nbsp;Private by default</div></div></aside>
     </div>
@@ -559,6 +559,29 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     }, 700);
   };
 
+  const snapTimelineTime = (time: number, ignoredId?: string): number => {
+    const anchors = [0, timelinePlayheadTime];
+    for (const clip of videoClips) {
+      if (clip.id === ignoredId) continue;
+      anchors.push(clip.start, clip.start + clip.sourceEnd - clip.sourceStart);
+    }
+    for (const clip of audioClips) {
+      if (clip.id === ignoredId) continue;
+      anchors.push(clip.start, clip.start + clip.sourceEnd - clip.sourceStart);
+    }
+    for (const layer of imageLayers) {
+      if (layer.id === ignoredId) continue;
+      anchors.push(layer.start ?? 0);
+      if (layer.end !== undefined) anchors.push(layer.end);
+    }
+    const nearest = anchors.reduce(
+      (best, anchor) => (Math.abs(anchor - time) < Math.abs(best - time) ? anchor : best),
+      Number.POSITIVE_INFINITY,
+    );
+    if (Math.abs(nearest - time) <= 8 / timelinePixelsPerSecond) return nearest;
+    return Math.max(0, Math.round(time * 10) / 10);
+  };
+
   const renderVideoTimeline = (): void => {
     videoTimeline.innerHTML = '';
     videoPlayheadElement = null;
@@ -640,15 +663,19 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           const sourceDuration = videoDurations.get(clip.fileIndex) ?? clip.sourceEnd;
           handle.setPointerCapture(event.pointerId);
           const updateClip = (moveEvent: PointerEvent): void => {
-            const delta = ((moveEvent.clientX - pointerStart) / zoomAtDrag) * 10;
+            const delta = (moveEvent.clientX - pointerStart) / zoomAtDrag;
             if (edge === 'start') {
               const minDelta = -Math.min(initialSourceStart, initialStart);
               const maxDelta = initialSourceEnd - initialSourceStart - 0.1;
-              const applied = Math.max(minDelta, Math.min(maxDelta, delta));
+              const snappedStart = snapTimelineTime(initialStart + delta, clip.id);
+              const applied = Math.max(minDelta, Math.min(maxDelta, snappedStart - initialStart));
               clip.sourceStart = initialSourceStart + applied;
               clip.start = initialStart + applied;
             } else {
-              clip.sourceEnd = Math.max(initialSourceStart + 0.1, Math.min(sourceDuration, initialSourceEnd + delta));
+              const initialTimelineEnd = initialStart + initialSourceEnd - initialSourceStart;
+              const snappedEnd = snapTimelineTime(initialTimelineEnd + delta, clip.id);
+              const applied = snappedEnd - initialTimelineEnd;
+              clip.sourceEnd = Math.max(initialSourceStart + 0.1, Math.min(sourceDuration, initialSourceEnd + applied));
             }
             block.style.left = `${clip.start * timelinePixelsPerSecond}px`;
             block.style.width = `${Math.max(54, (clip.sourceEnd - clip.sourceStart) * timelinePixelsPerSecond)}px`;
@@ -699,7 +726,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       if (!clip) return;
       event.preventDefault();
       const rect = canvas.getBoundingClientRect();
-      clip.start = Math.max(0, Math.round(((event.clientX - rect.left) / timelinePixelsPerSecond) * 10) / 10);
+      clip.start = snapTimelineTime((event.clientX - rect.left) / timelinePixelsPerSecond, clip.id);
       manuallyPlacedVideoClips.add(clip.id);
       select(clip.fileIndex);
       selectedVideoClipId = clip.id;
@@ -766,14 +793,14 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
             const delta = (moveEvent.clientX - pointerStart) / zoomAtDrag;
             if (Math.abs(delta) > 1 / zoomAtDrag) didMove = true;
             if (mode === 'move') {
-              const nextStart = Math.max(0, initialStart + delta);
+              const nextStart = snapTimelineTime(Math.max(0, initialStart + delta), layer.id);
               layer.start = nextStart;
               if (storedEnd !== undefined)
                 layer.end = Math.max(nextStart + 0.1, storedEnd + (nextStart - initialStart));
             } else if (mode === 'start') {
-              layer.start = Math.max(0, Math.min(initialEnd - 0.1, initialStart + delta));
+              layer.start = Math.max(0, Math.min(initialEnd - 0.1, snapTimelineTime(initialStart + delta, layer.id)));
             } else {
-              layer.end = Math.max(initialStart + 0.1, initialEnd + delta);
+              layer.end = Math.max(initialStart + 0.1, snapTimelineTime(initialEnd + delta, layer.id));
             }
             const nextStart = layer.start ?? 0;
             const nextEnd = Math.max(nextStart + 0.1, layer.end ?? openLayerEnd);
@@ -881,15 +908,22 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
             const sourceDuration = audioDurations.get(clip.fileIndex) ?? clip.sourceEnd;
             handle.setPointerCapture(event.pointerId);
             const updateClip = (moveEvent: PointerEvent): void => {
-              const delta = ((moveEvent.clientX - pointerStart) / zoomAtDrag) * 10;
+              const delta = (moveEvent.clientX - pointerStart) / zoomAtDrag;
               if (edge === 'start') {
                 const minDelta = -Math.min(initialSourceStart, initialStart);
                 const maxDelta = initialSourceEnd - initialSourceStart - 0.1;
-                const applied = Math.max(minDelta, Math.min(maxDelta, delta));
+                const snappedStart = snapTimelineTime(initialStart + delta, clip.id);
+                const applied = Math.max(minDelta, Math.min(maxDelta, snappedStart - initialStart));
                 clip.sourceStart = initialSourceStart + applied;
                 clip.start = initialStart + applied;
               } else {
-                clip.sourceEnd = Math.max(initialSourceStart + 0.1, Math.min(sourceDuration, initialSourceEnd + delta));
+                const initialTimelineEnd = initialStart + initialSourceEnd - initialSourceStart;
+                const snappedEnd = snapTimelineTime(initialTimelineEnd + delta, clip.id);
+                const applied = snappedEnd - initialTimelineEnd;
+                clip.sourceEnd = Math.max(
+                  initialSourceStart + 0.1,
+                  Math.min(sourceDuration, initialSourceEnd + applied),
+                );
               }
               block.style.left = `${clip.start * timelinePixelsPerSecond}px`;
               block.style.width = `${Math.max(48, (clip.sourceEnd - clip.sourceStart) * timelinePixelsPerSecond)}px`;
@@ -937,7 +971,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         if (!clip) return;
         event.preventDefault();
         const canvasRect = canvas.getBoundingClientRect();
-        clip.start = Math.max(0, Math.round(((event.clientX - canvasRect.left) / timelinePixelsPerSecond) * 10) / 10);
+        clip.start = snapTimelineTime((event.clientX - canvasRect.left) / timelinePixelsPerSecond, clip.id);
         clip.track = track;
         audioTrackCount = Math.max(audioTrackCount, track + 1);
         select(clip.fileIndex);
