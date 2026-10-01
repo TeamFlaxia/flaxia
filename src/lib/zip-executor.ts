@@ -105,6 +105,46 @@ export async function executeZip(
   }
 }
 
+/** Run a user-selected ZIP with the same validation and opaque-origin sandbox as post games. */
+export async function previewZipFile(file: File, containerEl: HTMLElement): Promise<ZipExecutorHandle> {
+  if (activeHandle) {
+    activeHandle.destroy();
+    activeHandle = null;
+  }
+
+  const blobUrlMap = new Map<string, string>();
+  let htmlBlobUrl: string | null = null;
+  try {
+    containerEl.replaceChildren();
+    containerEl.style.position = 'relative';
+    const JSZip = await getJSZip();
+    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    validateZip(zip);
+    const generatedUrls = await generateBlobUrlMap(zip);
+    for (const [path, url] of generatedUrls) blobUrlMap.set(path, url);
+    const htmlContent = await rewriteIndexHtml(zip, blobUrlMap);
+    htmlBlobUrl = URL.createObjectURL(new Blob([htmlContent], { type: 'text/html' }));
+    const { iframe, cleanup } = createSandboxIframe(containerEl, htmlBlobUrl);
+    iframe.style.opacity = '1';
+    const handle: ZipExecutorHandle = {
+      destroy: () => {
+        cleanup();
+        containerEl.replaceChildren();
+        for (const url of blobUrlMap.values()) URL.revokeObjectURL(url);
+        if (htmlBlobUrl) URL.revokeObjectURL(htmlBlobUrl);
+        if (activeHandle === handle) activeHandle = null;
+      },
+    };
+    activeHandle = handle;
+    return handle;
+  } catch (error) {
+    for (const url of blobUrlMap.values()) URL.revokeObjectURL(url);
+    if (htmlBlobUrl) URL.revokeObjectURL(htmlBlobUrl);
+    containerEl.replaceChildren();
+    throw error;
+  }
+}
+
 function createZipLoadingIndicator(): HTMLElement {
   ensureSpinKeyframe();
 
@@ -396,7 +436,7 @@ async function rewriteIndexHtml(zip: JSZipType, blobUrlMap: Map<string, string>)
 }
 
 function rewriteHtmlString(htmlContent: string, blobUrlMap: Map<string, string>, basePath: string = ''): string {
-  htmlContent = htmlContent.replace(/<(?!script)([^>]+)\s+src\s*=\s*['"]([^'"]+)['"]/gi, (match, tagAttrs, src) => {
+  htmlContent = htmlContent.replace(/<([^>]+)\s+src\s*=\s*['"]([^'"]+)['"]/gi, (match, tagAttrs, src) => {
     if (shouldRewritePath(src)) {
       const normalizedPath = src.replace(/^\.\//, '');
       const fullPath = basePath + normalizedPath;

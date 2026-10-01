@@ -87,6 +87,7 @@ export class LeftNav {
         { id: 'home', label: t('nav.home'), icon: 'home' },
         { id: 'explore', label: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', label: t('nav.arcade'), icon: 'arcade' },
+        { id: 'studio', label: t('nav.studio'), icon: 'edit' },
         { id: 'bookmarks', label: t('nav.bookmarks'), icon: 'bookmark' },
         { id: 'notifications', label: t('nav.notifications'), icon: 'notifications' },
       ] as const;

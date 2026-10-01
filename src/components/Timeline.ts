@@ -91,6 +91,7 @@ export class Timeline {
       this.composer = createPostComposer({
         onPostCreated: (post) => this.handleNewPost(post as unknown as Post),
         currentUser: this.props.currentUser,
+        initialFiles: this.props.composerFiles,
       });
       container.appendChild(this.composer.getElement());
     } else {

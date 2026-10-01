@@ -57,7 +57,10 @@ export const CONTEXT_PAYLOAD = 'flaxia.vault.payload.v1';
 
 export function encodeB64(bytes: Uint8Array): string {
   let binary = '';
-  for (const x of bytes) binary += String.fromCharCode(x);
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)));
+  }
   return btoa(binary);
 }
 

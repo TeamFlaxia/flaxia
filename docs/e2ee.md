@@ -77,6 +77,12 @@ error-prone operation unnecessary.
 
 ## Storage (D1)
 
+Browser-local Studio projects use the same per-item encryption format as vault
+items: the project payload is AES-GCM encrypted in the browser and its item key
+is wrapped by VK before IndexedDB stores either value. Studio keeps no plaintext
+files in IndexedDB. The local item key is re-wrapped when VK rotates. Files
+passed from Studio to the post composer stay in tab memory during navigation.
+
 ```sql
 vault_keys(user_id PK, salt,                                  -- password path (KEK)
            recovery_salt,                                     -- recovery path (REK)

@@ -129,6 +129,47 @@ export async function runFFmpeg(options: FFmpegRunOptions): Promise<Uint8Array> 
   }
 }
 
+/** Probe stream metadata while holding the same worker lock used by encodes. */
+export async function probeFFmpegStreams(
+  inputs: Array<{ name: string; data: Uint8Array }>,
+  args: string[],
+): Promise<string> {
+  if (running) throw new Error('ffmpeg busy');
+  running = true;
+  let ffmpeg: FFmpeg | null = null;
+  const written: string[] = [];
+  let logs = '';
+  const onLog = ({ message }: { message: string }): void => {
+    logs += `${message}\n`;
+  };
+  try {
+    ffmpeg = await getFFmpeg();
+    ffmpeg.on('log', onLog);
+    for (const input of inputs) {
+      await ffmpeg.writeFile(input.name, input.data.slice());
+      written.push(input.name);
+    }
+    try {
+      await ffmpeg.exec(args);
+    } catch {
+      // Probing with input arguments alone exits non-zero because no output was requested.
+    }
+    return logs;
+  } finally {
+    if (ffmpeg) {
+      ffmpeg.off('log', onLog);
+      for (const name of written) {
+        try {
+          await ffmpeg.deleteFile(name);
+        } catch {
+          // Ignore files already removed by the worker.
+        }
+      }
+    }
+    running = false;
+  }
+}
+
 /**
  * Forcefully kills the ffmpeg worker (used when the user cancels a render).
  * The next getFFmpeg() call reloads a fresh instance.

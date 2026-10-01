@@ -183,6 +183,7 @@ export interface PostActionsProps {
 
 export interface TimelineProps {
   sandboxOrigin: string;
+  composerFiles?: File[];
   currentUser?: {
     username: string;
     id: string;

@@ -6,12 +6,12 @@ import { showCrowdConsentModal } from './components/CrowdConsentModal.js';
 import type { ExplorePage } from './components/ExplorePage.js';
 import type { LeftNav } from './components/LeftNav.js';
 import type { NotificationsPage } from './components/NotificationsPage.js';
-import type { RightPanel } from './components/RightPanel.js';
 import type { ThreadPage } from './components/ThreadPage.js';
 import type { Timeline } from './components/Timeline.js';
 import { getMe } from './lib/auth-cache.js';
 import { initContentProtection } from './lib/content-protection.js';
 import { canRunFlaxiaNode, initCrowdNode, notifyCrowdConsentChanged } from './lib/crowd-node.js';
+import { consumeStudioHandoff } from './lib/editor/studio-handoff.js';
 import { initI18n } from './lib/i18n.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
 import { initTheme } from './lib/theme.js';
@@ -58,6 +58,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'docs'
       | 'admin'
       | 'settings'
+      | 'studio'
       | 'arcade'
       | 'billing-success'
       | 'billing-canceled' = 'timeline';
@@ -76,6 +77,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let docsPage: PageComponent | null = null;
     let notificationsPage: NotificationsPage | null = null;
     let settingsPage: PageComponent | null = null;
+    let studioPage: PageComponent | null = null;
     let arcadePage: ArcadePageHandle | null = null;
     let searchPage: PageComponent | null = null;
     let bookmarksPage: BookmarksPage | null = null;
@@ -101,6 +103,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           return 'explore';
         case 'arcade':
           return 'arcade';
+        case 'studio':
+          return '';
         case 'profile':
         case 'settings':
         case 'bookmarks':
@@ -1012,6 +1016,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         return { view: 'settings' as const, postId: null, username: null, tag: null };
       }
 
+      if (cleanPath === '/studio') {
+        return { view: 'studio' as const, postId: null, username: null, tag: null };
+      }
+
       // Billing routes
       if (cleanPath === '/billing/success') {
         console.log('Billing success route detected');
@@ -1123,6 +1131,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         | 'docs'
         | 'admin'
         | 'settings'
+        | 'studio'
         | 'arcade'
         | 'billing-success'
         | 'billing-canceled',
@@ -1176,6 +1185,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (settingsPage) {
           settingsPage.destroy();
           settingsPage = null;
+        }
+        if (studioPage) {
+          studioPage.destroy();
+          studioPage = null;
         }
         if (bookmarksPage) {
           bookmarksPage.destroy();
@@ -1250,6 +1263,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (settingsPage) {
           settingsPage.destroy();
           settingsPage = null;
+        }
+        if (studioPage) {
+          studioPage.destroy();
+          studioPage = null;
         }
         if (bookmarksPage) {
           bookmarksPage.destroy();
@@ -1987,6 +2004,32 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
+        if (view === 'studio') {
+          currentView = 'studio';
+          currentPostId = null;
+          _currentUsername = null;
+          currentTag = null;
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container studio-layout';
+          const leftNav = await lazyCreateLeftNav({
+            activeItem: 'studio',
+            unreadCount: unreadNotificationCount,
+            currentUser: currentUser || undefined,
+            onNavigate: leftNavNavigateHandler,
+            onSignIn: leftNavSignInHandler,
+            onSignUp: leftNavSignUpHandler,
+          });
+          leftNavInstances.add(leftNav);
+          const { createStudioPage } = await import('./components/StudioPage.js');
+          studioPage = createStudioPage();
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(studioPage.getElement());
+          app.appendChild(mainContainer);
+          hidePageLoader();
+          setupMobileLeftNav(leftNav.getElement());
+          return;
+        }
+
         // Create main container for timeline/thread views
         const mainContainer = document.createElement('div');
         mainContainer.className = 'main-container';
@@ -2068,9 +2111,20 @@ document.addEventListener('DOMContentLoaded', async () => {
           } else {
             // Create fresh timeline
             const { createTimeline } = await import('./components/Timeline.js');
+            const handoffToken = new URLSearchParams(window.location.search).get('studio_handoff');
+            let composerFiles: File[] | undefined;
+            if (handoffToken) {
+              try {
+                composerFiles = await consumeStudioHandoff(handoffToken);
+              } catch (error) {
+                console.warn('Could not restore Studio post assets:', error);
+              }
+              window.history.replaceState({}, '', '/home');
+            }
             timeline = createTimeline({
               sandboxOrigin,
               currentUser,
+              composerFiles,
             });
 
             // Listen for navigation events from timeline
@@ -2151,6 +2205,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else if (item === 'arcade') {
         window.history.pushState({}, '', '/arcade');
         navigateTo('arcade');
+      } else if (item === 'studio') {
+        window.history.pushState({}, '', '/studio');
+        navigateTo('studio');
       } else if (item === 'notifications') {
         window.history.pushState({}, '', '/notifications');
         navigateTo('notifications');
@@ -2252,6 +2309,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             | 'docs'
             | 'admin'
             | 'settings'
+            | 'studio'
             | 'arcade',
           postId,
           username,

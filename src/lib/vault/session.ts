@@ -9,6 +9,7 @@
 import { generateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
 import { createSrpProof } from '../auth-srp.ts';
+import { rewrapStudioProjectKey } from '../editor/studio-project-store.ts';
 import { fetchVaultItemKeys, fetchVaultKeys, revokeDeviceAndRotate, rewrapItemKeyForVaultKey } from './client.ts';
 import {
   createDevice,
@@ -269,6 +270,11 @@ export async function revokeDeviceWithRotation(
     decodeB64(keys.recovery_salt),
     keys.kdf_params,
   );
+  try {
+    await rewrapStudioProjectKey(currentVk, newVk);
+  } catch {
+    return false;
+  }
   const ok = await revokeDeviceAndRotate({
     current_srp: proof,
     device_id: deviceId,
@@ -281,7 +287,10 @@ export async function revokeDeviceWithRotation(
     recovery_blob,
     item_keys: rewrapped,
   });
-  if (!ok) return false;
+  if (!ok) {
+    await rewrapStudioProjectKey(newVk, currentVk).catch(() => undefined);
+    return false;
+  }
 
   setVaultKey(newVk);
   const device = await getOrCreateCurrentDevice();

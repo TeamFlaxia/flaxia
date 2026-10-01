@@ -11,6 +11,7 @@ export interface PostComposerProps {
   } | null;
   onDraftSaved?: () => void;
   quotedPost?: QuotedPost | null;
+  initialFiles?: File[];
 }
 
 import { attachPlusBadge } from '../lib/avatar.js';
@@ -25,7 +26,7 @@ import { showToast } from '../lib/toast.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
 import { openMediaEditor } from './MediaEditorModal.js';
-import { closeStampPicker, openStampPicker } from './StampPicker.js';
+import { openStampPicker } from './StampPicker.js';
 import { createVideoPlayer } from './VideoPlayer.js';
 
 // Multi-media attachment size limits (mirrors functions/lib/attachments.ts).
@@ -82,6 +83,7 @@ export class PostComposer {
     this.maxMediaAttachments = maxMediaAttachmentsForUser(props.currentUser);
     this.element = this.createElement();
     this.setupEventListeners();
+    if (props.initialFiles?.length) void this.handleFiles(props.initialFiles);
   }
 
   private createElement(): HTMLElement {
