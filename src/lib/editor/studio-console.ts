@@ -55,3 +55,10 @@ export const STUDIO_CONSOLE_BRIDGE_SOURCE = `(()=>{
   });
   addEventListener('pagehide',()=>port?.close());
 })();`;
+
+/** Install instrumentation after a document type declaration and before page scripts execute. */
+export function injectStudioConsoleBridge(source: string): string {
+  const instrumentation = `<script>${STUDIO_CONSOLE_BRIDGE_SOURCE}</script>`;
+  const doctype = source.match(/^\s*<!doctype\b[^>]*>/i)?.[0];
+  return doctype ? source.replace(doctype, `${doctype}${instrumentation}`) : `${instrumentation}${source}`;
+}

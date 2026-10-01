@@ -10,7 +10,7 @@ import {
 } from '../lib/editor/audio-mixer.ts';
 import { imageLayerOpacityAt } from '../lib/editor/image-adjustments.ts';
 import { drawStudioImageLayer } from '../lib/editor/image-layer-canvas.ts';
-import { parseStudioConsoleEntry, STUDIO_CONSOLE_BRIDGE_SOURCE } from '../lib/editor/studio-console.ts';
+import { injectStudioConsoleBridge, parseStudioConsoleEntry } from '../lib/editor/studio-console.ts';
 import { saveStudioHandoff } from '../lib/editor/studio-handoff.js';
 import {
   exportStudioProject,
@@ -210,9 +210,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let htmlEditing = false;
   let editorText = '';
   let previewUrl: string | null = null;
-  const activeCodePreviewDisposers = new Set<() => void>();
-  const closeCodePreviews = (): void => {
-    for (const dispose of activeCodePreviewDisposers) dispose();
+  const activeSandboxPreviewDisposers = new Set<() => void>();
+  const closeSandboxPreviews = (): void => {
+    for (const dispose of activeSandboxPreviewDisposers) dispose();
   };
   let destroyed = false;
   let interacted = false;
@@ -705,7 +705,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   };
 
   const clearUrl = (): void => {
-    closeCodePreviews();
+    closeSandboxPreviews();
     zipPreview?.destroy();
     zipPreview = null;
     flashPreview?.destroy();
@@ -2091,12 +2091,12 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     }
   };
 
-  const createCodePreview = (fileName: string, source: string): HTMLElement => {
+  const createSandboxPreview = (fileName: string, page: string, frameClass = 'studio-code-preview'): HTMLElement => {
     const output = document.createElement('div');
     output.className = 'studio-code-run-output';
     output.style.cssText = 'display:flex;flex-direction:column;gap:8px;width:100%';
     const frame = document.createElement('iframe');
-    frame.className = 'studio-code-preview';
+    frame.className = frameClass;
     frame.title = `${fileName} sandbox preview`;
     frame.setAttribute('sandbox', 'allow-scripts');
     frame.referrerPolicy = 'no-referrer';
@@ -2136,9 +2136,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const dispose = (): void => {
       channel.port1.onmessage = null;
       channel.port1.close();
-      activeCodePreviewDisposers.delete(dispose);
+      activeSandboxPreviewDisposers.delete(dispose);
     };
-    activeCodePreviewDisposers.add(dispose);
+    activeSandboxPreviewDisposers.add(dispose);
     channel.port1.onmessage = (event: MessageEvent<unknown>) => {
       const message = parseStudioConsoleEntry(event.data);
       if (!message) return;
@@ -2157,14 +2157,17 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       () => frame.contentWindow?.postMessage({ type: 'flaxia-studio-console-connect' }, '*', [channel.port2]),
       { once: true },
     );
-    const instrumentation = `<script>${STUDIO_CONSOLE_BRIDGE_SOURCE}</script>`;
+    frame.srcdoc = injectStudioConsoleBridge(page);
+    return output;
+  };
+
+  const createCodePreview = (fileName: string, source: string): HTMLElement => {
     const extension = fileName.toLowerCase().split('.').pop();
     const page =
       extension === 'css'
-        ? `<!doctype html><meta charset="utf-8"><style>body{font:16px system-ui;padding:24px;color:#222}.preview-card{padding:24px;border:1px solid #aaa;border-radius:12px;max-width:480px}</style>${instrumentation}<style>${source.replace(/<\/style/gi, '<\\/style')}</style><main class="preview-card"><h1>CSS preview</h1><p>Edit this stylesheet and run again.</p><button>Sample button</button></main>`
-        : `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><body>${instrumentation}<main id="app"></main><script>${source.replace(/<\/script/gi, '<\\/script')}</script></body>`;
-    frame.srcdoc = page;
-    return output;
+        ? `<!doctype html><meta charset="utf-8"><style>body{font:16px system-ui;padding:24px;color:#222}.preview-card{padding:24px;border:1px solid #aaa;border-radius:12px;max-width:480px}</style><style>${source.replace(/<\/style/gi, '<\\/style')}</style><main class="preview-card"><h1>CSS preview</h1><p>Edit this stylesheet and run again.</p><button>Sample button</button></main>`
+        : `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><body><main id="app"></main><script>${source.replace(/<\/script/gi, '<\\/script')}</script></body>`;
+    return createSandboxPreview(fileName, page);
   };
 
   const openImageComposer = async (initialFileIndex: number): Promise<void> => {
@@ -2803,7 +2806,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           const output = document.createElement('div');
           output.className = 'studio-code-output';
           run.addEventListener('click', () => {
-            closeCodePreviews();
+            closeSandboxPreviews();
             output.replaceChildren(createCodePreview(file.name, editorText));
           });
           content.insertBefore(run, editor);
@@ -2814,12 +2817,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       if (/\.html?$/i.test(file.name)) {
         void file.text().then((html) => {
           if (destroyed || activeIndex !== index) return;
-          const frame = document.createElement('iframe');
-          frame.className = 'studio-game-frame';
-          frame.title = `${file.name} preview`;
-          frame.setAttribute('sandbox', 'allow-scripts');
-          frame.srcdoc = html;
-          content.appendChild(frame);
+          content.appendChild(createSandboxPreview(file.name, html, 'studio-game-frame'));
         });
       } else if (/\.zip$/i.test(file.name)) {
         content.style.position = 'relative';
