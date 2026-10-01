@@ -360,6 +360,13 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   };
 
   const scheduleAutosave = (): void => {
+    if (mixPreview || mixPreviewUrl) {
+      mixPreview?.pause();
+      mixPreview = null;
+      if (mixPreviewUrl) URL.revokeObjectURL(mixPreviewUrl);
+      mixPreviewUrl = null;
+      mixPlayButton.textContent = '▶ Play mix';
+    }
     if (autosaveTimer) clearTimeout(autosaveTimer);
     const revision = ++saveRevision;
     saveState.textContent = 'Saving locally…';
@@ -1814,12 +1821,28 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   };
   mixPlayButton.addEventListener('click', async () => {
     try {
+      if (mixPreview) {
+        if (mixPreview.paused) {
+          if (mixPreview.ended) mixPreview.currentTime = 0;
+          await mixPreview.play();
+          mixPlayButton.textContent = 'Ⅱ Pause mix';
+          mixStatus.textContent = 'Playing rendered mix';
+        } else {
+          mixPreview.pause();
+          mixPlayButton.textContent = '▶ Resume mix';
+          mixStatus.textContent = `Paused · ${mixPreview.currentTime.toFixed(1)}s`;
+        }
+        return;
+      }
       const output = await renderMixdown();
-      if (mixPreview) mixPreview.pause();
-      if (mixPreviewUrl) URL.revokeObjectURL(mixPreviewUrl);
       mixPreviewUrl = URL.createObjectURL(output);
       mixPreview = new Audio(mixPreviewUrl);
+      mixPreview.addEventListener('ended', () => {
+        mixPlayButton.textContent = '▶ Play mix';
+        mixStatus.textContent = 'Mix finished';
+      });
       await mixPreview.play();
+      mixPlayButton.textContent = 'Ⅱ Pause mix';
       mixStatus.textContent = 'Playing rendered mix';
     } catch {
       // The render status already explains the failure.
