@@ -729,7 +729,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       saveChain = saveChain
         .catch(() => undefined)
         .then(async () => {
-          if (destroyed || revision !== saveRevision) return;
+          if (revision !== saveRevision) return;
           try {
             await saveStudioProject(projectFiles, audioClips, videoClips, imageLayers, vaultKey);
             if (!destroyed && revision === saveRevision) saveState.textContent = 'Saved on this device';
@@ -3173,10 +3173,39 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   return {
     getElement: () => root,
     destroy: () => {
+      const currentFile = files[activeIndex];
+      if (
+        codeDirty &&
+        currentFile &&
+        (kindOf(currentFile) === 'code' || (kindOf(currentFile) === 'game' && /\.html?$/i.test(currentFile.name)))
+      ) {
+        files[activeIndex] = new File([editorText], currentFile.name, {
+          type: currentFile.type || (kindOf(currentFile) === 'game' ? 'text/html' : 'text/plain'),
+          lastModified: currentFile.lastModified,
+        });
+      }
+      if (autosaveTimer) clearTimeout(autosaveTimer);
+      const vaultKey = getVaultKey();
+      if (vaultKey) {
+        const projectFiles = [...files];
+        const projectAudioClips = [...audioClips];
+        const projectVideoClips = [...videoClips];
+        const projectImageLayers = [...imageLayers];
+        const revision = ++saveRevision;
+        saveChain = saveChain
+          .catch(() => undefined)
+          .then(async () => {
+            if (revision !== saveRevision) return;
+            try {
+              await saveStudioProject(projectFiles, projectAudioClips, projectVideoClips, projectImageLayers, vaultKey);
+            } catch {
+              // The page is closing; there is no UI left to report a failed final save.
+            }
+          });
+      }
       destroyed = true;
       codeEditorCleanup?.();
       codeEditorCleanup = null;
-      if (autosaveTimer) clearTimeout(autosaveTimer);
       mixPreview?.pause();
       if (mixPreviewUrl) URL.revokeObjectURL(mixPreviewUrl);
       clearUrl();
