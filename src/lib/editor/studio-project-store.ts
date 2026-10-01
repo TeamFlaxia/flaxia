@@ -219,6 +219,8 @@ function decodeFiles(plaintext: Uint8Array): {
       fadeIn: Number.isFinite(clip.fadeIn) ? Math.max(0, clip.fadeIn) : 0,
       fadeOut: Number.isFinite(clip.fadeOut) ? Math.max(0, clip.fadeOut) : 0,
       pan: Number.isFinite(clip.pan) ? Math.max(-1, Math.min(1, clip.pan)) : 0,
+      trackMuted: clip.trackMuted === true,
+      trackSolo: clip.trackSolo === true,
       ...audioClipEqSettings(clip),
       gainEnvelope: audioClipGainEnvelope(clip),
     }));

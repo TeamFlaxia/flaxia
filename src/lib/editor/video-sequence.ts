@@ -1,4 +1,4 @@
-import { type AudioTimelineClip, mixAudioTimeline } from './audio-mixer.ts';
+import { type AudioTimelineClip, audibleAudioTimelineClips, mixAudioTimeline } from './audio-mixer.ts';
 import { probeFFmpegStreams, runFFmpeg } from './ffmpeg-client.ts';
 import { drawStudioImageLayer } from './image-layer-canvas.ts';
 import type { StudioImageLayer, StudioVideoClip } from './studio-project-store.ts';
@@ -302,7 +302,7 @@ export async function renderVideoSequence(
     onProgress: onProgress ? (ratio) => onProgress(ratio * (audioClips.length ? 0.72 : 1)) : undefined,
   });
   let finalBytes = outputBytes;
-  const hasAudioMix = audioClips.some((clip) => !clip.muted && clip.sourceEnd > clip.sourceStart);
+  const hasAudioMix = audibleAudioTimelineClips(audioClips).length > 0;
   if (hasAudioMix) {
     const mixedAudio = await mixAudioTimeline(files, audioClips);
     const audioBytes = new Uint8Array(await mixedAudio.arrayBuffer());

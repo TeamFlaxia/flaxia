@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { buildAudioArgs, defaultAudioEditState } from '../src/lib/editor/audio-editor.ts';
 import {
   type AudioTimelineClip,
+  audibleAudioTimelineClips,
   audioClipEqSettings,
   audioClipGainAutomation,
   audioClipGainEnvelope,
@@ -39,9 +40,53 @@ describe('audio solo preview', () => {
       pan: -0.3,
       muted: true,
     };
-    assert.deepEqual(soloAudioTimelineClip(clip), { ...clip, start: 0, muted: false });
+    assert.deepEqual(soloAudioTimelineClip(clip), {
+      ...clip,
+      start: 0,
+      muted: false,
+      trackMuted: false,
+      trackSolo: false,
+    });
     assert.equal(clip.start, 12.5);
     assert.equal(clip.muted, true);
+  });
+});
+
+describe('audio track mute and solo', () => {
+  const clip = (id: string, track: number, settings: Partial<AudioTimelineClip> = {}): AudioTimelineClip => ({
+    id,
+    fileIndex: 0,
+    track,
+    start: 0,
+    sourceStart: 0,
+    sourceEnd: 5,
+    gain: 1,
+    fadeIn: 0,
+    fadeOut: 0,
+    pan: 0,
+    muted: false,
+    ...settings,
+  });
+
+  it('mutes whole tracks and restricts playback to soloed tracks', () => {
+    const clips = [
+      clip('muted-track', 0, { trackMuted: true }),
+      clip('solo-track', 1, { trackSolo: true }),
+      clip('other-track', 2),
+      clip('muted-clip-on-solo', 1, { trackSolo: true, muted: true }),
+    ];
+    assert.deepEqual(
+      audibleAudioTimelineClips(clips).map(({ id }) => id),
+      ['solo-track'],
+    );
+  });
+
+  it('plays every unmuted track when no track is soloed', () => {
+    const clips = [clip('first', 0), clip('second', 1), clip('muted', 2, { trackMuted: true })];
+    assert.deepEqual(
+      audibleAudioTimelineClips(clips).map(({ id }) => id),
+      ['first', 'second'],
+    );
   });
 });
 

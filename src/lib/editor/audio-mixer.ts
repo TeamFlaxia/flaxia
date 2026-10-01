@@ -13,7 +13,21 @@ export interface AudioTimelineClip {
   midEqDb?: number;
   highEqDb?: number;
   gainEnvelope?: AudioGainEnvelope;
+  trackMuted?: boolean;
+  trackSolo?: boolean;
   muted: boolean;
+}
+
+/** Apply clip mute plus track mute/solo state consistently to preview and export. */
+export function audibleAudioTimelineClips(clips: AudioTimelineClip[]): AudioTimelineClip[] {
+  const soloedTracks = new Set(clips.filter((clip) => clip.trackSolo).map((clip) => clip.track));
+  return clips.filter(
+    (clip) =>
+      !clip.muted &&
+      !clip.trackMuted &&
+      (soloedTracks.size === 0 || soloedTracks.has(clip.track)) &&
+      clip.sourceEnd > clip.sourceStart,
+  );
 }
 
 export interface AudioGainEnvelope {
@@ -104,7 +118,7 @@ export function audioClipEqSettings(clip: AudioEqSettings): Required<AudioEqSett
 
 /** Copy one clip for isolated audition while preserving its trims and mix controls. */
 export function soloAudioTimelineClip(clip: AudioTimelineClip): AudioTimelineClip {
-  return { ...clip, start: 0, muted: false };
+  return { ...clip, start: 0, muted: false, trackMuted: false, trackSolo: false };
 }
 
 function audioContextConstructor(): typeof AudioContext {
@@ -155,7 +169,7 @@ export async function mixAudioTimeline(
   clips: AudioTimelineClip[],
   name = 'flaxia-mix.wav',
 ): Promise<File> {
-  const active = clips.filter((clip) => !clip.muted && clip.sourceEnd > clip.sourceStart);
+  const active = audibleAudioTimelineClips(clips);
   if (active.length === 0) throw new Error('Add an audible clip to the audio tracks first');
   const duration = Math.max(...active.map((clip) => clip.start + clip.sourceEnd - clip.sourceStart));
   if (!Number.isFinite(duration) || duration <= 0 || duration > 240) {

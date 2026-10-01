@@ -1,6 +1,7 @@
 import type * as Monaco from 'monaco-editor';
 import {
   type AudioTimelineClip,
+  audibleAudioTimelineClips,
   audioClipEqSettings,
   audioClipGainEnvelope,
   mixAudioTimeline,
@@ -624,6 +625,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         midEqDb: 0,
         highEqDb: 0,
         gainEnvelope: { start: 1, middle: 1, end: 1 },
+        trackMuted: false,
+        trackSolo: false,
         muted: false,
       };
       audioClips.push(clip);
@@ -1126,6 +1129,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const renderAudioTimeline = (): void => {
     audioTimeline.innerHTML = '';
     audioPlayheadElements = [];
+    const soloedTracks = new Set(audioClips.filter((clip) => clip.trackSolo).map((clip) => clip.track));
     const ruler = document.createElement('div');
     ruler.className = 'studio-audio-ruler';
     const end = Math.max(30, ...audioClips.map((clip) => clip.start + clip.sourceEnd - clip.sourceStart + 5));
@@ -1147,10 +1151,26 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const lane = document.createElement('div');
       lane.className = 'studio-audio-lane';
       lane.dataset.track = String(track);
-      lane.innerHTML = `<div class="studio-audio-track-label">A${track + 1}</div><div class="studio-audio-lane-canvas" style="width:${contentWidth}px"></div>`;
+      const trackClips = audioClips.filter((clip) => clip.track === track);
+      const trackMuted = trackClips.length > 0 && trackClips.every((clip) => clip.trackMuted);
+      const trackSolo = trackClips.length > 0 && trackClips.every((clip) => clip.trackSolo);
+      lane.innerHTML = `<div class="studio-audio-track-label" style="flex-basis:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:4px"><span>A${track + 1}</span><div class="studio-audio-track-controls" style="display:flex;gap:3px"><button type="button" data-action="mute" aria-pressed="${trackMuted}" title="${trackMuted ? 'Unmute' : 'Mute'} track" style="width:20px;height:16px;padding:0;border:1px solid #3b3d44;border-radius:3px;background:${trackMuted ? '#805c32' : '#24262c'};color:${trackMuted ? '#fff0c2' : '#999'};font-size:9px">M</button><button type="button" data-action="solo" aria-pressed="${trackSolo}" title="${trackSolo ? 'Unsolo' : 'Solo'} track" style="width:20px;height:16px;padding:0;border:1px solid #3b3d44;border-radius:3px;background:${trackSolo ? '#327365' : '#24262c'};color:${trackSolo ? '#d8fff4' : '#999'};font-size:9px">S</button></div></div><div class="studio-audio-lane-canvas" style="width:${contentWidth}px"></div>`;
       const canvas = lane.querySelector<HTMLElement>('.studio-audio-lane-canvas')!;
       canvas.style.backgroundSize = `${timelinePixelsPerSecond}px 100%`;
-      const trackClips = audioClips.filter((clip) => clip.track === track);
+      lane.querySelectorAll<HTMLButtonElement>('.studio-audio-track-controls button').forEach((button) => {
+        button.disabled = trackClips.length === 0;
+        button.classList.toggle('active', button.dataset.action === 'mute' ? trackMuted : trackSolo);
+        button.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const shouldEnable = button.dataset.action === 'mute' ? !trackMuted : !trackSolo;
+          for (const clip of trackClips) {
+            if (button.dataset.action === 'mute') clip.trackMuted = shouldEnable;
+            else clip.trackSolo = shouldEnable;
+          }
+          renderAudioTimeline();
+          scheduleAutosave();
+        });
+      });
       for (const clip of trackClips) {
         const file = files[clip.fileIndex];
         if (!file) continue;
@@ -1158,7 +1178,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         const block = document.createElement('button');
         block.type = 'button';
         block.draggable = true;
-        block.className = `studio-audio-clip ${clip.id === selectedAudioClipId ? 'active' : ''} ${clip.muted ? 'muted' : ''}`;
+        block.className = `studio-audio-clip ${clip.id === selectedAudioClipId ? 'active' : ''} ${clip.muted || clip.trackMuted || (soloedTracks.size > 0 && !soloedTracks.has(clip.track)) ? 'muted' : ''}`;
         block.dataset.clipId = clip.id;
         block.style.left = `${clip.start * timelinePixelsPerSecond}px`;
         block.style.width = `${Math.max(48, duration * timelinePixelsPerSecond)}px`;
@@ -1319,8 +1339,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     empty.className = 'studio-audio-empty';
     empty.textContent = audioClips.length ? '' : 'Import audio, then drag clips between tracks to arrange your mix';
     audioTimeline.appendChild(empty);
-    mixPlayButton.disabled = audioClips.length === 0;
-    mixExportButton.disabled = audioClips.length === 0;
+    mixPlayButton.disabled = audibleAudioTimelineClips(audioClips).length === 0;
+    mixExportButton.disabled = audibleAudioTimelineClips(audioClips).length === 0;
     soloAudioButton.disabled = !audioClips.some((clip) => clip.id === selectedAudioClipId);
     updateTimelinePlayhead(timelinePlayheadTime);
   };
@@ -3064,8 +3084,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       mixStatus.textContent = error instanceof Error ? error.message : 'Could not render mix';
       throw error;
     } finally {
-      mixPlayButton.disabled = audioClips.length === 0;
-      mixExportButton.disabled = audioClips.length === 0;
+      mixPlayButton.disabled = audibleAudioTimelineClips(audioClips).length === 0;
+      mixExportButton.disabled = audibleAudioTimelineClips(audioClips).length === 0;
     }
   };
   soloAudioButton.addEventListener('click', async () => {
