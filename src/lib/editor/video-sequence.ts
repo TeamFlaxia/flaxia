@@ -27,6 +27,55 @@ export function studioVideoLayerPlacement(format: StudioVideoFormat): {
   };
 }
 
+export interface VideoSequenceJoinSegment {
+  video: string;
+  audio: string;
+  start: number;
+  duration: number;
+}
+
+/** Build the filter graph that joins clips and gaps, dissolving any timed overlap. */
+export function buildVideoSequenceJoinFilters(segments: VideoSequenceJoinSegment[]): {
+  filters: string[];
+  duration: number;
+} {
+  const first = segments[0];
+  if (!first) throw new Error('Video sequence must contain a clip or gap');
+  if (segments.length === 1) {
+    return {
+      filters: [`[${first.video}]null[outvbase]`, `[${first.audio}]anull[outa]`],
+      duration: first.start + first.duration,
+    };
+  }
+  const filters: string[] = [];
+  let composedVideo = first.video;
+  let composedAudio = first.audio;
+  let composedDuration = first.start + first.duration;
+  for (let index = 1; index < segments.length; index++) {
+    const segment = segments[index];
+    const overlap = Math.max(0, Math.min(composedDuration - segment.start, segment.duration));
+    const videoOutput = index === segments.length - 1 ? 'outvbase' : `sequence-v${index}`;
+    const audioOutput = index === segments.length - 1 ? 'outa' : `sequence-a${index}`;
+    if (overlap > 0.04) {
+      const transitionStart = Math.max(0, composedDuration - overlap);
+      filters.push(
+        `[${composedVideo}][${segment.video}]xfade=transition=fade:duration=${overlap.toFixed(3)}:offset=${transitionStart.toFixed(3)}[${videoOutput}]`,
+      );
+      filters.push(
+        `[${composedAudio}][${segment.audio}]acrossfade=d=${overlap.toFixed(3)}:c1=tri:c2=tri[${audioOutput}]`,
+      );
+      composedDuration += segment.duration - overlap;
+    } else {
+      filters.push(`[${composedVideo}][${segment.video}]concat=n=2:v=1:a=0[${videoOutput}]`);
+      filters.push(`[${composedAudio}][${segment.audio}]concat=n=2:v=0:a=1[${audioOutput}]`);
+      composedDuration += segment.duration;
+    }
+    composedVideo = videoOutput;
+    composedAudio = audioOutput;
+  }
+  return { filters, duration: composedDuration };
+}
+
 /** Build FFmpeg fade filters for a clip's timeline duration. */
 export function videoClipFadeFilters(duration: number, fadeIn = 0, fadeOut = 0): string[] {
   if (!Number.isFinite(duration) || duration <= 0) return [];
@@ -219,14 +268,17 @@ export async function renderVideoSequence(
   if (sourceDurations.some((length) => !Number.isFinite(length) || length <= 0)) {
     throw new Error('Video sequences must be between 0 and 3 minutes');
   }
-  const timelineSegments: Array<{ kind: 'clip'; clipIndex: number } | { kind: 'gap'; duration: number }> = [];
+  const timelineSegments: Array<
+    | { kind: 'clip'; clipIndex: number; start: number; duration: number }
+    | { kind: 'gap'; start: number; duration: number }
+  > = [];
   let duration = 0;
   for (let index = 0; index < ordered.length; index++) {
-    const clipStart = Math.max(duration, ordered[index].start);
+    const clipStart = Math.max(0, ordered[index].start);
     const gap = clipStart - duration;
-    if (gap > 0.04) timelineSegments.push({ kind: 'gap', duration: gap });
-    timelineSegments.push({ kind: 'clip', clipIndex: index });
-    duration = clipStart + durations[index];
+    if (gap > 0.04) timelineSegments.push({ kind: 'gap', start: duration, duration: gap });
+    timelineSegments.push({ kind: 'clip', clipIndex: index, start: clipStart, duration: durations[index] });
+    duration = Math.max(duration, clipStart + durations[index]);
   }
   if (duration > MAX_DURATION_SECONDS) throw new Error('Video sequences must be between 0 and 3 minutes');
 
@@ -279,7 +331,7 @@ export async function renderVideoSequence(
   }
 
   const filters: string[] = [];
-  const concatInputs: string[] = [];
+  const segmentLabels: Array<{ video: string; audio: string }> = [];
   for (let segmentIndex = 0; segmentIndex < timelineSegments.length; segmentIndex++) {
     const segment = timelineSegments[segmentIndex];
     if (segment.kind === 'gap') {
@@ -289,7 +341,7 @@ export async function renderVideoSequence(
       filters.push(
         `anullsrc=channel_layout=stereo:sample_rate=44100:d=${segment.duration.toFixed(3)}[ag${segmentIndex}]`,
       );
-      concatInputs.push(`[vg${segmentIndex}]`, `[ag${segmentIndex}]`);
+      segmentLabels.push({ video: `vg${segmentIndex}`, audio: `ag${segmentIndex}` });
       continue;
     }
     const index = segment.clipIndex;
@@ -322,12 +374,19 @@ export async function renderVideoSequence(
     } else {
       filters.push(`anullsrc=channel_layout=stereo:sample_rate=44100:d=${clipDuration.toFixed(3)}[silence${index}]`);
     }
-    concatInputs.push(`[v${index}]`);
-    concatInputs.push(
-      clipSources[index].hasAudio && !clipSources[index].clip.muted ? `[a${index}]` : `[silence${index}]`,
-    );
+    segmentLabels.push({
+      video: `v${index}`,
+      audio: clipSources[index].hasAudio && !clipSources[index].clip.muted ? `a${index}` : `silence${index}`,
+    });
   }
-  filters.push(`${concatInputs.join('')}concat=n=${timelineSegments.length}:v=1:a=1[outvbase][outa]`);
+  const sequenceJoin = buildVideoSequenceJoinFilters(
+    timelineSegments.map((segment, index) => ({
+      ...segmentLabels[index],
+      start: segment.start,
+      duration: segment.duration,
+    })),
+  );
+  filters.push(...sequenceJoin.filters);
   if (overlays.length === 0) filters.push('[outvbase]null[outv]');
   else {
     let inputLabel = 'outvbase';

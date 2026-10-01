@@ -36,6 +36,7 @@ describe('portable Studio projects', () => {
         sourceEnd: 5,
         speed: 0.8,
         fit: 'cover' as const,
+        transitionOut: 1.2,
       },
     ];
     const imageLayers = [
@@ -97,6 +98,7 @@ describe('portable Studio projects', () => {
     assert.equal(restored.audioClips[0].speed, 1.25);
     assert.equal(restored.videoClips[0].fileIndex, 4);
     assert.equal(restored.videoClips[0].fit, 'cover');
+    assert.equal(restored.videoClips[0].transitionOut, 1.2);
     assert.equal(restored.videoFormat, 'portrait');
     assert.equal(restored.imageLayers[0].fileIndex, 2);
     assert.equal(restored.imageLayers[0].blend, 'screen');

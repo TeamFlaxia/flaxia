@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  buildVideoSequenceJoinFilters,
   studioVideoFrameSize,
   studioVideoLayerPlacement,
   videoOverlayBlendMode,
@@ -52,5 +53,28 @@ describe('video sequence canvas formats', () => {
     assert.deepEqual(studioVideoLayerPlacement('landscape'), { scale: 2 / 3, offsetX: 280, offsetY: 0 });
     assert.deepEqual(studioVideoLayerPlacement('square'), { scale: 1, offsetX: 0, offsetY: 0 });
     assert.deepEqual(studioVideoLayerPlacement('portrait'), { scale: 2 / 3, offsetX: 0, offsetY: 280 });
+  });
+});
+
+describe('video sequence joins', () => {
+  it('passes a single clip through to the MP4 export labels', () => {
+    assert.deepEqual(buildVideoSequenceJoinFilters([{ video: 'v0', audio: 'a0', start: 0, duration: 4 }]), {
+      filters: ['[v0]null[outvbase]', '[a0]anull[outa]'],
+      duration: 4,
+    });
+  });
+
+  it('crossfades overlapping clips and mixes their source audio', () => {
+    const result = buildVideoSequenceJoinFilters([
+      { video: 'v0', audio: 'a0', start: 0, duration: 4 },
+      { video: 'v1', audio: 'a1', start: 3, duration: 4 },
+    ]);
+    assert.deepEqual(result, {
+      filters: [
+        '[v0][v1]xfade=transition=fade:duration=1.000:offset=3.000[outvbase]',
+        '[a0][a1]acrossfade=d=1.000:c1=tri:c2=tri[outa]',
+      ],
+      duration: 7,
+    });
   });
 });

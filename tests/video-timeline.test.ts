@@ -38,6 +38,28 @@ describe('video timeline ripple layout', () => {
     );
   });
 
+  it('overlaps adjacent clips by the selected transition duration', () => {
+    const clips = [{ ...clip('first', 0, 4), transitionOut: 1 }, clip('second', 4, 3)];
+    assert.equal(rippleOverlappingVideoClips(clips), true);
+    assert.deepEqual(
+      clips.map((item) => [item.id, item.start]),
+      [
+        ['first', 0],
+        ['second', 3],
+      ],
+    );
+    assert.equal(rippleOverlappingVideoClips(clips), false);
+  });
+
+  it('limits a transition to half the duration of the shorter clip', () => {
+    const clips = [{ ...clip('first', 0, 8), transitionOut: 2 }, clip('short', 8, 1)];
+    rippleOverlappingVideoClips(clips);
+    assert.deepEqual(
+      clips.map((item) => item.start),
+      [0, 7.5],
+    );
+  });
+
   it('repairs invalid positions without producing a negative timeline start', () => {
     const clips = [clip('first', -3, 2), clip('second', Number.NaN, 1)];
     assert.equal(rippleOverlappingVideoClips(clips), true);

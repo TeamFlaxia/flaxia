@@ -64,6 +64,7 @@ export interface StudioVideoClip {
   blurPx?: number;
   fadeIn?: number;
   fadeOut?: number;
+  transitionOut?: number;
   gain?: number;
   muted?: boolean;
 }
@@ -284,6 +285,10 @@ function decodeFiles(plaintext: Uint8Array): {
         typeof clip.blurPx === 'number' && Number.isFinite(clip.blurPx) ? Math.max(0, Math.min(24, clip.blurPx)) : 0,
       fadeIn: typeof clip.fadeIn === 'number' && Number.isFinite(clip.fadeIn) ? Math.max(0, clip.fadeIn) : 0,
       fadeOut: typeof clip.fadeOut === 'number' && Number.isFinite(clip.fadeOut) ? Math.max(0, clip.fadeOut) : 0,
+      transitionOut:
+        typeof clip.transitionOut === 'number' && Number.isFinite(clip.transitionOut)
+          ? Math.max(0, Math.min(2, clip.transitionOut))
+          : 0,
       gain: typeof clip.gain === 'number' && Number.isFinite(clip.gain) ? Math.max(0, Math.min(1, clip.gain)) : 1,
       muted: typeof clip.muted === 'boolean' ? clip.muted : false,
     }));

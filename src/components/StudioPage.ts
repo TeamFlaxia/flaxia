@@ -38,7 +38,7 @@ import {
   studioVideoLayerPlacement,
   videoClipOpacityAt,
 } from '../lib/editor/video-sequence.ts';
-import { rippleOverlappingVideoClips } from '../lib/editor/video-timeline.ts';
+import { rippleOverlappingVideoClips, videoClipTransitionDuration } from '../lib/editor/video-timeline.ts';
 import { computeAudioPeaks } from '../lib/editor/waveform.ts';
 import { getVaultKey, tryDeviceUnlock } from '../lib/vault/session.js';
 import type { ZipExecutorHandle } from '../lib/zip-executor.js';
@@ -267,6 +267,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let codeEditorCleanup: (() => void) | null = null;
   let videoSequencePlayer: HTMLVideoElement | null = null;
   let videoSequenceUrl: string | null = null;
+  let videoSequenceTransitionPlayer: HTMLVideoElement | null = null;
+  let videoSequenceTransitionUrl: string | null = null;
   let videoSequenceAudio: HTMLAudioElement | null = null;
   let videoSequenceAudioUrl: string | null = null;
   let videoSequenceOverlayCanvas: HTMLElement | null = null;
@@ -462,12 +464,17 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     videoSequencePlayer?.pause();
     videoSequencePlayer?.remove();
     videoSequencePlayer = null;
+    videoSequenceTransitionPlayer?.pause();
+    videoSequenceTransitionPlayer?.remove();
+    videoSequenceTransitionPlayer = null;
     videoSequenceAudio?.pause();
     videoSequenceAudio = null;
     if (videoSequenceAudioUrl) URL.revokeObjectURL(videoSequenceAudioUrl);
     videoSequenceAudioUrl = null;
     if (videoSequenceUrl) URL.revokeObjectURL(videoSequenceUrl);
     videoSequenceUrl = null;
+    if (videoSequenceTransitionUrl) URL.revokeObjectURL(videoSequenceTransitionUrl);
+    videoSequenceTransitionUrl = null;
     videoSequenceIndex = -1;
     videoPlayButton.textContent = '▶ Preview video';
   };
@@ -537,6 +544,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         sourceStart: clip.sourceStart + offset * videoClipSpeed(clip),
       };
       clip.sourceEnd = rightClip.sourceStart;
+      clip.transitionOut = 0;
       videoClips.splice(clipIndex + 1, 0, rightClip);
       manuallyPlacedVideoClips.add(rightClip.id);
       selectedVideoClipId = rightClip.id;
@@ -896,9 +904,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const renderVideoTimeline = (): void => {
     videoTimeline.innerHTML = '';
     videoPlayheadElement = null;
-    const sequenceEnd = [...videoClips]
-      .sort((a, b) => a.start - b.start)
-      .reduce((cursor, clip) => Math.max(cursor, clip.start) + videoClipTimelineDuration(clip), 0);
+    const sequenceEnd = Math.max(0, ...videoClips.map((clip) => clip.start + videoClipTimelineDuration(clip)));
     const end = Math.max(
       30,
       sequenceEnd + 5,
@@ -930,7 +936,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     canvas.className = 'studio-video-lane-canvas';
     canvas.style.width = `${contentWidth}px`;
     canvas.style.backgroundSize = `${timelinePixelsPerSecond}px 100%`;
-    for (const clip of videoClips) {
+    for (const clip of [...videoClips].sort((left, right) => left.start - right.start)) {
       const file = files[clip.fileIndex];
       if (!file) continue;
       const block = document.createElement('button');
@@ -950,6 +956,25 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const rightHandle = document.createElement('span');
       rightHandle.className = 'studio-video-trim studio-video-trim-right';
       rightHandle.setAttribute('aria-label', 'Trim end');
+      const orderedClips = [...videoClips].sort((left, right) => left.start - right.start);
+      const clipIndex = orderedClips.findIndex((item) => item.id === clip.id);
+      const nextClip = orderedClips[clipIndex + 1];
+      const transitionDuration = nextClip
+        ? Math.max(
+            0,
+            Math.min(
+              videoClipTransitionDuration(clip, nextClip),
+              clip.start + videoClipTimelineDuration(clip) - nextClip.start,
+            ),
+          )
+        : 0;
+      if (transitionDuration > 0) {
+        const transitionMark = document.createElement('span');
+        transitionMark.className = 'studio-video-transition-mark';
+        transitionMark.style.width = `${transitionDuration * timelinePixelsPerSecond}px`;
+        transitionMark.title = `${transitionDuration.toFixed(1)}s cross-dissolve`;
+        block.appendChild(transitionMark);
+      }
       block.appendChild(leftHandle);
       block.appendChild(labelText);
       block.appendChild(rightHandle);
@@ -1519,7 +1544,21 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       };
       const colorControls = `${colorControl('brightness', 'Brightness')}${colorControl('contrast', 'Contrast')}${colorControl('saturation', 'Saturation')}${colorControl('hueDeg', 'Hue')}${colorControl('blurPx', 'Blur')}`;
       const clipDuration = videoClipTimelineDuration(videoClip);
-      inspectorBody.innerHTML = `<div class="studio-inspector-icon">▶</div><h2>${escapeHtml(videoFile.name)}</h2><p>Video clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-video-position" type="number" min="0" step="0.1" value="${videoClip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Framing</span><select class="studio-video-fit"><option value="contain" ${videoClip.fit !== 'cover' ? 'selected' : ''}>Fit · show whole frame</option><option value="cover" ${videoClip.fit === 'cover' ? 'selected' : ''}>Fill · crop to frame</option></select></label><label class="studio-property"><span>Speed</span><select class="studio-video-speed">${[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => `<option value="${speed}" ${videoClipSpeed(videoClip) === speed ? 'selected' : ''}>${speed}×</option>`).join('')}</select></label>${colorControls}<label class="studio-property"><span>Trim in</span><input class="studio-video-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-video-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade in</span><input class="studio-video-fade-in" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeIn ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade out</span><input class="studio-video-fade-out" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeOut ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Clip audio</span><input class="studio-video-gain" type="range" min="0" max="100" value="${Math.round((videoClip.gain ?? 1) * 100)}"><small class="studio-video-gain-value">${Math.round((videoClip.gain ?? 1) * 100)}%</small></label><label class="studio-property studio-mute-property"><input class="studio-video-muted" type="checkbox" ${videoClip.muted ? 'checked' : ''}><span>Mute source audio</span></label><p class="studio-video-hint">Speed, framing, color, and fade adjustments apply to sequence preview and MP4 export.</p><button class="studio-button studio-remove-video" type="button">Remove from timeline</button>`;
+      const orderedVideoClips = [...videoClips].sort((left, right) => left.start - right.start);
+      const nextVideoClip = orderedVideoClips[orderedVideoClips.findIndex((item) => item.id === videoClip.id) + 1];
+      const transitionControl = `<label class="studio-property"><span>Transition out</span><select class="studio-video-transition" ${nextVideoClip ? '' : 'disabled'}>${[
+        [0, 'Off'],
+        [0.5, 'Cross-dissolve · 0.5s'],
+        [1, 'Cross-dissolve · 1s'],
+        [1.5, 'Cross-dissolve · 1.5s'],
+        [2, 'Cross-dissolve · 2s'],
+      ]
+        .map(
+          ([value, label]) =>
+            `<option value="${value}" ${(videoClip.transitionOut ?? 0) === value ? 'selected' : ''}>${label}</option>`,
+        )
+        .join('')}</select></label>`;
+      inspectorBody.innerHTML = `<div class="studio-inspector-icon">▶</div><h2>${escapeHtml(videoFile.name)}</h2><p>Video clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-video-position" type="number" min="0" step="0.1" value="${videoClip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Framing</span><select class="studio-video-fit"><option value="contain" ${videoClip.fit !== 'cover' ? 'selected' : ''}>Fit · show whole frame</option><option value="cover" ${videoClip.fit === 'cover' ? 'selected' : ''}>Fill · crop to frame</option></select></label><label class="studio-property"><span>Speed</span><select class="studio-video-speed">${[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => `<option value="${speed}" ${videoClipSpeed(videoClip) === speed ? 'selected' : ''}>${speed}×</option>`).join('')}</select></label>${transitionControl}${colorControls}<label class="studio-property"><span>Trim in</span><input class="studio-video-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-video-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade in</span><input class="studio-video-fade-in" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeIn ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade out</span><input class="studio-video-fade-out" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeOut ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Clip audio</span><input class="studio-video-gain" type="range" min="0" max="100" value="${Math.round((videoClip.gain ?? 1) * 100)}"><small class="studio-video-gain-value">${Math.round((videoClip.gain ?? 1) * 100)}%</small></label><label class="studio-property studio-mute-property"><input class="studio-video-muted" type="checkbox" ${videoClip.muted ? 'checked' : ''}><span>Mute source audio</span></label><p class="studio-video-hint">Cross-dissolve blends adjacent video and source audio in preview and MP4 export.</p><button class="studio-button studio-remove-video" type="button">Remove from timeline</button>`;
       const update = (selector: string, set: (value: number) => void): void => {
         inspectorBody.querySelector<HTMLInputElement>(selector)!.addEventListener('change', (event) => {
           const input = event.currentTarget as HTMLInputElement;
@@ -1540,6 +1579,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         videoClip.fit = (event.currentTarget as HTMLSelectElement).value === 'cover' ? 'cover' : 'contain';
         if (videoSequencePlayer?.dataset.clipId === videoClip.id) {
           videoSequencePlayer.style.objectFit = videoClip.fit;
+        }
+        if (videoSequenceTransitionPlayer?.dataset.clipId === videoClip.id) {
+          videoSequenceTransitionPlayer.style.objectFit = videoClip.fit;
         }
         scheduleAutosave();
       });
@@ -1565,6 +1607,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           if (videoSequencePlayer?.dataset.clipId === videoClip.id) {
             videoSequencePlayer.style.filter = videoClipCssFilter(videoClip);
           }
+          if (videoSequenceTransitionPlayer?.dataset.clipId === videoClip.id) {
+            videoSequenceTransitionPlayer.style.filter = videoClipCssFilter(videoClip);
+          }
         });
         input.addEventListener('change', () => scheduleAutosave());
       });
@@ -1580,6 +1625,19 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       update('.studio-video-fade-out', (value) => {
         videoClip.fadeOut = Math.min(videoClipTimelineDuration(videoClip), Math.max(0, value));
       });
+      inspectorBody.querySelector('select.studio-video-transition')!.addEventListener('change', (event) => {
+        const transition = Number((event.currentTarget as HTMLSelectElement).value);
+        if (![0, 0.5, 1, 1.5, 2].includes(transition)) return;
+        videoClip.transitionOut = transition;
+        const ordered = [...videoClips].sort((left, right) => left.start - right.start);
+        const next = ordered[ordered.findIndex((item) => item.id === videoClip.id) + 1];
+        if (next && transition > 0) next.start = videoClip.start + videoClipTimelineDuration(videoClip);
+        rippleOverlappingVideoClips(videoClips);
+        stopVideoSequence();
+        renderVideoTimeline();
+        renderInspector();
+        scheduleAutosave();
+      });
       const videoGain = inspectorBody.querySelector<HTMLInputElement>('.studio-video-gain')!;
       videoGain.addEventListener('input', () => {
         videoClip.gain = Number(videoGain.value) / 100;
@@ -1587,12 +1645,18 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         if (videoSequencePlayer?.dataset.clipId === videoClip.id) {
           videoSequencePlayer.volume = videoClip.gain;
         }
+        if (videoSequenceTransitionPlayer?.dataset.clipId === videoClip.id) {
+          videoSequenceTransitionPlayer.volume = videoClip.gain;
+        }
       });
       videoGain.addEventListener('change', () => scheduleAutosave());
       inspectorBody.querySelector<HTMLInputElement>('.studio-video-muted')!.addEventListener('change', (event) => {
         videoClip.muted = (event.currentTarget as HTMLInputElement).checked;
         if (videoSequencePlayer?.dataset.clipId === videoClip.id) {
           videoSequencePlayer.muted = videoClip.muted;
+        }
+        if (videoSequenceTransitionPlayer?.dataset.clipId === videoClip.id) {
+          videoSequenceTransitionPlayer.muted = videoClip.muted;
         }
         scheduleAutosave();
       });
@@ -3616,9 +3680,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const startTimes: number[] = [];
     let sequenceEnd = 0;
     for (const clip of sequence) {
-      const clipStart = Math.max(sequenceEnd, clip.start);
+      const clipStart = Math.max(0, clip.start);
       startTimes.push(clipStart);
-      sequenceEnd = clipStart + videoClipTimelineDuration(clip);
+      sequenceEnd = Math.max(sequenceEnd, clipStart + videoClipTimelineDuration(clip));
     }
     const requestedStartTime = videoSequenceStartTime;
     videoSequenceStartTime = 0;
@@ -3629,6 +3693,14 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     player.playsInline = true;
     player.setAttribute('aria-label', 'Video sequence preview');
     stage.appendChild(player);
+    const transitionPlayer = document.createElement('video');
+    transitionPlayer.className = 'studio-sequence-transition-player';
+    transitionPlayer.playsInline = true;
+    transitionPlayer.preload = 'auto';
+    transitionPlayer.muted = true;
+    transitionPlayer.setAttribute('aria-hidden', 'true');
+    stage.appendChild(transitionPlayer);
+    videoSequenceTransitionPlayer = transitionPlayer;
     const overlayStack = document.createElement('div');
     overlayStack.className = 'studio-sequence-overlays';
     overlayStack.setAttribute('aria-hidden', 'true');
@@ -3644,7 +3716,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const height = Math.max(1, Math.round(frameSize.height * scale));
       const left = Math.round((stage.clientWidth - width) / 2);
       const top = Math.round((stage.clientHeight - height) / 2);
-      for (const element of [player, overlayStack]) {
+      for (const element of [player, transitionPlayer, overlayStack]) {
         element.style.inset = 'auto';
         element.style.left = `${left}px`;
         element.style.top = `${top}px`;
@@ -3708,6 +3780,92 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     let activeClip: StudioVideoClip | null = null;
     let advancing = false;
     let playAt: (index: number) => void = () => undefined;
+    let syncTransition: (time: number, playing: boolean) => void = () => undefined;
+    const overlapBefore = (index: number): number =>
+      index <= 0
+        ? 0
+        : Math.max(
+            0,
+            Math.min(
+              startTimes[index - 1] + videoClipTimelineDuration(sequence[index - 1]) - startTimes[index],
+              videoClipTimelineDuration(sequence[index]),
+            ),
+          );
+    const prepareTransition = (index: number): void => {
+      if (index <= 0 || index >= sequence.length || !videoSequencePlayer) return;
+      if (overlapBefore(index) <= 0.04 || transitionPlayer.dataset.clipId === sequence[index].id) return;
+      transitionPlayer.pause();
+      transitionPlayer.removeAttribute('src');
+      transitionPlayer.load();
+      if (videoSequenceTransitionUrl) URL.revokeObjectURL(videoSequenceTransitionUrl);
+      videoSequenceTransitionUrl = null;
+      transitionPlayer.style.visibility = 'hidden';
+      transitionPlayer.style.opacity = '0';
+      transitionPlayer.volume = 0;
+      transitionPlayer.muted = true;
+      const incomingClip = sequence[index];
+      const file = files[incomingClip.fileIndex];
+      if (!file) return;
+      transitionPlayer.dataset.clipId = incomingClip.id;
+      transitionPlayer.playbackRate = videoClipSpeed(incomingClip);
+      transitionPlayer.style.objectFit = incomingClip.fit === 'cover' ? 'cover' : 'contain';
+      transitionPlayer.style.filter = videoClipCssFilter(incomingClip);
+      videoSequenceTransitionUrl = URL.createObjectURL(file);
+      transitionPlayer.src = videoSequenceTransitionUrl;
+      transitionPlayer.onloadedmetadata = () => {
+        if (!videoSequencePlayer || transitionPlayer.dataset.clipId !== incomingClip.id) return;
+        const offset = Math.max(0, Math.min(overlapBefore(index), timelinePlayheadTime - startTimes[index]));
+        transitionPlayer.currentTime = Math.min(
+          incomingClip.sourceStart + offset * videoClipSpeed(incomingClip),
+          transitionPlayer.duration || 0,
+        );
+        syncTransition(timelinePlayheadTime, !player.paused);
+      };
+    };
+    syncTransition = (time, playing): void => {
+      if (!activeClip || videoSequenceIndex < 0) return;
+      const index = videoSequenceIndex + 1;
+      const incomingClip = sequence[index];
+      const overlap = overlapBefore(index);
+      const outgoingEnd = startTimes[videoSequenceIndex] + videoClipTimelineDuration(activeClip);
+      if (!incomingClip || overlap <= 0.04 || time < startTimes[index] || time >= outgoingEnd) {
+        transitionPlayer.pause();
+        transitionPlayer.style.visibility = 'hidden';
+        transitionPlayer.style.opacity = '0';
+        return;
+      }
+      prepareTransition(index);
+      if (transitionPlayer.dataset.clipId !== incomingClip.id || transitionPlayer.readyState < 1) return;
+      const progress = Math.max(0, Math.min(1, (time - startTimes[index]) / overlap));
+      const incomingOffset = Math.max(0, time - startTimes[index]);
+      const incomingTime = Math.min(
+        incomingClip.sourceStart + incomingOffset * videoClipSpeed(incomingClip),
+        transitionPlayer.duration || 0,
+      );
+      if (Math.abs(transitionPlayer.currentTime - incomingTime) > 0.12) transitionPlayer.currentTime = incomingTime;
+      transitionPlayer.playbackRate = videoClipSpeed(incomingClip);
+      const incomingFade = videoClipOpacityAt(
+        incomingOffset,
+        videoClipTimelineDuration(incomingClip),
+        incomingClip.fadeIn,
+        incomingClip.fadeOut,
+      );
+      const outgoingOffset = Math.max(0, time - startTimes[videoSequenceIndex]);
+      const outgoingFade = videoClipOpacityAt(
+        outgoingOffset,
+        videoClipTimelineDuration(activeClip),
+        activeClip.fadeIn,
+        activeClip.fadeOut,
+      );
+      player.style.opacity = String((1 - progress) * outgoingFade);
+      player.volume = Math.max(0, Math.min(1, activeClip.gain ?? 1)) * (1 - progress) * outgoingFade;
+      transitionPlayer.style.visibility = 'visible';
+      transitionPlayer.style.opacity = String(progress * incomingFade);
+      transitionPlayer.muted = incomingClip.muted ?? false;
+      transitionPlayer.volume = Math.max(0, Math.min(1, incomingClip.gain ?? 1)) * progress * incomingFade;
+      if (playing && transitionPlayer.paused) void transitionPlayer.play().catch(() => undefined);
+      else if (!playing && !transitionPlayer.paused) transitionPlayer.pause();
+    };
     const syncSequenceAudio = (time: number, play: boolean): void => {
       if (!sequenceAudio) return;
       if (Math.abs(sequenceAudio.currentTime - time) > 0.3) sequenceAudio.currentTime = time;
@@ -3729,6 +3887,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       player.style.objectFit = activeClip.fit === 'cover' ? 'cover' : 'contain';
       player.style.filter = videoClipCssFilter(activeClip);
       player.style.opacity = '1';
+      transitionPlayer.pause();
+      transitionPlayer.style.visibility = 'hidden';
+      transitionPlayer.style.opacity = '0';
+      if (overlapBefore(index + 1) > 0.04) prepareTransition(index + 1);
       const file = files[activeClip.fileIndex];
       if (!file) {
         playAt(index + 1);
@@ -3763,6 +3925,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       if (videoSequenceUrl) URL.revokeObjectURL(videoSequenceUrl);
       videoSequenceUrl = null;
       player.style.visibility = 'hidden';
+      transitionPlayer.pause();
+      transitionPlayer.style.visibility = 'hidden';
+      transitionPlayer.style.opacity = '0';
       mixStatus.textContent = `Gap · ${gapDuration.toFixed(1)}s`;
       const gapStartedAt = performance.now();
       const updateGap = (): void => {
@@ -3796,7 +3961,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const advance = (): void => {
       if (videoSequenceIndex >= 0 && !advancing) {
         advancing = true;
-        playAt(videoSequenceIndex + 1);
+        const nextIndex = videoSequenceIndex + 1;
+        const overlap = overlapBefore(nextIndex);
+        if (overlap > 0.04) playClip(nextIndex, overlap);
+        else playAt(nextIndex);
       }
     };
     const startAt = (time: number): void => {
@@ -3831,12 +3999,19 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         updateTimelinePlayhead(timelineTime);
         void drawLiveLayers(timelineTime);
         syncSequenceAudio(timelineTime, !player.paused);
+        syncTransition(timelineTime, !player.paused);
       }
       if (activeClip && player.currentTime >= activeClip.sourceEnd - 0.04) advance();
     });
     player.addEventListener('ended', advance);
-    player.addEventListener('pause', () => syncSequenceAudio(timelinePlayheadTime, false));
-    player.addEventListener('play', () => syncSequenceAudio(timelinePlayheadTime, true));
+    player.addEventListener('pause', () => {
+      syncSequenceAudio(timelinePlayheadTime, false);
+      syncTransition(timelinePlayheadTime, false);
+    });
+    player.addEventListener('play', () => {
+      syncSequenceAudio(timelinePlayheadTime, true);
+      syncTransition(timelinePlayheadTime, true);
+    });
     startAt(requestedStartTime);
   });
   videoExportButton.addEventListener('click', async () => {
@@ -4018,7 +4193,7 @@ const studioCss = `
 .studio-timeline-playhead{position:absolute;z-index:4;top:0;bottom:0;width:2px;background:#f2f687;box-shadow:0 0 6px #f2f687;pointer-events:none}
 .studio-sequence-overlays{position:absolute;z-index:6;inset:6% 8%;width:84%;height:88%;pointer-events:none}.studio-sequence-overlays canvas{position:absolute;inset:0;width:100%;height:100%}
 .studio-composer-preview-controls{display:flex;align-items:center;gap:16px;min-height:38px;padding:4px 18px;border-bottom:1px solid #30333a;background:#15161b;color:#aeb3bd;font-size:10px}.studio-composer-preview-controls label{display:flex;align-items:center;gap:7px;white-space:nowrap}.studio-composer-preview-controls label:last-child{flex:1}.studio-composer-preview-controls input[type=checkbox]{accent-color:#b8ef6a}.studio-composer-preview-controls input[type=range]{flex:1;min-width:80px;max-width:460px;accent-color:#b8ef6a}.studio-composer-preview-controls output{min-width:40px;color:#e9ebef;font-variant-numeric:tabular-nums}
-.studio-video-clip.muted{filter:saturate(.35);border-style:dashed}
+.studio-video-clip.muted{filter:saturate(.35);border-style:dashed}.studio-video-transition-mark{position:absolute;z-index:4;top:0;right:0;bottom:0;border-left:1px solid #e0c5ff;background:linear-gradient(90deg,#c99aff22,#c99aff99);pointer-events:none}
 .studio-clip-speed{max-width:116px;padding:5px 7px;border:1px solid var(--studio-border);border-radius:4px;background:#111216;color:var(--studio-text);font:11px system-ui,sans-serif}
 .studio-composer-position-lock{width:23px;flex:0 0 23px;padding:4px 0;border:0;border-radius:4px;background:transparent;color:#9da3ad;font-size:12px;cursor:pointer}.studio-composer-position-lock:hover,.studio-composer-position-lock[aria-pressed=true]{background:#30343c;color:#b8ef6a}.studio-composer-position-lock:focus-visible{outline:1px solid #b8ef6a}
 .studio-audio-track-label{box-sizing:border-box;flex:0 0 142px;display:flex;flex-direction:column;justify-content:center;gap:3px;padding:4px 7px}.studio-audio-track-heading{display:flex;align-items:center;justify-content:space-between}.studio-audio-track-controls{display:flex;gap:3px}.studio-audio-track-controls button{width:20px;height:16px;padding:0;border:1px solid #3b3d44;border-radius:3px;background:#24262c;color:#999;font-size:9px}.studio-audio-track-controls button.active,.studio-audio-track-controls button[aria-pressed=true]{background:#327365;color:#d8fff4}.studio-audio-track-controls button[data-action=mute][aria-pressed=true]{background:#805c32;color:#fff0c2}.studio-audio-mixer-control{display:flex;align-items:center;gap:4px;height:12px;color:#888e9a;font-size:8px}.studio-audio-mixer-control input{flex:1;min-width:0;height:10px;margin:0;accent-color:#9bd77b}.studio-audio-mixer-control output{width:28px;color:#b9bec8;text-align:right;font-size:8px;font-variant-numeric:tabular-nums}
@@ -4036,6 +4211,7 @@ const studioCss = `
 .studio-zip-editor-overlay{inset:3vh 4vw;overflow:hidden;border:1px solid #383c46;border-radius:9px;box-shadow:0 20px 80px #000b}.studio-zip-editor-overlay .studio-composer-header>div:last-child{align-items:center}.studio-zip-file-select{max-width:min(38vw,420px);padding:7px 9px;border:1px solid #393d46;border-radius:5px;background:#202228;color:#e7e9ee;font:11px system-ui,sans-serif}.studio-zip-editor-body{display:flex;flex:1;flex-direction:column;min-height:0;padding:12px;background:#111216}.studio-zip-editor-status{min-height:24px;color:#aeb3bd;font-size:11px}.studio-zip-editor-host{display:flex;flex:1;min-height:0}.studio-zip-editor-host .studio-code-workbench{flex:1;max-height:none}
 .studio-audio-envelope{position:absolute;z-index:2;left:5px;right:5px;top:17px;height:18px;overflow:visible;pointer-events:none}.studio-audio-envelope polyline{fill:none;stroke:#f1e678;stroke-width:1.5;vector-effect:non-scaling-stroke;opacity:.95}.studio-audio-envelope-point{fill:#fff4a3;stroke:#4c4724;stroke-width:1;vector-effect:non-scaling-stroke;pointer-events:all;cursor:ns-resize;touch-action:none}.studio-audio-envelope-point:hover{r:3}
 .studio-sequence-player{position:absolute;z-index:5;inset:6% 8%;width:84%;height:88%;max-height:88%;background:#000;border:1px solid var(--studio-border);border-radius:8px;box-shadow:0 12px 40px #0009}
+.studio-sequence-transition-player{position:absolute;z-index:5;inset:6% 8%;width:84%;height:88%;max-height:88%;background:#000;border:1px solid var(--studio-border);border-radius:8px;pointer-events:none;transition:opacity .12s linear}
 .studio-composer-button{border:1px solid #536843!important;background:#273323!important;color:#d8f3c2!important}.studio-composer-overlay{position:fixed;z-index:1000;inset:0;display:flex;flex-direction:column;background:#111216;color:#eceef2;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.studio-composer-header{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:58px;padding:8px 18px;border-bottom:1px solid #30333a;background:#181a1f}.studio-composer-header>div:first-child{display:flex;flex-direction:column;gap:4px}.studio-composer-header b{font-size:13px}.studio-composer-header small{color:#9298a3;font-size:10px}.studio-composer-header>div:last-child{display:flex;gap:8px}.studio-composer-header button,.studio-composer-order button,.studio-composer-remove{border:1px solid #393d46;border-radius:5px;background:#24272e;color:#e7e9ee;padding:7px 10px;font-size:11px;cursor:pointer}.studio-composer-export{background:#b8ef6a!important;border-color:#b8ef6a!important;color:#17200f!important;font-weight:700}.studio-composer-header .studio-composer-close{width:32px;padding:2px;font-size:21px}.studio-composer-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;flex:1;min-height:0}.studio-composer-board{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;min-height:0;padding:16px;background:#101115}.studio-composer-canvas-wrap{width:min(72vw,68vh);height:min(72vw,68vh);max-width:100%;max-height:100%;background-color:#202228;background-image:linear-gradient(45deg,#2b2d34 25%,transparent 25%),linear-gradient(-45deg,#2b2d34 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#2b2d34 75%),linear-gradient(-45deg,transparent 75%,#2b2d34 75%);background-size:24px 24px;background-position:0 0,0 12px,12px -12px,-12px 0}.studio-composer-canvas{display:block;width:100%;height:100%;touch-action:none;cursor:move}.studio-composer-status{min-height:22px;padding-top:8px;color:#f0a4a4;font-size:11px}.studio-composer-panel{min-width:0;overflow:auto;padding:12px;border-left:1px solid #30333a;background:#181a1f}.studio-composer-section{margin-bottom:17px}.studio-composer-title{display:flex;justify-content:space-between;margin-bottom:8px;color:#9298a3;font-size:9px;font-weight:700;letter-spacing:.08em}.studio-composer-count{color:#c1c5cd}.studio-composer-assets,.studio-composer-layers{display:flex;flex-direction:column;gap:4px;max-height:175px;overflow:auto}.studio-composer-asset,.studio-composer-layer{display:flex;align-items:center;gap:6px;min-width:0;border:1px solid transparent;border-radius:5px;background:#202229;color:#e4e6eb;font-size:10px}.studio-composer-asset{padding:7px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}.studio-composer-asset:hover{border-color:#61764d}.studio-composer-layer{padding:3px}.studio-composer-layer.active{border-color:#b8ef6a}.studio-composer-layer-select{flex:1;min-width:0;padding:5px;border:0;background:transparent;color:inherit;text-align:left;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:10px;cursor:pointer}.studio-composer-visibility{border:0;background:transparent;color:#c2c7d0;cursor:pointer}.studio-composer-properties{padding-top:3px}.studio-composer-layer-name{margin-bottom:9px;overflow:hidden;color:#dce0e7;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.studio-composer-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}.studio-composer-grid label,.studio-composer-field{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:6px 0;color:#aeb3bd;font-size:10px}.studio-composer-grid input,.studio-composer-field input,.studio-composer-field select{width:90px;padding:5px;border:1px solid #383c46;border-radius:4px;background:#111216;color:#e9ebef;font:11px system-ui,sans-serif}.studio-composer-field select{width:125px}.studio-composer-range{display:flex;flex-wrap:wrap;justify-content:space-between;gap:5px;margin:12px 0;color:#aeb3bd;font-size:10px}.studio-composer-range input{width:100%;accent-color:#b8ef6a}.studio-composer-range output{color:#e9ebef}.studio-composer-order{display:flex;gap:6px;margin:11px 0}.studio-composer-order button{flex:1;padding:6px 4px;font-size:9px}.studio-composer-remove{width:100%;margin-top:4px;border-color:#5c3737;color:#f0b8b8}.studio-composer-properties>p{color:#9298a3;font-size:10px}
 @media(max-width:1050px){.studio-workspace{grid-template-columns:58px 190px minmax(300px,1fr)}.studio-inspector{display:none}.studio-topbar{padding:0 12px}.studio-project-name{display:none}}
 @media(max-width:768px){.studio-page{width:100%;height:calc(100dvh - var(--bottom-nav-h, 62px));min-height:420px}.studio-workspace{grid-template-columns:48px minmax(0,1fr)}.studio-assets{display:none}.studio-rail{padding:10px 3px}.studio-tool{width:42px;height:47px}.studio-topbar{height:50px;flex-basis:50px;padding:0 8px}.studio-brand{font-size:13px}.studio-top-actions{gap:4px}.studio-top-actions .studio-button{padding:7px 8px;font-size:10px}.studio-empty-art{transform:scale(.8);margin:-12px 0}.studio-empty h1{font-size:16px}.studio-empty p{max-width:260px;line-height:1.5}.studio-timeline{height:205px;max-height:44vh}.studio-timeline-head{overflow-x:auto;flex:0 0 39px}.studio-timeline-hint{display:none}.studio-timeline-head>button{flex:0 0 auto}.studio-video-workarea{max-height:62px}.studio-video-ruler{height:17px}.studio-video-ruler>span{top:2px}.studio-video-lane{min-height:40px}.studio-video-track-label{padding:13px 7px}.studio-video-lane-canvas{min-height:39px}.studio-video-clip{height:30px}.studio-track{min-height:38px}.studio-audio-workarea{max-height:95px}.studio-audio-ruler{height:17px}.studio-audio-ruler>span{top:2px}.studio-audio-lane{min-height:40px}.studio-audio-track-label{padding:13px 7px}.studio-audio-lane-canvas{min-height:39px}.studio-audio-clip{height:30px}.studio-sequence-player,.studio-sequence-overlays{inset:8% 3%;width:94%;height:84%}}
