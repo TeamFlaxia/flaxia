@@ -1,5 +1,5 @@
 import type JSZipType from 'jszip';
-import { STUDIO_CONSOLE_CONNECT_MESSAGE } from './bridge.js';
+import { STUDIO_CONSOLE_CONNECT_MESSAGE } from './bridge.ts';
 import {
   injectStudioConsoleBridge,
   parseStudioConsoleEntry,
