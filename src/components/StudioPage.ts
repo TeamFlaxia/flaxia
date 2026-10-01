@@ -669,7 +669,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         if (audioClip && expandToSource) audioClip.sourceEnd = duration;
         renderAudioTimeline();
         renderInspector();
-        scheduleAutosave();
+        scheduleAutosave(false);
       })
       .catch(() => {
         if (destroyed) return;
@@ -716,7 +716,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         rippleOverlappingVideoClips(videoClips);
         renderVideoTimeline();
         renderInspector();
-        scheduleAutosave();
+        scheduleAutosave(false);
       })
       .catch(() => {
         if (!destroyed) videoDurations.set(fileIndex, 1);
@@ -760,8 +760,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     updateHistoryControls();
   };
 
-  const scheduleAutosave = (): void => {
-    recordHistoryChange();
+  const scheduleAutosave = (recordHistory = true): void => {
+    if (recordHistory) recordHistoryChange();
     audioRenderRevision++;
     if (videoSequencePlayer) stopVideoSequence();
     if (mixPreview || mixPreviewUrl) clearMixPreview();
