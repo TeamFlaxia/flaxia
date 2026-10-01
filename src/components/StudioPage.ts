@@ -73,6 +73,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let audioClips: AudioTimelineClip[] = [];
   let videoClips: StudioVideoClip[] = [];
   let imageLayers: StudioImageLayer[] = [];
+  let openTabs: number[] = [];
   let selectedImageLayerId: string | null = null;
   let imageComposerOverlay: HTMLElement | null = null;
   let imageDrawRevision = 0;
@@ -112,7 +113,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         <div class="studio-sidebar-note">Projects autosave encrypted with Flaxia Vault when unlocked. <a href="/settings">Vault settings →</a></div>
       </aside>
       <section class="studio-center">
-        <div class="studio-tabs"><span class="studio-tab active">⌂ &nbsp;Workspace</span><button class="studio-tab-open" type="button">＋</button><span class="studio-center-spacer"></span><button class="studio-shortcut" type="button" title="Import files">⌘ O</button></div>
+        <div class="studio-tabs"><button class="studio-tab studio-workspace-tab active" type="button">⌂ &nbsp;Workspace</button><div class="studio-document-tabs"></div><button class="studio-tab-open" type="button" aria-label="Open files">＋</button><span class="studio-center-spacer"></span><button class="studio-shortcut" type="button" title="Import files">⌘ O</button></div>
         <div class="studio-stage"><div class="studio-empty"><div class="studio-empty-art"><div class="studio-orbit studio-orbit-one"></div><div class="studio-orbit studio-orbit-two"></div><div class="studio-empty-glyph">✳</div><span class="studio-float studio-float-image">▧</span><span class="studio-float studio-float-audio">♫</span><span class="studio-float studio-float-code">&lt;/&gt;</span><span class="studio-float studio-float-game">◇</span></div><h1>Your ideas, in one studio.</h1><p>Bring images, sound, video, code, and games into one creative workspace.</p><button class="studio-button studio-open studio-primary" type="button">Import files</button><small>or drop files anywhere in the workspace</small></div><div class="studio-preview"></div></div>
         <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag clips to arrange · select to trim</span><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
       </section>
@@ -133,6 +134,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const createPostButton = root.querySelector<HTMLButtonElement>('.studio-create-post')!;
   const saveState = root.querySelector<HTMLElement>('.studio-save-state')!;
   const projectTitle = root.querySelector<HTMLElement>('.studio-project-title')!;
+  const documentTabs = root.querySelector<HTMLElement>('.studio-document-tabs')!;
+  const workspaceTab = root.querySelector<HTMLButtonElement>('.studio-workspace-tab')!;
   const audioTimeline = root.querySelector<HTMLElement>('.studio-audio-timeline')!;
   const videoTimeline = root.querySelector<HTMLElement>('.studio-video-timeline')!;
   const inspectorBody = root.querySelector<HTMLElement>('.studio-inspector-body')!;
@@ -143,6 +146,36 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const addTrackButton = root.querySelector<HTMLButtonElement>('.studio-add-track')!;
   const videoPlayButton = root.querySelector<HTMLButtonElement>('.studio-video-play')!;
   const videoExportButton = root.querySelector<HTMLButtonElement>('.studio-video-export')!;
+  workspaceTab.addEventListener('click', () => select(-1));
+  const renderDocumentTabs = (): void => {
+    workspaceTab.classList.toggle('active', activeIndex < 0);
+    documentTabs.replaceChildren();
+    for (const index of openTabs) {
+      const file = files[index];
+      if (!file) continue;
+      const tab = document.createElement('div');
+      tab.className = `studio-document-tab-wrap ${index === activeIndex ? 'active' : ''}`;
+      const open = document.createElement('button');
+      open.type = 'button';
+      open.className = 'studio-document-tab';
+      open.title = file.name;
+      open.textContent = `${codeDirty && index === activeIndex ? '● ' : ''}${file.name}`;
+      open.addEventListener('click', () => select(index));
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'studio-document-tab-close';
+      close.textContent = '×';
+      close.setAttribute('aria-label', `Close ${file.name}`);
+      close.addEventListener('click', () => {
+        openTabs = openTabs.filter((tabIndex) => tabIndex !== index);
+        if (activeIndex === index) select(openTabs.at(-1) ?? -1);
+        else renderDocumentTabs();
+      });
+      tab.appendChild(open);
+      tab.appendChild(close);
+      documentTabs.appendChild(tab);
+    }
+  };
   const stopVideoSequence = (): void => {
     if (videoSequenceTimer) clearTimeout(videoSequenceTimer);
     videoSequenceTimer = null;
@@ -532,6 +565,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 
   const render = (): void => {
     if (destroyed) return;
+    renderDocumentTabs();
     list.innerHTML = '';
     root.querySelector('.studio-count')!.textContent = String(files.length);
     files.forEach((file, index) => {
@@ -613,6 +647,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       codeDirty = true;
       saveState.textContent = 'Unsaved changes';
       exportButton.textContent = 'Save file';
+      renderDocumentTabs();
       updateGutter();
       onChange();
     });
@@ -1079,6 +1114,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     clearUrl();
     htmlEditing = false;
     activeIndex = index;
+    if (index >= 0 && index < files.length && !openTabs.includes(index)) openTabs.push(index);
     const file = files[index];
     if (!file) {
       empty.style.display = '';
@@ -1345,6 +1381,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       audioClips = restored.audioClips;
       videoClips = restored.videoClips;
       imageLayers = restored.imageLayers;
+      openTabs = [];
       selectedImageLayerId = imageLayers.at(-1)?.id ?? null;
       audioTrackCount = Math.max(1, ...audioClips.map((clip) => clip.track + 1));
       activeIndex = -1;
@@ -1664,6 +1701,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 }
 
 const studioCss = `
+.studio-tab{height:100%;padding:0 7px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--studio-muted);font:inherit;white-space:nowrap;cursor:pointer}.studio-tab.active{border-bottom-color:var(--studio-accent);color:var(--studio-text)}.studio-document-tabs{display:flex;align-items:center;gap:3px;min-width:0;height:100%;overflow:auto}.studio-document-tab-wrap{display:flex;align-items:center;max-width:190px;height:27px;border:1px solid transparent;border-radius:4px;background:#191b20}.studio-document-tab-wrap.active{border-color:#3c414c;background:#24262d}.studio-document-tab{min-width:0;padding:5px 7px;overflow:hidden;border:0;background:transparent;color:#aeb3bd;text-align:left;text-overflow:ellipsis;white-space:nowrap;font:10px system-ui,sans-serif;cursor:pointer}.studio-document-tab-wrap.active .studio-document-tab{color:#eceef2}.studio-document-tab-close{width:22px;height:22px;margin-right:3px;border:0;border-radius:3px;background:transparent;color:#888e9a;font-size:15px;cursor:pointer}.studio-document-tab-close:hover{background:#383b43;color:#fff}
 .studio-composer-add-text{padding:2px 5px;border:1px solid #393d46;border-radius:4px;background:#24272e;color:#dce0e7;font-size:9px;letter-spacing:0;cursor:pointer}.studio-composer-text-label{display:flex;flex-direction:column;gap:5px;margin:8px 0;color:#aeb3bd;font-size:10px}.studio-composer-text-label textarea{min-height:58px;resize:vertical;padding:6px;border:1px solid #383c46;border-radius:4px;background:#111216;color:#e9ebef;font:11px/1.4 system-ui,sans-serif}.studio-composer-field input[type=color]{width:42px;height:26px;padding:2px}
 .studio-layout{max-width:none}.studio-layout>.right-panel{display:none}.studio-page{--studio-bg:#101114;--studio-panel:#17191e;--studio-border:#282b33;--studio-muted:#888e9a;--studio-text:#eceef2;--studio-accent:#b8ef6a;display:flex;flex:1;flex-direction:column;width:calc(100% - 240px);min-width:0;height:100dvh;min-height:620px;background:var(--studio-bg);color:var(--studio-text);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow:hidden}
 .studio-topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:22px;padding:0 20px;border-bottom:1px solid var(--studio-border);background:#15171b}.studio-brand{display:flex;align-items:center;gap:7px;color:var(--studio-text);font-weight:750;text-decoration:none;white-space:nowrap}.studio-brand i{color:#626874;font-style:normal}.studio-brand-mark{display:grid;place-items:center;width:23px;height:23px;border-radius:7px;background:var(--studio-accent);color:#182012;font-size:18px}.studio-project-name{display:flex;align-items:center;gap:8px;min-width:0;margin-right:auto;font-size:12px}.studio-project-title{max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:650}.studio-save-state{color:var(--studio-muted);font-size:11px}.studio-live-dot{width:7px;height:7px;border-radius:50%;background:var(--studio-accent)}.studio-top-actions{display:flex;gap:7px}.studio-button{border:1px solid var(--studio-border);border-radius:6px;padding:8px 11px;background:#202228;color:var(--studio-text);font-size:12px;font-weight:600;cursor:pointer}.studio-button:hover:not(:disabled){border-color:#555b67;background:#272a31}.studio-button:disabled{opacity:.45;cursor:default}.studio-create-post{background:var(--studio-accent);border-color:var(--studio-accent);color:#17200f}.studio-workspace{display:grid;grid-template-columns:58px 235px minmax(320px,1fr) 280px;flex:1;min-height:0}.studio-rail{display:flex;flex-direction:column;align-items:center;gap:7px;padding:14px 6px;border-right:1px solid var(--studio-border);background:#14161a}.studio-tool{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;width:46px;height:49px;border:0;border-radius:6px;background:transparent;color:#9da3ad;font-size:9px;cursor:pointer}.studio-tool b{font-size:17px;font-weight:500}.studio-tool:hover,.studio-tool.active{background:#292c33;color:var(--studio-accent)}.studio-assets,.studio-inspector{min-width:0;overflow:auto;background:var(--studio-panel)}.studio-assets{display:flex;flex-direction:column;border-right:1px solid var(--studio-border)}.studio-panel-heading,.studio-project-label{display:flex;align-items:center;gap:8px;padding:13px 14px;color:var(--studio-muted);font-size:10px;font-weight:700;letter-spacing:.07em}.studio-panel-heading{justify-content:space-between}.studio-add,.studio-tab-open,.studio-shortcut,.studio-timeline-add{border:1px solid transparent;border-radius:5px;background:transparent;color:var(--studio-muted);cursor:pointer}.studio-add{font-size:17px}.studio-add:hover,.studio-tab-open:hover,.studio-shortcut:hover,.studio-timeline-add:hover{border-color:var(--studio-border);color:var(--studio-text)}.studio-project-label{padding-top:5px;padding-bottom:8px;color:#d3d6dc;font-weight:600;letter-spacing:0}.studio-folder{color:var(--studio-accent)}.studio-count{margin-left:auto;color:var(--studio-muted)}.studio-file-list{display:flex;flex-direction:column;gap:2px;padding:0 7px}.studio-asset{display:flex;align-items:center;gap:8px;min-width:0;padding:8px;border:0;border-radius:5px;background:transparent;color:var(--studio-text);text-align:left;cursor:pointer}.studio-asset:hover,.studio-asset.active{background:#272a31}.studio-asset-icon{flex:0 0 24px;color:#abb0ba;text-align:center}.studio-kind-image{color:#7fc8ff}.studio-kind-video{color:#c8a8ff}.studio-kind-audio{color:#9bd77b}.studio-asset-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}.studio-asset-size{margin-left:auto;color:var(--studio-muted);font-size:9px;white-space:nowrap}.studio-dropzone{display:flex;flex-direction:column;align-items:center;gap:6px;margin:18px 12px;padding:16px 8px;border:1px dashed #3c404a;border-radius:7px;background:#1b1d22;color:#d8dbe1;cursor:pointer}.studio-dropzone>span{color:var(--studio-accent);font-size:19px}.studio-dropzone small,.studio-sidebar-note{color:var(--studio-muted);font-size:10px}.studio-sidebar-note{margin:auto 13px 14px;line-height:1.6}.studio-sidebar-note a{color:var(--studio-accent);text-decoration:none}.studio-center{display:grid;grid-template-rows:38px minmax(180px,1fr) auto;min-width:0;min-height:0;background:#111216}.studio-tabs{display:flex;align-items:center;gap:9px;padding:0 12px;border-bottom:1px solid var(--studio-border);color:var(--studio-muted);font-size:11px}.studio-tab.active{color:var(--studio-text)}.studio-tab-open{font-size:15px}.studio-center-spacer{flex:1}.studio-shortcut{padding:4px 7px;font-size:10px}.studio-stage{position:relative;display:grid;place-items:center;min-height:0;overflow:auto;padding:22px;background:radial-gradient(ellipse at center,#1d2026 0,#111216 70%)}.studio-empty{display:flex;flex-direction:column;align-items:center;text-align:center}.studio-empty-art{position:relative;display:grid;place-items:center;width:180px;height:130px;margin-bottom:8px}.studio-orbit{position:absolute;width:130px;height:74px;border:1px solid #383d46;border-radius:50%;transform:rotate(-22deg)}.studio-orbit-two{transform:rotate(34deg)}.studio-empty-glyph{color:var(--studio-accent);font-size:46px}.studio-float{position:absolute;display:grid;place-items:center;width:29px;height:29px;border:1px solid #393e47;border-radius:8px;background:#20232a;color:#c8d1bd}.studio-float-image{top:16px;left:22px}.studio-float-audio{right:15px;top:38px}.studio-float-code{bottom:12px;left:38px;font-size:10px}.studio-float-game{right:37px;bottom:11px}.studio-empty h1{margin:8px 0;font-size:19px}.studio-empty p{max-width:360px;margin:0 0 15px;color:var(--studio-muted);font-size:12px}.studio-empty small{margin-top:9px;color:var(--studio-muted);font-size:10px}.studio-primary{background:var(--studio-accent);border-color:var(--studio-accent);color:#17200f}.studio-preview{display:flex;flex-direction:column;width:min(100%,900px);max-height:100%;min-height:0}.studio-preview-chrome{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 10px;border:1px solid var(--studio-border);border-bottom:0;border-radius:7px 7px 0 0;background:#1a1c21;color:#c7cbd2;font-size:10px}.studio-preview-actions{display:flex;gap:5px}.studio-preview-actions button{border:1px solid var(--studio-border);border-radius:4px;background:#252830;color:var(--studio-text);cursor:pointer}.studio-preview-content{display:flex;flex-direction:column;align-items:center;gap:10px;min-height:0;overflow:auto;padding:13px;border:1px solid var(--studio-border);border-radius:0 0 7px 7px;background:#17191e}.studio-image-preview{max-width:100%;max-height:58vh;object-fit:contain}.studio-video-preview{width:min(100%,820px);max-height:58vh;background:#000}.studio-preview-content audio{width:min(100%,620px);margin:24px auto}.studio-waveform{display:flex;align-items:center;gap:3px;width:min(100%,650px);height:75px}.studio-waveform i{flex:1;background:#567c48;border-radius:3px}.studio-audio-name{color:var(--studio-muted);font-size:11px}.studio-file-notice{max-width:560px;margin:auto;text-align:center;color:var(--studio-muted);font-size:12px;line-height:1.6}.studio-file-notice h2{color:var(--studio-text);font-size:16px}.studio-game-frame{width:min(100%,860px);height:min(56vh,600px);border:1px solid var(--studio-border);border-radius:6px;background:#fff}.studio-inspector{border-left:1px solid var(--studio-border)}.studio-inspector-tabs{display:flex;gap:20px;padding:14px;border-bottom:1px solid var(--studio-border);color:var(--studio-muted);font-size:11px}.studio-inspector-tabs .active{color:var(--studio-text)}.studio-inspector-body{padding:17px 15px;color:var(--studio-text)}.studio-inspector-body h2{overflow-wrap:anywhere;font-size:14px}.studio-inspector-body p{color:var(--studio-muted);font-size:11px;line-height:1.5}.studio-inspector-icon{font-size:21px;color:var(--studio-accent)}.studio-inspector-divider{height:1px;margin:14px 0;background:var(--studio-border)}.studio-format-title{margin-bottom:11px;color:var(--studio-muted);font-size:9px;font-weight:700;letter-spacing:.08em}.studio-format-list{display:grid;grid-template-columns:1fr;gap:5px}.studio-format-list span{margin-top:6px;color:#d8dbe1;font-size:9px;font-weight:700}.studio-format-list small{color:var(--studio-muted);font-size:10px}.studio-local-badge{margin-top:20px;padding:8px;border:1px solid #354333;border-radius:5px;color:#a6cf8a;font-size:10px}.studio-timeline{display:flex;flex-direction:column;min-height:0;max-height:290px;border-top:1px solid var(--studio-border);background:#17191e}.studio-timeline-head{display:flex;align-items:center;gap:7px;min-height:39px;padding:0 10px;border-bottom:1px solid var(--studio-border);color:#d9dce2;font-size:10px;font-weight:650}.studio-timeline-hint{margin-right:auto;color:var(--studio-muted);font-size:9px;font-weight:400}.studio-track{display:flex;align-items:stretch;min-height:45px;border-bottom:1px solid var(--studio-border)}.studio-track-label{position:sticky;left:0;z-index:2;display:grid;place-items:center;flex:0 0 54px;background:#1b1d22;color:var(--studio-muted);font-size:9px;font-weight:700}.studio-track-content{display:flex;align-items:center;gap:6px;min-width:0;overflow-x:auto;padding:5px 8px}.studio-track-empty{color:var(--studio-muted);font-size:10px}.studio-clip-list{display:flex;gap:6px}.studio-clip{display:flex;align-items:center;gap:7px;max-width:210px;padding:6px 9px;overflow:hidden;border:1px solid var(--studio-border);border-radius:5px;background:#24262d;color:var(--studio-text);text-overflow:ellipsis;white-space:nowrap;font-size:10px;cursor:pointer}.studio-clip.active{border-color:var(--studio-accent)}.studio-clip span{color:var(--studio-muted);font-size:8px;font-weight:700}
