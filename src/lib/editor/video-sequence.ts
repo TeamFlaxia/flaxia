@@ -6,6 +6,30 @@ import type { StudioImageLayer, StudioVideoClip } from './studio-project-store.t
 const MAX_INPUT_BYTES = 80 * 1024 * 1024;
 const MAX_DURATION_SECONDS = 180;
 
+/** Build FFmpeg fade filters for a clip's timeline duration. */
+export function videoClipFadeFilters(duration: number, fadeIn = 0, fadeOut = 0): string[] {
+  if (!Number.isFinite(duration) || duration <= 0) return [];
+  const safeFadeIn = Math.min(duration, Math.max(0, Number.isFinite(fadeIn) ? fadeIn : 0));
+  const safeFadeOut = Math.min(duration, Math.max(0, Number.isFinite(fadeOut) ? fadeOut : 0));
+  const filters: string[] = [];
+  if (safeFadeIn > 0) filters.push(`fade=t=in:st=0:d=${safeFadeIn.toFixed(3)}`);
+  if (safeFadeOut > 0) {
+    filters.push(`fade=t=out:st=${Math.max(0, duration - safeFadeOut).toFixed(3)}:d=${safeFadeOut.toFixed(3)}`);
+  }
+  return filters;
+}
+
+/** Return the video clip opacity at an offset on its timeline. */
+export function videoClipOpacityAt(time: number, duration: number, fadeIn = 0, fadeOut = 0): number {
+  if (!Number.isFinite(time) || !Number.isFinite(duration) || duration <= 0) return 1;
+  const safeFadeIn = Math.min(duration, Math.max(0, Number.isFinite(fadeIn) ? fadeIn : 0));
+  const safeFadeOut = Math.min(duration, Math.max(0, Number.isFinite(fadeOut) ? fadeOut : 0));
+  let opacity = 1;
+  if (safeFadeIn > 0) opacity = Math.min(opacity, Math.max(0, Math.min(1, time / safeFadeIn)));
+  if (safeFadeOut > 0) opacity = Math.min(opacity, Math.max(0, Math.min(1, (duration - time) / safeFadeOut)));
+  return opacity;
+}
+
 function inputName(index: number, file: File): string {
   const extension =
     file.name
@@ -197,8 +221,10 @@ export async function renderVideoSequence(
         ? 'scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720'
         : 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2';
     const color = `eq=brightness=${(((clip.brightness ?? 100) - 100) / 100).toFixed(3)}:contrast=${((clip.contrast ?? 100) / 100).toFixed(3)}:saturation=${((clip.saturation ?? 100) / 100).toFixed(3)}`;
+    const fades = videoClipFadeFilters(clipDuration, clip.fadeIn, clip.fadeOut);
+    const videoFilters = [framing, color, ...fades, 'setsar=1', 'fps=30', 'format=yuv420p'].join(',');
     filters.push(
-      `[${index}:v:0]trim=duration=${sourceDuration.toFixed(3)},setpts=(PTS-STARTPTS)/${speed.toFixed(3)},${framing},${color},setsar=1,fps=30,format=yuv420p[v${index}]`,
+      `[${index}:v:0]trim=duration=${sourceDuration.toFixed(3)},setpts=(PTS-STARTPTS)/${speed.toFixed(3)},${videoFilters}[v${index}]`,
     );
     if (clipSources[index].hasAudio && !clipSources[index].clip.muted) {
       const gain = Math.max(0, Math.min(1, clipSources[index].clip.gain ?? 1));

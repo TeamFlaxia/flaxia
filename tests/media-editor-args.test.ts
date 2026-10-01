@@ -14,6 +14,21 @@ import {
   resolveOutputSize,
   type VideoMeta,
 } from '../src/lib/editor/video-editor.ts';
+import { videoClipFadeFilters, videoClipOpacityAt } from '../src/lib/editor/video-sequence.ts';
+
+describe('video sequence fades', () => {
+  it('builds bounded timeline fade filters', () => {
+    assert.deepEqual(videoClipFadeFilters(8, 1.25, 2), ['fade=t=in:st=0:d=1.250', 'fade=t=out:st=6.000:d=2.000']);
+    assert.deepEqual(videoClipFadeFilters(4, 8, -1), ['fade=t=in:st=0:d=4.000']);
+    assert.deepEqual(videoClipFadeFilters(0), []);
+  });
+
+  it('computes the preview opacity for both clip edges', () => {
+    assert.equal(videoClipOpacityAt(0.5, 8, 1, 2), 0.5);
+    assert.equal(videoClipOpacityAt(7, 8, 1, 2), 0.5);
+    assert.equal(videoClipOpacityAt(3, 8, 1, 2), 1);
+  });
+});
 
 describe('image-editor getOutputSize', () => {
   const base = (): ImageEditState => defaultImageEditState();

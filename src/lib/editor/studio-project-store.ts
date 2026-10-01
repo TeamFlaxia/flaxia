@@ -49,6 +49,8 @@ export interface StudioVideoClip {
   brightness?: number;
   contrast?: number;
   saturation?: number;
+  fadeIn?: number;
+  fadeOut?: number;
   gain?: number;
   muted?: boolean;
 }
@@ -243,6 +245,8 @@ function decodeFiles(plaintext: Uint8Array): {
         typeof clip.saturation === 'number' && Number.isFinite(clip.saturation)
           ? Math.max(0, Math.min(200, clip.saturation))
           : 100,
+      fadeIn: typeof clip.fadeIn === 'number' && Number.isFinite(clip.fadeIn) ? Math.max(0, clip.fadeIn) : 0,
+      fadeOut: typeof clip.fadeOut === 'number' && Number.isFinite(clip.fadeOut) ? Math.max(0, clip.fadeOut) : 0,
       gain: typeof clip.gain === 'number' && Number.isFinite(clip.gain) ? Math.max(0, Math.min(1, clip.gain)) : 1,
       muted: typeof clip.muted === 'boolean' ? clip.muted : false,
     }));
