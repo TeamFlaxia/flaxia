@@ -20,6 +20,7 @@ import {
   type StudioConsoleEntry,
 } from '../lib/editor/studio-console.ts';
 import { saveStudioHandoff } from '../lib/editor/studio-handoff.js';
+import { resolveStudioPostMode } from '../lib/editor/studio-post-plan.ts';
 import {
   exportStudioProject,
   importStudioProject,
@@ -3276,6 +3277,47 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     }
     download(file);
   });
+  const renderStillImageComposition = async (): Promise<File> => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1080;
+    canvas.height = 1080;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Could not create the image composition');
+    const time = timelinePlayheadTime;
+    const duration = Math.max(0, ...imageLayers.map((layer) => layer.end ?? 0)) || Infinity;
+    const visibleLayers = imageLayers.filter(
+      (layer) =>
+        layer.visible &&
+        time >= (layer.start ?? 0) &&
+        time < (layer.end ?? Infinity) &&
+        imageLayerOpacityAt(layer, time, duration) > 0,
+    );
+    if (visibleLayers.length === 0) throw new Error('Move the playhead to a time with visible image layers');
+    const bitmaps = new Map<number, ImageBitmap>();
+    try {
+      for (const layer of visibleLayers) {
+        if (layer.kind !== 'image' || bitmaps.has(layer.fileIndex)) continue;
+        const file = files[layer.fileIndex];
+        if (!file || !file.type.startsWith('image/')) throw new Error('An image layer is missing its source file');
+        bitmaps.set(layer.fileIndex, await createImageBitmap(file));
+      }
+      for (const layer of visibleLayers) {
+        drawStudioImageLayer(context, layer, layer.kind === 'image' ? (bitmaps.get(layer.fileIndex) ?? null) : null, {
+          opacity: imageLayerOpacityAt(layer, time, duration),
+        });
+      }
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+          (result) => (result ? resolve(result) : reject(new Error('Could not encode image layers'))),
+          'image/png',
+        );
+      });
+      return new File([blob], 'flaxia-composition.png', { type: 'image/png' });
+    } finally {
+      for (const bitmap of bitmaps.values()) bitmap.close();
+    }
+  };
+
   createPostButton.addEventListener('click', async () => {
     if (files.length === 0 || createPostButton.disabled) return;
     createPostButton.disabled = true;
@@ -3298,11 +3340,58 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const vaultKey = getVaultKey();
       if (vaultKey)
         await saveStudioProject(files, audioClips, videoClips, imageLayers, vaultKey).catch(() => undefined);
-      const token = saveStudioHandoff(files);
+      const selectedFile = files[activeIndex];
+      const selectedExtension = selectedFile?.name.toLowerCase().split('.').pop() ?? '';
+      const composerGameExtensions = ['zip', 'swf', 'rsp', 'js', 'wasm'];
+      const selectedIsGame = selectedFile !== undefined && composerGameExtensions.includes(selectedExtension);
+      const selectedIsPostable =
+        selectedFile !== undefined &&
+        (selectedIsGame ||
+          (kindOf(selectedFile) !== 'code' &&
+            !(kindOf(selectedFile) === 'game' && ['html', 'htm'].includes(selectedExtension))));
+      const hasVisibleImageLayers = imageLayers.some(
+        (layer) =>
+          layer.visible &&
+          timelinePlayheadTime >= (layer.start ?? 0) &&
+          timelinePlayheadTime < (layer.end ?? Infinity) &&
+          imageLayerOpacityAt(
+            layer,
+            timelinePlayheadTime,
+            Math.max(0, ...imageLayers.map((item) => item.end ?? 0)) || Infinity,
+          ) > 0,
+      );
+      const mode = resolveStudioPostMode({
+        hasVideoClips: videoClips.length > 0,
+        selectedIsGame,
+        hasAudioClips: audibleAudioTimelineClips(audioClips).length > 0,
+        hasVisibleImageLayers,
+        selectedIsPostable,
+      });
+      let postFiles: File[];
+      if (mode === 'video') {
+        createPostButton.textContent = 'Rendering video…';
+        const output = await renderVideoSequence(files, videoClips, audioClips, imageLayers, (progress) => {
+          mixStatus.textContent = `Preparing post · ${Math.round(progress * 100)}%`;
+        });
+        postFiles = [output];
+      } else if (mode === 'game') {
+        postFiles = selectedFile ? [selectedFile] : [];
+      } else if (mode === 'timeline-assets') {
+        createPostButton.textContent = 'Rendering assets…';
+        postFiles = [];
+        if (audibleAudioTimelineClips(audioClips).length > 0) postFiles.push(await renderMixdown());
+        if (hasVisibleImageLayers) postFiles.push(await renderStillImageComposition());
+      } else if (mode === 'selected-file') {
+        postFiles = selectedFile ? [selectedFile] : [];
+      } else {
+        throw new Error('Select a postable asset or add media to the timeline before creating a post');
+      }
+      if (postFiles.length === 0) throw new Error('Studio could not prepare a postable export');
+      const token = saveStudioHandoff(postFiles);
       window.history.pushState({}, '', `/home?studio_handoff=${encodeURIComponent(token)}`);
       window.dispatchEvent(new PopStateEvent('popstate'));
-    } catch {
-      saveState.textContent = 'Could not prepare post';
+    } catch (error) {
+      saveState.textContent = error instanceof Error ? error.message : 'Could not prepare post';
       createPostButton.disabled = false;
       createPostButton.textContent = 'Create post ↗';
     }
