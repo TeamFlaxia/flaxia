@@ -1,11 +1,27 @@
 import type { StudioImageLayer } from './studio-project-store.ts';
 
+export type ImageLayerAdjustments = Pick<
+  StudioImageLayer,
+  'brightness' | 'contrast' | 'saturation' | 'hueDeg' | 'blurPx'
+>;
+
+/** Clamp non-destructive image controls to supported editor ranges. */
+export function normalizeImageLayerAdjustments(adjustments: ImageLayerAdjustments): Required<ImageLayerAdjustments> {
+  const normalize = (value: number | undefined, fallback: number, min: number, max: number): number =>
+    Math.max(min, Math.min(max, typeof value === 'number' && Number.isFinite(value) ? value : fallback));
+  return {
+    brightness: normalize(adjustments.brightness, 100, 0, 200),
+    contrast: normalize(adjustments.contrast, 100, 0, 200),
+    saturation: normalize(adjustments.saturation, 100, 0, 200),
+    hueDeg: normalize(adjustments.hueDeg, 0, -180, 180),
+    blurPx: normalize(adjustments.blurPx, 0, 0, 30),
+  };
+}
+
 /** Build the shared canvas filter used by the image editor and video compositor. */
-export function imageLayerCanvasFilter(layer: StudioImageLayer): string {
-  const brightness = Math.max(0, Math.min(200, layer.brightness ?? 100));
-  const contrast = Math.max(0, Math.min(200, layer.contrast ?? 100));
-  const saturation = Math.max(0, Math.min(200, layer.saturation ?? 100));
-  return `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%)`;
+export function imageLayerCanvasFilter(layer: ImageLayerAdjustments): string {
+  const { brightness, contrast, saturation, hueDeg, blurPx } = normalizeImageLayerAdjustments(layer);
+  return `brightness(${brightness}%) contrast(${contrast}%) saturate(${saturation}%) hue-rotate(${hueDeg}deg) blur(${blurPx}px)`;
 }
 
 /** Return the layer opacity at a timeline time, including its optional video fades. */

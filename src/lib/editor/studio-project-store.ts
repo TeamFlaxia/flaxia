@@ -8,6 +8,7 @@ import {
   type VaultItemCiphertext,
 } from '../vault/primitives.ts';
 import { type AudioTimelineClip, audioClipEqSettings } from './audio-mixer.ts';
+import { normalizeImageLayerAdjustments } from './image-adjustments.ts';
 
 const DATABASE_NAME = 'flaxia-studio';
 const DATABASE_VERSION = 3;
@@ -68,6 +69,8 @@ export interface StudioImageLayer {
   brightness?: number;
   contrast?: number;
   saturation?: number;
+  hueDeg?: number;
+  blurPx?: number;
   cropX?: number;
   cropY?: number;
   cropWidth?: number;
@@ -291,18 +294,7 @@ function decodeFiles(plaintext: Uint8Array): {
         x: Math.max(-8192, Math.min(8192, layer.x)),
         y: Math.max(-8192, Math.min(8192, layer.y)),
         opacity: Math.max(0, Math.min(1, layer.opacity)),
-        brightness:
-          typeof layer.brightness === 'number' && Number.isFinite(layer.brightness)
-            ? Math.max(0, Math.min(200, layer.brightness))
-            : 100,
-        contrast:
-          typeof layer.contrast === 'number' && Number.isFinite(layer.contrast)
-            ? Math.max(0, Math.min(200, layer.contrast))
-            : 100,
-        saturation:
-          typeof layer.saturation === 'number' && Number.isFinite(layer.saturation)
-            ? Math.max(0, Math.min(200, layer.saturation))
-            : 100,
+        ...normalizeImageLayerAdjustments(layer),
         cropX,
         cropY,
         cropWidth:

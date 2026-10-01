@@ -2121,7 +2121,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           : '';
       const adjustmentControls =
         layer.kind === 'image'
-          ? `<div class="studio-composer-title">IMAGE ADJUSTMENTS</div><label class="studio-composer-range">Brightness <output data-value="brightness">${Math.round(layer.brightness ?? 100)}%</output><input data-prop="brightness" type="range" min="0" max="200" value="${Math.round(layer.brightness ?? 100)}"></label><label class="studio-composer-range">Contrast <output data-value="contrast">${Math.round(layer.contrast ?? 100)}%</output><input data-prop="contrast" type="range" min="0" max="200" value="${Math.round(layer.contrast ?? 100)}"></label><label class="studio-composer-range">Saturation <output data-value="saturation">${Math.round(layer.saturation ?? 100)}%</output><input data-prop="saturation" type="range" min="0" max="200" value="${Math.round(layer.saturation ?? 100)}"></label>`
+          ? `<div class="studio-composer-title">IMAGE ADJUSTMENTS</div><label class="studio-composer-range">Brightness <output data-value="brightness">${Math.round(layer.brightness ?? 100)}%</output><input data-prop="brightness" type="range" min="0" max="200" value="${Math.round(layer.brightness ?? 100)}"></label><label class="studio-composer-range">Contrast <output data-value="contrast">${Math.round(layer.contrast ?? 100)}%</output><input data-prop="contrast" type="range" min="0" max="200" value="${Math.round(layer.contrast ?? 100)}"></label><label class="studio-composer-range">Saturation <output data-value="saturation">${Math.round(layer.saturation ?? 100)}%</output><input data-prop="saturation" type="range" min="0" max="200" value="${Math.round(layer.saturation ?? 100)}"></label><label class="studio-composer-range">Hue <output data-value="hueDeg">${Math.round(layer.hueDeg ?? 0)}°</output><input data-prop="hueDeg" type="range" min="-180" max="180" value="${Math.round(layer.hueDeg ?? 0)}"></label><label class="studio-composer-range">Blur <output data-value="blurPx">${(layer.blurPx ?? 0).toFixed(1)} px</output><input data-prop="blurPx" type="range" min="0" max="30" step="0.5" value="${(layer.blurPx ?? 0).toFixed(1)}"></label>`
           : '';
       const cropControls =
         layer.kind === 'image'
@@ -2138,6 +2138,12 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           const adjustment = Math.max(0, Math.min(200, Number(value) || 0));
           layer[property] = adjustment;
           properties.querySelector(`[data-value="${property}"]`)!.textContent = `${adjustment}%`;
+        } else if (property === 'hueDeg') {
+          layer.hueDeg = Math.max(-180, Math.min(180, Number(value) || 0));
+          properties.querySelector('[data-value="hueDeg"]')!.textContent = `${Math.round(layer.hueDeg)}°`;
+        } else if (property === 'blurPx') {
+          layer.blurPx = Math.max(0, Math.min(30, Number(value) || 0));
+          properties.querySelector('[data-value="blurPx"]')!.textContent = `${layer.blurPx.toFixed(1)} px`;
         } else if (property === 'cropX' || property === 'cropY') {
           const crop = Math.max(0, Math.min(0.99, (Number(value) || 0) / 100));
           if (property === 'cropX') {
@@ -2321,6 +2327,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           brightness: 100,
           contrast: 100,
           saturation: 100,
+          hueDeg: 0,
+          blurPx: 0,
           cropX: 0,
           cropY: 0,
           cropWidth: 1,
