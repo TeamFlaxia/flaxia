@@ -124,6 +124,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let videoSequenceUrl: string | null = null;
   let videoSequenceIndex = -1;
   let videoSequenceTimer: ReturnType<typeof setTimeout> | null = null;
+  let timelinePixelsPerSecond = 42;
 
   const root = document.createElement('main');
   root.className = 'studio-page';
@@ -183,6 +184,13 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const addTrackButton = root.querySelector<HTMLButtonElement>('.studio-add-track')!;
   const videoPlayButton = root.querySelector<HTMLButtonElement>('.studio-video-play')!;
   const videoExportButton = root.querySelector<HTMLButtonElement>('.studio-video-export')!;
+  const zoomLabel = document.createElement('label');
+  zoomLabel.className = 'studio-timeline-zoom-control';
+  zoomLabel.innerHTML =
+    'Zoom <input class="studio-timeline-zoom" type="range" min="18" max="120" step="1" value="42" aria-label="Timeline zoom"><output>42 px/s</output>';
+  videoExportButton.parentNode?.insertBefore(zoomLabel, videoExportButton.nextSibling);
+  const zoomInput = zoomLabel.querySelector<HTMLInputElement>('input')!;
+  const zoomOutput = zoomLabel.querySelector<HTMLOutputElement>('output')!;
   workspaceTab.addEventListener('click', () => select(-1));
   const renderDocumentTabs = (): void => {
     workspaceTab.classList.toggle('active', activeIndex < 0);
@@ -370,13 +378,14 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const renderVideoTimeline = (): void => {
     videoTimeline.innerHTML = '';
     const end = Math.max(30, ...videoClips.map((clip) => clip.start + clip.sourceEnd - clip.sourceStart + 5));
-    const contentWidth = Math.max(1200, end * 42);
+    const contentWidth = Math.max(1200, end * timelinePixelsPerSecond);
     const ruler = document.createElement('div');
     ruler.className = 'studio-video-ruler';
     ruler.style.width = `${contentWidth}px`;
+    ruler.style.backgroundSize = `${timelinePixelsPerSecond * 5}px 100%`;
     for (let second = 0; second <= end; second += 5) {
       const tick = document.createElement('span');
-      tick.style.left = `${second * 42}px`;
+      tick.style.left = `${second * timelinePixelsPerSecond}px`;
       tick.textContent = `${Math.floor(second / 60)}:${String(second % 60).padStart(2, '0')}`;
       ruler.appendChild(tick);
     }
@@ -389,6 +398,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const canvas = document.createElement('div');
     canvas.className = 'studio-video-lane-canvas';
     canvas.style.width = `${contentWidth}px`;
+    canvas.style.backgroundSize = `${timelinePixelsPerSecond}px 100%`;
     for (const clip of videoClips) {
       const file = files[clip.fileIndex];
       if (!file) continue;
@@ -397,8 +407,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       block.draggable = true;
       block.className = `studio-video-clip ${clip.fileIndex === activeIndex ? 'active' : ''}`;
       block.dataset.clipId = clip.id;
-      block.style.left = `${clip.start * 42}px`;
-      block.style.width = `${Math.max(54, (clip.sourceEnd - clip.sourceStart) * 42)}px`;
+      block.style.left = `${clip.start * timelinePixelsPerSecond}px`;
+      block.style.width = `${Math.max(54, (clip.sourceEnd - clip.sourceStart) * timelinePixelsPerSecond)}px`;
       const duration = videoDurations.get(clip.fileIndex);
       const leftHandle = document.createElement('span');
       leftHandle.className = 'studio-video-trim studio-video-trim-left';
@@ -419,13 +429,14 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           event.preventDefault();
           event.stopPropagation();
           const pointerStart = event.clientX;
+          const zoomAtDrag = timelinePixelsPerSecond;
           const initialStart = clip.start;
           const initialSourceStart = clip.sourceStart;
           const initialSourceEnd = clip.sourceEnd;
           const sourceDuration = videoDurations.get(clip.fileIndex) ?? clip.sourceEnd;
           handle.setPointerCapture(event.pointerId);
           const updateClip = (moveEvent: PointerEvent): void => {
-            const delta = ((moveEvent.clientX - pointerStart) / 42) * 10;
+            const delta = ((moveEvent.clientX - pointerStart) / zoomAtDrag) * 10;
             if (edge === 'start') {
               const minDelta = -Math.min(initialSourceStart, initialStart);
               const maxDelta = initialSourceEnd - initialSourceStart - 0.1;
@@ -435,8 +446,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
             } else {
               clip.sourceEnd = Math.max(initialSourceStart + 0.1, Math.min(sourceDuration, initialSourceEnd + delta));
             }
-            block.style.left = `${clip.start * 42}px`;
-            block.style.width = `${Math.max(54, (clip.sourceEnd - clip.sourceStart) * 42)}px`;
+            block.style.left = `${clip.start * timelinePixelsPerSecond}px`;
+            block.style.width = `${Math.max(54, (clip.sourceEnd - clip.sourceStart) * timelinePixelsPerSecond)}px`;
             labelText.textContent = `${file.name} · ${(clip.sourceEnd - clip.sourceStart).toFixed(1)}s`;
             const startField = inspectorBody.querySelector<HTMLInputElement>('.studio-video-in');
             const endField = inspectorBody.querySelector<HTMLInputElement>('.studio-video-out');
@@ -476,7 +487,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       if (!clip) return;
       event.preventDefault();
       const rect = canvas.getBoundingClientRect();
-      clip.start = Math.max(0, Math.round(((event.clientX - rect.left) / 42) * 10) / 10);
+      clip.start = Math.max(0, Math.round(((event.clientX - rect.left) / timelinePixelsPerSecond) * 10) / 10);
       manuallyPlacedVideoClips.add(clip.id);
       renderVideoTimeline();
       renderInspector();
@@ -492,11 +503,12 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const ruler = document.createElement('div');
     ruler.className = 'studio-audio-ruler';
     const end = Math.max(30, ...audioClips.map((clip) => clip.start + clip.sourceEnd - clip.sourceStart + 5));
-    const contentWidth = Math.max(1200, end * 42);
+    const contentWidth = Math.max(1200, end * timelinePixelsPerSecond);
     ruler.style.width = `${contentWidth}px`;
+    ruler.style.backgroundSize = `${timelinePixelsPerSecond * 5}px 100%`;
     for (let second = 0; second <= end; second += 5) {
       const tick = document.createElement('span');
-      tick.style.left = `${second * 42}px`;
+      tick.style.left = `${second * timelinePixelsPerSecond}px`;
       tick.textContent = `${Math.floor(second / 60)}:${String(second % 60).padStart(2, '0')}`;
       ruler.appendChild(tick);
     }
@@ -507,6 +519,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       lane.dataset.track = String(track);
       lane.innerHTML = `<div class="studio-audio-track-label">A${track + 1}</div><div class="studio-audio-lane-canvas" style="width:${contentWidth}px"></div>`;
       const canvas = lane.querySelector<HTMLElement>('.studio-audio-lane-canvas')!;
+      canvas.style.backgroundSize = `${timelinePixelsPerSecond}px 100%`;
       const trackClips = audioClips.filter((clip) => clip.track === track);
       for (const clip of trackClips) {
         const file = files[clip.fileIndex];
@@ -517,8 +530,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         block.draggable = true;
         block.className = `studio-audio-clip ${clip.fileIndex === activeIndex ? 'active' : ''} ${clip.muted ? 'muted' : ''}`;
         block.dataset.clipId = clip.id;
-        block.style.left = `${clip.start * 42}px`;
-        block.style.width = `${Math.max(48, duration * 42)}px`;
+        block.style.left = `${clip.start * timelinePixelsPerSecond}px`;
+        block.style.width = `${Math.max(48, duration * timelinePixelsPerSecond)}px`;
         const peaks = audioPeaks.get(clip.fileIndex);
         const bars = peaks
           ? Array.from(peaks)
@@ -532,13 +545,14 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
             event.preventDefault();
             event.stopPropagation();
             const pointerStart = event.clientX;
+            const zoomAtDrag = timelinePixelsPerSecond;
             const initialStart = clip.start;
             const initialSourceStart = clip.sourceStart;
             const initialSourceEnd = clip.sourceEnd;
             const sourceDuration = audioDurations.get(clip.fileIndex) ?? clip.sourceEnd;
             handle.setPointerCapture(event.pointerId);
             const updateClip = (moveEvent: PointerEvent): void => {
-              const delta = ((moveEvent.clientX - pointerStart) / 42) * 10;
+              const delta = ((moveEvent.clientX - pointerStart) / zoomAtDrag) * 10;
               if (edge === 'start') {
                 const minDelta = -Math.min(initialSourceStart, initialStart);
                 const maxDelta = initialSourceEnd - initialSourceStart - 0.1;
@@ -548,8 +562,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
               } else {
                 clip.sourceEnd = Math.max(initialSourceStart + 0.1, Math.min(sourceDuration, initialSourceEnd + delta));
               }
-              block.style.left = `${clip.start * 42}px`;
-              block.style.width = `${Math.max(48, (clip.sourceEnd - clip.sourceStart) * 42)}px`;
+              block.style.left = `${clip.start * timelinePixelsPerSecond}px`;
+              block.style.width = `${Math.max(48, (clip.sourceEnd - clip.sourceStart) * timelinePixelsPerSecond)}px`;
               const startField = inspectorBody.querySelector<HTMLInputElement>('.studio-clip-in');
               const endField = inspectorBody.querySelector<HTMLInputElement>('.studio-clip-out');
               const positionField = inspectorBody.querySelector<HTMLInputElement>('.studio-clip-position');
@@ -585,7 +599,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         if (!clip) return;
         event.preventDefault();
         const canvasRect = canvas.getBoundingClientRect();
-        clip.start = Math.max(0, Math.round(((event.clientX - canvasRect.left) / 42) * 10) / 10);
+        clip.start = Math.max(0, Math.round(((event.clientX - canvasRect.left) / timelinePixelsPerSecond) * 10) / 10);
         clip.track = track;
         audioTrackCount = Math.max(audioTrackCount, track + 1);
         renderAudioTimeline();
@@ -601,6 +615,20 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     mixPlayButton.disabled = audioClips.length === 0;
     mixExportButton.disabled = audioClips.length === 0;
   };
+
+  zoomInput.addEventListener('input', () => {
+    const oldZoom = timelinePixelsPerSecond;
+    const videoViewport = videoTimeline.parentElement;
+    const audioViewport = audioTimeline.parentElement;
+    const videoTime = videoViewport ? videoViewport.scrollLeft / oldZoom : 0;
+    const audioTime = audioViewport ? audioViewport.scrollLeft / oldZoom : 0;
+    timelinePixelsPerSecond = Number(zoomInput.value);
+    zoomOutput.textContent = `${timelinePixelsPerSecond} px/s`;
+    renderVideoTimeline();
+    renderAudioTimeline();
+    if (videoViewport) videoViewport.scrollLeft = videoTime * timelinePixelsPerSecond;
+    if (audioViewport) audioViewport.scrollLeft = audioTime * timelinePixelsPerSecond;
+  });
 
   const renderInspector = (): void => {
     const videoClip = videoClips.find((item) => item.fileIndex === activeIndex);
@@ -1937,6 +1965,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 }
 
 const studioCss = `
+.studio-timeline-zoom-control{display:flex;align-items:center;gap:4px;color:var(--studio-muted);font-size:9px;white-space:nowrap}.studio-timeline-zoom-control input{width:76px;accent-color:var(--studio-accent)}.studio-timeline-zoom-control output{min-width:40px;color:#c8ccd4;font-variant-numeric:tabular-nums}
 .studio-video-trim,.studio-audio-trim{position:absolute;z-index:3;top:0;bottom:0;width:9px;background:#d9efac55;cursor:ew-resize;touch-action:none}.studio-video-trim:hover,.studio-audio-trim:hover{background:#b8ef6a}.studio-video-trim-left,.studio-audio-trim-left{left:0;border-radius:4px 0 0 4px}.studio-video-trim-right,.studio-audio-trim-right{right:0;border-radius:0 4px 4px 0}.studio-video-clip-label{display:block;position:relative;z-index:1;padding:0 11px;overflow:hidden;line-height:33px;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}
 .studio-code-surface{position:relative;flex:1;min-width:0;min-height:260px;overflow:hidden}.studio-code-highlight{position:absolute;z-index:0;top:0;left:0;width:max-content;min-width:100%;min-height:100%;box-sizing:border-box;margin:0;padding:12px;overflow:visible;color:#dce2ec;font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2;white-space:pre;pointer-events:none;will-change:transform}.studio-code-surface>.studio-code-editor{position:absolute;z-index:1;inset:0;width:100%;height:100%;min-height:100%;box-sizing:border-box;resize:none;background:transparent;color:transparent;-webkit-text-fill-color:transparent;overflow:auto}.studio-code-surface>.studio-code-editor::selection{background:#71834c66;color:transparent}.studio-token-comment{color:#76836d}.studio-token-string{color:#d8a878}.studio-token-keyword{color:#c792ea}.studio-token-literal{color:#f78c6c}.studio-token-number{color:#f78c6c}.studio-token-function{color:#82aaff}.studio-token-tag{color:#e06c75}.studio-token-color{color:#c3e88d}.studio-token-property{color:#80cbc4}.studio-token-heading{color:#82aaff;font-weight:700}
 .studio-tab{height:100%;padding:0 7px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--studio-muted);font:inherit;white-space:nowrap;cursor:pointer}.studio-tab.active{border-bottom-color:var(--studio-accent);color:var(--studio-text)}.studio-document-tabs{display:flex;align-items:center;gap:3px;min-width:0;height:100%;overflow:auto}.studio-document-tab-wrap{display:flex;align-items:center;max-width:190px;height:27px;border:1px solid transparent;border-radius:4px;background:#191b20}.studio-document-tab-wrap.active{border-color:#3c414c;background:#24262d}.studio-document-tab{min-width:0;padding:5px 7px;overflow:hidden;border:0;background:transparent;color:#aeb3bd;text-align:left;text-overflow:ellipsis;white-space:nowrap;font:10px system-ui,sans-serif;cursor:pointer}.studio-document-tab-wrap.active .studio-document-tab{color:#eceef2}.studio-document-tab-close{width:22px;height:22px;margin-right:3px;border:0;border-radius:3px;background:transparent;color:#888e9a;font-size:15px;cursor:pointer}.studio-document-tab-close:hover{background:#383b43;color:#fff}
