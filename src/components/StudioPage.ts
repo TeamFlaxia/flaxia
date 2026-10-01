@@ -152,7 +152,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       <section class="studio-center">
         <div class="studio-tabs"><button class="studio-tab studio-workspace-tab active" type="button">⌂ &nbsp;Workspace</button><div class="studio-document-tabs"></div><button class="studio-tab-open" type="button" aria-label="Open files">＋</button><span class="studio-center-spacer"></span><button class="studio-shortcut" type="button" title="Import files">⌘ O</button></div>
         <div class="studio-stage"><div class="studio-empty"><div class="studio-empty-art"><div class="studio-orbit studio-orbit-one"></div><div class="studio-orbit studio-orbit-two"></div><div class="studio-empty-glyph">✳</div><span class="studio-float studio-float-image">▧</span><span class="studio-float studio-float-audio">♫</span><span class="studio-float studio-float-code">&lt;/&gt;</span><span class="studio-float studio-float-game">◇</span></div><h1>Your ideas, in one studio.</h1><p>Bring images, sound, video, code, and games into one creative workspace.</p><button class="studio-button studio-open studio-primary" type="button">Import files</button><small>or drop files anywhere in the workspace</small></div><div class="studio-preview"></div></div>
-        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag clips to arrange · select to trim</span><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
+        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag clips to arrange · drag clip edges to trim</span><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
       </section>
       <aside class="studio-inspector"><div class="studio-inspector-tabs"><span class="active">Inspector</span><span>Publish</span></div><div class="studio-inspector-body"><div class="studio-inspector-icon">✳</div><h2>Make something living</h2><p>Flaxia posts can hold playable games and interactive media. Import an asset to preview, edit, and prepare it for sharing.</p><div class="studio-inspector-divider"></div><div class="studio-format-title">SUPPORTED CREATIVE FILES</div><div class="studio-format-list"><span>IMAGE</span><small>PNG · JPG · GIF · WEBP</small><span>VIDEO</span><small>MP4 · WEBM · MOV</small><span>AUDIO</span><small>MP3 · WAV · OGG · M4A</small><span>CODE / GAME</span><small>HTML · JS · ZIP · SWF · WASM</small></div><div class="studio-local-badge">◉ &nbsp;Private by default</div></div></aside>
     </div>
@@ -400,9 +400,65 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       block.style.left = `${clip.start * 42}px`;
       block.style.width = `${Math.max(54, (clip.sourceEnd - clip.sourceStart) * 42)}px`;
       const duration = videoDurations.get(clip.fileIndex);
-      block.textContent = `${file.name} · ${duration ? `${(clip.sourceEnd - clip.sourceStart).toFixed(1)}s` : '…'}`;
+      const leftHandle = document.createElement('span');
+      leftHandle.className = 'studio-video-trim studio-video-trim-left';
+      leftHandle.setAttribute('aria-label', 'Trim start');
+      const labelText = document.createElement('span');
+      labelText.className = 'studio-video-clip-label';
+      labelText.textContent = `${file.name} · ${duration ? `${(clip.sourceEnd - clip.sourceStart).toFixed(1)}s` : '…'}`;
+      const rightHandle = document.createElement('span');
+      rightHandle.className = 'studio-video-trim studio-video-trim-right';
+      rightHandle.setAttribute('aria-label', 'Trim end');
+      block.appendChild(leftHandle);
+      block.appendChild(labelText);
+      block.appendChild(rightHandle);
       block.title = file.name;
       block.addEventListener('click', () => select(clip.fileIndex));
+      const attachVideoTrim = (handle: HTMLElement, edge: 'start' | 'end'): void => {
+        handle.addEventListener('pointerdown', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const pointerStart = event.clientX;
+          const initialStart = clip.start;
+          const initialSourceStart = clip.sourceStart;
+          const initialSourceEnd = clip.sourceEnd;
+          const sourceDuration = videoDurations.get(clip.fileIndex) ?? clip.sourceEnd;
+          handle.setPointerCapture(event.pointerId);
+          const updateClip = (moveEvent: PointerEvent): void => {
+            const delta = ((moveEvent.clientX - pointerStart) / 42) * 10;
+            if (edge === 'start') {
+              const minDelta = -Math.min(initialSourceStart, initialStart);
+              const maxDelta = initialSourceEnd - initialSourceStart - 0.1;
+              const applied = Math.max(minDelta, Math.min(maxDelta, delta));
+              clip.sourceStart = initialSourceStart + applied;
+              clip.start = initialStart + applied;
+            } else {
+              clip.sourceEnd = Math.max(initialSourceStart + 0.1, Math.min(sourceDuration, initialSourceEnd + delta));
+            }
+            block.style.left = `${clip.start * 42}px`;
+            block.style.width = `${Math.max(54, (clip.sourceEnd - clip.sourceStart) * 42)}px`;
+            labelText.textContent = `${file.name} · ${(clip.sourceEnd - clip.sourceStart).toFixed(1)}s`;
+            const startField = inspectorBody.querySelector<HTMLInputElement>('.studio-video-in');
+            const endField = inspectorBody.querySelector<HTMLInputElement>('.studio-video-out');
+            const positionField = inspectorBody.querySelector<HTMLInputElement>('.studio-video-position');
+            if (startField) startField.value = clip.sourceStart.toFixed(1);
+            if (endField) endField.value = clip.sourceEnd.toFixed(1);
+            if (positionField) positionField.value = clip.start.toFixed(1);
+          };
+          const finish = (): void => {
+            handle.removeEventListener('pointermove', updateClip);
+            manuallyPlacedVideoClips.add(clip.id);
+            renderVideoTimeline();
+            select(clip.fileIndex);
+            scheduleAutosave();
+          };
+          handle.addEventListener('pointermove', updateClip);
+          handle.addEventListener('pointerup', finish, { once: true });
+          handle.addEventListener('pointercancel', finish, { once: true });
+        });
+      };
+      attachVideoTrim(leftHandle, 'start');
+      attachVideoTrim(rightHandle, 'end');
       block.addEventListener('dragstart', (event) => {
         event.dataTransfer?.setData('application/x-flaxia-video-clip', clip.id);
         if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
@@ -469,8 +525,51 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
               .filter((_, index) => index % Math.max(1, Math.floor(peaks.length / 48)) === 0)
               .slice(0, 48)
           : [];
-        block.innerHTML = `<span class="studio-audio-clip-name">${escapeHtml(file.name)}</span><span class="studio-audio-clip-wave">${bars.map((peak) => `<i style="height:${Math.max(8, Math.min(100, peak * 100))}%"></i>`).join('')}</span>`;
+        block.innerHTML = `<span class="studio-audio-trim studio-audio-trim-left" aria-label="Trim start"></span><span class="studio-audio-clip-name">${escapeHtml(file.name)}</span><span class="studio-audio-clip-wave">${bars.map((peak) => `<i style="height:${Math.max(8, Math.min(100, peak * 100))}%"></i>`).join('')}</span><span class="studio-audio-trim studio-audio-trim-right" aria-label="Trim end"></span>`;
         block.addEventListener('click', () => select(clip.fileIndex));
+        const attachAudioTrim = (handle: HTMLElement, edge: 'start' | 'end'): void => {
+          handle.addEventListener('pointerdown', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const pointerStart = event.clientX;
+            const initialStart = clip.start;
+            const initialSourceStart = clip.sourceStart;
+            const initialSourceEnd = clip.sourceEnd;
+            const sourceDuration = audioDurations.get(clip.fileIndex) ?? clip.sourceEnd;
+            handle.setPointerCapture(event.pointerId);
+            const updateClip = (moveEvent: PointerEvent): void => {
+              const delta = ((moveEvent.clientX - pointerStart) / 42) * 10;
+              if (edge === 'start') {
+                const minDelta = -Math.min(initialSourceStart, initialStart);
+                const maxDelta = initialSourceEnd - initialSourceStart - 0.1;
+                const applied = Math.max(minDelta, Math.min(maxDelta, delta));
+                clip.sourceStart = initialSourceStart + applied;
+                clip.start = initialStart + applied;
+              } else {
+                clip.sourceEnd = Math.max(initialSourceStart + 0.1, Math.min(sourceDuration, initialSourceEnd + delta));
+              }
+              block.style.left = `${clip.start * 42}px`;
+              block.style.width = `${Math.max(48, (clip.sourceEnd - clip.sourceStart) * 42)}px`;
+              const startField = inspectorBody.querySelector<HTMLInputElement>('.studio-clip-in');
+              const endField = inspectorBody.querySelector<HTMLInputElement>('.studio-clip-out');
+              const positionField = inspectorBody.querySelector<HTMLInputElement>('.studio-clip-position');
+              if (startField) startField.value = clip.sourceStart.toFixed(1);
+              if (endField) endField.value = clip.sourceEnd.toFixed(1);
+              if (positionField) positionField.value = clip.start.toFixed(1);
+            };
+            const finish = (): void => {
+              handle.removeEventListener('pointermove', updateClip);
+              renderAudioTimeline();
+              select(clip.fileIndex);
+              scheduleAutosave();
+            };
+            handle.addEventListener('pointermove', updateClip);
+            handle.addEventListener('pointerup', finish, { once: true });
+            handle.addEventListener('pointercancel', finish, { once: true });
+          });
+        };
+        attachAudioTrim(block.querySelector<HTMLElement>('.studio-audio-trim-left')!, 'start');
+        attachAudioTrim(block.querySelector<HTMLElement>('.studio-audio-trim-right')!, 'end');
         block.addEventListener('dragstart', (event) => {
           event.dataTransfer?.setData('application/x-flaxia-audio-clip', clip.id);
           if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
@@ -1838,6 +1937,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 }
 
 const studioCss = `
+.studio-video-trim,.studio-audio-trim{position:absolute;z-index:3;top:0;bottom:0;width:9px;background:#d9efac55;cursor:ew-resize;touch-action:none}.studio-video-trim:hover,.studio-audio-trim:hover{background:#b8ef6a}.studio-video-trim-left,.studio-audio-trim-left{left:0;border-radius:4px 0 0 4px}.studio-video-trim-right,.studio-audio-trim-right{right:0;border-radius:0 4px 4px 0}.studio-video-clip-label{display:block;position:relative;z-index:1;padding:0 11px;overflow:hidden;line-height:33px;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}
 .studio-code-surface{position:relative;flex:1;min-width:0;min-height:260px;overflow:hidden}.studio-code-highlight{position:absolute;z-index:0;top:0;left:0;width:max-content;min-width:100%;min-height:100%;box-sizing:border-box;margin:0;padding:12px;overflow:visible;color:#dce2ec;font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2;white-space:pre;pointer-events:none;will-change:transform}.studio-code-surface>.studio-code-editor{position:absolute;z-index:1;inset:0;width:100%;height:100%;min-height:100%;box-sizing:border-box;resize:none;background:transparent;color:transparent;-webkit-text-fill-color:transparent;overflow:auto}.studio-code-surface>.studio-code-editor::selection{background:#71834c66;color:transparent}.studio-token-comment{color:#76836d}.studio-token-string{color:#d8a878}.studio-token-keyword{color:#c792ea}.studio-token-literal{color:#f78c6c}.studio-token-number{color:#f78c6c}.studio-token-function{color:#82aaff}.studio-token-tag{color:#e06c75}.studio-token-color{color:#c3e88d}.studio-token-property{color:#80cbc4}.studio-token-heading{color:#82aaff;font-weight:700}
 .studio-tab{height:100%;padding:0 7px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--studio-muted);font:inherit;white-space:nowrap;cursor:pointer}.studio-tab.active{border-bottom-color:var(--studio-accent);color:var(--studio-text)}.studio-document-tabs{display:flex;align-items:center;gap:3px;min-width:0;height:100%;overflow:auto}.studio-document-tab-wrap{display:flex;align-items:center;max-width:190px;height:27px;border:1px solid transparent;border-radius:4px;background:#191b20}.studio-document-tab-wrap.active{border-color:#3c414c;background:#24262d}.studio-document-tab{min-width:0;padding:5px 7px;overflow:hidden;border:0;background:transparent;color:#aeb3bd;text-align:left;text-overflow:ellipsis;white-space:nowrap;font:10px system-ui,sans-serif;cursor:pointer}.studio-document-tab-wrap.active .studio-document-tab{color:#eceef2}.studio-document-tab-close{width:22px;height:22px;margin-right:3px;border:0;border-radius:3px;background:transparent;color:#888e9a;font-size:15px;cursor:pointer}.studio-document-tab-close:hover{background:#383b43;color:#fff}
 .studio-composer-add-text{padding:2px 5px;border:1px solid #393d46;border-radius:4px;background:#24272e;color:#dce0e7;font-size:9px;letter-spacing:0;cursor:pointer}.studio-composer-text-label{display:flex;flex-direction:column;gap:5px;margin:8px 0;color:#aeb3bd;font-size:10px}.studio-composer-text-label textarea{min-height:58px;resize:vertical;padding:6px;border:1px solid #383c46;border-radius:4px;background:#111216;color:#e9ebef;font:11px/1.4 system-ui,sans-serif}.studio-composer-field input[type=color]{width:42px;height:26px;padding:2px}
