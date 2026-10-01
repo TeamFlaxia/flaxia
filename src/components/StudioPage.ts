@@ -459,7 +459,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const block = document.createElement('button');
       block.type = 'button';
       block.draggable = true;
-      block.className = `studio-video-clip ${clip.fileIndex === activeIndex ? 'active' : ''}`;
+      block.className = `studio-video-clip ${clip.fileIndex === activeIndex ? 'active' : ''} ${clip.muted ? 'muted' : ''}`;
       block.dataset.clipId = clip.id;
       block.style.left = `${clip.start * timelinePixelsPerSecond}px`;
       block.style.width = `${Math.max(54, (clip.sourceEnd - clip.sourceStart) * timelinePixelsPerSecond)}px`;
@@ -705,7 +705,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const videoFile = videoClip ? files[videoClip.fileIndex] : null;
     if (videoClip && videoFile) {
       const duration = videoDurations.get(videoClip.fileIndex) ?? videoClip.sourceEnd;
-      inspectorBody.innerHTML = `<div class="studio-inspector-icon">▶</div><h2>${escapeHtml(videoFile.name)}</h2><p>Video clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-video-position" type="number" min="0" step="0.1" value="${videoClip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim in</span><input class="studio-video-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-video-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceEnd.toFixed(1)}"><small>s</small></label><p class="studio-video-hint">These trims apply to sequence preview. Use Edit above for standalone video encoding.</p><button class="studio-button studio-remove-video" type="button">Remove from timeline</button>`;
+      inspectorBody.innerHTML = `<div class="studio-inspector-icon">▶</div><h2>${escapeHtml(videoFile.name)}</h2><p>Video clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-video-position" type="number" min="0" step="0.1" value="${videoClip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim in</span><input class="studio-video-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-video-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Clip audio</span><input class="studio-video-gain" type="range" min="0" max="100" value="${Math.round((videoClip.gain ?? 1) * 100)}"><small class="studio-video-gain-value">${Math.round((videoClip.gain ?? 1) * 100)}%</small></label><label class="studio-property studio-mute-property"><input class="studio-video-muted" type="checkbox" ${videoClip.muted ? 'checked' : ''}><span>Mute source audio</span></label><p class="studio-video-hint">Clip audio settings apply to sequence preview and MP4 export.</p><button class="studio-button studio-remove-video" type="button">Remove from timeline</button>`;
       const update = (selector: string, set: (value: number) => void): void => {
         inspectorBody.querySelector<HTMLInputElement>(selector)!.addEventListener('change', (event) => {
           const input = event.currentTarget as HTMLInputElement;
@@ -726,6 +726,22 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       });
       update('.studio-video-out', (value) => {
         videoClip.sourceEnd = Math.max(videoClip.sourceStart + 0.1, Math.min(value, duration));
+      });
+      const videoGain = inspectorBody.querySelector<HTMLInputElement>('.studio-video-gain')!;
+      videoGain.addEventListener('input', () => {
+        videoClip.gain = Number(videoGain.value) / 100;
+        inspectorBody.querySelector('.studio-video-gain-value')!.textContent = `${videoGain.value}%`;
+        if (videoSequencePlayer?.dataset.clipId === videoClip.id) {
+          videoSequencePlayer.volume = videoClip.gain;
+        }
+      });
+      videoGain.addEventListener('change', () => scheduleAutosave());
+      inspectorBody.querySelector<HTMLInputElement>('.studio-video-muted')!.addEventListener('change', (event) => {
+        videoClip.muted = (event.currentTarget as HTMLInputElement).checked;
+        if (videoSequencePlayer?.dataset.clipId === videoClip.id) {
+          videoSequencePlayer.muted = videoClip.muted;
+        }
+        scheduleAutosave();
       });
       inspectorBody.querySelector<HTMLButtonElement>('.studio-remove-video')!.addEventListener('click', () => {
         videoClips = videoClips.filter((item) => item.id !== videoClip.id);
@@ -1937,6 +1953,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       }
       videoSequenceIndex = index;
       activeClip = sequence[index];
+      player.dataset.clipId = activeClip.id;
+      player.volume = Math.max(0, Math.min(1, activeClip.gain ?? 1));
+      player.muted = activeClip.muted ?? false;
       const file = files[activeClip.fileIndex];
       if (!file) {
         playAt(index + 1);
@@ -2095,6 +2114,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 
 const studioCss = `
 .studio-timeline-playhead{position:absolute;z-index:4;top:0;bottom:0;width:2px;background:#f2f687;box-shadow:0 0 6px #f2f687;pointer-events:none}
+.studio-video-clip.muted{filter:saturate(.35);border-style:dashed}
 .studio-timeline-zoom-control{display:flex;align-items:center;gap:4px;color:var(--studio-muted);font-size:9px;white-space:nowrap}.studio-timeline-zoom-control input{width:76px;accent-color:var(--studio-accent)}.studio-timeline-zoom-control output{min-width:40px;color:#c8ccd4;font-variant-numeric:tabular-nums}
 .studio-video-trim,.studio-audio-trim{position:absolute;z-index:3;top:0;bottom:0;width:9px;background:#d9efac55;cursor:ew-resize;touch-action:none}.studio-video-trim:hover,.studio-audio-trim:hover{background:#b8ef6a}.studio-video-trim-left,.studio-audio-trim-left{left:0;border-radius:4px 0 0 4px}.studio-video-trim-right,.studio-audio-trim-right{right:0;border-radius:0 4px 4px 0}.studio-video-clip-label{display:block;position:relative;z-index:1;padding:0 11px;overflow:hidden;line-height:33px;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}
 .studio-code-surface{position:relative;flex:1;min-width:0;min-height:260px;overflow:hidden}.studio-code-highlight{position:absolute;z-index:0;top:0;left:0;width:max-content;min-width:100%;min-height:100%;box-sizing:border-box;margin:0;padding:12px;overflow:visible;color:#dce2ec;font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2;white-space:pre;pointer-events:none;will-change:transform}.studio-code-surface>.studio-code-editor{position:absolute;z-index:1;inset:0;width:100%;height:100%;min-height:100%;box-sizing:border-box;resize:none;background:transparent;color:transparent;-webkit-text-fill-color:transparent;overflow:auto}.studio-code-surface>.studio-code-editor::selection{background:#71834c66;color:transparent}.studio-token-comment{color:#76836d}.studio-token-string{color:#d8a878}.studio-token-keyword{color:#c792ea}.studio-token-literal{color:#f78c6c}.studio-token-number{color:#f78c6c}.studio-token-function{color:#82aaff}.studio-token-tag{color:#e06c75}.studio-token-color{color:#c3e88d}.studio-token-property{color:#80cbc4}.studio-token-heading{color:#82aaff;font-weight:700}

@@ -166,9 +166,10 @@ export async function renderVideoSequence(
     filters.push(
       `[${index}:v:0]trim=duration=${clipDuration.toFixed(3)},setpts=PTS-STARTPTS,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v${index}]`,
     );
-    if (clipSources[index].hasAudio) {
+    if (clipSources[index].hasAudio && !clipSources[index].clip.muted) {
+      const gain = Math.max(0, Math.min(1, clipSources[index].clip.gain ?? 1));
       filters.push(
-        `[${index}:a:0]atrim=duration=${clipDuration.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo[a${index}]`,
+        `[${index}:a:0]atrim=duration=${clipDuration.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo,volume=${gain.toFixed(3)}[a${index}]`,
       );
     } else {
       filters.push(`anullsrc=channel_layout=stereo:sample_rate=44100:d=${clipDuration.toFixed(3)}[silence${index}]`);

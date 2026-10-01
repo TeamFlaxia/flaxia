@@ -44,6 +44,8 @@ export interface StudioVideoClip {
   start: number;
   sourceStart: number;
   sourceEnd: number;
+  gain?: number;
+  muted?: boolean;
 }
 
 export interface StudioImageLayer {
@@ -197,17 +199,23 @@ function decodeFiles(plaintext: Uint8Array): {
       fadeOut: Number.isFinite(clip.fadeOut) ? Math.max(0, clip.fadeOut) : 0,
       pan: Number.isFinite(clip.pan) ? Math.max(-1, Math.min(1, clip.pan)) : 0,
     }));
-  const videoClips = (Array.isArray(manifest.videoClips) ? manifest.videoClips : []).filter(
-    (clip) =>
-      typeof clip.id === 'string' &&
-      Number.isInteger(clip.fileIndex) &&
-      clip.fileIndex >= 0 &&
-      clip.fileIndex < files.length &&
-      Number.isFinite(clip.start) &&
-      Number.isFinite(clip.sourceStart) &&
-      Number.isFinite(clip.sourceEnd) &&
-      clip.sourceEnd > clip.sourceStart,
-  );
+  const videoClips = (Array.isArray(manifest.videoClips) ? manifest.videoClips : [])
+    .filter(
+      (clip) =>
+        typeof clip.id === 'string' &&
+        Number.isInteger(clip.fileIndex) &&
+        clip.fileIndex >= 0 &&
+        clip.fileIndex < files.length &&
+        Number.isFinite(clip.start) &&
+        Number.isFinite(clip.sourceStart) &&
+        Number.isFinite(clip.sourceEnd) &&
+        clip.sourceEnd > clip.sourceStart,
+    )
+    .map((clip) => ({
+      ...clip,
+      gain: typeof clip.gain === 'number' && Number.isFinite(clip.gain) ? Math.max(0, Math.min(1, clip.gain)) : 1,
+      muted: typeof clip.muted === 'boolean' ? clip.muted : false,
+    }));
   const imageLayers = (Array.isArray(manifest.imageLayers) ? manifest.imageLayers : [])
     .filter(
       (layer) =>
