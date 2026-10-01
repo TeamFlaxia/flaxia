@@ -192,6 +192,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const videoSplitButton = root.querySelector<HTMLButtonElement>('.studio-video-split')!;
   const duplicateClipButton = root.querySelector<HTMLButtonElement>('.studio-clip-duplicate')!;
   const videoExportButton = root.querySelector<HTMLButtonElement>('.studio-video-export')!;
+  duplicateClipButton.title = 'Duplicate selected clip (⌘D / Ctrl+D)';
+  videoSplitButton.title = 'Split selected clip at the playhead';
+  videoPlayButton.title = 'Start or stop video preview (Space)';
+  mixPlayButton.title = 'Play or pause audio mix (Space)';
   const zoomLabel = document.createElement('label');
   zoomLabel.className = 'studio-timeline-zoom-control';
   zoomLabel.innerHTML =
@@ -2215,6 +2219,36 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'o') {
       event.preventDefault();
       input.click();
+      return;
+    }
+    const target = event.target;
+    if (!(target instanceof Element) || !root.contains(target)) return;
+    if (target.closest('input, textarea, select, [contenteditable="true"]')) return;
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'd' && !duplicateClipButton.disabled) {
+      event.preventDefault();
+      duplicateClipButton.click();
+      return;
+    }
+    if ((event.key === 'Delete' || event.key === 'Backspace') && (selectedVideoClipId || selectedAudioClipId)) {
+      event.preventDefault();
+      if (selectedVideoClipId) {
+        videoClips = videoClips.filter((clip) => clip.id !== selectedVideoClipId);
+        selectedVideoClipId = null;
+        stopVideoSequence();
+        renderVideoTimeline();
+      } else if (selectedAudioClipId) {
+        audioClips = audioClips.filter((clip) => clip.id !== selectedAudioClipId);
+        selectedAudioClipId = null;
+        renderAudioTimeline();
+      }
+      renderInspector();
+      scheduleAutosave();
+      return;
+    }
+    if (event.code === 'Space' && !target.closest('button, a, video, audio')) {
+      event.preventDefault();
+      if (videoClips.length > 0) videoPlayButton.click();
+      else if (audioClips.length > 0) mixPlayButton.click();
     }
   };
   window.addEventListener('keydown', keyHandler);
