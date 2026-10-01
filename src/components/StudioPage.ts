@@ -19,6 +19,7 @@ import {
   parseStudioConsoleEntry,
   type StudioConsoleEntry,
 } from '../lib/editor/studio-console.ts';
+import { sameStudioFileHistoryState } from '../lib/editor/studio-edit-history.ts';
 import { saveStudioHandoff } from '../lib/editor/studio-handoff.js';
 import { resolveStudioPostMode } from '../lib/editor/studio-post-plan.ts';
 import {
@@ -48,6 +49,8 @@ function videoClipTimelineDuration(clip: StudioVideoClip): number {
 }
 
 type StudioEditHistorySnapshot = {
+  files: File[];
+  activeIndex: number;
   audioClips: AudioTimelineClip[];
   videoClips: StudioVideoClip[];
   imageLayers: StudioImageLayer[];
@@ -268,6 +271,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let videoPlayheadElement: HTMLElement | null = null;
   let audioPlayheadElements: HTMLElement[] = [];
   const captureEditHistory = (): StudioEditHistorySnapshot => ({
+    files: [...files],
+    activeIndex,
     audioClips: audioClips.map((clip) => ({ ...clip })),
     videoClips: videoClips.map((clip) => ({ ...clip })),
     imageLayers: imageLayers.map((layer) => ({ ...layer })),
@@ -745,7 +750,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const recordHistoryChange = (): void => {
     if (restoringHistory || !restoreFinished) return;
     const next = captureEditHistory();
-    if (JSON.stringify(next) === JSON.stringify(editHistoryBaseline)) return;
+    if (sameStudioFileHistoryState(next, editHistoryBaseline)) return;
     undoHistory.push(editHistoryBaseline);
     if (undoHistory.length > 100) undoHistory.shift();
     editHistoryBaseline = next;
@@ -1402,6 +1407,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 
   const applyEditHistorySnapshot = (snapshot: StudioEditHistorySnapshot): void => {
     restoringHistory = true;
+    codeDirty = false;
+    files = [...snapshot.files];
+    activeIndex = snapshot.activeIndex;
+    openTabs = openTabs.filter((index) => index < files.length);
     audioClips = snapshot.audioClips.map((clip) => ({ ...clip }));
     videoClips = snapshot.videoClips.map((clip) => ({ ...clip }));
     imageLayers = snapshot.imageLayers.map((layer) => ({ ...layer }));
@@ -1409,8 +1418,16 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     selectedAudioClipId = snapshot.selectedAudioClipId;
     selectedVideoClipId = snapshot.selectedVideoClipId;
     selectedImageLayerId = snapshot.selectedImageLayerId;
-    editHistoryBaseline = captureEditHistory();
     stopVideoSequence();
+    if (activeIndex >= 0 && activeIndex < files.length) select(activeIndex);
+    else {
+      activeIndex = -1;
+      render();
+    }
+    selectedAudioClipId = snapshot.selectedAudioClipId;
+    selectedVideoClipId = snapshot.selectedVideoClipId;
+    selectedImageLayerId = snapshot.selectedImageLayerId;
+    editHistoryBaseline = captureEditHistory();
     renderVideoTimeline();
     renderAudioTimeline();
     renderInspector();
