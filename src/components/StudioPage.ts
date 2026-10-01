@@ -2310,8 +2310,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           context.setLineDash([8, 5]);
           context.strokeRect(-selected.width / 2, -selected.height / 2, selected.width, selected.height);
           context.setLineDash([]);
-          context.fillStyle = '#b8ef6a';
-          context.fillRect(selected.width / 2 - 7, selected.height / 2 - 7, 14, 14);
+          if (!selected.positionLocked) {
+            context.fillStyle = '#b8ef6a';
+            context.fillRect(selected.width / 2 - 7, selected.height / 2 - 7, 14, 14);
+          }
           context.restore();
         }
       } catch (error) {
@@ -2357,7 +2359,17 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           : '';
       const timingControls = `<div class="studio-composer-title">VIDEO TIMING</div><label class="studio-composer-field">Start (s)<input data-prop="startTime" type="number" min="0" max="14399.9" step="0.1" value="${(layer.start ?? 0).toFixed(1)}"></label><label class="studio-composer-field">End (s)<input data-prop="endTime" type="number" min="0.1" max="14400" step="0.1" placeholder="Video end" value="${layer.end === undefined ? '' : layer.end.toFixed(1)}"></label><label class="studio-composer-field">Fade in (s)<input data-prop="fadeIn" type="number" min="0" max="30" step="0.1" value="${(layer.fadeIn ?? 0).toFixed(1)}"></label><label class="studio-composer-field">Fade out (s)<input data-prop="fadeOut" type="number" min="0" max="30" step="0.1" value="${(layer.fadeOut ?? 0).toFixed(1)}"></label><div class="studio-composer-order"><button class="studio-composer-start-playhead" type="button">Start at playhead</button><button class="studio-composer-end-playhead" type="button">End at playhead</button></div>`;
       properties.innerHTML = `<div class="studio-composer-title">TRANSFORM</div><div class="studio-composer-layer-name">${escapeHtml(layerName)}</div>${textControls}${adjustmentControls}${cropControls}${timingControls}<div class="studio-composer-grid"><label>X<input data-prop="x" type="number" value="${Math.round(layer.x)}"></label><label>Y<input data-prop="y" type="number" value="${Math.round(layer.y)}"></label><label>Width<input data-prop="width" type="number" min="1" max="4096" value="${Math.round(layer.width)}"></label><label>Height<input data-prop="height" type="number" min="1" max="4096" value="${Math.round(layer.height)}"></label></div><label class="studio-composer-range">Opacity <output data-value="opacity">${Math.round(layer.opacity * 100)}%</output><input data-prop="opacity" type="range" min="0" max="100" value="${Math.round(layer.opacity * 100)}"></label><label class="studio-composer-field">Rotation<input data-prop="rotation" type="number" min="-360" max="360" value="${Math.round(layer.rotation)}">°</label><label class="studio-composer-field">Blend mode<select data-prop="blend">${STUDIO_IMAGE_BLEND_MODES.map((mode) => `<option value="${mode}" ${layer.blend === mode ? 'selected' : ''}>${mode === 'normal' ? 'Normal' : mode.replaceAll('-', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())}</option>`).join('')}</select></label><div class="studio-composer-order"><button class="studio-composer-down" type="button">Send backward</button><button class="studio-composer-up" type="button">Bring forward</button></div><button class="studio-composer-remove" type="button">Remove layer</button>`;
+      if (layer.positionLocked) {
+        properties
+          .querySelectorAll<HTMLInputElement>(
+            'input[data-prop="x"],input[data-prop="y"],input[data-prop="width"],input[data-prop="height"],input[data-prop="rotation"]',
+          )
+          .forEach((input) => {
+            input.disabled = true;
+          });
+      }
       const updateProperty = (property: string, value: string): void => {
+        if (layer.positionLocked && ['x', 'y', 'width', 'height', 'rotation'].includes(property)) return;
         if (property === 'blend') layer.blend = value as StudioImageLayer['blend'];
         else if (property === 'opacity') {
           layer.opacity = Number(value) / 100;
@@ -2515,8 +2527,23 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           void draw();
           scheduleAutosave();
         });
+        const positionLock = document.createElement('button');
+        positionLock.type = 'button';
+        positionLock.className = 'studio-composer-position-lock';
+        positionLock.textContent = layer.positionLocked ? '🔒' : '🔓';
+        positionLock.title = layer.positionLocked ? 'Unlock position' : 'Lock position';
+        positionLock.setAttribute('aria-label', positionLock.title);
+        positionLock.setAttribute('aria-pressed', String(layer.positionLocked === true));
+        positionLock.addEventListener('click', () => {
+          layer.positionLocked = !layer.positionLocked;
+          renderLayers();
+          renderProperties();
+          void draw();
+          scheduleAutosave();
+        });
         row.appendChild(name);
         row.appendChild(visibility);
+        row.appendChild(positionLock);
         layerList.appendChild(row);
       });
       assetList.innerHTML = '';
@@ -2625,7 +2652,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const selected = imageLayers.find(
         (layer) => layer.id === selectedImageLayerId && isLayerVisibleAt(layer, previewTime),
       );
-      if (selected) {
+      if (selected && !selected.positionLocked) {
         const local = localPosition(selected, point);
         if (Math.abs(local.x - selected.width / 2) <= 20 && Math.abs(local.y - selected.height / 2) <= 20) {
           drag = {
@@ -2653,6 +2680,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       });
       if (!hit) return;
       selectLayer(hit.id);
+      if (hit.positionLocked) return;
       drag = {
         id: hit.id,
         mode: 'move',
@@ -2670,8 +2698,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         const selected = imageLayers.find((layer) => layer.id === selectedImageLayerId && layer.visible);
         if (selected) {
           const local = localPosition(selected, pointerPosition(event));
-          canvas.style.cursor =
-            Math.abs(local.x - selected.width / 2) <= 20 && Math.abs(local.y - selected.height / 2) <= 20
+          canvas.style.cursor = selected.positionLocked
+            ? 'default'
+            : Math.abs(local.x - selected.width / 2) <= 20 && Math.abs(local.y - selected.height / 2) <= 20
               ? 'nwse-resize'
               : 'move';
         }
@@ -3699,6 +3728,7 @@ const studioCss = `
 .studio-sequence-overlays{position:absolute;z-index:6;inset:6% 8%;width:84%;height:88%;pointer-events:none}
 .studio-composer-preview-controls{display:flex;align-items:center;gap:16px;min-height:38px;padding:4px 18px;border-bottom:1px solid #30333a;background:#15161b;color:#aeb3bd;font-size:10px}.studio-composer-preview-controls label{display:flex;align-items:center;gap:7px;white-space:nowrap}.studio-composer-preview-controls label:last-child{flex:1}.studio-composer-preview-controls input[type=checkbox]{accent-color:#b8ef6a}.studio-composer-preview-controls input[type=range]{flex:1;min-width:80px;max-width:460px;accent-color:#b8ef6a}.studio-composer-preview-controls output{min-width:40px;color:#e9ebef;font-variant-numeric:tabular-nums}
 .studio-video-clip.muted{filter:saturate(.35);border-style:dashed}
+.studio-composer-position-lock{width:23px;flex:0 0 23px;padding:4px 0;border:0;border-radius:4px;background:transparent;color:#9da3ad;font-size:12px;cursor:pointer}.studio-composer-position-lock:hover,.studio-composer-position-lock[aria-pressed=true]{background:#30343c;color:#b8ef6a}.studio-composer-position-lock:focus-visible{outline:1px solid #b8ef6a}
 .studio-audio-track-label{box-sizing:border-box;flex:0 0 142px;display:flex;flex-direction:column;justify-content:center;gap:3px;padding:4px 7px}.studio-audio-track-heading{display:flex;align-items:center;justify-content:space-between}.studio-audio-track-controls{display:flex;gap:3px}.studio-audio-track-controls button{width:20px;height:16px;padding:0;border:1px solid #3b3d44;border-radius:3px;background:#24262c;color:#999;font-size:9px}.studio-audio-track-controls button.active,.studio-audio-track-controls button[aria-pressed=true]{background:#327365;color:#d8fff4}.studio-audio-track-controls button[data-action=mute][aria-pressed=true]{background:#805c32;color:#fff0c2}.studio-audio-mixer-control{display:flex;align-items:center;gap:4px;height:12px;color:#888e9a;font-size:8px}.studio-audio-mixer-control input{flex:1;min-width:0;height:10px;margin:0;accent-color:#9bd77b}.studio-audio-mixer-control output{width:28px;color:#b9bec8;text-align:right;font-size:8px;font-variant-numeric:tabular-nums}
 .studio-image-overlay-lane{min-height:42px}.studio-image-overlay-canvas{min-height:41px}.studio-image-overlay-clip{position:absolute;top:5px;height:31px;overflow:hidden;border:1px solid #597b48;border-radius:5px;background:#293b27;color:#e2f2d7;text-align:left;cursor:grab;touch-action:none}.studio-image-overlay-clip.text{border-color:#547c91;background:#243844;color:#dceefa}.studio-image-overlay-clip.active{outline:1px solid #b8ef6a}.studio-image-overlay-clip.hidden{opacity:.45;border-style:dashed}.studio-image-overlay-label{display:block;padding:0 11px;overflow:hidden;line-height:29px;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}.studio-image-overlay-trim{position:absolute;z-index:2;top:0;bottom:0;width:8px;background:#d9efac55;cursor:ew-resize;touch-action:none}.studio-image-overlay-trim:hover{background:#b8ef6a}.studio-image-overlay-trim-left{left:0}.studio-image-overlay-trim-right{right:0}
 .studio-timeline-zoom-control{display:flex;align-items:center;gap:4px;color:var(--studio-muted);font-size:9px;white-space:nowrap}.studio-timeline-zoom-control input{width:76px;accent-color:var(--studio-accent)}.studio-timeline-zoom-control output{min-width:40px;color:#c8ccd4;font-variant-numeric:tabular-nums}

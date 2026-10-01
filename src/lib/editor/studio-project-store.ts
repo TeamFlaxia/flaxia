@@ -89,6 +89,7 @@ export interface StudioImageLayer {
   fadeOut?: number;
   visible: boolean;
   blend: StudioImageBlendMode;
+  positionLocked?: boolean;
   text?: string;
   color?: string;
   fontSize?: number;
@@ -325,6 +326,7 @@ function decodeFiles(plaintext: Uint8Array): {
             ? Math.max(0.01, Math.min(1 - cropY, layer.cropHeight))
             : 1 - cropY,
         start,
+        positionLocked: layer.positionLocked === true,
         end:
           typeof layer.end === 'number' && Number.isFinite(layer.end)
             ? Math.max(start + 0.1, Math.min(14_400, layer.end))
