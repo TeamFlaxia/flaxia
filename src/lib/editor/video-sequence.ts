@@ -1,11 +1,31 @@
 import { type AudioTimelineClip, audibleAudioTimelineClips, mixAudioTimeline } from './audio-mixer.ts';
 import { probeFFmpegStreams, runFFmpeg } from './ffmpeg-client.ts';
 import { drawStudioImageLayer } from './image-layer-canvas.ts';
-import type { StudioImageLayer, StudioVideoClip } from './studio-project-store.ts';
+import type { StudioImageLayer, StudioVideoClip, StudioVideoFormat } from './studio-project-store.ts';
 import { rippleOverlappingVideoClips } from './video-timeline.ts';
 
 const MAX_INPUT_BYTES = 80 * 1024 * 1024;
 const MAX_DURATION_SECONDS = 180;
+
+export function studioVideoFrameSize(format: StudioVideoFormat): { width: number; height: number } {
+  if (format === 'square') return { width: 1080, height: 1080 };
+  if (format === 'portrait') return { width: 720, height: 1280 };
+  return { width: 1280, height: 720 };
+}
+
+export function studioVideoLayerPlacement(format: StudioVideoFormat): {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+} {
+  const { width, height } = studioVideoFrameSize(format);
+  const scale = Math.min(width / 1080, height / 1080);
+  return {
+    scale,
+    offsetX: (width - 1080 * scale) / 2,
+    offsetY: (height - 1080 * scale) / 2,
+  };
+}
 
 /** Build FFmpeg fade filters for a clip's timeline duration. */
 export function videoClipFadeFilters(duration: number, fadeIn = 0, fadeOut = 0): string[] {
@@ -110,17 +130,19 @@ export function videoOverlayBlendMode(mode: StudioImageLayer['blend']): string |
 async function renderLayerOverlayFrame(
   layers: StudioImageLayer[],
   bitmaps: Map<number, ImageBitmap>,
+  format: StudioVideoFormat,
 ): Promise<Uint8Array> {
+  const { width, height } = studioVideoFrameSize(format);
+  const placement = studioVideoLayerPlacement(format);
   const canvas = document.createElement('canvas');
-  canvas.width = 1280;
-  canvas.height = 720;
+  canvas.width = width;
+  canvas.height = height;
   const context = canvas.getContext('2d');
   if (!context) throw new Error('Could not create the video overlay canvas');
-  const scale = 2 / 3;
   for (const layer of layers) {
     const bitmap = layer.kind === 'image' ? bitmaps.get(layer.fileIndex) : null;
     if (layer.kind === 'image' && !bitmap) throw new Error('A video overlay layer is not an image');
-    drawStudioImageLayer(context, layer, bitmap ?? null, { scale, offsetX: 280 });
+    drawStudioImageLayer(context, layer, bitmap ?? null, placement);
   }
   const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(
@@ -135,6 +157,7 @@ async function renderTimedLayerOverlays(
   files: File[],
   layers: StudioImageLayer[],
   duration: number,
+  format: StudioVideoFormat,
 ): Promise<TimedOverlay[]> {
   const visibleLayers = layers
     .filter((layer) => layer.visible && (layer.start ?? 0) < duration && (layer.end ?? duration) > 0)
@@ -163,7 +186,7 @@ async function renderTimedLayerOverlays(
     return Promise.all(
       visibleLayers.map(async ({ layer, start, end, fadeIn, fadeOut, name }) => ({
         name,
-        data: await renderLayerOverlayFrame([layer], bitmaps),
+        data: await renderLayerOverlayFrame([layer], bitmaps, format),
         start,
         end,
         fadeIn,
@@ -183,6 +206,7 @@ export async function renderVideoSequence(
   audioClips: AudioTimelineClip[],
   imageLayers: StudioImageLayer[],
   onProgress?: (ratio: number) => void,
+  videoFormat: StudioVideoFormat = 'landscape',
 ): Promise<File> {
   const ordered = clips.map((clip) => ({ ...clip })).sort((left, right) => left.start - right.start);
   rippleOverlappingVideoClips(ordered);
@@ -191,6 +215,7 @@ export async function renderVideoSequence(
   const sourceDurations = ordered.map((clip) => clip.sourceEnd - clip.sourceStart);
   const speeds = ordered.map((clip) => Math.max(0.5, Math.min(2, clip.speed ?? 1)));
   const durations = sourceDurations.map((length, index) => length / speeds[index]);
+  const { width: frameWidth, height: frameHeight } = studioVideoFrameSize(videoFormat);
   if (sourceDurations.some((length) => !Number.isFinite(length) || length <= 0)) {
     throw new Error('Video sequences must be between 0 and 3 minutes');
   }
@@ -234,7 +259,7 @@ export async function renderVideoSequence(
     data: fileBytes.get(fileIndex)!,
   }));
   const hasAudio = await probeAudioStreams(inputs);
-  const overlays = await renderTimedLayerOverlays(files, imageLayers, duration);
+  const overlays = await renderTimedLayerOverlays(files, imageLayers, duration, videoFormat);
   const sourceInputs: Array<{ name: string; data: Uint8Array }> = [];
   const clipSources = ordered.map((clip, sourceOrdinal) => {
     const fileIndex = indexByFile.get(clip.fileIndex)!;
@@ -258,7 +283,9 @@ export async function renderVideoSequence(
   for (let segmentIndex = 0; segmentIndex < timelineSegments.length; segmentIndex++) {
     const segment = timelineSegments[segmentIndex];
     if (segment.kind === 'gap') {
-      filters.push(`color=c=black:s=1280x720:r=30:d=${segment.duration.toFixed(3)},format=yuv420p[vg${segmentIndex}]`);
+      filters.push(
+        `color=c=black:s=${frameWidth}x${frameHeight}:r=30:d=${segment.duration.toFixed(3)},format=yuv420p[vg${segmentIndex}]`,
+      );
       filters.push(
         `anullsrc=channel_layout=stereo:sample_rate=44100:d=${segment.duration.toFixed(3)}[ag${segmentIndex}]`,
       );
@@ -272,8 +299,8 @@ export async function renderVideoSequence(
     const speed = speeds[index];
     const framing =
       clip.fit === 'cover'
-        ? 'scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720'
-        : 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2';
+        ? `scale=${frameWidth}:${frameHeight}:force_original_aspect_ratio=increase,crop=${frameWidth}:${frameHeight}`
+        : `scale=${frameWidth}:${frameHeight}:force_original_aspect_ratio=decrease,pad=${frameWidth}:${frameHeight}:(ow-iw)/2:(oh-ih)/2`;
     const fades = videoClipFadeFilters(clipDuration, clip.fadeIn, clip.fadeOut);
     const videoFilters = [
       framing,
@@ -419,7 +446,7 @@ export async function renderVideoSequence(
       onProgress: onProgress ? (ratio) => onProgress(0.72 + ratio * 0.28) : undefined,
     });
   }
-  const output = new File([finalBytes as BlobPart], 'flaxia-video-sequence.mp4', { type: 'video/mp4' });
+  const output = new File([finalBytes as BlobPart], `flaxia-video-sequence-${videoFormat}.mp4`, { type: 'video/mp4' });
   if (output.size > 25 * 1024 * 1024) throw new Error('Rendered video exceeds the 25 MB post attachment limit');
   return output;
 }

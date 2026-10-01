@@ -44,7 +44,10 @@ interface StudioProjectManifest {
   audioClips: AudioTimelineClip[];
   videoClips: StudioVideoClip[];
   imageLayers: StudioImageLayer[];
+  videoFormat?: StudioVideoFormat;
 }
+
+export type StudioVideoFormat = 'landscape' | 'square' | 'portrait';
 
 export interface StudioVideoClip {
   id: string;
@@ -143,6 +146,7 @@ async function encodeFiles(
   audioClips: AudioTimelineClip[],
   videoClips: StudioVideoClip[],
   imageLayers: StudioImageLayer[],
+  videoFormat: StudioVideoFormat,
 ): Promise<Uint8Array> {
   if (files.length > 255) throw new Error('Studio projects support up to 255 files');
   const metadata: FileManifestEntry[] = [];
@@ -161,7 +165,13 @@ async function encodeFiles(
     totalBytes += file.size;
   }
   const manifest = new TextEncoder().encode(
-    JSON.stringify({ files: metadata, audioClips, videoClips, imageLayers } satisfies StudioProjectManifest),
+    JSON.stringify({
+      files: metadata,
+      audioClips,
+      videoClips,
+      imageLayers,
+      videoFormat,
+    } satisfies StudioProjectManifest),
   );
   const output = new Uint8Array(4 + manifest.length + totalBytes);
   new DataView(output.buffer).setUint32(0, manifest.length);
@@ -180,6 +190,7 @@ function decodeFiles(plaintext: Uint8Array): {
   audioClips: AudioTimelineClip[];
   videoClips: StudioVideoClip[];
   imageLayers: StudioImageLayer[];
+  videoFormat: StudioVideoFormat;
 } {
   if (plaintext.length < 4) throw new Error('Invalid encrypted Studio project');
   const manifestSize = new DataView(plaintext.buffer, plaintext.byteOffset, plaintext.byteLength).getUint32(0);
@@ -344,7 +355,9 @@ function decodeFiles(plaintext: Uint8Array): {
         rotation: Number.isFinite(layer.rotation) ? Math.max(-3600, Math.min(3600, layer.rotation)) : 0,
       };
     });
-  return { files, audioClips, videoClips, imageLayers };
+  const videoFormat: StudioVideoFormat =
+    manifest.videoFormat === 'square' || manifest.videoFormat === 'portrait' ? manifest.videoFormat : 'landscape';
+  return { files, audioClips, videoClips, imageLayers, videoFormat };
 }
 
 /** Export a passphrase-encrypted portable project; the passphrase never leaves this device. */
@@ -354,9 +367,10 @@ export async function exportStudioProject(
   videoClips: StudioVideoClip[],
   imageLayers: StudioImageLayer[],
   passphrase: string,
+  videoFormat: StudioVideoFormat = 'landscape',
 ): Promise<File> {
   if (passphrase.length < 12) throw new Error('Use a passphrase with at least 12 characters');
-  const plaintext = await encodeFiles(files, audioClips, videoClips, imageLayers);
+  const plaintext = await encodeFiles(files, audioClips, videoClips, imageLayers, videoFormat);
   const salt = crypto.getRandomValues(new Uint8Array(VAULT_SALT_BYTES));
   let key: Uint8Array | null = null;
   try {
@@ -385,6 +399,7 @@ export async function importStudioProject(
   audioClips: AudioTimelineClip[];
   videoClips: StudioVideoClip[];
   imageLayers: StudioImageLayer[];
+  videoFormat: StudioVideoFormat;
 }> {
   if (file.size > MAX_PORTABLE_BYTES) throw new Error('Studio project exceeds the 50 MB asset limit');
   if (passphrase.length < 1) throw new Error('Enter the project passphrase');
@@ -429,8 +444,9 @@ export async function saveStudioProject(
   videoClips: StudioVideoClip[],
   imageLayers: StudioImageLayer[],
   vaultKey: Uint8Array,
+  videoFormat: StudioVideoFormat = 'landscape',
 ): Promise<void> {
-  const plaintext = await encodeFiles(files, audioClips, videoClips, imageLayers);
+  const plaintext = await encodeFiles(files, audioClips, videoClips, imageLayers, videoFormat);
   try {
     const encrypted = await encryptVaultItem(vaultKey, PROJECT_ITEM_ID, plaintext);
     await transaction('readwrite', (store) =>
@@ -446,12 +462,13 @@ export async function loadStudioProject(vaultKey: Uint8Array): Promise<{
   audioClips: AudioTimelineClip[];
   videoClips: StudioVideoClip[];
   imageLayers: StudioImageLayer[];
+  videoFormat: StudioVideoFormat;
 }> {
   const record = (await transaction('readonly', (store) => store.get(CURRENT_PROJECT_KEY))) as
     | EncryptedProjectRecord
     | undefined;
   if (!record || record.item_id !== PROJECT_ITEM_ID) {
-    return { files: [], audioClips: [], videoClips: [], imageLayers: [] };
+    return { files: [], audioClips: [], videoClips: [], imageLayers: [], videoFormat: 'landscape' };
   }
   const plaintext = await decryptVaultItem(vaultKey, record.item_id, record.item_key_wrapped, record.payload);
   try {

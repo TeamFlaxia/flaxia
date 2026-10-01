@@ -73,7 +73,14 @@ describe('portable Studio projects', () => {
       },
     ];
 
-    const portable = await exportStudioProject(files, audioClips, videoClips, imageLayers, 'studio-round-trip-key');
+    const portable = await exportStudioProject(
+      files,
+      audioClips,
+      videoClips,
+      imageLayers,
+      'studio-round-trip-key',
+      'portrait',
+    );
     const restored = await importStudioProject(portable, 'studio-round-trip-key');
 
     assert.deepEqual(
@@ -90,6 +97,7 @@ describe('portable Studio projects', () => {
     assert.equal(restored.audioClips[0].speed, 1.25);
     assert.equal(restored.videoClips[0].fileIndex, 4);
     assert.equal(restored.videoClips[0].fit, 'cover');
+    assert.equal(restored.videoFormat, 'portrait');
     assert.equal(restored.imageLayers[0].fileIndex, 2);
     assert.equal(restored.imageLayers[0].blend, 'screen');
     assert.equal(restored.imageLayers[1].kind, 'text');

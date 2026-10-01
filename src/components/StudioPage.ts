@@ -28,10 +28,16 @@ import {
   loadStudioProject,
   type StudioImageLayer,
   type StudioVideoClip,
+  type StudioVideoFormat,
   saveStudioProject,
 } from '../lib/editor/studio-project-store.js';
 import { probeVideo } from '../lib/editor/video-editor.ts';
-import { renderVideoSequence, videoClipOpacityAt } from '../lib/editor/video-sequence.ts';
+import {
+  renderVideoSequence,
+  studioVideoFrameSize,
+  studioVideoLayerPlacement,
+  videoClipOpacityAt,
+} from '../lib/editor/video-sequence.ts';
 import { rippleOverlappingVideoClips } from '../lib/editor/video-timeline.ts';
 import { computeAudioPeaks } from '../lib/editor/waveform.ts';
 import { getVaultKey, tryDeviceUnlock } from '../lib/vault/session.js';
@@ -54,6 +60,7 @@ type StudioEditHistorySnapshot = {
   activeIndex: number;
   audioClips: AudioTimelineClip[];
   videoClips: StudioVideoClip[];
+  videoFormat: StudioVideoFormat;
   imageLayers: StudioImageLayer[];
   audioTrackCount: number;
   selectedAudioClipId: string | null;
@@ -238,6 +245,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let flashPreview: FlashPlayerHandle | null = null;
   let audioClips: AudioTimelineClip[] = [];
   let videoClips: StudioVideoClip[] = [];
+  let videoFormat: StudioVideoFormat = 'landscape';
   let imageLayers: StudioImageLayer[] = [];
   let openTabs: number[] = [];
   let selectedVideoClipId: string | null = null;
@@ -262,6 +270,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let videoSequenceAudio: HTMLAudioElement | null = null;
   let videoSequenceAudioUrl: string | null = null;
   let videoSequenceOverlayCanvas: HTMLElement | null = null;
+  let videoSequenceFrameObserver: ResizeObserver | null = null;
   let videoSequenceOverlayRevision = 0;
   const videoSequenceOverlayBitmaps = new Map<number, Promise<ImageBitmap>>();
   let videoSequenceIndex = -1;
@@ -276,6 +285,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     activeIndex,
     audioClips: audioClips.map((clip) => ({ ...clip })),
     videoClips: videoClips.map((clip) => ({ ...clip })),
+    videoFormat,
     imageLayers: imageLayers.map((layer) => ({ ...layer })),
     audioTrackCount,
     selectedAudioClipId,
@@ -373,6 +383,19 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   videoExportButton.parentNode?.insertBefore(zoomLabel, videoExportButton.nextSibling);
   const zoomInput = zoomLabel.querySelector<HTMLInputElement>('input')!;
   const zoomOutput = zoomLabel.querySelector<HTMLOutputElement>('output')!;
+  const videoFormatLabel = document.createElement('label');
+  videoFormatLabel.className = 'studio-video-format-control';
+  videoFormatLabel.innerHTML =
+    'Canvas <select class="studio-video-format" aria-label="Video canvas format"><option value="landscape">16:9</option><option value="square">1:1</option><option value="portrait">9:16</option></select>';
+  videoExportButton.parentNode?.insertBefore(videoFormatLabel, addTrackButton);
+  const videoFormatInput = videoFormatLabel.querySelector('select') as HTMLSelectElement;
+  videoFormatInput.value = videoFormat;
+  videoFormatInput.addEventListener('change', () => {
+    videoFormat = videoFormatInput.value as StudioVideoFormat;
+    videoSequenceStartTime = timelinePlayheadTime;
+    if (videoSequencePlayer) stopVideoSequence();
+    scheduleAutosave();
+  });
   const videoTimelineViewport = root.querySelector<HTMLElement>('.studio-video-workarea')!;
   const audioTimelineViewport = root.querySelector<HTMLElement>('.studio-audio-workarea')!;
   let syncedViewport: HTMLElement | null = null;
@@ -428,6 +451,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     if (videoSequenceTimer) clearTimeout(videoSequenceTimer);
     videoSequenceTimer = null;
     videoSequenceOverlayRevision++;
+    videoSequenceFrameObserver?.disconnect();
+    videoSequenceFrameObserver = null;
     videoSequenceOverlayCanvas?.remove();
     videoSequenceOverlayCanvas = null;
     for (const bitmapPromise of videoSequenceOverlayBitmaps.values()) {
@@ -785,12 +810,13 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           type: currentFile.type || (kindOf(currentFile) === 'game' ? 'text/html' : 'text/plain'),
         });
       }
+      const projectVideoFormat = videoFormat;
       saveChain = saveChain
         .catch(() => undefined)
         .then(async () => {
           if (revision !== saveRevision) return;
           try {
-            await saveStudioProject(projectFiles, audioClips, videoClips, imageLayers, vaultKey);
+            await saveStudioProject(projectFiles, audioClips, videoClips, imageLayers, vaultKey, projectVideoFormat);
             if (!destroyed && revision === saveRevision) saveState.textContent = 'Saved on this device';
           } catch (error) {
             if (!destroyed && revision === saveRevision) {
@@ -1417,6 +1443,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     openTabs = openTabs.filter((index) => index < files.length);
     audioClips = snapshot.audioClips.map((clip) => ({ ...clip }));
     videoClips = snapshot.videoClips.map((clip) => ({ ...clip }));
+    videoFormat = snapshot.videoFormat;
+    videoFormatInput.value = videoFormat;
     imageLayers = snapshot.imageLayers.map((layer) => ({ ...layer }));
     audioTrackCount = snapshot.audioTrackCount;
     selectedAudioClipId = snapshot.selectedAudioClipId;
@@ -3141,9 +3169,12 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     audioClips: AudioTimelineClip[];
     videoClips: StudioVideoClip[];
     imageLayers: StudioImageLayer[];
+    videoFormat: StudioVideoFormat;
   }): void => {
     if (!interacted && files.length === 0 && project.files.length > 0) {
       files = project.files;
+      videoFormat = project.videoFormat;
+      videoFormatInput.value = videoFormat;
       audioClips = project.audioClips.filter((clip) => clip.track < 8 && clip.fileIndex < files.length);
       videoClips = project.videoClips.filter((clip) => clip.fileIndex < files.length);
       rippleOverlappingVideoClips(videoClips);
@@ -3203,6 +3234,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       files = restored.files;
       audioClips = restored.audioClips;
       videoClips = restored.videoClips;
+      videoFormat = restored.videoFormat;
+      videoFormatInput.value = videoFormat;
       rippleOverlappingVideoClips(videoClips);
       imageLayers = restored.imageLayers;
       openTabs = [];
@@ -3257,7 +3290,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           lastModified: activeFile.lastModified,
         });
       }
-      download(await exportStudioProject(snapshot, audioClips, videoClips, imageLayers, passphrase));
+      download(await exportStudioProject(snapshot, audioClips, videoClips, imageLayers, passphrase, videoFormat));
       saveState.textContent = 'Encrypted project downloaded';
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'Could not export this project');
@@ -3364,7 +3397,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       await saveChain.catch(() => undefined);
       const vaultKey = getVaultKey();
       if (vaultKey)
-        await saveStudioProject(files, audioClips, videoClips, imageLayers, vaultKey).catch(() => undefined);
+        await saveStudioProject(files, audioClips, videoClips, imageLayers, vaultKey, videoFormat).catch(
+          () => undefined,
+        );
       const selectedFile = files[activeIndex];
       const selectedExtension = selectedFile?.name.toLowerCase().split('.').pop() ?? '';
       const composerGameExtensions = ['zip', 'swf', 'rsp', 'js', 'wasm'];
@@ -3395,9 +3430,16 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       let postFiles: File[];
       if (mode === 'video') {
         createPostButton.textContent = 'Rendering video…';
-        const output = await renderVideoSequence(files, videoClips, audioClips, imageLayers, (progress) => {
-          mixStatus.textContent = `Preparing post · ${Math.round(progress * 100)}%`;
-        });
+        const output = await renderVideoSequence(
+          files,
+          videoClips,
+          audioClips,
+          imageLayers,
+          (progress) => {
+            mixStatus.textContent = `Preparing post · ${Math.round(progress * 100)}%`;
+          },
+          videoFormat,
+        );
         postFiles = [output];
       } else if (mode === 'game') {
         postFiles = selectedFile ? [selectedFile] : [];
@@ -3591,6 +3633,28 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     overlayStack.className = 'studio-sequence-overlays';
     overlayStack.setAttribute('aria-hidden', 'true');
     stage.appendChild(overlayStack);
+    const frameSize = studioVideoFrameSize(videoFormat);
+    const framePlacement = studioVideoLayerPlacement(videoFormat);
+    const layoutVideoFrame = (): void => {
+      const scale = Math.min(
+        (stage.clientWidth * 0.84) / frameSize.width,
+        (stage.clientHeight * 0.88) / frameSize.height,
+      );
+      const width = Math.max(1, Math.round(frameSize.width * scale));
+      const height = Math.max(1, Math.round(frameSize.height * scale));
+      const left = Math.round((stage.clientWidth - width) / 2);
+      const top = Math.round((stage.clientHeight - height) / 2);
+      for (const element of [player, overlayStack]) {
+        element.style.inset = 'auto';
+        element.style.left = `${left}px`;
+        element.style.top = `${top}px`;
+        element.style.width = `${width}px`;
+        element.style.height = `${height}px`;
+      }
+    };
+    layoutVideoFrame();
+    videoSequenceFrameObserver = new ResizeObserver(layoutVideoFrame);
+    videoSequenceFrameObserver.observe(stage);
     videoSequenceOverlayCanvas = overlayStack;
     const overlayCanvases = new Map<string, HTMLCanvasElement>();
     const drawLiveLayers = async (time: number): Promise<void> => {
@@ -3620,8 +3684,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         let layerCanvas = overlayCanvases.get(layer.id);
         if (!layerCanvas) {
           layerCanvas = document.createElement('canvas');
-          layerCanvas.width = 1280;
-          layerCanvas.height = 720;
+          layerCanvas.width = frameSize.width;
+          layerCanvas.height = frameSize.height;
           videoSequenceOverlayCanvas.appendChild(layerCanvas);
           overlayCanvases.set(layer.id, layerCanvas);
         }
@@ -3631,8 +3695,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         if (!context) continue;
         context.clearRect(0, 0, layerCanvas.width, layerCanvas.height);
         drawStudioImageLayer(context, layer, bitmap, {
-          scale: 2 / 3,
-          offsetX: 280,
+          ...framePlacement,
           opacity: imageLayerOpacityAt(layer, time, sequenceEnd),
         });
       }
@@ -3782,9 +3845,16 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     videoExportButton.disabled = true;
     mixStatus.textContent = `Compositing ${imageLayers.some((layer) => layer.visible) ? 'visible layers and ' : ''}encoding MP4 · 0%`;
     try {
-      const output = await renderVideoSequence(files, videoClips, audioClips, imageLayers, (progress) => {
-        mixStatus.textContent = `Encoding MP4 · ${Math.round(progress * 100)}%`;
-      });
+      const output = await renderVideoSequence(
+        files,
+        videoClips,
+        audioClips,
+        imageLayers,
+        (progress) => {
+          mixStatus.textContent = `Encoding MP4 · ${Math.round(progress * 100)}%`;
+        },
+        videoFormat,
+      );
       download(output);
       mixStatus.textContent = `MP4 downloaded · ${sizeLabel(output.size)}`;
     } catch (error) {
@@ -3876,7 +3946,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     if (!vaultKey) {
       if (destroyed) return;
       saveState.textContent = 'Unlock Vault to restore saved projects';
-      finishRestore({ files: [], audioClips: [], videoClips: [], imageLayers: [] });
+      finishRestore({ files: [], audioClips: [], videoClips: [], imageLayers: [], videoFormat: 'landscape' });
       return;
     }
     const project = await loadStudioProject(vaultKey);
@@ -3884,7 +3954,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   })().catch(() => {
     if (destroyed) return;
     saveState.textContent = 'Could not restore encrypted project';
-    finishRestore({ files: [], audioClips: [], videoClips: [], imageLayers: [] });
+    finishRestore({ files: [], audioClips: [], videoClips: [], imageLayers: [], videoFormat: 'landscape' });
   });
 
   return {
@@ -3908,13 +3978,21 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         const projectAudioClips = [...audioClips];
         const projectVideoClips = [...videoClips];
         const projectImageLayers = [...imageLayers];
+        const projectVideoFormat = videoFormat;
         const revision = ++saveRevision;
         saveChain = saveChain
           .catch(() => undefined)
           .then(async () => {
             if (revision !== saveRevision) return;
             try {
-              await saveStudioProject(projectFiles, projectAudioClips, projectVideoClips, projectImageLayers, vaultKey);
+              await saveStudioProject(
+                projectFiles,
+                projectAudioClips,
+                projectVideoClips,
+                projectImageLayers,
+                vaultKey,
+                projectVideoFormat,
+              );
             } catch {
               // The page is closing; there is no UI left to report a failed final save.
             }
@@ -3935,6 +4013,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 
 const studioCss = `
 .studio-timeline-head{overflow-x:auto;scrollbar-width:thin}.studio-history-undo,.studio-history-redo{min-width:28px;padding:4px 6px!important;font-size:14px!important}
+.studio-center>.studio-timeline{min-width:0}.studio-timeline-head{min-width:0;max-width:100%}
+.studio-video-format-control{display:flex;align-items:center;gap:4px;white-space:nowrap;color:var(--studio-muted);font-size:9px}.studio-video-format{padding:4px 6px;border:1px solid var(--studio-border);border-radius:4px;background:#202228;color:var(--studio-text);font-size:10px}
 .studio-timeline-playhead{position:absolute;z-index:4;top:0;bottom:0;width:2px;background:#f2f687;box-shadow:0 0 6px #f2f687;pointer-events:none}
 .studio-sequence-overlays{position:absolute;z-index:6;inset:6% 8%;width:84%;height:88%;pointer-events:none}.studio-sequence-overlays canvas{position:absolute;inset:0;width:100%;height:100%}
 .studio-composer-preview-controls{display:flex;align-items:center;gap:16px;min-height:38px;padding:4px 18px;border-bottom:1px solid #30333a;background:#15161b;color:#aeb3bd;font-size:10px}.studio-composer-preview-controls label{display:flex;align-items:center;gap:7px;white-space:nowrap}.studio-composer-preview-controls label:last-child{flex:1}.studio-composer-preview-controls input[type=checkbox]{accent-color:#b8ef6a}.studio-composer-preview-controls input[type=range]{flex:1;min-width:80px;max-width:460px;accent-color:#b8ef6a}.studio-composer-preview-controls output{min-width:40px;color:#e9ebef;font-variant-numeric:tabular-nums}
