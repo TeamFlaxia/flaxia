@@ -604,6 +604,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       block.addEventListener('click', () => {
         select(clip.fileIndex);
         selectedVideoClipId = clip.id;
+        selectedAudioClipId = null;
+        selectedImageLayerId = null;
         renderVideoTimeline();
         renderInspector();
       });
@@ -644,6 +646,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
             manuallyPlacedVideoClips.add(clip.id);
             select(clip.fileIndex);
             selectedVideoClipId = clip.id;
+            selectedAudioClipId = null;
+            selectedImageLayerId = null;
             renderVideoTimeline();
             renderInspector();
             scheduleAutosave();
@@ -680,6 +684,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       manuallyPlacedVideoClips.add(clip.id);
       select(clip.fileIndex);
       selectedVideoClipId = clip.id;
+      selectedAudioClipId = null;
+      selectedImageLayerId = null;
       renderVideoTimeline();
       renderInspector();
       scheduleAutosave();
@@ -721,6 +727,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       block.addEventListener('click', () => {
         if (moved) return;
         selectedImageLayerId = layer.id;
+        selectedVideoClipId = null;
+        selectedAudioClipId = null;
+        updateSplitButton();
         void openImageComposer(layer.fileIndex);
       });
       const attachOverlayDrag = (target: HTMLElement, mode: 'move' | 'start' | 'end'): void => {
@@ -761,7 +770,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
                 moved = false;
               }, 0);
               selectedImageLayerId = layer.id;
+              selectedVideoClipId = null;
+              selectedAudioClipId = null;
               renderVideoTimeline();
+              updateSplitButton();
               scheduleAutosave();
             }
           };
@@ -833,6 +845,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         block.addEventListener('click', () => {
           select(clip.fileIndex);
           selectedAudioClipId = clip.id;
+          selectedVideoClipId = null;
+          selectedImageLayerId = null;
           renderAudioTimeline();
           renderInspector();
         });
@@ -871,6 +885,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
               handle.removeEventListener('pointermove', updateClip);
               select(clip.fileIndex);
               selectedAudioClipId = clip.id;
+              selectedVideoClipId = null;
+              selectedImageLayerId = null;
               renderAudioTimeline();
               renderInspector();
               scheduleAutosave();
@@ -907,6 +923,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         audioTrackCount = Math.max(audioTrackCount, track + 1);
         select(clip.fileIndex);
         selectedAudioClipId = clip.id;
+        selectedVideoClipId = null;
+        selectedImageLayerId = null;
         renderAudioTimeline();
         renderInspector();
         scheduleAutosave();
@@ -2502,7 +2520,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       duplicateClipButton.click();
       return;
     }
-    if ((event.key === 'Delete' || event.key === 'Backspace') && (selectedVideoClipId || selectedAudioClipId)) {
+    if (
+      (event.key === 'Delete' || event.key === 'Backspace') &&
+      (selectedVideoClipId || selectedAudioClipId || selectedImageLayerId)
+    ) {
       event.preventDefault();
       if (selectedVideoClipId) {
         videoClips = videoClips.filter((clip) => clip.id !== selectedVideoClipId);
@@ -2513,6 +2534,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         audioClips = audioClips.filter((clip) => clip.id !== selectedAudioClipId);
         selectedAudioClipId = null;
         renderAudioTimeline();
+      } else if (selectedImageLayerId) {
+        imageLayers = imageLayers.filter((layer) => layer.id !== selectedImageLayerId);
+        selectedImageLayerId = null;
+        renderVideoTimeline();
       }
       renderInspector();
       scheduleAutosave();
