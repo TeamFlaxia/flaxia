@@ -596,6 +596,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 
   const scheduleAutosave = (): void => {
     recordHistoryChange();
+    if (videoSequencePlayer) stopVideoSequence();
     if (mixPreview || mixPreviewUrl) {
       mixPreview?.pause();
       mixPreview = null;
