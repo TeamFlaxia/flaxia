@@ -33,7 +33,7 @@ export interface StudioLayerCanvasOptions {
 export function drawStudioImageLayer(
   context: CanvasRenderingContext2D,
   layer: StudioImageLayer,
-  bitmap: ImageBitmap | null,
+  bitmap: ImageBitmap | HTMLCanvasElement | null,
   options: StudioLayerCanvasOptions = {},
 ): void {
   const scale = options.scale ?? 1;

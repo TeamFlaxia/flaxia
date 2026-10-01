@@ -62,6 +62,7 @@ describe('portable Studio projects', () => {
         opacity: 0.7,
         visible: true,
         blend: 'screen' as const,
+        paintLayer: true,
         start: 1,
         end: 4,
       },
@@ -116,6 +117,7 @@ describe('portable Studio projects', () => {
     assert.equal(restored.videoFormat, 'portrait');
     assert.equal(restored.imageLayers[0].fileIndex, 2);
     assert.equal(restored.imageLayers[0].blend, 'screen');
+    assert.equal(restored.imageLayers[0].paintLayer, true);
     assert.equal(restored.imageLayers[1].kind, 'text');
     assert.equal(restored.imageLayers[1].text, 'Studio project');
   });

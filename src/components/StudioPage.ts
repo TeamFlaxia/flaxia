@@ -2566,7 +2566,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
     overlay.setAttribute('aria-label', 'Image layer composer');
-    overlay.innerHTML = `<header class="studio-composer-header"><div><b>Image composition</b><small>Drag to move · drag lower-right handle to resize · Shift keeps ratio · Arrow keys nudge</small></div><div><button class="studio-composer-export" type="button">Export PNG</button><button class="studio-composer-close" type="button" aria-label="Close">×</button></div></header><div class="studio-composer-preview-controls"><label><input class="studio-composer-preview-timing" type="checkbox"> Preview video timing</label><label>Time <input class="studio-composer-preview-time" type="range" min="0" max="180" step="0.1" value="${Math.min(180, timelinePlayheadTime).toFixed(1)}"><output>${Math.min(180, timelinePlayheadTime).toFixed(1)}s</output></label></div><div class="studio-composer-layout"><div class="studio-composer-board"><div class="studio-composer-canvas-wrap"><canvas class="studio-composer-canvas" width="1080" height="1080" tabindex="0" aria-label="Layer composition canvas"></canvas></div><div class="studio-composer-status" aria-live="polite"></div></div><aside class="studio-composer-panel"><div class="studio-composer-section"><div class="studio-composer-title">IMAGE ASSETS</div><div class="studio-composer-assets"></div></div><div class="studio-composer-section"><div class="studio-composer-title">LAYERS <button class="studio-composer-add-text" type="button">＋ Text</button><span class="studio-composer-count"></span></div><div class="studio-composer-layers"></div></div><div class="studio-composer-properties"></div></aside></div>`;
+    overlay.innerHTML = `<header class="studio-composer-header"><div><b>Image composition</b><small>Drag to move · drag lower-right handle to resize · Shift keeps ratio · Arrow keys nudge</small></div><div><button class="studio-composer-export" type="button">Export PNG</button><button class="studio-composer-close" type="button" aria-label="Close">×</button></div></header><div class="studio-composer-preview-controls"><label><input class="studio-composer-preview-timing" type="checkbox"> Preview video timing</label><label>Time <input class="studio-composer-preview-time" type="range" min="0" max="180" step="0.1" value="${Math.min(180, timelinePlayheadTime).toFixed(1)}"><output>${Math.min(180, timelinePlayheadTime).toFixed(1)}s</output></label></div><div class="studio-composer-layout"><div class="studio-composer-board"><div class="studio-composer-tools" role="toolbar" aria-label="Image drawing tools"><button class="studio-composer-tool active" data-tool="select" type="button" aria-pressed="true">↖ Select</button><button class="studio-composer-tool" data-tool="brush" type="button" aria-pressed="false">✎ Brush</button><button class="studio-composer-tool" data-tool="eraser" type="button" aria-pressed="false">⌫ Eraser</button><label>Color <input class="studio-composer-brush-color" type="color" value="#ff4f81"></label><label>Size <input class="studio-composer-brush-size" type="range" min="1" max="120" value="24"><output>24 px</output></label></div><div class="studio-composer-canvas-wrap"><canvas class="studio-composer-canvas" width="1080" height="1080" tabindex="0" aria-label="Layer composition canvas"></canvas></div><div class="studio-composer-status" aria-live="polite"></div></div><aside class="studio-composer-panel"><div class="studio-composer-section"><div class="studio-composer-title">IMAGE ASSETS</div><div class="studio-composer-assets"></div></div><div class="studio-composer-section"><div class="studio-composer-title">LAYERS <span class="studio-composer-title-actions"><button class="studio-composer-add-paint" type="button">＋ Paint</button><button class="studio-composer-add-text" type="button">＋ Text</button></span><span class="studio-composer-count"></span></div><div class="studio-composer-layers"></div></div><div class="studio-composer-properties"></div></aside></div>`;
     root.appendChild(overlay);
     imageComposerOverlay = overlay;
     const canvas = overlay.querySelector<HTMLCanvasElement>('.studio-composer-canvas')!;
@@ -2578,7 +2578,13 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const timingPreviewToggle = overlay.querySelector<HTMLInputElement>('.studio-composer-preview-timing')!;
     const timingPreviewInput = overlay.querySelector<HTMLInputElement>('.studio-composer-preview-time')!;
     const timingPreviewOutput = overlay.querySelector<HTMLOutputElement>('.studio-composer-preview-controls output')!;
+    const brushColorInput = overlay.querySelector<HTMLInputElement>('.studio-composer-brush-color')!;
+    const brushSizeInput = overlay.querySelector<HTMLInputElement>('.studio-composer-brush-size')!;
+    const paintSurfaces = new Map<string, HTMLCanvasElement>();
+    const paintSaveRevisions = new Map<string, number>();
     const bitmaps = new Map<number, Promise<ImageBitmap>>();
+    let activeTool: 'select' | 'brush' | 'eraser' = 'select';
+    let paintStroke: { pointerId: number; layerId: string; lastPoint: { x: number; y: number } } | null = null;
     let drag: {
       id: string;
       mode: 'move' | 'resize';
@@ -2595,6 +2601,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         void bitmapPromise.then((bitmap) => bitmap.close()).catch(() => undefined);
       }
       bitmaps.clear();
+      paintSurfaces.clear();
       overlay.remove();
       imageComposerOverlay = null;
       renderVideoTimeline();
@@ -2621,6 +2628,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         }
         return;
       }
+      if (activeTool !== 'select') return;
       const offsets: Record<string, { x: number; y: number }> = {
         ArrowLeft: { x: -1, y: 0 },
         ArrowRight: { x: 1, y: 0 },
@@ -2652,6 +2660,103 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       }
       return bitmap;
     };
+    const setComposerTool = (tool: 'select' | 'brush' | 'eraser'): void => {
+      activeTool = tool;
+      overlay.querySelectorAll<HTMLButtonElement>('.studio-composer-tool').forEach((button) => {
+        const selected = button.dataset.tool === tool;
+        button.classList.toggle('active', selected);
+        button.setAttribute('aria-pressed', String(selected));
+      });
+      canvas.style.cursor = tool === 'select' ? 'move' : 'crosshair';
+      void draw(tool === 'select');
+    };
+    const getPaintSurface = async (layer: StudioImageLayer): Promise<HTMLCanvasElement> => {
+      const existing = paintSurfaces.get(layer.id);
+      if (existing) return existing;
+      if (layer.kind !== 'image' || layer.paintLayer !== true) throw new Error('Select a paint layer first');
+      const bitmap = await getBitmap(layer.fileIndex);
+      const surface = document.createElement('canvas');
+      surface.width = canvas.width;
+      surface.height = canvas.height;
+      const paintContext = surface.getContext('2d');
+      if (!paintContext) throw new Error('Could not open this paint layer');
+      paintContext.drawImage(bitmap, 0, 0, surface.width, surface.height);
+      paintSurfaces.set(layer.id, surface);
+      return surface;
+    };
+    const canvasToPngFile = (surface: HTMLCanvasElement, name: string): Promise<File> =>
+      new Promise((resolve, reject) => {
+        surface.toBlob((blob) => {
+          if (!blob) {
+            reject(new Error('Could not save this paint layer'));
+            return;
+          }
+          resolve(new File([blob], name, { type: 'image/png', lastModified: Date.now() }));
+        }, 'image/png');
+      });
+    const persistPaintSurface = async (layer: StudioImageLayer): Promise<void> => {
+      const surface = paintSurfaces.get(layer.id);
+      const file = files[layer.fileIndex];
+      if (!surface || !file) return;
+      const revision = (paintSaveRevisions.get(layer.id) ?? 0) + 1;
+      paintSaveRevisions.set(layer.id, revision);
+      try {
+        const savedFile = await canvasToPngFile(surface, file.name);
+        if (paintSaveRevisions.get(layer.id) !== revision) return;
+        files[layer.fileIndex] = savedFile;
+        const staleBitmap = bitmaps.get(layer.fileIndex);
+        if (staleBitmap) void staleBitmap.then((bitmap) => bitmap.close()).catch(() => undefined);
+        bitmaps.delete(layer.fileIndex);
+        renderLayers();
+        scheduleAutosave();
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : 'Could not save this paint layer';
+      }
+    };
+    const paintAt = (
+      layer: StudioImageLayer,
+      from: { x: number; y: number },
+      to: { x: number; y: number },
+      tool: 'brush' | 'eraser',
+    ): void => {
+      const surface = paintSurfaces.get(layer.id);
+      const paintContext = surface?.getContext('2d');
+      if (!surface || !paintContext) return;
+      const sourcePosition = (point: { x: number; y: number }): { x: number; y: number } => {
+        const dx = point.x - (layer.x + layer.width / 2);
+        const dy = point.y - (layer.y + layer.height / 2);
+        const angle = (-layer.rotation * Math.PI) / 180;
+        const localX = dx * Math.cos(angle) - dy * Math.sin(angle);
+        const localY = dx * Math.sin(angle) + dy * Math.cos(angle);
+        const cropX = layer.cropX ?? 0;
+        const cropY = layer.cropY ?? 0;
+        const cropWidth = layer.cropWidth ?? 1;
+        const cropHeight = layer.cropHeight ?? 1;
+        return {
+          x: (cropX + (localX / layer.width + 0.5) * cropWidth) * surface.width,
+          y: (cropY + (localY / layer.height + 0.5) * cropHeight) * surface.height,
+        };
+      };
+      const sourceFrom = sourcePosition(from);
+      const sourceTo = sourcePosition(to);
+      paintContext.save();
+      paintContext.globalCompositeOperation = tool === 'eraser' ? 'destination-out' : 'source-over';
+      paintContext.strokeStyle = brushColorInput.value;
+      paintContext.fillStyle = brushColorInput.value;
+      paintContext.lineWidth = (Number(brushSizeInput.value) * surface.width * (layer.cropWidth ?? 1)) / layer.width;
+      paintContext.lineCap = 'round';
+      paintContext.lineJoin = 'round';
+      paintContext.beginPath();
+      paintContext.moveTo(sourceFrom.x, sourceFrom.y);
+      paintContext.lineTo(sourceTo.x, sourceTo.y);
+      paintContext.stroke();
+      if (sourceFrom.x === sourceTo.x && sourceFrom.y === sourceTo.y) {
+        paintContext.beginPath();
+        paintContext.arc(sourceTo.x, sourceTo.y, paintContext.lineWidth / 2, 0, Math.PI * 2);
+        paintContext.fill();
+      }
+      paintContext.restore();
+    };
     const currentPreviewTime = (): number | null =>
       timingPreviewToggle.checked ? Number(timingPreviewInput.value) : null;
     const previewDuration = (): number =>
@@ -2672,7 +2777,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           if (!isLayerVisibleAt(layer, previewTime)) continue;
           const layerOpacity =
             previewTime === null ? layer.opacity : imageLayerOpacityAt(layer, previewTime, previewDuration());
-          const bitmap = layer.kind === 'image' ? await getBitmap(layer.fileIndex) : null;
+          const bitmap =
+            layer.kind === 'image' ? (paintSurfaces.get(layer.id) ?? (await getBitmap(layer.fileIndex))) : null;
           if (revision !== imageDrawRevision) return;
           drawStudioImageLayer(context, layer, bitmap, { opacity: layerOpacity });
         }
@@ -2709,6 +2815,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       void draw();
     });
     const selectLayer = (layerId: string): void => {
+      if (activeTool !== 'select') setComposerTool('select');
       selectedImageLayerId = layerId;
       renderLayers();
       renderProperties();
@@ -2723,6 +2830,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         return;
       }
       const layerName = layer.kind === 'text' ? 'Text layer' : (file?.name ?? 'Image layer');
+      const paintControls = layer.paintLayer
+        ? '<p>Choose Brush or Eraser above the canvas to draw on this transparent layer.</p>'
+        : '';
       const textControls =
         layer.kind === 'text'
           ? `<label class="studio-composer-text-label">Text<textarea data-prop="text" maxlength="2000">${escapeHtml(layer.text ?? '')}</textarea></label><label class="studio-composer-field">Color<input data-prop="color" type="color" value="${layer.color ?? '#ffffff'}"></label><label class="studio-composer-field">Font size<input data-prop="fontSize" type="number" min="8" max="256" value="${layer.fontSize ?? 72}"></label><label class="studio-composer-field">Font<select data-prop="fontFamily"><option value="sans-serif" ${(layer.fontFamily ?? 'sans-serif') === 'sans-serif' ? 'selected' : ''}>Sans serif</option><option value="serif" ${layer.fontFamily === 'serif' ? 'selected' : ''}>Serif</option><option value="monospace" ${layer.fontFamily === 'monospace' ? 'selected' : ''}>Monospace</option></select></label>`
@@ -2736,7 +2846,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           ? `<div class="studio-composer-title">SOURCE CROP</div><label class="studio-composer-range">Left <output data-value="cropX">${Math.round((layer.cropX ?? 0) * 100)}%</output><input data-prop="cropX" type="range" min="0" max="99" value="${Math.round((layer.cropX ?? 0) * 100)}"></label><label class="studio-composer-range">Top <output data-value="cropY">${Math.round((layer.cropY ?? 0) * 100)}%</output><input data-prop="cropY" type="range" min="0" max="99" value="${Math.round((layer.cropY ?? 0) * 100)}"></label><label class="studio-composer-range">Width <output data-value="cropWidth">${Math.round((layer.cropWidth ?? 1) * 100)}%</output><input data-prop="cropWidth" type="range" min="1" max="100" value="${Math.round((layer.cropWidth ?? 1) * 100)}"></label><label class="studio-composer-range">Height <output data-value="cropHeight">${Math.round((layer.cropHeight ?? 1) * 100)}%</output><input data-prop="cropHeight" type="range" min="1" max="100" value="${Math.round((layer.cropHeight ?? 1) * 100)}"></label>`
           : '';
       const timingControls = `<div class="studio-composer-title">VIDEO TIMING</div><label class="studio-composer-field">Start (s)<input data-prop="startTime" type="number" min="0" max="14399.9" step="0.1" value="${(layer.start ?? 0).toFixed(1)}"></label><label class="studio-composer-field">End (s)<input data-prop="endTime" type="number" min="0.1" max="14400" step="0.1" placeholder="Video end" value="${layer.end === undefined ? '' : layer.end.toFixed(1)}"></label><label class="studio-composer-field">Fade in (s)<input data-prop="fadeIn" type="number" min="0" max="30" step="0.1" value="${(layer.fadeIn ?? 0).toFixed(1)}"></label><label class="studio-composer-field">Fade out (s)<input data-prop="fadeOut" type="number" min="0" max="30" step="0.1" value="${(layer.fadeOut ?? 0).toFixed(1)}"></label><div class="studio-composer-order"><button class="studio-composer-start-playhead" type="button">Start at playhead</button><button class="studio-composer-end-playhead" type="button">End at playhead</button></div>`;
-      properties.innerHTML = `<div class="studio-composer-title">TRANSFORM</div><div class="studio-composer-layer-name">${escapeHtml(layerName)}</div>${textControls}${adjustmentControls}${cropControls}${timingControls}<div class="studio-composer-grid"><label>X<input data-prop="x" type="number" value="${Math.round(layer.x)}"></label><label>Y<input data-prop="y" type="number" value="${Math.round(layer.y)}"></label><label>Width<input data-prop="width" type="number" min="1" max="4096" value="${Math.round(layer.width)}"></label><label>Height<input data-prop="height" type="number" min="1" max="4096" value="${Math.round(layer.height)}"></label></div><label class="studio-composer-range">Opacity <output data-value="opacity">${Math.round(layer.opacity * 100)}%</output><input data-prop="opacity" type="range" min="0" max="100" value="${Math.round(layer.opacity * 100)}"></label><label class="studio-composer-field">Rotation<input data-prop="rotation" type="number" min="-360" max="360" value="${Math.round(layer.rotation)}">°</label><label class="studio-composer-field">Blend mode<select data-prop="blend">${STUDIO_IMAGE_BLEND_MODES.map((mode) => `<option value="${mode}" ${layer.blend === mode ? 'selected' : ''}>${mode === 'normal' ? 'Normal' : mode.replaceAll('-', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())}</option>`).join('')}</select></label><div class="studio-composer-order"><button class="studio-composer-down" type="button">Send backward</button><button class="studio-composer-up" type="button">Bring forward</button></div><button class="studio-composer-remove" type="button">Remove layer</button>`;
+      properties.innerHTML = `${paintControls}<div class="studio-composer-title">TRANSFORM</div><div class="studio-composer-layer-name">${escapeHtml(layerName)}</div>${textControls}${adjustmentControls}${cropControls}${timingControls}<div class="studio-composer-grid"><label>X<input data-prop="x" type="number" value="${Math.round(layer.x)}"></label><label>Y<input data-prop="y" type="number" value="${Math.round(layer.y)}"></label><label>Width<input data-prop="width" type="number" min="1" max="4096" value="${Math.round(layer.width)}"></label><label>Height<input data-prop="height" type="number" min="1" max="4096" value="${Math.round(layer.height)}"></label></div><label class="studio-composer-range">Opacity <output data-value="opacity">${Math.round(layer.opacity * 100)}%</output><input data-prop="opacity" type="range" min="0" max="100" value="${Math.round(layer.opacity * 100)}"></label><label class="studio-composer-field">Rotation<input data-prop="rotation" type="number" min="-360" max="360" value="${Math.round(layer.rotation)}">°</label><label class="studio-composer-field">Blend mode<select data-prop="blend">${STUDIO_IMAGE_BLEND_MODES.map((mode) => `<option value="${mode}" ${layer.blend === mode ? 'selected' : ''}>${mode === 'normal' ? 'Normal' : mode.replaceAll('-', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())}</option>`).join('')}</select></label><div class="studio-composer-order"><button class="studio-composer-down" type="button">Send backward</button><button class="studio-composer-up" type="button">Bring forward</button></div><button class="studio-composer-remove" type="button">Remove layer</button>`;
       if (layer.positionLocked) {
         properties
           .querySelectorAll<HTMLInputElement>(
@@ -2892,7 +3002,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         name.textContent =
           layer.kind === 'text'
             ? `Text: ${(layer.text ?? '').split('\n')[0]}`
-            : (files[layer.fileIndex]?.name ?? 'Image layer');
+            : `${layer.paintLayer ? 'Paint: ' : ''}${files[layer.fileIndex]?.name ?? 'Image layer'}`;
         name.addEventListener('click', () => selectLayer(layer.id));
         const visibility = document.createElement('button');
         visibility.type = 'button';
@@ -2980,6 +3090,53 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         status.textContent = error instanceof Error ? error.message : 'Could not decode this image';
       }
     };
+    overlay.querySelector<HTMLButtonElement>('.studio-composer-add-paint')!.addEventListener('click', async () => {
+      if (imageLayers.length >= 32) {
+        status.textContent = 'A composition can have up to 32 layers';
+        return;
+      }
+      const surface = document.createElement('canvas');
+      surface.width = canvas.width;
+      surface.height = canvas.height;
+      const paintNumber = imageLayers.filter((layer) => layer.paintLayer).length + 1;
+      const file = await canvasToPngFile(surface, `Paint layer ${paintNumber}.png`).catch((error: unknown) => {
+        status.textContent = error instanceof Error ? error.message : 'Could not create a paint layer';
+        return null;
+      });
+      if (!file) return;
+      const fileIndex = files.push(file) - 1;
+      const layer: StudioImageLayer = {
+        id: crypto.randomUUID(),
+        kind: 'image',
+        fileIndex,
+        x: 0,
+        y: 0,
+        width: canvas.width,
+        height: canvas.height,
+        rotation: 0,
+        opacity: 1,
+        brightness: 100,
+        contrast: 100,
+        saturation: 100,
+        hueDeg: 0,
+        blurPx: 0,
+        cropX: 0,
+        cropY: 0,
+        cropWidth: 1,
+        cropHeight: 1,
+        start: 0,
+        visible: true,
+        blend: 'normal',
+        paintLayer: true,
+      };
+      imageLayers.push(layer);
+      paintSurfaces.set(layer.id, surface);
+      selectedImageLayerId = layer.id;
+      renderLayers();
+      renderProperties();
+      setComposerTool('brush');
+      scheduleAutosave();
+    });
     overlay.querySelector<HTMLButtonElement>('.studio-composer-add-text')!.addEventListener('click', () => {
       if (imageLayers.length >= 32) {
         status.textContent = 'A composition can have up to 32 layers';
@@ -3024,9 +3181,53 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const angle = (-layer.rotation * Math.PI) / 180;
       return { x: dx * Math.cos(angle) - dy * Math.sin(angle), y: dx * Math.sin(angle) + dy * Math.cos(angle) };
     };
+    overlay.querySelectorAll<HTMLButtonElement>('.studio-composer-tool').forEach((button) => {
+      button.addEventListener('click', () => {
+        const tool = button.dataset.tool;
+        if (tool === 'select') {
+          setComposerTool('select');
+          status.textContent = '';
+          return;
+        }
+        if (tool !== 'brush' && tool !== 'eraser') return;
+        const selected = imageLayers.find((layer) => layer.id === selectedImageLayerId);
+        if (!selected || selected.kind !== 'image' || selected.paintLayer !== true) {
+          status.textContent = 'Select or add a paint layer before drawing.';
+          return;
+        }
+        status.textContent = 'Loading paint layer…';
+        void getPaintSurface(selected)
+          .then(() => {
+            status.textContent = '';
+            setComposerTool(tool);
+          })
+          .catch((error: unknown) => {
+            status.textContent = error instanceof Error ? error.message : 'Could not open this paint layer';
+          });
+      });
+    });
+    brushSizeInput.addEventListener('input', () => {
+      overlay.querySelector<HTMLOutputElement>('.studio-composer-tools output')!.textContent =
+        `${brushSizeInput.value} px`;
+    });
     canvas.addEventListener('pointerdown', (event) => {
       const point = pointerPosition(event);
       const previewTime = currentPreviewTime();
+      if (activeTool !== 'select') {
+        const selected = imageLayers.find(
+          (layer) => layer.id === selectedImageLayerId && isLayerVisibleAt(layer, previewTime),
+        );
+        if (!selected || selected.kind !== 'image' || selected.paintLayer !== true || !paintSurfaces.has(selected.id)) {
+          status.textContent = 'Select or add a visible paint layer before drawing.';
+          return;
+        }
+        paintStroke = { pointerId: event.pointerId, layerId: selected.id, lastPoint: point };
+        canvas.setPointerCapture(event.pointerId);
+        paintAt(selected, point, point, activeTool);
+        void draw(false, previewTime);
+        event.preventDefault();
+        return;
+      }
       const selected = imageLayers.find(
         (layer) => layer.id === selectedImageLayerId && isLayerVisibleAt(layer, previewTime),
       );
@@ -3072,7 +3273,21 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       canvas.setPointerCapture(event.pointerId);
     });
     canvas.addEventListener('pointermove', (event) => {
+      if (paintStroke?.pointerId === event.pointerId) {
+        const layer = imageLayers.find((item) => item.id === paintStroke?.layerId);
+        if (!layer) return;
+        const point = pointerPosition(event);
+        paintAt(layer, paintStroke.lastPoint, point, activeTool === 'eraser' ? 'eraser' : 'brush');
+        paintStroke.lastPoint = point;
+        void draw(false);
+        event.preventDefault();
+        return;
+      }
       if (!drag) {
+        if (activeTool !== 'select') {
+          canvas.style.cursor = 'crosshair';
+          return;
+        }
         const selected = imageLayers.find((layer) => layer.id === selectedImageLayerId && layer.visible);
         if (selected) {
           const local = localPosition(selected, pointerPosition(event));
@@ -3131,11 +3346,18 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       if (height) height.value = String(Math.round(layer.height));
       void draw();
     });
-    canvas.addEventListener('pointerup', () => {
+    const finishPointer = (event: PointerEvent): void => {
+      if (paintStroke?.pointerId === event.pointerId) {
+        const layer = imageLayers.find((item) => item.id === paintStroke?.layerId);
+        paintStroke = null;
+        if (layer) void persistPaintSurface(layer);
+      }
       if (!drag) return;
       drag = null;
       scheduleAutosave();
-    });
+    };
+    canvas.addEventListener('pointerup', finishPointer);
+    canvas.addEventListener('pointercancel', finishPointer);
     const exportButton = overlay.querySelector<HTMLButtonElement>('.studio-composer-export')!;
     exportButton.addEventListener('click', async () => {
       if (imageLayers.length === 0) return;
@@ -4624,6 +4846,7 @@ const studioCss = `
 .studio-code-surface{position:relative;flex:1;min-width:0;min-height:260px;overflow:hidden}.studio-code-highlight{position:absolute;z-index:0;top:0;left:0;width:max-content;min-width:100%;min-height:100%;box-sizing:border-box;margin:0;padding:12px;overflow:visible;color:#dce2ec;font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2;white-space:pre;pointer-events:none;will-change:transform}.studio-code-surface>.studio-code-editor{position:absolute;z-index:1;inset:0;width:100%;height:100%;min-height:100%;box-sizing:border-box;resize:none;background:transparent;color:transparent;-webkit-text-fill-color:transparent;overflow:auto}.studio-code-surface>.studio-code-editor::selection{background:#71834c66;color:transparent}.studio-token-comment{color:#76836d}.studio-token-string{color:#d8a878}.studio-token-keyword{color:#c792ea}.studio-token-literal{color:#f78c6c}.studio-token-number{color:#f78c6c}.studio-token-function{color:#82aaff}.studio-token-tag{color:#e06c75}.studio-token-color{color:#c3e88d}.studio-token-property{color:#80cbc4}.studio-token-heading{color:#82aaff;font-weight:700}
 .studio-tab{height:100%;padding:0 7px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--studio-muted);font:inherit;white-space:nowrap;cursor:pointer}.studio-tab.active{border-bottom-color:var(--studio-accent);color:var(--studio-text)}.studio-document-tabs{display:flex;align-items:center;gap:3px;min-width:0;height:100%;overflow:auto}.studio-document-tab-wrap{display:flex;align-items:center;max-width:190px;height:27px;border:1px solid transparent;border-radius:4px;background:#191b20}.studio-document-tab-wrap.active{border-color:#3c414c;background:#24262d}.studio-document-tab{min-width:0;padding:5px 7px;overflow:hidden;border:0;background:transparent;color:#aeb3bd;text-align:left;text-overflow:ellipsis;white-space:nowrap;font:10px system-ui,sans-serif;cursor:pointer}.studio-document-tab-wrap.active .studio-document-tab{color:#eceef2}.studio-document-tab-close{width:22px;height:22px;margin-right:3px;border:0;border-radius:3px;background:transparent;color:#888e9a;font-size:15px;cursor:pointer}.studio-document-tab-close:hover{background:#383b43;color:#fff}
 .studio-composer-add-text{padding:2px 5px;border:1px solid #393d46;border-radius:4px;background:#24272e;color:#dce0e7;font-size:9px;letter-spacing:0;cursor:pointer}.studio-composer-text-label{display:flex;flex-direction:column;gap:5px;margin:8px 0;color:#aeb3bd;font-size:10px}.studio-composer-text-label textarea{min-height:58px;resize:vertical;padding:6px;border:1px solid #383c46;border-radius:4px;background:#111216;color:#e9ebef;font:11px/1.4 system-ui,sans-serif}.studio-composer-field input[type=color]{width:42px;height:26px;padding:2px}
+.studio-composer-tools{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px;width:min(100%,1080px);margin:0 auto 10px;color:#aeb3bd;font-size:10px}.studio-composer-tools button,.studio-composer-add-paint{padding:5px 7px;border:1px solid #393d46;border-radius:4px;background:#24272e;color:#dce0e7;font-size:10px;cursor:pointer}.studio-composer-tools button.active{border-color:#82995f;background:#303b29;color:#d8f3c2}.studio-composer-tools label{display:flex;align-items:center;gap:5px}.studio-composer-tools input[type=color]{width:32px;height:25px;padding:2px;border:1px solid #393d46;border-radius:4px;background:#111216}.studio-composer-tools input[type=range]{width:105px;accent-color:#b8ef6a}.studio-composer-tools output{min-width:35px;color:#e9ebef}.studio-composer-title-actions{display:flex;gap:4px}.studio-composer-add-paint{padding:2px 5px;color:#d8f3c2}
 .studio-layout{max-width:none}.studio-layout>.right-panel{display:none}.studio-page{--studio-bg:#101114;--studio-panel:#17191e;--studio-border:#282b33;--studio-muted:#888e9a;--studio-text:#eceef2;--studio-accent:#b8ef6a;display:flex;flex:1;flex-direction:column;width:calc(100% - 240px);min-width:0;height:100dvh;min-height:620px;background:var(--studio-bg);color:var(--studio-text);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;overflow:hidden}
 .studio-topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:22px;padding:0 20px;border-bottom:1px solid var(--studio-border);background:#15171b}.studio-brand{display:flex;align-items:center;gap:7px;color:var(--studio-text);font-weight:750;text-decoration:none;white-space:nowrap}.studio-brand i{color:#626874;font-style:normal}.studio-brand-mark{display:grid;place-items:center;width:23px;height:23px;border-radius:7px;background:var(--studio-accent);color:#182012;font-size:18px}.studio-project-name{display:flex;align-items:center;gap:8px;min-width:0;margin-right:auto;font-size:12px}.studio-project-title{max-width:190px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:650}.studio-save-state{color:var(--studio-muted);font-size:11px}.studio-live-dot{width:7px;height:7px;border-radius:50%;background:var(--studio-accent)}.studio-top-actions{display:flex;gap:7px}.studio-button{border:1px solid var(--studio-border);border-radius:6px;padding:8px 11px;background:#202228;color:var(--studio-text);font-size:12px;font-weight:600;cursor:pointer}.studio-button:hover:not(:disabled){border-color:#555b67;background:#272a31}.studio-button:disabled{opacity:.45;cursor:default}.studio-create-post{background:var(--studio-accent);border-color:var(--studio-accent);color:#17200f}.studio-workspace{display:grid;grid-template-columns:58px 235px minmax(320px,1fr) 280px;flex:1;min-height:0}.studio-rail{display:flex;flex-direction:column;align-items:center;gap:7px;padding:14px 6px;border-right:1px solid var(--studio-border);background:#14161a}.studio-tool{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;width:46px;height:49px;border:0;border-radius:6px;background:transparent;color:#9da3ad;font-size:9px;cursor:pointer}.studio-tool b{font-size:17px;font-weight:500}.studio-tool:hover,.studio-tool.active{background:#292c33;color:var(--studio-accent)}.studio-assets,.studio-inspector{min-width:0;overflow:auto;background:var(--studio-panel)}.studio-assets{display:flex;flex-direction:column;border-right:1px solid var(--studio-border)}.studio-panel-heading,.studio-project-label{display:flex;align-items:center;gap:8px;padding:13px 14px;color:var(--studio-muted);font-size:10px;font-weight:700;letter-spacing:.07em}.studio-panel-heading{justify-content:space-between}.studio-add,.studio-tab-open,.studio-shortcut,.studio-timeline-add{border:1px solid transparent;border-radius:5px;background:transparent;color:var(--studio-muted);cursor:pointer}.studio-add{font-size:17px}.studio-add:hover,.studio-tab-open:hover,.studio-shortcut:hover,.studio-timeline-add:hover{border-color:var(--studio-border);color:var(--studio-text)}.studio-project-label{padding-top:5px;padding-bottom:8px;color:#d3d6dc;font-weight:600;letter-spacing:0}.studio-folder{color:var(--studio-accent)}.studio-count{margin-left:auto;color:var(--studio-muted)}.studio-file-list{display:flex;flex-direction:column;gap:2px;padding:0 7px}.studio-asset{display:flex;align-items:center;gap:8px;min-width:0;padding:8px;border:0;border-radius:5px;background:transparent;color:var(--studio-text);text-align:left;cursor:pointer}.studio-asset:hover,.studio-asset.active{background:#272a31}.studio-asset-icon{flex:0 0 24px;color:#abb0ba;text-align:center}.studio-kind-image{color:#7fc8ff}.studio-kind-video{color:#c8a8ff}.studio-kind-audio{color:#9bd77b}.studio-asset-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}.studio-asset-size{margin-left:auto;color:var(--studio-muted);font-size:9px;white-space:nowrap}.studio-dropzone{display:flex;flex-direction:column;align-items:center;gap:6px;margin:18px 12px;padding:16px 8px;border:1px dashed #3c404a;border-radius:7px;background:#1b1d22;color:#d8dbe1;cursor:pointer}.studio-dropzone>span{color:var(--studio-accent);font-size:19px}.studio-dropzone small,.studio-sidebar-note{color:var(--studio-muted);font-size:10px}.studio-sidebar-note{margin:auto 13px 14px;line-height:1.6}.studio-sidebar-note a{color:var(--studio-accent);text-decoration:none}.studio-center{display:grid;grid-template-rows:38px minmax(180px,1fr) auto;min-width:0;min-height:0;background:#111216}.studio-tabs{display:flex;align-items:center;gap:9px;padding:0 12px;border-bottom:1px solid var(--studio-border);color:var(--studio-muted);font-size:11px}.studio-tab.active{color:var(--studio-text)}.studio-tab-open{font-size:15px}.studio-center-spacer{flex:1}.studio-shortcut{padding:4px 7px;font-size:10px}.studio-stage{position:relative;display:grid;place-items:center;min-height:0;overflow:auto;padding:22px;background:radial-gradient(ellipse at center,#1d2026 0,#111216 70%)}.studio-empty{display:flex;flex-direction:column;align-items:center;text-align:center}.studio-empty-art{position:relative;display:grid;place-items:center;width:180px;height:130px;margin-bottom:8px}.studio-orbit{position:absolute;width:130px;height:74px;border:1px solid #383d46;border-radius:50%;transform:rotate(-22deg)}.studio-orbit-two{transform:rotate(34deg)}.studio-empty-glyph{color:var(--studio-accent);font-size:46px}.studio-float{position:absolute;display:grid;place-items:center;width:29px;height:29px;border:1px solid #393e47;border-radius:8px;background:#20232a;color:#c8d1bd}.studio-float-image{top:16px;left:22px}.studio-float-audio{right:15px;top:38px}.studio-float-code{bottom:12px;left:38px;font-size:10px}.studio-float-game{right:37px;bottom:11px}.studio-empty h1{margin:8px 0;font-size:19px}.studio-empty p{max-width:360px;margin:0 0 15px;color:var(--studio-muted);font-size:12px}.studio-empty small{margin-top:9px;color:var(--studio-muted);font-size:10px}.studio-primary{background:var(--studio-accent);border-color:var(--studio-accent);color:#17200f}.studio-preview{display:flex;flex-direction:column;width:min(100%,900px);max-height:100%;min-height:0}.studio-preview-chrome{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 10px;border:1px solid var(--studio-border);border-bottom:0;border-radius:7px 7px 0 0;background:#1a1c21;color:#c7cbd2;font-size:10px}.studio-preview-actions{display:flex;gap:5px}.studio-preview-actions button{border:1px solid var(--studio-border);border-radius:4px;background:#252830;color:var(--studio-text);cursor:pointer}.studio-preview-content{display:flex;flex-direction:column;align-items:center;gap:10px;min-height:0;overflow:auto;padding:13px;border:1px solid var(--studio-border);border-radius:0 0 7px 7px;background:#17191e}.studio-image-preview{max-width:100%;max-height:58vh;object-fit:contain}.studio-video-preview{width:min(100%,820px);max-height:58vh;background:#000}.studio-preview-content audio{width:min(100%,620px);margin:24px auto}.studio-waveform{display:flex;align-items:center;gap:3px;width:min(100%,650px);height:75px}.studio-waveform i{flex:1;background:#567c48;border-radius:3px}.studio-audio-name{color:var(--studio-muted);font-size:11px}.studio-file-notice{max-width:560px;margin:auto;text-align:center;color:var(--studio-muted);font-size:12px;line-height:1.6}.studio-file-notice h2{color:var(--studio-text);font-size:16px}.studio-game-frame{width:min(100%,860px);height:min(56vh,600px);border:1px solid var(--studio-border);border-radius:6px;background:#fff}.studio-inspector{border-left:1px solid var(--studio-border)}.studio-inspector-tabs{display:flex;gap:20px;padding:14px;border-bottom:1px solid var(--studio-border);color:var(--studio-muted);font-size:11px}.studio-inspector-tabs .active{color:var(--studio-text)}.studio-inspector-body{padding:17px 15px;color:var(--studio-text)}.studio-inspector-body h2{overflow-wrap:anywhere;font-size:14px}.studio-inspector-body p{color:var(--studio-muted);font-size:11px;line-height:1.5}.studio-inspector-icon{font-size:21px;color:var(--studio-accent)}.studio-inspector-divider{height:1px;margin:14px 0;background:var(--studio-border)}.studio-format-title{margin-bottom:11px;color:var(--studio-muted);font-size:9px;font-weight:700;letter-spacing:.08em}.studio-format-list{display:grid;grid-template-columns:1fr;gap:5px}.studio-format-list span{margin-top:6px;color:#d8dbe1;font-size:9px;font-weight:700}.studio-format-list small{color:var(--studio-muted);font-size:10px}.studio-local-badge{margin-top:20px;padding:8px;border:1px solid #354333;border-radius:5px;color:#a6cf8a;font-size:10px}.studio-timeline{display:flex;flex-direction:column;min-height:0;max-height:290px;border-top:1px solid var(--studio-border);background:#17191e}.studio-timeline-head{display:flex;align-items:center;gap:7px;min-height:39px;padding:0 10px;border-bottom:1px solid var(--studio-border);color:#d9dce2;font-size:10px;font-weight:650}.studio-timeline-hint{margin-right:auto;color:var(--studio-muted);font-size:9px;font-weight:400}.studio-track{display:flex;align-items:stretch;min-height:45px;border-bottom:1px solid var(--studio-border)}.studio-track-label{position:sticky;left:0;z-index:2;display:grid;place-items:center;flex:0 0 54px;background:#1b1d22;color:var(--studio-muted);font-size:9px;font-weight:700}.studio-track-content{display:flex;align-items:center;gap:6px;min-width:0;overflow-x:auto;padding:5px 8px}.studio-track-empty{color:var(--studio-muted);font-size:10px}.studio-clip-list{display:flex;gap:6px}.studio-clip{display:flex;align-items:center;gap:7px;max-width:210px;padding:6px 9px;overflow:hidden;border:1px solid var(--studio-border);border-radius:5px;background:#24262d;color:var(--studio-text);text-overflow:ellipsis;white-space:nowrap;font-size:10px;cursor:pointer}.studio-clip.active{border-color:var(--studio-accent)}.studio-clip span{color:var(--studio-muted);font-size:8px;font-weight:700}
 .studio-audio-workarea{overflow:auto;max-height:220px;background:#121318}.studio-audio-timeline{position:relative;min-width:100%;font-size:11px}.studio-audio-ruler{height:22px;position:relative;border-bottom:1px solid var(--studio-border);background:repeating-linear-gradient(90deg,transparent 0,transparent 208px,#292c34 209px,#292c34 210px)}.studio-audio-ruler>span{position:absolute;top:4px;color:var(--studio-muted);font-variant-numeric:tabular-nums}.studio-audio-lane{display:flex;min-height:48px;border-bottom:1px solid var(--studio-border)}.studio-audio-track-label{position:sticky;left:0;z-index:2;flex:0 0 48px;padding:17px 8px;background:#191b20;color:#9ea4af;border-right:1px solid var(--studio-border)}.studio-audio-lane-canvas{position:relative;min-height:47px;background:repeating-linear-gradient(90deg,transparent 0,transparent 41px,#202229 41px,#202229 42px)}.studio-audio-clip{position:absolute;top:5px;height:37px;overflow:hidden;border:1px solid #4e8142;border-radius:5px;background:#233a2a;color:#e7f5dd;text-align:left;cursor:grab}.studio-audio-clip.active{outline:1px solid var(--studio-accent)}.studio-audio-clip.muted{opacity:.48}.studio-audio-clip-name{position:absolute;z-index:1;left:6px;top:3px;max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.studio-audio-clip-wave{position:absolute;inset:17px 5px 2px;display:flex;align-items:center;gap:2px;opacity:.65}.studio-audio-clip-wave i{flex:1;min-width:1px;background:#9bd77b}.studio-audio-empty{padding:10px;color:var(--studio-muted)}.studio-timeline-head>button{border:1px solid var(--studio-border);border-radius:4px;background:#202228;color:var(--studio-text);padding:4px 8px;font-size:11px;cursor:pointer}.studio-timeline-head>button:disabled{opacity:.45;cursor:default}.studio-mix-status{max-width:190px;overflow:hidden;color:var(--studio-muted);text-overflow:ellipsis;white-space:nowrap;font-size:10px}.studio-property{display:flex;align-items:center;gap:8px;margin:12px 0;font-size:12px}.studio-property>span{flex:1}.studio-property input[type=number]{width:76px;padding:5px;border:1px solid var(--studio-border);border-radius:4px;background:#111216;color:var(--studio-text)}.studio-property small{color:var(--studio-muted)}.studio-property input[type=range]{width:105px}.studio-mute-property{justify-content:flex-start}.studio-mute-property input{accent-color:var(--studio-accent)}
