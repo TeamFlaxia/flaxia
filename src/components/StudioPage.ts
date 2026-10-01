@@ -120,6 +120,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const audioDurations = new Map<number, number>();
   const audioPeaks = new Map<number, Float32Array>();
   const videoDurations = new Map<number, number>();
+  const videoFilmstrips = new Map<string, Promise<string>>();
   let audioTrackCount = 1;
   let mixPreviewUrl: string | null = null;
   let mixPreview: HTMLAudioElement | null = null;
@@ -585,6 +586,46 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const videoClipCssFilter = (clip: StudioVideoClip): string =>
     `brightness(${clip.brightness ?? 100}%) contrast(${clip.contrast ?? 100}%) saturate(${clip.saturation ?? 100}%)`;
 
+  const createVideoFilmstrip = async (file: File, sourceStart: number, sourceEnd: number): Promise<string> => {
+    const video = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    video.preload = 'auto';
+    video.muted = true;
+    video.playsInline = true;
+    video.src = url;
+    try {
+      await new Promise<void>((resolve, reject) => {
+        video.addEventListener('loadeddata', () => resolve(), { once: true });
+        video.addEventListener('error', () => reject(new Error('Could not decode video thumbnail')), { once: true });
+      });
+      const canvas = document.createElement('canvas');
+      const frameWidth = 80;
+      const frameHeight = 45;
+      canvas.width = frameWidth * 3;
+      canvas.height = frameHeight;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Could not draw video thumbnails');
+      const duration = Math.max(0, sourceEnd - sourceStart);
+      const times = [sourceStart, sourceStart + duration / 2, Math.max(sourceStart, sourceEnd - 0.05)];
+      for (const [index, time] of times.entries()) {
+        const target = Math.max(0, Math.min(time, Math.max(0, video.duration - 0.01)));
+        if (Math.abs(video.currentTime - target) > 0.01) {
+          await new Promise<void>((resolve, reject) => {
+            video.addEventListener('seeked', () => resolve(), { once: true });
+            video.addEventListener('error', () => reject(new Error('Could not seek video thumbnail')), { once: true });
+            video.currentTime = target;
+          });
+        }
+        context.drawImage(video, index * frameWidth, 0, frameWidth, frameHeight);
+      }
+      return canvas.toDataURL('image/jpeg', 0.68);
+    } finally {
+      video.removeAttribute('src');
+      video.load();
+      URL.revokeObjectURL(url);
+    }
+  };
+
   const renderVideoTimeline = (): void => {
     videoTimeline.innerHTML = '';
     videoPlayheadElement = null;
@@ -713,6 +754,26 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
       });
       canvas.appendChild(block);
+      const filmstripKey = `${clip.fileIndex}:${clip.sourceStart.toFixed(3)}:${clip.sourceEnd.toFixed(3)}`;
+      let filmstrip = videoFilmstrips.get(filmstripKey);
+      if (!filmstrip) {
+        filmstrip = createVideoFilmstrip(file, clip.sourceStart, clip.sourceEnd);
+        videoFilmstrips.set(filmstripKey, filmstrip);
+        void filmstrip.catch(() => videoFilmstrips.delete(filmstripKey));
+        if (videoFilmstrips.size > 48) {
+          const oldestKey = videoFilmstrips.keys().next().value;
+          if (oldestKey) videoFilmstrips.delete(oldestKey);
+        }
+      }
+      void filmstrip
+        .then((image) => {
+          if (!block.isConnected || destroyed) return;
+          block.style.backgroundImage = `linear-gradient(#0006,#0006),url("${image}")`;
+          block.style.backgroundRepeat = 'no-repeat,repeat-x';
+          block.style.backgroundPosition = '0 0,0 0';
+          block.style.backgroundSize = 'auto,240px 35px';
+        })
+        .catch(() => undefined);
     }
     videoPlayheadElement = document.createElement('div');
     videoPlayheadElement.className = 'studio-timeline-playhead';
