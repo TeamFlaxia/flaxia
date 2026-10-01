@@ -44,6 +44,7 @@ export interface StudioVideoClip {
   start: number;
   sourceStart: number;
   sourceEnd: number;
+  fit?: 'contain' | 'cover';
   gain?: number;
   muted?: boolean;
 }
@@ -222,6 +223,7 @@ function decodeFiles(plaintext: Uint8Array): {
     )
     .map((clip) => ({
       ...clip,
+      fit: clip.fit === 'cover' ? ('cover' as const) : ('contain' as const),
       gain: typeof clip.gain === 'number' && Number.isFinite(clip.gain) ? Math.max(0, Math.min(1, clip.gain)) : 1,
       muted: typeof clip.muted === 'boolean' ? clip.muted : false,
     }));

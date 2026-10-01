@@ -229,9 +229,14 @@ export async function renderVideoSequence(
       continue;
     }
     const index = segment.clipIndex;
+    const clip = ordered[index];
     const clipDuration = durations[index];
+    const framing =
+      clip.fit === 'cover'
+        ? 'scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720'
+        : 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2';
     filters.push(
-      `[${index}:v:0]trim=duration=${clipDuration.toFixed(3)},setpts=PTS-STARTPTS,scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v${index}]`,
+      `[${index}:v:0]trim=duration=${clipDuration.toFixed(3)},setpts=PTS-STARTPTS,${framing},setsar=1,fps=30,format=yuv420p[v${index}]`,
     );
     if (clipSources[index].hasAudio && !clipSources[index].clip.muted) {
       const gain = Math.max(0, Math.min(1, clipSources[index].clip.gain ?? 1));
