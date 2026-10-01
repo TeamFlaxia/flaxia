@@ -2,8 +2,10 @@ import type * as Monaco from 'monaco-editor';
 import {
   type AudioTimelineClip,
   audioClipEqSettings,
+  audioClipGainEnvelope,
   mixAudioTimeline,
   soloAudioTimelineClip,
+  splitAudioClipGainEnvelope,
 } from '../lib/editor/audio-mixer.ts';
 import { imageLayerOpacityAt } from '../lib/editor/image-adjustments.ts';
 import { drawStudioImageLayer } from '../lib/editor/image-layer-canvas.ts';
@@ -503,6 +505,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const duration = clip.sourceEnd - clip.sourceStart;
       if (offset <= 0.05 || offset >= duration - 0.05) return;
       const originalFadeOut = clip.fadeOut;
+      const splitEnvelope = splitAudioClipGainEnvelope(clip, offset / duration);
       const rightClip: AudioTimelineClip = {
         ...clip,
         id: crypto.randomUUID(),
@@ -510,9 +513,11 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         sourceStart: clip.sourceStart + offset,
         fadeIn: 0,
         fadeOut: originalFadeOut,
+        gainEnvelope: splitEnvelope.right,
       };
       clip.sourceEnd = rightClip.sourceStart;
       clip.fadeOut = 0;
+      clip.gainEnvelope = splitEnvelope.left;
       audioClips.splice(clipIndex + 1, 0, rightClip);
       selectedAudioClipId = rightClip.id;
       selectedVideoClipId = null;
@@ -618,6 +623,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         lowEqDb: 0,
         midEqDb: 0,
         highEqDb: 0,
+        gainEnvelope: { start: 1, middle: 1, end: 1 },
         muted: false,
       };
       audioClips.push(clip);
@@ -1162,7 +1168,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
               .filter((_, index) => index % Math.max(1, Math.floor(peaks.length / 48)) === 0)
               .slice(0, 48)
           : [];
-        block.innerHTML = `<span class="studio-audio-trim studio-audio-trim-left" aria-label="Trim start"></span><span class="studio-audio-clip-name">${escapeHtml(file.name)}</span><span class="studio-audio-clip-wave">${bars.map((peak) => `<i style="height:${Math.max(8, Math.min(100, peak * 100))}%"></i>`).join('')}</span><span class="studio-audio-trim studio-audio-trim-right" aria-label="Trim end"></span>`;
+        const envelope = audioClipGainEnvelope(clip);
+        const envelopeY = (value: number): number => 18 - value * 8;
+        block.innerHTML = `<span class="studio-audio-trim studio-audio-trim-left" aria-label="Trim start"></span><span class="studio-audio-clip-name">${escapeHtml(file.name)}</span><span class="studio-audio-clip-wave">${bars.map((peak) => `<i style="height:${Math.max(8, Math.min(100, peak * 100))}%"></i>`).join('')}</span><svg class="studio-audio-envelope" viewBox="0 0 100 20" preserveAspectRatio="none" aria-label="Volume envelope"><polyline points="0,${envelopeY(envelope.start)} 50,${envelopeY(envelope.middle)} 100,${envelopeY(envelope.end)}"></polyline></svg><span class="studio-audio-trim studio-audio-trim-right" aria-label="Trim end"></span>`;
         block.addEventListener('click', () => {
           select(clip.fileIndex);
           selectedAudioClipId = clip.id;
@@ -1421,6 +1429,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     }
     const duration = audioDurations.get(clip.fileIndex) ?? clip.sourceEnd;
     const eqSettings = audioClipEqSettings(clip);
+    const gainEnvelope = audioClipGainEnvelope(clip);
     const eqControls = (
       [
         ['lowEqDb', 'Low · 120 Hz'],
@@ -1433,7 +1442,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           `<label class="studio-property studio-gain-property"><span>${label}</span><input class="studio-clip-eq" data-eq="${band}" type="range" min="-18" max="18" step="1" value="${eqSettings[band]}"><small>${eqSettings[band]} dB</small></label>`,
       )
       .join('');
-    inspectorBody.innerHTML = `<div class="studio-inspector-icon">♫</div><h2>${escapeHtml(file.name)}</h2><p>Audio clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-clip-position" type="number" min="0" step="0.1" value="${clip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim in</span><input class="studio-clip-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${clip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-clip-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${clip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Gain</span><input class="studio-clip-gain" type="range" min="0" max="200" value="${Math.round(clip.gain * 100)}"><small class="studio-gain-value">${Math.round(clip.gain * 100)}%</small></label><label class="studio-property studio-gain-property"><span>Pan</span><input class="studio-clip-pan" type="range" min="-100" max="100" value="${Math.round(clip.pan * 100)}"><small class="studio-pan-value">${clip.pan === 0 ? 'Center' : `${Math.abs(Math.round(clip.pan * 100))}% ${clip.pan < 0 ? 'L' : 'R'}`}</small></label><div class="studio-inspector-divider"></div><div class="studio-format-title">3-BAND EQ</div>${eqControls}<p class="studio-eq-hint">EQ is applied when previewing or exporting the mix.</p><label class="studio-property"><span>Fade in</span><input class="studio-clip-fade-in" type="number" min="0" max="${(clip.sourceEnd - clip.sourceStart).toFixed(1)}" step="0.1" value="${clip.fadeIn.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade out</span><input class="studio-clip-fade-out" type="number" min="0" max="${(clip.sourceEnd - clip.sourceStart).toFixed(1)}" step="0.1" value="${clip.fadeOut.toFixed(1)}"><small>s</small></label><label class="studio-property studio-mute-property"><input class="studio-clip-muted" type="checkbox" ${clip.muted ? 'checked' : ''}><span>Mute clip</span></label><div class="studio-inspector-divider"></div><button class="studio-button studio-remove-audio" type="button">Remove from timeline</button>`;
+    inspectorBody.innerHTML = `<div class="studio-inspector-icon">♫</div><h2>${escapeHtml(file.name)}</h2><p>Audio clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-clip-position" type="number" min="0" step="0.1" value="${clip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim in</span><input class="studio-clip-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${clip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-clip-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${clip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Gain</span><input class="studio-clip-gain" type="range" min="0" max="200" value="${Math.round(clip.gain * 100)}"><small class="studio-gain-value">${Math.round(clip.gain * 100)}%</small></label><label class="studio-property studio-gain-property"><span>Pan</span><input class="studio-clip-pan" type="range" min="-100" max="100" value="${Math.round(clip.pan * 100)}"><small class="studio-pan-value">${clip.pan === 0 ? 'Center' : `${Math.abs(Math.round(clip.pan * 100))}% ${clip.pan < 0 ? 'L' : 'R'}`}</small></label><div class="studio-inspector-divider"></div><div class="studio-format-title">VOLUME AUTOMATION</div><label class="studio-property studio-gain-property"><span>Start</span><input class="studio-clip-envelope" data-point="start" type="range" min="0" max="200" value="${Math.round(gainEnvelope.start * 100)}"><small>${Math.round(gainEnvelope.start * 100)}%</small></label><label class="studio-property studio-gain-property"><span>Middle</span><input class="studio-clip-envelope" data-point="middle" type="range" min="0" max="200" value="${Math.round(gainEnvelope.middle * 100)}"><small>${Math.round(gainEnvelope.middle * 100)}%</small></label><label class="studio-property studio-gain-property"><span>End</span><input class="studio-clip-envelope" data-point="end" type="range" min="0" max="200" value="${Math.round(gainEnvelope.end * 100)}"><small>${Math.round(gainEnvelope.end * 100)}%</small></label><p class="studio-eq-hint">Automation is interpolated across the clip and shown on its waveform.</p><div class="studio-inspector-divider"></div><div class="studio-format-title">3-BAND EQ</div>${eqControls}<p class="studio-eq-hint">EQ is applied when previewing or exporting the mix.</p><label class="studio-property"><span>Fade in</span><input class="studio-clip-fade-in" type="number" min="0" max="${(clip.sourceEnd - clip.sourceStart).toFixed(1)}" step="0.1" value="${clip.fadeIn.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade out</span><input class="studio-clip-fade-out" type="number" min="0" max="${(clip.sourceEnd - clip.sourceStart).toFixed(1)}" step="0.1" value="${clip.fadeOut.toFixed(1)}"><small>s</small></label><label class="studio-property studio-mute-property"><input class="studio-clip-muted" type="checkbox" ${clip.muted ? 'checked' : ''}><span>Mute clip</span></label><div class="studio-inspector-divider"></div><button class="studio-button studio-remove-audio" type="button">Remove from timeline</button>`;
     const numeric = (selector: string, update: (value: number) => void): void => {
       const input = inspectorBody.querySelector<HTMLInputElement>(selector)!;
       input.addEventListener('change', () => {
@@ -1468,6 +1477,26 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     pan.addEventListener('change', () => {
       renderAudioTimeline();
       scheduleAutosave();
+    });
+    inspectorBody.querySelectorAll<HTMLInputElement>('.studio-clip-envelope').forEach((input) => {
+      input.addEventListener('input', () => {
+        const point = input.dataset.point as 'start' | 'middle' | 'end';
+        clip.gainEnvelope = {
+          ...audioClipGainEnvelope(clip),
+          [point]: Number(input.value) / 100,
+        };
+        input.parentElement?.querySelector('small')?.replaceChildren(`${input.value}%`);
+        const envelope = audioClipGainEnvelope(clip);
+        const polyline = audioTimeline.querySelector<SVGPolylineElement>(
+          '.studio-audio-clip.active .studio-audio-envelope polyline',
+        );
+        if (polyline)
+          polyline.setAttribute(
+            'points',
+            `0,${18 - envelope.start * 8} 50,${18 - envelope.middle * 8} 100,${18 - envelope.end * 8}`,
+          );
+      });
+      input.addEventListener('change', () => scheduleAutosave());
     });
     inspectorBody.querySelectorAll<HTMLInputElement>('.studio-clip-eq').forEach((input) => {
       input.addEventListener('input', () => {
@@ -3480,6 +3509,7 @@ const studioCss = `
 .studio-video-workarea{overflow:auto;max-height:100px;background:#121318}.studio-video-timeline{position:relative;min-width:100%;font-size:11px}.studio-video-ruler{height:22px;position:relative;border-bottom:1px solid var(--studio-border);background:repeating-linear-gradient(90deg,transparent 0,transparent 208px,#292c34 209px,#292c34 210px)}.studio-video-ruler>span{position:absolute;top:4px;color:var(--studio-muted);font-variant-numeric:tabular-nums}.studio-video-lane{display:flex;min-height:46px;border-bottom:1px solid var(--studio-border)}.studio-video-track-label{position:sticky;left:0;z-index:2;flex:0 0 48px;padding:16px 8px;background:#191b20;color:#9ea4af;border-right:1px solid var(--studio-border)}.studio-video-lane-canvas{position:relative;min-height:45px;background:repeating-linear-gradient(90deg,transparent 0,transparent 41px,#202229 41px,#202229 42px)}.studio-video-clip{position:absolute;top:5px;height:35px;overflow:hidden;border:1px solid #69519b;border-radius:5px;background:#34294a;color:#eee6ff;text-align:left;text-overflow:ellipsis;white-space:nowrap;cursor:grab}.studio-video-clip.active{outline:1px solid #c8a8ff}.studio-video-hint{color:var(--studio-muted);font-size:11px}
 .studio-code-workbench{display:flex;flex-direction:column;min-height:280px;max-height:48vh;border:1px solid var(--studio-border);border-radius:6px;background:#101116;overflow:hidden}.studio-code-toolbar{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:6px;border-bottom:1px solid var(--studio-border)}.studio-code-toolbar input{min-width:70px;width:22%;padding:5px 7px;border:1px solid var(--studio-border);border-radius:4px;background:#191b20;color:var(--studio-text);font:11px system-ui,sans-serif}.studio-code-toolbar input[type=number]{width:54px}.studio-code-toolbar button,.studio-code-run{padding:5px 8px;border:1px solid var(--studio-border);border-radius:4px;background:#202228;color:var(--studio-text);font-size:11px;cursor:pointer}.studio-code-row{display:flex;flex:1;min-height:0;overflow:hidden}.studio-code-gutter{flex:0 0 42px;padding:12px 8px 12px 0;overflow:hidden;background:#15161b;color:#686e7a;text-align:right;white-space:pre;font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace;user-select:none}.studio-code-editor{flex:1;min-width:0;min-height:260px;padding:12px;border:0;outline:0;resize:vertical;background:#101116;color:#e3e5eb;caret-color:#b8ef6a;font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2;white-space:pre;overflow:auto}.studio-code-run{margin:8px 0}.studio-code-output{min-height:80px}.studio-code-preview{width:100%;height:250px;border:1px solid var(--studio-border);border-radius:6px;background:white}
 .studio-zip-editor-overlay{inset:3vh 4vw;overflow:hidden;border:1px solid #383c46;border-radius:9px;box-shadow:0 20px 80px #000b}.studio-zip-editor-overlay .studio-composer-header>div:last-child{align-items:center}.studio-zip-file-select{max-width:min(38vw,420px);padding:7px 9px;border:1px solid #393d46;border-radius:5px;background:#202228;color:#e7e9ee;font:11px system-ui,sans-serif}.studio-zip-editor-body{display:flex;flex:1;flex-direction:column;min-height:0;padding:12px;background:#111216}.studio-zip-editor-status{min-height:24px;color:#aeb3bd;font-size:11px}.studio-zip-editor-host{display:flex;flex:1;min-height:0}.studio-zip-editor-host .studio-code-workbench{flex:1;max-height:none}
+.studio-audio-envelope{position:absolute;z-index:2;left:5px;right:5px;top:17px;height:18px;overflow:visible;pointer-events:none}.studio-audio-envelope polyline{fill:none;stroke:#f1e678;stroke-width:1.5;vector-effect:non-scaling-stroke;opacity:.95}
 .studio-sequence-player{position:absolute;z-index:5;inset:6% 8%;width:84%;height:88%;max-height:88%;background:#000;border:1px solid var(--studio-border);border-radius:8px;box-shadow:0 12px 40px #0009}
 .studio-composer-button{border:1px solid #536843!important;background:#273323!important;color:#d8f3c2!important}.studio-composer-overlay{position:fixed;z-index:1000;inset:0;display:flex;flex-direction:column;background:#111216;color:#eceef2;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.studio-composer-header{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:58px;padding:8px 18px;border-bottom:1px solid #30333a;background:#181a1f}.studio-composer-header>div:first-child{display:flex;flex-direction:column;gap:4px}.studio-composer-header b{font-size:13px}.studio-composer-header small{color:#9298a3;font-size:10px}.studio-composer-header>div:last-child{display:flex;gap:8px}.studio-composer-header button,.studio-composer-order button,.studio-composer-remove{border:1px solid #393d46;border-radius:5px;background:#24272e;color:#e7e9ee;padding:7px 10px;font-size:11px;cursor:pointer}.studio-composer-export{background:#b8ef6a!important;border-color:#b8ef6a!important;color:#17200f!important;font-weight:700}.studio-composer-header .studio-composer-close{width:32px;padding:2px;font-size:21px}.studio-composer-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;flex:1;min-height:0}.studio-composer-board{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;min-height:0;padding:16px;background:#101115}.studio-composer-canvas-wrap{width:min(72vw,68vh);height:min(72vw,68vh);max-width:100%;max-height:100%;background-color:#202228;background-image:linear-gradient(45deg,#2b2d34 25%,transparent 25%),linear-gradient(-45deg,#2b2d34 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#2b2d34 75%),linear-gradient(-45deg,transparent 75%,#2b2d34 75%);background-size:24px 24px;background-position:0 0,0 12px,12px -12px,-12px 0}.studio-composer-canvas{display:block;width:100%;height:100%;touch-action:none;cursor:move}.studio-composer-status{min-height:22px;padding-top:8px;color:#f0a4a4;font-size:11px}.studio-composer-panel{min-width:0;overflow:auto;padding:12px;border-left:1px solid #30333a;background:#181a1f}.studio-composer-section{margin-bottom:17px}.studio-composer-title{display:flex;justify-content:space-between;margin-bottom:8px;color:#9298a3;font-size:9px;font-weight:700;letter-spacing:.08em}.studio-composer-count{color:#c1c5cd}.studio-composer-assets,.studio-composer-layers{display:flex;flex-direction:column;gap:4px;max-height:175px;overflow:auto}.studio-composer-asset,.studio-composer-layer{display:flex;align-items:center;gap:6px;min-width:0;border:1px solid transparent;border-radius:5px;background:#202229;color:#e4e6eb;font-size:10px}.studio-composer-asset{padding:7px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}.studio-composer-asset:hover{border-color:#61764d}.studio-composer-layer{padding:3px}.studio-composer-layer.active{border-color:#b8ef6a}.studio-composer-layer-select{flex:1;min-width:0;padding:5px;border:0;background:transparent;color:inherit;text-align:left;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:10px;cursor:pointer}.studio-composer-visibility{border:0;background:transparent;color:#c2c7d0;cursor:pointer}.studio-composer-properties{padding-top:3px}.studio-composer-layer-name{margin-bottom:9px;overflow:hidden;color:#dce0e7;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.studio-composer-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}.studio-composer-grid label,.studio-composer-field{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:6px 0;color:#aeb3bd;font-size:10px}.studio-composer-grid input,.studio-composer-field input,.studio-composer-field select{width:90px;padding:5px;border:1px solid #383c46;border-radius:4px;background:#111216;color:#e9ebef;font:11px system-ui,sans-serif}.studio-composer-field select{width:125px}.studio-composer-range{display:flex;flex-wrap:wrap;justify-content:space-between;gap:5px;margin:12px 0;color:#aeb3bd;font-size:10px}.studio-composer-range input{width:100%;accent-color:#b8ef6a}.studio-composer-range output{color:#e9ebef}.studio-composer-order{display:flex;gap:6px;margin:11px 0}.studio-composer-order button{flex:1;padding:6px 4px;font-size:9px}.studio-composer-remove{width:100%;margin-top:4px;border-color:#5c3737;color:#f0b8b8}.studio-composer-properties>p{color:#9298a3;font-size:10px}
 @media(max-width:1050px){.studio-workspace{grid-template-columns:58px 190px minmax(300px,1fr)}.studio-inspector{display:none}.studio-topbar{padding:0 12px}.studio-project-name{display:none}}

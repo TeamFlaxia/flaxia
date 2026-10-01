@@ -1,7 +1,14 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
 import { buildAudioArgs, defaultAudioEditState } from '../src/lib/editor/audio-editor.ts';
-import { type AudioTimelineClip, audioClipEqSettings, soloAudioTimelineClip } from '../src/lib/editor/audio-mixer.ts';
+import {
+  type AudioTimelineClip,
+  audioClipEqSettings,
+  audioClipGainAutomation,
+  audioClipGainEnvelope,
+  soloAudioTimelineClip,
+  splitAudioClipGainEnvelope,
+} from '../src/lib/editor/audio-mixer.ts';
 import {
   buildGifEditArgs,
   defaultImageEditState,
@@ -51,6 +58,42 @@ describe('audio clip EQ', () => {
       midEqDb: -18,
       highEqDb: 18,
     });
+  });
+});
+
+describe('audio clip volume automation', () => {
+  it('defaults to unity and clamps envelope points to the 0–200% range', () => {
+    assert.deepEqual(audioClipGainEnvelope({}), { start: 1, middle: 1, end: 1 });
+    assert.deepEqual(audioClipGainEnvelope({ gainEnvelope: { start: -1, middle: 0.75, end: 3 } }), {
+      start: 0,
+      middle: 0.75,
+      end: 2,
+    });
+  });
+
+  it('creates a smooth three-point gain curve and multiplies it with the fades', () => {
+    const clip = {
+      gain: 0.5,
+      fadeIn: 2,
+      fadeOut: 2,
+      gainEnvelope: { start: 0, middle: 1, end: 0.5 },
+    };
+    assert.deepEqual(audioClipGainAutomation(clip, 10), [
+      { time: 0, gain: 0 },
+      { time: 2, gain: 0.2 },
+      { time: 5, gain: 0.5 },
+      { time: 8, gain: 0.35 },
+      { time: 10, gain: 0 },
+    ]);
+  });
+
+  it('keeps the original gain curve continuous across an audio split', () => {
+    const split = splitAudioClipGainEnvelope({ gainEnvelope: { start: 0.5, middle: 1.5, end: 0.25 } }, 0.3);
+    assert.deepEqual(split.left, { start: 0.5, middle: 0.8, end: 1.1 });
+    assert.equal(split.right.start, 1.1);
+    assert.ok(Math.abs(split.right.middle - 1.125) < 1e-12);
+    assert.equal(split.right.end, 0.25);
+    assert.equal(split.left.end, split.right.start);
   });
 });
 

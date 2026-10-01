@@ -12,7 +12,81 @@ export interface AudioTimelineClip {
   lowEqDb?: number;
   midEqDb?: number;
   highEqDb?: number;
+  gainEnvelope?: AudioGainEnvelope;
   muted: boolean;
+}
+
+export interface AudioGainEnvelope {
+  start: number;
+  middle: number;
+  end: number;
+}
+
+/** Normalize the three editable clip-volume control points (0–200%). */
+export function audioClipGainEnvelope(clip: { gainEnvelope?: AudioGainEnvelope }): Required<AudioGainEnvelope> {
+  const normalize = (value: number | undefined): number =>
+    typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(2, value)) : 1;
+  return {
+    start: normalize(clip.gainEnvelope?.start),
+    middle: normalize(clip.gainEnvelope?.middle),
+    end: normalize(clip.gainEnvelope?.end),
+  };
+}
+
+/** Interpolate the saved three-point gain curve at a clip position from 0 to 1. */
+export function audioClipGainEnvelopeAt(clip: { gainEnvelope?: AudioGainEnvelope }, position: number): number {
+  const envelope = audioClipGainEnvelope(clip);
+  const fraction = Math.max(0, Math.min(1, Number.isFinite(position) ? position : 0));
+  return fraction <= 0.5
+    ? envelope.start + (envelope.middle - envelope.start) * fraction * 2
+    : envelope.middle + (envelope.end - envelope.middle) * (fraction - 0.5) * 2;
+}
+
+/** Preserve a clip's piecewise-linear volume curve when splitting it. */
+export function splitAudioClipGainEnvelope(
+  clip: { gainEnvelope?: AudioGainEnvelope },
+  position: number,
+): { left: Required<AudioGainEnvelope>; right: Required<AudioGainEnvelope> } {
+  const split = Math.max(0, Math.min(1, Number.isFinite(position) ? position : 0));
+  return {
+    left: {
+      start: audioClipGainEnvelopeAt(clip, 0),
+      middle: audioClipGainEnvelopeAt(clip, split / 2),
+      end: audioClipGainEnvelopeAt(clip, split),
+    },
+    right: {
+      start: audioClipGainEnvelopeAt(clip, split),
+      middle: audioClipGainEnvelopeAt(clip, split + (1 - split) / 2),
+      end: audioClipGainEnvelopeAt(clip, 1),
+    },
+  };
+}
+
+/** Compute piecewise-linear gain samples combined with the clip's fades. */
+export function audioClipGainAutomation(
+  clip: Pick<AudioTimelineClip, 'gain' | 'fadeIn' | 'fadeOut' | 'gainEnvelope'>,
+  duration: number,
+): Array<{ time: number; gain: number }> {
+  if (!Number.isFinite(duration) || duration <= 0) return [];
+  const envelope = audioClipGainEnvelope(clip);
+  const fadeIn = Math.min(duration, Math.max(0, Number.isFinite(clip.fadeIn) ? clip.fadeIn : 0));
+  const fadeOut = Math.min(
+    Math.max(0, duration - fadeIn),
+    Math.max(0, Number.isFinite(clip.fadeOut) ? clip.fadeOut : 0),
+  );
+  const baseGain = Math.max(0, Math.min(4, Number.isFinite(clip.gain) ? clip.gain : 0));
+  const middleTime = duration / 2;
+  const gainAt = (time: number): number => {
+    const fraction = Math.max(0, Math.min(1, time / duration));
+    const envelopeGain = audioClipGainEnvelopeAt({ gainEnvelope: envelope }, fraction);
+    const fadeInGain = fadeIn > 0 ? Math.min(1, time / fadeIn) : 1;
+    const fadeOutGain = fadeOut > 0 ? Math.min(1, (duration - time) / fadeOut) : 1;
+    return baseGain * envelopeGain * fadeInGain * fadeOutGain;
+  };
+  const times = new Set([0, middleTime, duration]);
+  if (fadeIn > 0) times.add(fadeIn);
+  if (fadeOut > 0) times.add(duration - fadeOut);
+  return [...times].sort((left, right) => left - right).map((time) => ({ time, gain: gainAt(time) }));
 }
 
 export interface AudioEqSettings {
@@ -132,13 +206,12 @@ export async function mixAudioTimeline(
       const startAt = Math.max(0, clip.start);
       const fadeIn = Math.min(clipDuration, Math.max(0, clip.fadeIn));
       const fadeOut = Math.min(Math.max(0, clipDuration - fadeIn), Math.max(0, clip.fadeOut));
-      const targetGain = Math.max(0, Math.min(4, clip.gain));
-      gain.gain.setValueAtTime(fadeIn > 0 ? 0 : targetGain, startAt);
-      if (fadeIn > 0) gain.gain.linearRampToValueAtTime(targetGain, startAt + fadeIn);
-      if (fadeOut > 0) {
-        gain.gain.setValueAtTime(targetGain, startAt + clipDuration - fadeOut);
-        gain.gain.linearRampToValueAtTime(0, startAt + clipDuration);
-      }
+      const automation = audioClipGainAutomation({ ...clip, fadeIn, fadeOut }, clipDuration);
+      automation.forEach((point, index) => {
+        const time = startAt + point.time;
+        if (index === 0) gain.gain.setValueAtTime(point.gain, time);
+        else gain.gain.linearRampToValueAtTime(point.gain, time);
+      });
       source.connect(lowEq);
       lowEq.connect(midEq);
       midEq.connect(highEq);
