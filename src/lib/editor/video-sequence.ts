@@ -235,8 +235,9 @@ export async function renderVideoSequence(
       clip.fit === 'cover'
         ? 'scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720'
         : 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2';
+    const color = `eq=brightness=${(((clip.brightness ?? 100) - 100) / 100).toFixed(3)}:contrast=${((clip.contrast ?? 100) / 100).toFixed(3)}:saturation=${((clip.saturation ?? 100) / 100).toFixed(3)}`;
     filters.push(
-      `[${index}:v:0]trim=duration=${clipDuration.toFixed(3)},setpts=PTS-STARTPTS,${framing},setsar=1,fps=30,format=yuv420p[v${index}]`,
+      `[${index}:v:0]trim=duration=${clipDuration.toFixed(3)},setpts=PTS-STARTPTS,${framing},${color},setsar=1,fps=30,format=yuv420p[v${index}]`,
     );
     if (clipSources[index].hasAudio && !clipSources[index].clip.muted) {
       const gain = Math.max(0, Math.min(1, clipSources[index].clip.gain ?? 1));
