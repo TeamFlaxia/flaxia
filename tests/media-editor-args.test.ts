@@ -14,10 +14,13 @@ import {
   splitAudioClipGainEnvelope,
 } from '../src/lib/editor/audio-mixer.ts';
 import {
+  applyImageColorAdjustments,
   buildGifEditArgs,
   defaultImageEditState,
   getOutputSize,
   type ImageEditState,
+  imageFilterCss,
+  isImageStateDirty,
 } from '../src/lib/editor/image-editor.ts';
 import { computeVideoPlan } from '../src/lib/editor/render-preset.ts';
 import {
@@ -243,6 +246,8 @@ describe('image-editor buildGifEditArgs', () => {
       crop: { x: 0, y: 0, w: 0.5, h: 0.5 },
       brightness: 110,
       contrast: 90,
+      saturation: 80,
+      hueDeg: 30,
       maxLongEdge: 100,
       autoLongEdge: false,
     };
@@ -253,7 +258,8 @@ describe('image-editor buildGifEditArgs', () => {
     assert.ok(vf.includes('transpose=1'), vf);
     assert.ok(vf.includes('crop='), vf);
     assert.ok(vf.includes('scale='), vf);
-    assert.ok(vf.includes('eq=brightness=0.100:contrast=0.900'), vf);
+    assert.ok(vf.includes('eq=brightness=0.100:contrast=0.900:saturation=0.800'), vf);
+    assert.ok(vf.includes('hue=h=0.524'), vf);
     assert.equal(args[args.length - 1], 'out.gif');
     assert.ok(args.includes('-loop'));
   });
@@ -261,6 +267,29 @@ describe('image-editor buildGifEditArgs', () => {
   it('skips -vf when the state is neutral', () => {
     const args = buildGifEditArgs(400, 200, defaultImageEditState(), 'in.gif', 'out.gif');
     assert.ok(!args.includes('-vf'));
+  });
+});
+
+describe('image-editor color adjustments', () => {
+  it('rotates hue in image pixels without changing alpha', () => {
+    const pixels = new Uint8ClampedArray([255, 0, 0, 128]);
+    applyImageColorAdjustments(pixels, { ...defaultImageEditState(), hueDeg: 120 });
+    assert.deepEqual(pixels, new Uint8ClampedArray([0, 113, 0, 128]));
+  });
+
+  it('desaturates pixels and tracks the edits as dirty state', () => {
+    const state = { ...defaultImageEditState(), saturation: 0 };
+    const pixels = new Uint8ClampedArray([255, 0, 0, 255]);
+    applyImageColorAdjustments(pixels, state);
+    assert.deepEqual(pixels, new Uint8ClampedArray([54, 54, 54, 255]));
+    assert.equal(isImageStateDirty(state), true);
+  });
+
+  it('matches saturation and hue in the live CSS preview', () => {
+    assert.equal(
+      imageFilterCss({ ...defaultImageEditState(), saturation: 75, hueDeg: -30 }),
+      'brightness(100%) contrast(100%) saturate(75%) hue-rotate(-30deg)',
+    );
   });
 });
 

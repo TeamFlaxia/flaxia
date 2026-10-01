@@ -199,6 +199,8 @@
   "editor.flip_v": "上下反転",
   "editor.brightness": "明るさ",
   "editor.contrast": "コントラスト",
+  "editor.saturation": "彩度",
+  "editor.hue": "色相",
   "editor.volume": "音量",
   "editor.mute": "ミュート",
   "editor.aspect_free": "自由",

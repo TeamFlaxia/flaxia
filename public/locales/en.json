@@ -199,6 +199,8 @@
   "editor.flip_v": "Flip vertical",
   "editor.brightness": "Brightness",
   "editor.contrast": "Contrast",
+  "editor.saturation": "Saturation",
+  "editor.hue": "Hue",
   "editor.volume": "Volume",
   "editor.mute": "Mute",
   "editor.aspect_free": "Free",

@@ -745,6 +745,32 @@ class MediaEditorSession {
           },
         }).row,
       );
+      this.imagePanelHost.appendChild(
+        makeSlider({
+          label: t('editor.saturation'),
+          min: 0,
+          max: 200,
+          value: this.imgState.saturation,
+          format: (v) => `${v}%`,
+          onInput: (v) => {
+            this.imgState = { ...this.imgState, saturation: v };
+            this.onImageStateChanged();
+          },
+        }).row,
+      );
+      this.imagePanelHost.appendChild(
+        makeSlider({
+          label: t('editor.hue'),
+          min: -180,
+          max: 180,
+          value: this.imgState.hueDeg,
+          format: (v) => `${v}°`,
+          onInput: (v) => {
+            this.imgState = { ...this.imgState, hueDeg: v };
+            this.onImageStateChanged();
+          },
+        }).row,
+      );
     } else {
       const label = document.createElement('label');
       label.className = 'me-trim-label';

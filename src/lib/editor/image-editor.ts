@@ -18,6 +18,9 @@ export interface ImageEditState {
   /** Percent, 100 = neutral (matches CSS filter semantics). */
   brightness: number;
   contrast: number;
+  saturation: number;
+  /** Hue rotation in degrees, -180..180. */
+  hueDeg: number;
   /** Long-edge cap in px; null keeps the source size. */
   maxLongEdge: number | null;
   /** True when maxLongEdge was derived by the auto preset. */
@@ -34,6 +37,8 @@ export function defaultImageEditState(): ImageEditState {
     crop: null,
     brightness: 100,
     contrast: 100,
+    saturation: 100,
+    hueDeg: 0,
     maxLongEdge: null,
     autoLongEdge: false,
   };
@@ -48,13 +53,63 @@ export function isImageStateDirty(state: ImageEditState): boolean {
     state.crop !== null ||
     state.brightness !== d.brightness ||
     state.contrast !== d.contrast ||
+    state.saturation !== d.saturation ||
+    state.hueDeg !== d.hueDeg ||
     state.maxLongEdge !== d.maxLongEdge ||
     state.autoLongEdge !== d.autoLongEdge
   );
 }
 
 export function imageFilterCss(state: ImageEditState): string {
-  return `brightness(${state.brightness}%) contrast(${state.contrast}%)`;
+  return `brightness(${state.brightness}%) contrast(${state.contrast}%) saturate(${state.saturation}%) hue-rotate(${state.hueDeg}deg)`;
+}
+
+/** Apply the same brightness, contrast, saturation, and hue sequence as the preview CSS. */
+export function applyImageColorAdjustments(
+  pixels: Uint8ClampedArray,
+  state: Pick<ImageEditState, 'brightness' | 'contrast' | 'saturation' | 'hueDeg'>,
+): void {
+  const brightness = state.brightness / 100;
+  const contrast = state.contrast / 100;
+  const saturation = state.saturation / 100;
+  const angle = (state.hueDeg * Math.PI) / 180;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const hueMatrix = [
+    0.213 + cos * 0.787 - sin * 0.213,
+    0.715 - cos * 0.715 - sin * 0.715,
+    0.072 - cos * 0.072 + sin * 0.928,
+    0.213 - cos * 0.213 + sin * 0.143,
+    0.715 + cos * 0.285 + sin * 0.14,
+    0.072 - cos * 0.072 - sin * 0.283,
+    0.213 - cos * 0.213 - sin * 0.787,
+    0.715 - cos * 0.715 + sin * 0.715,
+    0.072 + cos * 0.928 + sin * 0.072,
+  ];
+  const saturationMatrix = [
+    0.213 + 0.787 * saturation,
+    0.715 - 0.715 * saturation,
+    0.072 - 0.072 * saturation,
+    0.213 - 0.213 * saturation,
+    0.715 + 0.285 * saturation,
+    0.072 - 0.072 * saturation,
+    0.213 - 0.213 * saturation,
+    0.715 - 0.715 * saturation,
+    0.072 + 0.928 * saturation,
+  ];
+  for (let index = 0; index + 3 < pixels.length; index += 4) {
+    const r = ((pixels[index] / 255) * brightness - 0.5) * contrast + 0.5;
+    const g = ((pixels[index + 1] / 255) * brightness - 0.5) * contrast + 0.5;
+    const b = ((pixels[index + 2] / 255) * brightness - 0.5) * contrast + 0.5;
+    const saturatedRed = saturationMatrix[0] * r + saturationMatrix[1] * g + saturationMatrix[2] * b;
+    const saturatedGreen = saturationMatrix[3] * r + saturationMatrix[4] * g + saturationMatrix[5] * b;
+    const saturatedBlue = saturationMatrix[6] * r + saturationMatrix[7] * g + saturationMatrix[8] * b;
+    pixels[index] = (hueMatrix[0] * saturatedRed + hueMatrix[1] * saturatedGreen + hueMatrix[2] * saturatedBlue) * 255;
+    pixels[index + 1] =
+      (hueMatrix[3] * saturatedRed + hueMatrix[4] * saturatedGreen + hueMatrix[5] * saturatedBlue) * 255;
+    pixels[index + 2] =
+      (hueMatrix[6] * saturatedRed + hueMatrix[7] * saturatedGreen + hueMatrix[8] * saturatedBlue) * 255;
+  }
 }
 
 export function getRotatedSize(width: number, height: number, rotation: number): { width: number; height: number } {
@@ -156,20 +211,6 @@ function rotateCanvas(
   return canvas;
 }
 
-function applyBrightnessContrast(imageData: ImageData, brightness: number, contrast: number): void {
-  if (brightness === 100 && contrast === 100) return;
-  const bFactor = brightness / 100;
-  const cFactor = contrast / 100;
-  const data = imageData.data;
-  for (let i = 0; i < data.length; i += 4) {
-    for (let c = i; c < i + 3; c++) {
-      let v = data[c] * bFactor;
-      v = (v - 127.5) * cFactor + 127.5;
-      data[c] = v < 0 ? 0 : v > 255 ? 255 : v;
-    }
-  }
-}
-
 function cropCanvas(oriented: HTMLCanvasElement, crop: NormalizedCrop | null): HTMLCanvasElement {
   if (!crop) return oriented;
   const sx = Math.max(0, Math.floor(crop.x * oriented.width));
@@ -210,7 +251,7 @@ function outputMimeFor(ext: string): { mime: string; ext: string } {
 }
 
 /**
- * Full canvas pipeline: flip → rotate → crop → scale → brightness/contrast →
+ * Full canvas pipeline: flip → rotate → crop → scale → color adjustment →
  * export that fits inside the byte budget (quality search for JPEG, downscale
  * steps as a last resort).
  */
@@ -231,9 +272,9 @@ export async function renderImageFile(
 
   const ctx = working.getContext('2d');
   if (!ctx) throw new Error('canvas unavailable');
-  if (state.brightness !== 100 || state.contrast !== 100) {
+  if (state.brightness !== 100 || state.contrast !== 100 || state.saturation !== 100 || state.hueDeg !== 0) {
     const imageData = ctx.getImageData(0, 0, working.width, working.height);
-    applyBrightnessContrast(imageData, state.brightness, state.contrast);
+    applyImageColorAdjustments(imageData.data, state);
     ctx.putImageData(imageData, 0, 0);
   }
 
@@ -312,11 +353,13 @@ export function buildGifEditArgs(
   if (out.width !== rotated.width || out.height !== rotated.height) {
     vf.push(`scale=${out.width}:${out.height}`);
   }
-  if (state.brightness !== 100 || state.contrast !== 100) {
+  if (state.brightness !== 100 || state.contrast !== 100 || state.saturation !== 100 || state.hueDeg !== 0) {
     const b = (state.brightness / 100 - 1).toFixed(3);
     const c = (state.contrast / 100).toFixed(3);
-    vf.push(`eq=brightness=${b}:contrast=${c}`);
+    const s = (state.saturation / 100).toFixed(3);
+    vf.push(`eq=brightness=${b}:contrast=${c}:saturation=${s}`);
   }
+  if (state.hueDeg !== 0) vf.push(`hue=h=${((state.hueDeg * Math.PI) / 180).toFixed(3)}`);
 
   const args = ['-i', inputName];
   if (vf.length > 0) args.push('-vf', vf.join(','));
