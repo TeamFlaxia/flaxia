@@ -12,6 +12,11 @@ export interface AudioTimelineClip {
   muted: boolean;
 }
 
+/** Copy one clip for isolated audition while preserving its trims and mix controls. */
+export function soloAudioTimelineClip(clip: AudioTimelineClip): AudioTimelineClip {
+  return { ...clip, start: 0, muted: false };
+}
+
 function audioContextConstructor(): typeof AudioContext {
   const prefixed = window as Window & { webkitAudioContext?: typeof AudioContext };
   const Context = window.AudioContext || prefixed.webkitAudioContext;

@@ -1,5 +1,5 @@
 import type * as Monaco from 'monaco-editor';
-import { type AudioTimelineClip, mixAudioTimeline } from '../lib/editor/audio-mixer.ts';
+import { type AudioTimelineClip, mixAudioTimeline, soloAudioTimelineClip } from '../lib/editor/audio-mixer.ts';
 import { imageLayerOpacityAt } from '../lib/editor/image-adjustments.ts';
 import { drawStudioImageLayer } from '../lib/editor/image-layer-canvas.ts';
 import { saveStudioHandoff } from '../lib/editor/studio-handoff.js';
@@ -227,6 +227,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let audioTrackCount = 1;
   let mixPreviewUrl: string | null = null;
   let mixPreview: HTMLAudioElement | null = null;
+  let mixPreviewTimelineOffset = 0;
+  let soloPreviewClipId: string | null = null;
+  let audioRenderRevision = 0;
   let codeEditorCleanup: (() => void) | null = null;
   let videoSequencePlayer: HTMLVideoElement | null = null;
   let videoSequenceUrl: string | null = null;
@@ -283,7 +286,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       <section class="studio-center">
         <div class="studio-tabs"><button class="studio-tab studio-workspace-tab active" type="button">⌂ &nbsp;Workspace</button><div class="studio-document-tabs"></div><button class="studio-tab-open" type="button" aria-label="Open files">＋</button><span class="studio-center-spacer"></span><button class="studio-shortcut" type="button" title="Import files">⌘ O</button></div>
         <div class="studio-stage"><div class="studio-empty"><div class="studio-empty-art"><div class="studio-orbit studio-orbit-one"></div><div class="studio-orbit studio-orbit-two"></div><div class="studio-empty-glyph">✳</div><span class="studio-float studio-float-image">▧</span><span class="studio-float studio-float-audio">♫</span><span class="studio-float studio-float-code">&lt;/&gt;</span><span class="studio-float studio-float-game">◇</span></div><h1>Your ideas, in one studio.</h1><p>Bring images, sound, video, code, and games into one creative workspace.</p><button class="studio-button studio-open studio-primary" type="button">Import files</button><small>or drop files anywhere in the workspace</small></div><div class="studio-preview"></div></div>
-        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag to arrange · trim edges · snaps to playhead and clip edges</span><button class="studio-history-undo" type="button" disabled title="Undo (⌘Z / Ctrl+Z)">↶</button><button class="studio-history-redo" type="button" disabled title="Redo (⌘⇧Z / Ctrl+Y)">↷</button><button class="studio-video-split" type="button" disabled>Split selected clip</button><button class="studio-clip-duplicate" type="button" disabled>Duplicate clip</button><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
+        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag to arrange · trim edges · snaps to playhead and clip edges</span><button class="studio-history-undo" type="button" disabled title="Undo (⌘Z / Ctrl+Z)">↶</button><button class="studio-history-redo" type="button" disabled title="Redo (⌘⇧Z / Ctrl+Y)">↷</button><button class="studio-video-split" type="button" disabled>Split selected clip</button><button class="studio-clip-duplicate" type="button" disabled>Duplicate clip</button><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-audio-solo" type="button" disabled>▶ Solo clip</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
       </section>
       <aside class="studio-inspector"><div class="studio-inspector-tabs"><span class="active">Inspector</span><span>Publish</span></div><div class="studio-inspector-body"><div class="studio-inspector-icon">✳</div><h2>Make something living</h2><p>Flaxia posts can hold playable games and interactive media. Import an asset to preview, edit, and prepare it for sharing.</p><div class="studio-inspector-divider"></div><div class="studio-format-title">SUPPORTED CREATIVE FILES</div><div class="studio-format-list"><span>IMAGE</span><small>PNG · JPG · GIF · WEBP</small><span>VIDEO</span><small>MP4 · WEBM · MOV</small><span>AUDIO</span><small>MP3 · WAV · OGG · M4A</small><span>CODE / GAME</span><small>HTML · JS · ZIP · SWF · WASM</small></div><div class="studio-local-badge">◉ &nbsp;Private by default</div></div></aside>
     </div>
@@ -311,6 +314,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const mixStatus = root.querySelector<HTMLElement>('.studio-mix-status')!;
   const mixPlayButton = root.querySelector<HTMLButtonElement>('.studio-mix-play')!;
   const mixExportButton = root.querySelector<HTMLButtonElement>('.studio-mix-export')!;
+  const soloAudioButton = root.querySelector<HTMLButtonElement>('.studio-audio-solo')!;
   const addTrackButton = root.querySelector<HTMLButtonElement>('.studio-add-track')!;
   const videoPlayButton = root.querySelector<HTMLButtonElement>('.studio-video-play')!;
   const videoSplitButton = root.querySelector<HTMLButtonElement>('.studio-video-split')!;
@@ -322,6 +326,18 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   videoSplitButton.title = 'Split selected clip at the playhead';
   videoPlayButton.title = 'Start or stop video preview (Space)';
   mixPlayButton.title = 'Play or pause audio mix (Space)';
+  soloAudioButton.title = 'Audition the selected audio clip';
+  const clearMixPreview = (): void => {
+    audioRenderRevision++;
+    mixPreview?.pause();
+    mixPreview = null;
+    if (mixPreviewUrl) URL.revokeObjectURL(mixPreviewUrl);
+    mixPreviewUrl = null;
+    mixPreviewTimelineOffset = 0;
+    soloPreviewClipId = null;
+    mixPlayButton.textContent = '▶ Play mix';
+    soloAudioButton.textContent = '▶ Solo clip';
+  };
   const zoomLabel = document.createElement('label');
   zoomLabel.className = 'studio-timeline-zoom-control';
   zoomLabel.innerHTML =
@@ -432,7 +448,13 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         const wasPlaying = !mixPreview.paused;
         const seekMix = (): void => {
           if (!mixPreview) return;
-          mixPreview.currentTime = Math.min(time, Number.isFinite(mixPreview.duration) ? mixPreview.duration : time);
+          mixPreview.currentTime = Math.max(
+            0,
+            Math.min(
+              time - mixPreviewTimelineOffset,
+              Number.isFinite(mixPreview.duration) ? mixPreview.duration : time,
+            ),
+          );
           if (wasPlaying) void mixPreview.play().catch(() => undefined);
         };
         if (mixPreview.readyState >= 1) seekMix();
@@ -441,7 +463,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       return;
     }
     mixPreview?.pause();
-    if (mixPreview) mixPlayButton.textContent = '▶ Resume mix';
+    if (mixPreview) mixPlayButton.textContent = soloPreviewClipId ? '▶ Play mix' : '▶ Resume mix';
     if (videoSequencePlayer) stopVideoSequence();
     const sequenceEnd = Math.max(0, ...videoClips.map((clip) => clip.start + videoClipTimelineDuration(clip)));
     videoSequenceStartTime = Math.max(0, Math.min(time, sequenceEnd));
@@ -698,14 +720,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 
   const scheduleAutosave = (): void => {
     recordHistoryChange();
+    audioRenderRevision++;
     if (videoSequencePlayer) stopVideoSequence();
-    if (mixPreview || mixPreviewUrl) {
-      mixPreview?.pause();
-      mixPreview = null;
-      if (mixPreviewUrl) URL.revokeObjectURL(mixPreviewUrl);
-      mixPreviewUrl = null;
-      mixPlayButton.textContent = '▶ Play mix';
-    }
+    if (mixPreview || mixPreviewUrl) clearMixPreview();
     if (autosaveTimer) clearTimeout(autosaveTimer);
     const revision = ++saveRevision;
     saveState.textContent = 'Saving locally…';
@@ -1240,6 +1257,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     audioTimeline.appendChild(empty);
     mixPlayButton.disabled = audioClips.length === 0;
     mixExportButton.disabled = audioClips.length === 0;
+    soloAudioButton.disabled = !audioClips.some((clip) => clip.id === selectedAudioClipId);
     updateTimelinePlayhead(timelinePlayheadTime);
   };
 
@@ -2473,8 +2491,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   };
 
   function select(index: number): void {
+    audioRenderRevision++;
     selectedVideoClipId = null;
     selectedAudioClipId = null;
+    soloAudioButton.disabled = true;
     const editingFile = files[activeIndex];
     if (
       codeDirty &&
@@ -2932,8 +2952,69 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       mixExportButton.disabled = audioClips.length === 0;
     }
   };
+  soloAudioButton.addEventListener('click', async () => {
+    const clip = audioClips.find((item) => item.id === selectedAudioClipId);
+    if (!clip) return;
+    if (videoSequencePlayer) stopVideoSequence();
+    if (mixPreview && soloPreviewClipId === clip.id) {
+      if (mixPreview.paused) {
+        if (mixPreview.ended) mixPreview.currentTime = 0;
+        await mixPreview.play().catch(() => undefined);
+        soloAudioButton.textContent = 'Ⅱ Pause clip';
+        mixStatus.textContent = `Previewing ${files[clip.fileIndex]?.name ?? 'clip'}`;
+      } else {
+        mixPreview.pause();
+        soloAudioButton.textContent = '▶ Resume clip';
+        mixStatus.textContent = `Paused · ${mixPreview.currentTime.toFixed(1)}s into clip`;
+      }
+      return;
+    }
+    if (mixPreview || mixPreviewUrl) clearMixPreview();
+    soloAudioButton.disabled = true;
+    soloAudioButton.textContent = 'Rendering clip…';
+    mixStatus.textContent = 'Rendering selected clip…';
+    const revision = ++audioRenderRevision;
+    try {
+      const previewFile = await mixAudioTimeline(files, [soloAudioTimelineClip(clip)], 'flaxia-clip-preview.wav');
+      if (destroyed) return;
+      if (revision !== audioRenderRevision || !audioClips.some((item) => item.id === clip.id)) {
+        soloAudioButton.disabled = !audioClips.some((item) => item.id === selectedAudioClipId);
+        soloAudioButton.textContent = '▶ Solo clip';
+        return;
+      }
+      mixPreviewTimelineOffset = clip.start;
+      soloPreviewClipId = clip.id;
+      mixPreviewUrl = URL.createObjectURL(previewFile);
+      const player = new Audio(mixPreviewUrl);
+      mixPreview = player;
+      soloAudioButton.disabled = false;
+      player.addEventListener('timeupdate', () => {
+        if (mixPreview === player) updateTimelinePlayhead(mixPreviewTimelineOffset + player.currentTime);
+      });
+      player.addEventListener('ended', () => {
+        if (mixPreview !== player) return;
+        clearMixPreview();
+        soloAudioButton.disabled = !audioClips.some((item) => item.id === selectedAudioClipId);
+        mixStatus.textContent = 'Clip preview finished';
+      });
+      await player.play();
+      if (mixPreview === player) {
+        soloAudioButton.textContent = 'Ⅱ Pause clip';
+        mixStatus.textContent = `Previewing ${files[clip.fileIndex]?.name ?? 'clip'}`;
+      }
+    } catch (error) {
+      if (revision === audioRenderRevision) {
+        soloAudioButton.disabled = !audioClips.some((item) => item.id === selectedAudioClipId);
+        soloAudioButton.textContent = '▶ Solo clip';
+        mixStatus.textContent = error instanceof Error ? error.message : 'Could not preview selected clip';
+      }
+    }
+  });
   mixPlayButton.addEventListener('click', async () => {
     try {
+      if (videoSequencePlayer) stopVideoSequence();
+      if (soloPreviewClipId) clearMixPreview();
+      const revision = ++audioRenderRevision;
       if (mixPreview) {
         if (mixPreview.paused) {
           if (mixPreview.ended) mixPreview.currentTime = 0;
@@ -2948,16 +3029,21 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         return;
       }
       const output = await renderMixdown();
+      if (destroyed || revision !== audioRenderRevision) return;
       mixPreviewUrl = URL.createObjectURL(output);
-      mixPreview = new Audio(mixPreviewUrl);
-      mixPreview.addEventListener('timeupdate', () => {
-        updateTimelinePlayhead(mixPreview?.currentTime ?? 0);
+      mixPreviewTimelineOffset = 0;
+      soloPreviewClipId = null;
+      const player = new Audio(mixPreviewUrl);
+      mixPreview = player;
+      player.addEventListener('timeupdate', () => {
+        if (mixPreview === player) updateTimelinePlayhead(mixPreviewTimelineOffset + player.currentTime);
       });
-      mixPreview.addEventListener('ended', () => {
+      player.addEventListener('ended', () => {
+        if (mixPreview !== player) return;
         mixPlayButton.textContent = '▶ Play mix';
         mixStatus.textContent = 'Mix finished';
       });
-      await mixPreview.play();
+      await player.play();
       mixPlayButton.textContent = 'Ⅱ Pause mix';
       mixStatus.textContent = 'Playing rendered mix';
     } catch {
@@ -2992,7 +3078,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       }
     }
     mixPreview?.pause();
-    if (mixPreview) mixPlayButton.textContent = '▶ Resume mix';
+    if (mixPreview) mixPlayButton.textContent = soloPreviewClipId ? '▶ Play mix' : '▶ Resume mix';
     const startTimes: number[] = [];
     let sequenceEnd = 0;
     for (const clip of sequence) {

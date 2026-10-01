@@ -1,6 +1,7 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
 import { buildAudioArgs, defaultAudioEditState } from '../src/lib/editor/audio-editor.ts';
+import { type AudioTimelineClip, soloAudioTimelineClip } from '../src/lib/editor/audio-mixer.ts';
 import {
   buildGifEditArgs,
   defaultImageEditState,
@@ -15,6 +16,27 @@ import {
   type VideoMeta,
 } from '../src/lib/editor/video-editor.ts';
 import { videoClipFadeFilters, videoClipOpacityAt } from '../src/lib/editor/video-sequence.ts';
+
+describe('audio solo preview', () => {
+  it('moves only the selected clip to time zero and preserves its trims and mix controls', () => {
+    const clip: AudioTimelineClip = {
+      id: 'audio-1',
+      fileIndex: 2,
+      track: 3,
+      start: 12.5,
+      sourceStart: 1.25,
+      sourceEnd: 8.75,
+      gain: 0.6,
+      fadeIn: 0.4,
+      fadeOut: 1.2,
+      pan: -0.3,
+      muted: true,
+    };
+    assert.deepEqual(soloAudioTimelineClip(clip), { ...clip, start: 0, muted: false });
+    assert.equal(clip.start, 12.5);
+    assert.equal(clip.muted, true);
+  });
+});
 
 describe('video sequence fades', () => {
   it('builds bounded timeline fade filters', () => {
