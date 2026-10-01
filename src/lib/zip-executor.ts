@@ -368,6 +368,11 @@ function validateZip(zip: JSZipType): void {
   }
 }
 
+/** Validate an already-opened game archive with the sandbox's ZIP policy. */
+export function validateGameZipArchive(zip: JSZipType): void {
+  validateZip(zip);
+}
+
 // Legacy functions kept for backward compatibility (used by tests)
 export async function validateZipLegacy(zipData: ArrayBuffer): Promise<void> {
   const JSZip = await getJSZip();
