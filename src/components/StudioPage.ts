@@ -159,7 +159,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       <section class="studio-center">
         <div class="studio-tabs"><button class="studio-tab studio-workspace-tab active" type="button">⌂ &nbsp;Workspace</button><div class="studio-document-tabs"></div><button class="studio-tab-open" type="button" aria-label="Open files">＋</button><span class="studio-center-spacer"></span><button class="studio-shortcut" type="button" title="Import files">⌘ O</button></div>
         <div class="studio-stage"><div class="studio-empty"><div class="studio-empty-art"><div class="studio-orbit studio-orbit-one"></div><div class="studio-orbit studio-orbit-two"></div><div class="studio-empty-glyph">✳</div><span class="studio-float studio-float-image">▧</span><span class="studio-float studio-float-audio">♫</span><span class="studio-float studio-float-code">&lt;/&gt;</span><span class="studio-float studio-float-game">◇</span></div><h1>Your ideas, in one studio.</h1><p>Bring images, sound, video, code, and games into one creative workspace.</p><button class="studio-button studio-open studio-primary" type="button">Import files</button><small>or drop files anywhere in the workspace</small></div><div class="studio-preview"></div></div>
-        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag clips to arrange · drag clip edges to trim</span><button class="studio-video-split" type="button" disabled>Split selected clip</button><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
+        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag clips to arrange · drag clip edges to trim</span><button class="studio-video-split" type="button" disabled>Split selected clip</button><button class="studio-clip-duplicate" type="button" disabled>Duplicate clip</button><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
       </section>
       <aside class="studio-inspector"><div class="studio-inspector-tabs"><span class="active">Inspector</span><span>Publish</span></div><div class="studio-inspector-body"><div class="studio-inspector-icon">✳</div><h2>Make something living</h2><p>Flaxia posts can hold playable games and interactive media. Import an asset to preview, edit, and prepare it for sharing.</p><div class="studio-inspector-divider"></div><div class="studio-format-title">SUPPORTED CREATIVE FILES</div><div class="studio-format-list"><span>IMAGE</span><small>PNG · JPG · GIF · WEBP</small><span>VIDEO</span><small>MP4 · WEBM · MOV</small><span>AUDIO</span><small>MP3 · WAV · OGG · M4A</small><span>CODE / GAME</span><small>HTML · JS · ZIP · SWF · WASM</small></div><div class="studio-local-badge">◉ &nbsp;Private by default</div></div></aside>
     </div>
@@ -190,6 +190,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const addTrackButton = root.querySelector<HTMLButtonElement>('.studio-add-track')!;
   const videoPlayButton = root.querySelector<HTMLButtonElement>('.studio-video-play')!;
   const videoSplitButton = root.querySelector<HTMLButtonElement>('.studio-video-split')!;
+  const duplicateClipButton = root.querySelector<HTMLButtonElement>('.studio-clip-duplicate')!;
   const videoExportButton = root.querySelector<HTMLButtonElement>('.studio-video-export')!;
   const zoomLabel = document.createElement('label');
   zoomLabel.className = 'studio-timeline-zoom-control';
@@ -269,6 +270,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       !clip ||
       timelinePlayheadTime <= clip.start + 0.05 ||
       timelinePlayheadTime >= clip.start + clip.sourceEnd - clip.sourceStart - 0.05;
+    duplicateClipButton.disabled = !clip;
   };
 
   const updateTimelinePlayhead = (time: number): void => {
@@ -334,6 +336,51 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       selectedAudioClipId = rightClip.id;
       selectedVideoClipId = null;
       renderAudioTimeline();
+    }
+    renderInspector();
+    scheduleAutosave();
+  });
+
+  duplicateClipButton.addEventListener('click', () => {
+    const videoClip = videoClips.find((item) => item.id === selectedVideoClipId);
+    if (videoClip) {
+      const duplicate: StudioVideoClip = {
+        ...videoClip,
+        id: crypto.randomUUID(),
+        start: Math.max(0, ...videoClips.map((item) => item.start + item.sourceEnd - item.sourceStart)),
+      };
+      videoClips.push(duplicate);
+      manuallyPlacedVideoClips.add(duplicate.id);
+      selectedVideoClipId = duplicate.id;
+      selectedAudioClipId = null;
+      renderVideoTimeline();
+      videoTimelineViewport.scrollLeft = Math.max(
+        0,
+        duplicate.start * timelinePixelsPerSecond - videoTimelineViewport.clientWidth + 160,
+      );
+      audioTimelineViewport.scrollLeft = videoTimelineViewport.scrollLeft;
+    } else {
+      const audioClip = audioClips.find((item) => item.id === selectedAudioClipId);
+      if (!audioClip) return;
+      const duplicate: AudioTimelineClip = {
+        ...audioClip,
+        id: crypto.randomUUID(),
+        start: Math.max(
+          0,
+          ...audioClips
+            .filter((item) => item.track === audioClip.track)
+            .map((item) => item.start + item.sourceEnd - item.sourceStart),
+        ),
+      };
+      audioClips.push(duplicate);
+      selectedAudioClipId = duplicate.id;
+      selectedVideoClipId = null;
+      renderAudioTimeline();
+      audioTimelineViewport.scrollLeft = Math.max(
+        0,
+        duplicate.start * timelinePixelsPerSecond - audioTimelineViewport.clientWidth + 160,
+      );
+      videoTimelineViewport.scrollLeft = audioTimelineViewport.scrollLeft;
     }
     renderInspector();
     scheduleAutosave();
