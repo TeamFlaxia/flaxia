@@ -145,6 +145,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let mixPreview: HTMLAudioElement | null = null;
   let videoSequencePlayer: HTMLVideoElement | null = null;
   let videoSequenceUrl: string | null = null;
+  let videoSequenceAudio: HTMLAudioElement | null = null;
+  let videoSequenceAudioUrl: string | null = null;
   let videoSequenceOverlayCanvas: HTMLCanvasElement | null = null;
   let videoSequenceOverlayRevision = 0;
   const videoSequenceOverlayBitmaps = new Map<number, Promise<ImageBitmap>>();
@@ -306,6 +308,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     videoSequencePlayer?.pause();
     videoSequencePlayer?.remove();
     videoSequencePlayer = null;
+    videoSequenceAudio?.pause();
+    videoSequenceAudio = null;
+    if (videoSequenceAudioUrl) URL.revokeObjectURL(videoSequenceAudioUrl);
+    videoSequenceAudioUrl = null;
     if (videoSequenceUrl) URL.revokeObjectURL(videoSequenceUrl);
     videoSequenceUrl = null;
     videoSequenceIndex = -1;
@@ -2576,13 +2582,25 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       // The render status already explains the failure.
     }
   });
-  videoPlayButton.addEventListener('click', () => {
+  videoPlayButton.addEventListener('click', async () => {
     if (videoSequencePlayer) {
       stopVideoSequence();
       return;
     }
     const sequence = [...videoClips].sort((left, right) => left.start - right.start);
     if (sequence.length === 0) return;
+    let sequenceAudio: HTMLAudioElement | null = null;
+    if (audioClips.some((clip) => !clip.muted && clip.sourceEnd > clip.sourceStart)) {
+      try {
+        const mix = await mixAudioTimeline(files, audioClips, 'flaxia-sequence-preview.wav');
+        if (destroyed) return;
+        videoSequenceAudioUrl = URL.createObjectURL(mix);
+        sequenceAudio = new Audio(videoSequenceAudioUrl);
+        videoSequenceAudio = sequenceAudio;
+      } catch {
+        // Video and source audio remain previewable if an audio track cannot be mixed.
+      }
+    }
     const startTimes: number[] = [];
     let sequenceEnd = 0;
     for (const clip of sequence) {
@@ -2642,6 +2660,12 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     let activeClip: StudioVideoClip | null = null;
     let advancing = false;
     let playAt: (index: number) => void = () => undefined;
+    const syncSequenceAudio = (time: number, play: boolean): void => {
+      if (!sequenceAudio) return;
+      if (Math.abs(sequenceAudio.currentTime - time) > 0.3) sequenceAudio.currentTime = time;
+      if (play && sequenceAudio.paused) void sequenceAudio.play().catch(() => undefined);
+      else if (!play && !sequenceAudio.paused) sequenceAudio.pause();
+    };
     const playClip = (index: number, offset = 0): void => {
       if (index >= sequence.length || !videoSequencePlayer) {
         mixStatus.textContent = 'Video sequence finished';
@@ -2671,6 +2695,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         const initialTimelineTime = startTimes[index] + offset;
         updateTimelinePlayhead(initialTimelineTime);
         void drawLiveLayers(initialTimelineTime);
+        syncSequenceAudio(initialTimelineTime, true);
         player.currentTime = Math.min(
           sequence[index].sourceStart + offset * videoClipSpeed(sequence[index]),
           player.duration || 0,
@@ -2696,6 +2721,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         const time = Math.min(startTimes[index], gapStart + elapsed);
         updateTimelinePlayhead(time);
         void drawLiveLayers(time);
+        syncSequenceAudio(time, true);
         if (elapsed >= gapDuration) {
           videoSequenceTimer = null;
           playClip(index);
@@ -2748,10 +2774,13 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           Math.max(0, player.currentTime - activeClip.sourceStart) / videoClipSpeed(activeClip);
         updateTimelinePlayhead(timelineTime);
         void drawLiveLayers(timelineTime);
+        syncSequenceAudio(timelineTime, !player.paused);
       }
       if (activeClip && player.currentTime >= activeClip.sourceEnd - 0.04) advance();
     });
     player.addEventListener('ended', advance);
+    player.addEventListener('pause', () => syncSequenceAudio(timelinePlayheadTime, false));
+    player.addEventListener('play', () => syncSequenceAudio(timelinePlayheadTime, true));
     startAt(requestedStartTime);
   });
   videoExportButton.addEventListener('click', async () => {
