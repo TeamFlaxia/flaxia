@@ -5,6 +5,7 @@ import {
   audibleAudioTimelineClips,
   audioClipEqSettings,
   audioClipGainEnvelope,
+  audioTrackMixSettings,
   mixAudioTimeline,
   soloAudioTimelineClip,
   splitAudioClipGainEnvelope,
@@ -637,6 +638,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         gainEnvelope: { start: 1, middle: 1, end: 1 },
         trackMuted: false,
         trackSolo: false,
+        trackGain: 1,
+        trackPan: 0,
         muted: false,
       };
       audioClips.push(clip);
@@ -1165,9 +1168,33 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const trackClips = audioClips.filter((clip) => clip.track === track);
       const trackMuted = trackClips.length > 0 && trackClips.every((clip) => clip.trackMuted);
       const trackSolo = trackClips.length > 0 && trackClips.every((clip) => clip.trackSolo);
-      lane.innerHTML = `<div class="studio-audio-track-label" style="flex-basis:64px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:4px"><span>A${track + 1}</span><div class="studio-audio-track-controls" style="display:flex;gap:3px"><button type="button" data-action="mute" aria-pressed="${trackMuted}" title="${trackMuted ? 'Unmute' : 'Mute'} track" style="width:20px;height:16px;padding:0;border:1px solid #3b3d44;border-radius:3px;background:${trackMuted ? '#805c32' : '#24262c'};color:${trackMuted ? '#fff0c2' : '#999'};font-size:9px">M</button><button type="button" data-action="solo" aria-pressed="${trackSolo}" title="${trackSolo ? 'Unsolo' : 'Solo'} track" style="width:20px;height:16px;padding:0;border:1px solid #3b3d44;border-radius:3px;background:${trackSolo ? '#327365' : '#24262c'};color:${trackSolo ? '#d8fff4' : '#999'};font-size:9px">S</button></div></div><div class="studio-audio-lane-canvas" style="width:${contentWidth}px"></div>`;
+      const trackMix = audioTrackMixSettings(trackClips[0] ?? {});
+      lane.innerHTML = `<div class="studio-audio-track-label"><div class="studio-audio-track-heading"><span>A${track + 1}</span><div class="studio-audio-track-controls"><button type="button" data-action="mute" aria-pressed="${trackMuted}" title="${trackMuted ? 'Unmute' : 'Mute'} track">M</button><button type="button" data-action="solo" aria-pressed="${trackSolo}" title="${trackSolo ? 'Unsolo' : 'Solo'} track">S</button></div></div><label class="studio-audio-mixer-control" title="Track gain"><span>G</span><input class="studio-track-gain" type="range" min="0" max="2" step="0.01" value="${trackMix.gain}" aria-label="Track ${track + 1} gain"><output>${Math.round(trackMix.gain * 100)}%</output></label><label class="studio-audio-mixer-control" title="Track pan"><span>P</span><input class="studio-track-pan" type="range" min="-1" max="1" step="0.01" value="${trackMix.pan}" aria-label="Track ${track + 1} pan"><output>${trackMix.pan === 0 ? 'C' : `${Math.round(Math.abs(trackMix.pan) * 100)}%${trackMix.pan < 0 ? 'L' : 'R'}`}</output></label></div><div class="studio-audio-lane-canvas" style="width:${contentWidth}px"></div>`;
       const canvas = lane.querySelector<HTMLElement>('.studio-audio-lane-canvas')!;
       canvas.style.backgroundSize = `${timelinePixelsPerSecond}px 100%`;
+      lane.querySelectorAll<HTMLInputElement>('.studio-audio-mixer-control input').forEach((input) => {
+        input.disabled = trackClips.length === 0;
+      });
+      const updateTrackMix = (input: HTMLInputElement, setting: 'trackGain' | 'trackPan'): void => {
+        const value = Number(input.value);
+        for (const clip of trackClips) clip[setting] = value;
+        const output = input.parentElement?.querySelector('output');
+        if (output) {
+          output.textContent =
+            setting === 'trackGain'
+              ? `${Math.round(value * 100)}%`
+              : value === 0
+                ? 'C'
+                : `${Math.round(Math.abs(value) * 100)}%${value < 0 ? 'L' : 'R'}`;
+        }
+        scheduleAutosave();
+      };
+      lane.querySelector<HTMLInputElement>('.studio-track-gain')?.addEventListener('input', (event) => {
+        updateTrackMix(event.currentTarget as HTMLInputElement, 'trackGain');
+      });
+      lane.querySelector<HTMLInputElement>('.studio-track-pan')?.addEventListener('input', (event) => {
+        updateTrackMix(event.currentTarget as HTMLInputElement, 'trackPan');
+      });
       lane.querySelectorAll<HTMLButtonElement>('.studio-audio-track-controls button').forEach((button) => {
         button.disabled = trackClips.length === 0;
         button.classList.toggle('active', button.dataset.action === 'mute' ? trackMuted : trackSolo);
@@ -1334,6 +1361,16 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         event.preventDefault();
         const canvasRect = canvas.getBoundingClientRect();
         clip.start = snapTimelineTime((event.clientX - canvasRect.left) / timelinePixelsPerSecond, clip.id);
+        if (clip.track !== track) {
+          const destination = audioClips.find((item) => item.id !== clip.id && item.track === track);
+          if (destination) {
+            const trackMix = audioTrackMixSettings(destination);
+            clip.trackGain = trackMix.gain;
+            clip.trackPan = trackMix.pan;
+            clip.trackMuted = destination.trackMuted === true;
+            clip.trackSolo = destination.trackSolo === true;
+          }
+        }
         clip.track = track;
         audioTrackCount = Math.max(audioTrackCount, track + 1);
         select(clip.fileIndex);
@@ -3659,6 +3696,7 @@ const studioCss = `
 .studio-sequence-overlays{position:absolute;z-index:6;inset:6% 8%;width:84%;height:88%;pointer-events:none}
 .studio-composer-preview-controls{display:flex;align-items:center;gap:16px;min-height:38px;padding:4px 18px;border-bottom:1px solid #30333a;background:#15161b;color:#aeb3bd;font-size:10px}.studio-composer-preview-controls label{display:flex;align-items:center;gap:7px;white-space:nowrap}.studio-composer-preview-controls label:last-child{flex:1}.studio-composer-preview-controls input[type=checkbox]{accent-color:#b8ef6a}.studio-composer-preview-controls input[type=range]{flex:1;min-width:80px;max-width:460px;accent-color:#b8ef6a}.studio-composer-preview-controls output{min-width:40px;color:#e9ebef;font-variant-numeric:tabular-nums}
 .studio-video-clip.muted{filter:saturate(.35);border-style:dashed}
+.studio-audio-track-label{box-sizing:border-box;flex:0 0 142px;display:flex;flex-direction:column;justify-content:center;gap:3px;padding:4px 7px}.studio-audio-track-heading{display:flex;align-items:center;justify-content:space-between}.studio-audio-track-controls{display:flex;gap:3px}.studio-audio-track-controls button{width:20px;height:16px;padding:0;border:1px solid #3b3d44;border-radius:3px;background:#24262c;color:#999;font-size:9px}.studio-audio-track-controls button.active,.studio-audio-track-controls button[aria-pressed=true]{background:#327365;color:#d8fff4}.studio-audio-track-controls button[data-action=mute][aria-pressed=true]{background:#805c32;color:#fff0c2}.studio-audio-mixer-control{display:flex;align-items:center;gap:4px;height:12px;color:#888e9a;font-size:8px}.studio-audio-mixer-control input{flex:1;min-width:0;height:10px;margin:0;accent-color:#9bd77b}.studio-audio-mixer-control output{width:28px;color:#b9bec8;text-align:right;font-size:8px;font-variant-numeric:tabular-nums}
 .studio-image-overlay-lane{min-height:42px}.studio-image-overlay-canvas{min-height:41px}.studio-image-overlay-clip{position:absolute;top:5px;height:31px;overflow:hidden;border:1px solid #597b48;border-radius:5px;background:#293b27;color:#e2f2d7;text-align:left;cursor:grab;touch-action:none}.studio-image-overlay-clip.text{border-color:#547c91;background:#243844;color:#dceefa}.studio-image-overlay-clip.active{outline:1px solid #b8ef6a}.studio-image-overlay-clip.hidden{opacity:.45;border-style:dashed}.studio-image-overlay-label{display:block;padding:0 11px;overflow:hidden;line-height:29px;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}.studio-image-overlay-trim{position:absolute;z-index:2;top:0;bottom:0;width:8px;background:#d9efac55;cursor:ew-resize;touch-action:none}.studio-image-overlay-trim:hover{background:#b8ef6a}.studio-image-overlay-trim-left{left:0}.studio-image-overlay-trim-right{right:0}
 .studio-timeline-zoom-control{display:flex;align-items:center;gap:4px;color:var(--studio-muted);font-size:9px;white-space:nowrap}.studio-timeline-zoom-control input{width:76px;accent-color:var(--studio-accent)}.studio-timeline-zoom-control output{min-width:40px;color:#c8ccd4;font-variant-numeric:tabular-nums}
 .studio-video-trim,.studio-audio-trim{position:absolute;z-index:3;top:0;bottom:0;width:9px;background:#d9efac55;cursor:ew-resize;touch-action:none}.studio-video-trim:hover,.studio-audio-trim:hover{background:#b8ef6a}.studio-video-trim-left,.studio-audio-trim-left{left:0;border-radius:4px 0 0 4px}.studio-video-trim-right,.studio-audio-trim-right{right:0;border-radius:0 4px 4px 0}.studio-video-clip-label{display:block;position:relative;z-index:1;padding:0 11px;overflow:hidden;line-height:33px;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}

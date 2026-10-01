@@ -7,7 +7,12 @@ import {
   VAULT_SALT_BYTES,
   type VaultItemCiphertext,
 } from '../vault/primitives.ts';
-import { type AudioTimelineClip, audioClipEqSettings, audioClipGainEnvelope } from './audio-mixer.ts';
+import {
+  type AudioTimelineClip,
+  audioClipEqSettings,
+  audioClipGainEnvelope,
+  audioTrackMixSettings,
+} from './audio-mixer.ts';
 import { normalizeImageLayerAdjustments } from './image-adjustments.ts';
 
 const DATABASE_NAME = 'flaxia-studio';
@@ -223,6 +228,8 @@ function decodeFiles(plaintext: Uint8Array): {
       pan: Number.isFinite(clip.pan) ? Math.max(-1, Math.min(1, clip.pan)) : 0,
       trackMuted: clip.trackMuted === true,
       trackSolo: clip.trackSolo === true,
+      trackGain: audioTrackMixSettings(clip).gain,
+      trackPan: audioTrackMixSettings(clip).pan,
       ...audioClipEqSettings(clip),
       gainEnvelope: audioClipGainEnvelope(clip),
     }));

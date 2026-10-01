@@ -7,6 +7,7 @@ import {
   audioClipEqSettings,
   audioClipGainAutomation,
   audioClipGainEnvelope,
+  audioTrackMixSettings,
   soloAudioTimelineClip,
   splitAudioClipGainEnvelope,
 } from '../src/lib/editor/audio-mixer.ts';
@@ -87,6 +88,17 @@ describe('audio track mute and solo', () => {
       audibleAudioTimelineClips(clips).map(({ id }) => id),
       ['first', 'second'],
     );
+  });
+});
+
+describe('audio track mixer controls', () => {
+  it('defaults track gain and pan to unity and center, and clamps saved values', () => {
+    assert.deepEqual(audioTrackMixSettings({}), { gain: 1, pan: 0 });
+    assert.deepEqual(audioTrackMixSettings({ trackGain: 3, trackPan: -2 }), { gain: 2, pan: -1 });
+    assert.deepEqual(audioTrackMixSettings({ trackGain: Number.NaN, trackPan: Number.POSITIVE_INFINITY }), {
+      gain: 1,
+      pan: 0,
+    });
   });
 });
 

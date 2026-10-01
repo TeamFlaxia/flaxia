@@ -15,7 +15,26 @@ export interface AudioTimelineClip {
   gainEnvelope?: AudioGainEnvelope;
   trackMuted?: boolean;
   trackSolo?: boolean;
+  trackGain?: number;
+  trackPan?: number;
   muted: boolean;
+}
+
+/** Normalize the shared mixer controls stored on each clip in a track. */
+export function audioTrackMixSettings(clip: Pick<AudioTimelineClip, 'trackGain' | 'trackPan'>): {
+  gain: number;
+  pan: number;
+} {
+  return {
+    gain:
+      typeof clip.trackGain === 'number' && Number.isFinite(clip.trackGain)
+        ? Math.max(0, Math.min(2, clip.trackGain))
+        : 1,
+    pan:
+      typeof clip.trackPan === 'number' && Number.isFinite(clip.trackPan)
+        ? Math.max(-1, Math.min(1, clip.trackPan))
+        : 0,
+  };
 }
 
 /** Apply clip mute plus track mute/solo state consistently to preview and export. */
@@ -220,7 +239,11 @@ export async function mixAudioTimeline(
       const startAt = Math.max(0, clip.start);
       const fadeIn = Math.min(clipDuration, Math.max(0, clip.fadeIn));
       const fadeOut = Math.min(Math.max(0, clipDuration - fadeIn), Math.max(0, clip.fadeOut));
-      const automation = audioClipGainAutomation({ ...clip, fadeIn, fadeOut }, clipDuration);
+      const trackMix = audioTrackMixSettings(clip);
+      const automation = audioClipGainAutomation(
+        { ...clip, gain: clip.gain * trackMix.gain, fadeIn, fadeOut },
+        clipDuration,
+      );
       automation.forEach((point, index) => {
         const time = startAt + point.time;
         if (index === 0) gain.gain.setValueAtTime(point.gain, time);
@@ -231,7 +254,7 @@ export async function mixAudioTimeline(
       midEq.connect(highEq);
       highEq.connect(gain);
       const panner = offline.createStereoPanner();
-      panner.pan.value = Math.max(-1, Math.min(1, clip.pan));
+      panner.pan.value = Math.max(-1, Math.min(1, clip.pan + trackMix.pan));
       gain.connect(panner);
       panner.connect(offline.destination);
       source.start(startAt, sourceStart, clipDuration);
