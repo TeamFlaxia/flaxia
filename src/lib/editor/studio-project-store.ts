@@ -61,6 +61,10 @@ export interface StudioImageLayer {
   brightness?: number;
   contrast?: number;
   saturation?: number;
+  cropX?: number;
+  cropY?: number;
+  cropWidth?: number;
+  cropHeight?: number;
   visible: boolean;
   blend: 'normal' | 'multiply' | 'screen';
   text?: string;
@@ -244,26 +248,42 @@ function decodeFiles(plaintext: Uint8Array): {
               (Number.isFinite(layer.fontSize) && layer.fontSize >= 8 && layer.fontSize <= 256)) &&
             (layer.fontFamily === undefined || ['sans-serif', 'serif', 'monospace'].includes(layer.fontFamily)))),
     )
-    .map((layer) => ({
-      ...layer,
-      kind: (layer.kind === 'text' ? 'text' : 'image') as StudioImageLayer['kind'],
-      x: Math.max(-8192, Math.min(8192, layer.x)),
-      y: Math.max(-8192, Math.min(8192, layer.y)),
-      opacity: Math.max(0, Math.min(1, layer.opacity)),
-      brightness:
-        typeof layer.brightness === 'number' && Number.isFinite(layer.brightness)
-          ? Math.max(0, Math.min(200, layer.brightness))
-          : 100,
-      contrast:
-        typeof layer.contrast === 'number' && Number.isFinite(layer.contrast)
-          ? Math.max(0, Math.min(200, layer.contrast))
-          : 100,
-      saturation:
-        typeof layer.saturation === 'number' && Number.isFinite(layer.saturation)
-          ? Math.max(0, Math.min(200, layer.saturation))
-          : 100,
-      rotation: Number.isFinite(layer.rotation) ? Math.max(-3600, Math.min(3600, layer.rotation)) : 0,
-    }));
+    .map((layer) => {
+      const cropX =
+        typeof layer.cropX === 'number' && Number.isFinite(layer.cropX) ? Math.max(0, Math.min(0.99, layer.cropX)) : 0;
+      const cropY =
+        typeof layer.cropY === 'number' && Number.isFinite(layer.cropY) ? Math.max(0, Math.min(0.99, layer.cropY)) : 0;
+      return {
+        ...layer,
+        kind: (layer.kind === 'text' ? 'text' : 'image') as StudioImageLayer['kind'],
+        x: Math.max(-8192, Math.min(8192, layer.x)),
+        y: Math.max(-8192, Math.min(8192, layer.y)),
+        opacity: Math.max(0, Math.min(1, layer.opacity)),
+        brightness:
+          typeof layer.brightness === 'number' && Number.isFinite(layer.brightness)
+            ? Math.max(0, Math.min(200, layer.brightness))
+            : 100,
+        contrast:
+          typeof layer.contrast === 'number' && Number.isFinite(layer.contrast)
+            ? Math.max(0, Math.min(200, layer.contrast))
+            : 100,
+        saturation:
+          typeof layer.saturation === 'number' && Number.isFinite(layer.saturation)
+            ? Math.max(0, Math.min(200, layer.saturation))
+            : 100,
+        cropX,
+        cropY,
+        cropWidth:
+          typeof layer.cropWidth === 'number' && Number.isFinite(layer.cropWidth)
+            ? Math.max(0.01, Math.min(1 - cropX, layer.cropWidth))
+            : 1 - cropX,
+        cropHeight:
+          typeof layer.cropHeight === 'number' && Number.isFinite(layer.cropHeight)
+            ? Math.max(0.01, Math.min(1 - cropY, layer.cropHeight))
+            : 1 - cropY,
+        rotation: Number.isFinite(layer.rotation) ? Math.max(-3600, Math.min(3600, layer.rotation)) : 0,
+      };
+    });
   return { files, audioClips, videoClips, imageLayers };
 }
 

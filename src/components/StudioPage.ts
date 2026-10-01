@@ -1,5 +1,5 @@
 import { type AudioTimelineClip, mixAudioTimeline } from '../lib/editor/audio-mixer.ts';
-import { imageLayerCanvasFilter } from '../lib/editor/image-adjustments.ts';
+import { imageLayerCanvasFilter, imageLayerSourceRect } from '../lib/editor/image-adjustments.ts';
 import { saveStudioHandoff } from '../lib/editor/studio-handoff.js';
 import {
   exportStudioProject,
@@ -1291,7 +1291,18 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           context.globalCompositeOperation = layer.blend === 'normal' ? 'source-over' : layer.blend;
           context.translate(layer.x + layer.width / 2, layer.y + layer.height / 2);
           context.rotate((layer.rotation * Math.PI) / 180);
-          context.drawImage(bitmap, -layer.width / 2, -layer.height / 2, layer.width, layer.height);
+          const source = imageLayerSourceRect(layer, bitmap.width, bitmap.height);
+          context.drawImage(
+            bitmap,
+            source.x,
+            source.y,
+            source.width,
+            source.height,
+            -layer.width / 2,
+            -layer.height / 2,
+            layer.width,
+            layer.height,
+          );
           context.restore();
         }
         const selected = withSelection ? imageLayers.find((layer) => layer.id === selectedImageLayerId) : null;
@@ -1335,7 +1346,11 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         layer.kind === 'image'
           ? `<div class="studio-composer-title">IMAGE ADJUSTMENTS</div><label class="studio-composer-range">Brightness <output data-value="brightness">${Math.round(layer.brightness ?? 100)}%</output><input data-prop="brightness" type="range" min="0" max="200" value="${Math.round(layer.brightness ?? 100)}"></label><label class="studio-composer-range">Contrast <output data-value="contrast">${Math.round(layer.contrast ?? 100)}%</output><input data-prop="contrast" type="range" min="0" max="200" value="${Math.round(layer.contrast ?? 100)}"></label><label class="studio-composer-range">Saturation <output data-value="saturation">${Math.round(layer.saturation ?? 100)}%</output><input data-prop="saturation" type="range" min="0" max="200" value="${Math.round(layer.saturation ?? 100)}"></label>`
           : '';
-      properties.innerHTML = `<div class="studio-composer-title">TRANSFORM</div><div class="studio-composer-layer-name">${escapeHtml(layerName)}</div>${textControls}${adjustmentControls}<div class="studio-composer-grid"><label>X<input data-prop="x" type="number" value="${Math.round(layer.x)}"></label><label>Y<input data-prop="y" type="number" value="${Math.round(layer.y)}"></label><label>Width<input data-prop="width" type="number" min="1" max="4096" value="${Math.round(layer.width)}"></label><label>Height<input data-prop="height" type="number" min="1" max="4096" value="${Math.round(layer.height)}"></label></div><label class="studio-composer-range">Opacity <output data-value="opacity">${Math.round(layer.opacity * 100)}%</output><input data-prop="opacity" type="range" min="0" max="100" value="${Math.round(layer.opacity * 100)}"></label><label class="studio-composer-field">Rotation<input data-prop="rotation" type="number" min="-360" max="360" value="${Math.round(layer.rotation)}">°</label><label class="studio-composer-field">Blend mode<select data-prop="blend"><option value="normal" ${layer.blend === 'normal' ? 'selected' : ''}>Normal</option><option value="multiply" ${layer.blend === 'multiply' ? 'selected' : ''}>Multiply</option><option value="screen" ${layer.blend === 'screen' ? 'selected' : ''}>Screen</option></select></label><div class="studio-composer-order"><button class="studio-composer-down" type="button">Send backward</button><button class="studio-composer-up" type="button">Bring forward</button></div><button class="studio-composer-remove" type="button">Remove layer</button>`;
+      const cropControls =
+        layer.kind === 'image'
+          ? `<div class="studio-composer-title">SOURCE CROP</div><label class="studio-composer-range">Left <output data-value="cropX">${Math.round((layer.cropX ?? 0) * 100)}%</output><input data-prop="cropX" type="range" min="0" max="99" value="${Math.round((layer.cropX ?? 0) * 100)}"></label><label class="studio-composer-range">Top <output data-value="cropY">${Math.round((layer.cropY ?? 0) * 100)}%</output><input data-prop="cropY" type="range" min="0" max="99" value="${Math.round((layer.cropY ?? 0) * 100)}"></label><label class="studio-composer-range">Width <output data-value="cropWidth">${Math.round((layer.cropWidth ?? 1) * 100)}%</output><input data-prop="cropWidth" type="range" min="1" max="100" value="${Math.round((layer.cropWidth ?? 1) * 100)}"></label><label class="studio-composer-range">Height <output data-value="cropHeight">${Math.round((layer.cropHeight ?? 1) * 100)}%</output><input data-prop="cropHeight" type="range" min="1" max="100" value="${Math.round((layer.cropHeight ?? 1) * 100)}"></label>`
+          : '';
+      properties.innerHTML = `<div class="studio-composer-title">TRANSFORM</div><div class="studio-composer-layer-name">${escapeHtml(layerName)}</div>${textControls}${adjustmentControls}${cropControls}<div class="studio-composer-grid"><label>X<input data-prop="x" type="number" value="${Math.round(layer.x)}"></label><label>Y<input data-prop="y" type="number" value="${Math.round(layer.y)}"></label><label>Width<input data-prop="width" type="number" min="1" max="4096" value="${Math.round(layer.width)}"></label><label>Height<input data-prop="height" type="number" min="1" max="4096" value="${Math.round(layer.height)}"></label></div><label class="studio-composer-range">Opacity <output data-value="opacity">${Math.round(layer.opacity * 100)}%</output><input data-prop="opacity" type="range" min="0" max="100" value="${Math.round(layer.opacity * 100)}"></label><label class="studio-composer-field">Rotation<input data-prop="rotation" type="number" min="-360" max="360" value="${Math.round(layer.rotation)}">°</label><label class="studio-composer-field">Blend mode<select data-prop="blend"><option value="normal" ${layer.blend === 'normal' ? 'selected' : ''}>Normal</option><option value="multiply" ${layer.blend === 'multiply' ? 'selected' : ''}>Multiply</option><option value="screen" ${layer.blend === 'screen' ? 'selected' : ''}>Screen</option></select></label><div class="studio-composer-order"><button class="studio-composer-down" type="button">Send backward</button><button class="studio-composer-up" type="button">Bring forward</button></div><button class="studio-composer-remove" type="button">Remove layer</button>`;
       const updateProperty = (property: string, value: string): void => {
         if (property === 'blend') layer.blend = value as StudioImageLayer['blend'];
         else if (property === 'opacity') {
@@ -1345,6 +1360,19 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           const adjustment = Math.max(0, Math.min(200, Number(value) || 0));
           layer[property] = adjustment;
           properties.querySelector(`[data-value="${property}"]`)!.textContent = `${adjustment}%`;
+        } else if (property === 'cropX' || property === 'cropY') {
+          const crop = Math.max(0, Math.min(0.99, (Number(value) || 0) / 100));
+          if (property === 'cropX') {
+            layer.cropX = crop;
+            layer.cropWidth = Math.max(0.01, Math.min(layer.cropWidth ?? 1, 1 - crop));
+          } else {
+            layer.cropY = crop;
+            layer.cropHeight = Math.max(0.01, Math.min(layer.cropHeight ?? 1, 1 - crop));
+          }
+        } else if (property === 'cropWidth' || property === 'cropHeight') {
+          const offset = property === 'cropWidth' ? (layer.cropX ?? 0) : (layer.cropY ?? 0);
+          const crop = Math.max(0.01, Math.min(1 - offset, (Number(value) || 1) / 100));
+          layer[property] = crop;
         } else if (property === 'x' || property === 'y') {
           layer[property] = Math.max(-8192, Math.min(8192, Number(value) || 0));
         } else if (property === 'width' || property === 'height') {
@@ -1363,6 +1391,18 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           ['sans-serif', 'serif', 'monospace'].includes(value)
         ) {
           layer.fontFamily = value as NonNullable<StudioImageLayer['fontFamily']>;
+        }
+        for (const cropProperty of ['cropX', 'cropY', 'cropWidth', 'cropHeight'] as const) {
+          const control = properties.querySelector<HTMLInputElement>(`input[data-prop="${cropProperty}"]`);
+          if (!control) continue;
+          const cropValue =
+            layer[cropProperty] ?? (cropProperty === 'cropWidth' || cropProperty === 'cropHeight' ? 1 : 0);
+          const offset =
+            cropProperty === 'cropWidth' ? (layer.cropX ?? 0) : cropProperty === 'cropHeight' ? (layer.cropY ?? 0) : 0;
+          control.max =
+            cropProperty === 'cropX' || cropProperty === 'cropY' ? '99' : String(Math.round((1 - offset) * 100));
+          control.value = String(Math.round(cropValue * 100));
+          properties.querySelector(`[data-value="${cropProperty}"]`)!.textContent = `${control.value}%`;
         }
         renderLayers();
         void draw();
@@ -1476,6 +1516,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           brightness: 100,
           contrast: 100,
           saturation: 100,
+          cropX: 0,
+          cropY: 0,
+          cropWidth: 1,
+          cropHeight: 1,
           visible: true,
           blend: 'normal',
         };
