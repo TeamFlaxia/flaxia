@@ -2,6 +2,7 @@ import { type AudioTimelineClip, audibleAudioTimelineClips, mixAudioTimeline } f
 import { probeFFmpegStreams, runFFmpeg } from './ffmpeg-client.ts';
 import { drawStudioImageLayer } from './image-layer-canvas.ts';
 import type { StudioImageLayer, StudioVideoClip } from './studio-project-store.ts';
+import { rippleOverlappingVideoClips } from './video-timeline.ts';
 
 const MAX_INPUT_BYTES = 80 * 1024 * 1024;
 const MAX_DURATION_SECONDS = 180;
@@ -183,7 +184,8 @@ export async function renderVideoSequence(
   imageLayers: StudioImageLayer[],
   onProgress?: (ratio: number) => void,
 ): Promise<File> {
-  const ordered = [...clips].sort((left, right) => left.start - right.start);
+  const ordered = clips.map((clip) => ({ ...clip })).sort((left, right) => left.start - right.start);
+  rippleOverlappingVideoClips(ordered);
   if (ordered.length === 0) throw new Error('Add a video clip to the timeline first');
   if (ordered.length > 12) throw new Error('Video sequences support up to 12 clips per export');
   const sourceDurations = ordered.map((clip) => clip.sourceEnd - clip.sourceStart);

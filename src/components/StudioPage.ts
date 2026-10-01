@@ -32,6 +32,7 @@ import {
 } from '../lib/editor/studio-project-store.js';
 import { probeVideo } from '../lib/editor/video-editor.ts';
 import { renderVideoSequence, videoClipOpacityAt } from '../lib/editor/video-sequence.ts';
+import { rippleOverlappingVideoClips } from '../lib/editor/video-timeline.ts';
 import { computeAudioPeaks } from '../lib/editor/waveform.ts';
 import { getVaultKey, tryDeviceUnlock } from '../lib/vault/session.js';
 import type { ZipExecutorHandle } from '../lib/zip-executor.js';
@@ -313,7 +314,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       <section class="studio-center">
         <div class="studio-tabs"><button class="studio-tab studio-workspace-tab active" type="button">⌂ &nbsp;Workspace</button><div class="studio-document-tabs"></div><button class="studio-tab-open" type="button" aria-label="Open files">＋</button><span class="studio-center-spacer"></span><button class="studio-shortcut" type="button" title="Import files">⌘ O</button></div>
         <div class="studio-stage"><div class="studio-empty"><div class="studio-empty-art"><div class="studio-orbit studio-orbit-one"></div><div class="studio-orbit studio-orbit-two"></div><div class="studio-empty-glyph">✳</div><span class="studio-float studio-float-image">▧</span><span class="studio-float studio-float-audio">♫</span><span class="studio-float studio-float-code">&lt;/&gt;</span><span class="studio-float studio-float-game">◇</span></div><h1>Your ideas, in one studio.</h1><p>Bring images, sound, video, code, and games into one creative workspace.</p><button class="studio-button studio-open studio-primary" type="button">Import files</button><small>or drop files anywhere in the workspace</small></div><div class="studio-preview"></div></div>
-        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag to arrange · trim edges · snaps to playhead and clip edges</span><button class="studio-history-undo" type="button" disabled title="Undo (⌘Z / Ctrl+Z)">↶</button><button class="studio-history-redo" type="button" disabled title="Redo (⌘⇧Z / Ctrl+Y)">↷</button><button class="studio-video-split" type="button" disabled>Split selected clip</button><button class="studio-clip-duplicate" type="button" disabled>Duplicate clip</button><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-audio-solo" type="button" disabled>▶ Solo clip</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
+        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag to arrange · trims ripple · clips snap to playhead and edges</span><button class="studio-history-undo" type="button" disabled title="Undo (⌘Z / Ctrl+Z)">↶</button><button class="studio-history-redo" type="button" disabled title="Redo (⌘⇧Z / Ctrl+Y)">↷</button><button class="studio-video-split" type="button" disabled>Split selected clip</button><button class="studio-clip-duplicate" type="button" disabled>Duplicate clip</button><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-audio-solo" type="button" disabled>▶ Solo clip</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
       </section>
       <aside class="studio-inspector"><div class="studio-inspector-tabs"><span class="active">Inspector</span><span>Publish</span></div><div class="studio-inspector-body"><div class="studio-inspector-icon">✳</div><h2>Make something living</h2><p>Flaxia posts can hold playable games and interactive media. Import an asset to preview, edit, and prepare it for sharing.</p><div class="studio-inspector-divider"></div><div class="studio-format-title">SUPPORTED CREATIVE FILES</div><div class="studio-format-list"><span>IMAGE</span><small>PNG · JPG · GIF · WEBP</small><span>VIDEO</span><small>MP4 · WEBM · MOV</small><span>AUDIO</span><small>MP3 · WAV · OGG · M4A</small><span>CODE / GAME</span><small>HTML · JS · ZIP · SWF · WASM</small></div><div class="studio-local-badge">◉ &nbsp;Private by default</div></div></aside>
     </div>
@@ -712,6 +713,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
             }
           }
         }
+        rippleOverlappingVideoClips(videoClips);
         renderVideoTimeline();
         renderInspector();
         scheduleAutosave();
@@ -977,6 +979,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           const finish = (): void => {
             handle.removeEventListener('pointermove', updateClip);
             manuallyPlacedVideoClips.add(clip.id);
+            rippleOverlappingVideoClips(videoClips);
             select(clip.fileIndex);
             selectedVideoClipId = clip.id;
             selectedAudioClipId = null;
@@ -1034,6 +1037,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       event.preventDefault();
       const rect = canvas.getBoundingClientRect();
       clip.start = snapTimelineTime((event.clientX - rect.left) / timelinePixelsPerSecond, clip.id);
+      rippleOverlappingVideoClips(videoClips);
       manuallyPlacedVideoClips.add(clip.id);
       select(clip.fileIndex);
       selectedVideoClipId = clip.id;
@@ -1494,6 +1498,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           const value = Number(input.value);
           if (!Number.isFinite(value)) return;
           set(value);
+          rippleOverlappingVideoClips(videoClips);
           renderVideoTimeline();
           renderInspector();
           scheduleAutosave();
@@ -1514,6 +1519,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         const speed = Number((event.currentTarget as HTMLSelectElement).value);
         if (![0.5, 0.75, 1, 1.25, 1.5, 2].includes(speed)) return;
         videoClip.speed = speed;
+        rippleOverlappingVideoClips(videoClips);
         stopVideoSequence();
         renderVideoTimeline();
         renderInspector();
@@ -3140,6 +3146,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       files = project.files;
       audioClips = project.audioClips.filter((clip) => clip.track < 8 && clip.fileIndex < files.length);
       videoClips = project.videoClips.filter((clip) => clip.fileIndex < files.length);
+      rippleOverlappingVideoClips(videoClips);
       imageLayers = project.imageLayers.filter(
         (layer) =>
           layer.kind === 'text' || (layer.fileIndex < files.length && kindOf(files[layer.fileIndex]) === 'image'),
@@ -3196,6 +3203,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       files = restored.files;
       audioClips = restored.audioClips;
       videoClips = restored.videoClips;
+      rippleOverlappingVideoClips(videoClips);
       imageLayers = restored.imageLayers;
       openTabs = [];
       selectedImageLayerId = imageLayers.at(-1)?.id ?? null;
@@ -3546,7 +3554,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       stopVideoSequence();
       return;
     }
-    const sequence = [...videoClips].sort((left, right) => left.start - right.start);
+    const sequence = videoClips.map((clip) => ({ ...clip })).sort((left, right) => left.start - right.start);
+    rippleOverlappingVideoClips(sequence);
     if (sequence.length === 0) return;
     let sequenceAudio: HTMLAudioElement | null = null;
     if (audioClips.some((clip) => !clip.muted && clip.sourceEnd > clip.sourceStart)) {
