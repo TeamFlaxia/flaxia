@@ -1,6 +1,6 @@
 import { type AudioTimelineClip, mixAudioTimeline } from './audio-mixer.ts';
 import { probeFFmpegStreams, runFFmpeg } from './ffmpeg-client.ts';
-import { imageLayerCanvasFilter, imageLayerSourceRect } from './image-adjustments.ts';
+import { drawStudioImageLayer } from './image-layer-canvas.ts';
 import type { StudioImageLayer, StudioVideoClip } from './studio-project-store.ts';
 
 const MAX_INPUT_BYTES = 80 * 1024 * 1024;
@@ -42,48 +42,9 @@ async function renderLayerOverlayFrame(
   if (!context) throw new Error('Could not create the video overlay canvas');
   const scale = 2 / 3;
   for (const layer of layers) {
-    context.save();
-    context.globalAlpha = layer.opacity;
-    context.globalCompositeOperation = layer.blend === 'normal' ? 'source-over' : layer.blend;
-    context.translate(280 + (layer.x + layer.width / 2) * scale, (layer.y + layer.height / 2) * scale);
-    context.rotate((layer.rotation * Math.PI) / 180);
-    if (layer.kind === 'text') {
-      context.beginPath();
-      context.rect((-layer.width * scale) / 2, (-layer.height * scale) / 2, layer.width * scale, layer.height * scale);
-      context.clip();
-      const fontSize = (layer.fontSize ?? 72) * scale;
-      context.fillStyle = layer.color ?? '#ffffff';
-      context.font = `${fontSize}px ${layer.fontFamily ?? 'sans-serif'}`;
-      context.textBaseline = 'middle';
-      (layer.text ?? '')
-        .split('\n')
-        .slice(0, 20)
-        .forEach((line, index) => {
-          context.fillText(
-            line,
-            (-layer.width * scale) / 2,
-            (-layer.height * scale) / 2 + fontSize * 0.7 + index * fontSize * 1.2,
-            layer.width * scale,
-          );
-        });
-    } else {
-      const bitmap = bitmaps.get(layer.fileIndex);
-      if (!bitmap) throw new Error('A video overlay layer is not an image');
-      context.filter = imageLayerCanvasFilter(layer);
-      const source = imageLayerSourceRect(layer, bitmap.width, bitmap.height);
-      context.drawImage(
-        bitmap,
-        source.x,
-        source.y,
-        source.width,
-        source.height,
-        (-layer.width * scale) / 2,
-        (-layer.height * scale) / 2,
-        layer.width * scale,
-        layer.height * scale,
-      );
-    }
-    context.restore();
+    const bitmap = layer.kind === 'image' ? bitmaps.get(layer.fileIndex) : null;
+    if (layer.kind === 'image' && !bitmap) throw new Error('A video overlay layer is not an image');
+    drawStudioImageLayer(context, layer, bitmap ?? null, { scale, offsetX: 280 });
   }
   const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(

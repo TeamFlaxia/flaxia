@@ -1,5 +1,6 @@
 import { type AudioTimelineClip, mixAudioTimeline } from '../lib/editor/audio-mixer.ts';
-import { imageLayerCanvasFilter, imageLayerOpacityAt, imageLayerSourceRect } from '../lib/editor/image-adjustments.ts';
+import { imageLayerOpacityAt } from '../lib/editor/image-adjustments.ts';
+import { drawStudioImageLayer } from '../lib/editor/image-layer-canvas.ts';
 import { saveStudioHandoff } from '../lib/editor/studio-handoff.js';
 import {
   exportStudioProject,
@@ -144,6 +145,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let mixPreview: HTMLAudioElement | null = null;
   let videoSequencePlayer: HTMLVideoElement | null = null;
   let videoSequenceUrl: string | null = null;
+  let videoSequenceOverlayCanvas: HTMLCanvasElement | null = null;
+  let videoSequenceOverlayRevision = 0;
+  const videoSequenceOverlayBitmaps = new Map<number, Promise<ImageBitmap>>();
   let videoSequenceIndex = -1;
   let videoSequenceTimer: ReturnType<typeof setTimeout> | null = null;
   let timelinePixelsPerSecond = 42;
@@ -292,6 +296,13 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const stopVideoSequence = (): void => {
     if (videoSequenceTimer) clearTimeout(videoSequenceTimer);
     videoSequenceTimer = null;
+    videoSequenceOverlayRevision++;
+    videoSequenceOverlayCanvas?.remove();
+    videoSequenceOverlayCanvas = null;
+    for (const bitmapPromise of videoSequenceOverlayBitmaps.values()) {
+      void bitmapPromise.then((bitmap) => bitmap.close()).catch(() => undefined);
+    }
+    videoSequenceOverlayBitmaps.clear();
     videoSequencePlayer?.pause();
     videoSequencePlayer?.remove();
     videoSequencePlayer = null;
@@ -1629,54 +1640,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           if (!isLayerVisibleAt(layer, previewTime)) continue;
           const layerOpacity =
             previewTime === null ? layer.opacity : imageLayerOpacityAt(layer, previewTime, previewDuration());
-          if (layer.kind === 'text') {
-            context.save();
-            context.globalAlpha = layerOpacity;
-            context.globalCompositeOperation = layer.blend === 'normal' ? 'source-over' : layer.blend;
-            context.translate(layer.x + layer.width / 2, layer.y + layer.height / 2);
-            context.rotate((layer.rotation * Math.PI) / 180);
-            context.beginPath();
-            context.rect(-layer.width / 2, -layer.height / 2, layer.width, layer.height);
-            context.clip();
-            const fontSize = layer.fontSize ?? 72;
-            context.fillStyle = layer.color ?? '#ffffff';
-            context.font = `${fontSize}px ${layer.fontFamily ?? 'sans-serif'}`;
-            context.textBaseline = 'middle';
-            (layer.text ?? '')
-              .split('\n')
-              .slice(0, 20)
-              .forEach((line, index) => {
-                context.fillText(
-                  line,
-                  -layer.width / 2,
-                  -layer.height / 2 + fontSize * 0.7 + index * fontSize * 1.2,
-                  layer.width,
-                );
-              });
-            context.restore();
-            continue;
-          }
-          const bitmap = await getBitmap(layer.fileIndex);
+          const bitmap = layer.kind === 'image' ? await getBitmap(layer.fileIndex) : null;
           if (revision !== imageDrawRevision) return;
-          context.save();
-          context.filter = imageLayerCanvasFilter(layer);
-          context.globalAlpha = layerOpacity;
-          context.globalCompositeOperation = layer.blend === 'normal' ? 'source-over' : layer.blend;
-          context.translate(layer.x + layer.width / 2, layer.y + layer.height / 2);
-          context.rotate((layer.rotation * Math.PI) / 180);
-          const source = imageLayerSourceRect(layer, bitmap.width, bitmap.height);
-          context.drawImage(
-            bitmap,
-            source.x,
-            source.y,
-            source.width,
-            source.height,
-            -layer.width / 2,
-            -layer.height / 2,
-            layer.width,
-            layer.height,
-          );
-          context.restore();
+          drawStudioImageLayer(context, layer, bitmap, { opacity: layerOpacity });
         }
         const selected =
           withSelection &&
@@ -2633,6 +2599,44 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     player.playsInline = true;
     player.setAttribute('aria-label', 'Video sequence preview');
     stage.appendChild(player);
+    const overlayCanvas = document.createElement('canvas');
+    overlayCanvas.className = 'studio-sequence-overlays';
+    overlayCanvas.width = 1280;
+    overlayCanvas.height = 720;
+    overlayCanvas.setAttribute('aria-hidden', 'true');
+    stage.appendChild(overlayCanvas);
+    videoSequenceOverlayCanvas = overlayCanvas;
+    const overlayContext = overlayCanvas.getContext('2d');
+    const drawLiveLayers = async (time: number): Promise<void> => {
+      if (!overlayContext || !videoSequenceOverlayCanvas) return;
+      const revision = ++videoSequenceOverlayRevision;
+      overlayContext.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      for (const layer of imageLayers) {
+        if (!layer.visible || time < (layer.start ?? 0) || time >= (layer.end ?? sequenceEnd)) continue;
+        let bitmap: ImageBitmap | null = null;
+        if (layer.kind === 'image') {
+          let bitmapPromise = videoSequenceOverlayBitmaps.get(layer.fileIndex);
+          if (!bitmapPromise) {
+            const file = files[layer.fileIndex];
+            if (!file) continue;
+            bitmapPromise = createImageBitmap(file);
+            videoSequenceOverlayBitmaps.set(layer.fileIndex, bitmapPromise);
+            void bitmapPromise.catch(() => videoSequenceOverlayBitmaps.delete(layer.fileIndex));
+          }
+          try {
+            bitmap = await bitmapPromise;
+          } catch {
+            continue;
+          }
+        }
+        if (revision !== videoSequenceOverlayRevision || !videoSequenceOverlayCanvas) return;
+        drawStudioImageLayer(overlayContext, layer, bitmap, {
+          scale: 2 / 3,
+          offsetX: 280,
+          opacity: imageLayerOpacityAt(layer, time, sequenceEnd),
+        });
+      }
+    };
     videoSequencePlayer = player;
     videoPlayButton.textContent = '■ Stop preview';
     let activeClip: StudioVideoClip | null = null;
@@ -2664,6 +2668,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       player.onloadedmetadata = () => {
         if (videoSequenceIndex !== index) return;
         advancing = false;
+        const initialTimelineTime = startTimes[index] + offset;
+        updateTimelinePlayhead(initialTimelineTime);
+        void drawLiveLayers(initialTimelineTime);
         player.currentTime = Math.min(
           sequence[index].sourceStart + offset * videoClipSpeed(sequence[index]),
           player.duration || 0,
@@ -2673,6 +2680,30 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         });
       };
       mixStatus.textContent = `Video ${index + 1} / ${sequence.length}`;
+    };
+    const waitThroughGap = (index: number, gapStart: number, gapDuration: number): void => {
+      videoSequenceIndex = index;
+      player.pause();
+      player.removeAttribute('src');
+      player.load();
+      if (videoSequenceUrl) URL.revokeObjectURL(videoSequenceUrl);
+      videoSequenceUrl = null;
+      player.style.visibility = 'hidden';
+      mixStatus.textContent = `Gap · ${gapDuration.toFixed(1)}s`;
+      const gapStartedAt = performance.now();
+      const updateGap = (): void => {
+        const elapsed = Math.min(gapDuration, (performance.now() - gapStartedAt) / 1000);
+        const time = Math.min(startTimes[index], gapStart + elapsed);
+        updateTimelinePlayhead(time);
+        void drawLiveLayers(time);
+        if (elapsed >= gapDuration) {
+          videoSequenceTimer = null;
+          playClip(index);
+          return;
+        }
+        videoSequenceTimer = setTimeout(updateGap, Math.min(50, (gapDuration - elapsed) * 1000));
+      };
+      videoSequenceTimer = setTimeout(updateGap, Math.min(50, gapDuration * 1000));
     };
     playAt = (index: number): void => {
       if (index >= sequence.length || !videoSequencePlayer) {
@@ -2685,18 +2716,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         playClip(index);
         return;
       }
-      videoSequenceIndex = index;
-      player.pause();
-      player.removeAttribute('src');
-      player.load();
-      if (videoSequenceUrl) URL.revokeObjectURL(videoSequenceUrl);
-      videoSequenceUrl = null;
-      player.style.visibility = 'hidden';
-      mixStatus.textContent = `Gap · ${gap.toFixed(1)}s`;
-      videoSequenceTimer = setTimeout(() => {
-        videoSequenceTimer = null;
-        playClip(index);
-      }, gap * 1000);
+      waitThroughGap(index, previousEnd, gap);
     };
     const advance = (): void => {
       if (videoSequenceIndex >= 0 && !advancing) {
@@ -2716,27 +2736,18 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       videoSequenceIndex = index;
       const timeIntoSegment = time - startTimes[index];
       if (timeIntoSegment < 0) {
-        player.pause();
-        player.removeAttribute('src');
-        player.load();
-        if (videoSequenceUrl) URL.revokeObjectURL(videoSequenceUrl);
-        videoSequenceUrl = null;
-        player.style.visibility = 'hidden';
-        mixStatus.textContent = `Gap · ${(-timeIntoSegment).toFixed(1)}s`;
-        videoSequenceTimer = setTimeout(() => {
-          videoSequenceTimer = null;
-          playClip(index);
-        }, -timeIntoSegment * 1000);
+        waitThroughGap(index, time, -timeIntoSegment);
         return;
       }
       playClip(index, timeIntoSegment);
     };
     player.addEventListener('timeupdate', () => {
       if (activeClip && videoSequenceIndex >= 0) {
-        updateTimelinePlayhead(
+        const timelineTime =
           startTimes[videoSequenceIndex] +
-            Math.max(0, player.currentTime - activeClip.sourceStart) / videoClipSpeed(activeClip),
-        );
+          Math.max(0, player.currentTime - activeClip.sourceStart) / videoClipSpeed(activeClip);
+        updateTimelinePlayhead(timelineTime);
+        void drawLiveLayers(timelineTime);
       }
       if (activeClip && player.currentTime >= activeClip.sourceEnd - 0.04) advance();
     });
@@ -2861,6 +2872,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 const studioCss = `
 .studio-timeline-head{overflow-x:auto;scrollbar-width:thin}.studio-history-undo,.studio-history-redo{min-width:28px;padding:4px 6px!important;font-size:14px!important}
 .studio-timeline-playhead{position:absolute;z-index:4;top:0;bottom:0;width:2px;background:#f2f687;box-shadow:0 0 6px #f2f687;pointer-events:none}
+.studio-sequence-overlays{position:absolute;z-index:6;inset:6% 8%;width:84%;height:88%;pointer-events:none}
 .studio-composer-preview-controls{display:flex;align-items:center;gap:16px;min-height:38px;padding:4px 18px;border-bottom:1px solid #30333a;background:#15161b;color:#aeb3bd;font-size:10px}.studio-composer-preview-controls label{display:flex;align-items:center;gap:7px;white-space:nowrap}.studio-composer-preview-controls label:last-child{flex:1}.studio-composer-preview-controls input[type=checkbox]{accent-color:#b8ef6a}.studio-composer-preview-controls input[type=range]{flex:1;min-width:80px;max-width:460px;accent-color:#b8ef6a}.studio-composer-preview-controls output{min-width:40px;color:#e9ebef;font-variant-numeric:tabular-nums}
 .studio-video-clip.muted{filter:saturate(.35);border-style:dashed}
 .studio-image-overlay-lane{min-height:42px}.studio-image-overlay-canvas{min-height:41px}.studio-image-overlay-clip{position:absolute;top:5px;height:31px;overflow:hidden;border:1px solid #597b48;border-radius:5px;background:#293b27;color:#e2f2d7;text-align:left;cursor:grab;touch-action:none}.studio-image-overlay-clip.text{border-color:#547c91;background:#243844;color:#dceefa}.studio-image-overlay-clip.active{outline:1px solid #b8ef6a}.studio-image-overlay-clip.hidden{opacity:.45;border-style:dashed}.studio-image-overlay-label{display:block;padding:0 11px;overflow:hidden;line-height:29px;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}.studio-image-overlay-trim{position:absolute;z-index:2;top:0;bottom:0;width:8px;background:#d9efac55;cursor:ew-resize;touch-action:none}.studio-image-overlay-trim:hover{background:#b8ef6a}.studio-image-overlay-trim-left{left:0}.studio-image-overlay-trim-right{right:0}
@@ -2877,7 +2889,7 @@ const studioCss = `
 .studio-sequence-player{position:absolute;z-index:5;inset:6% 8%;width:84%;height:88%;max-height:88%;background:#000;border:1px solid var(--studio-border);border-radius:8px;box-shadow:0 12px 40px #0009}
 .studio-composer-button{border:1px solid #536843!important;background:#273323!important;color:#d8f3c2!important}.studio-composer-overlay{position:fixed;z-index:1000;inset:0;display:flex;flex-direction:column;background:#111216;color:#eceef2;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.studio-composer-header{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:58px;padding:8px 18px;border-bottom:1px solid #30333a;background:#181a1f}.studio-composer-header>div:first-child{display:flex;flex-direction:column;gap:4px}.studio-composer-header b{font-size:13px}.studio-composer-header small{color:#9298a3;font-size:10px}.studio-composer-header>div:last-child{display:flex;gap:8px}.studio-composer-header button,.studio-composer-order button,.studio-composer-remove{border:1px solid #393d46;border-radius:5px;background:#24272e;color:#e7e9ee;padding:7px 10px;font-size:11px;cursor:pointer}.studio-composer-export{background:#b8ef6a!important;border-color:#b8ef6a!important;color:#17200f!important;font-weight:700}.studio-composer-header .studio-composer-close{width:32px;padding:2px;font-size:21px}.studio-composer-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;flex:1;min-height:0}.studio-composer-board{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;min-height:0;padding:16px;background:#101115}.studio-composer-canvas-wrap{width:min(72vw,68vh);height:min(72vw,68vh);max-width:100%;max-height:100%;background-color:#202228;background-image:linear-gradient(45deg,#2b2d34 25%,transparent 25%),linear-gradient(-45deg,#2b2d34 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#2b2d34 75%),linear-gradient(-45deg,transparent 75%,#2b2d34 75%);background-size:24px 24px;background-position:0 0,0 12px,12px -12px,-12px 0}.studio-composer-canvas{display:block;width:100%;height:100%;touch-action:none;cursor:move}.studio-composer-status{min-height:22px;padding-top:8px;color:#f0a4a4;font-size:11px}.studio-composer-panel{min-width:0;overflow:auto;padding:12px;border-left:1px solid #30333a;background:#181a1f}.studio-composer-section{margin-bottom:17px}.studio-composer-title{display:flex;justify-content:space-between;margin-bottom:8px;color:#9298a3;font-size:9px;font-weight:700;letter-spacing:.08em}.studio-composer-count{color:#c1c5cd}.studio-composer-assets,.studio-composer-layers{display:flex;flex-direction:column;gap:4px;max-height:175px;overflow:auto}.studio-composer-asset,.studio-composer-layer{display:flex;align-items:center;gap:6px;min-width:0;border:1px solid transparent;border-radius:5px;background:#202229;color:#e4e6eb;font-size:10px}.studio-composer-asset{padding:7px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}.studio-composer-asset:hover{border-color:#61764d}.studio-composer-layer{padding:3px}.studio-composer-layer.active{border-color:#b8ef6a}.studio-composer-layer-select{flex:1;min-width:0;padding:5px;border:0;background:transparent;color:inherit;text-align:left;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:10px;cursor:pointer}.studio-composer-visibility{border:0;background:transparent;color:#c2c7d0;cursor:pointer}.studio-composer-properties{padding-top:3px}.studio-composer-layer-name{margin-bottom:9px;overflow:hidden;color:#dce0e7;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.studio-composer-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}.studio-composer-grid label,.studio-composer-field{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:6px 0;color:#aeb3bd;font-size:10px}.studio-composer-grid input,.studio-composer-field input,.studio-composer-field select{width:90px;padding:5px;border:1px solid #383c46;border-radius:4px;background:#111216;color:#e9ebef;font:11px system-ui,sans-serif}.studio-composer-field select{width:125px}.studio-composer-range{display:flex;flex-wrap:wrap;justify-content:space-between;gap:5px;margin:12px 0;color:#aeb3bd;font-size:10px}.studio-composer-range input{width:100%;accent-color:#b8ef6a}.studio-composer-range output{color:#e9ebef}.studio-composer-order{display:flex;gap:6px;margin:11px 0}.studio-composer-order button{flex:1;padding:6px 4px;font-size:9px}.studio-composer-remove{width:100%;margin-top:4px;border-color:#5c3737;color:#f0b8b8}.studio-composer-properties>p{color:#9298a3;font-size:10px}
 @media(max-width:1050px){.studio-workspace{grid-template-columns:58px 190px minmax(300px,1fr)}.studio-inspector{display:none}.studio-topbar{padding:0 12px}.studio-project-name{display:none}}
-@media(max-width:768px){.studio-page{width:100%;height:calc(100dvh - var(--bottom-nav-h, 62px));min-height:420px}.studio-workspace{grid-template-columns:48px minmax(0,1fr)}.studio-assets{display:none}.studio-rail{padding:10px 3px}.studio-tool{width:42px;height:47px}.studio-topbar{height:50px;flex-basis:50px;padding:0 8px}.studio-brand{font-size:13px}.studio-top-actions{gap:4px}.studio-top-actions .studio-button{padding:7px 8px;font-size:10px}.studio-empty-art{transform:scale(.8);margin:-12px 0}.studio-empty h1{font-size:16px}.studio-empty p{max-width:260px;line-height:1.5}.studio-timeline{height:205px;max-height:44vh}.studio-timeline-head{overflow-x:auto;flex:0 0 39px}.studio-timeline-hint{display:none}.studio-timeline-head>button{flex:0 0 auto}.studio-video-workarea{max-height:62px}.studio-video-ruler{height:17px}.studio-video-ruler>span{top:2px}.studio-video-lane{min-height:40px}.studio-video-track-label{padding:13px 7px}.studio-video-lane-canvas{min-height:39px}.studio-video-clip{height:30px}.studio-track{min-height:38px}.studio-audio-workarea{max-height:95px}.studio-audio-ruler{height:17px}.studio-audio-ruler>span{top:2px}.studio-audio-lane{min-height:40px}.studio-audio-track-label{padding:13px 7px}.studio-audio-lane-canvas{min-height:39px}.studio-audio-clip{height:30px}.studio-sequence-player{inset:8% 3%;width:94%;height:84%}}
+@media(max-width:768px){.studio-page{width:100%;height:calc(100dvh - var(--bottom-nav-h, 62px));min-height:420px}.studio-workspace{grid-template-columns:48px minmax(0,1fr)}.studio-assets{display:none}.studio-rail{padding:10px 3px}.studio-tool{width:42px;height:47px}.studio-topbar{height:50px;flex-basis:50px;padding:0 8px}.studio-brand{font-size:13px}.studio-top-actions{gap:4px}.studio-top-actions .studio-button{padding:7px 8px;font-size:10px}.studio-empty-art{transform:scale(.8);margin:-12px 0}.studio-empty h1{font-size:16px}.studio-empty p{max-width:260px;line-height:1.5}.studio-timeline{height:205px;max-height:44vh}.studio-timeline-head{overflow-x:auto;flex:0 0 39px}.studio-timeline-hint{display:none}.studio-timeline-head>button{flex:0 0 auto}.studio-video-workarea{max-height:62px}.studio-video-ruler{height:17px}.studio-video-ruler>span{top:2px}.studio-video-lane{min-height:40px}.studio-video-track-label{padding:13px 7px}.studio-video-lane-canvas{min-height:39px}.studio-video-clip{height:30px}.studio-track{min-height:38px}.studio-audio-workarea{max-height:95px}.studio-audio-ruler{height:17px}.studio-audio-ruler>span{top:2px}.studio-audio-lane{min-height:40px}.studio-audio-track-label{padding:13px 7px}.studio-audio-lane-canvas{min-height:39px}.studio-audio-clip{height:30px}.studio-sequence-player,.studio-sequence-overlays{inset:8% 3%;width:94%;height:84%}}
 @media(max-width:768px){.studio-composer-preview-controls{gap:8px;padding:5px 9px}.studio-composer-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) 205px}.studio-composer-board{padding:8px}.studio-composer-canvas-wrap{width:min(78vw,48vh);height:min(78vw,48vh)}.studio-composer-panel{padding:8px;border-top:1px solid #30333a;border-left:0}.studio-composer-section{margin-bottom:9px}.studio-composer-assets,.studio-composer-layers{max-height:65px}}
 `;
 
