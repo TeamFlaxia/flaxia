@@ -1,9 +1,19 @@
 import type JSZipType from 'jszip';
+import { STUDIO_CONSOLE_CONNECT_MESSAGE } from './bridge.js';
+import {
+  injectStudioConsoleBridge,
+  parseStudioConsoleEntry,
+  type StudioConsoleEntry,
+} from './editor/studio-console.ts';
 import { validateFileType } from './file-extensions.ts';
 import { t } from './i18n.ts';
 
 export interface ZipExecutorHandle {
   destroy: () => void;
+}
+
+export interface ZipPreviewOptions {
+  onConsoleEntry?: (entry: StudioConsoleEntry) => void;
 }
 
 const _SANDBOX_ORIGIN = '';
@@ -106,7 +116,11 @@ export async function executeZip(
 }
 
 /** Run a user-selected ZIP with the same validation and opaque-origin sandbox as post games. */
-export async function previewZipFile(file: File, containerEl: HTMLElement): Promise<ZipExecutorHandle> {
+export async function previewZipFile(
+  file: File,
+  containerEl: HTMLElement,
+  options: ZipPreviewOptions = {},
+): Promise<ZipExecutorHandle> {
   if (activeHandle) {
     activeHandle.destroy();
     activeHandle = null;
@@ -122,9 +136,10 @@ export async function previewZipFile(file: File, containerEl: HTMLElement): Prom
     validateZip(zip);
     const generatedUrls = await generateBlobUrlMap(zip);
     for (const [path, url] of generatedUrls) blobUrlMap.set(path, url);
-    const htmlContent = await rewriteIndexHtml(zip, blobUrlMap);
+    const rewrittenHtml = await rewriteIndexHtml(zip, blobUrlMap);
+    const htmlContent = options.onConsoleEntry ? injectStudioConsoleBridge(rewrittenHtml) : rewrittenHtml;
     htmlBlobUrl = URL.createObjectURL(new Blob([htmlContent], { type: 'text/html' }));
-    const { iframe, cleanup } = createSandboxIframe(containerEl, htmlBlobUrl);
+    const { iframe, cleanup } = createSandboxIframe(containerEl, htmlBlobUrl, options.onConsoleEntry);
     iframe.style.opacity = '1';
     const handle: ZipExecutorHandle = {
       destroy: () => {
@@ -193,6 +208,7 @@ function createZipLoadingIndicator(): HTMLElement {
 function createSandboxIframe(
   containerEl: HTMLElement,
   blobUrl: string,
+  onConsoleEntry?: (entry: StudioConsoleEntry) => void,
 ): { iframe: HTMLIFrameElement; cleanup: () => void } {
   const iframeContainer = document.createElement('div');
   iframeContainer.style.cssText = `
@@ -206,7 +222,6 @@ function createSandboxIframe(
   `;
 
   const iframe = document.createElement('iframe');
-  iframe.src = blobUrl;
   iframe.sandbox = 'allow-scripts allow-pointer-lock allow-fullscreen';
   iframe.setAttribute('allow', 'fullscreen');
   iframe.setAttribute('referrerpolicy', 'no-referrer');
@@ -260,11 +275,35 @@ function createSandboxIframe(
     }
   };
 
+  let consolePort: MessagePort | null = null;
+  const connectConsole = (): void => {
+    if (!onConsoleEntry) return;
+    if (consolePort) {
+      consolePort.onmessage = null;
+      consolePort.close();
+    }
+    const channel = new MessageChannel();
+    consolePort = channel.port1;
+    consolePort.onmessage = (event: MessageEvent<unknown>) => {
+      const entry = parseStudioConsoleEntry(event.data);
+      if (entry) onConsoleEntry(entry);
+    };
+    consolePort.start();
+    iframe.contentWindow?.postMessage(STUDIO_CONSOLE_CONNECT_MESSAGE, '*', [channel.port2]);
+  };
+  if (onConsoleEntry) iframe.addEventListener('load', connectConsole);
+  iframe.src = blobUrl;
   containerEl.appendChild(iframeContainer);
   iframeContainer.appendChild(iframe);
   iframeContainer.appendChild(fullscreenBtn);
 
   const cleanup = () => {
+    iframe.removeEventListener('load', connectConsole);
+    if (consolePort) {
+      consolePort.onmessage = null;
+      consolePort.close();
+      consolePort = null;
+    }
     if (iframe.parentNode) {
       iframe.parentNode.removeChild(iframe);
     }

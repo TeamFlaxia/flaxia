@@ -19,6 +19,7 @@ export function parseStudioConsoleEntry(value: unknown): StudioConsoleEntry | nu
 /** Installed before user code runs; queued entries flush after the host transfers a MessagePort. */
 export const STUDIO_CONSOLE_BRIDGE_SOURCE = `(()=>{
   let port=null;
+  let sent=0;
   const backlog=[];
   const stringify=value=>{
     if(value instanceof Error)return value.stack||value.message;
@@ -27,6 +28,8 @@ export const STUDIO_CONSOLE_BRIDGE_SOURCE = `(()=>{
     catch{return String(value)}
   };
   const publish=entry=>{
+    if(sent>=100)return;
+    sent++;
     const safe={kind:'console',level:entry.level,text:String(entry.text).slice(0,2000)};
     if(port){port.postMessage(safe);return}
     if(backlog.length<100)backlog.push(safe);
@@ -47,7 +50,7 @@ export const STUDIO_CONSOLE_BRIDGE_SOURCE = `(()=>{
     text:'Unhandled promise rejection: '+stringify(event.reason),
   }));
   addEventListener('message',event=>{
-    if(event.source!==parent||event.data?.type!=='flaxia-studio-console-connect'||!event.ports[0])return;
+    if(event.source!==parent||event.data?.type!=='STUDIO_CONSOLE_CONNECT'||!event.ports[0])return;
     port=event.ports[0];
     for(const entry of backlog)port.postMessage(entry);
     backlog.length=0;

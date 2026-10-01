@@ -1,4 +1,5 @@
 import type * as Monaco from 'monaco-editor';
+import { STUDIO_CONSOLE_CONNECT_MESSAGE } from '../lib/bridge.js';
 import {
   type AudioTimelineClip,
   audibleAudioTimelineClips,
@@ -10,7 +11,11 @@ import {
 } from '../lib/editor/audio-mixer.ts';
 import { imageLayerOpacityAt } from '../lib/editor/image-adjustments.ts';
 import { drawStudioImageLayer } from '../lib/editor/image-layer-canvas.ts';
-import { injectStudioConsoleBridge, parseStudioConsoleEntry } from '../lib/editor/studio-console.ts';
+import {
+  injectStudioConsoleBridge,
+  parseStudioConsoleEntry,
+  type StudioConsoleEntry,
+} from '../lib/editor/studio-console.ts';
 import { saveStudioHandoff } from '../lib/editor/studio-handoff.js';
 import {
   exportStudioProject,
@@ -2091,20 +2096,12 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     }
   };
 
-  const createSandboxPreview = (fileName: string, page: string, frameClass = 'studio-code-preview'): HTMLElement => {
-    const output = document.createElement('div');
-    output.className = 'studio-code-run-output';
-    output.style.cssText = 'display:flex;flex-direction:column;gap:8px;width:100%';
-    const frame = document.createElement('iframe');
-    frame.className = frameClass;
-    frame.title = `${fileName} sandbox preview`;
-    frame.setAttribute('sandbox', 'allow-scripts');
-    frame.referrerPolicy = 'no-referrer';
+  const createStudioConsolePanel = (): { element: HTMLDetailsElement; write: (entry: StudioConsoleEntry) => void } => {
     const consolePanel = document.createElement('details');
     consolePanel.className = 'studio-code-console';
     consolePanel.open = true;
     consolePanel.style.cssText =
-      'border:1px solid var(--studio-border);border-radius:5px;background:#101116;color:var(--studio-text);font:11px ui-monospace,SFMono-Regular,Menlo,monospace';
+      'width:100%;box-sizing:border-box;border:1px solid var(--studio-border);border-radius:5px;background:#101116;color:var(--studio-text);font:11px ui-monospace,SFMono-Regular,Menlo,monospace';
     const summary = document.createElement('summary');
     summary.style.cssText = 'padding:7px 9px;color:var(--studio-muted);cursor:pointer';
     const count = document.createElement('span');
@@ -2122,8 +2119,6 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     summary.appendChild(clear);
     consolePanel.appendChild(summary);
     consolePanel.appendChild(lines);
-    output.appendChild(frame);
-    output.appendChild(consolePanel);
     let entryCount = 0;
     clear.addEventListener('click', (event) => {
       event.preventDefault();
@@ -2132,6 +2127,31 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       count.textContent = 'Console · 0';
       lines.replaceChildren();
     });
+    const write = (entry: StudioConsoleEntry): void => {
+      if (entryCount >= 100) return;
+      entryCount++;
+      count.textContent = `Console · ${entryCount}`;
+      const line = document.createElement('div');
+      const level = entry.level;
+      line.textContent = `${level === 'error' ? '✕' : level === 'warn' ? '⚠' : '›'} ${entry.text}`;
+      line.style.cssText = `padding:4px 9px;border-bottom:1px solid #25272e;white-space:pre-wrap;overflow-wrap:anywhere;color:${level === 'error' ? '#ff8e8e' : level === 'warn' ? '#f3ce76' : '#c9ced8'}`;
+      lines.appendChild(line);
+    };
+    return { element: consolePanel, write };
+  };
+
+  const createSandboxPreview = (fileName: string, page: string, frameClass = 'studio-code-preview'): HTMLElement => {
+    const output = document.createElement('div');
+    output.className = 'studio-code-run-output';
+    output.style.cssText = 'display:flex;flex-direction:column;gap:8px;width:100%';
+    const frame = document.createElement('iframe');
+    frame.className = frameClass;
+    frame.title = `${fileName} sandbox preview`;
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.referrerPolicy = 'no-referrer';
+    const consolePanel = createStudioConsolePanel();
+    output.appendChild(frame);
+    output.appendChild(consolePanel.element);
     const channel = new MessageChannel();
     const dispose = (): void => {
       channel.port1.onmessage = null;
@@ -2141,20 +2161,12 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     activeSandboxPreviewDisposers.add(dispose);
     channel.port1.onmessage = (event: MessageEvent<unknown>) => {
       const message = parseStudioConsoleEntry(event.data);
-      if (!message) return;
-      if (entryCount >= 100) return;
-      entryCount++;
-      count.textContent = `Console · ${entryCount}`;
-      const line = document.createElement('div');
-      const level = message.level;
-      line.textContent = `${level === 'error' ? '✕' : level === 'warn' ? '⚠' : '›'} ${message.text}`;
-      line.style.cssText = `padding:4px 9px;border-bottom:1px solid #25272e;white-space:pre-wrap;overflow-wrap:anywhere;color:${level === 'error' ? '#ff8e8e' : level === 'warn' ? '#f3ce76' : '#c9ced8'}`;
-      lines.appendChild(line);
+      if (message) consolePanel.write(message);
     };
     channel.port1.start();
     frame.addEventListener(
       'load',
-      () => frame.contentWindow?.postMessage({ type: 'flaxia-studio-console-connect' }, '*', [channel.port2]),
+      () => frame.contentWindow?.postMessage(STUDIO_CONSOLE_CONNECT_MESSAGE, '*', [channel.port2]),
       { once: true },
     );
     frame.srcdoc = injectStudioConsoleBridge(page);
@@ -2820,15 +2832,19 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           content.appendChild(createSandboxPreview(file.name, html, 'studio-game-frame'));
         });
       } else if (/\.zip$/i.test(file.name)) {
-        content.style.position = 'relative';
-        content.style.height = '46vh';
-        content.style.minHeight = '250px';
+        const zipStage = document.createElement('div');
+        zipStage.style.cssText = 'position:relative;width:100%;height:46vh;min-height:250px';
         const status = document.createElement('div');
         status.className = 'studio-file-notice';
         status.textContent = 'Checking game package…';
-        content.appendChild(status);
+        zipStage.appendChild(status);
+        const consolePanel = createStudioConsolePanel();
+        content.appendChild(zipStage);
+        content.appendChild(consolePanel.element);
         void import('../lib/zip-executor.js')
-          .then(({ previewZipFile }) => previewZipFile(file, content))
+          .then(({ previewZipFile }) =>
+            previewZipFile(file, zipStage, { onConsoleEntry: (entry) => consolePanel.write(entry) }),
+          )
           .then((handle) => {
             if (destroyed || activeIndex !== index) {
               handle.destroy();

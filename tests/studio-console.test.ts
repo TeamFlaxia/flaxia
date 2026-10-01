@@ -1,6 +1,7 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
 import { Script } from 'node:vm';
+import { isParentMessage, isSandboxMessage, STUDIO_CONSOLE_CONNECT_MESSAGE } from '../src/lib/bridge.ts';
 import {
   injectStudioConsoleBridge,
   parseStudioConsoleEntry,
@@ -29,6 +30,12 @@ describe('sandboxed Studio console bridge', () => {
     const page = '<!doctype html><html><head><script>console.log("ready")</script></head></html>';
     const instrumented = injectStudioConsoleBridge(page);
     assert.ok(instrumented.startsWith('<!doctype html><script>'));
-    assert.ok(instrumented.indexOf('flaxia-studio-console-connect') < instrumented.indexOf('console.log("ready")'));
+    assert.ok(instrumented.indexOf('STUDIO_CONSOLE_CONNECT') < instrumented.indexOf('console.log("ready")'));
+  });
+
+  it('uses the typed sandbox console connection message', () => {
+    assert.deepEqual(STUDIO_CONSOLE_CONNECT_MESSAGE, { type: 'STUDIO_CONSOLE_CONNECT' });
+    assert.ok(isSandboxMessage(STUDIO_CONSOLE_CONNECT_MESSAGE));
+    assert.ok(!isParentMessage(STUDIO_CONSOLE_CONNECT_MESSAGE));
   });
 });
