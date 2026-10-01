@@ -343,8 +343,20 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const requestVideoSeek = (time: number): void => {
     if (videoClips.length === 0) {
       updateTimelinePlayhead(time);
+      if (mixPreview) {
+        const wasPlaying = !mixPreview.paused;
+        const seekMix = (): void => {
+          if (!mixPreview) return;
+          mixPreview.currentTime = Math.min(time, Number.isFinite(mixPreview.duration) ? mixPreview.duration : time);
+          if (wasPlaying) void mixPreview.play().catch(() => undefined);
+        };
+        if (mixPreview.readyState >= 1) seekMix();
+        else mixPreview.addEventListener('loadedmetadata', seekMix, { once: true });
+      }
       return;
     }
+    mixPreview?.pause();
+    if (mixPreview) mixPlayButton.textContent = '▶ Resume mix';
     if (videoSequencePlayer) stopVideoSequence();
     const sequenceEnd = Math.max(0, ...videoClips.map((clip) => clip.start + videoClipTimelineDuration(clip)));
     videoSequenceStartTime = Math.max(0, Math.min(time, sequenceEnd));
@@ -2601,6 +2613,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         // Video and source audio remain previewable if an audio track cannot be mixed.
       }
     }
+    mixPreview?.pause();
+    if (mixPreview) mixPlayButton.textContent = '▶ Resume mix';
     const startTimes: number[] = [];
     let sequenceEnd = 0;
     for (const clip of sequence) {
