@@ -2845,6 +2845,17 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       redoButton.click();
       return;
     }
+    if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') && !target.closest('button, a, video, audio')) {
+      event.preventDefault();
+      const step = event.shiftKey ? 1 : 0.1;
+      const nextTime = Math.max(0, timelinePlayheadTime + (event.key === 'ArrowRight' ? step : -step));
+      if (videoSequencePlayer || (videoClips.length === 0 && mixPreview)) requestVideoSeek(nextTime);
+      else {
+        videoSequenceStartTime = nextTime;
+        updateTimelinePlayhead(nextTime);
+      }
+      return;
+    }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'd' && !duplicateClipButton.disabled) {
       event.preventDefault();
       duplicateClipButton.click();
