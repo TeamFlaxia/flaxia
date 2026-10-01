@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { imageLayerCanvasFilter, normalizeImageLayerAdjustments } from '../src/lib/editor/image-adjustments.ts';
+import {
+  imageLayerCanvasFilter,
+  normalizeImageLayerAdjustments,
+  nudgeImageLayerPosition,
+} from '../src/lib/editor/image-adjustments.ts';
 import { isStudioImageBlendMode } from '../src/lib/editor/image-layer-canvas.ts';
 
 describe('image layer adjustments', () => {
@@ -33,6 +37,23 @@ describe('image layer adjustments', () => {
       imageLayerCanvasFilter({ brightness: 125, contrast: 90, saturation: 80, hueDeg: 30, blurPx: 2.5 }),
       'brightness(125%) contrast(90%) saturate(80%) hue-rotate(30deg) blur(2.5px)',
     );
+  });
+});
+
+describe('image layer keyboard nudging', () => {
+  it('moves by a bounded step and keeps composition coordinates in range', () => {
+    const layer = { x: 100, y: 200, positionLocked: false };
+    assert.equal(nudgeImageLayerPosition(layer, 1, -1, 10), true);
+    assert.deepEqual(layer, { x: 110, y: 190, positionLocked: false });
+    layer.x = 8192;
+    assert.equal(nudgeImageLayerPosition(layer, 1, 0), false);
+    assert.equal(nudgeImageLayerPosition(layer, 1, 0, 100), false);
+  });
+
+  it('does not move a locked layer', () => {
+    const layer = { x: 12, y: 34, positionLocked: true };
+    assert.equal(nudgeImageLayerPosition(layer, -1, 1), false);
+    assert.deepEqual(layer, { x: 12, y: 34, positionLocked: true });
   });
 });
 

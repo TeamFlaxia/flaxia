@@ -5,6 +5,23 @@ export type ImageLayerAdjustments = Pick<
   'brightness' | 'contrast' | 'saturation' | 'hueDeg' | 'blurPx'
 >;
 
+/** Nudge an unlocked layer in composition coordinates and report whether it moved. */
+export function nudgeImageLayerPosition(
+  layer: Pick<StudioImageLayer, 'x' | 'y' | 'positionLocked'>,
+  dx: number,
+  dy: number,
+  step = 1,
+): boolean {
+  if (layer.positionLocked || !Number.isFinite(dx) || !Number.isFinite(dy)) return false;
+  const distance = Math.max(1, Math.min(10, Number.isFinite(step) ? step : 1));
+  const x = Math.max(-8192, Math.min(8192, layer.x + dx * distance));
+  const y = Math.max(-8192, Math.min(8192, layer.y + dy * distance));
+  if (x === layer.x && y === layer.y) return false;
+  layer.x = x;
+  layer.y = y;
+  return true;
+}
+
 /** Clamp non-destructive image controls to supported editor ranges. */
 export function normalizeImageLayerAdjustments(adjustments: ImageLayerAdjustments): Required<ImageLayerAdjustments> {
   const normalize = (value: number | undefined, fallback: number, min: number, max: number): number =>

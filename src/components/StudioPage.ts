@@ -10,7 +10,7 @@ import {
   soloAudioTimelineClip,
   splitAudioClipGainEnvelope,
 } from '../lib/editor/audio-mixer.ts';
-import { imageLayerOpacityAt } from '../lib/editor/image-adjustments.ts';
+import { imageLayerOpacityAt, nudgeImageLayerPosition } from '../lib/editor/image-adjustments.ts';
 import { drawStudioImageLayer, STUDIO_IMAGE_BLEND_MODES } from '../lib/editor/image-layer-canvas.ts';
 import {
   injectStudioConsoleBridge,
@@ -2229,7 +2229,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
     overlay.setAttribute('aria-label', 'Image layer composer');
-    overlay.innerHTML = `<header class="studio-composer-header"><div><b>Image composition</b><small>Drag to move · drag lower-right handle to resize · Shift keeps ratio</small></div><div><button class="studio-composer-export" type="button">Export PNG</button><button class="studio-composer-close" type="button" aria-label="Close">×</button></div></header><div class="studio-composer-preview-controls"><label><input class="studio-composer-preview-timing" type="checkbox"> Preview video timing</label><label>Time <input class="studio-composer-preview-time" type="range" min="0" max="180" step="0.1" value="${Math.min(180, timelinePlayheadTime).toFixed(1)}"><output>${Math.min(180, timelinePlayheadTime).toFixed(1)}s</output></label></div><div class="studio-composer-layout"><div class="studio-composer-board"><div class="studio-composer-canvas-wrap"><canvas class="studio-composer-canvas" width="1080" height="1080" aria-label="Layer composition canvas"></canvas></div><div class="studio-composer-status" aria-live="polite"></div></div><aside class="studio-composer-panel"><div class="studio-composer-section"><div class="studio-composer-title">IMAGE ASSETS</div><div class="studio-composer-assets"></div></div><div class="studio-composer-section"><div class="studio-composer-title">LAYERS <button class="studio-composer-add-text" type="button">＋ Text</button><span class="studio-composer-count"></span></div><div class="studio-composer-layers"></div></div><div class="studio-composer-properties"></div></aside></div>`;
+    overlay.innerHTML = `<header class="studio-composer-header"><div><b>Image composition</b><small>Drag to move · drag lower-right handle to resize · Shift keeps ratio · Arrow keys nudge</small></div><div><button class="studio-composer-export" type="button">Export PNG</button><button class="studio-composer-close" type="button" aria-label="Close">×</button></div></header><div class="studio-composer-preview-controls"><label><input class="studio-composer-preview-timing" type="checkbox"> Preview video timing</label><label>Time <input class="studio-composer-preview-time" type="range" min="0" max="180" step="0.1" value="${Math.min(180, timelinePlayheadTime).toFixed(1)}"><output>${Math.min(180, timelinePlayheadTime).toFixed(1)}s</output></label></div><div class="studio-composer-layout"><div class="studio-composer-board"><div class="studio-composer-canvas-wrap"><canvas class="studio-composer-canvas" width="1080" height="1080" tabindex="0" aria-label="Layer composition canvas"></canvas></div><div class="studio-composer-status" aria-live="polite"></div></div><aside class="studio-composer-panel"><div class="studio-composer-section"><div class="studio-composer-title">IMAGE ASSETS</div><div class="studio-composer-assets"></div></div><div class="studio-composer-section"><div class="studio-composer-title">LAYERS <button class="studio-composer-add-text" type="button">＋ Text</button><span class="studio-composer-count"></span></div><div class="studio-composer-layers"></div></div><div class="studio-composer-properties"></div></aside></div>`;
     root.appendChild(overlay);
     imageComposerOverlay = overlay;
     const canvas = overlay.querySelector<HTMLCanvasElement>('.studio-composer-canvas')!;
@@ -2263,6 +2263,47 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       renderVideoTimeline();
     };
     overlay.querySelector<HTMLButtonElement>('.studio-composer-close')!.addEventListener('click', close);
+    overlay.addEventListener('keydown', (event) => {
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (!target) return;
+      const editingField = target.closest('input, textarea, select, [contenteditable="true"]');
+      if (event.key === 'Escape' && !editingField) {
+        event.preventDefault();
+        close();
+        return;
+      }
+      if (editingField) return;
+      const keyboardSurface =
+        target === overlay || target === canvas || target.closest('.studio-composer-layer-select');
+      if (!keyboardSurface) return;
+      if (event.key === 'Delete' || event.key === 'Backspace') {
+        const removeButton = properties.querySelector<HTMLButtonElement>('.studio-composer-remove');
+        if (removeButton) {
+          event.preventDefault();
+          removeButton.click();
+        }
+        return;
+      }
+      const offsets: Record<string, { x: number; y: number }> = {
+        ArrowLeft: { x: -1, y: 0 },
+        ArrowRight: { x: 1, y: 0 },
+        ArrowUp: { x: 0, y: -1 },
+        ArrowDown: { x: 0, y: 1 },
+      };
+      const offset = offsets[event.key];
+      if (!offset) return;
+      event.preventDefault();
+      const layer = imageLayers.find((item) => item.id === selectedImageLayerId);
+      if (!layer || layer.positionLocked) return;
+      if (!nudgeImageLayerPosition(layer, offset.x, offset.y, event.shiftKey ? 10 : 1)) return;
+      const x = properties.querySelector<HTMLInputElement>('[data-prop="x"]');
+      const y = properties.querySelector<HTMLInputElement>('[data-prop="y"]');
+      if (x) x.value = String(Math.round(layer.x));
+      if (y) y.value = String(Math.round(layer.y));
+      void draw();
+      scheduleAutosave();
+    });
+    canvas.focus({ preventScroll: true });
 
     const getBitmap = (fileIndex: number): Promise<ImageBitmap> => {
       let bitmap = bitmaps.get(fileIndex);
