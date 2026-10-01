@@ -271,11 +271,12 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const clip =
       videoClips.find((item) => item.id === selectedVideoClipId) ??
       audioClips.find((item) => item.id === selectedAudioClipId);
+    const imageLayer = imageLayers.find((item) => item.id === selectedImageLayerId);
     videoSplitButton.disabled =
       !clip ||
       timelinePlayheadTime <= clip.start + 0.05 ||
       timelinePlayheadTime >= clip.start + clip.sourceEnd - clip.sourceStart - 0.05;
-    duplicateClipButton.disabled = !clip;
+    duplicateClipButton.disabled = !clip && !imageLayer;
   };
 
   const updateTimelinePlayhead = (time: number): void => {
@@ -347,6 +348,24 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   });
 
   duplicateClipButton.addEventListener('click', () => {
+    const imageLayer = imageLayers.find((item) => item.id === selectedImageLayerId);
+    if (imageLayer) {
+      const duplicate: StudioImageLayer = {
+        ...imageLayer,
+        id: crypto.randomUUID(),
+        x: Math.min(1080 - imageLayer.width, imageLayer.x + 24),
+        y: Math.min(1080 - imageLayer.height, imageLayer.y + 24),
+      };
+      const index = imageLayers.indexOf(imageLayer);
+      imageLayers.splice(index + 1, 0, duplicate);
+      selectedImageLayerId = duplicate.id;
+      selectedVideoClipId = null;
+      selectedAudioClipId = null;
+      renderVideoTimeline();
+      scheduleAutosave();
+      void openImageComposer(duplicate.fileIndex);
+      return;
+    }
     const videoClip = videoClips.find((item) => item.id === selectedVideoClipId);
     if (videoClip) {
       const duplicate: StudioVideoClip = {
