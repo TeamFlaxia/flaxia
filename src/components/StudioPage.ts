@@ -10,6 +10,7 @@ import {
 } from '../lib/editor/audio-mixer.ts';
 import { imageLayerOpacityAt } from '../lib/editor/image-adjustments.ts';
 import { drawStudioImageLayer } from '../lib/editor/image-layer-canvas.ts';
+import { parseStudioConsoleEntry, STUDIO_CONSOLE_BRIDGE_SOURCE } from '../lib/editor/studio-console.ts';
 import { saveStudioHandoff } from '../lib/editor/studio-handoff.js';
 import {
   exportStudioProject,
@@ -209,6 +210,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let htmlEditing = false;
   let editorText = '';
   let previewUrl: string | null = null;
+  const activeCodePreviewDisposers = new Set<() => void>();
+  const closeCodePreviews = (): void => {
+    for (const dispose of activeCodePreviewDisposers) dispose();
+  };
   let destroyed = false;
   let interacted = false;
   let restoreFinished = false;
@@ -700,6 +705,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   };
 
   const clearUrl = (): void => {
+    closeCodePreviews();
     zipPreview?.destroy();
     zipPreview = null;
     flashPreview?.destroy();
@@ -2085,19 +2091,80 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     }
   };
 
-  const createCodePreview = (fileName: string, source: string): HTMLIFrameElement => {
+  const createCodePreview = (fileName: string, source: string): HTMLElement => {
+    const output = document.createElement('div');
+    output.className = 'studio-code-run-output';
+    output.style.cssText = 'display:flex;flex-direction:column;gap:8px;width:100%';
     const frame = document.createElement('iframe');
     frame.className = 'studio-code-preview';
     frame.title = `${fileName} sandbox preview`;
     frame.setAttribute('sandbox', 'allow-scripts');
     frame.referrerPolicy = 'no-referrer';
+    const consolePanel = document.createElement('details');
+    consolePanel.className = 'studio-code-console';
+    consolePanel.open = true;
+    consolePanel.style.cssText =
+      'border:1px solid var(--studio-border);border-radius:5px;background:#101116;color:var(--studio-text);font:11px ui-monospace,SFMono-Regular,Menlo,monospace';
+    const summary = document.createElement('summary');
+    summary.style.cssText = 'padding:7px 9px;color:var(--studio-muted);cursor:pointer';
+    const count = document.createElement('span');
+    count.textContent = 'Console · 0';
+    const clear = document.createElement('button');
+    clear.type = 'button';
+    clear.textContent = 'Clear';
+    clear.style.cssText =
+      'float:right;border:0;background:transparent;color:var(--studio-muted);font:inherit;cursor:pointer';
+    const lines = document.createElement('div');
+    lines.className = 'studio-code-console-lines';
+    lines.setAttribute('aria-live', 'polite');
+    lines.style.cssText = 'max-height:130px;overflow:auto;border-top:1px solid var(--studio-border)';
+    summary.appendChild(count);
+    summary.appendChild(clear);
+    consolePanel.appendChild(summary);
+    consolePanel.appendChild(lines);
+    output.appendChild(frame);
+    output.appendChild(consolePanel);
+    let entryCount = 0;
+    clear.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      entryCount = 0;
+      count.textContent = 'Console · 0';
+      lines.replaceChildren();
+    });
+    const channel = new MessageChannel();
+    const dispose = (): void => {
+      channel.port1.onmessage = null;
+      channel.port1.close();
+      activeCodePreviewDisposers.delete(dispose);
+    };
+    activeCodePreviewDisposers.add(dispose);
+    channel.port1.onmessage = (event: MessageEvent<unknown>) => {
+      const message = parseStudioConsoleEntry(event.data);
+      if (!message) return;
+      if (entryCount >= 100) return;
+      entryCount++;
+      count.textContent = `Console · ${entryCount}`;
+      const line = document.createElement('div');
+      const level = message.level;
+      line.textContent = `${level === 'error' ? '✕' : level === 'warn' ? '⚠' : '›'} ${message.text}`;
+      line.style.cssText = `padding:4px 9px;border-bottom:1px solid #25272e;white-space:pre-wrap;overflow-wrap:anywhere;color:${level === 'error' ? '#ff8e8e' : level === 'warn' ? '#f3ce76' : '#c9ced8'}`;
+      lines.appendChild(line);
+    };
+    channel.port1.start();
+    frame.addEventListener(
+      'load',
+      () => frame.contentWindow?.postMessage({ type: 'flaxia-studio-console-connect' }, '*', [channel.port2]),
+      { once: true },
+    );
+    const instrumentation = `<script>${STUDIO_CONSOLE_BRIDGE_SOURCE}</script>`;
     const extension = fileName.toLowerCase().split('.').pop();
     const page =
       extension === 'css'
-        ? `<!doctype html><meta charset="utf-8"><style>body{font:16px system-ui;padding:24px;color:#222}.preview-card{padding:24px;border:1px solid #aaa;border-radius:12px;max-width:480px}</style><style>${source.replace(/<\/style/gi, '<\\/style')}</style><main class="preview-card"><h1>CSS preview</h1><p>Edit this stylesheet and run again.</p><button>Sample button</button></main>`
-        : `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><body><main id="app"></main><script>${source.replace(/<\/script/gi, '<\\/script')}</script></body>`;
+        ? `<!doctype html><meta charset="utf-8"><style>body{font:16px system-ui;padding:24px;color:#222}.preview-card{padding:24px;border:1px solid #aaa;border-radius:12px;max-width:480px}</style>${instrumentation}<style>${source.replace(/<\/style/gi, '<\\/style')}</style><main class="preview-card"><h1>CSS preview</h1><p>Edit this stylesheet and run again.</p><button>Sample button</button></main>`
+        : `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><body>${instrumentation}<main id="app"></main><script>${source.replace(/<\/script/gi, '<\\/script')}</script></body>`;
     frame.srcdoc = page;
-    return frame;
+    return output;
   };
 
   const openImageComposer = async (initialFileIndex: number): Promise<void> => {
@@ -2736,6 +2803,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           const output = document.createElement('div');
           output.className = 'studio-code-output';
           run.addEventListener('click', () => {
+            closeCodePreviews();
             output.replaceChildren(createCodePreview(file.name, editorText));
           });
           content.insertBefore(run, editor);
