@@ -12,6 +12,7 @@ import {
   soloAudioTimelineClip,
   splitAudioClipGainEnvelope,
 } from '../lib/editor/audio-mixer.ts';
+import { createAudioRecordingFile, preferredAudioRecordingMimeType } from '../lib/editor/audio-recorder.ts';
 import { imageLayerOpacityAt, nudgeImageLayerPosition } from '../lib/editor/image-adjustments.ts';
 import { drawStudioImageLayer, STUDIO_IMAGE_BLEND_MODES } from '../lib/editor/image-layer-canvas.ts';
 import {
@@ -259,6 +260,14 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const videoDurations = new Map<number, number>();
   const videoFilmstrips = new Map<string, Promise<string>>();
   let audioTrackCount = 1;
+  let audioRecorder: MediaRecorder | null = null;
+  let audioRecordingStream: MediaStream | null = null;
+  let audioRecordingChunks: Blob[] = [];
+  let audioRecordingTimer: ReturnType<typeof setInterval> | null = null;
+  let audioRecordingStartedAt = 0;
+  let audioRecordingTimelineStart = 0;
+  let audioRecordingTrack = 0;
+  let microphoneRequestPending = false;
   let mixPreviewUrl: string | null = null;
   let mixPreview: HTMLAudioElement | null = null;
   let mixPreviewTimelineOffset = 0;
@@ -328,7 +337,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       <section class="studio-center">
         <div class="studio-tabs"><button class="studio-tab studio-workspace-tab active" type="button">⌂ &nbsp;Workspace</button><div class="studio-document-tabs"></div><button class="studio-tab-open" type="button" aria-label="Open files">＋</button><span class="studio-center-spacer"></span><button class="studio-shortcut" type="button" title="Import files">⌘ O</button></div>
         <div class="studio-stage"><div class="studio-empty"><div class="studio-empty-art"><div class="studio-orbit studio-orbit-one"></div><div class="studio-orbit studio-orbit-two"></div><div class="studio-empty-glyph">✳</div><span class="studio-float studio-float-image">▧</span><span class="studio-float studio-float-audio">♫</span><span class="studio-float studio-float-code">&lt;/&gt;</span><span class="studio-float studio-float-game">◇</span></div><h1>Your ideas, in one studio.</h1><p>Bring images, sound, video, code, and games into one creative workspace.</p><button class="studio-button studio-open studio-primary" type="button">Import files</button><small>or drop files anywhere in the workspace</small></div><div class="studio-preview"></div></div>
-        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag clips between V1/V2 · V2 is picture-in-picture</span><button class="studio-history-undo" type="button" disabled title="Undo (⌘Z / Ctrl+Z)">↶</button><button class="studio-history-redo" type="button" disabled title="Redo (⌘⇧Z / Ctrl+Y)">↷</button><button class="studio-video-split" type="button" disabled>Split selected clip</button><button class="studio-clip-duplicate" type="button" disabled>Duplicate clip</button><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-audio-solo" type="button" disabled>▶ Solo clip</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
+        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag clips between V1/V2 · V2 is picture-in-picture</span><button class="studio-history-undo" type="button" disabled title="Undo (⌘Z / Ctrl+Z)">↶</button><button class="studio-history-redo" type="button" disabled title="Redo (⌘⇧Z / Ctrl+Y)">↷</button><button class="studio-video-split" type="button" disabled>Split selected clip</button><button class="studio-clip-duplicate" type="button" disabled>Duplicate clip</button><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-audio-record" type="button" aria-pressed="false" title="Record microphone audio at the playhead">● Record audio</button><button class="studio-audio-solo" type="button" disabled>▶ Solo clip</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
       </section>
       <aside class="studio-inspector"><div class="studio-inspector-tabs"><span class="active">Inspector</span><span>Publish</span></div><div class="studio-inspector-body"><div class="studio-inspector-icon">✳</div><h2>Make something living</h2><p>Flaxia posts can hold playable games and interactive media. Import an asset to preview, edit, and prepare it for sharing.</p><div class="studio-inspector-divider"></div><div class="studio-format-title">SUPPORTED CREATIVE FILES</div><div class="studio-format-list"><span>IMAGE</span><small>PNG · JPG · GIF · WEBP</small><span>VIDEO</span><small>MP4 · WEBM · MOV</small><span>AUDIO</span><small>MP3 · WAV · OGG · M4A</small><span>CODE / GAME</span><small>HTML · JS · ZIP · SWF · WASM</small></div><div class="studio-local-badge">◉ &nbsp;Private by default</div></div></aside>
     </div>
@@ -358,6 +367,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const mixExportButton = root.querySelector<HTMLButtonElement>('.studio-mix-export')!;
   const soloAudioButton = root.querySelector<HTMLButtonElement>('.studio-audio-solo')!;
   const addTrackButton = root.querySelector<HTMLButtonElement>('.studio-add-track')!;
+  const audioRecordButton = root.querySelector<HTMLButtonElement>('.studio-audio-record')!;
   const videoPlayButton = root.querySelector<HTMLButtonElement>('.studio-video-play')!;
   const videoSplitButton = root.querySelector<HTMLButtonElement>('.studio-video-split')!;
   const duplicateClipButton = root.querySelector<HTMLButtonElement>('.studio-clip-duplicate')!;
@@ -673,18 +683,22 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     }).join('');
   };
 
-  const ensureAudioClip = (fileIndex: number, useFullDuration = false): void => {
+  const ensureAudioClip = (
+    fileIndex: number,
+    useFullDuration = false,
+    placement?: { track: number; start: number },
+  ): void => {
     const file = files[fileIndex];
     if (!file || kindOf(file) !== 'audio') return;
     let clip = audioClips.find((item) => item.fileIndex === fileIndex);
     const expandToSource = useFullDuration || !clip;
     if (!clip) {
-      const track = Math.min(audioClips.length, 7);
+      const track = placement ? Math.max(0, Math.min(7, Math.floor(placement.track))) : Math.min(audioClips.length, 7);
       clip = {
         id: crypto.randomUUID(),
         fileIndex,
         track,
-        start: 0,
+        start: placement && Number.isFinite(placement.start) ? Math.max(0, placement.start) : 0,
         sourceStart: 0,
         sourceEnd: 1,
         speed: 1,
@@ -3700,6 +3714,137 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     renderAudioTimeline();
     scheduleAutosave();
   });
+  audioRecordButton.addEventListener('click', async () => {
+    if (audioRecorder) {
+      audioRecordButton.disabled = true;
+      audioRecordButton.title = 'Finishing microphone recording';
+      audioRecorder.stop();
+      return;
+    }
+    if (microphoneRequestPending) return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      mixStatus.textContent = 'Microphone recording is not available in this browser';
+      return;
+    }
+    microphoneRequestPending = true;
+    audioRecordButton.disabled = true;
+    mixStatus.textContent = 'Requesting microphone access…';
+    let stream: MediaStream | null = null;
+    try {
+      clearMixPreview();
+      if (videoSequencePlayer) stopVideoSequence();
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (destroyed) {
+        stream.getTracks().forEach((track) => {
+          track.stop();
+        });
+        return;
+      }
+      const mimeType = preferredAudioRecordingMimeType((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      audioRecordingChunks = [];
+      recorder.addEventListener('dataavailable', (event) => {
+        if (event.data.size > 0) audioRecordingChunks.push(event.data);
+      });
+      recorder.addEventListener('error', () => {
+        mixStatus.textContent = 'Microphone recording stopped after an audio error';
+        if (recorder.state === 'recording') recorder.stop();
+      });
+      recorder.addEventListener(
+        'stop',
+        () => {
+          const chunks = audioRecordingChunks;
+          audioRecordingChunks = [];
+          if (audioRecordingTimer) clearInterval(audioRecordingTimer);
+          audioRecordingTimer = null;
+          if (audioRecorder === recorder) audioRecorder = null;
+          if (audioRecordingStream === stream) audioRecordingStream = null;
+          stream?.getTracks().forEach((track) => {
+            track.stop();
+          });
+          audioRecordButton.disabled = false;
+          audioRecordButton.textContent = '● Record audio';
+          audioRecordButton.title = 'Record microphone audio at the playhead';
+          audioRecordButton.setAttribute('aria-pressed', 'false');
+          mixPlayButton.disabled = audibleAudioTimelineClips(audioClips).length === 0;
+          mixExportButton.disabled = audibleAudioTimelineClips(audioClips).length === 0;
+          soloAudioButton.disabled = !audioClips.some((clip) => clip.id === selectedAudioClipId);
+          if (destroyed) return;
+          const elapsedSeconds = Math.max(0, Math.floor((Date.now() - audioRecordingStartedAt) / 1000));
+          const elapsedLabel = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, '0')}:${String(elapsedSeconds % 60).padStart(2, '0')}`;
+          try {
+            const file = createAudioRecordingFile(chunks, recorder.mimeType, Date.now());
+            const fileIndex = files.length;
+            files = [...files, file];
+            ensureAudioClip(fileIndex, true, {
+              track: audioRecordingTrack,
+              start: audioRecordingTimelineStart,
+            });
+            const clip = audioClips.find((item) => item.fileIndex === fileIndex);
+            if (!clip) throw new Error('Recorded audio could not be added to the timeline');
+            audioTrackCount = Math.max(audioTrackCount, clip.track + 1);
+            select(fileIndex);
+            selectedAudioClipId = clip.id;
+            selectedVideoClipId = null;
+            selectedImageLayerId = null;
+            renderAudioTimeline();
+            renderInspector();
+            scheduleAutosave();
+            audioTimelineViewport.scrollLeft = Math.max(
+              0,
+              audioRecordingTimelineStart * timelinePixelsPerSecond - audioTimelineViewport.clientWidth / 3,
+            );
+            const recordedLane = audioTimeline.querySelector<HTMLElement>(
+              `.studio-audio-lane[data-track="${clip.track}"]`,
+            );
+            if (recordedLane) {
+              const laneBottom = recordedLane.offsetTop + recordedLane.offsetHeight;
+              audioTimelineViewport.scrollTop = Math.max(0, laneBottom - audioTimelineViewport.clientHeight + 4);
+            }
+            mixStatus.textContent = `Recorded ${file.name} · ${elapsedLabel}`;
+          } catch (error) {
+            mixStatus.textContent = error instanceof Error ? error.message : 'Could not add microphone recording';
+          }
+        },
+        { once: true },
+      );
+      audioRecordingTimelineStart = timelinePlayheadTime;
+      audioRecordingTrack = Math.min(audioTrackCount, 7);
+      recorder.start(250);
+      audioRecorder = recorder;
+      audioRecordingStream = stream;
+      audioRecordingStartedAt = Date.now();
+      audioRecordButton.disabled = false;
+      audioRecordButton.textContent = '■ Stop recording';
+      audioRecordButton.title = 'Stop and add this recording to the audio timeline';
+      audioRecordButton.setAttribute('aria-pressed', 'true');
+      mixPlayButton.disabled = true;
+      mixExportButton.disabled = true;
+      soloAudioButton.disabled = true;
+      const updateRecordingStatus = (): void => {
+        const seconds = Math.floor((Date.now() - audioRecordingStartedAt) / 1000);
+        mixStatus.textContent = `Recording · ${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+      };
+      updateRecordingStatus();
+      audioRecordingTimer = setInterval(updateRecordingStatus, 250);
+    } catch (error) {
+      stream?.getTracks().forEach((track) => {
+        track.stop();
+      });
+      audioRecordingStream = null;
+      audioRecordingChunks = [];
+      audioRecordButton.disabled = false;
+      audioRecordButton.textContent = '● Record audio';
+      audioRecordButton.title = 'Record microphone audio at the playhead';
+      audioRecordButton.setAttribute('aria-pressed', 'false');
+      mixPlayButton.disabled = audibleAudioTimelineClips(audioClips).length === 0;
+      mixExportButton.disabled = audibleAudioTimelineClips(audioClips).length === 0;
+      mixStatus.textContent =
+        error instanceof Error ? `Microphone unavailable: ${error.message}` : 'Microphone unavailable';
+    } finally {
+      microphoneRequestPending = false;
+    }
+  });
   const renderMixdown = async (): Promise<File> => {
     mixPlayButton.disabled = true;
     mixExportButton.disabled = true;
@@ -4443,6 +4588,13 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           });
       }
       destroyed = true;
+      if (audioRecordingTimer) clearInterval(audioRecordingTimer);
+      audioRecordingTimer = null;
+      if (audioRecorder?.state === 'recording') audioRecorder.stop();
+      audioRecordingStream?.getTracks().forEach((track) => {
+        track.stop();
+      });
+      audioRecordingStream = null;
       codeEditorCleanup?.();
       codeEditorCleanup = null;
       mixPreview?.pause();
@@ -4494,6 +4646,8 @@ if (!document.getElementById('studio-page-styles')) {
 .studio-timeline-head{flex-wrap:nowrap;white-space:nowrap}
 .studio-timeline-head>button,.studio-timeline-hint{flex:0 0 auto;white-space:nowrap}
 .studio-video-workarea{max-height:150px}
+.studio-audio-record{border-color:#80504b!important;color:#ffc1b7!important}
+.studio-audio-record[aria-pressed=true]{background:#743c39!important;color:#fff!important}
 .studio-picture-clip{border-color:#3d7599;background-color:#244259;color:#e0f4ff}
 .studio-sequence-pip-player{position:absolute;z-index:6;background:#000;border:2px solid #fff;border-radius:8px;box-shadow:0 8px 28px #000a;pointer-events:none}
 @media(max-width:768px){.studio-video-workarea{max-height:108px}}
