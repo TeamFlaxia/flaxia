@@ -543,7 +543,15 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const renderVideoTimeline = (): void => {
     videoTimeline.innerHTML = '';
     videoPlayheadElement = null;
-    const end = Math.max(30, ...videoClips.map((clip) => clip.start + clip.sourceEnd - clip.sourceStart + 5));
+    const sequenceEnd = [...videoClips]
+      .sort((a, b) => a.start - b.start)
+      .reduce((cursor, clip) => Math.max(cursor, clip.start) + clip.sourceEnd - clip.sourceStart, 0);
+    const end = Math.max(
+      30,
+      sequenceEnd + 5,
+      ...videoClips.map((clip) => clip.start + clip.sourceEnd - clip.sourceStart + 5),
+      ...imageLayers.map((layer) => Math.max(layer.start ?? 0, layer.end ?? 0) + 5),
+    );
     const contentWidth = Math.max(1200, end * timelinePixelsPerSecond);
     const ruler = document.createElement('div');
     ruler.className = 'studio-video-ruler';
@@ -677,6 +685,99 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       scheduleAutosave();
     });
     videoTimeline.appendChild(lane);
+    const openLayerEnd = sequenceEnd > 0 ? sequenceEnd : Math.max(30, ...imageLayers.map((layer) => layer.start ?? 0));
+    imageLayers.forEach((layer, index) => {
+      const overlayLane = document.createElement('div');
+      overlayLane.className = 'studio-video-lane studio-image-overlay-lane';
+      const overlayLabel = document.createElement('div');
+      overlayLabel.className = 'studio-video-track-label';
+      overlayLabel.textContent = `${layer.kind === 'text' ? 'T' : 'I'}${index + 1}`;
+      const overlayCanvas = document.createElement('div');
+      overlayCanvas.className = 'studio-video-lane-canvas studio-image-overlay-canvas';
+      overlayCanvas.style.width = `${contentWidth}px`;
+      overlayCanvas.style.backgroundSize = `${timelinePixelsPerSecond}px 100%`;
+      const start = Math.max(0, layer.start ?? 0);
+      const visibleEnd = Math.max(start + 0.1, layer.end ?? openLayerEnd);
+      const block = document.createElement('button');
+      block.type = 'button';
+      block.className = `studio-image-overlay-clip ${layer.kind} ${layer.id === selectedImageLayerId ? 'active' : ''} ${layer.visible ? '' : 'hidden'}`;
+      block.style.left = `${start * timelinePixelsPerSecond}px`;
+      block.style.width = `${Math.max(36, (visibleEnd - start) * timelinePixelsPerSecond)}px`;
+      const blockLabel = document.createElement('span');
+      blockLabel.className = 'studio-image-overlay-label';
+      blockLabel.textContent =
+        layer.kind === 'text' ? layer.text || 'Text overlay' : (files[layer.fileIndex]?.name ?? 'Image overlay');
+      const leftHandle = document.createElement('span');
+      leftHandle.className = 'studio-image-overlay-trim studio-image-overlay-trim-left';
+      leftHandle.setAttribute('aria-label', 'Trim overlay start');
+      const rightHandle = document.createElement('span');
+      rightHandle.className = 'studio-image-overlay-trim studio-image-overlay-trim-right';
+      rightHandle.setAttribute('aria-label', 'Trim overlay end');
+      block.appendChild(leftHandle);
+      block.appendChild(blockLabel);
+      block.appendChild(rightHandle);
+      block.title = `${blockLabel.textContent} · ${start.toFixed(1)}–${layer.end === undefined ? 'end' : layer.end.toFixed(1)}s`;
+      let moved = false;
+      block.addEventListener('click', () => {
+        if (moved) return;
+        selectedImageLayerId = layer.id;
+        void openImageComposer(layer.fileIndex);
+      });
+      const attachOverlayDrag = (target: HTMLElement, mode: 'move' | 'start' | 'end'): void => {
+        target.addEventListener('pointerdown', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const pointerStart = event.clientX;
+          const zoomAtDrag = timelinePixelsPerSecond;
+          const initialStart = start;
+          const initialEnd = visibleEnd;
+          const storedEnd = layer.end;
+          let didMove = false;
+          target.setPointerCapture(event.pointerId);
+          const update = (moveEvent: PointerEvent): void => {
+            const delta = (moveEvent.clientX - pointerStart) / zoomAtDrag;
+            if (Math.abs(delta) > 1 / zoomAtDrag) didMove = true;
+            if (mode === 'move') {
+              const nextStart = Math.max(0, initialStart + delta);
+              layer.start = nextStart;
+              if (storedEnd !== undefined)
+                layer.end = Math.max(nextStart + 0.1, storedEnd + (nextStart - initialStart));
+            } else if (mode === 'start') {
+              layer.start = Math.max(0, Math.min(initialEnd - 0.1, initialStart + delta));
+            } else {
+              layer.end = Math.max(initialStart + 0.1, initialEnd + delta);
+            }
+            const nextStart = layer.start ?? 0;
+            const nextEnd = Math.max(nextStart + 0.1, layer.end ?? openLayerEnd);
+            block.style.left = `${nextStart * timelinePixelsPerSecond}px`;
+            block.style.width = `${Math.max(36, (nextEnd - nextStart) * timelinePixelsPerSecond)}px`;
+            block.title = `${blockLabel.textContent} · ${nextStart.toFixed(1)}–${layer.end === undefined ? 'end' : layer.end.toFixed(1)}s`;
+          };
+          const finish = (): void => {
+            target.removeEventListener('pointermove', update);
+            if (didMove) {
+              moved = true;
+              window.setTimeout(() => {
+                moved = false;
+              }, 0);
+              selectedImageLayerId = layer.id;
+              renderVideoTimeline();
+              scheduleAutosave();
+            }
+          };
+          target.addEventListener('pointermove', update);
+          target.addEventListener('pointerup', finish, { once: true });
+          target.addEventListener('pointercancel', finish, { once: true });
+        });
+      };
+      attachOverlayDrag(block, 'move');
+      attachOverlayDrag(leftHandle, 'start');
+      attachOverlayDrag(rightHandle, 'end');
+      overlayCanvas.appendChild(block);
+      overlayLane.appendChild(overlayLabel);
+      overlayLane.appendChild(overlayCanvas);
+      videoTimeline.appendChild(overlayLane);
+    });
     videoPlayButton.disabled = videoClips.length === 0;
     videoExportButton.disabled = videoClips.length === 0;
     updateSplitButton();
@@ -1238,6 +1339,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       bitmaps.clear();
       overlay.remove();
       imageComposerOverlay = null;
+      renderVideoTimeline();
     };
     overlay.querySelector<HTMLButtonElement>('.studio-composer-close')!.addEventListener('click', close);
 
@@ -2459,6 +2561,7 @@ const studioCss = `
 .studio-timeline-playhead{position:absolute;z-index:4;top:0;bottom:0;width:2px;background:#f2f687;box-shadow:0 0 6px #f2f687;pointer-events:none}
 .studio-composer-preview-controls{display:flex;align-items:center;gap:16px;min-height:38px;padding:4px 18px;border-bottom:1px solid #30333a;background:#15161b;color:#aeb3bd;font-size:10px}.studio-composer-preview-controls label{display:flex;align-items:center;gap:7px;white-space:nowrap}.studio-composer-preview-controls label:last-child{flex:1}.studio-composer-preview-controls input[type=checkbox]{accent-color:#b8ef6a}.studio-composer-preview-controls input[type=range]{flex:1;min-width:80px;max-width:460px;accent-color:#b8ef6a}.studio-composer-preview-controls output{min-width:40px;color:#e9ebef;font-variant-numeric:tabular-nums}
 .studio-video-clip.muted{filter:saturate(.35);border-style:dashed}
+.studio-image-overlay-lane{min-height:42px}.studio-image-overlay-canvas{min-height:41px}.studio-image-overlay-clip{position:absolute;top:5px;height:31px;overflow:hidden;border:1px solid #597b48;border-radius:5px;background:#293b27;color:#e2f2d7;text-align:left;cursor:grab;touch-action:none}.studio-image-overlay-clip.text{border-color:#547c91;background:#243844;color:#dceefa}.studio-image-overlay-clip.active{outline:1px solid #b8ef6a}.studio-image-overlay-clip.hidden{opacity:.45;border-style:dashed}.studio-image-overlay-label{display:block;padding:0 11px;overflow:hidden;line-height:29px;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}.studio-image-overlay-trim{position:absolute;z-index:2;top:0;bottom:0;width:8px;background:#d9efac55;cursor:ew-resize;touch-action:none}.studio-image-overlay-trim:hover{background:#b8ef6a}.studio-image-overlay-trim-left{left:0}.studio-image-overlay-trim-right{right:0}
 .studio-timeline-zoom-control{display:flex;align-items:center;gap:4px;color:var(--studio-muted);font-size:9px;white-space:nowrap}.studio-timeline-zoom-control input{width:76px;accent-color:var(--studio-accent)}.studio-timeline-zoom-control output{min-width:40px;color:#c8ccd4;font-variant-numeric:tabular-nums}
 .studio-video-trim,.studio-audio-trim{position:absolute;z-index:3;top:0;bottom:0;width:9px;background:#d9efac55;cursor:ew-resize;touch-action:none}.studio-video-trim:hover,.studio-audio-trim:hover{background:#b8ef6a}.studio-video-trim-left,.studio-audio-trim-left{left:0;border-radius:4px 0 0 4px}.studio-video-trim-right,.studio-audio-trim-right{right:0;border-radius:0 4px 4px 0}.studio-video-clip-label{display:block;position:relative;z-index:1;padding:0 11px;overflow:hidden;line-height:33px;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}
 .studio-code-surface{position:relative;flex:1;min-width:0;min-height:260px;overflow:hidden}.studio-code-highlight{position:absolute;z-index:0;top:0;left:0;width:max-content;min-width:100%;min-height:100%;box-sizing:border-box;margin:0;padding:12px;overflow:visible;color:#dce2ec;font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2;white-space:pre;pointer-events:none;will-change:transform}.studio-code-surface>.studio-code-editor{position:absolute;z-index:1;inset:0;width:100%;height:100%;min-height:100%;box-sizing:border-box;resize:none;background:transparent;color:transparent;-webkit-text-fill-color:transparent;overflow:auto}.studio-code-surface>.studio-code-editor::selection{background:#71834c66;color:transparent}.studio-token-comment{color:#76836d}.studio-token-string{color:#d8a878}.studio-token-keyword{color:#c792ea}.studio-token-literal{color:#f78c6c}.studio-token-number{color:#f78c6c}.studio-token-function{color:#82aaff}.studio-token-tag{color:#e06c75}.studio-token-color{color:#c3e88d}.studio-token-property{color:#80cbc4}.studio-token-heading{color:#82aaff;font-weight:700}
