@@ -116,10 +116,7 @@ export function audioClipGainAutomation(
   if (!Number.isFinite(duration) || duration <= 0) return [];
   const envelope = audioClipGainEnvelope(clip);
   const fadeIn = Math.min(duration, Math.max(0, Number.isFinite(clip.fadeIn) ? clip.fadeIn : 0));
-  const fadeOut = Math.min(
-    Math.max(0, duration - fadeIn),
-    Math.max(0, Number.isFinite(clip.fadeOut) ? clip.fadeOut : 0),
-  );
+  const fadeOut = Math.min(duration, Math.max(0, Number.isFinite(clip.fadeOut) ? clip.fadeOut : 0));
   const baseGain = Math.max(0, Math.min(4, Number.isFinite(clip.gain) ? clip.gain : 0));
   const middleTime = duration / 2;
   const gainAt = (time: number): number => {
