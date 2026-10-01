@@ -14,6 +14,7 @@ import {
   audioTrackMixSettings,
 } from './audio-mixer.ts';
 import { normalizeImageLayerAdjustments } from './image-adjustments.ts';
+import { isStudioImageBlendMode, type StudioImageBlendMode } from './image-layer-canvas.ts';
 
 const DATABASE_NAME = 'flaxia-studio';
 const DATABASE_VERSION = 3;
@@ -87,7 +88,7 @@ export interface StudioImageLayer {
   fadeIn?: number;
   fadeOut?: number;
   visible: boolean;
-  blend: 'normal' | 'multiply' | 'screen';
+  blend: StudioImageBlendMode;
   text?: string;
   color?: string;
   fontSize?: number;
@@ -290,7 +291,7 @@ function decodeFiles(plaintext: Uint8Array): {
         (layer.rotation === undefined || Number.isFinite(layer.rotation)) &&
         Number.isFinite(layer.opacity) &&
         typeof layer.visible === 'boolean' &&
-        ['normal', 'multiply', 'screen'].includes(layer.blend) &&
+        isStudioImageBlendMode(layer.blend) &&
         (layer.kind !== 'text' ||
           ((layer.color === undefined || /^#[\da-f]{6}$/i.test(layer.color)) &&
             (layer.fontSize === undefined ||

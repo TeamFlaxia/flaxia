@@ -1,6 +1,27 @@
 import { imageLayerCanvasFilter, imageLayerSourceRect } from './image-adjustments.ts';
 import type { StudioImageLayer } from './studio-project-store.ts';
 
+export const STUDIO_IMAGE_BLEND_MODES = [
+  'normal',
+  'multiply',
+  'screen',
+  'overlay',
+  'darken',
+  'lighten',
+  'color-dodge',
+  'color-burn',
+  'hard-light',
+  'soft-light',
+  'difference',
+  'exclusion',
+] as const;
+
+export type StudioImageBlendMode = (typeof STUDIO_IMAGE_BLEND_MODES)[number];
+
+export function isStudioImageBlendMode(value: unknown): value is StudioImageBlendMode {
+  return typeof value === 'string' && STUDIO_IMAGE_BLEND_MODES.some((mode) => mode === value);
+}
+
 export interface StudioLayerCanvasOptions {
   scale?: number;
   offsetX?: number;
