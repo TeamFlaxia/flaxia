@@ -19,6 +19,7 @@ type Bindings = {
 };
 
 const SANDBOX_CSP = [
+  'sandbox allow-scripts allow-pointer-lock',
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:",
   "style-src 'self' 'unsafe-inline' data: blob: https:",
