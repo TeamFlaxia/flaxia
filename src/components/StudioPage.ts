@@ -3786,11 +3786,18 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         if (selected) nameInput.value = selected.defaultName;
       }
     });
-    form.addEventListener('submit', (event) => {
+    let creating = false;
+    const createButton = overlay.querySelector<HTMLButtonElement>('.studio-starter-create')!;
+    form.addEventListener('submit', async (event) => {
       event.preventDefault();
+      if (creating) return;
+      creating = true;
+      createButton.disabled = true;
+      createButton.textContent = 'Creating…';
       try {
         const templateId = templateSelect.value as StudioStarterTemplateId;
-        const file = createStudioStarterFile(templateId, nameInput.value);
+        const file = await createStudioStarterFile(templateId, nameInput.value);
+        if (closed || destroyed) return;
         if (files.some((existing) => existing.name.toLowerCase() === file.name.toLowerCase())) {
           errorMessage.textContent = `A file named “${file.name}” already exists in this project.`;
           nameInput.focus();
@@ -3798,12 +3805,18 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         }
         close();
         addFiles([file]);
-        if (kindOf(file) === 'game' && /\.html?$/i.test(file.name)) {
+        if (kindOf(file) === 'game') {
           preview.querySelector<HTMLButtonElement>('.studio-edit-button')?.click();
         }
       } catch (error) {
         errorMessage.textContent = error instanceof Error ? error.message : 'Could not create this file';
         nameInput.focus();
+      } finally {
+        creating = false;
+        if (!closed) {
+          createButton.disabled = false;
+          createButton.textContent = 'Create file';
+        }
       }
     });
     nameInput.focus();
