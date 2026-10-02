@@ -238,6 +238,7 @@ function sizeLabel(bytes: number): string {
 /** Local-first workspace for preparing the interactive media shared on Flaxia. */
 export function createStudioPage(): { getElement(): HTMLElement; destroy(): void } {
   let files: File[] = [];
+  let activeAssetFilter: StudioKind | 'all' = 'all';
   let activeProjectId = 'current';
   let activeProjectName = 'Untitled project';
   let activeIndex = -1;
@@ -2170,6 +2171,14 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     });
   };
 
+  const applyAssetFilter = (): void => {
+    list.querySelectorAll<HTMLElement>('.studio-asset').forEach((row, index) => {
+      const hidden = activeAssetFilter !== 'all' && kindOf(files[index]!) !== activeAssetFilter;
+      row.hidden = hidden;
+      row.style.display = hidden ? 'none' : '';
+    });
+  };
+
   const render = (): void => {
     if (destroyed) return;
     renderDocumentTabs();
@@ -2184,6 +2193,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       row.addEventListener('click', () => select(index));
       list.appendChild(row);
     });
+    applyAssetFilter();
     const clips = root.querySelector<HTMLElement>('.studio-clip-list')!;
     clips.innerHTML = files
       .map(
@@ -4538,10 +4548,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     button.addEventListener('click', () => {
       root.querySelector('.studio-tool.active')?.classList.remove('active');
       button.classList.add('active');
-      const filter = button.dataset.tool;
-      list.querySelectorAll<HTMLElement>('.studio-asset').forEach((row, index) => {
-        row.hidden = filter !== 'all' && kindOf(files[index]) !== filter;
-      });
+      activeAssetFilter = button.dataset.tool as StudioKind | 'all';
+      applyAssetFilter();
     });
   });
   exportButton.addEventListener('click', () => {
