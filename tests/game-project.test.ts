@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import JSZip from 'jszip';
-import { listEditableGameSources, updateEditableGameSources } from '../src/lib/editor/game-project.ts';
+import {
+  listEditableGameSources,
+  updateEditableGameSources,
+  validateEditableGameSourcePath,
+} from '../src/lib/editor/game-project.ts';
 
 async function sampleGame(): Promise<File> {
   const zip = new JSZip();
@@ -42,6 +46,39 @@ describe('editable game packages', () => {
     assert.deepEqual(await zip.file('assets/icon.png')?.async('uint8array'), new Uint8Array([1, 2, 3]));
     assert.equal(updated.name, original.name);
     assert.equal(updated.type, 'application/zip');
+  });
+
+  it('adds a new editable source path to the ZIP project', async () => {
+    const original = await sampleGame();
+    const updated = await updateEditableGameSources(
+      original,
+      new Map([
+        ['scripts/game.js', 'startGame(2);'],
+        ['scripts/levels/bonus.json', '{"name":"bonus"}'],
+      ]),
+      new Set(['scripts/levels/bonus.json']),
+    );
+
+    assert.deepEqual(
+      (await listEditableGameSources(updated)).map(({ path }) => path),
+      ['index.html', 'scripts/game.js', 'scripts/levels/bonus.json', 'styles/game.css'],
+    );
+    const zip = await JSZip.loadAsync(await updated.arrayBuffer());
+    assert.equal(await zip.file('scripts/levels/bonus.json')?.async('string'), '{"name":"bonus"}');
+  });
+
+  it('rejects unsafe, unsupported, or excessively deep source paths', () => {
+    assert.equal(validateEditableGameSourcePath(' scripts/new.js '), 'scripts/new.js');
+    for (const path of [
+      '../escape.js',
+      '/absolute.js',
+      'src\\escape.js',
+      'src/./escape.js',
+      'src/game.bin',
+      'a/b/c/d/e/f/g/h/i/j/k/new.js',
+    ]) {
+      assert.throws(() => validateEditableGameSourcePath(path), /relative/);
+    }
   });
 
   it('rejects paths outside the supported source allowlist', async () => {

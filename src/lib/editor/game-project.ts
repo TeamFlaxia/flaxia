@@ -15,6 +15,31 @@ function isEditableSource(path: string): boolean {
   return EDITABLE_SOURCE_EXTENSIONS.has(extension);
 }
 
+/** Normalize and validate a source path that can safely be added to a game package. */
+export function validateEditableGameSourcePath(requestedPath: string): string {
+  const path = requestedPath.trim();
+  const hasControlCharacter = Array.from(path).some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 0x20 || code === 0x7f;
+  });
+  const segments = path.split('/');
+  if (
+    !path ||
+    path.length > 255 ||
+    path.startsWith('/') ||
+    path.includes('\\') ||
+    path.includes('?') ||
+    path.includes('#') ||
+    hasControlCharacter ||
+    segments.some((segment) => !segment || segment === '.' || segment === '..') ||
+    segments.length - 1 > 10 ||
+    !isEditableSource(path)
+  ) {
+    throw new Error('Use a relative .html, .css, .js, .mjs, .json, .txt, .glsl, .wgsl, or .rsp source path');
+  }
+  return path;
+}
+
 /** List text sources in a validated ZIP game package for safe in-Studio editing. */
 export async function listEditableGameSources(file: File): Promise<EditableGameSource[]> {
   const bytes = await file.arrayBuffer();
@@ -35,19 +60,32 @@ export async function listEditableGameSources(file: File): Promise<EditableGameS
 }
 
 /** Apply source edits to their original paths and return a replacement ZIP File. */
-export async function updateEditableGameSources(file: File, edits: Map<string, string>): Promise<File> {
+export async function updateEditableGameSources(
+  file: File,
+  edits: Map<string, string>,
+  createdPaths: ReadonlySet<string> = new Set(),
+): Promise<File> {
   if (edits.size === 0) return file;
   const bytes = await file.arrayBuffer();
   const zip = await JSZip.loadAsync(bytes);
   validateGameZipArchive(zip);
   for (const [path, source] of edits) {
-    const entry = zip.file(path);
-    if (!entry || entry.dir || !isEditableSource(path)) throw new Error(`Cannot edit game file: ${path}`);
-    if (new TextEncoder().encode(source).byteLength > MAX_EDITABLE_SOURCE_BYTES) {
-      throw new Error(`${path} exceeds the 2 MB source file limit`);
+    let safePath: string;
+    try {
+      safePath = validateEditableGameSourcePath(path);
+    } catch {
+      throw new Error(`Cannot edit game file: ${path}`);
     }
-    zip.file(path, source);
+    const entry = zip.file(safePath);
+    if (entry?.dir || (createdPaths.has(safePath) && entry) || (!entry && !createdPaths.has(safePath))) {
+      throw new Error(`Cannot edit game file: ${path}`);
+    }
+    if (new TextEncoder().encode(source).byteLength > MAX_EDITABLE_SOURCE_BYTES) {
+      throw new Error(`${safePath} exceeds the 2 MB source file limit`);
+    }
+    zip.file(safePath, source);
   }
+  validateGameZipArchive(zip);
   const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
   if (blob.size > MAX_EDITABLE_GAME_BYTES) throw new Error('The edited game package exceeds 200 MB');
   return new File([blob], file.name, { type: 'application/zip', lastModified: Date.now() });

@@ -2485,14 +2485,18 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
     overlay.setAttribute('aria-label', `Edit ${gameFile.name}`);
-    overlay.innerHTML = `<header class="studio-composer-header"><div><b>Edit game source</b><small>${escapeHtml(gameFile.name)} · files remain in the isolated game sandbox</small></div><div><select class="studio-zip-file-select" aria-label="Game source file"></select><button class="studio-zip-save" type="button" disabled>Save &amp; preview</button><button class="studio-composer-close" type="button" aria-label="Close">×</button></div></header><div class="studio-zip-editor-body"><div class="studio-zip-editor-status" aria-live="polite">Reading game files…</div><div class="studio-zip-editor-host"></div></div>`;
+    overlay.innerHTML = `<header class="studio-composer-header"><div><b>Edit game source</b><small>${escapeHtml(gameFile.name)} · files remain in the isolated game sandbox</small></div><div><select class="studio-zip-file-select" aria-label="Game source file"></select><div class="studio-zip-new-source"><button class="studio-zip-new-file" type="button">＋ New file</button><form class="studio-zip-new-source-form" hidden><input class="studio-zip-new-source-path" type="text" aria-label="New source path" placeholder="scripts/new-file.js" autocomplete="off" spellcheck="false" required><button type="submit">Create</button><button class="studio-zip-new-source-cancel" type="button">Cancel</button></form></div><button class="studio-zip-save" type="button" disabled>Save &amp; preview</button><button class="studio-composer-close" type="button" aria-label="Close">×</button></div></header><div class="studio-zip-editor-body"><div class="studio-zip-editor-status" aria-live="polite">Reading game files…</div><div class="studio-zip-editor-host"></div></div>`;
     root.appendChild(overlay);
     const fileSelect = overlay.querySelector('select')!;
     const editorHost = overlay.querySelector<HTMLElement>('.studio-zip-editor-host')!;
     const status = overlay.querySelector<HTMLElement>('.studio-zip-editor-status')!;
     const saveButton = overlay.querySelector<HTMLButtonElement>('.studio-zip-save')!;
+    const addSourceButton = overlay.querySelector<HTMLButtonElement>('.studio-zip-new-file')!;
+    const addSourceForm = overlay.querySelector<HTMLFormElement>('.studio-zip-new-source-form')!;
+    const newSourcePathInput = overlay.querySelector<HTMLInputElement>('.studio-zip-new-source-path')!;
     const closeButton = overlay.querySelector<HTMLButtonElement>('.studio-composer-close')!;
     const drafts = new Map<string, string>();
+    const createdPaths = new Set<string>();
     let editorPaths = new Map<string, string>();
     let dirty = false;
     let closed = false;
@@ -2505,7 +2509,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     };
     closeButton.addEventListener('click', close);
     try {
-      const { listEditableGameSources, updateEditableGameSources } = await import('../lib/editor/game-project.ts');
+      const { listEditableGameSources, updateEditableGameSources, validateEditableGameSourcePath } = await import(
+        '../lib/editor/game-project.ts'
+      );
       const sources = await listEditableGameSources(gameFile);
       if (closed || destroyed || activeIndex !== index) return;
       if (sources.length === 0) {
@@ -2541,6 +2547,40 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         status.textContent = path;
       };
       fileSelect.addEventListener('change', () => mountEditor(fileSelect.value));
+      addSourceButton.addEventListener('click', () => {
+        addSourceForm.hidden = false;
+        newSourcePathInput.focus();
+      });
+      overlay.querySelector<HTMLButtonElement>('.studio-zip-new-source-cancel')!.addEventListener('click', () => {
+        addSourceForm.hidden = true;
+        newSourcePathInput.value = '';
+      });
+      addSourceForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        try {
+          const path = validateEditableGameSourcePath(newSourcePathInput.value);
+          if ([...editorPaths.keys()].some((existingPath) => existingPath.toLowerCase() === path.toLowerCase())) {
+            status.textContent = `A source file named ${path} already exists.`;
+            return;
+          }
+          createdPaths.add(path);
+          editorPaths.set(path, '');
+          drafts.set(path, '');
+          const option = document.createElement('option');
+          option.value = path;
+          option.textContent = path;
+          fileSelect.appendChild(option);
+          fileSelect.value = path;
+          mountEditor(path);
+          addSourceForm.hidden = true;
+          newSourcePathInput.value = '';
+          dirty = true;
+          saveButton.disabled = false;
+          status.textContent = `New file · ${path}`;
+        } catch (error) {
+          status.textContent = error instanceof Error ? error.message : 'Could not create this source file';
+        }
+      });
       fileSelect.value = sources[0].path;
       mountEditor(fileSelect.value);
       saveButton.addEventListener('click', async () => {
@@ -2548,7 +2588,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         saveButton.disabled = true;
         status.textContent = 'Updating game package…';
         try {
-          const updated = await updateEditableGameSources(gameFile, drafts);
+          const updated = await updateEditableGameSources(gameFile, drafts, createdPaths);
           if (closed || destroyed || activeIndex !== index) return;
           files[index] = updated;
           dirty = false;
@@ -5047,7 +5087,7 @@ const studioCss = `
 .studio-video-workarea{overflow:auto;max-height:100px;background:#121318}.studio-video-timeline{position:relative;min-width:100%;font-size:11px}.studio-video-ruler{height:22px;position:relative;border-bottom:1px solid var(--studio-border);background:repeating-linear-gradient(90deg,transparent 0,transparent 208px,#292c34 209px,#292c34 210px)}.studio-video-ruler>span{position:absolute;top:4px;color:var(--studio-muted);font-variant-numeric:tabular-nums}.studio-video-lane{display:flex;min-height:46px;border-bottom:1px solid var(--studio-border)}.studio-video-track-label{position:sticky;left:0;z-index:2;flex:0 0 48px;padding:16px 8px;background:#191b20;color:#9ea4af;border-right:1px solid var(--studio-border)}.studio-video-lane-canvas{position:relative;min-height:45px;background:repeating-linear-gradient(90deg,transparent 0,transparent 41px,#202229 41px,#202229 42px)}.studio-video-clip{position:absolute;top:5px;height:35px;overflow:hidden;border:1px solid #69519b;border-radius:5px;background:#34294a;color:#eee6ff;text-align:left;text-overflow:ellipsis;white-space:nowrap;cursor:grab}.studio-video-clip.active{outline:1px solid #c8a8ff}.studio-video-hint{color:var(--studio-muted);font-size:11px}
 .studio-code-workbench{display:flex;flex-direction:column;min-height:280px;max-height:48vh;border:1px solid var(--studio-border);border-radius:6px;background:#101116;overflow:hidden}.studio-code-toolbar{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:6px;border-bottom:1px solid var(--studio-border)}.studio-code-toolbar input{min-width:70px;width:22%;padding:5px 7px;border:1px solid var(--studio-border);border-radius:4px;background:#191b20;color:var(--studio-text);font:11px system-ui,sans-serif}.studio-code-toolbar input[type=number]{width:54px}.studio-code-toolbar button,.studio-code-run{padding:5px 8px;border:1px solid var(--studio-border);border-radius:4px;background:#202228;color:var(--studio-text);font-size:11px;cursor:pointer}.studio-code-row{display:flex;flex:1;min-height:0;overflow:hidden}.studio-code-gutter{flex:0 0 42px;padding:12px 8px 12px 0;overflow:hidden;background:#15161b;color:#686e7a;text-align:right;white-space:pre;font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace;user-select:none}.studio-code-editor{flex:1;min-width:0;min-height:260px;padding:12px;border:0;outline:0;resize:vertical;background:#101116;color:#e3e5eb;caret-color:#b8ef6a;font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2;white-space:pre;overflow:auto}.studio-code-run{margin:8px 0}.studio-code-output{min-height:80px}.studio-code-preview{width:100%;height:250px;border:1px solid var(--studio-border);border-radius:6px;background:white}
 .studio-new-file{border-color:#46563a;color:#d8f3c2}.studio-starter-overlay{position:fixed;z-index:1100;inset:0;display:grid;place-items:center;padding:20px;background:#080a0dcc;color:#eceef2;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.studio-starter-dialog{display:flex;flex-direction:column;gap:14px;width:min(100%,440px);padding:20px;border:1px solid #383c46;border-radius:10px;background:#181a1f;box-shadow:0 20px 80px #000b}.studio-starter-dialog header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.studio-starter-dialog h2{margin:0;font-size:16px}.studio-starter-dialog header p,.studio-starter-help{margin:5px 0 0;color:#9298a3;font-size:11px;line-height:1.5}.studio-starter-dialog label{display:flex;flex-direction:column;gap:6px;color:#c6cbd4;font-size:11px}.studio-starter-dialog select,.studio-starter-dialog input{width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid #393d46;border-radius:5px;background:#111216;color:#e9ebef;font:12px system-ui,sans-serif}.studio-starter-dialog input:focus,.studio-starter-dialog select:focus{outline:1px solid #b8ef6a}.studio-starter-error{min-height:15px;margin:0;color:#ff9c9c;font-size:11px}.studio-starter-dialog footer{display:flex;justify-content:flex-end;gap:8px}.studio-starter-dialog footer button,.studio-starter-close{padding:8px 11px;border:1px solid #393d46;border-radius:5px;background:#24272e;color:#e7e9ee;font:11px system-ui,sans-serif;cursor:pointer}.studio-starter-dialog footer .studio-starter-create{border-color:#b8ef6a;background:#b8ef6a;color:#17200f;font-weight:700}.studio-starter-close{width:32px;padding:2px;font-size:20px!important}.studio-starter-dialog button:focus-visible{outline:2px solid #b8ef6a;outline-offset:2px}
-.studio-zip-editor-overlay{inset:3vh 4vw;overflow:hidden;border:1px solid #383c46;border-radius:9px;box-shadow:0 20px 80px #000b}.studio-zip-editor-overlay .studio-composer-header>div:last-child{align-items:center}.studio-zip-file-select{max-width:min(38vw,420px);padding:7px 9px;border:1px solid #393d46;border-radius:5px;background:#202228;color:#e7e9ee;font:11px system-ui,sans-serif}.studio-zip-editor-body{display:flex;flex:1;flex-direction:column;min-height:0;padding:12px;background:#111216}.studio-zip-editor-status{min-height:24px;color:#aeb3bd;font-size:11px}.studio-zip-editor-host{display:flex;flex:1;min-height:0}.studio-zip-editor-host .studio-code-workbench{flex:1;max-height:none}
+.studio-zip-editor-overlay{inset:3vh 4vw;overflow:hidden;border:1px solid #383c46;border-radius:9px;box-shadow:0 20px 80px #000b}.studio-zip-editor-overlay .studio-composer-header>div:last-child{align-items:center}.studio-zip-file-select{max-width:min(38vw,420px);padding:7px 9px;border:1px solid #393d46;border-radius:5px;background:#202228;color:#e7e9ee;font:11px system-ui,sans-serif}.studio-zip-new-source{position:relative}.studio-zip-new-source-form{position:absolute;z-index:12;top:calc(100% + 6px);right:0;display:flex;align-items:center;gap:5px;padding:7px;border:1px solid #393d46;border-radius:6px;background:#181a1f;box-shadow:0 8px 24px #0009}.studio-zip-new-source-form[hidden]{display:none}.studio-zip-new-source-path{width:min(42vw,240px);padding:7px 8px;border:1px solid #393d46;border-radius:4px;background:#111216;color:#e9ebef;font:11px system-ui,sans-serif}.studio-zip-editor-body{display:flex;flex:1;flex-direction:column;min-height:0;padding:12px;background:#111216}.studio-zip-editor-status{min-height:24px;color:#aeb3bd;font-size:11px}.studio-zip-editor-host{display:flex;flex:1;min-height:0}.studio-zip-editor-host .studio-code-workbench{flex:1;max-height:none}
 .studio-audio-envelope{position:absolute;z-index:2;left:5px;right:5px;top:17px;height:18px;overflow:visible;pointer-events:none}.studio-audio-envelope polyline{fill:none;stroke:#f1e678;stroke-width:1.5;vector-effect:non-scaling-stroke;opacity:.95}.studio-audio-envelope-point{fill:#fff4a3;stroke:#4c4724;stroke-width:1;vector-effect:non-scaling-stroke;pointer-events:all;cursor:ns-resize;touch-action:none}.studio-audio-envelope-point:hover{r:3}
 .studio-add-envelope-point{float:right;padding:3px 5px;border:1px solid #3b3d44;border-radius:4px;background:#24262c;color:#d8f3c2;font-size:9px;cursor:pointer}.studio-add-envelope-point:hover{border-color:#82995f;background:#303b29}
 .studio-sequence-player{position:absolute;z-index:5;inset:6% 8%;width:84%;height:88%;max-height:88%;background:#000;border:1px solid var(--studio-border);border-radius:8px;box-shadow:0 12px 40px #0009}
