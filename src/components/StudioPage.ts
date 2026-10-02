@@ -240,6 +240,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let codeDirty = false;
   let htmlEditing = false;
   let editorText = '';
+  let pendingEditorDraftFile: { index: number; file: File } | null = null;
   let previewUrl: string | null = null;
   const activeSandboxPreviewDisposers = new Set<() => void>();
   const closeSandboxPreviews = (): void => {
@@ -250,6 +251,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let restoreFinished = false;
   let pendingImports: File[] = [];
   let autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+  let codeHistoryTimer: ReturnType<typeof setTimeout> | null = null;
   let saveRevision = 0;
   let saveChain: Promise<void> = Promise.resolve();
   let zipPreview: ZipExecutorHandle | null = null;
@@ -303,18 +305,24 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   let timelinePlayheadTime = 0;
   let videoPlayheadElement: HTMLElement | null = null;
   let audioPlayheadElements: HTMLElement[] = [];
-  const captureEditHistory = (): StudioEditHistorySnapshot => ({
-    files: [...files],
-    activeIndex,
-    audioClips: audioClips.map((clip) => ({ ...clip })),
-    videoClips: videoClips.map((clip) => ({ ...clip })),
-    videoFormat,
-    imageLayers: imageLayers.map((layer) => ({ ...layer })),
-    audioTrackCount,
-    selectedAudioClipId,
-    selectedVideoClipId,
-    selectedImageLayerId,
-  });
+  const captureEditHistory = (): StudioEditHistorySnapshot => {
+    const snapshotFiles = [...files];
+    if (codeDirty && pendingEditorDraftFile?.index === activeIndex && snapshotFiles[activeIndex]) {
+      snapshotFiles[activeIndex] = pendingEditorDraftFile.file;
+    }
+    return {
+      files: snapshotFiles,
+      activeIndex,
+      audioClips: audioClips.map((clip) => ({ ...clip })),
+      videoClips: videoClips.map((clip) => ({ ...clip })),
+      videoFormat,
+      imageLayers: imageLayers.map((layer) => ({ ...layer })),
+      audioTrackCount,
+      selectedAudioClipId,
+      selectedVideoClipId,
+      selectedImageLayerId,
+    };
+  };
   let editHistoryBaseline = captureEditHistory();
   const undoHistory: StudioEditHistorySnapshot[] = [];
   const redoHistory: StudioEditHistorySnapshot[] = [];
@@ -830,7 +838,36 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     redoButton.disabled = redoHistory.length === 0;
   };
 
+  const updatePendingEditorDraftFile = (): void => {
+    const currentFile = files[activeIndex];
+    if (!currentFile) return;
+    pendingEditorDraftFile = {
+      index: activeIndex,
+      file: new File([editorText], currentFile.name, {
+        type: currentFile.type || (kindOf(currentFile) === 'game' ? 'text/html' : 'text/plain'),
+        lastModified: currentFile.lastModified,
+      }),
+    };
+  };
+
+  const commitActiveEditorDraft = (): void => {
+    if (!codeDirty) return;
+    const currentFile = files[activeIndex];
+    if (!currentFile) return;
+    const draft = pendingEditorDraftFile?.index === activeIndex ? pendingEditorDraftFile.file : null;
+    files[activeIndex] =
+      draft ??
+      new File([editorText], currentFile.name, {
+        type: currentFile.type || (kindOf(currentFile) === 'game' ? 'text/html' : 'text/plain'),
+        lastModified: currentFile.lastModified,
+      });
+    pendingEditorDraftFile = null;
+    codeDirty = false;
+  };
+
   const recordHistoryChange = (): void => {
+    if (codeHistoryTimer) clearTimeout(codeHistoryTimer);
+    codeHistoryTimer = null;
     if (restoringHistory || !restoreFinished) return;
     const next = captureEditHistory();
     if (sameStudioFileHistoryState(next, editHistoryBaseline)) return;
@@ -839,6 +876,14 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     editHistoryBaseline = next;
     redoHistory.length = 0;
     updateHistoryControls();
+  };
+
+  const scheduleCodeHistoryCheckpoint = (): void => {
+    if (codeHistoryTimer) clearTimeout(codeHistoryTimer);
+    codeHistoryTimer = setTimeout(() => {
+      codeHistoryTimer = null;
+      recordHistoryChange();
+    }, 500);
   };
 
   const scheduleAutosave = (recordHistory = true): void => {
@@ -862,9 +907,13 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         currentFile &&
         (kindOf(currentFile) === 'code' || (kindOf(currentFile) === 'game' && /\.html?$/i.test(currentFile.name)))
       ) {
-        projectFiles[activeIndex] = new File([editorText], currentFile.name, {
-          type: currentFile.type || (kindOf(currentFile) === 'game' ? 'text/html' : 'text/plain'),
-        });
+        projectFiles[activeIndex] =
+          pendingEditorDraftFile?.index === activeIndex
+            ? pendingEditorDraftFile.file
+            : new File([editorText], currentFile.name, {
+                type: currentFile.type || (kindOf(currentFile) === 'game' ? 'text/html' : 'text/plain'),
+                lastModified: currentFile.lastModified,
+              });
       }
       const projectVideoFormat = videoFormat;
       saveChain = saveChain
@@ -1657,6 +1706,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 
   const applyEditHistorySnapshot = (snapshot: StudioEditHistorySnapshot): void => {
     restoringHistory = true;
+    if (codeHistoryTimer) clearTimeout(codeHistoryTimer);
+    codeHistoryTimer = null;
+    pendingEditorDraftFile = null;
     codeDirty = false;
     files = [...snapshot.files];
     activeIndex = snapshot.activeIndex;
@@ -1689,6 +1741,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   };
 
   undoButton.addEventListener('click', () => {
+    if (codeHistoryTimer) recordHistoryChange();
     const snapshot = undoHistory.pop();
     if (!snapshot) return;
     redoHistory.push(captureEditHistory());
@@ -1696,6 +1749,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     applyEditHistorySnapshot(snapshot);
   });
   redoButton.addEventListener('click', () => {
+    if (codeHistoryTimer) recordHistoryChange();
     const snapshot = redoHistory.pop();
     if (!snapshot) return;
     undoHistory.push(captureEditHistory());
@@ -2238,6 +2292,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       editorText = area.value;
       if (tracksProjectFile) {
         codeDirty = true;
+        updatePendingEditorDraftFile();
+        scheduleCodeHistoryCheckpoint();
         saveState.textContent = 'Unsaved changes';
         exportButton.textContent = 'Save file';
         renderDocumentTabs();
@@ -2470,6 +2526,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           editorText = activeEditor.getValue();
           if (tracksProjectFile) {
             codeDirty = true;
+            updatePendingEditorDraftFile();
+            scheduleCodeHistoryCheckpoint();
             saveState.textContent = 'Unsaved changes';
             exportButton.textContent = 'Save file';
             renderDocumentTabs();
@@ -3707,10 +3765,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       editingFile &&
       (kindOf(editingFile) === 'code' || (kindOf(editingFile) === 'game' && /\.html?$/i.test(editingFile.name)))
     ) {
-      files[activeIndex] = new File([editorText], editingFile.name, {
-        type: editingFile.type || (kindOf(editingFile) === 'game' ? 'text/html' : 'text/plain'),
-      });
-      codeDirty = false;
+      commitActiveEditorDraft();
       interacted = true;
       scheduleAutosave();
     }
@@ -3784,7 +3839,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       void file.text().then((text) => {
         if (destroyed || activeIndex !== index) return;
         editorText = text;
-        const editor = createCodeEditor(text, file.name, () => scheduleAutosave());
+        const editor = createCodeEditor(text, file.name, () => scheduleAutosave(false));
         content.appendChild(editor);
         if (/\.(?:js|mjs|css)$/i.test(file.name)) {
           const run = document.createElement('button');
@@ -3893,8 +3948,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         void openZipGameEditor(index);
       } else if (kind === 'game' && /\.html?$/i.test(file.name)) {
         if (htmlEditing) {
-          files[index] = new File([editorText], file.name, { type: 'text/html' });
-          codeDirty = false;
+          commitActiveEditorDraft();
           htmlEditing = false;
           saveState.textContent = 'Saved locally';
           interacted = true;
@@ -3907,7 +3961,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           editorText = html;
           htmlEditing = true;
           content.innerHTML = '';
-          content.appendChild(createCodeEditor(html, file.name, () => scheduleAutosave()));
+          content.appendChild(createCodeEditor(html, file.name, () => scheduleAutosave(false)));
           preview.querySelector<HTMLButtonElement>('.studio-edit-button')!.textContent = 'Preview';
         });
       } else {
@@ -4093,6 +4147,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     try {
       const restored = await importStudioProject(projectFile, passphrase);
       if (autosaveTimer) clearTimeout(autosaveTimer);
+      if (codeHistoryTimer) clearTimeout(codeHistoryTimer);
+      codeHistoryTimer = null;
+      pendingEditorDraftFile = null;
       saveRevision++;
       await saveChain.catch(() => undefined);
       clearUrl();
@@ -4155,10 +4212,13 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         activeFile &&
         (kindOf(activeFile) === 'code' || (kindOf(activeFile) === 'game' && /\.html?$/i.test(activeFile.name)))
       ) {
-        snapshot[activeIndex] = new File([editorText], activeFile.name, {
-          type: activeFile.type || (kindOf(activeFile) === 'game' ? 'text/html' : 'text/plain'),
-          lastModified: activeFile.lastModified,
-        });
+        snapshot[activeIndex] =
+          pendingEditorDraftFile?.index === activeIndex
+            ? pendingEditorDraftFile.file
+            : new File([editorText], activeFile.name, {
+                type: activeFile.type || (kindOf(activeFile) === 'game' ? 'text/html' : 'text/plain'),
+                lastModified: activeFile.lastModified,
+              });
       }
       download(await exportStudioProject(snapshot, audioClips, videoClips, imageLayers, passphrase, videoFormat));
       saveState.textContent = 'Encrypted project downloaded';
@@ -4190,11 +4250,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const file = files[activeIndex];
     if (!file) return;
     if (codeDirty && (kindOf(file) === 'code' || (kindOf(file) === 'game' && /\.html?$/i.test(file.name)))) {
-      const updated = new File([editorText], file.name, {
-        type: file.type || (kindOf(file) === 'game' ? 'text/html' : 'text/plain'),
-      });
-      files[activeIndex] = updated;
-      codeDirty = false;
+      commitActiveEditorDraft();
       saveState.textContent = 'Saved locally';
       exportButton.textContent = 'Export';
       interacted = true;
@@ -4257,10 +4313,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         currentFile &&
         (kindOf(currentFile) === 'code' || (kindOf(currentFile) === 'game' && /\.html?$/i.test(currentFile.name)))
       ) {
-        files[activeIndex] = new File([editorText], currentFile.name, {
-          type: currentFile.type || (kindOf(currentFile) === 'game' ? 'text/html' : 'text/plain'),
-        });
-        codeDirty = false;
+        commitActiveEditorDraft();
       }
       if (autosaveTimer) clearTimeout(autosaveTimer);
       saveRevision++;
@@ -5180,11 +5233,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         currentFile &&
         (kindOf(currentFile) === 'code' || (kindOf(currentFile) === 'game' && /\.html?$/i.test(currentFile.name)))
       ) {
-        files[activeIndex] = new File([editorText], currentFile.name, {
-          type: currentFile.type || (kindOf(currentFile) === 'game' ? 'text/html' : 'text/plain'),
-          lastModified: currentFile.lastModified,
-        });
+        commitActiveEditorDraft();
       }
+      if (codeHistoryTimer) clearTimeout(codeHistoryTimer);
+      codeHistoryTimer = null;
       if (autosaveTimer) clearTimeout(autosaveTimer);
       const vaultKey = getVaultKey();
       if (vaultKey) {
