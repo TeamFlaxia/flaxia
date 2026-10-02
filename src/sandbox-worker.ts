@@ -195,6 +195,47 @@ app.get('/', (c) => c.json({ status: 'ok', worker: 'flaxia-sandbox' }, 200));
 
 app.get('/favicon.ico', (c) => c.body(null, 204));
 
+// Trusted compatibility broker for game localStorage. This endpoint is kept
+// outside the worker's CSP sandbox so it can read the sandbox origin's legacy
+// storage; untrusted game documents continue to receive SANDBOX_CSP.
+app.get('/api/game-storage', (c) => {
+  const html = `<!doctype html><meta charset="utf-8"><script>
+    (function(){
+      'use strict';
+      var allowedOrigins=new Set(['https://flaxia.app','http://localhost:5173','http://localhost:8787','http://localhost:8788']);
+      function send(origin,message){try{window.parent.postMessage(message,origin)}catch{}}
+      window.addEventListener('message',function(event){
+        if(event.source!==window.parent||!allowedOrigins.has(event.origin))return;
+        var message=event.data;
+        if(!message||typeof message!=='object')return;
+        try{
+          if(message.type==='FLAXIA_STORAGE_READ'&&typeof message.requestId==='string'){
+            var entries=[];
+            for(var i=0;i<localStorage.length;i++){var key=localStorage.key(i);if(key!==null){var value=localStorage.getItem(key);if(value!==null)entries.push([key,value])}}
+            send(event.origin,{type:'FLAXIA_STORAGE_SNAPSHOT',requestId:message.requestId,entries:entries});
+          }else if(message.type==='FLAXIA_STORAGE_SET'&&typeof message.key==='string'&&typeof message.value==='string'){
+            localStorage.setItem(message.key,message.value);
+          }else if(message.type==='FLAXIA_STORAGE_REMOVE'&&typeof message.key==='string'){
+            localStorage.removeItem(message.key);
+          }else if(message.type==='FLAXIA_STORAGE_CLEAR'){
+            localStorage.clear();
+          }
+        }catch(error){send(event.origin,{type:'FLAXIA_STORAGE_ERROR',message:String(error)})}
+      });
+      window.parent.postMessage({type:'FLAXIA_STORAGE_BROKER_READY'},'*');
+    })();
+  </script>`;
+  return new Response(html, {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors https://flaxia.app http://localhost:5173 http://localhost:8787 http://localhost:8788",
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+    },
+  });
+});
+
 app.get('/sdk/multiplayer.js', (c) => {
   return c.body(MULTIPLAYER_SDK_IIFE, 200, {
     'Content-Type': 'application/javascript; charset=utf-8',
