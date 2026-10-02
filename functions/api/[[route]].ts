@@ -64,12 +64,7 @@ app.use(
       if (!origin) return '';
       const env = c.env as { BASE_URL?: string; SANDBOX_ORIGIN?: string };
       const allowed = new Set(
-        [
-          env.BASE_URL,
-          'http://localhost:8787',
-          'http://localhost:5173',
-          'https://flaxia.app',
-        ].filter(Boolean),
+        [env.BASE_URL, 'http://localhost:8787', 'http://localhost:5173', 'https://flaxia.app'].filter(Boolean),
       );
       return allowed.has(origin) ? origin : '';
     },

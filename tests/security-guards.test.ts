@@ -85,15 +85,13 @@ describe('security guards', () => {
     // User-controlled sandbox code communicates with the app through typed
     // postMessage bridges. It must never be a credentialed CORS or CSRF origin.
     const api = readFileSync(join(ROOT, 'functions/api/[[route]].ts'), 'utf8');
-    const corsAllowlist =
-      api.match(/const allowed = new Set\(\s*\[([\s\S]*?)\]\.filter\(Boolean\),\s*\);/)?.[1] ?? '';
+    const corsAllowlist = api.match(/const allowed = new Set\(\s*\[([\s\S]*?)\]\.filter\(Boolean\),\s*\);/)?.[1] ?? '';
     assert.ok(corsAllowlist, 'API CORS allowlist must be discoverable');
     assert.ok(!corsAllowlist.includes('SANDBOX_ORIGIN'), 'sandbox origin must not receive credentialed CORS');
     assert.ok(!corsAllowlist.includes('sandbox.flaxia.app'), 'sandbox origin must not receive credentialed CORS');
 
     const helpers = readFileSync(join(ROOT, 'functions/api/helpers.ts'), 'utf8');
-    const csrfAllowlist =
-      helpers.match(/export const allowedOrigins = new Set\(\[([\s\S]*?)\]\);/)?.[1] ?? '';
+    const csrfAllowlist = helpers.match(/export const allowedOrigins = new Set\(\[([\s\S]*?)\]\);/)?.[1] ?? '';
     assert.ok(csrfAllowlist, 'CSRF allowlist must be discoverable');
     assert.ok(!csrfAllowlist.includes('sandbox.flaxia.app'), 'sandbox origin must not bypass CSRF validation');
   });

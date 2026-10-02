@@ -229,7 +229,8 @@ app.get('/api/game-storage', (c) => {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
-      'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors https://flaxia.app http://localhost:5173 http://localhost:8787 http://localhost:8788",
+      'Content-Security-Policy':
+        "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors https://flaxia.app http://localhost:5173 http://localhost:8787 http://localhost:8788",
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
     },

@@ -1,3 +1,4 @@
+import { connectGameStorage, loadLegacyGameStorage } from './game-storage-broker.js';
 import {
   createZipLoadingIndicator,
   createZipSandboxIframe,
@@ -5,7 +6,6 @@ import {
   showLoadingTimeoutMessage,
   waitForZipIframeLoad,
 } from './zip-ui-utils.js';
-import { connectGameStorage, loadLegacyGameStorage } from './game-storage-broker.js';
 
 export interface WvfsZipExecutorHandle {
   destroy: () => void;

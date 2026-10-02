@@ -59,11 +59,7 @@ export const requireAdmin = async (c: Context<{ Bindings: Bindings; Variables: V
 };
 
 // CSRF protection middleware
-export const allowedOrigins = new Set([
-  'http://localhost:8787',
-  'http://localhost:5173',
-  'https://flaxia.app',
-]);
+export const allowedOrigins = new Set(['http://localhost:8787', 'http://localhost:5173', 'https://flaxia.app']);
 
 export function getBaseOrigin(c: any): string {
   try {

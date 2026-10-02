@@ -542,9 +542,7 @@ describe('PDF attachments (kind = document)', () => {
     ];
 
     for (const file of files) {
-      const { status, data } = await prepareFiles(cookie, [
-        { filename: file.filename, contentType: file.contentType },
-      ]);
+      const { status, data } = await prepareFiles(cookie, [{ filename: file.filename, contentType: file.contentType }]);
       assert.equal(status, 200, `prepare failed for ${file.filename}`);
       const uploads = data.uploads as Array<{ key: string; uploadUrl: string; kind: string }>;
       assert.equal(uploads[0].kind, 'document');

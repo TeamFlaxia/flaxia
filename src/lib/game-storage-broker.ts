@@ -34,7 +34,8 @@ function ensureStorageBroker(sandboxOrigin: string): Promise<HTMLIFrameElement> 
     iframe.title = 'Game storage compatibility';
     iframe.tabIndex = -1;
     iframe.setAttribute('aria-hidden', 'true');
-    iframe.style.cssText = 'position:fixed;width:1px;height:1px;left:-10px;bottom:0;border:0;opacity:0;pointer-events:none';
+    iframe.style.cssText =
+      'position:fixed;width:1px;height:1px;left:-10px;bottom:0;border:0;opacity:0;pointer-events:none';
     if (!existing) {
       iframe.src = `${brokerOriginFor(sandboxOrigin)}${STORAGE_FRAME_PATH}`;
       document.body.appendChild(iframe);
@@ -109,15 +110,8 @@ export function connectGameStorage(iframe: HTMLIFrameElement, sandboxOrigin: str
     const operation = data.operation;
     if (operation === 'clear') {
       broker.contentWindow.postMessage({ type: 'FLAXIA_STORAGE_CLEAR' }, brokerOrigin);
-    } else if (
-      operation === 'set' &&
-      typeof data.key === 'string' &&
-      typeof data.value === 'string'
-    ) {
-      broker.contentWindow.postMessage(
-        { type: 'FLAXIA_STORAGE_SET', key: data.key, value: data.value },
-        brokerOrigin,
-      );
+    } else if (operation === 'set' && typeof data.key === 'string' && typeof data.value === 'string') {
+      broker.contentWindow.postMessage({ type: 'FLAXIA_STORAGE_SET', key: data.key, value: data.value }, brokerOrigin);
     } else if (operation === 'remove' && typeof data.key === 'string') {
       broker.contentWindow.postMessage({ type: 'FLAXIA_STORAGE_REMOVE', key: data.key }, brokerOrigin);
     }
