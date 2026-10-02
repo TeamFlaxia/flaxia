@@ -66,11 +66,9 @@ app.use(
       const allowed = new Set(
         [
           env.BASE_URL,
-          env.SANDBOX_ORIGIN,
           'http://localhost:8787',
           'http://localhost:5173',
           'https://flaxia.app',
-          'https://sandbox.flaxia.app',
         ].filter(Boolean),
       );
       return allowed.has(origin) ? origin : '';

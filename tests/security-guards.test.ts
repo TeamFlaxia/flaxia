@@ -62,6 +62,42 @@ describe('security guards', () => {
     assert.match(sandboxOrigin, /^https:\/\/sandbox\./);
   });
 
+  it('keeps untrusted sandbox content off the authenticated API trust boundary', () => {
+    // Every ZIP iframe is untrusted. The shared helper must always apply a
+    // sandbox so a caller cannot accidentally opt out (the WVFS path did).
+    const zipUi = readFileSync(join(ROOT, 'src/lib/zip-ui-utils.ts'), 'utf8');
+    const zipSandbox = zipUi.match(/const ZIP_SANDBOX = ['"]([^'"]+)['"]/)?.[1] ?? '';
+    assert.ok(zipSandbox, 'ZIP iframe helper must define a sandbox policy');
+    assert.ok(zipSandbox.includes('allow-scripts'), 'ZIP games need scripts enabled');
+    assert.ok(!zipSandbox.includes('allow-same-origin'), 'ZIP iframe sandbox must keep an opaque origin');
+    assert.match(zipUi, /iframe\.sandbox = ZIP_SANDBOX/, 'ZIP iframe helper must always set the sandbox attribute');
+    assert.ok(!/options:\s*\{[^}]*sandbox\?/.test(zipUi), 'callers must not be able to disable ZIP sandboxing');
+
+    // iframe sandboxing does not protect users who open a sandbox URL directly.
+    // The response CSP must force the same opaque-origin boundary even when the
+    // untrusted document is the top-level page.
+    const worker = readFileSync(join(ROOT, 'src/sandbox-worker.ts'), 'utf8');
+    const sandboxCsp = worker.match(/const SANDBOX_CSP = \[([\s\S]*?)\]\.join\('; '\);/)?.[1] ?? '';
+    assert.ok(sandboxCsp, 'sandbox worker must define SANDBOX_CSP');
+    assert.match(sandboxCsp, /sandbox allow-scripts/, 'sandbox worker CSP must force sandboxing');
+    assert.ok(!sandboxCsp.includes('allow-same-origin'), 'sandbox worker CSP must force an opaque origin');
+
+    // User-controlled sandbox code communicates with the app through typed
+    // postMessage bridges. It must never be a credentialed CORS or CSRF origin.
+    const api = readFileSync(join(ROOT, 'functions/api/[[route]].ts'), 'utf8');
+    const corsAllowlist =
+      api.match(/const allowed = new Set\(\s*\[([\s\S]*?)\]\.filter\(Boolean\),\s*\);/)?.[1] ?? '';
+    assert.ok(corsAllowlist, 'API CORS allowlist must be discoverable');
+    assert.ok(!corsAllowlist.includes('SANDBOX_ORIGIN'), 'sandbox origin must not receive credentialed CORS');
+    assert.ok(!corsAllowlist.includes('sandbox.flaxia.app'), 'sandbox origin must not receive credentialed CORS');
+
+    const helpers = readFileSync(join(ROOT, 'functions/api/helpers.ts'), 'utf8');
+    const csrfAllowlist =
+      helpers.match(/export const allowedOrigins = new Set\(\[([\s\S]*?)\]\);/)?.[1] ?? '';
+    assert.ok(csrfAllowlist, 'CSRF allowlist must be discoverable');
+    assert.ok(!csrfAllowlist.includes('sandbox.flaxia.app'), 'sandbox origin must not bypass CSRF validation');
+  });
+
   it('does not gate test routes on request-derived data', () => {
     const src = readFileSync(join(ROOT, 'functions/api/routes/tests.ts'), 'utf8');
     assert.ok(!src.includes('c.req.url.includes'), 'test route guard must not inspect c.req.url');
