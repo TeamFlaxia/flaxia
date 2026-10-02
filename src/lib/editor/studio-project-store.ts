@@ -23,12 +23,24 @@ const DATABASE_VERSION = 3;
 const PROJECT_STORE = 'projects';
 const CURRENT_PROJECT_KEY = 'current';
 const PROJECT_ITEM_ID = 'studio_project';
+const PROJECT_DATA_KEY_PREFIX = 'project-data:';
+const PROJECT_META_KEY_PREFIX = 'project-meta:';
+const PROJECT_ITEM_ID_PREFIX = 'studio_project:';
+const PROJECT_META_ITEM_ID_PREFIX = 'studio_project_meta:';
+const DEFAULT_PROJECT_NAME = 'Untitled project';
+const MAX_PROJECTS = 100;
 const MAX_PERSISTED_BYTES = 50 * 1024 * 1024;
 const MAX_PORTABLE_BYTES = 70 * 1024 * 1024;
 const PORTABLE_ITEM_ID = 'studio_portable_project_v1';
 const PORTABLE_MAGIC = new Uint8Array([0x46, 0x58, 0x53, 0x54, 1]);
 
 interface EncryptedProjectRecord extends VaultItemCiphertext {
+  savedAt: number;
+}
+
+interface ProjectMetadata {
+  id: string;
+  name: string;
   savedAt: number;
 }
 
@@ -41,11 +53,18 @@ interface FileManifestEntry {
 }
 
 interface StudioProjectManifest {
+  projectName?: string;
   files: FileManifestEntry[];
   audioClips: AudioTimelineClip[];
   videoClips: StudioVideoClip[];
   imageLayers: StudioImageLayer[];
   videoFormat?: StudioVideoFormat;
+}
+
+export interface StudioLocalProjectSummary {
+  id: string;
+  name: string;
+  savedAt: number;
 }
 
 export type StudioVideoFormat = 'landscape' | 'square' | 'portrait';
@@ -148,12 +167,108 @@ async function transaction<T>(mode: IDBTransactionMode, run: (store: IDBObjectSt
   }
 }
 
+function normalizeProjectId(id: string): string {
+  if (id !== 'current' && !/^[\w-]{1,80}$/.test(id)) throw new Error('Invalid local project id');
+  return id;
+}
+
+function normalizeProjectName(name: string): string {
+  const normalized = name.trim();
+  if (!normalized) throw new Error('Enter a project name');
+  if (normalized.length > 100) throw new Error('Project names must be 100 characters or fewer');
+  return normalized;
+}
+
+function projectDataKey(id: string): string {
+  return id === 'current' ? CURRENT_PROJECT_KEY : `${PROJECT_DATA_KEY_PREFIX}${id}`;
+}
+
+function projectItemId(id: string): string {
+  return id === 'current' ? PROJECT_ITEM_ID : `${PROJECT_ITEM_ID_PREFIX}${id}`;
+}
+
+function projectMetadataKey(id: string): string {
+  return `${PROJECT_META_KEY_PREFIX}${id}`;
+}
+
+function projectMetadataItemId(id: string): string {
+  return `${PROJECT_META_ITEM_ID_PREFIX}${id}`;
+}
+
+async function encryptProjectMetadata(
+  metadata: ProjectMetadata,
+  vaultKey: Uint8Array,
+): Promise<EncryptedProjectRecord> {
+  const itemId = projectMetadataItemId(metadata.id);
+  const plaintext = new TextEncoder().encode(JSON.stringify(metadata));
+  try {
+    return { ...(await encryptVaultItem(vaultKey, itemId, plaintext)), savedAt: metadata.savedAt };
+  } finally {
+    plaintext.fill(0);
+  }
+}
+
+async function readProjectMetadataRecords(): Promise<{
+  keys: IDBValidKey[];
+  records: Array<{ key: string; value: EncryptedProjectRecord }>;
+}> {
+  const database = await openDatabase();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = database.transaction(PROJECT_STORE, 'readonly');
+      const store = tx.objectStore(PROJECT_STORE);
+      const keysRequest = store.getAllKeys();
+      const records: Array<{ key: string; value: EncryptedProjectRecord }> = [];
+      let keys: IDBValidKey[] = [];
+      keysRequest.onsuccess = () => {
+        keys = keysRequest.result;
+        const metadataKeys = keys.filter(
+          (key): key is string => typeof key === 'string' && key.startsWith(PROJECT_META_KEY_PREFIX),
+        );
+        for (const key of metadataKeys) {
+          const request = store.get(key);
+          request.onsuccess = () => {
+            if (request.result) records.push({ key, value: request.result as EncryptedProjectRecord });
+          };
+        }
+      };
+      keysRequest.onerror = () => reject(keysRequest.error ?? new Error('Studio project list unavailable'));
+      tx.oncomplete = () => resolve({ keys, records });
+      tx.onerror = () => reject(tx.error ?? new Error('Studio project list unavailable'));
+      tx.onabort = () => reject(tx.error ?? new Error('Studio project list unavailable'));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+async function writeProjectRecords(
+  records: ReadonlyArray<{ key: string; value: EncryptedProjectRecord }>,
+): Promise<void> {
+  const database = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = database.transaction(PROJECT_STORE, 'readwrite');
+      const store = tx.objectStore(PROJECT_STORE);
+      records.forEach(({ key, value }) => {
+        store.put(value, key);
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error('Studio project save failed'));
+      tx.onabort = () => reject(tx.error ?? new Error('Studio project save failed'));
+    });
+  } finally {
+    database.close();
+  }
+}
+
 async function encodeFiles(
   files: File[],
   audioClips: AudioTimelineClip[],
   videoClips: StudioVideoClip[],
   imageLayers: StudioImageLayer[],
   videoFormat: StudioVideoFormat,
+  projectName = DEFAULT_PROJECT_NAME,
 ): Promise<Uint8Array> {
   if (files.length > 255) throw new Error('Studio projects support up to 255 files');
   const metadata: FileManifestEntry[] = [];
@@ -173,6 +288,7 @@ async function encodeFiles(
   }
   const manifest = new TextEncoder().encode(
     JSON.stringify({
+      projectName,
       files: metadata,
       audioClips,
       videoClips,
@@ -193,6 +309,7 @@ async function encodeFiles(
 }
 
 function decodeFiles(plaintext: Uint8Array): {
+  projectName: string;
   files: File[];
   audioClips: AudioTimelineClip[];
   videoClips: StudioVideoClip[];
@@ -377,7 +494,17 @@ function decodeFiles(plaintext: Uint8Array): {
     });
   const videoFormat: StudioVideoFormat =
     manifest.videoFormat === 'square' || manifest.videoFormat === 'portrait' ? manifest.videoFormat : 'landscape';
-  return { files, audioClips, videoClips, imageLayers, videoFormat };
+  return {
+    projectName:
+      typeof manifest.projectName === 'string' && manifest.projectName.trim().length > 0
+        ? manifest.projectName.trim().slice(0, 100)
+        : DEFAULT_PROJECT_NAME,
+    files,
+    audioClips,
+    videoClips,
+    imageLayers,
+    videoFormat,
+  };
 }
 
 /** Export a passphrase-encrypted portable project; the passphrase never leaves this device. */
@@ -388,9 +515,17 @@ export async function exportStudioProject(
   imageLayers: StudioImageLayer[],
   passphrase: string,
   videoFormat: StudioVideoFormat = 'landscape',
+  projectName = DEFAULT_PROJECT_NAME,
 ): Promise<File> {
   if (passphrase.length < 12) throw new Error('Use a passphrase with at least 12 characters');
-  const plaintext = await encodeFiles(files, audioClips, videoClips, imageLayers, videoFormat);
+  const plaintext = await encodeFiles(
+    files,
+    audioClips,
+    videoClips,
+    imageLayers,
+    videoFormat,
+    normalizeProjectName(projectName),
+  );
   const salt = crypto.getRandomValues(new Uint8Array(VAULT_SALT_BYTES));
   let key: Uint8Array | null = null;
   try {
@@ -415,6 +550,7 @@ export async function importStudioProject(
   file: File,
   passphrase: string,
 ): Promise<{
+  projectName: string;
   files: File[];
   audioClips: AudioTimelineClip[];
   videoClips: StudioVideoClip[];
@@ -465,45 +601,170 @@ export async function saveStudioProject(
   imageLayers: StudioImageLayer[],
   vaultKey: Uint8Array,
   videoFormat: StudioVideoFormat = 'landscape',
+  projectId = 'current',
+  projectName = DEFAULT_PROJECT_NAME,
 ): Promise<void> {
-  const plaintext = await encodeFiles(files, audioClips, videoClips, imageLayers, videoFormat);
+  const id = normalizeProjectId(projectId);
+  const name = normalizeProjectName(projectName);
+  if (id !== 'current') {
+    const projects = await listStudioProjects(vaultKey);
+    if (!projects.some((project) => project.id === id) && projects.length >= MAX_PROJECTS) {
+      throw new Error(`Studio supports up to ${MAX_PROJECTS} local projects`);
+    }
+  }
+  const plaintext = await encodeFiles(files, audioClips, videoClips, imageLayers, videoFormat, name);
   try {
-    const encrypted = await encryptVaultItem(vaultKey, PROJECT_ITEM_ID, plaintext);
-    await transaction('readwrite', (store) =>
-      store.put({ ...encrypted, savedAt: Date.now() } satisfies EncryptedProjectRecord, CURRENT_PROJECT_KEY),
-    );
+    const savedAt = Date.now();
+    const [encrypted, metadata] = await Promise.all([
+      encryptVaultItem(vaultKey, projectItemId(id), plaintext),
+      encryptProjectMetadata({ id, name, savedAt }, vaultKey),
+    ]);
+    await writeProjectRecords([
+      { key: projectDataKey(id), value: { ...encrypted, savedAt } },
+      { key: projectMetadataKey(id), value: metadata },
+    ]);
   } finally {
     plaintext.fill(0);
   }
 }
 
-export async function loadStudioProject(vaultKey: Uint8Array): Promise<{
+async function decodeProjectMetadataRecord(
+  vaultKey: Uint8Array,
+  id: string,
+  record: EncryptedProjectRecord | undefined,
+): Promise<ProjectMetadata | null> {
+  if (!record || record.item_id !== projectMetadataItemId(id)) return null;
+  let plaintext: Uint8Array | null = null;
+  try {
+    plaintext = await decryptVaultItem(vaultKey, record.item_id, record.item_key_wrapped, record.payload);
+    const metadata = JSON.parse(new TextDecoder().decode(plaintext)) as Partial<ProjectMetadata>;
+    if (
+      metadata.id !== id ||
+      typeof metadata.name !== 'string' ||
+      metadata.name.trim().length === 0 ||
+      typeof metadata.savedAt !== 'number' ||
+      !Number.isFinite(metadata.savedAt)
+    ) {
+      return null;
+    }
+    return { id, name: metadata.name.trim().slice(0, 100), savedAt: metadata.savedAt };
+  } catch {
+    return null;
+  } finally {
+    plaintext?.fill(0);
+  }
+}
+
+async function loadProjectMetadata(vaultKey: Uint8Array, id: string): Promise<ProjectMetadata | null> {
+  const record = (await transaction('readonly', (store) => store.get(projectMetadataKey(id)))) as
+    | EncryptedProjectRecord
+    | undefined;
+  return decodeProjectMetadataRecord(vaultKey, id, record);
+}
+
+export async function listStudioProjects(vaultKey: Uint8Array): Promise<StudioLocalProjectSummary[]> {
+  const { keys, records } = await readProjectMetadataRecords();
+  const projects = await Promise.all(
+    records.map(async ({ key, value }): Promise<StudioLocalProjectSummary | null> => {
+      const id = key.slice(PROJECT_META_KEY_PREFIX.length);
+      return decodeProjectMetadataRecord(vaultKey, id, value);
+    }),
+  );
+  const valid = projects.filter((project): project is StudioLocalProjectSummary => project !== null);
+  if (keys.includes(CURRENT_PROJECT_KEY) && !valid.some((project) => project.id === 'current')) {
+    valid.push({ id: 'current', name: DEFAULT_PROJECT_NAME, savedAt: 0 });
+  }
+  return valid.sort((left, right) => right.savedAt - left.savedAt).slice(0, MAX_PROJECTS);
+}
+
+export async function renameStudioProject(vaultKey: Uint8Array, projectId: string, projectName: string): Promise<void> {
+  const id = normalizeProjectId(projectId);
+  const name = normalizeProjectName(projectName);
+  const dataRecord = (await transaction('readonly', (store) => store.get(projectDataKey(id)))) as
+    | EncryptedProjectRecord
+    | undefined;
+  if (!dataRecord || dataRecord.item_id !== projectItemId(id)) throw new Error('Local project not found');
+  const priorMetadata = await loadProjectMetadata(vaultKey, id);
+  const savedAt = priorMetadata?.savedAt ?? dataRecord.savedAt;
+  const encrypted = await encryptProjectMetadata({ id, name, savedAt }, vaultKey);
+  await transaction('readwrite', (store) => store.put(encrypted, projectMetadataKey(id)));
+}
+
+export async function deleteStudioProject(projectId: string): Promise<void> {
+  const id = normalizeProjectId(projectId);
+  const database = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = database.transaction(PROJECT_STORE, 'readwrite');
+      const store = tx.objectStore(PROJECT_STORE);
+      store.delete(projectDataKey(id));
+      store.delete(projectMetadataKey(id));
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error('Studio project delete failed'));
+      tx.onabort = () => reject(tx.error ?? new Error('Studio project delete failed'));
+    });
+  } finally {
+    database.close();
+  }
+}
+
+export async function loadStudioProject(
+  vaultKey: Uint8Array,
+  projectId = 'current',
+): Promise<{
+  id: string;
+  name: string;
+  savedAt: number;
   files: File[];
   audioClips: AudioTimelineClip[];
   videoClips: StudioVideoClip[];
   imageLayers: StudioImageLayer[];
   videoFormat: StudioVideoFormat;
 }> {
-  const record = (await transaction('readonly', (store) => store.get(CURRENT_PROJECT_KEY))) as
+  const id = normalizeProjectId(projectId);
+  const record = (await transaction('readonly', (store) => store.get(projectDataKey(id)))) as
     | EncryptedProjectRecord
     | undefined;
-  if (!record || record.item_id !== PROJECT_ITEM_ID) {
-    return { files: [], audioClips: [], videoClips: [], imageLayers: [], videoFormat: 'landscape' };
+  const metadata = await loadProjectMetadata(vaultKey, id);
+  if (!record) {
+    return {
+      id,
+      name: metadata?.name ?? DEFAULT_PROJECT_NAME,
+      savedAt: metadata?.savedAt ?? 0,
+      files: [],
+      audioClips: [],
+      videoClips: [],
+      imageLayers: [],
+      videoFormat: 'landscape',
+    };
   }
+  if (record.item_id !== projectItemId(id)) throw new Error('Invalid encrypted Studio project');
   const plaintext = await decryptVaultItem(vaultKey, record.item_id, record.item_key_wrapped, record.payload);
   try {
-    return decodeFiles(plaintext);
+    const project = decodeFiles(plaintext);
+    return {
+      ...project,
+      id,
+      name: metadata?.name ?? project.projectName,
+      savedAt: metadata?.savedAt ?? record.savedAt,
+    };
   } finally {
     plaintext.fill(0);
   }
 }
 
-/** Keep the device-local project readable when the account rotates its VK. */
+/** Keep every device-local project readable when the account rotates its VK. */
 export async function rewrapStudioProjectKey(oldVk: Uint8Array, newVk: Uint8Array): Promise<void> {
-  const record = (await transaction('readonly', (store) => store.get(CURRENT_PROJECT_KEY))) as
-    | EncryptedProjectRecord
-    | undefined;
-  if (!record || record.item_id !== PROJECT_ITEM_ID) return;
-  const item_key_wrapped = await rewrapItemKeyForVaultKey(oldVk, newVk, record.item_id, record.item_key_wrapped);
-  await transaction('readwrite', (store) => store.put({ ...record, item_key_wrapped }, CURRENT_PROJECT_KEY));
+  const { keys } = await readProjectMetadataRecords();
+  const recordKeys = keys.filter(
+    (key): key is string =>
+      key === CURRENT_PROJECT_KEY ||
+      (typeof key === 'string' && (key.startsWith(PROJECT_DATA_KEY_PREFIX) || key.startsWith(PROJECT_META_KEY_PREFIX))),
+  );
+  for (const key of recordKeys) {
+    const record = (await transaction('readonly', (store) => store.get(key))) as EncryptedProjectRecord | undefined;
+    if (!record || typeof record.item_id !== 'string' || typeof record.item_key_wrapped !== 'string') continue;
+    const item_key_wrapped = await rewrapItemKeyForVaultKey(oldVk, newVk, record.item_id, record.item_key_wrapped);
+    await transaction('readwrite', (store) => store.put({ ...record, item_key_wrapped }, key));
+  }
 }

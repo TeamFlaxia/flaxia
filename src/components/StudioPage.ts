@@ -29,9 +29,12 @@ import { sameStudioFileHistoryState } from '../lib/editor/studio-edit-history.ts
 import { saveStudioHandoff } from '../lib/editor/studio-handoff.js';
 import { resolveStudioPostMode } from '../lib/editor/studio-post-plan.ts';
 import {
+  deleteStudioProject,
   exportStudioProject,
   importStudioProject,
+  listStudioProjects,
   loadStudioProject,
+  renameStudioProject,
   type StudioImageLayer,
   type StudioVideoClip,
   type StudioVideoFormat,
@@ -235,6 +238,8 @@ function sizeLabel(bytes: number): string {
 /** Local-first workspace for preparing the interactive media shared on Flaxia. */
 export function createStudioPage(): { getElement(): HTMLElement; destroy(): void } {
   let files: File[] = [];
+  let activeProjectId = 'current';
+  let activeProjectName = 'Untitled project';
   let activeIndex = -1;
   let objectUrl: string | null = null;
   let codeDirty = false;
@@ -334,7 +339,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     <header class="studio-topbar">
       <a class="studio-brand" href="/home" aria-label="Flaxia home"><span class="studio-brand-mark">f</span> flaxia <i>/</i> studio</a>
       <div class="studio-project-name"><span class="studio-live-dot"></span><span class="studio-project-title">Untitled project</span><span class="studio-save-state">Local workspace</span></div>
-      <div class="studio-top-actions"><button class="studio-button studio-open" type="button">＋ Import</button><button class="studio-button studio-new-file" type="button" aria-label="Create a new source file" title="Create a new source file" disabled>＋ New</button><button class="studio-button studio-project-import" type="button">Open project</button><button class="studio-button studio-project-export" type="button" disabled>Save project</button><button class="studio-button studio-export" type="button" disabled>Export</button><button class="studio-button studio-create-post" type="button" disabled>Create post ↗</button></div>
+      <div class="studio-top-actions"><button class="studio-button studio-project-library" type="button">Projects</button><button class="studio-button studio-open" type="button">＋ Import</button><button class="studio-button studio-new-file" type="button" aria-label="Create a new source file" title="Create a new source file" disabled>＋ New</button><button class="studio-button studio-project-import" type="button">Open project file</button><button class="studio-button studio-project-export" type="button" disabled>Export project</button><button class="studio-button studio-export" type="button" disabled>Export</button><button class="studio-button studio-create-post" type="button" disabled>Create post ↗</button></div>
     </header>
     <div class="studio-workspace">
       <aside class="studio-rail" aria-label="Editor modes">
@@ -347,7 +352,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       </aside>
       <aside class="studio-assets">
         <div class="studio-panel-heading"><span>PROJECT ASSETS</span><button class="studio-add" type="button" aria-label="Import files">＋</button></div>
-        <div class="studio-project-label"><span class="studio-folder">▾</span> Untitled project <span class="studio-count">0</span></div>
+        <div class="studio-project-label"><span class="studio-folder">▾</span><span class="studio-project-label-name">Untitled project</span><span class="studio-count">0</span></div>
         <div class="studio-file-list"></div>
         <button class="studio-dropzone" type="button"><span>＋</span><b>Import media</b><small>Images, video, audio, code, games</small></button>
         <div class="studio-sidebar-note">Projects autosave encrypted with Flaxia Vault when unlocked. <a href="/settings">Vault settings →</a></div>
@@ -369,12 +374,14 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const empty = root.querySelector<HTMLElement>('.studio-empty')!;
   const exportButton = root.querySelector<HTMLButtonElement>('.studio-export')!;
   const newFileButton = root.querySelector<HTMLButtonElement>('.studio-new-file')!;
+  const projectLibraryButton = root.querySelector<HTMLButtonElement>('.studio-project-library')!;
   const projectImportButton = root.querySelector<HTMLButtonElement>('.studio-project-import')!;
   const projectExportButton = root.querySelector<HTMLButtonElement>('.studio-project-export')!;
   const projectInput = root.querySelector<HTMLInputElement>('.studio-project-input')!;
   const createPostButton = root.querySelector<HTMLButtonElement>('.studio-create-post')!;
   const saveState = root.querySelector<HTMLElement>('.studio-save-state')!;
   const projectTitle = root.querySelector<HTMLElement>('.studio-project-title')!;
+  const projectLabelName = root.querySelector<HTMLElement>('.studio-project-label-name')!;
   const documentTabs = root.querySelector<HTMLElement>('.studio-document-tabs')!;
   const workspaceTab = root.querySelector<HTMLButtonElement>('.studio-workspace-tab')!;
   const audioTimeline = root.querySelector<HTMLElement>('.studio-audio-timeline')!;
@@ -393,6 +400,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const videoExportButton = root.querySelector<HTMLButtonElement>('.studio-video-export')!;
   const undoButton = root.querySelector<HTMLButtonElement>('.studio-history-undo')!;
   const redoButton = root.querySelector<HTMLButtonElement>('.studio-history-redo')!;
+  const renderProjectIdentity = (): void => {
+    projectTitle.textContent = activeProjectName;
+    projectLabelName.textContent = activeProjectName;
+  };
   duplicateClipButton.title = 'Duplicate selected clip (⌘D / Ctrl+D)';
   videoSplitButton.title = 'Split selected clip at the playhead';
   videoPlayButton.title = 'Start or stop video preview (Space)';
@@ -893,6 +904,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     if (mixPreview || mixPreviewUrl) clearMixPreview();
     if (autosaveTimer) clearTimeout(autosaveTimer);
     const revision = ++saveRevision;
+    const projectId = activeProjectId;
+    const projectName = activeProjectName;
     saveState.textContent = 'Saving locally…';
     autosaveTimer = setTimeout(() => {
       const vaultKey = getVaultKey();
@@ -921,7 +934,16 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         .then(async () => {
           if (revision !== saveRevision) return;
           try {
-            await saveStudioProject(projectFiles, audioClips, videoClips, imageLayers, vaultKey, projectVideoFormat);
+            await saveStudioProject(
+              projectFiles,
+              audioClips,
+              videoClips,
+              imageLayers,
+              vaultKey,
+              projectVideoFormat,
+              projectId,
+              projectName,
+            );
             if (!destroyed && revision === saveRevision) saveState.textContent = 'Saved on this device';
           } catch (error) {
             if (!destroyed && revision === saveRevision) {
@@ -3780,11 +3802,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     if (!file) {
       empty.style.display = '';
       preview.innerHTML = '';
-      projectTitle.textContent = 'Untitled project';
       render();
       return;
     }
-    projectTitle.textContent = file.name;
     empty.style.display = 'none';
     const kind = kindOf(file);
     const url = URL.createObjectURL(file);
@@ -4087,12 +4107,19 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   };
 
   const finishRestore = (project: {
+    id?: string;
+    name?: string;
+    projectName?: string;
+    savedAt?: number;
     files: File[];
     audioClips: AudioTimelineClip[];
     videoClips: StudioVideoClip[];
     imageLayers: StudioImageLayer[];
     videoFormat: StudioVideoFormat;
   }): void => {
+    activeProjectId = project.id ?? 'current';
+    activeProjectName = project.name ?? project.projectName ?? 'Untitled project';
+    renderProjectIdentity();
     if (!interacted && files.length === 0 && project.files.length > 0) {
       files = project.files;
       videoFormat = project.videoFormat;
@@ -4129,11 +4156,270 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     }
   };
 
+  const persistCurrentProjectNow = async (): Promise<void> => {
+    const vaultKey = getVaultKey();
+    if (!vaultKey) throw new Error('Unlock Vault before managing local projects');
+    if (audioRecorder?.state === 'recording')
+      throw new Error('Stop the microphone recording before switching projects');
+    commitActiveEditorDraft();
+    if (codeHistoryTimer) clearTimeout(codeHistoryTimer);
+    codeHistoryTimer = null;
+    if (autosaveTimer) clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+    const revision = ++saveRevision;
+    const projectFiles = [...files];
+    const projectAudioClips = audioClips.map((clip) => ({ ...clip }));
+    const projectVideoClips = videoClips.map((clip) => ({ ...clip }));
+    const projectImageLayers = imageLayers.map((layer) => ({ ...layer }));
+    const projectVideoFormat = videoFormat;
+    const projectId = activeProjectId;
+    const projectName = activeProjectName;
+    saveChain = saveChain
+      .catch(() => undefined)
+      .then(async () => {
+        if (revision !== saveRevision) return;
+        await saveStudioProject(
+          projectFiles,
+          projectAudioClips,
+          projectVideoClips,
+          projectImageLayers,
+          vaultKey,
+          projectVideoFormat,
+          projectId,
+          projectName,
+        );
+      });
+    await saveChain;
+  };
+
+  const activateLocalProject = (project: Awaited<ReturnType<typeof loadStudioProject>>): void => {
+    if (autosaveTimer) clearTimeout(autosaveTimer);
+    autosaveTimer = null;
+    saveRevision++;
+    codeEditorCleanup?.();
+    codeEditorCleanup = null;
+    codeHistoryTimer && clearTimeout(codeHistoryTimer);
+    codeHistoryTimer = null;
+    pendingEditorDraftFile = null;
+    codeDirty = false;
+    htmlEditing = false;
+    editorText = '';
+    clearUrl();
+    stopVideoSequence();
+    clearMixPreview();
+    audioDurations.clear();
+    audioPeaks.clear();
+    audioPeakTasks.clear();
+    videoDurations.clear();
+    videoFilmstrips.clear();
+    manuallyPlacedVideoClips.clear();
+    activeProjectId = project.id;
+    activeProjectName = project.name;
+    renderProjectIdentity();
+    try {
+      localStorage.setItem('flaxia-studio-active-project', project.id);
+    } catch {
+      // Continue with this project for the current tab if localStorage is unavailable.
+    }
+    files = project.files;
+    audioClips = project.audioClips.filter((clip) => clip.track < 8 && clip.fileIndex < files.length);
+    videoClips = project.videoClips.filter((clip) => clip.fileIndex < files.length);
+    rippleOverlappingVideoClips(videoClips);
+    imageLayers = project.imageLayers.filter(
+      (layer) =>
+        layer.kind === 'text' || (layer.fileIndex < files.length && kindOf(files[layer.fileIndex]) === 'image'),
+    );
+    videoFormat = project.videoFormat;
+    videoFormatInput.value = videoFormat;
+    audioTrackCount = Math.max(1, ...audioClips.map((clip) => clip.track + 1));
+    selectedAudioClipId = null;
+    selectedVideoClipId = null;
+    selectedImageLayerId = imageLayers.at(-1)?.id ?? null;
+    openTabs = [];
+    activeIndex = -1;
+    timelinePlayheadTime = 0;
+    videoClips.forEach((clip) => {
+      manuallyPlacedVideoClips.add(clip.id);
+    });
+    files.forEach((_file, index) => {
+      ensureAudioClip(index);
+      ensureVideoClip(index);
+    });
+    restoreFinished = true;
+    interacted = true;
+    newFileButton.disabled = false;
+    undoHistory.length = 0;
+    redoHistory.length = 0;
+    render();
+    if (files.length > 0) select(0);
+    else select(-1);
+    renderVideoTimeline();
+    renderAudioTimeline();
+    renderInspector();
+    editHistoryBaseline = captureEditHistory();
+    updateHistoryControls();
+    saveState.textContent = 'Project opened';
+  };
+
+  const createLocalProject = async (name: string, persistCurrent = true): Promise<void> => {
+    const vaultKey = getVaultKey();
+    if (!vaultKey) throw new Error('Unlock Vault before creating local projects');
+    if (persistCurrent) await persistCurrentProjectNow();
+    const id = crypto.randomUUID();
+    await saveStudioProject([], [], [], [], vaultKey, 'landscape', id, name);
+    activateLocalProject(await loadStudioProject(vaultKey, id));
+  };
+
+  const openProjectLibrary = (): void => {
+    const vaultKey = getVaultKey();
+    if (!vaultKey) {
+      window.alert('Unlock Vault before managing local projects.');
+      return;
+    }
+    const overlay = document.createElement('section');
+    overlay.className = 'studio-project-library-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'studio-project-library-title');
+    overlay.innerHTML = `
+      <div class="studio-project-library-dialog">
+        <header><div><h2 id="studio-project-library-title">Local projects</h2><p>Each project is encrypted with your Flaxia Vault on this device.</p></div><button class="studio-project-library-close" type="button" aria-label="Close">×</button></header>
+        <p class="studio-project-library-status" aria-live="polite"></p>
+        <div class="studio-project-library-list"></div>
+        <form class="studio-project-library-create"><input type="text" maxlength="100" aria-label="New project name" placeholder="New project name" required><button type="submit">＋ Create project</button></form>
+      </div>`;
+    root.appendChild(overlay);
+    const listElement = overlay.querySelector<HTMLElement>('.studio-project-library-list')!;
+    const status = overlay.querySelector<HTMLElement>('.studio-project-library-status')!;
+    const createForm = overlay.querySelector<HTMLFormElement>('.studio-project-library-create')!;
+    const createName = createForm.querySelector<HTMLInputElement>('input')!;
+    const close = (): void => {
+      overlay.remove();
+    };
+    overlay.querySelector<HTMLButtonElement>('.studio-project-library-close')!.addEventListener('click', close);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close();
+    });
+    overlay.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        close();
+      }
+    });
+
+    const refresh = async (): Promise<void> => {
+      listElement.replaceChildren();
+      status.textContent = 'Loading encrypted projects…';
+      try {
+        const projects = await listStudioProjects(vaultKey);
+        status.textContent = projects.length
+          ? `${projects.length} local project${projects.length === 1 ? '' : 's'}`
+          : 'No saved local projects yet.';
+        for (const project of projects) {
+          const row = document.createElement('div');
+          row.className = 'studio-project-library-row';
+          const openButton = document.createElement('button');
+          openButton.type = 'button';
+          openButton.className = 'studio-project-library-open';
+          openButton.dataset.projectId = project.id;
+          openButton.disabled = project.id === activeProjectId;
+          const name = document.createElement('strong');
+          name.textContent = project.name;
+          const detail = document.createElement('small');
+          detail.textContent =
+            project.id === activeProjectId
+              ? 'Current workspace'
+              : project.savedAt > 0
+                ? `Saved ${new Date(project.savedAt).toLocaleString()}`
+                : 'Not saved yet';
+          openButton.appendChild(name);
+          openButton.appendChild(detail);
+          openButton.addEventListener('click', async () => {
+            openButton.disabled = true;
+            status.textContent = `Opening ${project.name}…`;
+            try {
+              await persistCurrentProjectNow();
+              activateLocalProject(await loadStudioProject(vaultKey, project.id));
+              close();
+            } catch (error) {
+              status.textContent = error instanceof Error ? error.message : 'Could not open this project';
+              openButton.disabled = false;
+            }
+          });
+          const renameButton = document.createElement('button');
+          renameButton.type = 'button';
+          renameButton.className = 'studio-project-library-action';
+          renameButton.textContent = 'Rename';
+          renameButton.addEventListener('click', async () => {
+            const nextName = window.prompt('Project name', project.name);
+            if (nextName === null) return;
+            try {
+              await renameStudioProject(vaultKey, project.id, nextName);
+              if (project.id === activeProjectId) {
+                activeProjectName = nextName.trim();
+                renderProjectIdentity();
+                scheduleAutosave(false);
+              }
+              await refresh();
+            } catch (error) {
+              status.textContent = error instanceof Error ? error.message : 'Could not rename this project';
+            }
+          });
+          const deleteButton = document.createElement('button');
+          deleteButton.type = 'button';
+          deleteButton.className = 'studio-project-library-action danger';
+          deleteButton.textContent = 'Delete';
+          deleteButton.addEventListener('click', async () => {
+            if (!window.confirm(`Delete “${project.name}” from this device?`)) return;
+            deleteButton.disabled = true;
+            try {
+              await deleteStudioProject(project.id);
+              if (project.id === activeProjectId) {
+                const remaining = await listStudioProjects(vaultKey);
+                if (remaining[0]) activateLocalProject(await loadStudioProject(vaultKey, remaining[0].id));
+                else await createLocalProject('Untitled project', false);
+              }
+              await refresh();
+            } catch (error) {
+              status.textContent = error instanceof Error ? error.message : 'Could not delete this project';
+              deleteButton.disabled = false;
+            }
+          });
+          row.appendChild(openButton);
+          row.appendChild(renameButton);
+          row.appendChild(deleteButton);
+          listElement.appendChild(row);
+        }
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : 'Could not list local projects';
+      }
+    };
+
+    createForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const name = createName.value.trim();
+      if (!name) return;
+      const button = createForm.querySelector<HTMLButtonElement>('button')!;
+      button.disabled = true;
+      status.textContent = 'Saving current project…';
+      try {
+        await createLocalProject(name);
+        close();
+      } catch (error) {
+        status.textContent = error instanceof Error ? error.message : 'Could not create this project';
+        button.disabled = false;
+      }
+    });
+    void refresh();
+    createName.focus();
+  };
+
   input.addEventListener('change', () => {
     importFiles(input.files ?? []);
     input.value = '';
   });
   newFileButton.addEventListener('click', openNewFileDialog);
+  projectLibraryButton.addEventListener('click', openProjectLibrary);
   projectImportButton.addEventListener('click', () => projectInput.click());
   projectInput.addEventListener('change', async () => {
     const projectFile = projectInput.files?.[0];
@@ -4159,6 +4445,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       videoDurations.clear();
       manuallyPlacedVideoClips.clear();
       files = restored.files;
+      activeProjectName = restored.projectName;
+      renderProjectIdentity();
       audioClips = restored.audioClips;
       videoClips = restored.videoClips;
       videoFormat = restored.videoFormat;
@@ -4220,7 +4508,17 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
                 lastModified: activeFile.lastModified,
               });
       }
-      download(await exportStudioProject(snapshot, audioClips, videoClips, imageLayers, passphrase, videoFormat));
+      download(
+        await exportStudioProject(
+          snapshot,
+          audioClips,
+          videoClips,
+          imageLayers,
+          passphrase,
+          videoFormat,
+          activeProjectName,
+        ),
+      );
       saveState.textContent = 'Encrypted project downloaded';
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'Could not export this project');
@@ -4320,9 +4618,16 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       await saveChain.catch(() => undefined);
       const vaultKey = getVaultKey();
       if (vaultKey)
-        await saveStudioProject(files, audioClips, videoClips, imageLayers, vaultKey, videoFormat).catch(
-          () => undefined,
-        );
+        await saveStudioProject(
+          files,
+          audioClips,
+          videoClips,
+          imageLayers,
+          vaultKey,
+          videoFormat,
+          activeProjectId,
+          activeProjectName,
+        ).catch(() => undefined);
       const selectedFile = files[activeIndex];
       const selectedExtension = selectedFile?.name.toLowerCase().split('.').pop() ?? '';
       const composerGameExtensions = ['zip', 'swf', 'rsp', 'js', 'wasm'];
@@ -5216,7 +5521,20 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       finishRestore({ files: [], audioClips: [], videoClips: [], imageLayers: [], videoFormat: 'landscape' });
       return;
     }
-    const project = await loadStudioProject(vaultKey);
+    const localProjects = await listStudioProjects(vaultKey);
+    let rememberedProjectId: string | null = null;
+    try {
+      rememberedProjectId = localStorage.getItem('flaxia-studio-active-project');
+    } catch {
+      // Local project selection is a convenience; encrypted autosave still works without localStorage.
+    }
+    const selectedProject = localProjects.find((project) => project.id === rememberedProjectId) ?? localProjects[0];
+    const project = await loadStudioProject(vaultKey, selectedProject?.id ?? 'current');
+    try {
+      localStorage.setItem('flaxia-studio-active-project', project.id);
+    } catch {
+      // Continue with the active project for this tab.
+    }
     if (!destroyed) finishRestore(project);
   })().catch(() => {
     if (destroyed) return;
@@ -5258,6 +5576,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
                 projectImageLayers,
                 vaultKey,
                 projectVideoFormat,
+                activeProjectId,
+                activeProjectName,
               );
             } catch {
               // The page is closing; there is no UI left to report a failed final save.
@@ -5327,12 +5647,18 @@ if (!document.getElementById('studio-page-styles')) {
   style.textContent = `${studioCss}
 .studio-timeline-head{flex-wrap:nowrap;white-space:nowrap}
 .studio-timeline-head>button,.studio-timeline-hint{flex:0 0 auto;white-space:nowrap}
+.studio-project-library-overlay{position:fixed;inset:0;z-index:1150;display:grid;place-items:center;padding:20px;background:#080a0dcc;color:#eceef2;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.studio-project-library-dialog{display:flex;flex-direction:column;gap:12px;width:min(100%,560px);max-height:min(80vh,680px);padding:18px;border:1px solid #383c46;border-radius:10px;background:#181a1f;box-shadow:0 20px 80px #000b}
+.studio-project-library-dialog>header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.studio-project-library-dialog h2{margin:0;font-size:16px}.studio-project-library-dialog header p{margin:5px 0 0;color:#9298a3;font-size:11px;line-height:1.5}.studio-project-library-close{width:32px;height:32px;border:1px solid #393d46;border-radius:5px;background:#24272e;color:#e7e9ee;font-size:20px;cursor:pointer}
+.studio-project-library-status{min-height:14px;margin:0;color:#a8adb8;font-size:10px}.studio-project-library-list{display:flex;flex-direction:column;gap:5px;min-height:50px;max-height:45vh;overflow:auto}
+.studio-project-library-row{display:flex;align-items:stretch;gap:5px}.studio-project-library-open{display:flex;flex:1;flex-direction:column;gap:4px;min-width:0;padding:9px 11px;border:1px solid #393d46;border-radius:5px;background:#202228;color:#e7e9ee;text-align:left;cursor:pointer}.studio-project-library-open:hover:not(:disabled){border-color:#70815a;background:#252a22}.studio-project-library-open:disabled{opacity:.78}.studio-project-library-open strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.studio-project-library-open small{color:#9298a3;font-size:10px}.studio-project-library-action{align-self:center;padding:7px;border:1px solid #393d46;border-radius:5px;background:#202228;color:#dce0e7;font-size:10px;cursor:pointer}.studio-project-library-action.danger{border-color:#5c3737;color:#f0b8b8}.studio-project-library-create{display:flex;gap:7px;padding-top:5px;border-top:1px solid #30333a}.studio-project-library-create input{flex:1;min-width:0;padding:8px 9px;border:1px solid #393d46;border-radius:5px;background:#111216;color:#e9ebef;font:12px system-ui,sans-serif}.studio-project-library-create button{padding:8px 10px;border:1px solid #62794b;border-radius:5px;background:#2a3824;color:#d8f3c2;font-size:11px;white-space:nowrap;cursor:pointer}.studio-project-library button:focus-visible,.studio-project-library-create input:focus-visible{outline:2px solid #b8ef6a;outline-offset:2px}
 .studio-video-workarea{max-height:150px}
 .studio-audio-record{border-color:#80504b!important;color:#ffc1b7!important}
 .studio-audio-record[aria-pressed=true]{background:#743c39!important;color:#fff!important}
 .studio-picture-clip{border-color:#3d7599;background-color:#244259;color:#e0f4ff}
 .studio-sequence-pip-player{position:absolute;z-index:6;background:#000;border:2px solid #fff;border-radius:8px;box-shadow:0 8px 28px #000a;pointer-events:none}
 @media(max-width:768px){.studio-video-workarea{max-height:108px}}
+@media(max-width:520px){.studio-project-library-overlay{padding:9px}.studio-project-library-dialog{padding:12px}.studio-project-library-row{flex-wrap:wrap}.studio-project-library-open{flex-basis:100%}.studio-project-library-action{margin-left:auto}.studio-project-library-create{flex-wrap:wrap}.studio-project-library-create input{flex-basis:100%}}
 `;
   document.head.appendChild(style);
 }

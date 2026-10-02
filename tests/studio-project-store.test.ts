@@ -102,6 +102,7 @@ describe('portable Studio projects', () => {
       imageLayers,
       'studio-round-trip-key',
       'portrait',
+      'Weekend short',
     );
     const restored = await importStudioProject(portable, 'studio-round-trip-key');
 
@@ -130,6 +131,7 @@ describe('portable Studio projects', () => {
     assert.equal(restored.videoClips[1].track, 'overlay');
     assert.equal(restored.videoClips[1].transitionOut, 0);
     assert.equal(restored.videoFormat, 'portrait');
+    assert.equal(restored.projectName, 'Weekend short');
     assert.equal(restored.imageLayers[0].fileIndex, 2);
     assert.equal(restored.imageLayers[0].blend, 'screen');
     assert.equal(restored.imageLayers[0].paintLayer, true);
