@@ -37,6 +37,11 @@ import {
   type StudioVideoFormat,
   saveStudioProject,
 } from '../lib/editor/studio-project-store.js';
+import {
+  createStudioStarterFile,
+  STUDIO_STARTER_TEMPLATES,
+  type StudioStarterTemplateId,
+} from '../lib/editor/studio-starter-files.ts';
 import { probeVideo } from '../lib/editor/video-editor.ts';
 import {
   renderVideoSequence,
@@ -321,7 +326,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     <header class="studio-topbar">
       <a class="studio-brand" href="/home" aria-label="Flaxia home"><span class="studio-brand-mark">f</span> flaxia <i>/</i> studio</a>
       <div class="studio-project-name"><span class="studio-live-dot"></span><span class="studio-project-title">Untitled project</span><span class="studio-save-state">Local workspace</span></div>
-      <div class="studio-top-actions"><button class="studio-button studio-open" type="button">＋ Import</button><button class="studio-button studio-project-import" type="button">Open project</button><button class="studio-button studio-project-export" type="button" disabled>Save project</button><button class="studio-button studio-export" type="button" disabled>Export</button><button class="studio-button studio-create-post" type="button" disabled>Create post ↗</button></div>
+      <div class="studio-top-actions"><button class="studio-button studio-open" type="button">＋ Import</button><button class="studio-button studio-new-file" type="button" aria-label="Create a new source file" title="Create a new source file" disabled>＋ New</button><button class="studio-button studio-project-import" type="button">Open project</button><button class="studio-button studio-project-export" type="button" disabled>Save project</button><button class="studio-button studio-export" type="button" disabled>Export</button><button class="studio-button studio-create-post" type="button" disabled>Create post ↗</button></div>
     </header>
     <div class="studio-workspace">
       <aside class="studio-rail" aria-label="Editor modes">
@@ -355,6 +360,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const preview = root.querySelector<HTMLElement>('.studio-preview')!;
   const empty = root.querySelector<HTMLElement>('.studio-empty')!;
   const exportButton = root.querySelector<HTMLButtonElement>('.studio-export')!;
+  const newFileButton = root.querySelector<HTMLButtonElement>('.studio-new-file')!;
   const projectImportButton = root.querySelector<HTMLButtonElement>('.studio-project-import')!;
   const projectExportButton = root.querySelector<HTMLButtonElement>('.studio-project-export')!;
   const projectInput = root.querySelector<HTMLInputElement>('.studio-project-input')!;
@@ -3726,6 +3732,84 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     addFiles(additions);
   };
 
+  const openNewFileDialog = (): void => {
+    if (!restoreFinished || destroyed) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'studio-starter-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', 'studio-starter-title');
+    overlay.innerHTML = `
+      <form class="studio-starter-dialog">
+        <header><div><h2 id="studio-starter-title">Create a source file</h2><p>Start a game or code file in this project.</p></div><button class="studio-starter-close" type="button" aria-label="Close">×</button></header>
+        <label>Template<select class="studio-starter-template" name="template">${STUDIO_STARTER_TEMPLATES.map((template) => `<option value="${template.id}">${template.label} (${template.extension})</option>`).join('')}</select></label>
+        <label>File name<input class="studio-starter-name" name="name" type="text" autocomplete="off" spellcheck="false" required></label>
+        <p class="studio-starter-help">The selected extension is added automatically. HTML games open in Flaxia’s isolated preview.</p>
+        <p class="studio-starter-error" role="alert" aria-live="polite"></p>
+        <footer><button class="studio-starter-cancel" type="button">Cancel</button><button class="studio-starter-create" type="submit">Create file</button></footer>
+      </form>`;
+    root.appendChild(overlay);
+
+    const form = overlay.querySelector<HTMLFormElement>('form')!;
+    const templateSelect = overlay.querySelector('select')!;
+    const nameInput = overlay.querySelector<HTMLInputElement>('.studio-starter-name')!;
+    const errorMessage = overlay.querySelector<HTMLElement>('.studio-starter-error')!;
+    const initialTemplate = STUDIO_STARTER_TEMPLATES[0];
+    nameInput.value = initialTemplate.defaultName;
+    let nameEdited = false;
+    let closed = false;
+    const close = (): void => {
+      if (closed) return;
+      closed = true;
+      overlay.remove();
+      newFileButton.focus();
+    };
+    overlay.querySelector<HTMLButtonElement>('.studio-starter-close')!.addEventListener('click', close);
+    overlay.querySelector<HTMLButtonElement>('.studio-starter-cancel')!.addEventListener('click', close);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) close();
+    });
+    overlay.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        close();
+      }
+    });
+    nameInput.addEventListener('input', () => {
+      nameEdited = true;
+      errorMessage.textContent = '';
+    });
+    templateSelect.addEventListener('change', () => {
+      errorMessage.textContent = '';
+      if (!nameEdited) {
+        const selected = STUDIO_STARTER_TEMPLATES.find((template) => template.id === templateSelect.value);
+        if (selected) nameInput.value = selected.defaultName;
+      }
+    });
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      try {
+        const templateId = templateSelect.value as StudioStarterTemplateId;
+        const file = createStudioStarterFile(templateId, nameInput.value);
+        if (files.some((existing) => existing.name.toLowerCase() === file.name.toLowerCase())) {
+          errorMessage.textContent = `A file named “${file.name}” already exists in this project.`;
+          nameInput.focus();
+          return;
+        }
+        close();
+        addFiles([file]);
+        if (kindOf(file) === 'game' && /\.html?$/i.test(file.name)) {
+          preview.querySelector<HTMLButtonElement>('.studio-edit-button')?.click();
+        }
+      } catch (error) {
+        errorMessage.textContent = error instanceof Error ? error.message : 'Could not create this file';
+        nameInput.focus();
+      }
+    });
+    nameInput.focus();
+    nameInput.select();
+  };
+
   const finishRestore = (project: {
     files: File[];
     audioClips: AudioTimelineClip[];
@@ -3757,6 +3841,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       select(0);
     }
     restoreFinished = true;
+    newFileButton.disabled = false;
     undoHistory.length = 0;
     redoHistory.length = 0;
     editHistoryBaseline = captureEditHistory();
@@ -3772,6 +3857,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     importFiles(input.files ?? []);
     input.value = '';
   });
+  newFileButton.addEventListener('click', openNewFileDialog);
   projectImportButton.addEventListener('click', () => projectInput.click());
   projectInput.addEventListener('change', async () => {
     const projectFile = projectInput.files?.[0];
@@ -4947,6 +5033,7 @@ const studioCss = `
 .studio-audio-workarea{overflow:auto;max-height:220px;background:#121318}.studio-audio-timeline{position:relative;min-width:100%;font-size:11px}.studio-audio-ruler{height:22px;position:relative;border-bottom:1px solid var(--studio-border);background:repeating-linear-gradient(90deg,transparent 0,transparent 208px,#292c34 209px,#292c34 210px)}.studio-audio-ruler>span{position:absolute;top:4px;color:var(--studio-muted);font-variant-numeric:tabular-nums}.studio-audio-lane{display:flex;min-height:48px;border-bottom:1px solid var(--studio-border)}.studio-audio-track-label{position:sticky;left:0;z-index:2;flex:0 0 48px;padding:17px 8px;background:#191b20;color:#9ea4af;border-right:1px solid var(--studio-border)}.studio-audio-lane-canvas{position:relative;min-height:47px;background:repeating-linear-gradient(90deg,transparent 0,transparent 41px,#202229 41px,#202229 42px)}.studio-audio-clip{position:absolute;top:5px;height:37px;overflow:hidden;border:1px solid #4e8142;border-radius:5px;background:#233a2a;color:#e7f5dd;text-align:left;cursor:grab}.studio-audio-clip.active{outline:1px solid var(--studio-accent)}.studio-audio-clip.muted{opacity:.48}.studio-audio-clip-name{position:absolute;z-index:1;left:6px;top:3px;max-width:calc(100% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.studio-audio-clip-wave{position:absolute;inset:17px 5px 2px;display:flex;align-items:center;gap:2px;opacity:.65}.studio-audio-clip-wave i{flex:1;min-width:1px;background:#9bd77b}.studio-audio-empty{padding:10px;color:var(--studio-muted)}.studio-timeline-head>button{border:1px solid var(--studio-border);border-radius:4px;background:#202228;color:var(--studio-text);padding:4px 8px;font-size:11px;cursor:pointer}.studio-timeline-head>button:disabled{opacity:.45;cursor:default}.studio-mix-status{max-width:190px;overflow:hidden;color:var(--studio-muted);text-overflow:ellipsis;white-space:nowrap;font-size:10px}.studio-property{display:flex;align-items:center;gap:8px;margin:12px 0;font-size:12px}.studio-property>span{flex:1}.studio-property input[type=number]{width:76px;padding:5px;border:1px solid var(--studio-border);border-radius:4px;background:#111216;color:var(--studio-text)}.studio-property small{color:var(--studio-muted)}.studio-property input[type=range]{width:105px}.studio-mute-property{justify-content:flex-start}.studio-mute-property input{accent-color:var(--studio-accent)}
 .studio-video-workarea{overflow:auto;max-height:100px;background:#121318}.studio-video-timeline{position:relative;min-width:100%;font-size:11px}.studio-video-ruler{height:22px;position:relative;border-bottom:1px solid var(--studio-border);background:repeating-linear-gradient(90deg,transparent 0,transparent 208px,#292c34 209px,#292c34 210px)}.studio-video-ruler>span{position:absolute;top:4px;color:var(--studio-muted);font-variant-numeric:tabular-nums}.studio-video-lane{display:flex;min-height:46px;border-bottom:1px solid var(--studio-border)}.studio-video-track-label{position:sticky;left:0;z-index:2;flex:0 0 48px;padding:16px 8px;background:#191b20;color:#9ea4af;border-right:1px solid var(--studio-border)}.studio-video-lane-canvas{position:relative;min-height:45px;background:repeating-linear-gradient(90deg,transparent 0,transparent 41px,#202229 41px,#202229 42px)}.studio-video-clip{position:absolute;top:5px;height:35px;overflow:hidden;border:1px solid #69519b;border-radius:5px;background:#34294a;color:#eee6ff;text-align:left;text-overflow:ellipsis;white-space:nowrap;cursor:grab}.studio-video-clip.active{outline:1px solid #c8a8ff}.studio-video-hint{color:var(--studio-muted);font-size:11px}
 .studio-code-workbench{display:flex;flex-direction:column;min-height:280px;max-height:48vh;border:1px solid var(--studio-border);border-radius:6px;background:#101116;overflow:hidden}.studio-code-toolbar{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:6px;border-bottom:1px solid var(--studio-border)}.studio-code-toolbar input{min-width:70px;width:22%;padding:5px 7px;border:1px solid var(--studio-border);border-radius:4px;background:#191b20;color:var(--studio-text);font:11px system-ui,sans-serif}.studio-code-toolbar input[type=number]{width:54px}.studio-code-toolbar button,.studio-code-run{padding:5px 8px;border:1px solid var(--studio-border);border-radius:4px;background:#202228;color:var(--studio-text);font-size:11px;cursor:pointer}.studio-code-row{display:flex;flex:1;min-height:0;overflow:hidden}.studio-code-gutter{flex:0 0 42px;padding:12px 8px 12px 0;overflow:hidden;background:#15161b;color:#686e7a;text-align:right;white-space:pre;font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace;user-select:none}.studio-code-editor{flex:1;min-width:0;min-height:260px;padding:12px;border:0;outline:0;resize:vertical;background:#101116;color:#e3e5eb;caret-color:#b8ef6a;font:12px/20px ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2;white-space:pre;overflow:auto}.studio-code-run{margin:8px 0}.studio-code-output{min-height:80px}.studio-code-preview{width:100%;height:250px;border:1px solid var(--studio-border);border-radius:6px;background:white}
+.studio-new-file{border-color:#46563a;color:#d8f3c2}.studio-starter-overlay{position:fixed;z-index:1100;inset:0;display:grid;place-items:center;padding:20px;background:#080a0dcc;color:#eceef2;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.studio-starter-dialog{display:flex;flex-direction:column;gap:14px;width:min(100%,440px);padding:20px;border:1px solid #383c46;border-radius:10px;background:#181a1f;box-shadow:0 20px 80px #000b}.studio-starter-dialog header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.studio-starter-dialog h2{margin:0;font-size:16px}.studio-starter-dialog header p,.studio-starter-help{margin:5px 0 0;color:#9298a3;font-size:11px;line-height:1.5}.studio-starter-dialog label{display:flex;flex-direction:column;gap:6px;color:#c6cbd4;font-size:11px}.studio-starter-dialog select,.studio-starter-dialog input{width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid #393d46;border-radius:5px;background:#111216;color:#e9ebef;font:12px system-ui,sans-serif}.studio-starter-dialog input:focus,.studio-starter-dialog select:focus{outline:1px solid #b8ef6a}.studio-starter-error{min-height:15px;margin:0;color:#ff9c9c;font-size:11px}.studio-starter-dialog footer{display:flex;justify-content:flex-end;gap:8px}.studio-starter-dialog footer button,.studio-starter-close{padding:8px 11px;border:1px solid #393d46;border-radius:5px;background:#24272e;color:#e7e9ee;font:11px system-ui,sans-serif;cursor:pointer}.studio-starter-dialog footer .studio-starter-create{border-color:#b8ef6a;background:#b8ef6a;color:#17200f;font-weight:700}.studio-starter-close{width:32px;padding:2px;font-size:20px!important}.studio-starter-dialog button:focus-visible{outline:2px solid #b8ef6a;outline-offset:2px}
 .studio-zip-editor-overlay{inset:3vh 4vw;overflow:hidden;border:1px solid #383c46;border-radius:9px;box-shadow:0 20px 80px #000b}.studio-zip-editor-overlay .studio-composer-header>div:last-child{align-items:center}.studio-zip-file-select{max-width:min(38vw,420px);padding:7px 9px;border:1px solid #393d46;border-radius:5px;background:#202228;color:#e7e9ee;font:11px system-ui,sans-serif}.studio-zip-editor-body{display:flex;flex:1;flex-direction:column;min-height:0;padding:12px;background:#111216}.studio-zip-editor-status{min-height:24px;color:#aeb3bd;font-size:11px}.studio-zip-editor-host{display:flex;flex:1;min-height:0}.studio-zip-editor-host .studio-code-workbench{flex:1;max-height:none}
 .studio-audio-envelope{position:absolute;z-index:2;left:5px;right:5px;top:17px;height:18px;overflow:visible;pointer-events:none}.studio-audio-envelope polyline{fill:none;stroke:#f1e678;stroke-width:1.5;vector-effect:non-scaling-stroke;opacity:.95}.studio-audio-envelope-point{fill:#fff4a3;stroke:#4c4724;stroke-width:1;vector-effect:non-scaling-stroke;pointer-events:all;cursor:ns-resize;touch-action:none}.studio-audio-envelope-point:hover{r:3}
 .studio-add-envelope-point{float:right;padding:3px 5px;border:1px solid #3b3d44;border-radius:4px;background:#24262c;color:#d8f3c2;font-size:9px;cursor:pointer}.studio-add-envelope-point:hover{border-color:#82995f;background:#303b29}
@@ -4954,7 +5041,7 @@ const studioCss = `
 .studio-sequence-transition-player{position:absolute;z-index:5;inset:6% 8%;width:84%;height:88%;max-height:88%;background:#000;border:1px solid var(--studio-border);border-radius:8px;pointer-events:none;transition:opacity .12s linear}
 .studio-composer-button{border:1px solid #536843!important;background:#273323!important;color:#d8f3c2!important}.studio-composer-overlay{position:fixed;z-index:1000;inset:0;display:flex;flex-direction:column;background:#111216;color:#eceef2;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.studio-composer-header{display:flex;align-items:center;justify-content:space-between;gap:14px;min-height:58px;padding:8px 18px;border-bottom:1px solid #30333a;background:#181a1f}.studio-composer-header>div:first-child{display:flex;flex-direction:column;gap:4px}.studio-composer-header b{font-size:13px}.studio-composer-header small{color:#9298a3;font-size:10px}.studio-composer-header>div:last-child{display:flex;gap:8px}.studio-composer-header button,.studio-composer-order button,.studio-composer-remove{border:1px solid #393d46;border-radius:5px;background:#24272e;color:#e7e9ee;padding:7px 10px;font-size:11px;cursor:pointer}.studio-composer-export{background:#b8ef6a!important;border-color:#b8ef6a!important;color:#17200f!important;font-weight:700}.studio-composer-header .studio-composer-close{width:32px;padding:2px;font-size:21px}.studio-composer-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;flex:1;min-height:0}.studio-composer-board{display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;min-height:0;padding:16px;background:#101115}.studio-composer-canvas-wrap{width:min(72vw,68vh);height:min(72vw,68vh);max-width:100%;max-height:100%;background-color:#202228;background-image:linear-gradient(45deg,#2b2d34 25%,transparent 25%),linear-gradient(-45deg,#2b2d34 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#2b2d34 75%),linear-gradient(-45deg,transparent 75%,#2b2d34 75%);background-size:24px 24px;background-position:0 0,0 12px,12px -12px,-12px 0}.studio-composer-canvas{display:block;width:100%;height:100%;touch-action:none;cursor:move}.studio-composer-status{min-height:22px;padding-top:8px;color:#f0a4a4;font-size:11px}.studio-composer-panel{min-width:0;overflow:auto;padding:12px;border-left:1px solid #30333a;background:#181a1f}.studio-composer-section{margin-bottom:17px}.studio-composer-title{display:flex;justify-content:space-between;margin-bottom:8px;color:#9298a3;font-size:9px;font-weight:700;letter-spacing:.08em}.studio-composer-count{color:#c1c5cd}.studio-composer-assets,.studio-composer-layers{display:flex;flex-direction:column;gap:4px;max-height:175px;overflow:auto}.studio-composer-asset,.studio-composer-layer{display:flex;align-items:center;gap:6px;min-width:0;border:1px solid transparent;border-radius:5px;background:#202229;color:#e4e6eb;font-size:10px}.studio-composer-asset{padding:7px;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}.studio-composer-asset:hover{border-color:#61764d}.studio-composer-layer{padding:3px}.studio-composer-layer.active{border-color:#b8ef6a}.studio-composer-layer-select{flex:1;min-width:0;padding:5px;border:0;background:transparent;color:inherit;text-align:left;text-overflow:ellipsis;white-space:nowrap;overflow:hidden;font-size:10px;cursor:pointer}.studio-composer-visibility{border:0;background:transparent;color:#c2c7d0;cursor:pointer}.studio-composer-properties{padding-top:3px}.studio-composer-layer-name{margin-bottom:9px;overflow:hidden;color:#dce0e7;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.studio-composer-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}.studio-composer-grid label,.studio-composer-field{display:flex;align-items:center;justify-content:space-between;gap:6px;margin:6px 0;color:#aeb3bd;font-size:10px}.studio-composer-grid input,.studio-composer-field input,.studio-composer-field select{width:90px;padding:5px;border:1px solid #383c46;border-radius:4px;background:#111216;color:#e9ebef;font:11px system-ui,sans-serif}.studio-composer-field select{width:125px}.studio-composer-range{display:flex;flex-wrap:wrap;justify-content:space-between;gap:5px;margin:12px 0;color:#aeb3bd;font-size:10px}.studio-composer-range input{width:100%;accent-color:#b8ef6a}.studio-composer-range output{color:#e9ebef}.studio-composer-order{display:flex;gap:6px;margin:11px 0}.studio-composer-order button{flex:1;padding:6px 4px;font-size:9px}.studio-composer-remove{width:100%;margin-top:4px;border-color:#5c3737;color:#f0b8b8}.studio-composer-properties>p{color:#9298a3;font-size:10px}
 @media(max-width:1050px){.studio-workspace{grid-template-columns:58px 190px minmax(300px,1fr)}.studio-inspector{display:none}.studio-topbar{padding:0 12px}.studio-project-name{display:none}}
-@media(max-width:768px){.studio-page{width:100%;height:calc(100dvh - var(--bottom-nav-h, 62px));min-height:420px}.studio-workspace{grid-template-columns:48px minmax(0,1fr)}.studio-assets{display:none}.studio-rail{padding:10px 3px}.studio-tool{width:42px;height:47px}.studio-topbar{height:50px;flex-basis:50px;padding:0 8px}.studio-brand{font-size:13px}.studio-top-actions{gap:4px}.studio-top-actions .studio-button{padding:7px 8px;font-size:10px}.studio-empty-art{transform:scale(.8);margin:-12px 0}.studio-empty h1{font-size:16px}.studio-empty p{max-width:260px;line-height:1.5}.studio-timeline{height:205px;max-height:44vh}.studio-timeline-head{overflow-x:auto;flex:0 0 39px}.studio-timeline-hint{display:none}.studio-timeline-head>button{flex:0 0 auto}.studio-video-workarea{max-height:62px}.studio-video-ruler{height:17px}.studio-video-ruler>span{top:2px}.studio-video-lane{min-height:40px}.studio-video-track-label{padding:13px 7px}.studio-video-lane-canvas{min-height:39px}.studio-video-clip{height:30px}.studio-track{min-height:38px}.studio-audio-workarea{max-height:95px}.studio-audio-ruler{height:17px}.studio-audio-ruler>span{top:2px}.studio-audio-lane{min-height:40px}.studio-audio-track-label{padding:13px 7px}.studio-audio-lane-canvas{min-height:39px}.studio-audio-clip{height:30px}.studio-sequence-player,.studio-sequence-overlays{inset:8% 3%;width:94%;height:84%}}
+@media(max-width:768px){.studio-page{width:100%;height:calc(100dvh - var(--bottom-nav-h, 62px));min-height:420px}.studio-workspace{grid-template-columns:48px minmax(0,1fr)}.studio-assets{display:none}.studio-rail{padding:10px 3px}.studio-tool{width:42px;height:47px}.studio-topbar{height:50px;flex-basis:50px;padding:0 8px}.studio-brand{font-size:13px}.studio-top-actions{gap:4px}.studio-top-actions .studio-button{padding:7px 8px;font-size:10px}.studio-top-actions .studio-new-file{width:30px;min-width:30px;padding:7px 0;font-size:0}.studio-new-file::before{content:"＋";font-size:14px}.studio-empty-art{transform:scale(.8);margin:-12px 0}.studio-empty h1{font-size:16px}.studio-empty p{max-width:260px;line-height:1.5}.studio-timeline{height:205px;max-height:44vh}.studio-timeline-head{overflow-x:auto;flex:0 0 39px}.studio-timeline-hint{display:none}.studio-timeline-head>button{flex:0 0 auto}.studio-video-workarea{max-height:62px}.studio-video-ruler{height:17px}.studio-video-ruler>span{top:2px}.studio-video-lane{min-height:40px}.studio-video-track-label{padding:13px 7px}.studio-video-lane-canvas{min-height:39px}.studio-video-clip{height:30px}.studio-track{min-height:38px}.studio-audio-workarea{max-height:95px}.studio-audio-ruler{height:17px}.studio-audio-ruler>span{top:2px}.studio-audio-lane{min-height:40px}.studio-audio-track-label{padding:13px 7px}.studio-audio-lane-canvas{min-height:39px}.studio-audio-clip{height:30px}.studio-sequence-player,.studio-sequence-overlays{inset:8% 3%;width:94%;height:84%}}
 @media(max-width:768px){.studio-composer-preview-controls{gap:8px;padding:5px 9px}.studio-composer-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) 205px}.studio-composer-board{padding:8px}.studio-composer-canvas-wrap{width:min(78vw,48vh);height:min(78vw,48vh)}.studio-composer-panel{padding:8px;border-top:1px solid #30333a;border-left:0}.studio-composer-section{margin-bottom:9px}.studio-composer-assets,.studio-composer-layers{max-height:65px}}
 `;
 
