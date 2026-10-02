@@ -780,6 +780,11 @@ export class Timeline {
     return this.element;
   }
 
+  public addComposerFiles(files: File[]): Promise<void> {
+    if (!this.props.currentUser || files.length === 0) return Promise.resolve();
+    return this.composer.addFiles(files);
+  }
+
   private setupComposerObserver(): void {
     if (!this.composer || !this.fabButton) return;
     this.composerObserver = new IntersectionObserver(

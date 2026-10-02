@@ -2099,11 +2099,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
+          const handoffToken = new URLSearchParams(window.location.search).get('studio_handoff');
+          let composerFiles: File[] | undefined;
+          if (handoffToken) {
+            try {
+              composerFiles = await consumeStudioHandoff(handoffToken);
+            } catch (error) {
+              console.warn('Could not restore Studio post assets:', error);
+            }
+            window.history.replaceState({}, '', '/home');
+          }
+
           if (cachedContentComponent?.view === 'timeline') {
             console.log('Restoring cached timeline');
             timeline = cachedContentComponent.component as Timeline;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
+
+            if (composerFiles?.length) await timeline.addComposerFiles(composerFiles);
 
             requestAnimationFrame(() => {
               window.scrollTo(0, scrollY);
@@ -2111,16 +2124,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           } else {
             // Create fresh timeline
             const { createTimeline } = await import('./components/Timeline.js');
-            const handoffToken = new URLSearchParams(window.location.search).get('studio_handoff');
-            let composerFiles: File[] | undefined;
-            if (handoffToken) {
-              try {
-                composerFiles = await consumeStudioHandoff(handoffToken);
-              } catch (error) {
-                console.warn('Could not restore Studio post assets:', error);
-              }
-              window.history.replaceState({}, '', '/home');
-            }
             timeline = createTimeline({
               sandboxOrigin,
               currentUser,

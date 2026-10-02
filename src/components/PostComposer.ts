@@ -2125,6 +2125,10 @@ export class PostComposer {
     if (section) section.style.display = 'none';
   }
 
+  public addFiles(files: File[]): Promise<void> {
+    return this.handleFiles(files);
+  }
+
   public getSavedDrafts(): Array<{ id: string; text: string; savedAt: number }> {
     this.loadSavedDrafts();
     return [...this.savedDrafts];
