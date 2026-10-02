@@ -422,8 +422,6 @@ describe('POST /api/vault/keys/revoke-device', () => {
       alg: 'PBKDF2-SHA256',
       iterations: 600_000,
     });
-    const proof = await createSrpProof(cookie, PASSWORD);
-    assert.ok(proof);
     const staleVk = generateVaultKey();
     const staleSalt = generateVaultSalt();
     const staleWrapped = await rewrapVaultKeyForPassword(staleVk, PASSWORD, staleSalt, {
@@ -437,11 +435,8 @@ describe('POST /api/vault/keys/revoke-device', () => {
       { alg: 'PBKDF2-SHA256', iterations: 600_000 },
     );
     const staleRewrapped = await rewrapItemKeyForVaultKey(vk, staleVk, itemId, item.item_key_wrapped);
-    const staleProof = await createSrpProof(cookie, PASSWORD);
-    assert.ok(staleProof);
-
     const requestBody = {
-      current_srp: proof,
+      current_srp: await createSrpProof(cookie, PASSWORD),
       device_id: id,
       current_device_id: currentDeviceId,
       vk_version: oldKeys.vk_version,
@@ -463,12 +458,57 @@ describe('POST /api/vault/keys/revoke-device', () => {
     assert.equal(unchanged.vk_version, oldKeys.vk_version, 'an incomplete rotation must not advance the envelope');
     assert.equal((await getPairing(cookie, id)).status, 200, 'an incomplete rotation must not revoke the device');
 
+    const malformedInventory = await fetch(`${BASE_URL}/api/vault/keys/revoke-device`, {
+      method: 'POST',
+      headers: headers(cookie),
+      body: JSON.stringify({ ...requestBody, item_keys: [null] }),
+    });
+    assert.equal(malformedInventory.status, 400, 'malformed item-key entries must be rejected without throwing');
+
+    const changedInventoryProof = await createSrpProof(cookie, PASSWORD);
+    assert.ok(changedInventoryProof);
+    const changedInventory = await fetch(`${BASE_URL}/api/vault/keys/revoke-device`, {
+      method: 'POST',
+      headers: headers(cookie),
+      body: JSON.stringify({
+        ...requestBody,
+        current_srp: changedInventoryProof,
+        item_keys: [
+          {
+            item_id: itemId,
+            item_key_wrapped: rewrapped,
+            // The client read this wrap before another device changed the row.
+            item_key_wrapped_before: staleRewrapped,
+          },
+        ],
+      }),
+    });
+    assert.equal(changedInventory.status, 409, 'a changed item-key snapshot must reject the full rotation');
+    const unchangedAfterConflict = (await (
+      await fetch(`${BASE_URL}/api/vault/keys`, { headers: headers(cookie) })
+    ).json()) as {
+      vk_version: number;
+    };
+    assert.equal(
+      unchangedAfterConflict.vk_version,
+      oldKeys.vk_version,
+      'a stale item-key snapshot must not update the vault envelope',
+    );
+    assert.equal((await getPairing(cookie, id)).status, 200, 'a stale item-key snapshot must not revoke the device');
+
     const res = await fetch(`${BASE_URL}/api/vault/keys/revoke-device`, {
       method: 'POST',
       headers: headers(cookie),
       body: JSON.stringify({
         ...requestBody,
-        item_keys: [{ item_id: itemId, item_key_wrapped: rewrapped }],
+        current_srp: await createSrpProof(cookie, PASSWORD),
+        item_keys: [
+          {
+            item_id: itemId,
+            item_key_wrapped: rewrapped,
+            item_key_wrapped_before: item.item_key_wrapped,
+          },
+        ],
       }),
     });
     assert.equal(res.status, 200);
@@ -482,6 +522,8 @@ describe('POST /api/vault/keys/revoke-device', () => {
     const body = await decryptVaultItem(newVk, itemId, rewrapped, item.payload);
     assert.equal(new TextDecoder().decode(body), 'secret', 'the item key must move to the new VK');
 
+    const staleProof = await createSrpProof(cookie, PASSWORD);
+    assert.ok(staleProof);
     const staleRes = await fetch(`${BASE_URL}/api/vault/keys/revoke-device`, {
       method: 'POST',
       headers: headers(cookie),
@@ -495,7 +537,13 @@ describe('POST /api/vault/keys/revoke-device', () => {
         kdf_params: oldKeys.kdf_params,
         wrapped_vk: staleWrapped,
         recovery_blob: staleRecovery,
-        item_keys: [{ item_id: itemId, item_key_wrapped: staleRewrapped }],
+        item_keys: [
+          {
+            item_id: itemId,
+            item_key_wrapped: staleRewrapped,
+            item_key_wrapped_before: item.item_key_wrapped,
+          },
+        ],
       }),
     });
     assert.equal(staleRes.status, 409, 'a stale rotation must report a version conflict');

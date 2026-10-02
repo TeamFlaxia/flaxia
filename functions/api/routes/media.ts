@@ -510,10 +510,9 @@ media.get('/documents/*', async (c) => {
 
     return new Response(object.body, {
       headers: {
+        ...MEDIA_SECURITY_HEADERS,
         'Content-Type': 'application/octet-stream',
         'Cache-Control': MEDIA_CACHE_CONTROL,
-        'X-Content-Type-Options': 'nosniff',
-        ...MEDIA_SECURITY_HEADERS,
         // Must win over MEDIA_SECURITY_HEADERS' inline default: arbitrary
         // document bytes are always a download.
         'Content-Disposition': `attachment; filename="${key.split('/').pop() || 'download.bin'}"`,

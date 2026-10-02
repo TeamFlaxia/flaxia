@@ -253,7 +253,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const sessionToken = localStorage.getItem('flaxia_session');
       const url = `${protocol}//${window.location.host}/api/ws/notifications${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`;
 
-      console.log('[push] connecting to', url);
+      console.log('[push] connecting to notification stream');
       try {
         const ws = new WebSocket(url);
         ws.onopen = () => {
@@ -263,7 +263,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         ws.onmessage = (ev) => {
           try {
             const data = JSON.parse(ev.data);
-            console.log('[push] received:', data);
             if (data.type === 'notification') {
               unreadNotificationCount = data.unread_count;
               updateBadgeUI();
@@ -283,19 +282,19 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
         };
         ws.onclose = (ev) => {
-          console.log(`[push] disconnected (code=${ev.code} reason=${ev.reason}), reconnecting in 10s`);
+          console.log(`[push] disconnected (code=${ev.code}), reconnecting in 10s`);
           pushWs = null;
           _pushWsReconnectTimer = setTimeout(() => {
             _pushWsReconnectTimer = null;
             connectPushWebSocket();
           }, 10000);
         };
-        ws.onerror = (ev) => {
-          console.error('[push] error:', ev);
+        ws.onerror = () => {
+          console.error('[push] WebSocket error');
         };
         pushWs = ws;
-      } catch (e) {
-        console.error('[push] connection error:', e);
+      } catch {
+        console.error('[push] connection error');
         pushWs = null;
         _pushWsReconnectTimer = setTimeout(() => {
           _pushWsReconnectTimer = null;
@@ -889,7 +888,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Parse current URL
     const parseCurrentRoute = () => {
       const path = window.location.pathname;
-      console.log('Current path:', path, 'Full URL:', window.location.href);
+      console.log('Current path:', path);
 
       // Remove trailing slash and ensure consistent format
       const cleanPath = path.replace(/\/$/, '');

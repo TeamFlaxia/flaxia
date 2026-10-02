@@ -1,5 +1,8 @@
 // Unified file extension and MIME type validation for ZIP execution
 
+/** Executable post payloads use the sandbox flow instead of document attachments. */
+export const GAME_FILE_EXTENSIONS = new Set(['zip', 'swf', 'html', 'htm', 'rsp', 'js', 'wasm']);
+
 export const ALLOWED_EXTENSIONS: Record<string, string> = {
   // Web content
   '.html': 'text/html',

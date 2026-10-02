@@ -75,8 +75,7 @@ async function getAccessToken(serviceAccount: ServiceAccount): Promise<string> {
   });
 
   if (!res.ok) {
-    const body = await res.text();
-    console.error('[fcm] token exchange failed', res.status, body);
+    console.error('[fcm] token exchange failed', res.status);
     throw new Error('FCM token exchange failed');
   }
 
@@ -138,8 +137,7 @@ export async function sendPushToDevice(
     });
 
     if (!res.ok) {
-      const body = await res.text();
-      console.error('[fcm] send failed', res.status, body);
+      console.error('[fcm] send failed', res.status);
       if (res.status === 400 || res.status === 404 || res.status === 410) {
         return false;
       }
@@ -147,8 +145,8 @@ export async function sendPushToDevice(
     }
 
     return true;
-  } catch (err) {
-    console.error('[fcm] send error', err);
+  } catch {
+    console.error('[fcm] send error');
     return false;
   }
 }

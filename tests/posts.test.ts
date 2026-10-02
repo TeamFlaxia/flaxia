@@ -2,6 +2,52 @@ import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
 import { BASE_URL, resetDb, seedUserAndLogin } from './helpers/setup.ts';
 
+describe('chronological timeline updates', () => {
+  beforeEach(resetDb);
+
+  it('reflects publish, edit, and delete on repeated first-page reads', async () => {
+    const { cookie, username } = await seedUserAndLogin('timeline');
+    const tag = `debug${crypto.randomUUID().replaceAll('-', '').slice(0, 15)}`;
+    const paths = [
+      '/api/posts?limit=3',
+      `/api/posts?username=${username}`,
+      '/api/posts?following=true',
+      `/api/posts?hashtag=${tag}`,
+    ];
+    const read = async (path: string) => {
+      const response = await fetch(`${BASE_URL}${path}`, { headers: { Cookie: cookie } });
+      assert.equal(response.status, 200);
+      return (await response.json()) as { posts: Array<{ id: string; text: string }>; count?: number };
+    };
+    for (const path of paths) await read(path);
+
+    const id = crypto.randomUUID();
+    const published = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ postId: id, text: `first #${tag}`, hashtags: [tag] }),
+    });
+    assert.equal(published.status, 200);
+    for (const path of paths) {
+      const data = await read(path);
+      assert.equal(data.posts[0]?.id, id, `new post missing from ${path}`);
+      if (path.includes('hashtag=')) assert.equal(data.count, 1);
+    }
+
+    const edited = await fetch(`${BASE_URL}/api/posts/${id}`, {
+      method: 'PUT',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: `edited #${tag}` }),
+    });
+    assert.equal(edited.status, 200);
+    for (const path of paths) assert.equal((await read(path)).posts[0]?.text, `edited #${tag}`);
+
+    const deleted = await fetch(`${BASE_URL}/api/posts/${id}`, { method: 'DELETE', headers: { Cookie: cookie } });
+    assert.equal(deleted.status, 200);
+    for (const path of paths) assert.ok(!(await read(path)).posts.some((post) => post.id === id));
+  });
+});
+
 describe('POST /api/posts', () => {
   beforeEach(resetDb);
 

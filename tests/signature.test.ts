@@ -1,8 +1,24 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
-import { verifyDigest, verifyHttpSignature } from '../functions/lib/activitypub/signature.ts';
+import { exportPrivateKey, exportPublicKey, generateKeyPair } from '../functions/lib/activitypub/crypto.ts';
+import { signRequest, verifyDigest, verifyHttpSignature } from '../functions/lib/activitypub/signature.ts';
 
 describe('HTTP Signature Verification', () => {
+  it('signRequest produces a verifiable signature without exposing key material', async () => {
+    const pair = await generateKeyPair();
+    const privateKeyPem = await exportPrivateKey(pair.privateKey);
+    const publicKeyPem = await exportPublicKey(pair.publicKey);
+    const url = 'https://example.com/inbox?cursor=older';
+    const body = '{"type":"Follow"}';
+    const headers = await signRequest(url, body, privateKeyPem, 'https://example.com/actors/alice#main-key');
+    headers.set('Host', 'example.com');
+
+    const request = new Request(url, { method: 'POST', headers, body });
+    assert.equal(await verifyHttpSignature(request, publicKeyPem), true);
+    assert.equal(await verifyDigest(request, body), true);
+    assert.equal(await verifyDigest(request, '{"type":"Delete"}'), false);
+  });
+
   it('should reject requests without a Signature header', async () => {
     const request = new Request('https://example.com/inbox', {
       method: 'POST',

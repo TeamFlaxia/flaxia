@@ -10,6 +10,8 @@
  *   bucketPrefix: gif (images) | audio | video | docs (pdf)
  */
 
+import { GAME_FILE_EXTENSIONS } from '../../src/lib/file-extensions.ts';
+
 export type AttachmentKind = 'image' | 'audio' | 'video' | 'document';
 
 /** Free-plan ceiling. */
@@ -64,7 +66,7 @@ const ATTACHMENT_KEY_RE = /^(gif|audio|video|docs)\/([^/]+)\/(\d{1,2})(\.[A-Za-z
 export function normalizeExt(filename: string): string | null {
   const ext = filename.toLowerCase().match(/\.(\w+)$/)?.[1];
   if (!ext) return 'bin';
-  return EXT_MAP[ext] || /^[a-z0-9]{1,8}$/.test(ext) ? ext : null;
+  return EXT_MAP[ext]?.slice(1) ?? (/^[a-z0-9]{1,8}$/.test(ext) ? ext : null);
 }
 
 /**
@@ -77,6 +79,7 @@ export function normalizeExt(filename: string): string | null {
 export function kindFromUpload(filename: string, contentType?: string): AttachmentKind | null {
   const ext = filename.toLowerCase().match(/\.(\w+)$/)?.[1];
   if (!ext) return 'document';
+  if (GAME_FILE_EXTENSIONS.has(ext)) return null;
 
   if (GAME_EXTS.has(ext)) return null;
 

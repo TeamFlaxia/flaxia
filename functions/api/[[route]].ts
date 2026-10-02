@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { getSession, getSessionToken, User } from '../lib/auth';
-import { authMiddleware, csrfProtection } from './helpers';
+import { allowedOrigins, authMiddleware, csrfProtection, getBaseOrigin } from './helpers';
 import activitypubRouter from './routes/activitypub';
 import adminRouter from './routes/admin';
 import adsRouter from './routes/ads';
@@ -62,13 +62,9 @@ app.use(
   cors({
     origin: (origin, c) => {
       if (!origin) return '';
-      const env = c.env as { BASE_URL?: string; SANDBOX_ORIGIN?: string };
-      const allowed = new Set(
-        [env.BASE_URL, 'http://localhost:8787', 'http://localhost:5173', 'https://flaxia.app'].filter(Boolean),
-      );
-      return allowed.has(origin) ? origin : '';
+      return allowedOrigins.has(origin) || origin === getBaseOrigin(c) ? origin : '';
     },
-    allowMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+    allowMethods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
   }),

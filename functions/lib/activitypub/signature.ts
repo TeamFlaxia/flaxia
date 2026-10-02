@@ -242,13 +242,7 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
 /**
  * Sign an outgoing ActivityPub request with HTTP Signature
  */
-export async function signRequest(
-  url: string,
-  body: string,
-  privateKeyPem: string,
-  publicKeyPem: string,
-  keyId: string,
-): Promise<Headers> {
+export async function signRequest(url: string, body: string, privateKeyPem: string, keyId: string): Promise<Headers> {
   const headers = new Headers();
 
   // Calculate digest
@@ -278,40 +272,18 @@ export async function signRequest(
     `digest: sha-256=${digest}`,
   ].join('\n');
 
-  console.log('Signing string:');
-  console.log(signingString);
-
-  // Import private key
-  console.log('Importing private key for signing...');
+  // Import private key. Never log the signing string or signature: either can
+  // expose request details, and the signature can be replayed during its date window.
   const privateKey = await importPrivateKey(privateKeyPem);
-  console.log('Private key imported successfully');
 
   // Sign
   const signingArray = encoder.encode(signingString);
-  console.log('Signing string length:', signingString.length);
-  console.log('Signing string (first 200 chars):', signingString.substring(0, 200));
 
   const signatureBuffer = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privateKey, signingArray);
 
   // Convert signature to base64 (not base64url)
   const signatureArray = new Uint8Array(signatureBuffer);
   const signature = btoa(String.fromCharCode(...signatureArray));
-
-  console.log('Signature generated successfully, length:', signature.length);
-  console.log('Signature (first 50 chars):', signature.substring(0, 50));
-
-  // Verify our own signature for debugging
-  try {
-    console.log('Verifying our own signature...');
-    const publicKey = await importPublicKey(publicKeyPem);
-    const isValid = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', publicKey, signatureArray, signingArray);
-    console.log('Self-verification result:', isValid);
-    if (!isValid) {
-      console.error('WARNING: Our own signature verification failed!');
-    }
-  } catch (error) {
-    console.error('Self-verification error:', error);
-  }
 
   // Set Signature header
   headers.set(
@@ -359,8 +331,8 @@ export async function signedFetch(url: string, privateKeyPem: string, keyId: str
     });
 
     return response;
-  } catch (error) {
-    console.error('Signed GET error:', error);
+  } catch {
+    console.error('Signed GET request failed');
     return null;
   }
 }

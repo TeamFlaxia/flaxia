@@ -89,9 +89,9 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
   }
 
   try {
-    // Get user's private and public keys for signing
+    // Get the user's private key for signing.
     const keyResult = await env.DB.prepare(`
-      SELECT ak.private_key_pem, ak.public_key_pem FROM actor_keys ak
+      SELECT ak.private_key_pem FROM actor_keys ak
       JOIN users u ON u.id = ak.user_id
       WHERE u.username = ?
     `)
@@ -105,12 +105,11 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
     }
 
     const privateKeyPem = keyResult.private_key_pem as string;
-    const publicKeyPem = keyResult.public_key_pem as string;
     const keyId = `${env.BASE_URL}/actors/${senderUsername}#main-key`;
 
     const { signRequest } = await import('./lib/activitypub/signature');
     const body = JSON.stringify(activity);
-    const headers = await signRequest(deliveryUrl.toString(), body, privateKeyPem, publicKeyPem, keyId);
+    const headers = await signRequest(deliveryUrl.toString(), body, privateKeyPem, keyId);
 
     // Add timeout and better error handling
     const controller = new AbortController();
@@ -128,25 +127,21 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
     }
 
     if (response.ok) {
-      console.log('ActivityPub delivery successful:', inboxUrl, 'activity:', (activity as { type: string }).type);
+      console.log('ActivityPub delivery successful:', (activity as { type: string }).type);
       message.ack();
     } else {
-      const responseText = await response.text();
       console.error('ActivityPub delivery failed:', {
-        inboxUrl,
         status: response.status,
-        statusText: response.statusText,
-        responseText: responseText.substring(0, 500),
         activityType: (activity as { type: string }).type,
       });
 
       // Retry on server errors (5xx) or network issues
       if (response.status >= 500 || response.status === 429) {
         if (retryCount < maxRetries) {
-          console.log(`Retrying delivery to ${inboxUrl}, attempt ${retryCount + 1}/${maxRetries}`);
+          console.log(`Retrying ActivityPub delivery, attempt ${retryCount + 1}/${maxRetries}`);
           message.retry({ delaySeconds: 2 ** retryCount * 30 }); // Exponential backoff
         } else {
-          console.error(`Max retries exceeded for ${inboxUrl}, giving up`);
+          console.error('Max ActivityPub delivery retries exceeded');
           message.ack();
         }
       } else {
@@ -160,8 +155,6 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
     }
 
     console.error('ActivityPub delivery error:', {
-      inboxUrl,
-      error: (e as Error).message,
       name: (e as Error).name,
       retryCount,
       activityType: (activity as { type: string }).type,
@@ -169,10 +162,10 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
 
     // Retry on network errors or timeouts
     if (retryCount < maxRetries && ((e as Error).name === 'AbortError' || (e as Error).name === 'TypeError')) {
-      console.log(`Retrying delivery to ${inboxUrl} after error, attempt ${retryCount + 1}/${maxRetries}`);
+      console.log(`Retrying ActivityPub delivery after error, attempt ${retryCount + 1}/${maxRetries}`);
       message.retry({ delaySeconds: 2 ** retryCount * 30 });
     } else {
-      console.error(`Max retries exceeded or non-retryable error for ${inboxUrl}`);
+      console.error('Max retries exceeded or non-retryable ActivityPub delivery error');
       message.ack();
     }
   }
@@ -452,13 +445,13 @@ async function handleFollowActivity(
 
   // Send Accept activity automatically
   try {
-    console.log('Preparing to send Accept activity for follow from:', actorId, 'to user:', username);
+    console.log('Preparing ActivityPub follow acceptance');
 
     const { signRequest } = await import('./lib/activitypub/signature');
 
     // Get user's private and public keys for signing
     const keyResult = await env.DB.prepare(`
-      SELECT ak.private_key_pem, ak.public_key_pem FROM actor_keys ak
+      SELECT ak.private_key_pem FROM actor_keys ak
       JOIN users u ON u.id = ak.user_id
       WHERE u.username = ?
     `)
@@ -471,11 +464,7 @@ async function handleFollowActivity(
     }
 
     const privateKeyPem = keyResult.private_key_pem as string;
-    const publicKeyPem = keyResult.public_key_pem as string;
     const keyId = `${env.BASE_URL}/actors/${username}#main-key`;
-
-    console.log('Using inbox URL:', inboxUrl);
-    console.log('Key ID:', keyId);
 
     // Build Accept activity - use the original Follow activity as object
     const acceptActivity = {
@@ -488,13 +477,8 @@ async function handleFollowActivity(
       published: new Date().toISOString(),
     };
 
-    console.log('Accept activity:', JSON.stringify(acceptActivity, null, 2));
-
     const body = JSON.stringify(acceptActivity);
-    const headers = await signRequest(inboxUrl, body, privateKeyPem, publicKeyPem, keyId);
-
-    console.log('Sending Accept activity to:', inboxUrl);
-    console.log('Headers:', Object.fromEntries(headers.entries()));
+    const headers = await signRequest(inboxUrl, body, privateKeyPem, keyId);
 
     const response = await fetch(inboxUrl, {
       method: 'POST',
@@ -503,29 +487,16 @@ async function handleFollowActivity(
     });
 
     if (response.status === 200) {
-      console.log('Accept activity sent successfully to:', actorId, 'status:', response.status);
+      console.log('Accept activity sent successfully:', response.status);
     } else if (response.status === 202) {
-      console.warn(
-        'Accept activity accepted but not processed yet (202) - this may cause follow approval issues:',
-        actorId,
-      );
+      console.warn('Accept activity was accepted but not processed yet (202)');
     } else {
-      const responseText = await response.text();
       console.error('Failed to send Accept activity:', {
-        inboxUrl,
         status: response.status,
-        statusText: response.statusText,
-        responseText: responseText.substring(0, 500),
       });
     }
   } catch (e: unknown) {
-    console.error('Error sending Accept activity:', {
-      error: (e as Error).message,
-      stack: (e as Error).stack,
-      actorId,
-      username,
-      inboxUrl,
-    });
+    console.error('Error sending Accept activity:', { name: (e as Error).name });
   }
 }
 

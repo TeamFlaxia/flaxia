@@ -8,6 +8,5 @@
 /notes/:noteId /api/notes/:noteId 301
 /api/* /api/:splat 200
 /robots.txt /robots.txt 200
-/sandbox/* /sandbox/index.html 200
 /whitepaper /docs/whitepaper 308
 / /home 301

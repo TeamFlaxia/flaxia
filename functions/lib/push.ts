@@ -59,8 +59,7 @@ export async function sendPushToSubscription(
     });
 
     if (!res.ok) {
-      const body = await res.text();
-      console.error('Web Push send failed', res.status, body);
+      console.error('Web Push send failed', res.status);
       // 410 Gone = subscription expired, should be removed
       if (res.status === 410) {
         return false; // signal that subscription should be deleted
@@ -69,8 +68,8 @@ export async function sendPushToSubscription(
     }
 
     return true;
-  } catch (err) {
-    console.error('Web Push send error', err);
+  } catch {
+    console.error('Web Push send error');
     return false;
   }
 }

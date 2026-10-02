@@ -168,37 +168,8 @@ posts.get('/posts', async (c) => {
       return c.json({ error: 'Authentication required for Following tab' }, 401);
     }
 
-    // Try cache hit (first page only)
-    if (!cursor) {
-      const cacheKey = makeCacheKey(
-        'timeline',
-        c,
-        `${limit}:${hashtag || ''}:${following ? 'following' : ''}:${username || ''}`,
-        following || Boolean(username),
-      );
-      const cached = await kvCacheGet<{ posts: Record<string, unknown>[] }>(c, cacheKey);
-      if (cached) {
-        // User-agnostic cache: shared feeds must re-apply the current user's block list.
-        let posts = cached.posts;
-        if (!following && !username) {
-          posts = (await filterBlockedAuthors(c.env.DB, currentUserId, posts)).slice(0, limit);
-        }
-        if (currentUserId && posts.length > 0) {
-          const postIds = posts.map((p) => String(p.id));
-          const { freshed, bookmarked } = await batchGetFreshAndBookmarkStatus(c.env.DB, currentUserId, postIds);
-          posts.forEach((post: Record<string, unknown>) => {
-            post.is_freshed = freshed.has(post.id as string);
-            post.is_bookmarked = bookmarked.has(post.id as string);
-          });
-        }
-        await enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId);
-        await enrichPostsWithQuotes(posts as PostRow[], c.env.DB);
-        await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
-        await enrichPostsWithReactions(posts as PostRow[], c.env.DB, currentUserId);
-        return c.json({ posts });
-      }
-    }
-
+    // Chronological feeds read the current rows. A KV snapshot cannot reflect
+    // publishing, edits, moderation, or deletion consistently across edges.
     let query: string;
     let params: Array<string | number> = [];
 
@@ -207,18 +178,14 @@ posts.get('/posts', async (c) => {
       ? 'AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
       : '';
     const blockParam = currentUserId ? [currentUserId] : [];
-    // Shared first pages fetch a small surplus so the user-agnostic cache can
-    // still return a full page after the per-user block filter runs in JS.
-    const fetchLimit = limit + 20;
-
     if (hashtag) {
       // Filter by hashtag using json_each
       if (cursor) {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [hashtag, cursor, ...blockParam, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ORDER BY p.created_at DESC LIMIT ?`;
-        params = [hashtag, fetchLimit];
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        params = [hashtag, ...blockParam, limit];
       }
     } else if (following && currentUserId) {
       // Following tab - show posts from followed users and current user's own posts
@@ -265,13 +232,13 @@ posts.get('/posts', async (c) => {
         params = [username, limit];
       }
     } else {
-      // Regular timeline query (For You tab)
+      // Global timeline
       if (cursor) {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [cursor, ...blockParam, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ORDER BY p.created_at DESC LIMIT ?`;
-        params = [fetchLimit];
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, p.status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        params = [...blockParam, limit];
       }
     }
 
@@ -284,15 +251,7 @@ posts.get('/posts', async (c) => {
       return c.json({ error: 'Failed to fetch posts' }, 500);
     }
 
-    const rawPosts = result.results || [];
-
-    // Shared first pages (For You / hashtag) fetch without the SQL block filter
-    // so the cache can be shared across users; apply the block list in JS here
-    // and trim back to the requested page size.
-    const posts =
-      !cursor && !following && !username
-        ? (await filterBlockedAuthors(c.env.DB, currentUserId, rawPosts)).slice(0, limit)
-        : rawPosts;
+    const posts = result.results || [];
 
     // Parallel: fresh/bookmark status, poll enrichment, vector embedding check
     await Promise.all([
@@ -332,21 +291,6 @@ posts.get('/posts', async (c) => {
         }
       })(),
     ]);
-
-    // Write to KV cache (first page only). Shared feeds cache the raw
-    // (unblocked) post list so any user's block list can be applied on read.
-    if (!cursor && c.env.CACHE) {
-      const cacheKey = makeCacheKey(
-        'timeline',
-        c,
-        `${limit}:${hashtag || ''}:${following ? 'following' : ''}:${username || ''}`,
-        following || Boolean(username),
-      );
-      const cacheData = {
-        posts: (rawPosts as Record<string, unknown>[]).map((p) => ({ ...p, is_freshed: false, is_bookmarked: false })),
-      };
-      await kvCacheSet(c, cacheKey, cacheData, 60);
-    }
 
     // Return total count when filtering by hashtag
     if (hashtag) {

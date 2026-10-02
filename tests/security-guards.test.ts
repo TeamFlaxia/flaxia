@@ -86,15 +86,14 @@ describe('security guards', () => {
     // User-controlled sandbox code communicates with the app through typed
     // postMessage bridges. It must never be a credentialed CORS or CSRF origin.
     const api = readFileSync(join(ROOT, 'functions/api/[[route]].ts'), 'utf8');
-    const corsAllowlist = api.match(/const allowed = new Set\(\s*\[([\s\S]*?)\]\.filter\(Boolean\),\s*\);/)?.[1] ?? '';
-    assert.ok(corsAllowlist, 'API CORS allowlist must be discoverable');
-    assert.ok(!corsAllowlist.includes('SANDBOX_ORIGIN'), 'sandbox origin must not receive credentialed CORS');
-    assert.ok(!corsAllowlist.includes('sandbox.flaxia.app'), 'sandbox origin must not receive credentialed CORS');
-
     const helpers = readFileSync(join(ROOT, 'functions/api/helpers.ts'), 'utf8');
-    const csrfAllowlist = helpers.match(/export const allowedOrigins = new Set\(\[([\s\S]*?)\]\);/)?.[1] ?? '';
-    assert.ok(csrfAllowlist, 'CSRF allowlist must be discoverable');
-    assert.ok(!csrfAllowlist.includes('sandbox.flaxia.app'), 'sandbox origin must not bypass CSRF validation');
+    assert.ok(api.includes('allowedOrigins.has(origin)'), 'API CORS must use the shared origin allowlist');
+    assert.ok(
+      helpers.includes('export const allowedOrigins = new Set('),
+      'CSRF must define the shared origin allowlist',
+    );
+    assert.ok(!helpers.includes('SANDBOX_ORIGIN'), 'sandbox origin must not receive credentialed CORS');
+    assert.ok(!helpers.includes('sandbox.flaxia.app'), 'sandbox origin must not bypass CSRF validation');
   });
 
   it('does not gate test routes on request-derived data', () => {
@@ -162,6 +161,42 @@ describe('security guards', () => {
       "base-uri 'self'",
     ]) {
       assert.ok(headers.includes(header), `_headers missing ${header}`);
+    }
+  });
+
+  it('does not log session tokens, signed requests, or push response bodies', () => {
+    const main = readFileSync(join(ROOT, 'src/main.ts'), 'utf8');
+    assert.ok(!main.includes("console.log('[push] connecting to', url)"));
+    assert.ok(!main.includes("console.log('[push] received:', data)"));
+    assert.doesNotMatch(main, /console\.(?:log|info|warn|error)\([^\n]*window\.location\.href/);
+
+    const signature = readFileSync(join(ROOT, 'functions/lib/activitypub/signature.ts'), 'utf8');
+    const requestSigner = signature.match(
+      /export async function signRequest\([\s\S]*?export async function signedFetch/,
+    );
+    assert.ok(requestSigner, 'ActivityPub request signer must be discoverable');
+    assert.doesNotMatch(requestSigner[0], /console\.(?:log|info|warn|error)\(/);
+
+    const delivery = readFileSync(join(ROOT, 'functions/queue-worker.ts'), 'utf8');
+    assert.ok(!delivery.includes("console.log('Headers:', Object.fromEntries(headers.entries()))"));
+    assert.ok(!delivery.includes("console.log('Accept activity:', JSON.stringify(acceptActivity"));
+    assert.ok(!delivery.includes('const responseText = await response.text()'));
+
+    const activityPubCrypto = readFileSync(join(ROOT, 'functions/lib/activitypub/crypto.ts'), 'utf8');
+    assert.doesNotMatch(activityPubCrypto, /console\.(?:log|info|warn|error)\([^\n]*(?:private key|pemContents)/i);
+
+    for (const file of ['src/components/PostComposer.ts', 'src/components/ReplyComposer.ts']) {
+      const source = readFileSync(join(ROOT, file), 'utf8');
+      assert.doesNotMatch(
+        source,
+        /console\.(?:log|info|warn|error)\([^\n]*(?:uploadUrl|responseText)/,
+        `${file} must not log private upload paths or response bodies`,
+      );
+    }
+
+    for (const file of ['functions/lib/fcm.ts', 'functions/lib/push.ts']) {
+      const source = readFileSync(join(ROOT, file), 'utf8');
+      assert.ok(!source.includes('await res.text()'), `${file} must not log provider response bodies`);
     }
   });
 
@@ -266,12 +301,13 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
     assert.deepEqual(offenders, [], `KV expirationTtl must be >= 60: ${offenders.join(', ')}`);
   });
 
-  it('keys user-specific timelines by user', () => {
+  it('queries chronological timelines fresh with user-specific filters', () => {
     const src = readFileSync(join(ROOT, 'functions/api/routes/posts.ts'), 'utf8');
-    assert.ok(
-      src.includes('following || Boolean(username)'),
-      "following/profile timelines must not share another user's cache",
-    );
+    const handler = src.match(/posts\.get\('\/posts',[\s\S]*?(?=\/\/ GET \/api\/posts\/trending)/)?.[0] ?? '';
+    assert.ok(handler, 'chronological timeline handler must be discoverable');
+    assert.ok(handler.includes('follower_id = ?'), 'Following must bind the authenticated follower id');
+    assert.ok(handler.includes('WHERE p.username = ?'), 'profile timelines must bind the requested username');
+    assert.doesNotMatch(handler, /kvCache(?:Get|Set)\(/, 'chronological posts must not come from a stale KV snapshot');
   });
 
   it('escapes JSON-LD embedded in SSR pages', () => {

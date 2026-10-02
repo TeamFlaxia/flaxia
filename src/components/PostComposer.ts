@@ -15,31 +15,84 @@ export interface PostComposerProps {
 
 import { attachPlusBadge } from '../lib/avatar.js';
 import { maxMediaAttachmentsForUser } from '../lib/entitlements.js';
-import { attachmentMimeType, getMimeType } from '../lib/file-extensions.js';
+import { attachmentMimeType, GAME_FILE_EXTENSIONS, getMimeType } from '../lib/file-extensions.js';
 import { AttachPreviewHandle, checkImageSizeLimit, detectAttachKind, renderFilePreview } from '../lib/file-preview.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { attachIcons, icon } from '../lib/icons.js';
 import { registerModal } from '../lib/modal-state.js';
 import { showToast } from '../lib/toast.js';
+import {
+  deleteVaultItem,
+  deleteVaultItems,
+  listVaultItems,
+  newVaultItemId,
+  saveVaultItem,
+} from '../lib/vault/items.js';
+import { getVaultKey, isVaultUnlocked, subscribeVault, tryDeviceUnlock } from '../lib/vault/session.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
 import { openMediaEditor } from './MediaEditorModal.js';
-import { closeStampPicker, openStampPicker } from './StampPicker.js';
+import { openStampPicker } from './StampPicker.js';
 import { createVideoPlayer } from './VideoPlayer.js';
 
 // Multi-media attachment size limits (mirrors functions/lib/attachments.ts).
 // The count limit is plan-dependent — see src/lib/entitlements.ts.
 const MAX_MEDIA_FILE_BYTES = 25 * 1024 * 1024;
 const MAX_MEDIA_TOTAL_BYTES = 50 * 1024 * 1024;
-const GAME_EXTENSIONS = new Set(['zip', 'swf', 'rsp', 'js', 'wasm']);
+const AUTOSAVE_ITEM_ID = 'post_autosave_main';
+
+interface ComposerDraft {
+  id: string;
+  text: string;
+  savedAt: number;
+}
+
+interface ComposerAutosave {
+  text: string;
+  savedAt: number;
+  poll?: { question: string; options: string[]; duration: string };
+}
+
+type DraftStorageMode = 'loading' | 'local' | 'vault' | 'locked';
+
+function parseComposerDrafts(value: unknown): ComposerDraft[] {
+  if (!Array.isArray(value)) return [];
+  const values: unknown[] = value;
+  return values.filter((draft): draft is ComposerDraft => {
+    if (typeof draft !== 'object' || draft === null) return false;
+    const candidate = draft as Record<string, unknown>;
+    return (
+      typeof candidate.id === 'string' &&
+      typeof candidate.text === 'string' &&
+      typeof candidate.savedAt === 'number' &&
+      Number.isFinite(candidate.savedAt)
+    );
+  });
+}
+
+function parseAutosave(value: unknown): ComposerAutosave | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const draft = value as Partial<ComposerAutosave>;
+  if (typeof draft.text !== 'string' || typeof draft.savedAt !== 'number' || !Number.isFinite(draft.savedAt))
+    return null;
+  if (
+    draft.poll &&
+    (typeof draft.poll.question !== 'string' ||
+      !Array.isArray(draft.poll.options) ||
+      !draft.poll.options.every((option) => typeof option === 'string') ||
+      typeof draft.poll.duration !== 'string')
+  )
+    return null;
+  return draft as ComposerAutosave;
+}
 
 function fileExtension(file: File): string {
   return file.name.toLowerCase().split('.').pop() || '';
 }
 
 function isGameFile(file: File): boolean {
-  return GAME_EXTENSIONS.has(fileExtension(file));
+  return GAME_FILE_EXTENSIONS.has(fileExtension(file));
 }
 
 export class PostComposer {
@@ -71,17 +124,23 @@ export class PostComposer {
   private static readonly SAVE_COOLDOWN = 1000;
   private draftTimeout: ReturnType<typeof setTimeout> | null = null;
   private saveCooldown = false;
-  private savedDrafts: Array<{ id: string; text: string; savedAt: number }> = [];
+  private savedDrafts: ComposerDraft[] = [];
   private loadedDraftId: string | null = null;
   private draftsDropdown!: HTMLElement;
   private boundCloseDrafts!: (e: MouseEvent) => void;
   private maxMediaAttachments: number;
+  private draftStorageMode: DraftStorageMode = 'loading';
+  private draftStorageReady: Promise<void> = Promise.resolve();
+  private unsubscribeVault: (() => void) | null = null;
+  private vaultNotice!: HTMLElement;
 
   constructor(props: PostComposerProps) {
     this.props = props;
     this.maxMediaAttachments = maxMediaAttachmentsForUser(props.currentUser);
     this.element = this.createElement();
     this.setupEventListeners();
+    this.unsubscribeVault = subscribeVault(() => this.handleVaultSessionChange());
+    this.draftStorageReady = this.initializeDraftStorage();
   }
 
   private createElement(): HTMLElement {
@@ -193,6 +252,11 @@ export class PostComposer {
     this.errorDisplay.style.display = 'none';
     const body = container.querySelector('.composer-body');
     if (body) {
+      this.vaultNotice = document.createElement('div');
+      this.vaultNotice.style.cssText =
+        'display:none;margin:0.5rem 0;padding:0.5rem 0.75rem;border-radius:6px;background:var(--bg-secondary);color:var(--text-muted);font-size:0.8rem;';
+      this.vaultNotice.textContent = t('composer.vault_unlock_required');
+      body.insertBefore(this.vaultNotice, body.querySelector('.composer-file-preview'));
       body.insertBefore(this.errorDisplay, body.querySelector('.composer-file-preview'));
     }
 
@@ -239,9 +303,6 @@ export class PostComposer {
       composerHeader.style.position = 'relative';
       composerHeader.appendChild(this.mentionDropdown);
     }
-
-    // Restore draft if available
-    this.loadDraft();
 
     // Set avatar
     const avatar = container.querySelector('.composer-avatar') as HTMLElement;
@@ -1316,72 +1377,227 @@ export class PostComposer {
 
   private scheduleDraftSave(): void {
     if (this.draftTimeout) clearTimeout(this.draftTimeout);
-    this.draftTimeout = setTimeout(() => this.saveDraft(), 500);
+    this.draftTimeout = setTimeout(() => void this.saveDraft(), 500);
   }
 
-  private saveDraft(): void {
-    try {
-      const draft: Record<string, any> = {
-        text: this.textarea.value,
-        savedAt: Date.now(),
-      };
-      if (this.pollActive) {
-        const select = this.element.querySelector('.poll-duration-select') as unknown as HTMLSelectElement;
-        draft.poll = {
-          question: this.pollQuestion,
-          options: [...this.pollOptionsArr],
-          duration: select?.value || '86400000',
-        };
+  private setVaultNotice(show: boolean, failed = false): void {
+    this.vaultNotice.style.display = show ? 'block' : 'none';
+    this.vaultNotice.textContent = failed ? t('composer.vault_save_failed') : t('composer.vault_unlock_required');
+  }
+
+  private handleVaultSessionChange(): void {
+    if (!getVaultKey()) {
+      if (this.draftStorageMode === 'vault') {
+        this.draftStorageMode = 'locked';
+        this.savedDrafts = [];
+        this.setVaultNotice(true);
+        this.renderDraftsDropdown();
+        this.props.onDraftSaved?.();
       }
-      localStorage.setItem(PostComposer.AUTOSAVE_KEY, JSON.stringify(draft));
-      this.props.onDraftSaved?.();
-    } catch {}
+      return;
+    }
+    if (this.draftStorageMode === 'locked' || this.draftStorageMode === 'local') {
+      this.draftStorageMode = 'loading';
+      this.draftStorageReady = this.initializeDraftStorage();
+    }
   }
 
-  private loadDraft(): void {
+  private readLocalSavedDrafts(): ComposerDraft[] {
+    try {
+      const raw = localStorage.getItem(PostComposer.SAVED_DRAFTS_KEY);
+      const parsed: unknown = raw ? JSON.parse(raw) : null;
+      return parseComposerDrafts(parsed);
+    } catch {
+      return [];
+    }
+  }
+
+  private readLocalAutosave(): ComposerAutosave | null {
     try {
       const raw = localStorage.getItem(PostComposer.AUTOSAVE_KEY);
-      if (!raw) return;
-      const draft = JSON.parse(raw);
-      if (!draft.text) return;
-
-      this.textarea.value = draft.text;
-      this.charCount.textContent = t('composer.char_count', { current: draft.text.length, max: 200 });
-      this.updateSubmitButton();
-
-      if (draft.poll) {
-        this.pollActive = true;
-        this.pollQuestion = draft.poll.question || '';
-        this.pollOptionsArr = draft.poll.options?.length ? [...draft.poll.options] : ['', ''];
-        const section = this.element.querySelector('.composer-poll-section') as HTMLElement;
-        if (section) section.style.display = 'block';
-        const questionInput = this.element.querySelector('.poll-question-input') as HTMLInputElement;
-        if (questionInput) questionInput.value = this.pollQuestion;
-        const select = this.element.querySelector('.poll-duration-select') as unknown as HTMLSelectElement;
-        if (select && draft.poll.duration) select.value = draft.poll.duration;
-        this.renderPollOptions();
-      }
-    } catch {}
+      const parsed: unknown = raw ? JSON.parse(raw) : null;
+      return parseAutosave(parsed);
+    } catch {
+      return null;
+    }
   }
 
-  private clearAutoDraft(): void {
-    localStorage.removeItem(PostComposer.AUTOSAVE_KEY);
+  private restoreAutosave(draft: ComposerAutosave | null): void {
+    if (!draft?.text || this.textarea.value || this.props.quotedPost) return;
+    this.textarea.value = draft.text;
+    this.charCount.textContent = t('composer.char_count', { current: draft.text.length, max: 200 });
+    this.updateSubmitButton();
+    if (draft.poll) {
+      this.pollActive = true;
+      this.pollQuestion = draft.poll.question;
+      this.pollOptionsArr = [...draft.poll.options];
+      const section = this.element.querySelector('.composer-poll-section') as HTMLElement | null;
+      if (section) section.style.display = 'block';
+      const questionInput = this.element.querySelector('.poll-question-input') as HTMLInputElement | null;
+      if (questionInput) questionInput.value = this.pollQuestion;
+      const select = this.element.querySelector('.poll-duration-select') as HTMLSelectElement | null;
+      if (select && draft.poll.duration) select.value = draft.poll.duration;
+      this.renderPollOptions();
+    }
+  }
+
+  private async initializeDraftStorage(): Promise<void> {
+    if (!this.props.currentUser) {
+      this.draftStorageMode = 'local';
+      this.savedDrafts = this.readLocalSavedDrafts();
+      this.restoreAutosave(this.readLocalAutosave());
+      this.setVaultNotice(false);
+      this.renderDraftsDropdown();
+      this.props.onDraftSaved?.();
+      return;
+    }
+
+    const keys = await fetch('/api/vault/keys', { credentials: 'include' })
+      .then(async (res) => (res.ok ? ((await res.json()) as { enabled?: boolean }) : null))
+      .catch(() => null);
+    // If vault status cannot be checked, never fall back to writing plaintext.
+    if (!keys) {
+      this.draftStorageMode = 'locked';
+      this.savedDrafts = [];
+      this.setVaultNotice(true, true);
+      this.renderDraftsDropdown();
+      this.props.onDraftSaved?.();
+      return;
+    }
+    if (!keys.enabled) {
+      this.draftStorageMode = 'local';
+      this.savedDrafts = this.readLocalSavedDrafts();
+      this.restoreAutosave(this.readLocalAutosave());
+      this.setVaultNotice(false);
+      this.renderDraftsDropdown();
+      this.props.onDraftSaved?.();
+      return;
+    }
+
+    if (!isVaultUnlocked()) await tryDeviceUnlock();
+    if (!isVaultUnlocked()) {
+      this.draftStorageMode = 'locked';
+      this.savedDrafts = [];
+      this.setVaultNotice(true);
+      this.renderDraftsDropdown();
+      this.props.onDraftSaved?.();
+      return;
+    }
+
+    try {
+      const [remoteDrafts, remoteAutosaves] = await Promise.all([
+        listVaultItems<ComposerDraft>('post_draft'),
+        listVaultItems<ComposerAutosave>('post_autosave'),
+      ]);
+      this.draftStorageMode = 'vault';
+      this.savedDrafts = parseComposerDrafts(remoteDrafts.map(({ value }) => value)).slice(0, 20);
+      const remoteAutosave = parseAutosave(remoteAutosaves.find(({ id }) => id === AUTOSAVE_ITEM_ID)?.value);
+      const autosave = await this.migrateLegacyDrafts(remoteAutosave);
+      this.restoreAutosave(autosave);
+      this.setVaultNotice(false);
+      this.renderDraftsDropdown();
+      this.props.onDraftSaved?.();
+    } catch {
+      this.draftStorageMode = 'locked';
+      this.savedDrafts = [];
+      this.setVaultNotice(true, true);
+      this.renderDraftsDropdown();
+      this.props.onDraftSaved?.();
+    }
+  }
+
+  /** Move old plaintext drafts into encrypted rows before removing local copies. */
+  private async migrateLegacyDrafts(remoteAutosave: ComposerAutosave | null): Promise<ComposerAutosave | null> {
+    const legacyDrafts = this.readLocalSavedDrafts();
+    const legacyAutosave = this.readLocalAutosave();
+    try {
+      const knownText = new Set(this.savedDrafts.map((draft) => draft.text));
+      for (const draft of legacyDrafts) {
+        if (!draft.text || knownText.has(draft.text)) continue;
+        const migrated = { ...draft, id: newVaultItemId() };
+        await saveVaultItem(migrated.id, 'post_draft', migrated);
+        this.savedDrafts.unshift(migrated);
+        knownText.add(migrated.text);
+      }
+      this.savedDrafts = this.savedDrafts.slice(0, 20);
+      let autosave = remoteAutosave;
+      if (!autosave && legacyAutosave) {
+        autosave = legacyAutosave;
+        await saveVaultItem(AUTOSAVE_ITEM_ID, 'post_autosave', autosave);
+      }
+      try {
+        localStorage.removeItem(PostComposer.AUTOSAVE_KEY);
+        localStorage.removeItem(PostComposer.SAVED_DRAFTS_KEY);
+      } catch {
+        // Storage can be unavailable in private mode; the vault copy is still usable.
+      }
+      return autosave;
+    } catch {
+      // Keep the legacy copies until every migrated row has been accepted.
+      throw new Error('Unable to migrate local drafts into the vault');
+    }
+  }
+
+  private async saveDraft(): Promise<void> {
+    await this.draftStorageReady;
+    const draft: ComposerAutosave = {
+      text: this.textarea.value,
+      savedAt: Date.now(),
+    };
+    if (this.pollActive) {
+      const select = this.element.querySelector('.poll-duration-select') as HTMLSelectElement | null;
+      draft.poll = {
+        question: this.pollQuestion,
+        options: [...this.pollOptionsArr],
+        duration: select?.value || '86400000',
+      };
+    }
+    if (this.draftStorageMode === 'local') {
+      try {
+        localStorage.setItem(PostComposer.AUTOSAVE_KEY, JSON.stringify(draft));
+        this.props.onDraftSaved?.();
+      } catch {}
+      return;
+    }
+    if (this.draftStorageMode !== 'vault' || !getVaultKey()) {
+      this.setVaultNotice(true);
+      return;
+    }
+    try {
+      if (draft.text || draft.poll?.question || draft.poll?.options.some(Boolean)) {
+        await saveVaultItem(AUTOSAVE_ITEM_ID, 'post_autosave', draft);
+      } else {
+        await deleteVaultItem(AUTOSAVE_ITEM_ID);
+      }
+      this.setVaultNotice(false);
+    } catch {
+      this.setVaultNotice(true, true);
+    }
+  }
+
+  private async clearAutoDraft(): Promise<void> {
     if (this.draftTimeout) {
       clearTimeout(this.draftTimeout);
       this.draftTimeout = null;
     }
+    await this.draftStorageReady;
+    if (this.draftStorageMode === 'local') {
+      localStorage.removeItem(PostComposer.AUTOSAVE_KEY);
+      return;
+    }
+    if (this.draftStorageMode === 'vault') await deleteVaultItem(AUTOSAVE_ITEM_ID).catch(() => undefined);
   }
 
   private loadSavedDrafts(): void {
-    try {
-      const raw = localStorage.getItem(PostComposer.SAVED_DRAFTS_KEY);
-      this.savedDrafts = raw ? JSON.parse(raw) : [];
-    } catch {
-      this.savedDrafts = [];
-    }
+    if (this.draftStorageMode === 'local') this.savedDrafts = this.readLocalSavedDrafts();
   }
 
-  private saveExplicitDraft(): void {
+  private async saveExplicitDraft(): Promise<void> {
+    await this.draftStorageReady;
+    if (this.draftStorageMode !== 'local' && this.draftStorageMode !== 'vault') {
+      this.setVaultNotice(true);
+      return;
+    }
     const text = this.textarea.value.trim();
     if (!text) {
       showToast(t('composer.draft_empty'), true);
@@ -1398,12 +1614,10 @@ export class PostComposer {
     if (this.loadedDraftId) {
       const existing = this.savedDrafts.find((d) => d.id === this.loadedDraftId);
       if (existing) {
-        existing.text = text;
-        existing.savedAt = Date.now();
-        try {
-          localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
-          this.props.onDraftSaved?.();
-        } catch {}
+        const updated = { ...existing, text, savedAt: Date.now() };
+        if (!(await this.persistDraft(updated))) return;
+        this.savedDrafts = this.savedDrafts.map((draft) => (draft.id === updated.id ? updated : draft));
+        this.props.onDraftSaved?.();
         showToast(t('composer.draft_updated'));
         this.loadedDraftId = null;
         this.renderDraftsDropdown();
@@ -1413,40 +1627,78 @@ export class PostComposer {
 
     const duplicate = this.savedDrafts.find((d) => d.text === text);
     if (duplicate) {
-      duplicate.savedAt = Date.now();
-      try {
-        localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
-        this.props.onDraftSaved?.();
-      } catch {}
+      const updated = { ...duplicate, savedAt: Date.now() };
+      if (!(await this.persistDraft(updated))) return;
+      this.savedDrafts = this.savedDrafts.map((draft) => (draft.id === updated.id ? updated : draft));
+      this.props.onDraftSaved?.();
       showToast(t('composer.draft_saved'));
       this.renderDraftsDropdown();
       return;
     }
 
-    const draft = {
-      id: Date.now().toString(36),
+    const draft: ComposerDraft = {
+      id: newVaultItemId(),
       text,
       savedAt: Date.now(),
     };
+    if (!(await this.persistDraft(draft))) return;
     this.savedDrafts.unshift(draft);
-    if (this.savedDrafts.length > 20) this.savedDrafts.length = 20;
-    try {
-      localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
-      this.props.onDraftSaved?.();
-    } catch {}
+    const discarded = this.savedDrafts.splice(20);
+    if (this.draftStorageMode === 'vault') {
+      await Promise.all(discarded.map((item) => deleteVaultItem(item.id).catch(() => undefined)));
+    }
+    if (this.draftStorageMode === 'local') {
+      try {
+        localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
+      } catch {}
+    }
+    this.props.onDraftSaved?.();
     showToast(t('composer.draft_saved'));
     this.loadedDraftId = null;
     this.renderDraftsDropdown();
   }
 
-  private deleteExplicitDraft(id: string): void {
+  private async persistDraft(draft: ComposerDraft): Promise<boolean> {
+    try {
+      if (this.draftStorageMode === 'vault') await saveVaultItem(draft.id, 'post_draft', draft);
+      else if (this.draftStorageMode === 'local') {
+        const next = this.savedDrafts.map((existing) => (existing.id === draft.id ? draft : existing));
+        if (!next.some((existing) => existing.id === draft.id)) next.unshift(draft);
+        localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(next.slice(0, 20)));
+      } else return false;
+      this.setVaultNotice(false);
+      return true;
+    } catch {
+      this.setVaultNotice(true, true);
+      showToast(t('composer.vault_save_failed'), true);
+      return false;
+    }
+  }
+
+  private async deleteExplicitDraft(id: string): Promise<void> {
+    await this.draftStorageReady;
     this.loadSavedDrafts();
+    if (this.draftStorageMode !== 'local' && this.draftStorageMode !== 'vault') {
+      this.setVaultNotice(true);
+      return;
+    }
+    if (this.draftStorageMode === 'vault') {
+      try {
+        await deleteVaultItem(id);
+      } catch {
+        this.setVaultNotice(true, true);
+        showToast(t('composer.vault_save_failed'), true);
+        return;
+      }
+    }
     this.savedDrafts = this.savedDrafts.filter((d) => d.id !== id);
     if (this.loadedDraftId === id) this.loadedDraftId = null;
-    try {
-      localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
-      this.props.onDraftSaved?.();
-    } catch {}
+    if (this.draftStorageMode === 'local') {
+      try {
+        localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
+      } catch {}
+    }
+    this.props.onDraftSaved?.();
     showToast(t('composer.draft_deleted'));
     this.renderDraftsDropdown();
   }
@@ -1517,7 +1769,7 @@ export class PostComposer {
 
     deleteBtn.addEventListener('click', () => {
       destroy();
-      this.deleteAllDrafts();
+      void this.deleteAllDrafts();
     });
 
     overlay.addEventListener('click', (e) => {
@@ -1525,14 +1777,27 @@ export class PostComposer {
     });
   }
 
-  private deleteAllDrafts(): void {
+  private async deleteAllDrafts(): Promise<void> {
+    await this.draftStorageReady;
     if (this.savedDrafts.length === 0) return;
     this.loadSavedDrafts();
+    if (this.draftStorageMode === 'vault') {
+      try {
+        await deleteVaultItems('post_draft');
+      } catch {
+        this.setVaultNotice(true, true);
+        showToast(t('composer.vault_save_failed'), true);
+        return;
+      }
+    }
     this.savedDrafts = [];
     this.loadedDraftId = null;
-    try {
-      localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
-    } catch {}
+    if (this.draftStorageMode === 'local') {
+      try {
+        localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
+      } catch {}
+    }
+    this.props.onDraftSaved?.();
     showToast(t('composer.draft_all_deleted'));
     this.renderDraftsDropdown();
   }
@@ -1705,7 +1970,7 @@ export class PostComposer {
       });
       delBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        this.deleteExplicitDraft(draft.id);
+        void this.deleteExplicitDraft(draft.id);
       });
 
       actionRow.appendChild(time);
@@ -1868,7 +2133,7 @@ export class PostComposer {
       }
 
       // Clear form and draft
-      this.clearAutoDraft();
+      await this.clearAutoDraft();
       this.loadedDraftId = null;
       this.textarea.value = '';
       this.charCount.textContent = t('composer.char_count', { current: 0, max: 200 });
@@ -2017,7 +2282,7 @@ export class PostComposer {
 
   private async uploadFileDirect(file: File, uploadUrl: string): Promise<boolean> {
     try {
-      console.log('Uploading file to:', uploadUrl, 'Type:', file.type, 'Size:', file.size);
+      console.log('Uploading file', 'Type:', file.type, 'Size:', file.size);
 
       const response = await fetch(uploadUrl, {
         method: 'PUT',
@@ -2031,27 +2296,13 @@ export class PostComposer {
       console.log('Upload response status:', response.status, response.statusText);
 
       if (!response.ok) {
-        const responseText = await response.text();
-        console.error('Upload failed response:', responseText);
-
-        // Try to parse as JSON, fallback to text if it fails
-        let error: Record<string, unknown>;
-        try {
-          error = JSON.parse(responseText) as Record<string, unknown>;
-        } catch {
-          error = { error: responseText };
-        }
-
-        console.error('Upload failed parsed error:', error);
+        console.error('Upload failed:', response.status);
         return false;
       }
 
-      const responseText = await response.text();
-      console.log('Upload success response:', responseText);
-
       return true;
-    } catch (error) {
-      console.error('File upload failed:', error);
+    } catch {
+      console.error('File upload failed');
       return false;
     }
   }
@@ -2129,13 +2380,7 @@ export class PostComposer {
   }
 
   public deleteDraft(id: string): void {
-    this.loadSavedDrafts();
-    this.savedDrafts = this.savedDrafts.filter((d) => d.id !== id);
-    if (this.loadedDraftId === id) this.loadedDraftId = null;
-    try {
-      localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
-    } catch {}
-    this.renderDraftsDropdown();
+    void this.deleteExplicitDraft(id);
   }
 
   public saveDraftPublic(): void {
@@ -2143,13 +2388,7 @@ export class PostComposer {
   }
 
   public deleteAllDraftsPublic(): void {
-    this.loadSavedDrafts();
-    this.savedDrafts = [];
-    this.loadedDraftId = null;
-    try {
-      localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
-      this.props.onDraftSaved?.();
-    } catch {}
+    void this.deleteAllDrafts();
   }
 
   public getElement(): HTMLElement {
@@ -2201,7 +2440,10 @@ export class PostComposer {
   }
 
   public destroy(): void {
-    this.saveDraft();
+    if (this.draftTimeout) clearTimeout(this.draftTimeout);
+    void this.saveDraft();
+    this.unsubscribeVault?.();
+    this.unsubscribeVault = null;
     document.removeEventListener('click', this.boundCloseDrafts);
     this.element.remove();
   }

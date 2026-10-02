@@ -22,13 +22,14 @@ export interface VaultKeysResponse {
   wrapped_vk?: string;
   recovery_blob?: string;
   vk_version?: number;
-  devices?: Array<{ id: string; label: string; created_at: string }>;
+  devices?: Array<{ id: string; label: string; state: string; created_at: string }>;
 }
 
 export interface VaultRewrapFields {
   salt: string;
   kdf_params: VaultKdfParams;
   wrapped_vk: string;
+  vk_version: number;
 }
 
 export type VaultRewrap =
@@ -60,7 +61,16 @@ export async function prepareVaultRewrap(currentPassword: string, newPassword: s
   const keys = await fetchVaultKeys();
   if (keys === null) return { status: 'error' };
   if (!keys.enabled) return { status: 'none' };
-  if (!keys.salt || !keys.kdf_params || !keys.wrapped_vk) return { status: 'error' };
+  const version = keys.vk_version;
+  if (
+    !keys.salt ||
+    !keys.kdf_params ||
+    !keys.wrapped_vk ||
+    typeof version !== 'number' ||
+    !Number.isSafeInteger(version) ||
+    version < 1
+  )
+    return { status: 'error' };
 
   let vk: Uint8Array;
   try {
@@ -82,7 +92,7 @@ export async function prepareVaultRewrap(currentPassword: string, newPassword: s
   const wrapped_vk = await rewrapVaultKeyForPassword(vk, newPassword, salt, keys.kdf_params);
   return {
     status: 'ok',
-    fields: { salt: encodeB64(salt), kdf_params: keys.kdf_params, wrapped_vk },
+    fields: { salt: encodeB64(salt), kdf_params: keys.kdf_params, wrapped_vk, vk_version: version },
   };
 }
 
@@ -208,7 +218,7 @@ export async function revokeDeviceAndRotate(body: {
   kdf_params: VaultKdfParams;
   wrapped_vk: string;
   recovery_blob?: string;
-  item_keys: Array<{ item_id: string; item_key_wrapped: string }>;
+  item_keys: Array<{ item_id: string; item_key_wrapped: string; item_key_wrapped_before: string }>;
 }): Promise<boolean> {
   try {
     const res = await fetch('/api/vault/keys/revoke-device', {

@@ -26,6 +26,7 @@ import {
   enableVault,
   generateRecoveryPhrase,
   getVaultKey,
+  getVaultKeyVersion,
   isVaultUnlocked,
   lockVault,
   revokeDeviceWithRotation,
@@ -301,6 +302,7 @@ test('lock drops VK and subscribers see every transition', async () => {
   lockVault();
   assert.equal(notifications, 2, 'lock notifies once');
   assert.equal(isVaultUnlocked(), false);
+  assert.equal(getVaultKeyVersion(), null, 'a locked session must not retain an active key version');
 
   unsubscribe();
   assert.equal(await unlockVault(PASSWORD), 'ok');

@@ -88,8 +88,11 @@ Wrapped key material only — the server cannot decrypt anything here
 
 ### Password change with a vault
 `PATCH /api/users/me/password` must include `vault_kek: { salt, kdf_params,
-wrapped_vk }`, re-wrapped under the new password in the same request.
+wrapped_vk, vk_version }`, re-wrapped under the new password in the same request.
 Omitting it fails with **409 `vault_rewrap_required`**.
+The version must match the envelope read by the client. A stale version fails
+with **409 `vault_key_version_conflict`**, leaving both the verifier and vault
+unchanged. Missing or malformed versions fail with 400.
 
 ### Pair a device (QR)
 The joiner (new device) holds an ephemeral X25519 keypair; the approver is an

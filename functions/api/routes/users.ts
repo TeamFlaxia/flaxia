@@ -1199,37 +1199,66 @@ users.patch('/users/me/password', requireAuth, async (c) => {
     // A vault exists ⇒ VK is wrapped under a KEK derived from the OLD password.
     // The client holds that password right now, so it must re-wrap VK in the
     // same request; otherwise the vault is orphaned the moment this lands.
-    const vaultRow = (await c.env.DB.prepare('SELECT user_id FROM vault_keys WHERE user_id = ?')
+    const vaultRow = (await c.env.DB.prepare('SELECT vk_version FROM vault_keys WHERE user_id = ?')
       .bind(userId)
-      .first()) as { user_id: string } | null;
+      .first()) as { vk_version: number } | null;
     const vaultUpdate = await (async () => {
       if (!vaultRow) {
         if (vault_kek !== undefined) return { error: 'No vault is enabled' } as const;
         return null;
       }
-      const rewrap = vault_kek as { salt?: unknown; kdf_params?: unknown; wrapped_vk?: unknown } | undefined;
+      const rewrap = vault_kek as
+        | { salt?: unknown; kdf_params?: unknown; wrapped_vk?: unknown; vk_version?: unknown }
+        | undefined;
       if (!rewrap) return { error: 'vault_rewrap_required' } as const;
       if (!isValidB64(rewrap.salt, 16)) return { error: 'Invalid vault salt' } as const;
       if (!isValidVaultKdfParams(rewrap.kdf_params)) return { error: 'Unsupported vault KDF parameters' } as const;
       if (!isValidWrappedKey(rewrap.wrapped_vk)) return { error: 'Invalid wrapped vault key' } as const;
+      if (!Number.isSafeInteger(rewrap.vk_version) || (rewrap.vk_version as number) < 1) {
+        return { error: 'Invalid vault key version' } as const;
+      }
+      if (rewrap.vk_version !== vaultRow.vk_version) return { error: 'vault_key_version_conflict' } as const;
       return {
         sql: `UPDATE vault_keys SET salt = ?, kdf_params = ?, wrapped_vk = ?,
                      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-              WHERE user_id = ?`,
-        binds: [rewrap.salt as string, JSON.stringify(rewrap.kdf_params), rewrap.wrapped_vk as string, userId],
+              WHERE user_id = ? AND vk_version = ?`,
+        binds: [
+          rewrap.salt as string,
+          JSON.stringify(rewrap.kdf_params),
+          rewrap.wrapped_vk as string,
+          userId,
+          rewrap.vk_version as number,
+        ],
+        version: rewrap.vk_version as number,
       } as const;
     })();
     if (vaultUpdate && 'error' in vaultUpdate) {
-      const status = vaultUpdate.error === 'vault_rewrap_required' ? 409 : 400;
+      const status =
+        vaultUpdate.error === 'vault_rewrap_required' || vaultUpdate.error === 'vault_key_version_conflict' ? 409 : 400;
       return c.json({ error: vaultUpdate.error }, status);
     }
 
     // password_hash is blanked unconditionally: the account must stop carrying
     // a value a dump could dictionary-attack outside the SRP protocol.
+    const expectedVaultVersion = vaultUpdate?.version ?? null;
     const statements = [
       c.env.DB.prepare(
-        `UPDATE users SET password_hash = '', srp_salt = ?, srp_verifier = ?, srp_group = ?, srp_kdf = ? WHERE id = ?`,
-      ).bind(srp_salt, srp_verifier, srp_group, srp_kdf, userId),
+        `UPDATE users SET password_hash = '', srp_salt = ?, srp_verifier = ?, srp_group = ?, srp_kdf = ?
+         WHERE id = ? AND (
+           (? IS NULL AND NOT EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ?))
+           OR EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ? AND vk_version = ?)
+         )`,
+      ).bind(
+        srp_salt,
+        srp_verifier,
+        srp_group,
+        srp_kdf,
+        userId,
+        expectedVaultVersion,
+        userId,
+        userId,
+        expectedVaultVersion,
+      ),
     ];
     if (vaultUpdate) {
       statements.push(c.env.DB.prepare(vaultUpdate.sql).bind(...vaultUpdate.binds));
@@ -1240,6 +1269,7 @@ users.patch('/users/me/password', requireAuth, async (c) => {
     if (results.some((r) => !r.success)) {
       return c.json({ error: 'Failed to update password' }, 500);
     }
+    if (results[0].meta.changes === 0) return c.json({ error: 'vault_key_version_conflict' }, 409);
 
     return c.json({ ok: true });
   } catch (error: unknown) {

@@ -46,7 +46,7 @@ async function changePassword(
   cookie: string,
   proofPassword: string,
   newPassword: string,
-  vaultFields?: { salt: string; kdf_params: unknown; wrapped_vk: string },
+  vaultFields?: { salt: string; kdf_params: unknown; wrapped_vk: string; vk_version?: unknown },
 ): Promise<Response> {
   const proof = await createSrpProof(cookie, proofPassword);
   assert.ok(proof, 'should be able to prove the current password');
@@ -56,7 +56,7 @@ async function changePassword(
     body: JSON.stringify({
       ...(await srpVerifierPayload(newPassword)),
       current_srp: proof,
-      ...(vaultFields ? { vault_kek: vaultFields } : {}),
+      ...(vaultFields ? { vault_kek: { vk_version: 1, ...vaultFields } } : {}),
     }),
   });
 }
@@ -211,6 +211,33 @@ describe('PUT /api/vault/keys — envelope rotation', () => {
 describe('password change with a vault', () => {
   beforeEach(resetDb);
 
+  it('rejects a stale re-wrap after another device rotates the vault', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const enabled = await enableVault(cookie, PASSWORD);
+    assert.equal(enabled.res.status, 201);
+    const salt = generateVaultSalt();
+    const staleWrapped = await rewrapVaultKeyForPassword(enabled.vk, NEW_PASSWORD, salt, DEFAULT_VAULT_KDF_PARAMS);
+
+    const rotated = await createVaultEnvelope(PASSWORD, PHRASE);
+    const rotation = await fetch(`${BASE_URL}/api/vault/keys`, {
+      method: 'PUT',
+      headers: headers(cookie),
+      body: JSON.stringify({ ...rotated.envelope, current_srp: await createSrpProof(cookie, PASSWORD) }),
+    });
+    assert.equal(rotation.status, 200);
+    const response = await changePassword(cookie, PASSWORD, NEW_PASSWORD, {
+      salt: encodeB64(salt),
+      kdf_params: DEFAULT_VAULT_KDF_PARAMS,
+      wrapped_vk: staleWrapped,
+      vk_version: 1,
+    });
+    assert.equal(response.status, 409, 'a stale envelope must never replace the new VK');
+    const keys = (await (await getKeys(cookie)).json()) as Parameters<typeof unlockVaultWithPassword>[1];
+    assert.deepEqual(await unlockVaultWithPassword(PASSWORD, keys), rotated.vk);
+    assert.equal((await loginUser('user1@test.com', PASSWORD)).res.status, 200);
+    assert.equal((await loginUser('user1@test.com', NEW_PASSWORD)).res.status, 401);
+  });
+
   it('refuses to change the password without re-wrapping the vault → 409', async () => {
     // Otherwise the stored wrapped_vk would keep expecting the old password.
     const { cookie } = await seedUserAndLogin('1');
@@ -230,6 +257,22 @@ describe('password change with a vault', () => {
       wrapped_vk: string;
     };
     assert.ok(await unlockVaultWithPassword(PASSWORD, keys), 'old password must still open the vault');
+  });
+
+  it('requires a positive integer version when re-wrapping for a password change', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { envelope, res } = await enableVault(cookie, PASSWORD);
+    assert.equal(res.status, 201);
+    for (const version of [undefined, null, 0, 1.5, '1']) {
+      const response = await changePassword(cookie, PASSWORD, NEW_PASSWORD, {
+        salt: envelope.salt,
+        kdf_params: envelope.kdf_params,
+        wrapped_vk: envelope.wrapped_vk,
+        vk_version: version,
+      });
+      assert.equal(response.status, 400, `invalid version: ${String(version)}`);
+    }
+    assert.equal((await loginUser('user1@test.com', PASSWORD)).res.status, 200);
   });
 
   it('rejects a malformed re-wrap → 400', async () => {
