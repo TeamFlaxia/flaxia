@@ -2485,9 +2485,34 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
     overlay.setAttribute('aria-label', `Edit ${gameFile.name}`);
-    overlay.innerHTML = `<header class="studio-composer-header"><div><b>Edit game source</b><small>${escapeHtml(gameFile.name)} · files remain in the isolated game sandbox</small></div><div><select class="studio-zip-file-select" aria-label="Game source file"></select><div class="studio-zip-new-source"><button class="studio-zip-new-file" type="button">＋ New file</button><form class="studio-zip-new-source-form" hidden><input class="studio-zip-new-source-path" type="text" aria-label="New source path" placeholder="scripts/new-file.js" autocomplete="off" spellcheck="false" required><button type="submit">Create</button><button class="studio-zip-new-source-cancel" type="button">Cancel</button></form></div><button class="studio-zip-save" type="button" disabled>Save &amp; preview</button><button class="studio-composer-close" type="button" aria-label="Close">×</button></div></header><div class="studio-zip-editor-body"><div class="studio-zip-editor-status" aria-live="polite">Reading game files…</div><div class="studio-zip-editor-host"></div></div>`;
+    overlay.innerHTML = `
+      <header class="studio-composer-header">
+        <div><b>Edit game source</b><small>${escapeHtml(gameFile.name)} · files remain in the isolated game sandbox</small></div>
+        <div>
+          <div class="studio-zip-new-source">
+            <button class="studio-zip-new-file" type="button">＋ New file</button>
+            <form class="studio-zip-new-source-form" hidden>
+              <input class="studio-zip-new-source-path" type="text" aria-label="New source path" placeholder="scripts/new-file.js" autocomplete="off" spellcheck="false" required>
+              <button type="submit">Create</button>
+              <button class="studio-zip-new-source-cancel" type="button">Cancel</button>
+            </form>
+          </div>
+          <button class="studio-zip-save" type="button" disabled>Save &amp; preview</button>
+          <button class="studio-composer-close" type="button" aria-label="Close">×</button>
+        </div>
+      </header>
+      <div class="studio-zip-editor-body">
+        <div class="studio-zip-editor-status" aria-live="polite">Reading game files…</div>
+        <div class="studio-zip-workbench">
+          <nav class="studio-zip-source-explorer" aria-label="Game source files">
+            <div class="studio-zip-source-heading">EXPLORER</div>
+            <div class="studio-zip-source-list"></div>
+          </nav>
+          <div class="studio-zip-editor-host"></div>
+        </div>
+      </div>`;
     root.appendChild(overlay);
-    const fileSelect = overlay.querySelector('select')!;
+    const sourceList = overlay.querySelector<HTMLElement>('.studio-zip-source-list')!;
     const editorHost = overlay.querySelector<HTMLElement>('.studio-zip-editor-host')!;
     const status = overlay.querySelector<HTMLElement>('.studio-zip-editor-status')!;
     const saveButton = overlay.querySelector<HTMLButtonElement>('.studio-zip-save')!;
@@ -2497,7 +2522,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const closeButton = overlay.querySelector<HTMLButtonElement>('.studio-composer-close')!;
     const drafts = new Map<string, string>();
     const createdPaths = new Set<string>();
+    const collapsedDirectories = new Set<string>();
     let editorPaths = new Map<string, string>();
+    let activeSourcePath: string | null = null;
     let dirty = false;
     let closed = false;
     const close = (): void => {
@@ -2516,20 +2543,75 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       if (closed || destroyed || activeIndex !== index) return;
       if (sources.length === 0) {
         status.textContent = 'No editable HTML, CSS, JavaScript, JSON, or text source files were found.';
-        fileSelect.hidden = true;
+        overlay.querySelector<HTMLElement>('.studio-zip-workbench')!.hidden = true;
         return;
       }
       editorPaths = new Map(sources.map(({ path, source }) => [path, source]));
       for (const { path, source } of sources) {
         drafts.set(path, source);
-        const option = document.createElement('option');
-        option.value = path;
-        option.textContent = path;
-        fileSelect.appendChild(option);
       }
-      const mountEditor = (path: string): void => {
+
+      type SourceTreeNode = { directories: Map<string, SourceTreeNode>; files: string[] };
+      const renderSourceExplorer = (): void => {
+        const tree: SourceTreeNode = { directories: new Map(), files: [] };
+        for (const path of editorPaths.keys()) {
+          const segments = path.split('/');
+          let node = tree;
+          for (const segment of segments.slice(0, -1)) {
+            let child = node.directories.get(segment);
+            if (!child) {
+              child = { directories: new Map(), files: [] };
+              node.directories.set(segment, child);
+            }
+            node = child;
+          }
+          node.files.push(path);
+        }
+
+        const appendNode = (container: HTMLElement, node: SourceTreeNode, prefix: string, depth: number): void => {
+          for (const [name, child] of [...node.directories.entries()].sort(([left], [right]) =>
+            left.localeCompare(right),
+          )) {
+            const path = prefix ? `${prefix}/${name}` : name;
+            const expanded = !collapsedDirectories.has(path);
+            const folder = document.createElement('button');
+            folder.type = 'button';
+            folder.className = 'studio-zip-source-folder';
+            folder.dataset.path = path;
+            folder.style.paddingInlineStart = `${10 + depth * 13}px`;
+            folder.setAttribute('aria-expanded', String(expanded));
+            folder.textContent = `${expanded ? '▾' : '▸'} ${name}`;
+            folder.addEventListener('click', () => {
+              if (expanded) collapsedDirectories.add(path);
+              else collapsedDirectories.delete(path);
+              renderSourceExplorer();
+            });
+            container.appendChild(folder);
+            if (expanded) appendNode(container, child, path, depth + 1);
+          }
+          for (const path of node.files.sort((left, right) => left.localeCompare(right))) {
+            const file = document.createElement('button');
+            file.type = 'button';
+            file.className = 'studio-zip-source-file';
+            file.dataset.path = path;
+            file.style.paddingInlineStart = `${10 + depth * 13}px`;
+            file.textContent = `▤ ${path.split('/').at(-1) ?? path}`;
+            file.title = path;
+            file.setAttribute('aria-current', String(path === activeSourcePath));
+            file.addEventListener('click', () => mountEditor(path));
+            container.appendChild(file);
+          }
+        };
+
+        sourceList.replaceChildren();
+        appendNode(sourceList, tree, '', 0);
+      };
+
+      function mountEditor(path: string): void {
+        if (!editorPaths.has(path)) return;
         codeEditorCleanup?.();
         codeEditorCleanup = null;
+        activeSourcePath = path;
         editorText = drafts.get(path) ?? editorPaths.get(path) ?? '';
         editorHost.replaceChildren();
         const editor = createCodeEditor(
@@ -2545,8 +2627,9 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         );
         editorHost.appendChild(editor);
         status.textContent = path;
-      };
-      fileSelect.addEventListener('change', () => mountEditor(fileSelect.value));
+        renderSourceExplorer();
+      }
+
       addSourceButton.addEventListener('click', () => {
         addSourceForm.hidden = false;
         newSourcePathInput.focus();
@@ -2566,11 +2649,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           createdPaths.add(path);
           editorPaths.set(path, '');
           drafts.set(path, '');
-          const option = document.createElement('option');
-          option.value = path;
-          option.textContent = path;
-          fileSelect.appendChild(option);
-          fileSelect.value = path;
+          renderSourceExplorer();
           mountEditor(path);
           addSourceForm.hidden = true;
           newSourcePathInput.value = '';
@@ -2581,8 +2660,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           status.textContent = error instanceof Error ? error.message : 'Could not create this source file';
         }
       });
-      fileSelect.value = sources[0].path;
-      mountEditor(fileSelect.value);
+      mountEditor(sources[0].path);
       saveButton.addEventListener('click', async () => {
         if (!dirty || saveButton.disabled) return;
         saveButton.disabled = true;
@@ -5064,6 +5142,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 }
 
 const studioCss = `
+.studio-zip-workbench{display:grid;grid-template-columns:198px minmax(0,1fr);flex:1;min-height:0;border:1px solid #2b2d34;border-radius:5px;overflow:hidden}.studio-zip-source-explorer{display:flex;flex-direction:column;min-width:0;overflow:auto;border-right:1px solid #30333a;background:#17181d}.studio-zip-source-heading{flex:0 0 auto;padding:8px 10px;color:#8e949f;font-size:9px;font-weight:700;letter-spacing:.08em}.studio-zip-source-list{overflow:auto;padding-bottom:8px}.studio-zip-source-folder,.studio-zip-source-file{display:block;width:100%;padding:5px 8px;border:0;background:transparent;color:#bfc4ce;text-align:left;font:11px system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}.studio-zip-source-folder{color:#d4d8df}.studio-zip-source-folder:hover,.studio-zip-source-file:hover{background:#24262c}.studio-zip-source-file[aria-current=true]{background:#30382a;color:#d8f3c2}.studio-zip-editor-host{min-width:0;overflow:hidden;background:#111216}@media(max-width:700px){.studio-zip-workbench{grid-template-columns:minmax(112px,30vw) minmax(0,1fr)}}
 .studio-timeline-head{overflow-x:auto;scrollbar-width:thin}.studio-history-undo,.studio-history-redo{min-width:28px;padding:4px 6px!important;font-size:14px!important}
 .studio-center>.studio-timeline{min-width:0}.studio-timeline-head{min-width:0;max-width:100%}
 .studio-video-format-control{display:flex;align-items:center;gap:4px;white-space:nowrap;color:var(--studio-muted);font-size:9px}.studio-video-format{padding:4px 6px;border:1px solid var(--studio-border);border-radius:4px;background:#202228;color:var(--studio-text);font-size:10px}
