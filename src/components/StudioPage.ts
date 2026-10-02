@@ -2131,15 +2131,18 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     fileName: string,
     onChange: () => void,
     tracksProjectFile = true,
+    initialSearch?: string,
   ): HTMLElement => {
     const workbench = document.createElement('div');
     workbench.className = 'studio-code-workbench';
+    const initialSearchQuery = initialSearch?.trim() ?? '';
     const toolbar = document.createElement('div');
     toolbar.className = 'studio-code-toolbar';
     const search = document.createElement('input');
     search.type = 'search';
     search.placeholder = 'Find';
     search.setAttribute('aria-label', 'Find in file');
+    search.value = initialSearchQuery;
     const replacement = document.createElement('input');
     replacement.type = 'text';
     replacement.placeholder = 'Replace';
@@ -2186,6 +2189,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     area.wrap = 'off';
     area.setAttribute('aria-label', `Edit ${fileName}`);
     area.value = text;
+    if (initialSearchQuery) {
+      const match = area.value.toLowerCase().indexOf(initialSearchQuery.toLowerCase());
+      if (match >= 0) area.setSelectionRange(match, match + initialSearchQuery.length);
+    }
     let monacoEditor: Monaco.editor.IStandaloneCodeEditor | null = null;
     const currentValue = (): string => monacoEditor?.getValue() ?? area.value;
     const findNextMatch = (query: string): boolean => {
@@ -2443,6 +2450,22 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           throw error;
         }
         const activeEditor = monacoEditor;
+        if (initialSearchQuery) {
+          const model = activeEditor.getModel();
+          const match = activeEditor.getValue().toLowerCase().indexOf(initialSearchQuery.toLowerCase());
+          if (model && match >= 0) {
+            const start = model.getPositionAt(match);
+            const end = model.getPositionAt(match + initialSearchQuery.length);
+            activeEditor.setSelection({
+              startLineNumber: start.lineNumber,
+              startColumn: start.column,
+              endLineNumber: end.lineNumber,
+              endColumn: end.column,
+            });
+            activeEditor.revealLineInCenter(start.lineNumber);
+            activeEditor.focus();
+          }
+        }
         const modelChanges = activeEditor.onDidChangeModelContent(() => {
           editorText = activeEditor.getValue();
           if (tracksProjectFile) {
@@ -2505,7 +2528,17 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         <div class="studio-zip-editor-status" aria-live="polite">Reading game files…</div>
         <div class="studio-zip-workbench">
           <nav class="studio-zip-source-explorer" aria-label="Game source files">
-            <div class="studio-zip-source-heading">EXPLORER</div>
+            <div class="studio-zip-source-tools">
+              <div class="studio-zip-source-heading">EXPLORER</div>
+              <button class="studio-zip-search-toggle" type="button" aria-label="Find in project" aria-expanded="false" title="Find in project">⌕</button>
+            </div>
+            <div class="studio-zip-search-panel" hidden>
+              <div class="studio-zip-search-row">
+                <input class="studio-zip-search-input" type="search" aria-label="Search project files" placeholder="Find in files" autocomplete="off" spellcheck="false">
+                <button class="studio-zip-search-clear" type="button" aria-label="Clear file search">×</button>
+              </div>
+              <div class="studio-zip-search-status" aria-live="polite"></div>
+            </div>
             <div class="studio-zip-source-list"></div>
           </nav>
           <div class="studio-zip-editor-host"></div>
@@ -2513,6 +2546,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       </div>`;
     root.appendChild(overlay);
     const sourceList = overlay.querySelector<HTMLElement>('.studio-zip-source-list')!;
+    const searchToggle = overlay.querySelector<HTMLButtonElement>('.studio-zip-search-toggle')!;
+    const searchPanel = overlay.querySelector<HTMLElement>('.studio-zip-search-panel')!;
+    const searchInput = overlay.querySelector<HTMLInputElement>('.studio-zip-search-input')!;
+    const searchStatus = overlay.querySelector<HTMLElement>('.studio-zip-search-status')!;
     const editorHost = overlay.querySelector<HTMLElement>('.studio-zip-editor-host')!;
     const status = overlay.querySelector<HTMLElement>('.studio-zip-editor-status')!;
     const saveButton = overlay.querySelector<HTMLButtonElement>('.studio-zip-save')!;
@@ -2536,9 +2573,12 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     };
     closeButton.addEventListener('click', close);
     try {
-      const { listEditableGameSources, updateEditableGameSources, validateEditableGameSourcePath } = await import(
-        '../lib/editor/game-project.ts'
-      );
+      const {
+        listEditableGameSources,
+        searchEditableGameSources,
+        updateEditableGameSources,
+        validateEditableGameSourcePath,
+      } = await import('../lib/editor/game-project.ts');
       const sources = await listEditableGameSources(gameFile);
       if (closed || destroyed || activeIndex !== index) return;
       if (sources.length === 0) {
@@ -2553,6 +2593,38 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 
       type SourceTreeNode = { directories: Map<string, SourceTreeNode>; files: string[] };
       const renderSourceExplorer = (): void => {
+        const query = searchInput.value.trim();
+        sourceList.replaceChildren();
+        if (query) {
+          const matches = searchEditableGameSources(
+            [...editorPaths].map(([path, source]) => ({ path, source: drafts.get(path) ?? source })),
+            query,
+          );
+          searchStatus.textContent =
+            matches.length === 200
+              ? 'Showing up to 200 results'
+              : `${matches.length} result${matches.length === 1 ? '' : 's'}`;
+          for (const match of matches) {
+            const result = document.createElement('button');
+            result.type = 'button';
+            result.className = 'studio-zip-search-result';
+            result.dataset.path = match.path;
+            result.dataset.line = String(match.line);
+            result.setAttribute('aria-label', `${match.path}, line ${match.line}: ${match.preview}`);
+            const location = document.createElement('span');
+            location.className = 'studio-zip-search-location';
+            location.textContent = `${match.path}:${match.line}`;
+            const preview = document.createElement('span');
+            preview.className = 'studio-zip-search-preview';
+            preview.textContent = match.preview;
+            result.appendChild(location);
+            result.appendChild(preview);
+            result.addEventListener('click', () => mountEditor(match.path, query));
+            sourceList.appendChild(result);
+          }
+          return;
+        }
+        searchStatus.textContent = '';
         const tree: SourceTreeNode = { directories: new Map(), files: [] };
         for (const path of editorPaths.keys()) {
           const segments = path.split('/');
@@ -2603,11 +2675,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           }
         };
 
-        sourceList.replaceChildren();
         appendNode(sourceList, tree, '', 0);
       };
 
-      function mountEditor(path: string): void {
+      function mountEditor(path: string, initialSearch?: string): void {
         if (!editorPaths.has(path)) return;
         codeEditorCleanup?.();
         codeEditorCleanup = null;
@@ -2622,13 +2693,33 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
             dirty = true;
             saveButton.disabled = !dirty;
             status.textContent = `Unsaved · ${path}`;
+            if (searchInput.value.trim()) renderSourceExplorer();
           },
           false,
+          initialSearch,
         );
         editorHost.appendChild(editor);
         status.textContent = path;
         renderSourceExplorer();
       }
+
+      searchToggle.addEventListener('click', () => {
+        const opening = searchPanel.hidden;
+        searchPanel.hidden = !opening;
+        searchToggle.setAttribute('aria-expanded', String(opening));
+        if (opening) searchInput.focus();
+        else searchInput.value = '';
+        renderSourceExplorer();
+      });
+      searchInput.addEventListener('input', renderSourceExplorer);
+      overlay.querySelector<HTMLButtonElement>('.studio-zip-search-clear')!.addEventListener('click', () => {
+        searchInput.value = '';
+        renderSourceExplorer();
+        searchInput.focus();
+      });
+      searchInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') searchToggle.click();
+      });
 
       addSourceButton.addEventListener('click', () => {
         addSourceForm.hidden = false;
@@ -5142,6 +5233,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 }
 
 const studioCss = `
+.studio-zip-source-tools{display:flex;align-items:center;justify-content:space-between;padding-right:6px}.studio-zip-search-toggle,.studio-zip-search-clear{width:25px;height:24px;padding:0;border:1px solid #393d46;border-radius:4px;background:#202228;color:#c9cdd5;font-size:15px;cursor:pointer}.studio-zip-search-toggle[aria-expanded=true]{border-color:#82995f;color:#d8f3c2}.studio-zip-search-panel{padding:0 7px 7px;border-bottom:1px solid #30333a}.studio-zip-search-row{display:flex;gap:4px}.studio-zip-search-input{flex:1;min-width:0;padding:5px 6px;border:1px solid #393d46;border-radius:4px;background:#111216;color:#e9ebef;font:11px system-ui,sans-serif}.studio-zip-search-status{min-height:14px;padding-top:4px;color:#9298a3;font-size:9px}.studio-zip-source-list{flex:1;min-height:0}.studio-zip-search-result{display:flex;flex-direction:column;gap:3px;width:100%;padding:6px 9px;border:0;border-bottom:1px solid #24262c;background:transparent;color:#bfc4ce;text-align:left;cursor:pointer}.studio-zip-search-result:hover{background:#24262c}.studio-zip-search-location{overflow:hidden;color:#d8f3c2;font-size:10px;text-overflow:ellipsis;white-space:nowrap}.studio-zip-search-preview{overflow:hidden;color:#9298a3;font:10px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace;text-overflow:ellipsis;white-space:nowrap}
 .studio-zip-workbench{display:grid;grid-template-columns:198px minmax(0,1fr);flex:1;min-height:0;border:1px solid #2b2d34;border-radius:5px;overflow:hidden}.studio-zip-source-explorer{display:flex;flex-direction:column;min-width:0;overflow:auto;border-right:1px solid #30333a;background:#17181d}.studio-zip-source-heading{flex:0 0 auto;padding:8px 10px;color:#8e949f;font-size:9px;font-weight:700;letter-spacing:.08em}.studio-zip-source-list{overflow:auto;padding-bottom:8px}.studio-zip-source-folder,.studio-zip-source-file{display:block;width:100%;padding:5px 8px;border:0;background:transparent;color:#bfc4ce;text-align:left;font:11px system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}.studio-zip-source-folder{color:#d4d8df}.studio-zip-source-folder:hover,.studio-zip-source-file:hover{background:#24262c}.studio-zip-source-file[aria-current=true]{background:#30382a;color:#d8f3c2}.studio-zip-editor-host{min-width:0;overflow:hidden;background:#111216}@media(max-width:700px){.studio-zip-workbench{grid-template-columns:minmax(112px,30vw) minmax(0,1fr)}}
 .studio-timeline-head{overflow-x:auto;scrollbar-width:thin}.studio-history-undo,.studio-history-redo{min-width:28px;padding:4px 6px!important;font-size:14px!important}
 .studio-center>.studio-timeline{min-width:0}.studio-timeline-head{min-width:0;max-width:100%}

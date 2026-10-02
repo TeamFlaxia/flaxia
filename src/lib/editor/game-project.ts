@@ -10,6 +10,13 @@ export interface EditableGameSource {
   source: string;
 }
 
+export interface EditableGameSearchMatch {
+  path: string;
+  line: number;
+  column: number;
+  preview: string;
+}
+
 function isEditableSource(path: string): boolean {
   const extension = path.toLowerCase().split('.').pop() ?? '';
   return EDITABLE_SOURCE_EXTENSIONS.has(extension);
@@ -38,6 +45,28 @@ export function validateEditableGameSourcePath(requestedPath: string): string {
     throw new Error('Use a relative .html, .css, .js, .mjs, .json, .txt, .glsl, .wgsl, or .rsp source path');
   }
   return path;
+}
+
+/** Search project sources case-insensitively and return the first match on each line. */
+export function searchEditableGameSources(
+  sources: Iterable<EditableGameSource>,
+  query: string,
+  maxResults = 200,
+): EditableGameSearchMatch[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle || !Number.isInteger(maxResults) || maxResults < 1) return [];
+  const matches: EditableGameSearchMatch[] = [];
+  search: for (const source of sources) {
+    const lines = source.source.split(/\r\n|\n|\r/);
+    for (let index = 0; index < lines.length; index++) {
+      const line = lines[index];
+      const column = line.toLowerCase().indexOf(needle);
+      if (column < 0) continue;
+      matches.push({ path: source.path, line: index + 1, column: column + 1, preview: line.trim().slice(0, 180) });
+      if (matches.length >= maxResults) break search;
+    }
+  }
+  return matches;
 }
 
 /** List text sources in a validated ZIP game package for safe in-Studio editing. */

@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import JSZip from 'jszip';
 import {
   listEditableGameSources,
+  searchEditableGameSources,
   updateEditableGameSources,
   validateEditableGameSourcePath,
 } from '../src/lib/editor/game-project.ts';
@@ -79,6 +80,22 @@ describe('editable game packages', () => {
     ]) {
       assert.throws(() => validateEditableGameSourcePath(path), /relative/);
     }
+  });
+
+  it('searches all project sources by line and limits results', () => {
+    const matches = searchEditableGameSources(
+      [
+        { path: 'src/main.js', source: 'first line\nconst target = 1;\nTARGET();' },
+        { path: 'styles.css', source: '.target { color: red; }' },
+      ],
+      ' target ',
+      2,
+    );
+    assert.deepEqual(matches, [
+      { path: 'src/main.js', line: 2, column: 7, preview: 'const target = 1;' },
+      { path: 'src/main.js', line: 3, column: 1, preview: 'TARGET();' },
+    ]);
+    assert.deepEqual(searchEditableGameSources([{ path: 'a.js', source: 'hit' }], '   '), []);
   });
 
   it('rejects paths outside the supported source allowlist', async () => {
