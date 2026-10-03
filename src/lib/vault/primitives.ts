@@ -13,6 +13,9 @@
 //                                                                      │
 //                                                                      └─AES-GCM─► payload[i]
 
+import { validateMnemonic } from '@scure/bip39';
+import { wordlist } from '@scure/bip39/wordlists/english.js';
+
 const subtle = (globalThis.crypto as Crypto).subtle;
 
 export const VAULT_FORMAT_VERSION = 1;
@@ -199,10 +202,14 @@ export function recoveryPhraseWordCount(phrase: string): number {
   return normalizeRecoveryPhrase(phrase).split(' ').filter(Boolean).length;
 }
 
-/** 12/15/18/21/24 words — the counts BIP-39 allows. Checksum is not checked here. */
+/** 12/15/18/21/24 words with a valid BIP-39 checksum. */
 export function isValidRecoveryPhrase(phrase: string): boolean {
-  const count = recoveryPhraseWordCount(phrase);
-  return count === 12 || count === 15 || count === 18 || count === 21 || count === 24;
+  const normalized = normalizeRecoveryPhrase(phrase);
+  const count = normalized.split(' ').filter(Boolean).length;
+  if (!(count === 12 || count === 15 || count === 18 || count === 21 || count === 24)) return false;
+  // A one-word typo that keeps the word count must not silently replace the
+  // recovery blob with an unrecoverable envelope.
+  return validateMnemonic(normalized, wordlist);
 }
 
 // ─── Vault envelope ──────────────────────────────────────────────────────────

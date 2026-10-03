@@ -47,6 +47,11 @@ export interface CrowdConfig {
   /** Secret callbacks are signed with; empty when Crowd is unconfigured. */
   webhookSecret: string;
   configured: boolean;
+  /**
+   * True only for local/test deployments. An unconfigured *production*
+   * deployment must reject unsigned callbacks instead of accepting anything.
+   */
+  allowUnsignedCallbacks: boolean;
 }
 
 export const IMAGE_KEY_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
@@ -86,7 +91,10 @@ export function crowdConfig(env: CrowdEnv): CrowdConfig {
   // that can submit tasks, with no extra secret to provision; set
   // CROWD_WEBHOOK_SECRET to rotate it independently of the API key.
   const webhookSecret = configured ? env.CROWD_WEBHOOK_SECRET || apiKey : '';
-  return { orchestratorUrl, apiKey, baseUrl, webhookSecret, configured };
+  // Without a secret, unsigned callbacks are only tolerated when the instance
+  // is a local dev/test server. Production fails closed.
+  const allowUnsignedCallbacks = !configured && /^http:\/\/localhost(:\d+)?$/.test(baseUrl);
+  return { orchestratorUrl, apiKey, baseUrl, webhookSecret, configured, allowUnsignedCallbacks };
 }
 
 /** Build a client, or null when Crowd is unconfigured (calls become no-ops). */
@@ -144,11 +152,11 @@ export async function signedCallbackUrl(config: CrowdConfig, options: CallbackUr
 
 /**
  * True when the callback carries a signature matching `config.webhookSecret`.
- * An empty secret disables verification rather than breaking the callback flow
- * in environments where Crowd cannot submit anything in the first place.
+ * An unconfigured production instance fails closed (a local dev/test server
+ * keeps accepting unsigned callbacks because Crowd cannot submit there).
  */
 export async function verifyCallbackSignature(url: URL, config: CrowdConfig): Promise<boolean> {
-  if (!config.webhookSecret) return true;
+  if (!config.webhookSecret) return config.allowUnsignedCallbacks;
   const provided = url.searchParams.get('sig');
   if (!provided) return false;
   return signatureEquals(provided, await hmacHex(config.webhookSecret, signingMessage(url)));

@@ -344,4 +344,26 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
     assert.ok(attachments.includes('GAME_EXTS'), 'zip/swf/html must not become attachments');
     assert.match(attachments, /GAME_EXTS\.has\(ext\)\) return null/);
   });
+
+  it('fails crowd callbacks closed outside local dev', () => {
+    const crowd = readFileSync(join(ROOT, 'functions/lib/crowd.ts'), 'utf8');
+    assert.ok(crowd.includes('allowUnsignedCallbacks'), 'unsigned callbacks must be gated');
+    assert.ok(
+      !/if \(!config\.webhookSecret\) return true;/.test(crowd),
+      'an unconfigured production webhook must reject unsigned callbacks',
+    );
+  });
+
+  it('validates recovery phrases with the BIP-39 checksum', () => {
+    const primitives = readFileSync(join(ROOT, 'src/lib/vault/primitives.ts'), 'utf8');
+    assert.ok(primitives.includes('validateMnemonic'), 'recovery phrases must carry a valid checksum');
+  });
+
+  it('drops arcade events for unknown games and keeps media cache short', () => {
+    const games = readFileSync(join(ROOT, 'functions/api/routes/games.ts'), 'utf8');
+    assert.ok(games.includes('loadValidGamePostIds'), 'arcade events must target published games');
+    const media = readFileSync(join(ROOT, 'functions/api/routes/media.ts'), 'utf8');
+    assert.ok(!media.includes('31536000'), 'media must not be cached for a year before scan verdicts land');
+    assert.ok(media.includes('postKeyMediaAllowed'), 'key-addressed media must respect hidden posts');
+  });
 });

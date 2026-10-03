@@ -4,6 +4,7 @@ import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../s
 import { deleteAccount } from '../../lib/account-deletion';
 import { enrichPostsWithAttachments } from '../../lib/attachments';
 import { deleteSession, getMeWithSession, getSessionToken, verifySrpPassword } from '../../lib/auth';
+import { validateImageDimensions } from '../../lib/image-dimensions';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { isSupportedSrpKdf } from '../../lib/srp';
@@ -881,6 +882,10 @@ users.patch('/users/me', requireAuth, async (c) => {
         if (!isAllowedImageMime(detected)) {
           return c.json({ error: 'File content does not match allowed image types' }, 400);
         }
+        const dimError = validateImageDimensions(fileBuffer, detected);
+        if (dimError) {
+          return c.json({ error: dimError }, 413);
+        }
         const hashBuffer = await crypto.subtle.digest('SHA-256', fileBuffer);
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -937,6 +942,10 @@ users.patch('/users/me', requireAuth, async (c) => {
         const detected = detectMimeType(fileBuffer);
         if (!isAllowedImageMime(detected)) {
           return c.json({ error: 'File content does not match allowed image types' }, 400);
+        }
+        const dimError = validateImageDimensions(fileBuffer, detected);
+        if (dimError) {
+          return c.json({ error: dimError }, 413);
         }
         const hashBuffer = await crypto.subtle.digest('SHA-256', fileBuffer);
         const hashArray = Array.from(new Uint8Array(hashBuffer));
@@ -1170,6 +1179,10 @@ users.patch('/users/me/password', requireAuth, async (c) => {
     }
     if (srp_group !== '2048') return c.json({ error: 'Unsupported SRP group' }, 400);
     if (!isSupportedSrpKdf(srp_kdf)) return c.json({ error: 'Unsupported SRP KDF' }, 400);
+    // Same shape checks as registration: a degenerate verifier would make the
+    // account undecryptable / trivially attackable.
+    if (!isValidB64(srp_salt, 16)) return c.json({ error: 'Invalid SRP salt' }, 400);
+    if (!isValidB64(srp_verifier, 256)) return c.json({ error: 'Invalid SRP verifier' }, 400);
 
     const proof = current_srp as SrpProofBody | undefined;
     if (!proof?.challenge_id || !proof.A || !proof.M1) {
@@ -1304,6 +1317,10 @@ users.post('/users/me/avatar', requireAuth, async (c) => {
     const detected = detectMimeType(fileData);
     if (!isAllowedImageMime(detected)) {
       return c.json({ error: 'File content does not match allowed image types' }, 400);
+    }
+    const dimError = validateImageDimensions(fileData, detected);
+    if (dimError) {
+      return c.json({ error: dimError }, 413);
     }
 
     const hashBuffer = await crypto.subtle.digest('SHA-256', fileData);

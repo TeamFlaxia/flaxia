@@ -52,11 +52,31 @@ async function postMediaAllowed(c: MediaContext, postId: string): Promise<boolea
 }
 
 /**
- * Cache-Control for media responses.
- * CDN cacheable (`public` + `s-maxage`) since media keys are content-hash
- * based and do not require a signed token.
+ * Same moderation rule as postMediaAllowed for routes addressed by media key
+ * instead of post id (legacy gif/payload/swf/thumbnail keys). Attachment keys
+ * and avatar/header keys have no posts row and stay unaffected.
  */
-const MEDIA_CACHE_CONTROL = 'public, max-age=86400, s-maxage=86400';
+async function postKeyMediaAllowed(c: MediaContext, key: string): Promise<boolean> {
+  const row = (await c.env.DB.prepare(
+    `SELECT user_id, hidden, status FROM posts
+     WHERE gif_key = ? OR payload_key = ? OR swf_key = ? OR thumbnail_key = ?
+     LIMIT 1`,
+  )
+    .bind(key, key, key, key)
+    .first()) as { user_id: string; hidden: number; status: string } | null;
+  if (!row) return true;
+  if (!row.hidden && row.status === 'published') return true;
+  const viewer = c.get('user');
+  if (!viewer) return false;
+  return viewer.id === row.user_id || isAdmin(c.env, viewer.username);
+}
+
+/**
+ * Cache-Control for media responses. Kept short so an async scan verdict or a
+ * moderation hide lands quickly; the previous 24h/1y windows could serve a
+ * blocked file long after the KV/D1 verdict was written.
+ */
+const MEDIA_CACHE_CONTROL = 'public, max-age=300, s-maxage=300';
 
 /**
  * Does a detected MIME type belong in an attachment slot of this kind?
@@ -284,6 +304,10 @@ media.get('/images/*', async (c) => {
       return c.json({ error: 'Image not found' }, 404);
     }
 
+    if (c.env.DB && !(await postKeyMediaAllowed(c, key))) {
+      return c.json({ error: 'Image not found' }, 404);
+    }
+
     // Rate limit: 100 requests per minute per IP
     const clientIp = getClientIp(c.req.raw);
     if (!(await checkRateLimit(c.env.CACHE, `img:${clientIp}`, { maxRequests: 100, windowSeconds: 60 }))) {
@@ -355,6 +379,10 @@ media.get('/audio/*', async (c) => {
       return c.json({ error: 'Audio not found' }, 404);
     }
 
+    if (c.env.DB && !(await postKeyMediaAllowed(c, key))) {
+      return c.json({ error: 'Audio not found' }, 404);
+    }
+
     // Rate limit: 60 requests per minute per IP
     const clientIp = getClientIp(c.req.raw);
     if (!(await checkRateLimit(c.env.CACHE, `aud:${clientIp}`, { maxRequests: 60, windowSeconds: 60 }))) {
@@ -393,6 +421,10 @@ media.get('/video/*', async (c) => {
     }
 
     if (!(await canAccessMediaKey(c, key))) {
+      return c.json({ error: 'Video not found' }, 404);
+    }
+
+    if (c.env.DB && !(await postKeyMediaAllowed(c, key))) {
       return c.json({ error: 'Video not found' }, 404);
     }
 
@@ -447,6 +479,10 @@ media.get('/documents/*', async (c) => {
     }
 
     if (!(await canAccessMediaKey(c, key))) {
+      return c.json({ error: 'Document not found' }, 404);
+    }
+
+    if (c.env.DB && !(await postKeyMediaAllowed(c, key))) {
       return c.json({ error: 'Document not found' }, 404);
     }
 
@@ -531,7 +567,7 @@ media.get('/zip/:postId', async (c) => {
       headers: {
         'Content-Type': 'application/zip',
         'Content-Length': String(object.size),
-        'Cache-Control': 'public, max-age=31536000, s-maxage=31536000, immutable',
+        'Cache-Control': 'public, max-age=300, s-maxage=300',
         'Access-Control-Allow-Origin': zipAllowed ? zipOrigin : 'https://flaxia.app',
         'Access-Control-Allow-Credentials': 'true',
         ...MEDIA_SECURITY_HEADERS,
@@ -681,7 +717,7 @@ media.get('/swf/:postId', async (c) => {
       headers: {
         'Content-Type': 'application/x-shockwave-flash',
         'Content-Length': String(object.size),
-        'Cache-Control': 'public, max-age=31536000, s-maxage=31536000, immutable',
+        'Cache-Control': 'public, max-age=300, s-maxage=300',
         'Access-Control-Allow-Origin': swfAllowed ? swfOrigin : 'https://flaxia.app',
         'Access-Control-Allow-Credentials': 'true',
         ...MEDIA_SECURITY_HEADERS,

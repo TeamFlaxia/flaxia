@@ -6,6 +6,7 @@ import {
   project as banditProject,
   projConfigKey,
 } from '../../lib/linucb';
+import { checkRateLimit } from '../../lib/rate-limit';
 import {
   ARCADE_EVENT_TYPES,
   batchGetFreshAndBookmarkStatus,
@@ -580,6 +581,20 @@ games.get('/games', async (c) => {
     return c.json({ error: 'Failed to fetch games', details: (error as { message?: string })?.message }, 500);
   }
 });
+/** Published, visible game posts (payload or swf present) among the given ids. */
+async function loadValidGamePostIds(db: D1Database, postIds: unknown[]): Promise<Set<string>> {
+  const unique = [...new Set(postIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+  if (unique.length === 0) return new Set();
+  const placeholders = unique.map(() => '?').join(',');
+  const rows = await db
+    .prepare(
+      `SELECT id FROM posts WHERE id IN (${placeholders}) AND status = 'published' AND hidden = 0 AND (payload_key IS NOT NULL OR swf_key IS NOT NULL)`,
+    )
+    .bind(...unique)
+    .all<{ id: string }>();
+  return new Set((rows.results ?? []).map((row) => row.id));
+}
+
 // POST /api/games/events - record raw Arcade interaction events (views incl. skips,
 // fresh, reply, fullscreen, share). Superset of /api/games/dwell: positive-dwell
 // views are also mirrored into user_game_plays so the existing dwell-based
@@ -590,6 +605,12 @@ games.post('/games/events', async (c) => {
     const currentUserId = c.get('user')?.id;
     if (!currentUserId) {
       return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    if (
+      !(await checkRateLimit(c.env.CACHE, `arcade-events:${currentUserId}`, { maxRequests: 120, windowSeconds: 60 }))
+    ) {
+      return c.json({ error: 'Too many requests' }, 429);
     }
 
     const { sessionId, events } = await c.req.json<{
@@ -628,8 +649,16 @@ games.post('/games/events', async (c) => {
     const statements: D1PreparedStatement[] = [];
     const eventList = events.slice(0, MAX_ARCADE_EVENTS_PER_REQUEST);
 
+    // Only real, published games may accumulate events; unknown or hidden ids
+    // are dropped instead of poisoning arcade/dwell rankings.
+    const validGamePostIds = await loadValidGamePostIds(
+      c.env.DB,
+      eventList.map((event) => event?.postId),
+    );
+
     for (const event of eventList) {
       if (typeof event?.postId !== 'string' || event.postId.length === 0) continue;
+      if (!validGamePostIds.has(event.postId)) continue;
       if (typeof event?.eventType !== 'string' || !ARCADE_EVENT_TYPES.has(event.eventType)) continue;
 
       const dwellMs = Math.max(0, Math.min(Math.round(Number(event.dwellMs) || 0), 86400000));
@@ -684,6 +713,10 @@ games.post('/games/dwell', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
+    if (!(await checkRateLimit(c.env.CACHE, `arcade-dwell:${currentUserId}`, { maxRequests: 60, windowSeconds: 60 }))) {
+      return c.json({ error: 'Too many requests' }, 429);
+    }
+
     const { plays } = await c.req.json<{
       plays: Array<{ postId: string; dwellMs: number; isFullscreen: number; gameType: string }>;
     }>();
@@ -696,10 +729,20 @@ games.post('/games/dwell', async (c) => {
        VALUES (?, ?, ?, ?, ?, ?, 'arcade')`,
     );
 
+    const playList = plays.slice(0, MAX_ARCADE_EVENTS_PER_REQUEST);
+    const validGamePostIds = await loadValidGamePostIds(
+      c.env.DB,
+      playList.map((play) => play?.postId),
+    );
+
     const statements: D1PreparedStatement[] = [];
-    for (const play of plays.slice(0, MAX_ARCADE_EVENTS_PER_REQUEST)) {
+    for (const play of playList) {
+      if (!validGamePostIds.has(play.postId)) continue;
       const id = crypto.randomUUID();
-      statements.push(stmt.bind(id, currentUserId, play.postId, play.dwellMs, play.isFullscreen, play.gameType));
+      const dwellMs = Math.max(0, Math.min(Math.round(Number(play.dwellMs) || 0), 86400000));
+      const isFullscreen = play.isFullscreen ? 1 : 0;
+      const gameType = typeof play.gameType === 'string' ? play.gameType.slice(0, 32) : '';
+      statements.push(stmt.bind(id, currentUserId, play.postId, dwellMs, isFullscreen, gameType));
     }
     await runBatched(c.env.DB, statements);
 
