@@ -4,6 +4,7 @@ import { dirname, join, relative } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import testsRouter from '../functions/api/routes/tests.ts';
+import { renderJsonLd } from '../src/lib/render-html.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -271,5 +272,98 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
       src.includes('following || Boolean(username)'),
       "following/profile timelines must not share another user's cache",
     );
+  });
+
+  it('escapes JSON-LD embedded in SSR pages', () => {
+    const html = renderJsonLd({ name: '</script><script>alert(1)</script>', sep: '\u2028' });
+    assert.ok(!html.includes('</script><script>'), 'JSON-LD values must not close the script element');
+    assert.ok(html.includes('\\u003c'), '`<` must be escaped');
+    assert.ok(html.includes('\\u2028'), 'U+2028 must be escaped');
+  });
+
+  it('keeps the SSRF guard on user-controlled outbound fetches', () => {
+    const linkPreview = readFileSync(join(ROOT, 'functions/api/routes/link-preview.ts'), 'utf8');
+    assert.ok(linkPreview.includes('fetchWithSsrfGuard'));
+    assert.ok(!linkPreview.includes("redirect: 'follow'"), 'redirects must be validated hop by hop');
+
+    const users = readFileSync(join(ROOT, 'functions/api/routes/users.ts'), 'utf8');
+    assert.ok(users.includes('fetchRemoteJson'), 'webfinger/actor fetches must use the guard');
+
+    const queue = readFileSync(join(ROOT, 'functions/queue-worker.ts'), 'utf8');
+    assert.ok(queue.includes('parsePublicHttpUrl'), 'delivery inboxes must be re-validated');
+
+    const activitypub = readFileSync(join(ROOT, 'functions/api/routes/activitypub.ts'), 'utf8');
+    assert.ok(activitypub.includes('localActorUsername'), 'shared inbox targets need canonical origin checks');
+  });
+
+  it('never lets a single report hide a post', () => {
+    const helpers = readFileSync(join(ROOT, 'functions/api/helpers.ts'), 'utf8');
+    const block = helpers.match(/const thresholds: Record<ReportCategory, number> = \{([\s\S]*?)\};/)?.[1] ?? '';
+    assert.ok(block, 'report thresholds must be discoverable');
+    for (const line of block.split('\n')) {
+      const value = line.match(/:\s*(\d+),/)?.[1];
+      if (value) assert.ok(Number(value) >= 2, `single-report hide is not allowed: ${line.trim()}`);
+    }
+    const report = readFileSync(join(ROOT, 'functions/api/routes/report.ts'), 'utf8');
+    assert.ok(!/Immediate hide - no threshold check/.test(report), 'csam/malware must not hide on one report');
+    assert.ok(report.includes('checkRateLimit'), 'reports must be rate limited');
+  });
+
+  it('serves only real audio/video from the media proxies', () => {
+    const media = readFileSync(join(ROOT, 'functions/api/routes/media.ts'), 'utf8');
+    assert.ok(media.includes('safeMediaContentType'), 'media proxies must class-check the stored type');
+    assert.ok(media.includes("safeMediaContentType(key, object.httpMetadata?.contentType, 'audio')"));
+    assert.ok(media.includes("safeMediaContentType(key, object.httpMetadata?.contentType, 'video')"));
+  });
+
+  it('checks session expiry in the market checkout', () => {
+    const checkout = readFileSync(join(ROOT, 'functions/api/market/checkout.ts'), 'utf8');
+    assert.ok(checkout.includes('expires_at > strftime'), 'checkout must not accept expired sessions');
+    assert.ok(checkout.includes('isAllowedOrigin'), 'checkout must enforce an origin allowlist');
+  });
+
+  it('validates client-supplied media keys against the caller', () => {
+    const posts = readFileSync(join(ROOT, 'functions/api/routes/posts.ts'), 'utf8');
+    assert.ok(posts.includes('isOwnedMediaKey'), 'media keys must be ownership-checked');
+    assert.ok(
+      !/BUCKET\.delete\(k\)/.test(posts) || posts.includes('isOwnedMediaKey'),
+      'R2 cleanup must only run for owned keys',
+    );
+  });
+
+  it('caps ZIP inflation and enforces hidden-post media', () => {
+    const wvfs = readFileSync(join(ROOT, 'src/lib/wvfs-zip-server.ts'), 'utf8');
+    assert.ok(wvfs.includes('inflateSync(compressedData, { out:'), 'inflate output must be bounded');
+
+    const media = readFileSync(join(ROOT, 'functions/api/routes/media.ts'), 'utf8');
+    assert.ok(media.includes('postMediaAllowed'), 'zip/swf routes must respect hidden posts');
+  });
+
+  it('treats game containers as non-attachments', () => {
+    const attachments = readFileSync(join(ROOT, 'functions/lib/attachments.ts'), 'utf8');
+    assert.ok(attachments.includes('GAME_EXTS'), 'zip/swf/html must not become attachments');
+    assert.match(attachments, /GAME_EXTS\.has\(ext\)\) return null/);
+  });
+
+  it('fails crowd callbacks closed outside local dev', () => {
+    const crowd = readFileSync(join(ROOT, 'functions/lib/crowd.ts'), 'utf8');
+    assert.ok(crowd.includes('allowUnsignedCallbacks'), 'unsigned callbacks must be gated');
+    assert.ok(
+      !/if \(!config\.webhookSecret\) return true;/.test(crowd),
+      'an unconfigured production webhook must reject unsigned callbacks',
+    );
+  });
+
+  it('validates recovery phrases with the BIP-39 checksum', () => {
+    const primitives = readFileSync(join(ROOT, 'src/lib/vault/primitives.ts'), 'utf8');
+    assert.ok(primitives.includes('validateMnemonic'), 'recovery phrases must carry a valid checksum');
+  });
+
+  it('drops arcade events for unknown games and keeps media cache short', () => {
+    const games = readFileSync(join(ROOT, 'functions/api/routes/games.ts'), 'utf8');
+    assert.ok(games.includes('loadValidGamePostIds'), 'arcade events must target published games');
+    const media = readFileSync(join(ROOT, 'functions/api/routes/media.ts'), 'utf8');
+    assert.ok(!media.includes('31536000'), 'media must not be cached for a year before scan verdicts land');
+    assert.ok(media.includes('postKeyMediaAllowed'), 'key-addressed media must respect hidden posts');
   });
 });

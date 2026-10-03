@@ -59,7 +59,18 @@ export function assetUrl(baseUrl: string, key: string): string {
 }
 
 export function renderJsonLd(data: Record<string, unknown>): string {
-  return `<script type="application/ld+json">${JSON.stringify(data)}</script>`;
+  // JSON.stringify does not escape `<`, so a value containing `</script>`
+  // closes the script element and turns the rest of the JSON into markup
+  // (stored XSS in every SSR page that embeds user data). Escaping the HTML
+  // metacharacters — and U+2028/U+2029, which are valid JSON but invalid in
+  // JavaScript string literals — keeps the payload inert inside the element.
+  const json = JSON.stringify(data)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+  return `<script type="application/ld+json">${json}</script>`;
 }
 
 export function renderBlogPostingJsonLd(

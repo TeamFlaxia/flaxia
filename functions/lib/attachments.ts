@@ -23,6 +23,9 @@ const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp'] as const;
 const AUDIO_EXTS = ['mp3', 'wav', 'ogg', 'm4a', 'opus'] as const;
 const VIDEO_EXTS = ['mp4', 'webm', 'mov'] as const;
 
+/** Game containers keep the legacy composer flow; they are never attachments. */
+const GAME_EXTS = new Set(['zip', 'swf', 'html', 'htm']);
+
 const KIND_PREFIX: Record<AttachmentKind, string> = {
   image: 'gif',
   audio: 'audio',
@@ -75,6 +78,8 @@ export function kindFromUpload(filename: string, contentType?: string): Attachme
   const ext = filename.toLowerCase().match(/\.(\w+)$/)?.[1];
   if (!ext) return 'document';
 
+  if (GAME_EXTS.has(ext)) return null;
+
   if ((IMAGE_EXTS as readonly string[]).includes(ext)) return 'image';
 
   if (ext === 'webm') {
@@ -112,7 +117,11 @@ export function parseAttachmentKey(
   if (!Number.isInteger(position) || position < 1 || position > MAX_ATTACHMENTS_PLUS) return null;
   const kind = PREFIX_KIND.get(prefix);
   if (!kind) return null;
-  return { postId: m[2], position, kind, ext: m[4] };
+  const ext = m[4];
+  // Game containers must never be addressable as attachments, even when the
+  // key is crafted by hand instead of produced by buildAttachmentKey.
+  if (GAME_EXTS.has(ext.slice(1).toLowerCase())) return null;
+  return { postId: m[2], position, kind, ext };
 }
 
 export interface AttachmentInput {

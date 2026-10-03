@@ -236,8 +236,15 @@ async function extractFileFromR2(bucket: R2Bucket, zipKey: string, entry: ZipInd
     }
 
     if (entry.compressionMethod === 8) {
+      // A decompression bomb must not exhaust the isolate: reject a declared
+      // size above the archive budget and pass an output buffer as well, so
+      // fflate cannot allocate past the cap even if the declared size lies.
+      if (entry.uncompressedSize > ZIP_MAX_TOTAL_SIZE) {
+        console.warn(`ZIP entry exceeds size limit: ${entry.fileName} (${entry.uncompressedSize} bytes)`);
+        return null;
+      }
       const fflate = await import('fflate');
-      return fflate.inflateSync(compressedData);
+      return fflate.inflateSync(compressedData, { out: new Uint8Array(Math.max(entry.uncompressedSize, 1)) });
     }
 
     console.warn(`Unsupported compression method: ${entry.compressionMethod} for ${entry.fileName}`);

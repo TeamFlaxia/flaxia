@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { Hono } from 'hono';
+import { isAdmin } from '../../../src/lib/admin';
 import type { AttachmentKind } from '../../lib/attachments';
 import { parseAttachmentKey } from '../../lib/attachments';
 import { validateImageDimensions } from '../../lib/image-dimensions';
@@ -35,11 +36,47 @@ async function canAccessMediaKey(c: MediaContext, key: string): Promise<boolean>
 }
 
 /**
- * Cache-Control for media responses.
- * CDN cacheable (`public` + `s-maxage`) since media keys are content-hash
- * based and do not require a signed token.
+ * Moderation is not optional for media: a hidden or unpublished post must not
+ * keep serving its payload to everyone. The owner and admins keep access so
+ * review, edits and restoration still work.
  */
-const MEDIA_CACHE_CONTROL = 'public, max-age=86400, s-maxage=86400';
+async function postMediaAllowed(c: MediaContext, postId: string): Promise<boolean> {
+  const row = (await c.env.DB.prepare('SELECT user_id, hidden, status FROM posts WHERE id = ?')
+    .bind(postId)
+    .first()) as { user_id: string; hidden: number; status: string } | null;
+  if (!row) return true; // key without a post row: keep the previous behavior
+  if (!row.hidden && row.status === 'published') return true;
+  const viewer = c.get('user');
+  if (!viewer) return false;
+  return viewer.id === row.user_id || isAdmin(c.env, viewer.username);
+}
+
+/**
+ * Same moderation rule as postMediaAllowed for routes addressed by media key
+ * instead of post id (legacy gif/payload/swf/thumbnail keys). Attachment keys
+ * and avatar/header keys have no posts row and stay unaffected.
+ */
+async function postKeyMediaAllowed(c: MediaContext, key: string): Promise<boolean> {
+  const row = (await c.env.DB.prepare(
+    `SELECT user_id, hidden, status FROM posts
+     WHERE gif_key = ? OR payload_key = ? OR swf_key = ? OR thumbnail_key = ?
+     LIMIT 1`,
+  )
+    .bind(key, key, key, key)
+    .first()) as { user_id: string; hidden: number; status: string } | null;
+  if (!row) return true;
+  if (!row.hidden && row.status === 'published') return true;
+  const viewer = c.get('user');
+  if (!viewer) return false;
+  return viewer.id === row.user_id || isAdmin(c.env, viewer.username);
+}
+
+/**
+ * Cache-Control for media responses. Kept short so an async scan verdict or a
+ * moderation hide lands quickly; the previous 24h/1y windows could serve a
+ * blocked file long after the KV/D1 verdict was written.
+ */
+const MEDIA_CACHE_CONTROL = 'public, max-age=300, s-maxage=300';
 
 /**
  * Does a detected MIME type belong in an attachment slot of this kind?
@@ -61,6 +98,26 @@ function mimeMatchesAttachmentKind(kind: AttachmentKind, mime: string): boolean 
     case 'document':
       return true;
   }
+}
+
+/**
+ * Pick a Content-Type that is actually in the requested media class.
+ *
+ * The stored R2 metadata is attacker-influenced (the uploader chooses the
+ * declared type and, for document slots, any sniffed type passes), so the
+ * audio/video proxies must never echo an executable type such as text/html
+ * back to the browser. Unknown stored types fall back to the key extension;
+ * when neither says "audio" (or "video") the route refuses to serve.
+ */
+function safeMediaContentType(key: string, stored: string | undefined, family: 'audio' | 'video'): string | null {
+  const prefix = `${family}/`;
+  if (stored && stored.startsWith(prefix)) return stored;
+  const extension = key.split('.').pop()?.toLowerCase() ?? '';
+  const byExtension: Record<'audio' | 'video', Record<string, string>> = {
+    audio: { mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4', webm: 'audio/webm' },
+    video: { mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime' },
+  };
+  return byExtension[family][extension] ?? null;
 }
 
 // PUT /api/upload/:key — direct file upload endpoint (requires auth + ownership of pending post)
@@ -247,6 +304,10 @@ media.get('/images/*', async (c) => {
       return c.json({ error: 'Image not found' }, 404);
     }
 
+    if (c.env.DB && !(await postKeyMediaAllowed(c, key))) {
+      return c.json({ error: 'Image not found' }, 404);
+    }
+
     // Rate limit: 100 requests per minute per IP
     const clientIp = getClientIp(c.req.raw);
     if (!(await checkRateLimit(c.env.CACHE, `img:${clientIp}`, { maxRequests: 100, windowSeconds: 60 }))) {
@@ -318,6 +379,10 @@ media.get('/audio/*', async (c) => {
       return c.json({ error: 'Audio not found' }, 404);
     }
 
+    if (c.env.DB && !(await postKeyMediaAllowed(c, key))) {
+      return c.json({ error: 'Audio not found' }, 404);
+    }
+
     // Rate limit: 60 requests per minute per IP
     const clientIp = getClientIp(c.req.raw);
     if (!(await checkRateLimit(c.env.CACHE, `aud:${clientIp}`, { maxRequests: 60, windowSeconds: 60 }))) {
@@ -334,28 +399,9 @@ media.get('/audio/*', async (c) => {
       return c.json({ error: 'Audio not found' }, 404);
     }
 
-    let contentType = object.httpMetadata?.contentType;
+    const contentType = safeMediaContentType(key, object.httpMetadata?.contentType, 'audio');
     if (!contentType) {
-      const extension = key.split('.').pop()?.toLowerCase();
-      switch (extension) {
-        case 'mp3':
-          contentType = 'audio/mpeg';
-          break;
-        case 'wav':
-          contentType = 'audio/wav';
-          break;
-        case 'ogg':
-          contentType = 'audio/ogg';
-          break;
-        case 'm4a':
-          contentType = 'audio/mp4';
-          break;
-        case 'webm':
-          contentType = 'audio/webm';
-          break;
-        default:
-          contentType = 'audio/mpeg';
-      }
+      return c.json({ error: 'Audio not found' }, 404);
     }
 
     return handleRangeRequest(c, key, object, contentType);
@@ -378,6 +424,10 @@ media.get('/video/*', async (c) => {
       return c.json({ error: 'Video not found' }, 404);
     }
 
+    if (c.env.DB && !(await postKeyMediaAllowed(c, key))) {
+      return c.json({ error: 'Video not found' }, 404);
+    }
+
     // Rate limit: 30 requests per minute per IP
     const clientIp = getClientIp(c.req.raw);
     if (!(await checkRateLimit(c.env.CACHE, `vid:${clientIp}`, { maxRequests: 30, windowSeconds: 60 }))) {
@@ -394,22 +444,9 @@ media.get('/video/*', async (c) => {
       return c.json({ error: 'Video not found' }, 404);
     }
 
-    let contentType = object.httpMetadata?.contentType;
+    const contentType = safeMediaContentType(key, object.httpMetadata?.contentType, 'video');
     if (!contentType) {
-      const extension = key.split('.').pop()?.toLowerCase();
-      switch (extension) {
-        case 'mp4':
-          contentType = 'video/mp4';
-          break;
-        case 'webm':
-          contentType = 'video/webm';
-          break;
-        case 'mov':
-          contentType = 'video/quicktime';
-          break;
-        default:
-          contentType = 'video/mp4';
-      }
+      return c.json({ error: 'Video not found' }, 404);
     }
 
     return handleRangeRequest(c, key, object, contentType);
@@ -445,6 +482,10 @@ media.get('/documents/*', async (c) => {
       return c.json({ error: 'Document not found' }, 404);
     }
 
+    if (c.env.DB && !(await postKeyMediaAllowed(c, key))) {
+      return c.json({ error: 'Document not found' }, 404);
+    }
+
     // Rate limit: 60 requests per minute per IP
     const clientIp = getClientIp(c.req.raw);
     if (!(await checkRateLimit(c.env.CACHE, `doc:${clientIp}`, { maxRequests: 60, windowSeconds: 60 }))) {
@@ -470,10 +511,12 @@ media.get('/documents/*', async (c) => {
     return new Response(object.body, {
       headers: {
         'Content-Type': 'application/octet-stream',
-        'Content-Disposition': `attachment; filename="${key.split('/').pop() || 'download.bin'}"`,
         'Cache-Control': MEDIA_CACHE_CONTROL,
         'X-Content-Type-Options': 'nosniff',
         ...MEDIA_SECURITY_HEADERS,
+        // Must win over MEDIA_SECURITY_HEADERS' inline default: arbitrary
+        // document bytes are always a download.
+        'Content-Disposition': `attachment; filename="${key.split('/').pop() || 'download.bin'}"`,
       },
     });
   } catch (error: unknown) {
@@ -507,6 +550,10 @@ media.get('/zip/:postId', async (c) => {
       return c.json({ error: 'ZIP not found' }, 404);
     }
 
+    if (c.env.DB && !(await postMediaAllowed(c, postId))) {
+      return c.json({ error: 'ZIP not found' }, 404);
+    }
+
     const object = await c.env.BUCKET.get(publicKey);
 
     if (!object) {
@@ -520,7 +567,7 @@ media.get('/zip/:postId', async (c) => {
       headers: {
         'Content-Type': 'application/zip',
         'Content-Length': String(object.size),
-        'Cache-Control': 'public, max-age=31536000, s-maxage=31536000, immutable',
+        'Cache-Control': 'public, max-age=300, s-maxage=300',
         'Access-Control-Allow-Origin': zipAllowed ? zipOrigin : 'https://flaxia.app',
         'Access-Control-Allow-Credentials': 'true',
         ...MEDIA_SECURITY_HEADERS,
@@ -555,17 +602,32 @@ media.get('/thumbnail/:id', async (c) => {
     }
 
     // First try to get from posts table
-    let post = await c.env.DB.prepare('SELECT thumbnail_key FROM posts WHERE id = ?').bind(postId).first();
+    let post = (await c.env.DB.prepare('SELECT thumbnail_key, user_id, hidden, status FROM posts WHERE id = ?')
+      .bind(postId)
+      .first()) as Record<string, unknown> | null;
+    const isPostRow = Boolean(post && post.thumbnail_key);
 
     // If not found in posts, try ads table
     if (!post || !post.thumbnail_key) {
-      const ad = await c.env.DB.prepare('SELECT thumbnail_key FROM ads WHERE id = ?').bind(postId).first();
+      const ad = (await c.env.DB.prepare('SELECT thumbnail_key FROM ads WHERE id = ?').bind(postId).first()) as Record<
+        string,
+        unknown
+      > | null;
 
       if (!ad || !ad.thumbnail_key) {
         return c.json({ error: 'Thumbnail not found' }, 404);
       }
 
       post = ad;
+    }
+
+    // Hidden or unpublished posts keep their thumbnail for owner/admins only.
+    if (isPostRow && post && (post.hidden || post.status !== 'published')) {
+      const viewer = c.get('user');
+      const allowed = viewer !== null && (viewer.id === String(post.user_id) || isAdmin(c.env, viewer.username));
+      if (!allowed) {
+        return c.json({ error: 'Thumbnail not found' }, 404);
+      }
     }
 
     // Get thumbnail object from R2
@@ -638,6 +700,10 @@ media.get('/swf/:postId', async (c) => {
       return c.json({ error: 'SWF not found' }, 404);
     }
 
+    if (c.env.DB && !(await postMediaAllowed(c, postId))) {
+      return c.json({ error: 'SWF not found' }, 404);
+    }
+
     const object = await c.env.BUCKET.get(publicKey);
 
     if (!object) {
@@ -651,7 +717,7 @@ media.get('/swf/:postId', async (c) => {
       headers: {
         'Content-Type': 'application/x-shockwave-flash',
         'Content-Length': String(object.size),
-        'Cache-Control': 'public, max-age=31536000, s-maxage=31536000, immutable',
+        'Cache-Control': 'public, max-age=300, s-maxage=300',
         'Access-Control-Allow-Origin': swfAllowed ? swfOrigin : 'https://flaxia.app',
         'Access-Control-Allow-Credentials': 'true',
         ...MEDIA_SECURITY_HEADERS,

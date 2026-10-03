@@ -4,13 +4,29 @@ import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../s
 import { deleteAccount } from '../../lib/account-deletion';
 import { enrichPostsWithAttachments } from '../../lib/attachments';
 import { deleteSession, getMeWithSession, getSessionToken, verifySrpPassword } from '../../lib/auth';
+import { validateImageDimensions } from '../../lib/image-dimensions';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { isSupportedSrpKdf } from '../../lib/srp';
+import { parsePublicHttpUrl, SsrfError } from '../../lib/url-guard';
 import { detectMimeType, isAllowedImageMime, requireAuth } from '../helpers';
 import type { Bindings, PostRow, SrpProofBody, Variables } from '../types';
 
 const users = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+/**
+ * Fetch a JSON document from a URL that ultimately came from user input or a
+ * remote server. validate + timeout + no redirect surprises beyond the policy
+ * in url-guard; callers map SsrfError to a 400.
+ */
+async function fetchRemoteJson(url: string, accept: string): Promise<{ url: string; response: Response }> {
+  const parsed = parsePublicHttpUrl(url);
+  const response = await fetch(parsed.toString(), {
+    headers: { Accept: accept },
+    signal: AbortSignal.timeout(10_000),
+  });
+  return { url: parsed.toString(), response };
+}
 
 const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
   COALESCE(p.reply_count, 0) as reply_count, 
@@ -193,9 +209,13 @@ users.post('/remote-follow', requireAuth, async (c) => {
     const localUser = user;
 
     const webfingerUrl = `https://${domain}/.well-known/webfinger?resource=acct:${remoteUsername}@${domain}`;
-    const wfResponse = await fetch(webfingerUrl, {
-      headers: { Accept: 'application/jrd+json, application/json' },
-    });
+    let wfResponse: Response;
+    try {
+      wfResponse = (await fetchRemoteJson(webfingerUrl, 'application/jrd+json, application/json')).response;
+    } catch (error: unknown) {
+      if (error instanceof SsrfError) return c.json({ error: 'Invalid target domain' }, 400);
+      throw error;
+    }
 
     if (!wfResponse.ok) {
       return c.json({ error: 'Could not resolve remote user' }, 404);
@@ -207,20 +227,27 @@ users.post('/remote-follow', requireAuth, async (c) => {
       return c.json({ error: 'Remote user has no ActivityPub actor link' }, 400);
     }
 
-    const actorUrl = selfLink.href;
-
-    const actorResponse = await fetch(actorUrl, {
-      headers: { Accept: 'application/activity+json, application/ld+json' },
-    });
+    let actorUrl: string;
+    let actorResponse: Response;
+    try {
+      const actorResult = await fetchRemoteJson(selfLink.href, 'application/activity+json, application/ld+json');
+      actorUrl = actorResult.url;
+      actorResponse = actorResult.response;
+    } catch (error: unknown) {
+      if (error instanceof SsrfError) return c.json({ error: 'Remote user has an invalid actor URL' }, 400);
+      throw error;
+    }
 
     if (!actorResponse.ok) {
       return c.json({ error: 'Could not fetch remote actor' }, 404);
     }
 
     const actorData = (await actorResponse.json()) as { inbox?: string };
-    const inboxUrl = actorData.inbox;
-    if (!inboxUrl) {
-      return c.json({ error: 'Remote actor has no inbox' }, 400);
+    let inboxUrl: string;
+    try {
+      inboxUrl = parsePublicHttpUrl(String(actorData.inbox ?? '')).toString();
+    } catch {
+      return c.json({ error: 'Remote actor has no valid inbox' }, 400);
     }
 
     const existing = await c.env.DB.prepare(
@@ -294,9 +321,15 @@ users.delete('/remote-follow', requireAuth, async (c) => {
     const localUser = user;
 
     const webfingerUrl = `https://${domain}/.well-known/webfinger?resource=acct:${remoteUsername}@${domain}`;
-    const wfResponse = await fetch(webfingerUrl, {
-      headers: { Accept: 'application/jrd+json, application/json' },
-    });
+    let wfResponse: Response;
+    let actorUrl: string;
+    try {
+      const wfResult = await fetchRemoteJson(webfingerUrl, 'application/jrd+json, application/json');
+      wfResponse = wfResult.response;
+    } catch (error: unknown) {
+      if (error instanceof SsrfError) return c.json({ error: 'Invalid target domain' }, 400);
+      throw error;
+    }
 
     if (!wfResponse.ok) {
       return c.json({ error: 'Could not resolve remote user' }, 404);
@@ -308,7 +341,11 @@ users.delete('/remote-follow', requireAuth, async (c) => {
       return c.json({ error: 'Remote user has no ActivityPub actor link' }, 400);
     }
 
-    const actorUrl = selfLink.href;
+    try {
+      actorUrl = parsePublicHttpUrl(selfLink.href).toString();
+    } catch {
+      return c.json({ error: 'Remote user has an invalid actor URL' }, 400);
+    }
 
     const following = (await c.env.DB.prepare(
       'SELECT id, target_inbox_url FROM ap_following WHERE local_user_id = ? AND target_actor_url = ?',
@@ -845,6 +882,10 @@ users.patch('/users/me', requireAuth, async (c) => {
         if (!isAllowedImageMime(detected)) {
           return c.json({ error: 'File content does not match allowed image types' }, 400);
         }
+        const dimError = validateImageDimensions(fileBuffer, detected);
+        if (dimError) {
+          return c.json({ error: dimError }, 413);
+        }
         const hashBuffer = await crypto.subtle.digest('SHA-256', fileBuffer);
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -901,6 +942,10 @@ users.patch('/users/me', requireAuth, async (c) => {
         const detected = detectMimeType(fileBuffer);
         if (!isAllowedImageMime(detected)) {
           return c.json({ error: 'File content does not match allowed image types' }, 400);
+        }
+        const dimError = validateImageDimensions(fileBuffer, detected);
+        if (dimError) {
+          return c.json({ error: dimError }, 413);
         }
         const hashBuffer = await crypto.subtle.digest('SHA-256', fileBuffer);
         const hashArray = Array.from(new Uint8Array(hashBuffer));
@@ -1134,6 +1179,10 @@ users.patch('/users/me/password', requireAuth, async (c) => {
     }
     if (srp_group !== '2048') return c.json({ error: 'Unsupported SRP group' }, 400);
     if (!isSupportedSrpKdf(srp_kdf)) return c.json({ error: 'Unsupported SRP KDF' }, 400);
+    // Same shape checks as registration: a degenerate verifier would make the
+    // account undecryptable / trivially attackable.
+    if (!isValidB64(srp_salt, 16)) return c.json({ error: 'Invalid SRP salt' }, 400);
+    if (!isValidB64(srp_verifier, 256)) return c.json({ error: 'Invalid SRP verifier' }, 400);
 
     const proof = current_srp as SrpProofBody | undefined;
     if (!proof?.challenge_id || !proof.A || !proof.M1) {
@@ -1268,6 +1317,10 @@ users.post('/users/me/avatar', requireAuth, async (c) => {
     const detected = detectMimeType(fileData);
     if (!isAllowedImageMime(detected)) {
       return c.json({ error: 'File content does not match allowed image types' }, 400);
+    }
+    const dimError = validateImageDimensions(fileData, detected);
+    if (dimError) {
+      return c.json({ error: dimError }, 413);
     }
 
     const hashBuffer = await crypto.subtle.digest('SHA-256', fileData);
