@@ -481,7 +481,7 @@ export class PostComposer {
       image: 'image/*,video/*',
       audio: 'audio/*',
       document: '*/*',
-      game: '.zip,.swf,.rsp,.js,.wasm',
+      game: '.zip,.html,.htm,.swf,.rsp,.js,.wasm',
     };
     const attachToggle = this.element.querySelector('.composer-attach-menu-toggle') as HTMLButtonElement;
     const attachMenu = this.element.querySelector('.composer-attach-menu') as HTMLElement;
@@ -1121,6 +1121,7 @@ export class PostComposer {
       'text/javascript',
       'application/wasm',
       'text/plain',
+      'text/html',
     ];
 
     // Also check file extension for SWF files (browsers may not report correct MIME type)
@@ -1131,6 +1132,8 @@ export class PostComposer {
       file.name.toLowerCase().endsWith('.js') ||
       file.name.toLowerCase().endsWith('.wasm') ||
       file.name.toLowerCase().endsWith('.zip') ||
+      file.name.toLowerCase().endsWith('.html') ||
+      file.name.toLowerCase().endsWith('.htm') ||
       file.name.toLowerCase().endsWith('.rsp') ||
       file.name.toLowerCase().endsWith('.mp4') ||
       file.name.toLowerCase().endsWith('.webm') ||
@@ -1160,10 +1163,12 @@ export class PostComposer {
     this.selectedFile = file;
     this.showFilePreview(file);
 
-    // Show thumbnail section for ZIP or SWF files
-    const isZip = file.name.toLowerCase().endsWith('.zip');
-    const isSwf = file.name.toLowerCase().endsWith('.swf');
-    if (isZip || isSwf) {
+    // Show thumbnail section for ZIP, HTML, or SWF files
+    const name = file.name.toLowerCase();
+    const isZip = name.endsWith('.zip');
+    const isHtml = name.endsWith('.html') || name.endsWith('.htm');
+    const isSwf = name.endsWith('.swf');
+    if (isZip || isHtml || isSwf) {
       this.showThumbnailSection();
     } else {
       this.hideThumbnailSection();

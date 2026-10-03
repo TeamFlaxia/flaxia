@@ -55,7 +55,7 @@ export function detectAttachKind(file: File): AttachPreviewKind | null {
   if (name.endsWith('.webm') || name.endsWith('.mp4') || name.endsWith('.mov')) {
     return 'video';
   }
-  if (name.endsWith('.zip') || name.endsWith('.swf')) {
+  if (name.endsWith('.zip') || name.endsWith('.swf') || name.endsWith('.html') || name.endsWith('.htm')) {
     return 'game';
   }
   if (name.endsWith('.pdf')) {
@@ -67,8 +67,8 @@ export function detectAttachKind(file: File): AttachPreviewKind | null {
 /**
  * Renders an inline preview of a selected attachment inside the composer's
  * file preview area. Images, audio and video are shown as compact inline
- * media; games (.zip / .swf) render as a chip with a play button that executes
- * the game once clicked; documents (.pdf) render as a chip with an open button.
+ * media; games (.zip / .swf / .html) render as a chip with a play button that
+ * executes the game once clicked; documents (.pdf) render as a chip with an open button.
  */
 export function renderFilePreview(file: File, previewContainer: HTMLElement): AttachPreviewHandle {
   const kind = detectAttachKind(file);
@@ -128,6 +128,17 @@ export function renderFilePreview(file: File, previewContainer: HTMLElement): At
             showGameError(gameStage, error);
           }
         })();
+        return;
+      }
+      if (ext === 'html' || ext === 'htm') {
+        const url = URL.createObjectURL(file);
+        revokeUrls.push(() => URL.revokeObjectURL(url));
+        const iframe = document.createElement('iframe');
+        iframe.className = 'file-preview-game-iframe';
+        iframe.setAttribute('sandbox', 'allow-scripts allow-modals allow-pointer-lock');
+        iframe.style.cssText = 'width: 100%; height: 100%; border: none;';
+        iframe.src = url;
+        gameStage.appendChild(iframe);
         return;
       }
       void runGame(file, gameStage, (h) => (gameHandle = h));
