@@ -321,4 +321,27 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
     assert.ok(checkout.includes('expires_at > strftime'), 'checkout must not accept expired sessions');
     assert.ok(checkout.includes('isAllowedOrigin'), 'checkout must enforce an origin allowlist');
   });
+
+  it('validates client-supplied media keys against the caller', () => {
+    const posts = readFileSync(join(ROOT, 'functions/api/routes/posts.ts'), 'utf8');
+    assert.ok(posts.includes('isOwnedMediaKey'), 'media keys must be ownership-checked');
+    assert.ok(
+      !/BUCKET\.delete\(k\)/.test(posts) || posts.includes('isOwnedMediaKey'),
+      'R2 cleanup must only run for owned keys',
+    );
+  });
+
+  it('caps ZIP inflation and enforces hidden-post media', () => {
+    const wvfs = readFileSync(join(ROOT, 'src/lib/wvfs-zip-server.ts'), 'utf8');
+    assert.ok(wvfs.includes('inflateSync(compressedData, { out:'), 'inflate output must be bounded');
+
+    const media = readFileSync(join(ROOT, 'functions/api/routes/media.ts'), 'utf8');
+    assert.ok(media.includes('postMediaAllowed'), 'zip/swf routes must respect hidden posts');
+  });
+
+  it('treats game containers as non-attachments', () => {
+    const attachments = readFileSync(join(ROOT, 'functions/lib/attachments.ts'), 'utf8');
+    assert.ok(attachments.includes('GAME_EXTS'), 'zip/swf/html must not become attachments');
+    assert.match(attachments, /GAME_EXTS\.has\(ext\)\) return null/);
+  });
 });

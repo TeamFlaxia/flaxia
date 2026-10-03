@@ -105,6 +105,12 @@ posts.post('/posts', requireAuth, async (c) => {
     const userId = c.get('user')?.id || '';
     const username = c.get('user')?.username || 'anonymous';
     const postId = crypto.randomUUID();
+
+    for (const key of [gifKey, payloadKey]) {
+      if (key && !(await isOwnedMediaKey(c.env.DB, userId, key))) {
+        return c.json({ error: 'Media key does not belong to this account' }, 422);
+      }
+    }
     const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu;
     const hashtags = Array.from(text.matchAll(hashtagRegex), (m) => m[1]);
     const now = new Date().toISOString();
@@ -1455,6 +1461,30 @@ function isValidPostId(value: unknown): value is string {
   return typeof value === 'string' && POST_ID_PATTERN.test(value);
 }
 
+const LEGACY_MEDIA_KEY_RE = /^(?:gif|payload|swf|zip|html|thumbnail)\/([A-Za-z0-9_-]{1,64})(?:\..+)?$/;
+const VERSION_MEDIA_KEY_RE = /^versions\/([A-Za-z0-9_-]{1,64})\//;
+
+/**
+ * True when a client-supplied R2 key names one of the caller's own posts.
+ *
+ * Without this, a request could attach another user's object to its own post
+ * (hotlink/misattribution) or, worse, pass the victim's key on an edit so the
+ * cleanup path deletes it from R2.
+ */
+async function isOwnedMediaKey(db: D1Database, userId: string, key: unknown): Promise<boolean> {
+  if (typeof key !== 'string' || key.length === 0 || key.length > 256) return false;
+  const attachment = parseAttachmentKey(key);
+  let postId: string | null = attachment?.postId ?? null;
+  if (!postId) postId = key.match(LEGACY_MEDIA_KEY_RE)?.[1] ?? null;
+  if (!postId) postId = key.match(VERSION_MEDIA_KEY_RE)?.[1] ?? null;
+  if (!postId) return false;
+  const row = await db
+    .prepare("SELECT id FROM posts WHERE id = ? AND user_id = ? AND status IN ('pending', 'published')")
+    .bind(postId, userId)
+    .first();
+  return Boolean(row);
+}
+
 // Step 3 — POST /api/posts/commit (protected)
 posts.post('/posts/commit', requireAuth, async (c) => {
   try {
@@ -1474,6 +1504,16 @@ posts.post('/posts/commit', requireAuth, async (c) => {
       const formData = await c.req.formData();
       text = formData.get('text') as string;
       postId = (formData.get('postId') as string) || undefined;
+      if (postId) {
+        // Reject another user's post id before the thumbnail write below:
+        // ownership was only checked after the R2 put.
+        const existingOwner = (await c.env.DB.prepare('SELECT user_id FROM posts WHERE id = ?')
+          .bind(postId)
+          .first()) as { user_id: string } | null;
+        if (existingOwner && existingOwner.user_id !== (c.get('user')?.id || '')) {
+          return c.json({ error: 'Forbidden' }, 403);
+        }
+      }
       gifKey = (formData.get('gifKey') as string) || undefined;
       swfKey = (formData.get('swfKey') as string) || undefined;
       zipKey = (formData.get('payloadKey') as string) || undefined;
@@ -1538,6 +1578,17 @@ posts.post('/posts/commit', requireAuth, async (c) => {
     const payloadKey = zipKey;
     const userId = c.get('user')?.id || '';
     const username = c.get('user')?.username || 'anonymous';
+
+    for (const [field, value] of [
+      ['gifKey', gifKey],
+      ['swfKey', swfKey],
+      ['zipKey', zipKey],
+      ['thumbnailKey', thumbnailKey],
+    ] as const) {
+      if (value && !(await isOwnedMediaKey(c.env.DB, userId, value))) {
+        return c.json({ error: `Media key ${field} does not belong to this account` }, 422);
+      }
+    }
 
     // Validate multi-media attachments (image/audio/video, plan-dependent max)
     if (attachmentInputs !== undefined) {
@@ -3663,6 +3714,24 @@ posts.put('/posts/:id', async (c) => {
     }
 
     // Handle attachment key updates and cleanup old files
+    // Client-supplied media keys must name the caller's own posts: otherwise
+    // the cleanup below could delete another user's R2 object.
+    for (const [field, value] of [
+      ['gif_key', body.gif_key],
+      ['payload_key', body.payload_key],
+      ['swf_key', body.swf_key],
+      ['thumbnail_key', body.thumbnail_key],
+    ] as const) {
+      if (
+        value !== undefined &&
+        value !== null &&
+        value !== '' &&
+        !(await isOwnedMediaKey(c.env.DB, post.user_id, value))
+      ) {
+        return c.json({ error: `Media key ${field} does not belong to this account` }, 422);
+      }
+    }
+
     const updatedGifKey = body.gif_key !== undefined ? body.gif_key : post.gif_key;
     const updatedPayloadKey = body.payload_key !== undefined ? body.payload_key : post.payload_key;
     const updatedSwfKey = body.swf_key !== undefined ? body.swf_key : post.swf_key;

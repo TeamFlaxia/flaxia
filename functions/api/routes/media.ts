@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { Hono } from 'hono';
+import { isAdmin } from '../../../src/lib/admin';
 import type { AttachmentKind } from '../../lib/attachments';
 import { parseAttachmentKey } from '../../lib/attachments';
 import { validateImageDimensions } from '../../lib/image-dimensions';
@@ -32,6 +33,22 @@ async function canAccessMediaKey(c: MediaContext, key: string): Promise<boolean>
   if (key.startsWith('dm/')) return false;
   if (await isKeyBlocked(c.env.CACHE, key, c.env.DB)) return false;
   return true;
+}
+
+/**
+ * Moderation is not optional for media: a hidden or unpublished post must not
+ * keep serving its payload to everyone. The owner and admins keep access so
+ * review, edits and restoration still work.
+ */
+async function postMediaAllowed(c: MediaContext, postId: string): Promise<boolean> {
+  const row = (await c.env.DB.prepare('SELECT user_id, hidden, status FROM posts WHERE id = ?')
+    .bind(postId)
+    .first()) as { user_id: string; hidden: number; status: string } | null;
+  if (!row) return true; // key without a post row: keep the previous behavior
+  if (!row.hidden && row.status === 'published') return true;
+  const viewer = c.get('user');
+  if (!viewer) return false;
+  return viewer.id === row.user_id || isAdmin(c.env, viewer.username);
 }
 
 /**
@@ -458,10 +475,12 @@ media.get('/documents/*', async (c) => {
     return new Response(object.body, {
       headers: {
         'Content-Type': 'application/octet-stream',
-        'Content-Disposition': `attachment; filename="${key.split('/').pop() || 'download.bin'}"`,
         'Cache-Control': MEDIA_CACHE_CONTROL,
         'X-Content-Type-Options': 'nosniff',
         ...MEDIA_SECURITY_HEADERS,
+        // Must win over MEDIA_SECURITY_HEADERS' inline default: arbitrary
+        // document bytes are always a download.
+        'Content-Disposition': `attachment; filename="${key.split('/').pop() || 'download.bin'}"`,
       },
     });
   } catch (error: unknown) {
@@ -492,6 +511,10 @@ media.get('/zip/:postId', async (c) => {
     const publicKey = `zip/${postId}.zip`;
 
     if (!(await canAccessMediaKey(c, publicKey))) {
+      return c.json({ error: 'ZIP not found' }, 404);
+    }
+
+    if (c.env.DB && !(await postMediaAllowed(c, postId))) {
       return c.json({ error: 'ZIP not found' }, 404);
     }
 
@@ -543,17 +566,32 @@ media.get('/thumbnail/:id', async (c) => {
     }
 
     // First try to get from posts table
-    let post = await c.env.DB.prepare('SELECT thumbnail_key FROM posts WHERE id = ?').bind(postId).first();
+    let post = (await c.env.DB.prepare('SELECT thumbnail_key, user_id, hidden, status FROM posts WHERE id = ?')
+      .bind(postId)
+      .first()) as Record<string, unknown> | null;
+    const isPostRow = Boolean(post && post.thumbnail_key);
 
     // If not found in posts, try ads table
     if (!post || !post.thumbnail_key) {
-      const ad = await c.env.DB.prepare('SELECT thumbnail_key FROM ads WHERE id = ?').bind(postId).first();
+      const ad = (await c.env.DB.prepare('SELECT thumbnail_key FROM ads WHERE id = ?').bind(postId).first()) as Record<
+        string,
+        unknown
+      > | null;
 
       if (!ad || !ad.thumbnail_key) {
         return c.json({ error: 'Thumbnail not found' }, 404);
       }
 
       post = ad;
+    }
+
+    // Hidden or unpublished posts keep their thumbnail for owner/admins only.
+    if (isPostRow && post && (post.hidden || post.status !== 'published')) {
+      const viewer = c.get('user');
+      const allowed = viewer !== null && (viewer.id === String(post.user_id) || isAdmin(c.env, viewer.username));
+      if (!allowed) {
+        return c.json({ error: 'Thumbnail not found' }, 404);
+      }
     }
 
     // Get thumbnail object from R2
@@ -623,6 +661,10 @@ media.get('/swf/:postId', async (c) => {
     const publicKey = `swf/${postId}.swf`;
 
     if (!(await canAccessMediaKey(c, publicKey))) {
+      return c.json({ error: 'SWF not found' }, 404);
+    }
+
+    if (c.env.DB && !(await postMediaAllowed(c, postId))) {
       return c.json({ error: 'SWF not found' }, 404);
     }
 
