@@ -26,10 +26,25 @@ function getSessionToken(request: Request): string | null {
 async function getUserId(env: Env, request: Request): Promise<string | null> {
   const token = getSessionToken(request);
   if (!token) return null;
-  const session = await env.DB.prepare('SELECT user_id FROM sessions WHERE id = ?')
+  // Expiry is part of the session check: an expired or leaked token must not
+  // keep creating checkout sessions forever.
+  const session = await env.DB.prepare(
+    "SELECT user_id FROM sessions WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+  )
     .bind(token)
     .first<{ user_id: string }>();
   return session?.user_id ?? null;
+}
+
+// This endpoint lives outside the Hono router, so it enforces the same origin
+// allowlist as the CSRF middleware itself.
+const CHECKOUT_ALLOWED_ORIGINS = new Set(['http://localhost:8787', 'http://localhost:5173', 'https://flaxia.app']);
+
+function isAllowedOrigin(request: Request, env: Env): boolean {
+  const origin = request.headers.get('Origin');
+  if (!origin) return true; // server-side clients do not send Origin
+  if (CHECKOUT_ALLOWED_ORIGINS.has(origin)) return true;
+  return Boolean(env.BASE_URL) && origin === new URL(env.BASE_URL).origin;
 }
 
 export async function onRequest(context: {
@@ -53,6 +68,13 @@ export async function onRequest(context: {
 }
 
 async function handleMarketCheckout(request: Request, env: Env): Promise<Response> {
+  if (!isAllowedOrigin(request, env)) {
+    return new Response(JSON.stringify({ error: 'CSRF validation failed' }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   const userId = await getUserId(env, request);
   if (!userId) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {

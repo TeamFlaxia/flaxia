@@ -237,6 +237,30 @@ app.post('/api/actors/:username/inbox', async (c) => {
   }
 });
 
+// Extract a local username from an actor URL, but only when the URL really
+// points at this instance. startsWith(baseUrl) accepted look-alikes such as
+// `https://flaxia.app@evil.example/actors/victim`, which let a remote actor
+// address an arbitrary local user in to/cc/object.
+function localActorUsername(value: unknown, baseUrl: string): string | null {
+  if (typeof value !== 'string') return null;
+  let parsed: URL;
+  let base: URL;
+  try {
+    parsed = new URL(value);
+    base = new URL(baseUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.origin !== base.origin) return null;
+  const match = parsed.pathname.match(/^\/actors\/([^/]+)/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
 // POST /api/inbox - ActivityPub sharedInbox endpoint
 app.post('/api/inbox', async (c) => {
   try {
@@ -311,31 +335,26 @@ app.post('/api/inbox', async (c) => {
     if (!digestValid) {
       return c.json({ error: 'Invalid Digest' }, 401);
     }
-    const targetAudience = [(activity.to as string[] | undefined) ?? [], (activity.cc as string[] | undefined) ?? []]
-      .flat()
-      .filter(Boolean) as string[];
-    const localActorUrls = targetAudience.filter(
-      (url: string) => typeof url === 'string' && url.startsWith(baseUrl) && url.includes('/actors/'),
-    );
+    const audienceValues: unknown[] = [
+      ...(Array.isArray(activity.to) ? activity.to : activity.to ? [activity.to] : []),
+      ...(Array.isArray(activity.cc) ? activity.cc : activity.cc ? [activity.cc] : []),
+    ];
 
-    // Extract usernames from local actor URLs
+    // Extract usernames from URLs that canonically point at local actors.
     const targetUsernames = new Set<string>();
-    for (const url of localActorUrls) {
-      const match = (url as string).match(/\/actors\/([^/]+)/);
-      if (match) targetUsernames.add(match[1]);
+    for (const value of audienceValues) {
+      const username = localActorUsername(value, baseUrl);
+      if (username) targetUsernames.add(username);
     }
 
-    // If no local target found via to/cc, try the object field (for Follow activities)
-    if (targetUsernames.size === 0 && activity.object && typeof activity.object === 'string') {
-      const match = (activity.object as string).match(/\/actors\/([^/]+)/);
-      if (match) targetUsernames.add(match[1]);
-    }
-
-    // Fallback: if still no target, try all local users by checking the activity object
-    if (targetUsernames.size === 0 && activity.object && typeof activity.object === 'object') {
-      const objId = (activity.object as Record<string, unknown>).id || '';
-      const match = (objId as string).match(/\/actors\/([^/]+)/);
-      if (match) targetUsernames.add(match[1]);
+    // If no local target found via to/cc, try the object field (for Follow
+    // activities). It is held to the same canonical-origin rule.
+    if (targetUsernames.size === 0) {
+      const objectValue = activity.object as unknown;
+      const candidate =
+        typeof objectValue === 'string' ? objectValue : ((objectValue as { id?: unknown } | null)?.id ?? '');
+      const username = localActorUsername(candidate, baseUrl);
+      if (username) targetUsernames.add(username);
     }
 
     if (targetUsernames.size === 0) {

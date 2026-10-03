@@ -63,6 +63,26 @@ function mimeMatchesAttachmentKind(kind: AttachmentKind, mime: string): boolean 
   }
 }
 
+/**
+ * Pick a Content-Type that is actually in the requested media class.
+ *
+ * The stored R2 metadata is attacker-influenced (the uploader chooses the
+ * declared type and, for document slots, any sniffed type passes), so the
+ * audio/video proxies must never echo an executable type such as text/html
+ * back to the browser. Unknown stored types fall back to the key extension;
+ * when neither says "audio" (or "video") the route refuses to serve.
+ */
+function safeMediaContentType(key: string, stored: string | undefined, family: 'audio' | 'video'): string | null {
+  const prefix = `${family}/`;
+  if (stored && stored.startsWith(prefix)) return stored;
+  const extension = key.split('.').pop()?.toLowerCase() ?? '';
+  const byExtension: Record<'audio' | 'video', Record<string, string>> = {
+    audio: { mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4', webm: 'audio/webm' },
+    video: { mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime' },
+  };
+  return byExtension[family][extension] ?? null;
+}
+
 // PUT /api/upload/:key — direct file upload endpoint (requires auth + ownership of pending post)
 media.put('/upload/*', requireAuth, async (c) => {
   try {
@@ -334,28 +354,9 @@ media.get('/audio/*', async (c) => {
       return c.json({ error: 'Audio not found' }, 404);
     }
 
-    let contentType = object.httpMetadata?.contentType;
+    const contentType = safeMediaContentType(key, object.httpMetadata?.contentType, 'audio');
     if (!contentType) {
-      const extension = key.split('.').pop()?.toLowerCase();
-      switch (extension) {
-        case 'mp3':
-          contentType = 'audio/mpeg';
-          break;
-        case 'wav':
-          contentType = 'audio/wav';
-          break;
-        case 'ogg':
-          contentType = 'audio/ogg';
-          break;
-        case 'm4a':
-          contentType = 'audio/mp4';
-          break;
-        case 'webm':
-          contentType = 'audio/webm';
-          break;
-        default:
-          contentType = 'audio/mpeg';
-      }
+      return c.json({ error: 'Audio not found' }, 404);
     }
 
     return handleRangeRequest(c, key, object, contentType);
@@ -394,22 +395,9 @@ media.get('/video/*', async (c) => {
       return c.json({ error: 'Video not found' }, 404);
     }
 
-    let contentType = object.httpMetadata?.contentType;
+    const contentType = safeMediaContentType(key, object.httpMetadata?.contentType, 'video');
     if (!contentType) {
-      const extension = key.split('.').pop()?.toLowerCase();
-      switch (extension) {
-        case 'mp4':
-          contentType = 'video/mp4';
-          break;
-        case 'webm':
-          contentType = 'video/webm';
-          break;
-        case 'mov':
-          contentType = 'video/quicktime';
-          break;
-        default:
-          contentType = 'video/mp4';
-      }
+      return c.json({ error: 'Video not found' }, 404);
     }
 
     return handleRangeRequest(c, key, object, contentType);

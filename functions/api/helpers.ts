@@ -206,6 +206,11 @@ export type ReportCategory =
   | 'nsfw_untagged';
 
 export function getThreshold(category: ReportCategory): number {
+  // No auto-hide may be triggered by a single reporter: a hostile account
+  // could otherwise take down any post with one report. Categories that must
+  // reach moderators fast (csam/malware) raise a critical alert immediately
+  // (see report.ts) while still requiring a second, independent reporter
+  // before the post is hidden.
   const thresholds: Record<ReportCategory, number> = {
     spam: 3,
     harassment: 3,
@@ -213,9 +218,9 @@ export function getThreshold(category: ReportCategory): number {
     misinformation: 3,
     other: 3,
     hate_speech: 3,
-    copyright: 1,
-    csam: 1,
-    malware: 1,
+    copyright: 2,
+    csam: 2,
+    malware: 2,
     privacy: 3,
     nsfw_untagged: 2,
   };

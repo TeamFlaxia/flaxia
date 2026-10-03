@@ -986,7 +986,7 @@ posts.get('/posts/:id/similar', async (c) => {
     if (similarIds.length === 0) return c.json({ posts: [] });
 
     const postsResult = await c.env.DB.prepare(
-      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id IN (${similarIds.map(() => '?').join(',')})`,
+      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id IN (${similarIds.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0`,
     )
       .bind(...similarIds)
       .all();
@@ -1447,6 +1447,14 @@ async function extractGameDescription(
   }
 }
 
+// Client-chosen post/reply IDs must be a safe, bounded format: IDs end up in
+// URLs, R2 keys and HTML, so accepting arbitrary strings invites injection and
+// key confusion. UUIDs and nanoids both match this pattern.
+const POST_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+function isValidPostId(value: unknown): value is string {
+  return typeof value === 'string' && POST_ID_PATTERN.test(value);
+}
+
 // Step 3 — POST /api/posts/commit (protected)
 posts.post('/posts/commit', requireAuth, async (c) => {
   try {
@@ -1522,6 +1530,11 @@ posts.post('/posts/commit', requireAuth, async (c) => {
       quotedPostId = body.quotedPostId;
       attachmentInputs = body.attachments;
     }
+
+    if (postId !== undefined && postId !== null && postId !== '' && !isValidPostId(postId)) {
+      return c.json({ error: 'Invalid post ID format' }, 422);
+    }
+
     const payloadKey = zipKey;
     const userId = c.get('user')?.id || '';
     const username = c.get('user')?.username || 'anonymous';
@@ -2284,7 +2297,7 @@ posts.post('/posts/fresh/batch', requireAuth, async (c) => {
 
     // Get posts to check ownership for notifications
     const posts = await c.env.DB.prepare(`
-      SELECT id, user_id FROM posts WHERE id IN (${post_ids.map(() => '?').join(',')}) AND status = 'published'
+      SELECT id, user_id FROM posts WHERE id IN (${post_ids.map(() => '?').join(',')}) AND status = 'published' AND hidden = 0
     `)
       .bind(...post_ids)
       .all();
@@ -2392,19 +2405,31 @@ posts.post('/posts/fresh/batch', requireAuth, async (c) => {
 
       return c.json({ freshed: toFresh, already_freshed: Array.from(alreadyFreshed) });
     } else {
-      // Remove freshes
-      await c.env.DB.prepare(`
-        DELETE FROM freshs WHERE user_id = ? AND post_id IN (${post_ids.map(() => '?').join(',')})
+      // Remove freshes — only for posts the caller had actually freshed. The
+      // previous version decremented every listed post, letting any account
+      // drive other users' counters negative.
+      const existingFreshes = await c.env.DB.prepare(`
+        SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${post_ids.map(() => '?').join(',')})
       `)
         .bind(userId, ...post_ids)
-        .run();
+        .all();
 
-      // Batch update fresh counts
-      await c.env.DB.prepare(`
-        UPDATE posts SET fresh_count = fresh_count - 1, engagement_hotness = engagement_hotness - 2.0 WHERE id IN (${post_ids.map(() => '?').join(',')})
-      `)
-        .bind(...post_ids)
-        .run();
+      const actuallyFreshed = (existingFreshes.results?.map((f) => f.post_id) || []) as string[];
+
+      if (actuallyFreshed.length > 0) {
+        await c.env.DB.prepare(`
+          DELETE FROM freshs WHERE user_id = ? AND post_id IN (${actuallyFreshed.map(() => '?').join(',')})
+        `)
+          .bind(userId, ...actuallyFreshed)
+          .run();
+
+        // Clamp at zero so counters cannot go negative.
+        await c.env.DB.prepare(`
+          UPDATE posts SET fresh_count = MAX(fresh_count - 1, 0), engagement_hotness = MAX(engagement_hotness - 2.0, 0) WHERE id IN (${actuallyFreshed.map(() => '?').join(',')})
+        `)
+          .bind(...actuallyFreshed)
+          .run();
+      }
 
       return c.json({ unfreshed: post_ids });
     }
@@ -2522,7 +2547,7 @@ posts.get('/posts/:id/replies', async (c) => {
 
     // Verify parent post exists and is published
     const parentPost = await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published'",
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
     )
       .bind(postId)
       .first();
@@ -2535,7 +2560,7 @@ posts.get('/posts/:id/replies', async (c) => {
        u.display_name, u.avatar_key, u.badge_type, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
-       WHERE p.parent_id = ? AND p.status = 'published' 
+       WHERE p.parent_id = ? AND p.status = 'published' AND p.hidden = 0 
        ORDER BY p.created_at ASC LIMIT ?`;
     const params: Array<unknown> = [postId, limit];
 
@@ -2544,7 +2569,7 @@ posts.get('/posts/:id/replies', async (c) => {
        u.display_name, u.avatar_key, u.badge_type, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
-       WHERE p.parent_id = ? AND p.status = 'published' AND p.created_at < ?
+       WHERE p.parent_id = ? AND p.status = 'published' AND p.hidden = 0 AND p.created_at < ?
        ORDER BY p.created_at ASC LIMIT ?`;
       params.splice(1, 0, cursor);
     }
@@ -2616,7 +2641,7 @@ posts.get('/posts/:id/thread', async (c) => {
     }
 
     const post = await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published'",
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
     )
       .bind(postId)
       .first();
@@ -2632,7 +2657,7 @@ posts.get('/posts/:id/thread', async (c) => {
        u.display_name, u.avatar_key, u.badge_type, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
-       WHERE p.id = ? AND p.status = 'published'`,
+       WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0`,
     )
       .bind(rootId)
       .first();
@@ -2646,7 +2671,7 @@ posts.get('/posts/:id/thread', async (c) => {
        u.display_name, u.avatar_key, u.badge_type, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
-       WHERE p.root_id = ? AND p.status = 'published' AND p.id != ?
+       WHERE p.root_id = ? AND p.status = 'published' AND p.hidden = 0 AND p.id != ?
        ORDER BY p.created_at ASC LIMIT 200`,
     )
       .bind(rootId, rootId)
@@ -2749,7 +2774,7 @@ posts.post('/posts/:id/replies/prepare', requireAuth, async (c) => {
 
     // Validate parent post exists and is published
     const parentPost = await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published'",
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
     )
       .bind(postId)
       .first();
@@ -2838,6 +2863,10 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
   try {
     const { replyId, gifKey, text, hashtags } = await c.req.json();
 
+    if (!isValidPostId(replyId)) {
+      return c.json({ error: 'Invalid reply ID format' }, 422);
+    }
+
     // Validate text
     if (!text || text.length < 1 || text.length > 200) {
       return c.json({ error: 'Text must be 1-200 characters' }, 422);
@@ -2873,7 +2902,7 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
 
     // Validate parent still exists and is published
     const parentPost = (await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published'",
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
     )
       .bind(postId)
       .first()) as {
@@ -2897,11 +2926,11 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       const replyUsername = c.get('user')?.username || 'anonymous';
       mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, replyUsername);
 
-      // Validate that this is a pending reply and gifKey matches
+      // Validate that this is a pending reply of the CALLER and gifKey matches
       const pendingReply = await c.env.DB.prepare(`
-        SELECT * FROM posts WHERE id = ? AND status = 'pending' AND gif_key = ? AND parent_id = ?
+        SELECT * FROM posts WHERE id = ? AND status = 'pending' AND gif_key = ? AND parent_id = ? AND user_id = ?
       `)
-        .bind(replyId, gifKey, postId)
+        .bind(replyId, gifKey, postId, c.get('user')?.id || '')
         .first();
 
       if (!pendingReply) {
@@ -2919,9 +2948,9 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       const updateResult = await c.env.DB.prepare(`
         UPDATE posts 
         SET text = ?, hashtags = ?, mentions = ?, status = 'published', created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-        WHERE id = ?
+        WHERE id = ? AND user_id = ?
       `)
-        .bind(text, JSON.stringify(hashtags), mentionsJson, replyId)
+        .bind(text, JSON.stringify(hashtags), mentionsJson, replyId, c.get('user')?.id || '')
         .run();
 
       if (!updateResult.success) {
@@ -3091,7 +3120,7 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       if (referencedIndices.size > 0) {
         const rootId = parentPost.root_id || parentPost.id;
         const allRepliesResult = await c.env.DB.prepare(
-          "SELECT id, user_id, username FROM posts WHERE root_id = ? AND status = 'published' AND id != ? ORDER BY created_at ASC",
+          "SELECT id, user_id, username FROM posts WHERE root_id = ? AND status = 'published' AND hidden = 0 AND id != ? ORDER BY created_at ASC",
         )
           .bind(rootId, rootId)
           .all();
@@ -3798,8 +3827,9 @@ posts.get('/posts/:id', async (c) => {
       if (refreshed) post.hidden = refreshed.hidden;
     }
 
-    // Check if post is hidden - allow admin bypass
-    if (post.hidden && !isAdmin(c.env, c.get('user')?.username ?? '')) {
+    // Check if post is hidden or not published - allow admin bypass
+    const isPostAdmin = isAdmin(c.env, c.get('user')?.username ?? '');
+    if ((post.hidden || (post.status && post.status !== 'published')) && !isPostAdmin) {
       return c.json({ error: 'Gone' }, 410);
     }
 

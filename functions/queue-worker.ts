@@ -1,5 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 
+import { parsePublicHttpUrl } from './lib/url-guard';
+
 interface DeliveryMessage {
   type: 'delivery';
   inboxUrl: string;
@@ -74,6 +76,18 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
   const maxRetries = 3;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
+  // The inbox URL is stored from a remote actor document, so it is re-validated
+  // at delivery time: a poisoned row must not turn the queue into an
+  // authenticated request forwarder to private addresses.
+  let deliveryUrl: URL;
+  try {
+    deliveryUrl = parsePublicHttpUrl(inboxUrl);
+  } catch {
+    console.error('Blocked ActivityPub delivery to non-public inbox:', inboxUrl);
+    message.ack();
+    return;
+  }
+
   try {
     // Get user's private and public keys for signing
     const keyResult = await env.DB.prepare(`
@@ -96,13 +110,13 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
 
     const { signRequest } = await import('./lib/activitypub/signature');
     const body = JSON.stringify(activity);
-    const headers = await signRequest(inboxUrl, body, privateKeyPem, publicKeyPem, keyId);
+    const headers = await signRequest(deliveryUrl.toString(), body, privateKeyPem, publicKeyPem, keyId);
 
     // Add timeout and better error handling
     const controller = new AbortController();
     timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
-    const response = await fetch(inboxUrl, {
+    const response = await fetch(deliveryUrl.toString(), {
       method: 'POST',
       headers: headers,
       body: body,
