@@ -1461,7 +1461,7 @@ function isValidPostId(value: unknown): value is string {
   return typeof value === 'string' && POST_ID_PATTERN.test(value);
 }
 
-const LEGACY_MEDIA_KEY_RE = /^(?:gif|payload|swf|zip|html|thumbnail)\/([A-Za-z0-9_-]{1,64})(?:\..+)?$/;
+const LEGACY_MEDIA_KEY_RE = /^(?:gif|audio|video|payload|swf|zip|html|thumbnail)\/([A-Za-z0-9_-]{1,64})(?:\..+)?$/;
 const VERSION_MEDIA_KEY_RE = /^versions\/([A-Za-z0-9_-]{1,64})\//;
 
 /**

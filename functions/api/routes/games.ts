@@ -581,18 +581,25 @@ games.get('/games', async (c) => {
     return c.json({ error: 'Failed to fetch games', details: (error as { message?: string })?.message }, 500);
   }
 });
+// D1 permits at most 100 bound parameters per query.
+const GAME_VALIDATION_CHUNK_SIZE = 100;
+
 /** Published, visible game posts (payload or swf present) among the given ids. */
 async function loadValidGamePostIds(db: D1Database, postIds: unknown[]): Promise<Set<string>> {
   const unique = [...new Set(postIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
-  if (unique.length === 0) return new Set();
-  const placeholders = unique.map(() => '?').join(',');
-  const rows = await db
-    .prepare(
-      `SELECT id FROM posts WHERE id IN (${placeholders}) AND status = 'published' AND hidden = 0 AND (payload_key IS NOT NULL OR swf_key IS NOT NULL)`,
-    )
-    .bind(...unique)
-    .all<{ id: string }>();
-  return new Set((rows.results ?? []).map((row) => row.id));
+  const validIds = new Set<string>();
+  for (let offset = 0; offset < unique.length; offset += GAME_VALIDATION_CHUNK_SIZE) {
+    const chunk = unique.slice(offset, offset + GAME_VALIDATION_CHUNK_SIZE);
+    const placeholders = chunk.map(() => '?').join(',');
+    const rows = await db
+      .prepare(
+        `SELECT id FROM posts WHERE id IN (${placeholders}) AND status = 'published' AND hidden = 0 AND (payload_key IS NOT NULL OR swf_key IS NOT NULL)`,
+      )
+      .bind(...chunk)
+      .all<{ id: string }>();
+    for (const row of rows.results ?? []) validIds.add(row.id);
+  }
+  return validIds;
 }
 
 // POST /api/games/events - record raw Arcade interaction events (views incl. skips,

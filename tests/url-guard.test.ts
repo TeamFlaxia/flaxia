@@ -72,6 +72,41 @@ describe('url-guard', () => {
     assert.equal(checkUrlForSsrf(new URL('http://8.8.8.8/')), null);
   });
 
+  it('allows public IPv6 literals while still rejecting private IPv6 URLs', () => {
+    for (const host of ['[2606:4700:4700::1111]', '[::ffff:8.8.8.8]']) {
+      const url = `https://${host}/`;
+      assert.equal(checkUrlForSsrf(new URL(url)), null, url);
+      assert.equal(parsePublicHttpUrl(url).hostname, new URL(url).hostname);
+    }
+    for (const host of ['[::1]', '[::]', '[fc00::1]', '[fe80::1]', '[::ffff:127.0.0.1]']) {
+      assert.throws(() => parsePublicHttpUrl(`https://${host}/`), SsrfError, host);
+    }
+  });
+
+  it('blocks reserved IPv4 /24 networks without blocking adjacent public addresses', () => {
+    for (const prefix of ['192.0.0', '192.0.2', '198.51.100', '203.0.113']) {
+      for (const last of [0, 1, 255]) {
+        const host = `${prefix}.${last}`;
+        assert.equal(isPrivateHost(host), true, host);
+        assert.throws(() => parsePublicHttpUrl(`https://${host}/`), SsrfError, host);
+        assert.throws(() => parsePublicHttpUrl(`https://[::ffff:${host}]/`), SsrfError, host);
+      }
+    }
+    for (const host of [
+      '192.0.1.1',
+      '192.0.3.1',
+      '192.0.78.24',
+      '198.51.99.255',
+      '198.51.101.1',
+      '203.0.112.255',
+      '203.0.114.1',
+    ]) {
+      assert.equal(isPrivateHost(host), false, host);
+      assert.equal(checkUrlForSsrf(new URL(`https://${host}/`)), null, host);
+      assert.equal(checkUrlForSsrf(new URL(`https://[::ffff:${host}]/`)), null, host);
+    }
+  });
+
   it('re-validates every redirect hop and refuses private targets', async () => {
     const originalFetch = globalThis.fetch;
     const calls: string[] = [];
@@ -108,6 +143,23 @@ describe('url-guard', () => {
       const response = await fetchWithSsrfGuard('https://example.com/start');
       assert.equal(response.status, 200);
       assert.equal(await response.text(), 'ok');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('fetches public IPv6 and adjacent IPv4 addresses across redirect hops', async () => {
+    const urls = ['https://[2606:4700:4700::1111]/', 'https://192.0.78.24/', 'https://203.0.114.1/'];
+    const calls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      calls.push(String(input));
+      const next = urls[calls.length];
+      return next ? new Response(null, { status: 302, headers: { Location: next } }) : new Response('ok');
+    }) as typeof fetch;
+    try {
+      assert.equal(await (await fetchWithSsrfGuard(urls[0])).text(), 'ok');
+      assert.deepEqual(calls, urls);
     } finally {
       globalThis.fetch = originalFetch;
     }

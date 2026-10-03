@@ -43,6 +43,8 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 
 function isBlockedHostname(hostname: string): boolean {
   const name = hostname.toLowerCase().replace(/\.$/, '');
+  // IP literals are classified by isPrivateHost, not DNS-name rules.
+  if (isIpv4(name) || name.includes(':')) return false;
   if (BLOCKED_HOSTNAMES.has(name)) return true;
   if (BLOCKED_HOSTNAME_SUFFIXES.some((suffix) => name.endsWith(suffix))) return true;
   // A public DNS name always has a dot; a bare label can only resolve through
@@ -66,7 +68,7 @@ function isIpv4(hostname: string): Ipv4Parts | null {
   return { a: parts[0], b: parts[1], c: parts[2], d: parts[3] };
 }
 
-function isPrivateIpv4({ a, b }: Ipv4Parts): boolean {
+function isPrivateIpv4({ a, b, c }: Ipv4Parts): boolean {
   if (a === 0) return true; // 0.0.0.0/8 "this network"
   if (a === 10) return true; // 10.0.0.0/8
   if (a === 127) return true; // 127.0.0.0/8 loopback
@@ -74,10 +76,10 @@ function isPrivateIpv4({ a, b }: Ipv4Parts): boolean {
   if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
   if (a === 192 && b === 168) return true; // 192.168.0.0/16
   if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 CGNAT
-  if (a === 192 && b === 0) return true; // 192.0.0.0/24 + 192.0.2.0/24
+  if (a === 192 && b === 0 && (c === 0 || c === 2)) return true; // 192.0.0.0/24 + 192.0.2.0/24
   if (a === 198 && (b === 18 || b === 19)) return true; // 198.18.0.0/15 benchmarking
-  if (a === 198 && b === 51) return true; // 198.51.100.0/24 TEST-NET-2
-  if (a === 203 && b === 0) return true; // 203.0.113.0/24 TEST-NET-3
+  if (a === 198 && b === 51 && c === 100) return true; // 198.51.100.0/24 TEST-NET-2
+  if (a === 203 && b === 0 && c === 113) return true; // 203.0.113.0/24 TEST-NET-3
   if (a >= 224) return true; // multicast + reserved + broadcast
   return false;
 }
