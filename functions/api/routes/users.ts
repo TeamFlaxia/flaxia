@@ -264,7 +264,7 @@ users.post('/remote-follow', requireAuth, async (c) => {
     const followId = nanoid();
     await c.env.DB.prepare(`
       INSERT INTO ap_following (id, local_user_id, target_actor_url, target_inbox_url, target_username, target_domain, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'pending', datetime('now'))
+      VALUES (?, ?, ?, ?, ?, ?, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     `)
       .bind(followId, localUser.id, actorUrl, inboxUrl, remoteUsername, domain)
       .run();

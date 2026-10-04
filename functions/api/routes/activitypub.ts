@@ -111,7 +111,7 @@ app.get('/api/actors/:username', async (c) => {
       const keyPair = await generateKeyPair();
       publicKeyPem = await exportPublicKey(keyPair.publicKey);
       await c.env.DB.prepare(
-        `INSERT INTO actor_keys (user_id, public_key_pem, private_key_pem, created_at) VALUES (?, ?, ?, datetime('now'))`,
+        `INSERT INTO actor_keys (user_id, public_key_pem, private_key_pem, created_at) VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
       )
         .bind(user.id, publicKeyPem, await exportPrivateKey(keyPair.privateKey))
         .run();

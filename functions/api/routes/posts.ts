@@ -361,7 +361,7 @@ posts.get('/posts/trending', async (c) => {
       EXP(1.5 * LN((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))) as score
       FROM posts p
       LEFT JOIN users u ON p.user_id = u.id
-      WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at > datetime('now', '-7 days')
+      WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')
       ORDER BY score DESC, p.created_at DESC
       LIMIT ?
     `;
@@ -2519,7 +2519,7 @@ posts.post('/posts/:id/share', requireAuth, async (c) => {
       // Add share
       const shareId = nanoid();
       await c.env.DB.prepare(
-        "INSERT INTO shares (id, post_id, user_id, actor_id, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
+        "INSERT INTO shares (id, post_id, user_id, actor_id, created_at) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
       )
         .bind(shareId, postId, currentUser.id, `${c.env.BASE_URL}/api/actors/${currentUser.username}`)
         .run();

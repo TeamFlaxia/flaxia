@@ -163,7 +163,7 @@ async function loadDwellStats(
     .prepare(
       `SELECT post_id, AVG(dwell_ms) as avg_dwell, COUNT(*) as play_count
        FROM user_game_plays
-       WHERE dwell_ms > 2000 AND created_at > datetime('now', '-30 days')
+       WHERE dwell_ms > 2000 AND created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')
        GROUP BY post_id`,
     )
     .all<{ post_id: string; avg_dwell: number; play_count: number }>();
