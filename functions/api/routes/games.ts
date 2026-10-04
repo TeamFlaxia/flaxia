@@ -1,11 +1,6 @@
 import { Hono } from 'hono';
 import { getMeWithSession, getSessionToken } from '../../lib/auth';
-import {
-  applyReward as banditApplyReward,
-  computeScore as banditComputeScore,
-  project as banditProject,
-  projConfigKey,
-} from '../../lib/linucb';
+import { computeScore as banditComputeScore, project as banditProject, projConfigKey } from '../../lib/linucb';
 import { clampLimit } from '../../lib/pagination';
 import { checkRateLimit } from '../../lib/rate-limit';
 import {

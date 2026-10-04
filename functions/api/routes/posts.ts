@@ -34,17 +34,7 @@ import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
 import { batchGetFreshAndBookmarkStatus, kvCacheGet, kvCacheSet, makeCacheKey, requireAuth } from '../helpers';
 import type { ActorData, Bindings, PollOptionRow, PollRow, PostRow, Variables } from '../types';
-import {
-  applyBanditRewards,
-  cosineSimilarity,
-  getProjection,
-  loadBanditConfig,
-  loadBanditPrior,
-  loadBanditState,
-  loadDwellStats,
-  loadOrComputeInterestVector,
-  saveBanditState,
-} from './recommender';
+import { cosineSimilarity, loadOrComputeInterestVector } from './recommender';
 
 const posts = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -3942,35 +3932,6 @@ posts.get('/posts/:id', async (c) => {
   }
 });
 
-// Helper function to get threshold for a category
-function getThreshold(category: ReportCategory): number {
-  const thresholds: Record<ReportCategory, number> = {
-    spam: 3,
-    harassment: 3,
-    inappropriate: 3,
-    misinformation: 3,
-    other: 3,
-    hate_speech: 3,
-    copyright: 1,
-    csam: 1,
-    malware: 1,
-    privacy: 3,
-    nsfw_untagged: 2,
-  };
-  return thresholds[category];
-}
-
-// Helper function to get priority for a category
-function getPriority(category: ReportCategory): 'critical' | 'high' | 'normal' {
-  if (category === 'csam' || category === 'malware') {
-    return 'critical';
-  }
-  if (category === 'copyright') {
-    return 'high';
-  }
-  return 'normal';
-}
-
 // Helper function to resolve mentioned usernames to {username, user_id} objects
 async function resolveMentions(db: D1Database, mentionedUsernames: string[], currentUsername: string): Promise<string> {
   if (mentionedUsernames.length === 0) return '[]';
@@ -3998,26 +3959,6 @@ async function resolveMentions(db: D1Database, mentionedUsernames: string[], cur
       return true;
     });
   return JSON.stringify(resolved);
-}
-
-// Helper function to insert notification
-async function insertNotification(
-  db: D1Database,
-  userId: string,
-  type: 'fresh' | 'reported' | 'warned' | 'hidden',
-  postId: string,
-  actorId?: string,
-) {
-  const _messages: Record<string, string> = {
-    fresh: 'fresed your post',
-    reported: 'reported your post',
-    warned: 'Your post has been reported for {category}. It may be removed if it violates our ToS.',
-    hidden: 'Your post has been removed due to a {category} report.',
-  };
-  await db
-    .prepare('INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)')
-    .bind(nanoid(), userId, type, postId, actorId || null)
-    .run();
 }
 
 // Helper function to insert admin alert
