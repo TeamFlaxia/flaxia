@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { getMeWithSession, getSessionToken } from '../../lib/auth';
 import { sendPushToAll } from '../../lib/notify';
+import { checkRateLimit } from '../../lib/rate-limit';
 import { requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
@@ -71,6 +72,11 @@ polls.post('/polls/:pollId/vote', requireAuth, async (c) => {
   try {
     const pollId = c.req.param('pollId');
     const userId = c.get('user')?.id;
+    // Voting writes several rows per call: throttle per user so one account
+    // cannot churn vote counts across polls in a loop.
+    if (!(await checkRateLimit(c.env.CACHE, `poll:vote:${userId}`, { maxRequests: 30, windowSeconds: 60 }))) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
     const { optionId } = await c.req.json();
 
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);

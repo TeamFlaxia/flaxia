@@ -34,8 +34,12 @@ ads.get('/ads/:id/payload', async (c) => {
       return c.json({ error: 'Storage not available' }, 500);
     }
 
-    // Fetch ad to get payload_key, payload_type, and thumbnail_key
-    const ad = await c.env.DB.prepare('SELECT payload_key, payload_type, thumbnail_key FROM ads WHERE id = ?')
+    // Fetch ad to get payload_key, payload_type, and thumbnail_key.
+    // Only active ads are servable: a deactivated (e.g. policy-violating)
+    // ad must not stay fetchable by direct ID.
+    const ad = await c.env.DB.prepare(
+      'SELECT payload_key, payload_type, thumbnail_key FROM ads WHERE id = ? AND active = 1',
+    )
       .bind(adId)
       .first();
 

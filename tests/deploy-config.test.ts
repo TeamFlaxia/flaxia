@@ -63,3 +63,20 @@ test('setup docs point the migration steps at the npm scripts', async () => {
     'AGENTS.md pins npm as the documented package manager — keep the migration steps on npm run',
   );
 });
+
+test('CSP script-src stays explicit (no unsafe-eval, no scheme allowlist)', async () => {
+  const headers = await readFile(new URL('../public/_headers', import.meta.url), 'utf8');
+  const csp = headers.split('\n').find((line) => line.includes('Content-Security-Policy'));
+  assert.ok(csp, 'public/_headers must define a Content-Security-Policy');
+  const scriptSrc = /script-src ([^;]+)/.exec(csp)?.[1] ?? '';
+  assert.doesNotMatch(scriptSrc, /'unsafe-eval'/, 'eval-compiled scripts must not run in the app origin');
+  assert.doesNotMatch(
+    scriptSrc,
+    /(?:^|\s)https:(?:\s|;|$)/,
+    'a bare https: scheme lets any host run scripts — allowlist hosts instead',
+  );
+  assert.doesNotMatch(scriptSrc, /'https'/, 'quoted schemes are invalid CSP and only add noise');
+  for (const host of ['https://cdn.jsdelivr.net', 'https://unpkg.com']) {
+    assert.ok(scriptSrc.includes(host), `script-src must keep ${host} (runtime-loaded libs)`);
+  }
+});
