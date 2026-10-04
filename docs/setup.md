@@ -3,49 +3,49 @@
 ## Prerequisites
 
 - Node.js >= 18
-- pnpm >= 8.0.0
+- npm >= 10
 - Wrangler CLI (included via `wrangler` dev dependency)
 
 ## Quick Start
 
 ```bash
 # Install dependencies
-pnpm install
+npm install
 
 # Run local migrations (creates local D1 database)
 npm run migrate:local
 
 # Start dev server (build + wrangler pages dev)
-pnpm dev
+npm run dev
 ```
 
 The dev server starts at `http://localhost:8787`.
 
 ## Package Manager
 
-This project uses **pnpm** (`packageManager: "pnpm@8.0.0"` in package.json).
+Scripts run with **npm** (see AGENTS.md); the `packageManager` field is legacy.
 
 ```bash
 # Add a dependency
-pnpm add <package>
+npm install <package>
 
 # Add a dev dependency
-pnpm add -D <package>
+npm install -D <package>
 ```
 
-Do NOT use `npm install` or `yarn add`.
+Do NOT use `yarn add`.
 
 ## Dev Server Modes
 
 ```bash
 # Full build + dev server (default)
-pnpm dev
+npm run dev
 
 # Hot reload (watch mode for Vite build)
-pnpm dev:hot
+npm run dev:hot
 
 # API-only dev (skip Vite rebuild, use existing dist/)
-pnpm dev:api
+npm run dev:api
 ```
 
 ## Environment Variables
@@ -78,14 +78,14 @@ Tests use Node.js native test runner with experimental TypeScript stripping.
 
 ```bash
 # Run all tests
-pnpm test
+npm test
 
 # Run individual test suites
-pnpm test:auth
-pnpm test:posts
-pnpm test:users
-pnpm test:notifications
-pnpm test:tags
+npm test:auth
+npm test:posts
+npm test:users
+npm test:notifications
+npm test:tags
 ```
 
 ## Local Test Accounts

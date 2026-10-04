@@ -17,7 +17,8 @@ export const ALLOWED_EXTENSIONS: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
+  // NOTE: '.svg' is deliberately absent (H-4/M-5): scriptable SVG inside
+  // game ZIPs is an XSS vector. Re-adding it reopens the finding.
 
   '.ico': 'image/x-icon',
 

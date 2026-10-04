@@ -65,7 +65,7 @@ Content-Security-Policy:
   default-src 'none';
   script-src 'self';
   connect-src 'none';
-  frame-ancestors https://flaxia.com;
+  frame-ancestors https://flaxia.app;
 ```
 
 ## ZIP Execution
@@ -114,7 +114,7 @@ When iframe is closed or replaced, all blob URLs are revoked via `URL.revokeObje
 - No path traversal (`../`)
 - No absolute paths (`/`)
 - `index.html` must exist at root
-- Only allowed extensions: `.html`, `.css`, `.js`, `.wasm`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.mp3`, `.wav`, `.ogg`, `.mp4`, `.webm`, `.json`, `.txt`, `.glsl`, `.wgsl`
+- Only allowed extensions: `.html`, `.css`, `.js`, `.wasm`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.mp3`, `.wav`, `.ogg`, `.mp4`, `.webm`, `.json`, `.txt`, `.glsl`, `.wgsl` (no `.svg` — scriptable SVG, see H-4/M-5)
 
 ## R2 Storage Keys
 

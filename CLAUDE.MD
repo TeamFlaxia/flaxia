@@ -56,7 +56,7 @@ docs/                       # Developer documentation
 
 ## Security
 - ZIP validation: client-side (JSZip) + server-side (file count, path traversal, forbidden types)
-- Sandbox CSP: `default-src 'none'; script-src 'self'; connect-src 'none'; frame-ancestors https://flaxia.com`
+- Sandbox CSP: `default-src 'none'; script-src 'self'; connect-src 'none'; frame-ancestors https://flaxia.app`
 
 ## Testing
 ```bash
