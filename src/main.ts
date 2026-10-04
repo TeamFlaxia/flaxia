@@ -8,6 +8,7 @@ import type { NotificationsPage } from './components/NotificationsPage.js';
 import type { ThreadPage } from './components/ThreadPage.js';
 import type { Timeline } from './components/Timeline.js';
 import { getMe } from './lib/auth-cache.js';
+import { resolveAuthRedirect } from './lib/auth-guard.js';
 import type { BottomNavDeps } from './lib/bottom-nav-setup.js';
 import { ensureBottomNav, getBottomNav } from './lib/bottom-nav-setup.js';
 import { initContentProtection } from './lib/content-protection.js';
@@ -297,69 +298,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Mobile left nav overlay management (see src/lib/left-nav-drawer.ts)
 
     // Auth guard - redirect to login if not authenticated (only for protected routes)
+    // Route decisions live in src/lib/auth-guard.ts; checkAuth owns the session.
     const requireAuth = async () => {
       const isAuthenticated = await checkAuth();
-
-      // Check if current route is public (accessible to guests)
-      const path = window.location.pathname;
-      const cleanPath = path.replace(/\/$/, '');
-      const _urlParams = new URLSearchParams(window.location.search);
-
-      // Public routes that don't require authentication:
-      // - / (home/timeline)
-      // - /home (landing page)
-      // - /explore (with or without tag parameter)
-      // - /arcade (game arcade)
-      // - /users/:username (profile pages)
-      // - /profile/:username (profile pages - alias for /users/)
-      // - /thread/:id (thread pages)
-      // - /terms, /privacy, /about (legal pages)
-      // - /docs, /docs/:slug (docs blog)
-      // - /login, /register (auth pages)
-      const isPublicRoute =
-        cleanPath === '' ||
-        cleanPath === '/' ||
-        cleanPath === '/home' ||
-        cleanPath === '/explore' ||
-        cleanPath === '/search' ||
-        cleanPath === '/arcade' ||
-        cleanPath === '/login' ||
-        cleanPath === '/register' ||
-        cleanPath === '/terms' ||
-        cleanPath === '/privacy' ||
-        cleanPath === '/about' ||
-        cleanPath === '/docs' ||
-        cleanPath.startsWith('/docs/') ||
-        cleanPath.startsWith('/users/') ||
-        cleanPath.startsWith('/profile/') ||
-        cleanPath.startsWith('/arcade/') ||
-        cleanPath.startsWith('/thread/');
-
-      // Allow public routes for everyone
-      if (isPublicRoute) {
-        return true;
-      }
-
-      // For /notifications, redirect to arcade if not authenticated
-      if (cleanPath === '/notifications') {
-        if (!isAuthenticated) {
-          window.history.replaceState({}, '', '/arcade');
-          navigateTo('arcade');
-          return false;
-        }
-        return true;
-      }
-
-      // For all other protected routes, redirect to login if not authenticated
-      if (!isAuthenticated) {
-        // Use replaceState so the browser back button doesn't return to the
-        // protected route (which would just redirect again, causing an infinite loop)
-        window.history.replaceState({}, '', '/login');
-        navigateTo('login');
-        return false;
-      }
-
-      return true;
+      const redirect = resolveAuthRedirect(window.location.pathname, isAuthenticated);
+      if (!redirect) return true;
+      // Use replaceState so the browser back button doesn't return to the
+      // protected route (which would just redirect again, causing an infinite loop)
+      window.history.replaceState({}, '', redirect.path);
+      navigateTo(redirect.view);
+      return false;
     };
 
     // URL routing (see src/lib/router.ts)
