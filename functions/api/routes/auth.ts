@@ -160,14 +160,19 @@ auth.post('/login/start', async (c) => {
   try {
     const { email } = await c.req.json();
     if (!email) return c.json({ error: 'Email required' }, 400);
+    // #98: canonicalize before keying the per-email bucket — otherwise
+    // whitespace/case variants of one address each get a fresh bucket.
+    // The handshake itself is bound to the resolved user, not the string.
+    const canonicalEmail = typeof email === 'string' ? email.trim().toLowerCase().slice(0, 254) : '';
+    if (!canonicalEmail) return c.json({ error: 'Email required' }, 400);
 
     const ip = getClientIp(c.req.raw);
     const limitedIp = await rateLimit(c, 'auth:srp-start:ip', ip, 10, 60);
     if (limitedIp) return limitedIp;
-    const limitedEmail = await rateLimit(c, 'auth:srp-start:email', String(email).toLowerCase(), 5, 60);
+    const limitedEmail = await rateLimit(c, 'auth:srp-start:email', canonicalEmail, 5, 60);
     if (limitedEmail) return limitedEmail;
 
-    const hs = await startSrpLogin(c.env, email);
+    const hs = await startSrpLogin(c.env, canonicalEmail);
     if (!hs) return c.json({ srp: false });
 
     return c.json({ srp: true, challenge_id: hs.challengeId, salt: hs.salt, B: hs.B, srp_kdf: hs.kdf });

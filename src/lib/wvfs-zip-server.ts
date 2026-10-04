@@ -275,6 +275,11 @@ function normalizePath(path: string): string {
       }
       normalized.pop();
     } else {
+      // #91: dotfiles (e.g. .wvfs-manifest) are never game content. Refusing
+      // them at normalization closes the anonymous manifest listing.
+      if (segment.startsWith('.')) {
+        throw new Error(`Dotfiles are not servable: ${segment}`);
+      }
       if (segment.includes('\0') || /[<>:"|?*]/.test(segment)) {
         throw new Error(`Invalid path segment: ${segment}`);
       }
