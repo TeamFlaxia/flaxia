@@ -3846,11 +3846,13 @@ posts.put('/posts/:id', async (c) => {
     // Re-screen on every edit: a swapped-in image kept the old post's verdict,
     // because submitDetectNsfw skips objects already marked done. Reconciling
     // here also drops rows for images that were removed.
+    // Runs in the background like the commit path: crowd round-trips can take
+    // up to the workload timeout (120s+), which must not gate the edit response.
     const currentGif = typeof updated?.gif_key === 'string' ? updated.gif_key : null;
-    await screenPostImages(c.env.DB, c.env, postId, [
+    screenPostImages(c.env.DB, c.env, postId, [
       ...(isImageKey(currentGif) ? [currentGif] : []),
       ...imageAttachmentKeys(updated?.attachments),
-    ]);
+    ]).catch((e) => console.error('Background NSFW re-screen failed:', e));
 
     return c.json({ post: updated });
   } catch (error: unknown) {
