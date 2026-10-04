@@ -28,7 +28,7 @@ import { createPushSocket } from './lib/push-socket.js';
 import { initTheme } from './lib/theme.js';
 import { showToast } from './lib/toast.js';
 import { viewToBottomNavId } from './lib/view-nav.js';
-import { urlBase64ToUint8Array } from './lib/web-push.js';
+import { initializeWebPush } from './lib/web-push.js';
 
 interface PageComponent {
   getElement(): HTMLElement;
@@ -205,49 +205,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const connectPushWebSocket = () => pushSocket.connect();
 
     /** Register Web Push in browser (Service Worker), or skip in Tauri/Capacitor. */
-    /** Convert VAPID base64 key to Uint8Array for PushManager.subscribe(). */
-    /** Register for Web Push via Service Worker (browser only). */
-    const registerPushToken = async () => {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-        return; // not supported (Tauri or old browser)
-      }
-
-      try {
-        const reg = await navigator.serviceWorker.register('/sw.js');
-        await navigator.serviceWorker.ready;
-
-        // Get VAPID public key from server
-        const keyRes = await fetch('/api/push/vapid-key');
-        if (!keyRes.ok) return;
-        const { publicKey } = (await keyRes.json()) as { publicKey: string };
-
-        // Subscribe
-        const sub = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(publicKey),
-        });
-
-        await fetch('/api/push/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify(sub.toJSON()),
-        });
-        console.log('Web Push subscription registered');
-      } catch (err) {
-        console.log('Web Push registration not available:', err);
-      }
-    };
-
-    const initializeWebPush = async () => {
-      if (typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__)) {
-        return; // Tauri desktop/mobile — no Service Worker push needed
-      }
-      if (isCapacitorNative) {
-        return; // Capacitor mobile — no Service Worker push needed
-      }
-      await registerPushToken();
-    };
+    /** Web Push registration (see src/lib/web-push.ts). */
 
     // Capacitor ライフサイクル: アプリ復帰時に WebSocket 再接続
     if (isCapacitorNative) {
@@ -1773,7 +1731,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     // Register Service Worker for Web Push (browser) — non-blocking
-    initializeWebPush().catch(() => {});
+    initializeWebPush(isCapacitorNative).catch(() => {});
 
     deferInit(async () => {
       // Defer platform-specific notification init (not critical for first paint)
