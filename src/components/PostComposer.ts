@@ -2156,13 +2156,6 @@ export class PostComposer {
       const errorMessage = err?.message || t('composer.error_create_failed');
       showToast(`${errorMessage}${err?.details ? ` (${err.details})` : ''}`, true);
     } finally {
-      console.log('[PostComposer] finally: resetting submit state', {
-        isSubmittingBefore: this.isSubmitting,
-        textareaExists: !!this.textarea,
-        textareaValue: this.textarea?.value,
-        textareaInDOM: this.textarea ? document.contains(this.textarea) : false,
-        submitButtonInDOM: this.submitButton ? document.contains(this.submitButton) : false,
-      });
       this.isSubmitting = false;
       try {
         this.updateSubmitButton();
@@ -2287,8 +2280,6 @@ export class PostComposer {
 
   private async uploadFileDirect(file: File, uploadUrl: string): Promise<boolean> {
     try {
-      console.log('Uploading file', 'Type:', file.type, 'Size:', file.size);
-
       const response = await fetch(uploadUrl, {
         method: 'PUT',
         body: file,
@@ -2297,8 +2288,6 @@ export class PostComposer {
         },
         credentials: 'include',
       });
-
-      console.log('Upload response status:', response.status, response.statusText);
 
       if (!response.ok) {
         console.error('Upload failed:', response.status);

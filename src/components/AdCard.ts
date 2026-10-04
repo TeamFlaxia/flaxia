@@ -184,18 +184,8 @@ function mountAdmax(ad: Ad, placeholder: HTMLElement): void {
 }
 
 function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
-  // Debug logging
-  console.log('mountAdStage called with ad:', {
-    id: ad.id,
-    body_text: ad.body_text,
-    ad_type: ad.ad_type,
-    payload_type: ad.payload_type,
-    payload_key: ad.payload_key,
-  });
-
   // Handle admax ads
   if (ad.ad_type === 'admax') {
-    console.log('Ad is admax type, calling mountAdmax');
     mountAdmax(ad, placeholder);
     return;
   }
@@ -212,7 +202,6 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
 
   // Render based on payload_type
   if (ad.payload_type === null) {
-    console.log('Ad has no payload_type, showing admax iframe');
     // Body text only - show admax iframe
     // Update placeholder styles for admax
     placeholder.style.cssText = `

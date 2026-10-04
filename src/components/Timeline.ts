@@ -290,14 +290,6 @@ export class Timeline {
       this.handleReplyToggle(postId);
     }) as EventListener);
 
-    // Thread navigation events - listen for navigateToThread events from post cards
-    this.element.addEventListener('navigateToThread', ((e: Event) => {
-      const postId = (e as CustomEvent).detail.postId;
-      console.log('Timeline received navigateToThread event for postId:', postId);
-      // Let the main app handle this navigation
-      console.log('Navigate to thread:', postId);
-    }) as EventListener);
-
     // Hashtag search
     const hashtagInput = this.element.querySelector('.hashtag-search-btn') as HTMLButtonElement;
     const inputField = this.element.querySelector('.hashtag-input-field') as HTMLInputElement;
