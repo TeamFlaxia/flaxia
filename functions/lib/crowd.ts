@@ -728,10 +728,12 @@ async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Da
 /**
  * Handle an orchestrator callback. Returns the HTTP response for the route:
  * `401` for a missing or invalid callback signature, `400` for malformed
- * payloads, `200 { received: true }` for a callback we observed (including
- * verdicts we deliberately drop as stale), and `500` when an unexpected error
- * left the row unwritten — the orchestrator retries non-2xx responses, so a
- * transient D1 failure no longer loses a verdict.
+ * payloads, `200 { received: true }` for a callback we observed (a verdict we
+ * deliberately drop as stale, or an undeliverable body — the orchestrator
+ * could never deliver those successfully, so retrying them would only loop),
+ * and `500` when an unexpected error left the row unwritten — the orchestrator
+ * retries non-2xx responses, so a transient D1 failure no longer loses a
+ * verdict.
  */
 export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1Database): Promise<Response> {
   const url = new URL(request.url);
@@ -744,7 +746,13 @@ export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1
       return new Response('Forbidden', { status: 401 });
     }
 
-    const event = parseCrowdWebhook(await request.json());
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ received: true });
+    }
+    const event = parseCrowdWebhook(body);
     if (!event) return new Response('Bad Request', { status: 400 });
 
     if (event.status === 'done') {
