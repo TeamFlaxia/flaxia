@@ -153,4 +153,12 @@ describe('validateZipStructure', () => {
     const garbage = new Uint8Array(1024).fill(0x41);
     assert.throws(() => validateZipStructure(garbage), /Invalid ZIP/);
   });
+
+  it('rejects entry names containing backslashes (#94)', async () => {
+    const zipData = await createZip({
+      'index.html': '<html></html>',
+      '..\\evil.html': '<html></html>',
+    });
+    assert.throws(() => validateZipStructure(zipData), /Backslash in entry name/);
+  });
 });

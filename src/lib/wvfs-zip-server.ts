@@ -150,6 +150,12 @@ function validateZipCentralDirectory(cdData: Uint8Array, cdEntries: number): voi
         throw new Error(`Path traversal detected: ${fileName}`);
       }
 
+      // #94: backslashes are separators on Windows extractors. A name like
+      // `..\evil.html` passes the slash check above but escapes elsewhere.
+      if (fileName.includes('\\')) {
+        throw new Error(`Backslash in entry name: ${fileName}`);
+      }
+
       if (fileName.startsWith('/')) {
         throw new Error(`Absolute paths are not allowed: ${fileName}`);
       }
@@ -716,7 +722,12 @@ function rewriteLocalAbsolutePaths(htmlContent: string): string {
 }
 
 export function injectBaseTag(htmlContent: string, postId: string, subPath: string = ''): string {
-  const baseUrl = `/api/wvfs-zip/${postId}/${subPath}`;
+  // #92: postId/subPath land inside an HTML attribute. Identifiers are
+  // server-minted, but a hostile value must never break out of the quote or
+  // smuggle String.replace $-patterns into the replacement string.
+  const safeId = /^[A-Za-z0-9_-]{1,128}$/.test(postId) ? postId : 'invalid';
+  const safeSub = /^[A-Za-z0-9_.\/\-]{0,256}$/.test(subPath) ? subPath.replace(/\$+/g, '') : '';
+  const baseUrl = `/api/wvfs-zip/${safeId}/${safeSub}`;
   // ZIP games run with an opaque origin, so the browser's storage getters
   // throw. Seed the compatibility shim before game scripts run and relay
   // writes to the trusted sandbox-origin broker.
