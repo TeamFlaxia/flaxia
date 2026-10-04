@@ -57,7 +57,17 @@ report.post('/report', requireAuth, async (c) => {
       if (!dmca.sworn) {
         return c.json({ error: 'You must swear that this report is made in good faith' }, 400);
       }
+      // #142: bound DMCA free-text before storage (per-row write cap).
+      if (typeof dmca.work_description !== 'string' || dmca.work_description.trim().length === 0) {
+        return c.json({ error: 'Work description is required' }, 400);
+      }
+      if (dmca.work_description.length > 2000) {
+        return c.json({ error: 'Work description too long' }, 400);
+      }
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (typeof dmca.reporter_email !== 'string' || dmca.reporter_email.length > 254) {
+        return c.json({ error: 'Invalid email format' }, 400);
+      }
       if (!emailRegex.test(dmca.reporter_email)) {
         return c.json({ error: 'Invalid email format' }, 400);
       }
