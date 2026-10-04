@@ -122,7 +122,10 @@ ads.get('/ads/active', async (c) => {
     // Shuffle results in JS
     const shuffled = [...(result.results || [])].sort(() => Math.random() - 0.5);
 
-    return c.json({ ads: shuffled });
+    // Public, low-churn inventory: safe for short edge caching (success only).
+    return c.json({ ads: shuffled }, 200, {
+      'Cache-Control': 'public, max-age=60',
+    });
   } catch (error: unknown) {
     const err = error as { message?: string };
     console.error('Get active ads error:', error);
