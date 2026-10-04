@@ -144,6 +144,13 @@ ads.post('/ads/:id/impression', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
+    // #71: count only for a live ad. Otherwise any id (including removed
+    // ones) burns a D1 write per call with no observable row change.
+    const live = await c.env.DB.prepare('SELECT 1 FROM ads WHERE id = ? AND active = 1').bind(adId).first();
+    if (!live) {
+      return c.json({ error: 'Ad not found' }, 404);
+    }
+
     const result = await c.env.DB.prepare('UPDATE ads SET impressions = impressions + 1 WHERE id = ?').bind(adId).run();
 
     if (!result.success) {
@@ -172,6 +179,12 @@ ads.post('/ads/:id/click', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
+    // #71: same liveness guard as impressions.
+    const live = await c.env.DB.prepare('SELECT 1 FROM ads WHERE id = ? AND active = 1').bind(adId).first();
+    if (!live) {
+      return c.json({ error: 'Ad not found' }, 404);
+    }
+
     const result = await c.env.DB.prepare('UPDATE ads SET clicks = clicks + 1 WHERE id = ?').bind(adId).run();
 
     if (!result.success) {
@@ -196,12 +209,19 @@ ads.post('/ads/:id/interaction', async (c) => {
     }
     const adId = c.req.param('id');
     const { duration_ms } = await c.req.json();
-    if (typeof duration_ms !== 'number' || !Number.isFinite(duration_ms) || duration_ms < 0) {
+    // #71: durations are client-asserted — bound both ends (a day is absurd
+    // already) and refuse orphan rows for dead ad ids like the counters do.
+    if (typeof duration_ms !== 'number' || !Number.isFinite(duration_ms) || duration_ms < 0 || duration_ms > 86400000) {
       return c.json({ error: 'Invalid duration' }, 400);
     }
 
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const liveInteraction = await c.env.DB.prepare('SELECT 1 FROM ads WHERE id = ? AND active = 1').bind(adId).first();
+    if (!liveInteraction) {
+      return c.json({ error: 'Ad not found' }, 404);
     }
 
     const result = await c.env.DB.prepare('INSERT INTO ad_interactions (id, ad_id, duration_ms) VALUES (?, ?, ?)')
@@ -232,6 +252,12 @@ ads.post('/ads/:id/play', async (c) => {
 
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);
+    }
+
+    // #71: same liveness guard as the other metric writes.
+    const livePlay = await c.env.DB.prepare('SELECT 1 FROM ads WHERE id = ? AND active = 1').bind(adId).first();
+    if (!livePlay) {
+      return c.json({ error: 'Ad not found' }, 404);
     }
 
     // Record a 0-duration interaction to track play count
