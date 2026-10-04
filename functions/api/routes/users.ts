@@ -1312,9 +1312,8 @@ users.delete('/users/me', requireAuth, async (c) => {
 
     return c.json({ success: true });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Delete account error:', error);
-    return c.json({ error: 'Failed to delete account', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to delete account' }, 500);
   }
 });
 

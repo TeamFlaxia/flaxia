@@ -96,9 +96,8 @@ multiplayer.post('/rooms', requireAuth, async (c) => {
       201,
     );
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Create room error:', error);
-    return c.json({ error: 'Failed to create room', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to create room' }, 500);
   }
 });
 
@@ -132,9 +131,8 @@ multiplayer.get('/rooms', requireAuth, async (c) => {
 
     return c.json({ rooms: result.results || [] });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('List rooms error:', error);
-    return c.json({ error: 'Failed to list rooms', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to list rooms' }, 500);
   }
 });
 
@@ -179,9 +177,8 @@ multiplayer.get('/rooms/:id', requireAuth, async (c) => {
 
     return c.json({ room, participants: participantsResult.results || [] });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Get room error:', error);
-    return c.json({ error: 'Failed to get room', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to get room' }, 500);
   }
 });
 
@@ -233,9 +230,8 @@ multiplayer.post('/rooms/:id/join', requireAuth, async (c) => {
       wsUrl: `/api/ws/multiplayer?roomId=${roomId}&gameId=${room.game_id as string}`,
     });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Join room error:', error);
-    return c.json({ error: 'Failed to join room', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to join room' }, 500);
   }
 });
 
@@ -254,9 +250,8 @@ multiplayer.post('/rooms/:id/leave', requireAuth, async (c) => {
 
     return c.json({ success: true });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Leave room error:', error);
-    return c.json({ error: 'Failed to leave room', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to leave room' }, 500);
   }
 });
 
@@ -336,9 +331,8 @@ multiplayer.post('/matchmaking', requireAuth, async (c) => {
 
     return c.json({ error: 'Unknown action' }, 400);
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Matchmaking error:', error);
-    return c.json({ error: 'Failed to process matchmaking', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to process matchmaking' }, 500);
   }
 });
 
@@ -394,9 +388,8 @@ multiplayer.post('/scores', requireAuth, async (c) => {
 
     return c.json({ id, score, label: label || null }, 201);
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Score submit error:', error);
-    return c.json({ error: 'Failed to submit score', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to submit score' }, 500);
   }
 });
 
@@ -432,9 +425,8 @@ multiplayer.get('/scores/:gameId', async (c) => {
 
     return c.json({ scores: result.results || [] });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Leaderboard error:', error);
-    return c.json({ error: 'Failed to fetch leaderboard', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to fetch leaderboard' }, 500);
   }
 });
 

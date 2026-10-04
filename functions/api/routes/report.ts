@@ -188,9 +188,8 @@ report.post('/report', requireAuth, async (c) => {
 
     return c.json({ success: true, report_id: reportId });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Report error:', error);
-    return c.json({ error: 'Failed to report post', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to report post' }, 500);
   }
 });
 

@@ -44,9 +44,8 @@ LIMIT 5
       'Cache-Control': 'public, max-age=60',
     });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Trending tags error:', error);
-    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 
@@ -78,9 +77,8 @@ tags.get('/tags/suggest', async (c) => {
       'Cache-Control': 'public, max-age=30',
     });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Tag suggest error:', error);
-    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 

@@ -128,9 +128,8 @@ posts.post('/posts', requireAuth, async (c) => {
     }
     return c.json({ id: postId }, 201);
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Post creation error:', error);
-    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 
@@ -305,9 +304,8 @@ posts.get('/posts', async (c) => {
 
     return c.json({ posts });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Posts fetch error:', error);
-    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 
@@ -846,9 +844,8 @@ posts.get('/posts/recommended', async (c) => {
 
     return c.json({ posts: enrichedPosts, next_cursor: nextCursor });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Recommended posts error:', error);
-    return c.json({ error: 'Internal server error', details: err.message }, 500);
+    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 
@@ -959,9 +956,8 @@ posts.get('/posts/:id/similar', async (c) => {
 
     return c.json({ posts });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Similar posts error:', error);
-    return c.json({ error: 'Internal server error', details: err.message }, 500);
+    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 
@@ -1122,9 +1118,8 @@ posts.post('/posts/:id/prepare-attachment', requireAuth, async (c) => {
 
     return c.json({ uploadUrl, key: storageKey, keyType });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Prepare attachment error:', error);
-    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 
@@ -1213,9 +1208,8 @@ posts.post('/posts/:id/prepare-media', requireAuth, async (c) => {
     const position = parseAttachmentKey(key)?.position ?? 0;
     return c.json({ uploadUrl: `${new URL(c.req.url).origin}/api/upload/${key}`, key, kind, position });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Prepare media error:', error);
-    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 
@@ -1370,9 +1364,8 @@ posts.post('/posts/prepare', requireAuth, async (c) => {
 
     return c.json(resp);
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Prepare post error:', error);
-    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 
@@ -1909,9 +1902,8 @@ posts.post('/posts/commit', requireAuth, async (c) => {
 
     return c.json({ post: fullPost });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Post creation error:', error);
-    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 
@@ -2132,9 +2124,8 @@ posts.post('/posts/:id/reactions', requireAuth, async (c) => {
       reactions: postRow.reactions || [],
     });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Reaction toggle error:', error);
-    return c.json({ error: 'Failed to toggle reaction', details: err.message }, 500);
+    return c.json({ error: 'Failed to toggle reaction' }, 500);
   }
 });
 
@@ -2434,9 +2425,8 @@ posts.post('/posts/fresh/batch', requireAuth, async (c) => {
       return c.json({ unfreshed: post_ids });
     }
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Batch fresh error:', error);
-    return c.json({ error: 'Batch fresh operation failed', details: err.message }, 500);
+    return c.json({ error: 'Batch fresh operation failed' }, 500);
   }
 });
 
@@ -2523,9 +2513,8 @@ posts.post('/posts/:id/share', requireAuth, async (c) => {
       return c.json({ shared: true, share_id: shareId });
     }
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Share error:', error);
-    return c.json({ error: 'Share operation failed', details: err.message }, 500);
+    return c.json({ error: 'Share operation failed' }, 500);
   }
 });
 
@@ -2621,9 +2610,8 @@ posts.get('/posts/:id/replies', async (c) => {
 
     return c.json({ root: parentPost, replies });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Thread fetch error:', error);
-    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 
@@ -2734,9 +2722,8 @@ posts.get('/posts/:id/thread', async (c) => {
 
     return c.json({ root: rootPost, replies });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Thread fetch error:', error);
-    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 
@@ -3018,7 +3005,7 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
           cause: err.cause,
           name: err.name,
         });
-        return c.json({ error: 'Database error', details: err.message || 'Unknown error' }, 500);
+        return c.json({ error: 'Database error' }, 500);
       }
     }
 
@@ -3192,7 +3179,7 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       postId: postId || 'unknown',
       replyId: err.replyId || 'unknown',
     });
-    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 
@@ -3335,9 +3322,8 @@ posts.get('/search', async (c) => {
     await kvCacheSet(c, cacheKey, responseData, 60);
     return c.json(responseData);
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Search error:', error);
-    return c.json({ error: 'Search failed', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Search failed' }, 500);
   }
 });
 
@@ -3569,9 +3555,8 @@ posts.delete('/posts/:id', requireAuth, async (c) => {
 
     return c.json({ success: true });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Delete post error:', error);
-    return c.json({ error: 'Failed to delete post', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to delete post' }, 500);
   }
 });
 
@@ -3815,9 +3800,8 @@ posts.put('/posts/:id', async (c) => {
 
     return c.json({ post: updated });
   } catch (error: unknown) {
-    const err = error as { message: string; stack?: string };
     console.error('Edit post error:', error);
-    return c.json({ error: 'Failed to edit post', details: err.message || String(error) }, 500);
+    return c.json({ error: 'Failed to edit post' }, 500);
   }
 });
 
@@ -3889,9 +3873,8 @@ posts.get('/posts/:id', async (c) => {
 
     return c.json(post);
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Get post error:', error);
-    return c.json({ error: 'Failed to get post', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to get post' }, 500);
   }
 });
 
