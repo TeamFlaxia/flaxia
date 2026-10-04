@@ -1,0 +1,54 @@
+# status.flaxia.app 用 wrangler 設定の雛形。
+#
+# これは雛形であり wrangler は読み込まない（`--config status-worker/wrangler.toml` を
+# 参照する package.json のスクリプトは、このファイルをコピーするまで動かない）。
+#
+# 背景: status-worker 一式（wrangler.toml / src/index.ts / src/checks.ts /
+# public/ / migrations/）はコミット 0f0eadf "Remove status-worker and flaxia-status
+# deployment" で削除済み。現在リポジトリに残っているのはテスト用の純粋関数
+# src/transition.ts だけなので、wrangler.toml を置くだけではデプロイは成功しない。
+#
+# 再開する場合:
+#   1. cp status-worker/wrangler.toml.example status-worker/wrangler.toml
+#   2. npx wrangler d1 create flaxia-status   # 出力された database_id を下に記入
+#   3. ワーカー実装・public/・migrations/ を復元する
+#      （git show 0f0eadf^:status-worker/src/index.ts などで取得できる。
+#        ただし transition.ts は 9b7524b で書き直されており、旧 index.ts とは
+#        bucketAvailability の引数順が異なるため、そのままでは稼働率の集計がずれる）
+#   4. npx wrangler secret put CROWD_API_KEY        --config status-worker/wrangler.toml
+#      npx wrangler secret put STATUS_TEST_EMAIL    --config status-worker/wrangler.toml
+#      npx wrangler secret put STATUS_TEST_PASSWORD --config status-worker/wrangler.toml
+#   5. npm run migrate:status && npm run deploy:status
+#
+# 以下は削除前の設定（cafb7e0）から復元した値。database_id は既存 DB が
+# 残っている場合のみ再利用できる（削除前の値: deda1482-d5f0-44a1-a120-e6fb9b31c269）。
+
+name = "flaxia-status"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+routes = [
+  { pattern = "status.flaxia.app/*", zone_name = "flaxia.app" }
+]
+
+[triggers]
+crons = ["*/1 * * * *"]
+
+# Static status page (index.html / styles.css / app.js)
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "none"
+
+# D1 database for check state, history, incidents
+[[d1_databases]]
+binding = "DB"
+database_name = "flaxia-status"
+database_id = "<your-d1-database-id>"
+
+[vars]
+BASE_URL = "https://flaxia.app"
+SANDBOX_URL = "https://sandbox.flaxia.app"
+CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
+STATUS_TEST_USERNAME = "devstatus"
