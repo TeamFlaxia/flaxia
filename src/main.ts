@@ -29,7 +29,7 @@ import { fetchNotifications, invalidateNotificationsCache } from './lib/notifica
 import { hidePageLoader, showPageLoader, showPageLoaderFailure } from './lib/page-loader.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
 import { createPushSocket } from './lib/push-socket.js';
-import { parseCurrentRoute } from './lib/router.js';
+import { parseCurrentRoute, type RouteInfo, type RouteView } from './lib/router.js';
 import { initTheme } from './lib/theme.js';
 import { showToast } from './lib/toast.js';
 import { viewToBottomNavId } from './lib/view-nav.js';
@@ -305,25 +305,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Navigate to view
     const navigateTo = async (
-      view:
-        | 'timeline'
-        | 'thread'
-        | 'login'
-        | 'register'
-        | 'profile'
-        | 'explore'
-        | 'search'
-        | 'notifications'
-        | 'bookmarks'
-        | 'terms'
-        | 'privacy'
-        | 'about'
-        | 'docs'
-        | 'admin'
-        | 'settings'
-        | 'arcade'
-        | 'billing-success'
-        | 'billing-canceled',
+      view: RouteView,
       postId?: string,
       username?: string,
       tag?: string,
@@ -1302,40 +1284,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
 
     async function safeNavigate(
-      view: string,
+      view: RouteView,
       postId?: string,
       username?: string,
       tag?: string,
-      adminTab?: string,
+      adminTab?: RouteInfo['adminTab'],
       searchQuery?: string,
-      searchType?: string,
+      searchType?: RouteInfo['searchType'],
     ) {
       try {
-        await navigateTo(
-          view as
-            | 'timeline'
-            | 'thread'
-            | 'login'
-            | 'register'
-            | 'profile'
-            | 'explore'
-            | 'search'
-            | 'notifications'
-            | 'bookmarks'
-            | 'terms'
-            | 'privacy'
-            | 'about'
-            | 'docs'
-            | 'admin'
-            | 'settings'
-            | 'arcade',
-          postId,
-          username,
-          tag,
-          adminTab as 'alerts' | 'hidden' | 'users' | 'counter',
-          searchQuery,
-          searchType as 'posts' | 'users' | 'arcade',
-        );
+        await navigateTo(view, postId, username, tag, adminTab, searchQuery, searchType);
       } catch (e) {
         console.error('Navigation failed:', e);
         // Show error on the loading overlay if it's visible, otherwise reload
@@ -1363,13 +1321,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.addEventListener('spaNavigate', async (e: Event) => {
       const detail = (
         e as CustomEvent<{
-          view: string;
+          view: RouteView;
           postId?: string;
           username?: string;
           tag?: string;
-          adminTab?: string;
+          adminTab?: RouteInfo['adminTab'];
           searchQuery?: string;
-          searchType?: string;
+          searchType?: RouteInfo['searchType'];
         }>
       ).detail;
       await safeNavigate(
