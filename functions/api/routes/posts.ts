@@ -1458,7 +1458,9 @@ posts.post('/posts/commit', requireAuth, async (c) => {
     let swfKey: string | undefined;
     let text: string;
     let requestHashtags: string[] = [];
-    let pollData: any;
+    let pollData:
+      | { question?: string; options?: string[]; multipleChoice?: boolean; endsAt?: string | null }
+      | undefined;
     let zipKey: string | undefined;
     let thumbnailKey: string | undefined;
     let quotedPostId: string | undefined;

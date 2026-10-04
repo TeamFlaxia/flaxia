@@ -115,7 +115,16 @@ export function parseRange(rangeHeader: string, fileSize: number): { start: numb
 /**
  * Serve an R2 object, honouring HTTP Range requests.
  */
-export async function handleRangeRequest(c: any, key: string, object: any, contentType: string): Promise<Response> {
+type R2ObjectLike = { size?: number; body?: BodyInit | null };
+
+type RouteContext = Context<{ Bindings: Bindings; Variables: Variables }>;
+
+export async function handleRangeRequest(
+  c: RouteContext,
+  key: string,
+  object: R2ObjectLike,
+  contentType: string,
+): Promise<Response> {
   const fileSize = object.size || 0;
   const rangeHeader = c.req.header('Range');
 
@@ -166,7 +175,7 @@ export async function handleRangeRequest(c: any, key: string, object: any, conte
 }
 
 // KV cache helpers
-export async function kvCacheGet<T>(c: any, key: string): Promise<T | null> {
+export async function kvCacheGet<T>(c: RouteContext, key: string): Promise<T | null> {
   try {
     const raw = await c.env.CACHE?.get(key);
     if (raw) return JSON.parse(raw) as T;
@@ -176,7 +185,7 @@ export async function kvCacheGet<T>(c: any, key: string): Promise<T | null> {
   return null;
 }
 
-export async function kvCacheSet(c: any, key: string, data: unknown, ttl: number): Promise<void> {
+export async function kvCacheSet(c: RouteContext, key: string, data: unknown, ttl: number): Promise<void> {
   try {
     await c.env.CACHE?.put(key, JSON.stringify(data), { expirationTtl: ttl });
   } catch (e) {
@@ -184,7 +193,7 @@ export async function kvCacheSet(c: any, key: string, data: unknown, ttl: number
   }
 }
 
-export function makeCacheKey(prefix: string, c: any, extra?: string, includeUser = true): string {
+export function makeCacheKey(prefix: string, c: RouteContext, extra?: string, includeUser = true): string {
   const token = getSessionToken(c.req.raw);
   const userId = token ? token.substring(0, 12) : 'anon';
   const query = c.req.raw.url.split('?')[1] || '';

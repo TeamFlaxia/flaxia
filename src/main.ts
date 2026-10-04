@@ -13,6 +13,7 @@ import { getMe } from './lib/auth-cache.js';
 import { initContentProtection } from './lib/content-protection.js';
 import { canRunFlaxiaNode, initCrowdNode, notifyCrowdConsentChanged } from './lib/crowd-node.js';
 import { initI18n } from './lib/i18n.js';
+import { lazyCreateBottomNav, lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from './lib/lazy-nav.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
 import { initTheme } from './lib/theme.js';
 
@@ -2178,50 +2179,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const leftNavSignUpHandler = (): void => {
       window.history.pushState({}, '', '/register');
       navigateTo('register');
-    };
-
-    // Lazy-loaded component factories (deferred from initial bundle)
-    let _createBottomNav: typeof import('./components/BottomNav.js')['createBottomNav'] | null = null;
-    let _createLeftNav: typeof import('./components/LeftNav.js')['createLeftNav'] | null = null;
-    let _updateLeftNavUser: typeof import('./components/LeftNav.js')['updateLeftNavUser'] | null = null;
-    let _createRightPanel: typeof import('./components/RightPanel.js')['createRightPanel'] | null = null;
-
-    const lazyCreateBottomNav: (
-      ...args: Parameters<typeof import('./components/BottomNav.js')['createBottomNav']>
-    ) => Promise<ReturnType<typeof import('./components/BottomNav.js')['createBottomNav']>> = async (...args) => {
-      if (!_createBottomNav) {
-        const mod = await import('./components/BottomNav.js');
-        _createBottomNav = mod.createBottomNav;
-      }
-      return _createBottomNav(...args);
-    };
-
-    const lazyCreateLeftNav: (
-      ...args: Parameters<typeof import('./components/LeftNav.js')['createLeftNav']>
-    ) => Promise<ReturnType<typeof import('./components/LeftNav.js')['createLeftNav']>> = async (...args) => {
-      if (!_createLeftNav) {
-        const mod = await import('./components/LeftNav.js');
-        _createLeftNav = mod.createLeftNav;
-        _updateLeftNavUser = mod.updateLeftNavUser;
-      }
-      return _createLeftNav(...args);
-    };
-
-    const lazyUpdateLeftNavUser: typeof import('./components/LeftNav.js')['updateLeftNavUser'] = (...args) => {
-      if (!_updateLeftNavUser) {
-        throw new Error('updateLeftNavUser not yet loaded');
-      }
-      return _updateLeftNavUser(...args);
-    };
-
-    const lazyCreateRightPanel: (
-      ...args: Parameters<typeof import('./components/RightPanel.js')['createRightPanel']>
-    ) => Promise<ReturnType<typeof import('./components/RightPanel.js')['createRightPanel']>> = async (...args) => {
-      if (!_createRightPanel) {
-        const mod = await import('./components/RightPanel.js');
-        _createRightPanel = mod.createRightPanel;
-      }
-      return _createRightPanel(...args);
     };
 
     async function safeNavigate(
