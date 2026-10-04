@@ -168,11 +168,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         },
       },
     );
-    const connectPushWebSocket = () => pushSocket.connect();
-
-    /** Register Web Push in browser (Service Worker), or skip in Tauri/Capacitor. */
-    /** Web Push registration (see src/lib/web-push.ts). */
-
+    // WebSocket 経由のプッシュ通知を受け取り OS 通知を表示する
+    // (接続管理・backoff は src/lib/push-socket.ts)
     // Capacitor ライフサイクル: アプリ復帰時に WebSocket 再接続
     if (isCapacitorNative) {
       try {
@@ -181,7 +178,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (isActive) {
             // フォアグラウンド復帰時、WebSocket を再接続 & 未読カウント即時取得
             // (connect は接続中なら何もしない)
-            connectPushWebSocket();
+            pushSocket.connect();
             refreshNotificationBadges();
           }
         });
@@ -222,15 +219,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       window.__tauriDesktopPoll = refreshNotificationBadges;
     }
 
-    const startNotificationPolling = () => {
-      // 初回一度だけ HTTP 取得（以降は WebSocket でリアルタイム更新）
-      refreshNotificationBadges();
-    };
-
-    const stopNotificationPolling = () => {
-      // polling は廃止。WebSocket 切断時は再接続時に onopen で再取得する
-    };
-
     // Check current user session
     const checkAuth = async () => {
       try {
@@ -260,10 +248,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           (await ensureBottomNav(bottomNavDeps())).updateUser(currentUser);
 
           // 初回の未読通知数を取得（以降は WebSocket でリアルタイム更新）
-          startNotificationPolling();
+          refreshNotificationBadges();
 
           // WebSocket でリアルタイム通知受信（全プラットフォーム）
-          connectPushWebSocket();
+          pushSocket.connect();
 
           return true;
         }
@@ -286,7 +274,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       // If user was logged in and now is not, they were logged out
       if (wasLoggedIn) {
         console.log('User session expired - redirecting to login');
-        stopNotificationPolling();
         window.history.replaceState({}, '', '/login');
         navigateTo('login');
         return false;
