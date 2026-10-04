@@ -250,6 +250,11 @@ auth.post('/reauth/verify', requireAuth, async (c) => {
 // and this handler only stores the result.
 auth.post('/upgrade-srp', requireAuth, async (c) => {
   try {
+    // #90: upgrades mint long-lived credentials — throttle per account so a
+    // stolen session cannot be used for unbounded verifier swapping.
+    const limiterUserId = c.get('user')?.id ?? getClientIp(c.req.raw);
+    const limited = await rateLimit(c, 'auth:upgrade-srp', limiterUserId, 10, 3600);
+    if (limited) return limited;
     const { srp_salt, srp_verifier, srp_group, srp_kdf, current_srp } = await c.req.json();
     if (!srp_salt || !srp_verifier || !srp_group || !srp_kdf) {
       return c.json({ error: 'Missing SRP parameters' }, 400);
