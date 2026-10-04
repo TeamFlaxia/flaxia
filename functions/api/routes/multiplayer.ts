@@ -306,14 +306,18 @@ multiplayer.post('/matchmaking', requireAuth, async (c) => {
         if (!data.players.some((p) => p.userId === user.id)) {
           return c.json({ error: 'Forbidden' }, 403);
         }
-        // Create a room for the matched players
+        // The consuming caller is the only player who receives the roomId,
+        // so it must also be the recorded host. Pinning the host to
+        // players[0] would leave the room unstartable when a later-queued
+        // player wins the polling race (only the caller knows the room,
+        // and only the host may start it).
         const roomId = crypto.randomUUID();
         const now = new Date().toISOString();
         await c.env.DB.prepare(`
           INSERT INTO multiplayer_rooms (id, game_id, host_id, status, max_players, is_public, created_at)
           VALUES (?, ?, ?, 'lobby', ?, 0, ?)
         `)
-          .bind(roomId, gameId, data.players[0].userId, data.players.length, now)
+          .bind(roomId, gameId, user.id, data.players.length, now)
           .run();
 
         for (const p of data.players) {
@@ -321,7 +325,7 @@ multiplayer.post('/matchmaking', requireAuth, async (c) => {
             INSERT INTO multiplayer_room_participants (room_id, user_id, username, display_name, avatar_key, joined_at, is_host)
             VALUES (?, ?, ?, NULL, NULL, ?, ?)
           `)
-            .bind(roomId, p.userId, p.username, now, p.userId === data.players[0].userId ? 1 : 0)
+            .bind(roomId, p.userId, p.username, now, p.userId === user.id ? 1 : 0)
             .run();
         }
 
