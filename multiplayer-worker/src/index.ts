@@ -59,6 +59,11 @@ type ServerMessage =
 
 const INACTIVITY_TIMEOUT_MS = 300_000;
 const LOBBY_TIMEOUT_MS = 1_800_000;
+// #120: inbound frame and payload ceilings. Broadcast multiplies every byte
+// by the room size, so unbounded payloads are a ready-made amplifier.
+const MAX_WS_MESSAGE_BYTES = 64_000;
+const MAX_RELAY_PAYLOAD_BYTES = 8_000;
+const MAX_CHAT_MESSAGE_LENGTH = 500;
 
 export class MultiplayerRoom {
   private ctx: DurableObjectState;
@@ -251,6 +256,9 @@ export class MultiplayerRoom {
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== 'string') return;
+    // #120: bound inbound frames — an unchecked multi-MB JSON would be
+    // amplified N× by broadcast to every other socket in the room.
+    if (message.length > MAX_WS_MESSAGE_BYTES) return;
 
     let data: ClientMessage;
     try {
@@ -258,14 +266,19 @@ export class MultiplayerRoom {
     } catch {
       return;
     }
+    if (!data || typeof data.type !== 'string') return;
 
     const player = this.findPlayerByWs(ws);
     if (!player) return;
 
+    // #145: any message proves liveness — without this refresh the room
+    // self-destructs ~5 minutes after creation regardless of activity.
+    player.connectedAt = Date.now();
     this.setInactivityAlarm();
 
     switch (data.type) {
       case 'ready':
+        if (typeof data.ready !== 'boolean') return;
         player.isReady = data.ready;
         this.broadcast({ type: 'player_ready', userId: player.userId, ready: data.ready });
         break;
@@ -284,11 +297,21 @@ export class MultiplayerRoom {
         break;
 
       case 'input':
+        // Game inputs relay at play frequency: bound the payload, not the rate.
+        if (typeof data.timestamp !== 'number' || JSON.stringify(data.input).length > MAX_RELAY_PAYLOAD_BYTES) {
+          return;
+        }
         this.broadcast({ type: 'player_input', userId: player.userId, input: data.input }, player.userId);
         break;
 
       case 'chat':
-        this.broadcast({ type: 'chat', userId: player.userId, username: player.username, message: data.message });
+        if (typeof data.message !== 'string' || data.message.length === 0) return;
+        this.broadcast({
+          type: 'chat',
+          userId: player.userId,
+          username: player.username,
+          message: data.message.slice(0, MAX_CHAT_MESSAGE_LENGTH),
+        });
         break;
 
       case 'request_state':
@@ -312,10 +335,16 @@ export class MultiplayerRoom {
         break;
 
       case 'signal':
+        // Signals may only go to a current room member, and the envelope is
+        // bounded — otherwise anyone could pump arbitrary data at anyone.
+        if (typeof data.targetUserId !== 'string' || !this.players.has(data.targetUserId)) return;
+        if (!data.signal || typeof data.signal !== 'object') return;
+        if (JSON.stringify(data.signal).length > MAX_RELAY_PAYLOAD_BYTES) return;
         this.sendTo(data.targetUserId, { type: 'signal', userId: player.userId, signal: data.signal });
         break;
 
       case 'peer_data':
+        if (JSON.stringify(data.data).length > MAX_RELAY_PAYLOAD_BYTES) return;
         this.broadcast({ type: 'peer_data', userId: player.userId, data: data.data }, player.userId);
         break;
     }
