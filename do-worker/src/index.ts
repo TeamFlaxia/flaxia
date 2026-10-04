@@ -1,5 +1,8 @@
 /// <reference types="@cloudflare/workers-types" />
 
+// #110: dispatch payload ceiling (notification + push payload, with margin).
+const MAX_DISPATCH_BYTES = 16_000;
+
 export class NotificationStream {
   private ctx: DurableObjectState;
 
@@ -24,7 +27,23 @@ export class NotificationStream {
     }
 
     if (request.method === 'POST') {
+      // #110: the DO only speaks its own notification protocol. Reachable
+      // solely via worker bindings (per-user stub from session context or
+      // server-side dispatch), but a compromised caller must still not be
+      // able to blast arbitrary bytes to every socket in the namespace.
       const body = await request.text();
+      if (body.length > MAX_DISPATCH_BYTES) {
+        return new Response('Payload too large', { status: 413 });
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        return new Response('Invalid JSON', { status: 400 });
+      }
+      if (!parsed || typeof parsed !== 'object' || (parsed as { type?: unknown }).type !== 'notification') {
+        return new Response('Unknown message type', { status: 400 });
+      }
       const websockets = this.ctx.getWebSockets();
       for (const ws of websockets) {
         try {
