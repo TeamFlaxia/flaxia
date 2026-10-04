@@ -3835,7 +3835,7 @@ posts.get('/posts/:id', async (c) => {
     }
 
     // Check if post is hidden or not published - allow admin bypass
-    const isPostAdmin = isAdmin(c.env, c.get('user')?.username ?? '');
+    const isPostAdmin = isAdmin(c.env, c.get('user') ?? null);
     if ((post.hidden || (post.status && post.status !== 'published')) && !isPostAdmin) {
       return c.json({ error: 'Gone' }, 410);
     }

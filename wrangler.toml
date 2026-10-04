@@ -34,7 +34,11 @@ CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
 # but recorded as `skipped / scan_image_unconfigured` instead of being scanned.
 # FILE_SCAN_CLAMAV_IMAGE = "https://<host>/<path>/clamav.wasm"
 # FILE_SCAN_VIDEO_PHASH_IMAGE = "https://<host>/<path>/flaxia-video-phash.wasm"
-ADMIN_USERNAMES = "remydrescarlet"
+# #134: admin rights live on users.role now. This allowlist is only a
+# bootstrap fallback — leave it empty once the admin role is assigned
+# (wrangler d1 execute DB --remote --command "UPDATE users SET role='admin' WHERE username='<name>'").
+# Never commit a real username here: the value is public in the repo.
+ADMIN_USERNAMES = ""
 STRIPE_PRICE_FLXIA_PLUS = "price_1UI3sxGMn6YcUp3x8rC58pdt"  # Stripe Price ID は公開識別子なので vars で管理（secret ではない）
 
 
