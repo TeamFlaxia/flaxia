@@ -450,6 +450,15 @@ export async function ensureFileInWvfs(
   if (!cdObj) return false;
   const cdData = new Uint8Array(await cdObj.arrayBuffer());
 
+  // #80: the serve path must enforce the same archive policy as the upload
+  // and background-extract paths. Reject banned entries before indexing.
+  try {
+    validateZipCentralDirectory(cdData, eocd.cdEntries);
+  } catch (error) {
+    console.error(`ensureFileInWvfs: ZIP policy violation for post ${postId}:`, error);
+    return false;
+  }
+
   const index = parseCentralDirectory(cdData);
   const normalizedPath = normalizePath(filePath);
   let indexEntry = findFileInIndex(index, normalizedPath);
@@ -509,6 +518,14 @@ export async function extractFileFromZip(
   const cdObj = await bucket.get(zipKey, { range: { offset: eocd.cdOffset, length: eocd.cdSize } });
   if (!cdObj) return null;
   const cdData = new Uint8Array(await cdObj.arrayBuffer());
+
+  // #80: same archive policy as every other ZIP entry point.
+  try {
+    validateZipCentralDirectory(cdData, eocd.cdEntries);
+  } catch (error) {
+    console.error(`extractFileFromZip: ZIP policy violation for ${zipKey}:`, error);
+    return null;
+  }
 
   const index = parseCentralDirectory(cdData);
   const normalizedPath = normalizePath(filePath);

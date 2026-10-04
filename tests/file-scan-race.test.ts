@@ -152,6 +152,18 @@ describe('file scan verdict races', () => {
     assert.equal(await isKeyBlocked(cache, key, db), true);
   });
 
+  it('fails closed when the verdict cannot be verified (#81)', async () => {
+    const { db } = testDb();
+    await ensureFileScansTable(db);
+    assert.equal(await isKeyBlocked(undefined, 'gif/x/0.png', db), true, 'missing KV binding must withhold');
+    const brokenCache = {
+      async get() {
+        throw new Error('kv down');
+      },
+    } as unknown as KVNamespace;
+    assert.equal(await isKeyBlocked(brokenCache, 'gif/x/0.png', db), true, 'KV read error must withhold');
+  });
+
   it('rejects unsigned callbacks on a non-local instance (no fail-open)', async () => {
     const cache = memoryCache();
     const { db } = testDb();

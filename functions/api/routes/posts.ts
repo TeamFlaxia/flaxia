@@ -4184,8 +4184,24 @@ posts.post('/posts/:id/counter-notice', requireAuth, async (c) => {
       consent_jurisdiction: boolean;
     };
 
-    if (!name || !email || !address || !phone) {
+    // Bound untrusted filer input before storage (stored-XSS hardening, #114;
+    // also caps per-row write size). Values are rendered with textContent
+    // admin-side, but length/format gates keep the table abuse-resistant.
+    const cleanName = typeof name === 'string' ? name.trim() : '';
+    const cleanEmail = typeof email === 'string' ? email.trim() : '';
+    const cleanAddress = typeof address === 'string' ? address.trim() : '';
+    const cleanPhone = typeof phone === 'string' ? phone.trim() : '';
+    if (!cleanName || !cleanEmail || !cleanAddress || !cleanPhone) {
       return c.json({ error: 'Name, email, address, and phone are required' }, 400);
+    }
+    if (
+      cleanName.length > 100 ||
+      cleanEmail.length > 254 ||
+      cleanAddress.length > 500 ||
+      cleanPhone.length > 50 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)
+    ) {
+      return c.json({ error: 'Invalid counter-notice fields' }, 400);
     }
 
     if (!statement) {
@@ -4215,10 +4231,10 @@ posts.post('/posts/:id/counter-notice', requireAuth, async (c) => {
         id,
         postId,
         userId,
-        name,
-        email,
-        address,
-        phone,
+        cleanName,
+        cleanEmail,
+        cleanAddress,
+        cleanPhone,
         statement ? 1 : 0,
         consent_jurisdiction ? 1 : 0,
         now.toISOString(),
@@ -4231,9 +4247,8 @@ posts.post('/posts/:id/counter-notice', requireAuth, async (c) => {
 
     return c.json({ success: true, counter_id: id, restore_at: restoreAt.toISOString() });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Counter-notice error:', error);
-    return c.json({ error: 'Failed to file counter-notice', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to file counter-notice' }, 500);
   }
 });
 

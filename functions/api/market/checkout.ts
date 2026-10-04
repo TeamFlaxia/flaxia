@@ -84,10 +84,16 @@ async function handleMarketCheckout(request: Request, env: Env): Promise<Respons
   }
 
   const body = (await request.json()) as { postId?: string; amount?: number; title?: string };
-  const { postId, amount, title } = body;
+  const { postId, amount } = body;
 
-  if (!postId || !amount || amount < 100 || amount > 50000) {
-    return new Response(JSON.stringify({ error: 'Invalid request: postId and amount (100-50000) required' }), {
+  // #67: amount/title are untrusted client input. Require a strict integer in
+  // range (blocks NaN/coerced/fractional values) and always derive the
+  // product name server-side from the post so receipts cannot be spoofed.
+  // NOTE: there is no seller price table yet (posts has no price column), so
+  // the buyer still chooses within the floor/ceiling band; the charge that
+  // Stripe actually collects is verified webhook-side before completion.
+  if (!postId || typeof amount !== 'number' || !Number.isInteger(amount) || amount < 100 || amount > 50000) {
+    return new Response(JSON.stringify({ error: 'Invalid request: postId and integer amount (100-50000) required' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -165,7 +171,8 @@ async function handleMarketCheckout(request: Request, env: Env): Promise<Respons
 
   const stripe = getStripe(env);
   const baseUrl = env.BASE_URL || 'https://flaxia.app';
-  const contentTitle = title || post.text.slice(0, 50) || 'Flaxia Content';
+  // Product name is always server-derived: client `title` is ignored (#67).
+  const contentTitle = post.text.slice(0, 50) || 'Flaxia Content';
 
   const session = await stripe.checkout.sessions.create({
     customer: customerId,

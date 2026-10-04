@@ -248,18 +248,39 @@ export async function processWebhookEvent(event: Stripe.Event, env: BillingEnv):
 
       // Flax-market (kept working; not the focus of the Flaxia+ rollout).
       if (session.metadata?.type === 'marketplace') {
+        // #67 + transaction-completion hardening: only complete when Stripe
+        // actually collected the money, and only for the pending row that
+        // matches the session's buyer/post/amount. Unpaid async sessions
+        // (e.g. konbini `unpaid`) and amount-mismatched rows stay pending.
         if (
           session.metadata?.user_id &&
           session.metadata?.post_id &&
           session.payment_intent &&
-          typeof session.payment_intent === 'string'
+          typeof session.payment_intent === 'string' &&
+          session.payment_status === 'paid'
         ) {
-          await env.DB.prepare(
-            `UPDATE transactions SET status = 'completed', stripe_payment_intent_id = ?
+          const pending = await env.DB.prepare(
+            `SELECT id, user_id, post_id, amount, currency FROM transactions
              WHERE stripe_session_id = ? AND status = 'pending'`,
           )
-            .bind(session.payment_intent, session.id)
-            .run();
+            .bind(session.id)
+            .first<{ id: string; user_id: string; post_id: string; amount: number; currency: string }>();
+          if (
+            pending &&
+            pending.user_id === session.metadata.user_id &&
+            pending.post_id === session.metadata.post_id &&
+            pending.currency === 'jpy' &&
+            session.currency === 'jpy' &&
+            typeof session.amount_total === 'number' &&
+            session.amount_total === pending.amount
+          ) {
+            await env.DB.prepare(
+              `UPDATE transactions SET status = 'completed', stripe_payment_intent_id = ?
+               WHERE id = ? AND status = 'pending'`,
+            )
+              .bind(session.payment_intent, pending.id)
+              .run();
+          }
         }
         break;
       }

@@ -247,7 +247,10 @@ export async function markKeyBlocked(cache: KVNamespace | undefined, r2Key: stri
  * still fails closed.
  */
 export async function isKeyBlocked(cache: KVNamespace | undefined, r2Key: string, db?: D1Database): Promise<boolean> {
-  if (!cache) return false;
+  // Fail closed (#81, docs/file-scanning.md): when the verdict cannot be
+  // verified — no KV binding or a read error — the key must be withheld
+  // rather than served. CACHE is a required production binding.
+  if (!cache) return true;
   try {
     if ((await cache.get(`fileblk:${r2Key}`)) === null) return false;
     if (!db) return true;
@@ -259,7 +262,7 @@ export async function isKeyBlocked(cache: KVNamespace | undefined, r2Key: string
     return true;
   } catch (e) {
     console.warn('KV block marker read failed:', e);
-    return false;
+    return true;
   }
 }
 
