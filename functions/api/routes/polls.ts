@@ -61,9 +61,8 @@ polls.get('/polls/:postId', async (c) => {
 
     return c.json({ poll, options, userVote, expired });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Get poll error:', error);
-    return c.json({ error: 'Failed to get poll', details: err.message }, 500);
+    return c.json({ error: 'Failed to get poll' }, 500);
   }
 });
 
@@ -139,9 +138,8 @@ polls.post('/polls/:pollId/vote', requireAuth, async (c) => {
 
     return c.json({ options, userVote: optionId });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Vote error:', error);
-    return c.json({ error: 'Failed to vote', details: err.message }, 500);
+    return c.json({ error: 'Failed to vote' }, 500);
   }
 });
 

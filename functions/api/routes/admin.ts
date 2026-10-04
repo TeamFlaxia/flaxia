@@ -119,9 +119,8 @@ admin.get('/alerts', requireAuth, requireAdmin, async (c) => {
 
     return c.json({ alerts: result.results || [] });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Fetch admin alerts error:', error);
-    return c.json({ error: 'Failed to fetch alerts', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to fetch alerts' }, 500);
   }
 });
 
@@ -138,9 +137,8 @@ admin.post('/alerts/:id/resolve', requireAuth, requireAdmin, async (c) => {
 
     return c.json({ success: true });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Resolve alert error:', error);
-    return c.json({ error: 'Failed to resolve alert', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to resolve alert' }, 500);
   }
 });
 
@@ -165,9 +163,8 @@ admin.post('/posts/:id/hide', requireAuth, requireAdmin, async (c) => {
 
     return c.json({ success: true });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Hide post error:', error);
-    return c.json({ error: 'Failed to hide post', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to hide post' }, 500);
   }
 });
 
@@ -190,9 +187,8 @@ admin.post('/posts/:id/unhide', requireAuth, requireAdmin, async (c) => {
 
     return c.json({ success: true });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Unhide post error:', error);
-    return c.json({ error: 'Failed to unhide post', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to unhide post' }, 500);
   }
 });
 
@@ -227,9 +223,8 @@ admin.get('/posts/hidden', requireAuth, requireAdmin, async (c) => {
 
     return c.json({ posts: result.results || [] });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Fetch hidden posts error:', error);
-    return c.json({ error: 'Failed to fetch hidden posts', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to fetch hidden posts' }, 500);
   }
 });
 
@@ -250,9 +245,8 @@ admin.get('/users', requireAuth, requireAdmin, async (c) => {
 
     return c.json({ users: result.results || [] });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Fetch users error:', error);
-    return c.json({ error: 'Failed to fetch users', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to fetch users' }, 500);
   }
 });
 
@@ -285,9 +279,8 @@ admin.delete('/users/:id', requireAuth, requireAdmin, async (c) => {
 
     return c.json({ success: true });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Delete user error:', error);
-    return c.json({ error: 'Failed to delete user', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to delete user' }, 500);
   }
 });
 
@@ -324,9 +317,8 @@ admin.get('/counter/pending', requireAuth, requireAdmin, async (c) => {
 
     return c.json({ counter_notices: result.results || [] });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Fetch counter-notices error:', error);
-    return c.json({ error: 'Failed to fetch counter-notices', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to fetch counter-notices' }, 500);
   }
 });
 
@@ -358,9 +350,8 @@ admin.post('/counter/:id/reject', requireAuth, requireAdmin, async (c) => {
 
     return c.json({ success: true });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Reject counter-notice error:', error);
-    return c.json({ error: 'Failed to reject counter-notice', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to reject counter-notice' }, 500);
   }
 });
 
@@ -386,9 +377,8 @@ admin.get('/ads/config', async (c) => {
 
     return c.json({ every_n: Number(result.value) });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Get ad config error:', error);
-    return c.json({ error: 'Failed to get ad config', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to get ad config' }, 500);
   }
 });
 
@@ -422,9 +412,8 @@ admin.patch('/ads/config', requireAuth, async (c) => {
 
     return c.json({ every_n });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Update ad config error:', error);
-    return c.json({ error: 'Failed to update ad config', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to update ad config' }, 500);
   }
 });
 
@@ -466,9 +455,8 @@ admin.get('/ads', requireAuth, async (c) => {
 
     return c.json({ ads: result.results || [] });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Get admin ads error:', error);
-    return c.json({ error: 'Failed to fetch ads', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to fetch ads' }, 500);
   }
 });
 
@@ -679,9 +667,8 @@ admin.post('/ads', requireAuth, async (c) => {
 
     return c.json({ ad: createdAd });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Create ad error:', error);
-    return c.json({ error: 'Failed to create ad', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to create ad' }, 500);
   }
 });
 
@@ -812,9 +799,8 @@ admin.put('/ads/:id', requireAdmin, async (c) => {
 
     return c.json({ ad: updatedAd });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Update ad error:', error);
-    return c.json({ error: 'Failed to update ad', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to update ad' }, 500);
   }
 });
 
@@ -854,9 +840,8 @@ admin.delete('/ads/:id', requireAuth, async (c) => {
 
     return c.json({ ok: true });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Delete ad error:', error);
-    return c.json({ error: 'Failed to delete ad', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to delete ad' }, 500);
   }
 });
 
@@ -890,9 +875,8 @@ admin.post('/backfill-game-descriptions', requireAuth, requireAdmin, async (c) =
 
     return c.json({ success: true, processed: games.results.length });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Backfill game descriptions error:', error);
-    return c.json({ error: 'Failed to backfill game descriptions', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to backfill game descriptions' }, 500);
   }
 });
 
@@ -945,9 +929,8 @@ admin.post('/backfill-nsfw', requireAuth, requireAdmin, async (c) => {
 
     return c.json({ success: true, submitted, remaining: candidates.results.length - submitted });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Backfill nsfw error:', error);
-    return c.json({ error: 'Failed to backfill nsfw screening', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to backfill nsfw screening' }, 500);
   }
 });
 
@@ -1012,9 +995,8 @@ admin.post('/backfill-embeddings', requireAuth, requireAdmin, async (c) => {
 
     return c.json({ success: true, enqueued, submitted, remaining });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Backfill embeddings error:', error);
-    return c.json({ error: 'Failed to backfill embeddings', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to backfill embeddings' }, 500);
   }
 });
 

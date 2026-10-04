@@ -127,9 +127,8 @@ ads.get('/ads/active', async (c) => {
       'Cache-Control': 'public, max-age=60',
     });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Get active ads error:', error);
-    return c.json({ error: 'Failed to get active ads', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to get active ads' }, 500);
   }
 });
 
@@ -320,9 +319,8 @@ ads.put('/ads/:id', requireAdmin, async (c) => {
 
     return c.json({ ad: updatedAd });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Update ad error:', error);
-    return c.json({ error: 'Failed to update ad', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to update ad' }, 500);
   }
 });
 

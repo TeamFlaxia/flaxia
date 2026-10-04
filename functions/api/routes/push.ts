@@ -240,9 +240,8 @@ push.get('/notifications', requireAuth, async (c) => {
       unread_count: unreadResult?.count || 0,
     });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Fetch notifications error:', error);
-    return c.json({ error: 'Failed to fetch notifications', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to fetch notifications' }, 500);
   }
 });
 
@@ -259,9 +258,8 @@ push.post('/notifications/read-all', requireAuth, async (c) => {
 
     return c.json({ success: true });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Mark all read error:', error);
-    return c.json({ error: 'Failed to mark notifications as read', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Failed to mark notifications as read' }, 500);
   }
 });
 

@@ -51,9 +51,8 @@ stamps.get('/stamps', requireAuth, async (c) => {
 
     return c.json({ stamps: stampsList });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('List stamps error:', error);
-    return c.json({ error: 'Failed to list stamps', details: err.message }, 500);
+    return c.json({ error: 'Failed to list stamps' }, 500);
   }
 });
 
@@ -166,9 +165,8 @@ stamps.post('/stamps', requireAuth, async (c) => {
       201,
     );
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Upload stamp error:', error);
-    return c.json({ error: 'Failed to upload stamp', details: err.message }, 500);
+    return c.json({ error: 'Failed to upload stamp' }, 500);
   }
 });
 
@@ -192,9 +190,8 @@ stamps.delete('/stamps/:id', requireAuth, async (c) => {
 
     return c.json({ deleted: true });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Delete stamp error:', error);
-    return c.json({ error: 'Failed to delete stamp', details: err.message }, 500);
+    return c.json({ error: 'Failed to delete stamp' }, 500);
   }
 });
 
@@ -216,9 +213,8 @@ stamps.get('/stamps/all', async (c) => {
 
     return c.json({ stamps: stampsList });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('List all stamps error:', error);
-    return c.json({ error: 'Failed to list stamps', details: err.message }, 500);
+    return c.json({ error: 'Failed to list stamps' }, 500);
   }
 });
 

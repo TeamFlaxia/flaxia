@@ -83,9 +83,8 @@ postVersions.get('/posts/:id/versions', async (c) => {
 
     return c.json({ versions });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('List game versions error:', error);
-    return c.json({ error: 'Failed to list versions', details: err.message }, 500);
+    return c.json({ error: 'Failed to list versions' }, 500);
   }
 });
 
@@ -122,9 +121,8 @@ postVersions.post('/posts/:id/versions/prepare', requireAuth, async (c) => {
 
     return c.json({ postId, versionId, zipUploadUrl: uploadUrl, zipKey: storageKey });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Prepare game version error:', error);
-    return c.json({ error: 'Failed to prepare version', details: err.message }, 500);
+    return c.json({ error: 'Failed to prepare version' }, 500);
   }
 });
 
@@ -225,9 +223,8 @@ postVersions.post('/posts/:id/versions/commit', requireAuth, async (c) => {
 
     return c.json({ ok: true, versionId: body.versionId, versionNumber: newVersionNumber });
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Commit game version error:', error);
-    return c.json({ error: 'Failed to commit version', details: err.message }, 500);
+    return c.json({ error: 'Failed to commit version' }, 500);
   }
 });
 

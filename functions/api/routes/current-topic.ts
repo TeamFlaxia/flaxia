@@ -77,9 +77,8 @@ topic.get('/current-topic', async (c) => {
 
     return c.json(topicPost);
   } catch (error: unknown) {
-    const err = error as { message?: string };
     console.error('Current topic fetch error:', error);
-    return c.json({ error: 'Internal server error', details: err.message || 'Unknown error' }, 500);
+    return c.json({ error: 'Internal server error' }, 500);
   }
 });
 
