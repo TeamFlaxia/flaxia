@@ -10,12 +10,40 @@ const push = new Hono<{ Bindings: Bindings; Variables: Variables }>();
  * Web Push endpoints are server-fetched on every notification, so only
  * genuine https push-service URLs are accepted (no intranet hosts).
  */
+function isPrivateHostname(host: string): boolean {
+  const h = host.toLowerCase();
+  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true;
+  if (!h.includes('.') && h !== 'localhost') return true;
+  // IPv4 literal or IPv4-mapped: block loopback/link-local/private/reserved.
+  const v4 = h.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    if (
+      a === 10 ||
+      a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      a >= 224
+    ) {
+      return true;
+    }
+    return false;
+  }
+  if (h.includes(':')) return true; // IPv6 literal (incl. ::1): no push service lives here
+  return false;
+}
+
 function isValidWebPushEndpoint(endpoint: string): boolean {
   if (typeof endpoint !== 'string' || endpoint.length === 0 || endpoint.length > 2048) return false;
   try {
     const parsed = new URL(endpoint);
     if (parsed.protocol !== 'https:') return false;
     if (parsed.username || parsed.password) return false;
+    // #68: the server fetches this URL on every notification — an intranet
+    // host would turn registration into a fetch primitive. DNS rebinding
+    // past this registration-time check is accepted as residual risk.
+    if (isPrivateHostname(parsed.hostname)) return false;
     return true;
   } catch {
     return false;
