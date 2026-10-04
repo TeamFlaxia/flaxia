@@ -14,6 +14,7 @@ import { canRunFlaxiaNode, initCrowdNode, notifyCrowdConsentChanged } from './li
 import { initI18n, t } from './lib/i18n.js';
 import { lazyCreateBottomNav, lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from './lib/lazy-nav.js';
 import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
+import { fetchNotifications, invalidateNotificationsCache } from './lib/notifications-api.js';
 import { hidePageLoader, showPageLoader, showPageLoaderFailure } from './lib/page-loader.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
 import { createPushSocket } from './lib/push-socket.js';
@@ -452,7 +453,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const refreshNotificationBadges = async () => {
       console.log('[poll] refreshNotificationBadges called');
-      await fetchNotifications();
+      const data = await fetchNotifications();
+      unreadNotificationCount = data.unread_count || 0;
       console.log('[poll] unread count:', unreadNotificationCount);
       updateBadgeUI();
     };
@@ -542,57 +544,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       return false;
     };
 
-    // Fetch notifications
-    interface NotificationData {
-      notifications: Array<{
-        id: string;
-        type:
-          | 'reported'
-          | 'fresh'
-          | 'warned'
-          | 'hidden'
-          | 'ap_follow'
-          | 'ap_like'
-          | 'ap_announce'
-          | 'reply'
-          | 'mention'
-          | 'poll_ended';
-        post_id: string;
-        post_text_preview: string;
-        actor?: {
-          username: string;
-          display_name: string;
-          avatar_key: string | null;
-        };
-        read: boolean;
-        created_at: string;
-      }>;
-      unread_count: number;
-    }
-
-    let cachedNotifications: NotificationData | null = null;
-    let lastNotificationFetch = 0;
-    const NOTIFICATION_FETCH_TTL = 10000; // 10秒以内の連続fetchはキャッシュ
-
-    const fetchNotifications = async (): Promise<NotificationData> => {
-      const now = Date.now();
-      if (cachedNotifications && now - lastNotificationFetch < NOTIFICATION_FETCH_TTL) {
-        return cachedNotifications;
-      }
-      try {
-        const response = await fetch('/api/notifications', { credentials: 'include' });
-        if (response.ok) {
-          const data = (await response.json()) as NotificationData;
-          unreadNotificationCount = data.unread_count || 0;
-          cachedNotifications = data;
-          lastNotificationFetch = now;
-          return data;
-        }
-      } catch (error) {
-        console.log('Failed to fetch notifications:', error);
-      }
-      return { notifications: [], unread_count: 0 };
-    };
+    // Fetch notifications (see src/lib/notifications-api.ts)
 
     // Mobile left nav overlay management (see src/lib/left-nav-drawer.ts)
 
@@ -1539,6 +1491,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           // Fetch notifications data for the page content
           const [notificationsData] = await Promise.all([fetchNotifications()]);
+          unreadNotificationCount = notificationsData.unread_count || 0;
 
           // Create main container for 3-column layout
           const mainContainer = document.createElement('div');
@@ -1568,8 +1521,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               });
               unreadNotificationCount = 0;
               // キャッシュをクリアして次回のfetchで最新データを取得
-              cachedNotifications = null;
-              lastNotificationFetch = 0;
+              invalidateNotificationsCache();
               leftNavInstances.forEach((ln) => {
                 if (typeof ln.setUnreadCount === 'function') {
                   ln.setUnreadCount(0);
