@@ -27,7 +27,6 @@ export interface DatasetRecord {
   is_fullscreen: number;
   swipe_velocity: number;
   hour: string;
-  created_at: string;
   post_embedding: number[] | null;
   label: number;
 }
@@ -66,7 +65,14 @@ export async function anonymizeId(id: string, salt: string): Promise<string> {
 }
 
 export async function loadOrCreateSalt(kv: KVNamespace | undefined): Promise<string> {
-  if (!kv) return 'no-kv-salt';
+  if (!kv) {
+    // No KV means no persistent salt: mint an ephemeral one per run so
+    // hashes are never derived under a publicly known constant. Records
+    // from such a run are unlinkable across runs by design.
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  }
   const existing = await kv.get(DATASET_SALT_KEY);
   if (existing) return existing;
   const salt = crypto.randomUUID();
@@ -102,7 +108,6 @@ export async function buildDatasetRecords(
       is_fullscreen: event.is_fullscreen,
       swipe_velocity: event.swipe_velocity,
       hour: truncateToHour(event.created_at),
-      created_at: event.created_at,
       post_embedding: embedding,
       label: eventReward(event.event_type, event.dwell_ms),
     });
@@ -143,7 +148,9 @@ including quick skips as negative feedback.
 - \`dwell_ms\` — time the game was shown
 - \`did_skip\` — 1 when the game was skipped quickly (<2s)
 - \`is_fullscreen\`, \`swipe_velocity\` — UI signals
-- \`hour\`, \`created_at\` — timestamps
+- \`hour\` — event time truncated to the top of the hour (full precision is
+  never exported: exact timestamps enable re-identification by joining
+  public interaction times)
 - \`post_embedding\` — 1024-d content embedding of the game
 - \`label\` — reward used for RL (normalized dwell, or engagement boosts)
 

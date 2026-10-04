@@ -290,14 +290,6 @@ export class Timeline {
       this.handleReplyToggle(postId);
     }) as EventListener);
 
-    // Thread navigation events - listen for navigateToThread events from post cards
-    this.element.addEventListener('navigateToThread', ((e: Event) => {
-      const postId = (e as CustomEvent).detail.postId;
-      console.log('Timeline received navigateToThread event for postId:', postId);
-      // Let the main app handle this navigation
-      console.log('Navigate to thread:', postId);
-    }) as EventListener);
-
     // Hashtag search
     const hashtagInput = this.element.querySelector('.hashtag-search-btn') as HTMLButtonElement;
     const inputField = this.element.querySelector('.hashtag-input-field') as HTMLInputElement;
@@ -579,15 +571,19 @@ export class Timeline {
   }
 
   private async loadAdConfig(): Promise<void> {
-    const [adsRes, configRes] = await Promise.all([
-      fetch('/api/ads/active'),
-      fetch('/api/admin/ads/config'), // returns { every_n: number }
-    ]);
+    // The admin pacing config is staff-only: guests get a predictable 403,
+    // so don't request it without a session (avoids console noise + a
+    // wasted round-trip on every logged-out visit).
+    const fetches: Array<Promise<Response>> = [fetch('/api/ads/active')];
+    if (this.props.currentUser) {
+      fetches.push(fetch('/api/admin/ads/config')); // returns { every_n: number }
+    }
+    const [adsRes, configRes] = await Promise.all(fetches);
     if (adsRes.ok) {
       const adsData = (await adsRes.json()) as { ads: Ad[] };
       this.state.ads = adsData.ads;
     }
-    if (configRes.ok) {
+    if (configRes?.ok) {
       const configData = (await configRes.json()) as { every_n: number };
       this.state.everyN = configData.every_n;
     }

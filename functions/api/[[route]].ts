@@ -13,6 +13,7 @@ import meRouter from './routes/me';
 import mediaRouter from './routes/media';
 import multiplayerRouter from './routes/multiplayer';
 import pollsRouter from './routes/polls';
+import postVersionsRouter from './routes/post-versions';
 import postsRouter from './routes/posts';
 import pushRouter from './routes/push';
 import reportRouter from './routes/report';
@@ -123,6 +124,9 @@ app.route('/api', gamesRouter);
 // Post routes (extracted to routes/posts.ts)
 app.route('/api', postsRouter);
 
+// Game version routes (extracted to routes/post-versions.ts)
+app.route('/api', postVersionsRouter);
+
 // Test routes (extracted to routes/tests.ts)
 app.route('/', testsRouter);
 
@@ -158,6 +162,24 @@ export async function onRequest(context: Record<string, unknown>) {
     const session = await getSession(env, sessionToken);
     if (!session) return new Response('Unauthorized', { status: 401 });
 
+    // The room must exist: otherwise any UUID opens a phantom DO namespace.
+    const room = (await env.DB.prepare('SELECT max_players, host_id FROM multiplayer_rooms WHERE id = ?')
+      .bind(roomId)
+      .first()) as { max_players?: number; host_id?: string } | null;
+    if (!room) return new Response('Room not found', { status: 404 });
+
+    // Only members may open a socket: the DO trusts forwarded identity, so
+    // the REST join/leave path is the single gate for membership.
+    const member =
+      room.host_id === session.user.id
+        ? { ok: true }
+        : await env.DB.prepare(
+            'SELECT 1 FROM multiplayer_room_participants WHERE room_id = ? AND user_id = ? AND left_at IS NULL',
+          )
+            .bind(roomId, session.user.id)
+            .first();
+    if (!member) return new Response('Forbidden', { status: 403 });
+
     const forwardUrl = new URL(request.url);
     forwardUrl.searchParams.set('userId', session.user.id);
     forwardUrl.searchParams.set('username', session.user.username || '');
@@ -165,6 +187,11 @@ export async function onRequest(context: Record<string, unknown>) {
     forwardUrl.searchParams.set('avatar_key', session.user.avatar_key || '');
     forwardUrl.searchParams.set('gameId', gameId);
     forwardUrl.searchParams.set('roomId', roomId);
+    forwardUrl.searchParams.delete('token');
+    // Capacity and host come from D1, never from client query params: the
+    // DO trusts these values for room sizing and host authority.
+    forwardUrl.searchParams.set('maxPlayers', String(room.max_players ?? 2));
+    if (room.host_id) forwardUrl.searchParams.set('hostId', room.host_id);
 
     const forwardReq = new Request(forwardUrl.toString(), {
       headers: request.headers,

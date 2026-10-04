@@ -68,6 +68,11 @@ auth.post('/register', async (c) => {
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    // Bound the string before it reaches the regex: overlapping `[^\s@]+`
+    // classes backtrack quadratically on long dot-heavy input.
+    if (typeof email !== 'string' || email.length > 254) {
+      return c.json({ error: 'Invalid email format' }, 400);
+    }
     if (!emailRegex.test(email)) {
       return c.json({ error: 'Invalid email format' }, 400);
     }
@@ -203,6 +208,10 @@ auth.post('/reauth/start', requireAuth, async (c) => {
   try {
     const user = c.get('user');
     if (!user?.email) return c.json({ error: 'Unauthorized' }, 401);
+    // Same throttle as login/start: each call mints a handshake row holding
+    // server secrets, and expired rows are never reaped.
+    const limited = await rateLimit(c, 'auth:reauth-start', user.id, 10, 60);
+    if (limited) return limited;
     const hs = await startSrpLogin(c.env, user.email);
     if (!hs) return c.json({ error: 'SRP not available' }, 400);
     return c.json({ challenge_id: hs.challengeId, salt: hs.salt, B: hs.B, srp_kdf: hs.kdf });
@@ -217,6 +226,8 @@ auth.post('/reauth/verify', requireAuth, async (c) => {
   try {
     const user = c.get('user');
     if (!user?.id) return c.json({ error: 'Unauthorized' }, 401);
+    const limited = await rateLimit(c, 'auth:reauth-verify', user.id, 10, 60);
+    if (limited) return limited;
     const { challenge_id, A, M1 } = (await c.req.json()) as {
       challenge_id?: string;
       A?: string;
@@ -284,7 +295,10 @@ auth.post('/upgrade-srp', requireAuth, async (c) => {
 });
 
 // POST /api/auth/logout
-auth.post('/logout', requireAuth, async (c) => {
+// Clears the cookie unconditionally: behind requireAuth a dead/expired
+// session would 401 before clearSessionCookie ever ran, leaving the client
+// sending the dead cookie forever.
+auth.post('/logout', async (c) => {
   try {
     const token = getSessionToken(c.req.raw);
     if (token) {
@@ -297,7 +311,9 @@ auth.post('/logout', requireAuth, async (c) => {
     return response;
   } catch (error: unknown) {
     console.error('Logout error:', error);
-    return c.json({ error: 'Logout failed' }, 500);
+    const response = c.json({ success: true });
+    clearSessionCookie(response);
+    return response;
   }
 });
 

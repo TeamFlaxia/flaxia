@@ -457,16 +457,22 @@ describe('POST /api/auth/logout', () => {
     assert.equal(afterLogout.status, 401, 'a logged-out session must not authenticate from stale KV cache');
   });
 
-  it('rejects unauthenticated logout → 401', async () => {
+  // Logout always succeeds and clears the cookie: a dead/expired session must
+  // not 401 before the clear runs, or the client keeps sending it forever.
+  it('clears the cookie even without a session → 200', async () => {
     const res = await fetch(`${BASE_URL}/api/auth/logout`, { method: 'POST' });
-    assert.equal(res.status, 401);
+    assert.equal(res.status, 200);
+    const setCookie = res.headers.get('set-cookie') ?? '';
+    assert.ok(setCookie.includes('Max-Age=0'), 'logout must expire the session cookie');
   });
 
-  it('rejects logout with invalid session cookie → 401', async () => {
+  it('clears the cookie for an invalid session → 200', async () => {
     const res = await fetch(`${BASE_URL}/api/auth/logout`, {
       method: 'POST',
       headers: { Cookie: 'session=invalid-session-token' },
     });
-    assert.equal(res.status, 401);
+    assert.equal(res.status, 200);
+    const setCookie = res.headers.get('set-cookie') ?? '';
+    assert.ok(setCookie.includes('Max-Age=0'), 'logout must expire the session cookie');
   });
 });

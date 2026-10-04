@@ -99,10 +99,20 @@ export class BottomNav {
 
     const user = this.props.currentUser!;
     if (user.avatar_key) {
-      btn.innerHTML = `<span class="bottom-nav-avatar" style="background-image:url(/api/images/${user.avatar_key})"></span>`;
+      const avatar = document.createElement('span');
+      avatar.className = 'bottom-nav-avatar';
+      // avatar_key is server-minted (`avatar/<sha256>`), but never trust a
+      // stored value inside a style context: validate the shape first.
+      if (/^avatar\/[0-9a-f]{64}$/.test(user.avatar_key)) {
+        avatar.style.backgroundImage = `url(/api/images/${user.avatar_key})`;
+      }
+      btn.appendChild(avatar);
     } else {
-      const initial = (user.display_name || user.username || '?').charAt(0).toUpperCase();
-      btn.innerHTML = `<span class="bottom-nav-avatar bottom-nav-avatar--initial">${initial}</span>`;
+      const avatar = document.createElement('span');
+      avatar.className = 'bottom-nav-avatar bottom-nav-avatar--initial';
+      // First grapheme as text — innerHTML here would parse `<`/`&` in names.
+      avatar.textContent = Array.from(user.display_name || user.username || '?')[0]!.toUpperCase();
+      btn.appendChild(avatar);
     }
 
     const avatarEl = btn.querySelector('.bottom-nav-avatar');

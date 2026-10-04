@@ -38,6 +38,13 @@ export default {
     } catch (error) {
       console.error('Dataset export failed:', (error as Error).message);
     }
+    try {
+      const { reapStalePendingPosts } = await import('./lib/pending-reap');
+      const reaped = await reapStalePendingPosts(env);
+      if (reaped > 0) console.log(`Reaped ${reaped} stale pending posts`);
+    } catch (error) {
+      console.error('Pending reap failed:', (error as Error).message);
+    }
   },
 
   async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
@@ -105,7 +112,7 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
     }
 
     const privateKeyPem = keyResult.private_key_pem as string;
-    const keyId = `${env.BASE_URL}/actors/${senderUsername}#main-key`;
+    const keyId = `${env.BASE_URL}/api/actors/${senderUsername}#main-key`;
 
     const { signRequest } = await import('./lib/activitypub/signature');
     const body = JSON.stringify(activity);
@@ -236,6 +243,18 @@ async function handleCreateActivity(
     return;
   }
 
+  // The Note must be attributed to the signing actor; otherwise any
+  // federated key could publish content under another actor's name.
+  const attributedTo = object.attributedTo;
+  const attributedMatch =
+    typeof attributedTo === 'string'
+      ? attributedTo === actorId
+      : Array.isArray(attributedTo) && attributedTo.includes(actorId);
+  if (!attributedMatch) {
+    console.error('Note attributedTo does not match signing actor');
+    return;
+  }
+
   const userResult = (await env.DB.prepare(`
     SELECT id FROM users WHERE username = ? COLLATE NOCASE
   `)
@@ -248,12 +267,29 @@ async function handleCreateActivity(
   }
 
   const userId = userResult.id;
-  const postId = activity.id ? (activity.id as string).split('/create-')[1] : generatePostId();
+
+  // Only actors the target user has a follow relationship with may have
+  // their Notes published. Without this, any holder of a federated signing
+  // key could inject posts into any local timeline context.
+  const followRel = await env.DB.prepare(`SELECT id FROM ap_followers WHERE local_user_id = ? AND actor_url = ?`)
+    .bind(userId, actorId)
+    .first();
+  if (!followRel) {
+    console.error('Ignoring Create from non-follower actor:', actorId);
+    return;
+  }
+
+  // Always mint the post id server-side: activity ids are attacker input
+  // and must never become primary keys (id squatting / collision).
+  const postId = generatePostId();
+
+  // Federated content is untrusted markup: store plain text only.
+  const plainContent = content.replace(/<[^>]*>/g, '').slice(0, 200);
 
   const hashtagSet = new Set<string>();
   const hashtagRegex = /#(\w+)/g;
   let match: RegExpExecArray | null;
-  while ((match = hashtagRegex.exec(content)) !== null) {
+  while ((match = hashtagRegex.exec(plainContent)) !== null) {
     hashtagSet.add(match[1]);
   }
   const hashtags = Array.from(hashtagSet);
@@ -262,7 +298,7 @@ async function handleCreateActivity(
   const mentionSet = new Set<string>();
   const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g;
   let mentionMatch: RegExpExecArray | null;
-  while ((mentionMatch = mentionRegex.exec(content)) !== null) {
+  while ((mentionMatch = mentionRegex.exec(plainContent)) !== null) {
     mentionSet.add(mentionMatch[1]);
   }
   const mentionedUsernames = Array.from(mentionSet);
@@ -281,9 +317,9 @@ async function handleCreateActivity(
 
   await env.DB.prepare(`
     INSERT INTO posts (id, user_id, username, text, hashtags, status, parent_id, root_id, depth, actor_id, created_at)
-    VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
-    .bind(postId, userId, username, content, JSON.stringify(hashtags), parentId, rootId, depth, actorId)
+    .bind(postId, userId, username, plainContent, JSON.stringify(hashtags), parentId, rootId, depth, actorId)
     .run();
 
   // Create mention notifications for mentioned users
@@ -360,28 +396,53 @@ async function handleFollowActivity(
     return;
   }
 
-  // Fetch actor's inbox URL and profile information
+  // Fetch actor's inbox URL and profile information.
+  // Both the actor URL and the advertised inbox are remote input: gate them
+  // before fetching, and only accept an inbox on the actor's own origin so a
+  // malicious actor document cannot redirect signed deliveries at intranet URLs.
   let inboxUrl = activity.actor as string;
   let actorData: Record<string, unknown> | null = null;
+  let actorOrigin: string | null = null;
   try {
-    const actorResponse = await fetch(actorId, {
-      headers: {
-        Accept: 'application/activity+json, application/ld+json',
-      },
-    });
+    actorOrigin = parsePublicHttpUrl(actorId).origin;
+  } catch {
+    console.error('Refusing to fetch non-public actor URL:', actorId);
+  }
+  if (actorOrigin) {
+    try {
+      const { fetchWithSsrfGuard } = await import('./lib/url-guard');
+      const actorResponse = await fetchWithSsrfGuard(actorId, {
+        headers: {
+          Accept: 'application/activity+json, application/ld+json',
+        },
+        timeoutMs: 10000,
+      });
 
-    if (actorResponse.ok) {
-      actorData = (await actorResponse.json()) as Record<string, unknown>;
-      inboxUrl = (actorData.inbox as string) || (activity.actor as string);
+      if (actorResponse.ok) {
+        actorData = (await actorResponse.json()) as Record<string, unknown>;
+        const advertised = actorData.inbox;
+        if (typeof advertised === 'string') {
+          try {
+            const inboxParsed = parsePublicHttpUrl(advertised);
+            if (inboxParsed.origin === actorOrigin) {
+              inboxUrl = inboxParsed.toString();
+            } else {
+              console.error('Refusing cross-origin actor inbox:', advertised);
+            }
+          } catch {
+            console.error('Refusing invalid actor inbox:', advertised);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch actor inbox:', e);
     }
-  } catch (e) {
-    console.error('Failed to fetch actor inbox:', e);
   }
 
   const followerId = generateId();
   await env.DB.prepare(`
     INSERT INTO ap_followers (id, local_user_id, actor_url, inbox_url, created_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
     .bind(followerId, localUserId, actorId, inboxUrl)
     .run();
@@ -464,14 +525,14 @@ async function handleFollowActivity(
     }
 
     const privateKeyPem = keyResult.private_key_pem as string;
-    const keyId = `${env.BASE_URL}/actors/${username}#main-key`;
+    const keyId = `${env.BASE_URL}/api/actors/${username}#main-key`;
 
     // Build Accept activity - use the original Follow activity as object
     const acceptActivity = {
       '@context': 'https://www.w3.org/ns/activitystreams',
       id: `${env.BASE_URL}/activities/accept-${followerId}`,
       type: 'Accept',
-      actor: `${env.BASE_URL}/actors/${username}`,
+      actor: `${env.BASE_URL}/api/actors/${username}`,
       object: activity, // Use the entire original Follow activity
       to: [actorId],
       published: new Date().toISOString(),
@@ -581,7 +642,7 @@ async function handleLikeActivity(
   const likeId = generateId();
   await env.DB.prepare(`
     INSERT INTO likes (id, post_id, user_id, actor_id, created_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
     .bind(likeId, postId, 'unknown', actorId)
     .run();
@@ -635,7 +696,7 @@ async function handleAnnounceActivity(
   const shareId = generateId();
   await env.DB.prepare(`
     INSERT INTO shares (id, post_id, user_id, actor_id, created_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
     .bind(shareId, postId, 'unknown', actorId)
     .run();

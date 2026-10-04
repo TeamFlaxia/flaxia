@@ -4,6 +4,7 @@ import {
   anonymizeId,
   buildDatasetRecords,
   type DatasetEventRow,
+  loadOrCreateSalt,
   serializeRecords,
   truncateToHour,
 } from '../functions/lib/dataset-export.ts';
@@ -120,5 +121,31 @@ describe('dataset-export', () => {
       assert.ok('label' in parsed);
       assert.ok('hour' in parsed);
     }
+  });
+
+  it('records carry hour only, never full-precision timestamps', async () => {
+    const event: DatasetEventRow = {
+      user_id: 'u1',
+      session_id: 's1',
+      post_id: 'p1',
+      position: 0,
+      event_type: 'view',
+      dwell_ms: 1000,
+      did_skip: 0,
+      is_fullscreen: 0,
+      swipe_velocity: 0,
+      game_type: 'zip',
+      created_at: '2026-08-03T04:05:12.123Z',
+    };
+    const [record] = await buildDatasetRecords([event], new Map(), 'salt');
+    assert.ok(!('created_at' in record), 'full-precision timestamps must not be exported');
+    assert.equal(record.hour, '2026-08-03T04:00:00.000Z');
+  });
+
+  it('salt without KV is ephemeral, never a public constant', async () => {
+    const a = await loadOrCreateSalt(undefined);
+    const b = await loadOrCreateSalt(undefined);
+    assert.notEqual(a, 'no-kv-salt');
+    assert.notEqual(a, b);
   });
 });

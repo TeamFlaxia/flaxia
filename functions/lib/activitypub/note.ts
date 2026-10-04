@@ -75,9 +75,9 @@ export function buildNoteObject(
   mentionActorUrls?: string[],
 ): NoteObject {
   const noteId = `${baseUrl}/notes/${post.id}`;
-  const actorUrl = `${baseUrl}/actors/${user.username}`;
+  const actorUrl = `${baseUrl}/api/actors/${user.username}`;
 
-  const cc: string[] = [`${baseUrl}/actors/${user.username}/followers`];
+  const cc: string[] = [`${baseUrl}/api/actors/${user.username}/followers`];
 
   if (mentionActorUrls && mentionActorUrls.length > 0) {
     for (const url of mentionActorUrls) {
@@ -111,7 +111,7 @@ export function buildNoteObject(
  */
 export function buildCreateActivity(note: NoteObject, user: User, baseUrl: string): object {
   const noteId = note.id;
-  const actorUrl = `${baseUrl}/actors/${user.username}`;
+  const actorUrl = `${baseUrl}/api/actors/${user.username}`;
 
   // Extract post ID from note URL to create activity ID
   const postId = noteId.split('/notes/')[1];
@@ -136,7 +136,7 @@ export function buildCreateActivity(note: NoteObject, user: User, baseUrl: strin
  * Build a Delete activity for a Note
  */
 export function buildDeleteActivity(noteId: string, user: User, baseUrl: string): object {
-  const actorUrl = `${baseUrl}/actors/${user.username}`;
+  const actorUrl = `${baseUrl}/api/actors/${user.username}`;
   const activityId = `${baseUrl}/activities/delete-${noteId}`;
 
   return {
@@ -149,7 +149,7 @@ export function buildDeleteActivity(noteId: string, user: User, baseUrl: string)
       type: 'Tombstone',
     },
     to: ['https://www.w3.org/ns/activitystreams#Public'],
-    cc: [`${baseUrl}/actors/${user.username}/followers`],
+    cc: [`${baseUrl}/api/actors/${user.username}/followers`],
     published: new Date().toISOString(),
   };
 }

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, it } from 'node:test';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -71,8 +72,26 @@ function features(data: Uint8Array) {
   return { sha256: bytesToHex(sha256(data)), kind: 'image' as const };
 }
 
+const CROWD_SECRET = 'test-callback-secret';
+
+function crowdEnv(cache: unknown) {
+  return {
+    CACHE: cache,
+    CROWD_ORCHESTRATOR_URL: 'https://crowd.example',
+    CROWD_API_KEY: 'test-api-key',
+    CROWD_WEBHOOK_SECRET: CROWD_SECRET,
+    BASE_URL: 'https://flaxia.app',
+  };
+}
+
 function cleanCallback(key: string, sha: string): Request {
-  return new Request(`https://flaxia.app/api/crowd/webhook?type=file-scan&key=${key}&kind=clamav&sha=${sha}`, {
+  // The webhook rejects unconfigured/unsigned callers: sign like the
+  // orchestrator would (HMAC-SHA256 over path + sorted query).
+  const params = new URLSearchParams({ key, kind: 'clamav', sha, type: 'file-scan' });
+  params.sort();
+  const sig = createHmac('sha256', CROWD_SECRET).update(`/api/crowd/webhook?${params}`).digest('hex');
+  params.set('sig', sig);
+  return new Request(`https://flaxia.app/api/crowd/webhook?${params}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -97,14 +116,7 @@ describe('file scan verdict races', () => {
 
     await ensureFileScansTable(db);
     await upsertFileScan(db, key, features(data));
-    // BASE_URL marks this as a local dev/test deployment, which is the only
-    // place crowdConfig() tolerates unsigned callbacks; without it the webhook
-    // is rejected 401 before the clean path runs and the test proves nothing.
-    const res = await handleCrowdWebhook(
-      cleanCallback(key, sha.slice(0, 16)),
-      { CACHE: cache, BASE_URL: 'http://localhost' },
-      db,
-    );
+    const res = await handleCrowdWebhook(cleanCallback(key, sha.slice(0, 16)), crowdEnv(cache), db);
     assert.equal(res.status, 200);
 
     assert.equal((await getFileScan(db, key))?.status, 'infected', 'the infection must stay sticky');
@@ -138,5 +150,18 @@ describe('file scan verdict races', () => {
     await ensureFileScansTable(db);
     await cache.put(`fileblk:${key}`, '1');
     assert.equal(await isKeyBlocked(cache, key, db), true);
+  });
+
+  it('rejects unsigned callbacks on a non-local instance (no fail-open)', async () => {
+    const cache = memoryCache();
+    const { db } = testDb();
+    await ensureFileScansTable(db);
+    const unsigned = new Request('https://flaxia.app/api/crowd/webhook?type=file-scan&key=gif/x/0.png', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskId: 't-nosig', status: 'done', result: {} }),
+    });
+    const res = await handleCrowdWebhook(unsigned, { CACHE: cache }, db);
+    assert.equal(res.status, 401);
   });
 });

@@ -19,6 +19,8 @@
   "common.delete": "削除",
   "common.submit": "送信",
   "common.loading": "読み込み中...",
+  "common.offline": "オフラインです。一部機能が使えない場合があります。",
+  "common.online": "オンラインに復帰しました。",
   "common.error": "エラー",
   "common.close": "閉じる",
   "common.back": "← 戻る",

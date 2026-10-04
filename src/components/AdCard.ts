@@ -132,6 +132,10 @@ function handleDirectClick(ad: Ad): void {
 function mountAdmax(ad: Ad, placeholder: HTMLElement): void {
   // Create iframe for isolated ad environment
   const iframe = document.createElement('iframe');
+  // Sandbox: third-party ad scripts must never share the app origin (no DOM,
+  // cookie, or storage access). Scripts + popups stay enabled so ad rendering
+  // and click-through keep working; same-origin access stays blocked.
+  iframe.sandbox.add('allow-scripts', 'allow-popups');
   iframe.style.width = '100%';
   iframe.style.height = '250px';
   iframe.style.border = 'none';
@@ -180,18 +184,8 @@ function mountAdmax(ad: Ad, placeholder: HTMLElement): void {
 }
 
 function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
-  // Debug logging
-  console.log('mountAdStage called with ad:', {
-    id: ad.id,
-    body_text: ad.body_text,
-    ad_type: ad.ad_type,
-    payload_type: ad.payload_type,
-    payload_key: ad.payload_key,
-  });
-
   // Handle admax ads
   if (ad.ad_type === 'admax') {
-    console.log('Ad is admax type, calling mountAdmax');
     mountAdmax(ad, placeholder);
     return;
   }
@@ -208,7 +202,6 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
 
   // Render based on payload_type
   if (ad.payload_type === null) {
-    console.log('Ad has no payload_type, showing admax iframe');
     // Body text only - show admax iframe
     // Update placeholder styles for admax
     placeholder.style.cssText = `

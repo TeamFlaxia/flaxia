@@ -101,6 +101,15 @@ export class MultiplayerRoom {
     const avatarKey = url.searchParams.get('avatar_key') || null;
     const gameId = url.searchParams.get('gameId') || '';
     const roomId = url.searchParams.get('roomId') || '';
+    const configuredMaxPlayers = Number(url.searchParams.get('maxPlayers'));
+    if (Number.isSafeInteger(configuredMaxPlayers) && configuredMaxPlayers > 0) {
+      // The API resolves this value from the room's D1 record before forwarding.
+      this.maxPlayers = configuredMaxPlayers;
+    }
+    // The API resolves this from the room's D1 record before forwarding, so
+    // runtime host privileges stay bound to the recorded room host instead of
+    // whoever happens to connect first.
+    const recordedHostId = url.searchParams.get('hostId') || '';
 
     if (!userId || !gameId || !roomId) {
       return new Response('Missing required params: userId, gameId, roomId', { status: 400 });
@@ -121,7 +130,7 @@ export class MultiplayerRoom {
     if (this.players.size === 0) {
       this.roomId = roomId;
       this.gameId = gameId;
-      this.hostId = userId;
+      this.hostId = recordedHostId || userId;
       this.createdAt = Date.now();
     }
 
@@ -130,7 +139,7 @@ export class MultiplayerRoom {
 
     this.ctx.acceptWebSocket(server);
 
-    const isHost = this.players.size === 0;
+    const isHost = this.hostId ? userId === this.hostId : this.players.size === 0;
     const info: PlayerInfo = {
       userId,
       username,
@@ -552,9 +561,20 @@ export class Matchmaker {
   }
 
   private async checkMatch(userId: string, gameId: string, maxPlayers: number): Promise<Response> {
+    const unmatched = { matched: false };
     const entries = this.queue.get(gameId);
     if (!entries || entries.length < maxPlayers) {
-      return new Response(JSON.stringify({ matched: false }), {
+      return new Response(JSON.stringify(unmatched), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Only consume a match when the requester is part of it. Otherwise any
+    // authenticated caller could drain other users' queued matches and keep
+    // the resulting room to themselves.
+    const requesterIndex = entries.findIndex((entry) => entry.userId === userId);
+    if (requesterIndex === -1 || requesterIndex >= maxPlayers) {
+      return new Response(JSON.stringify(unmatched), {
         headers: { 'Content-Type': 'application/json' },
       });
     }

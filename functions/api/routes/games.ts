@@ -1,11 +1,7 @@
 import { Hono } from 'hono';
 import { getMeWithSession, getSessionToken } from '../../lib/auth';
-import {
-  applyReward as banditApplyReward,
-  computeScore as banditComputeScore,
-  project as banditProject,
-  projConfigKey,
-} from '../../lib/linucb';
+import { computeScore as banditComputeScore, project as banditProject, projConfigKey } from '../../lib/linucb';
+import { clampLimit } from '../../lib/pagination';
 import { checkRateLimit } from '../../lib/rate-limit';
 import {
   ARCADE_EVENT_TYPES,
@@ -29,7 +25,7 @@ games.get('/games', async (c) => {
   try {
     const shuffle = c.req.query('shuffle') === 'true';
     const trending = c.req.query('trending') === 'true';
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
     const cursor = c.req.query('cursor');
 
     if (!c.env.DB) {

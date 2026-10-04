@@ -2,7 +2,7 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { isAdmin } from '../../../src/lib/admin';
-import { copyHtmlToWvfs, extractFileFromZip, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
+import { copyHtmlToWvfs, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
 import type { ReportCategory } from '../../../src/types/post';
 import { buildCreateActivity, buildDeleteActivity, buildNoteObject } from '../../lib/activitypub/note';
 import {
@@ -27,22 +27,23 @@ import { getUserPlan } from '../../lib/billing';
 import { embedPost, isImageKey, screenPostImages } from '../../lib/crowd';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { sendPushToAll } from '../../lib/notify';
+import { clampLimit } from '../../lib/pagination';
+import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
-import { batchGetFreshAndBookmarkStatus, kvCacheGet, kvCacheSet, makeCacheKey, requireAuth } from '../helpers';
-import type { ActorData, Bindings, PollOptionRow, PollRow, PostRow, Variables } from '../types';
 import {
-  applyBanditRewards,
-  cosineSimilarity,
-  getProjection,
-  loadBanditConfig,
-  loadBanditPrior,
-  loadBanditState,
-  loadDwellStats,
-  loadOrComputeInterestVector,
-  saveBanditState,
-} from './recommender';
+  addBusinessDays,
+  batchGetFreshAndBookmarkStatus,
+  kvCacheGet,
+  kvCacheSet,
+  makeCacheKey,
+  requireAuth,
+  resolveMentions,
+} from '../helpers';
+import type { ActorData, Bindings, PollOptionRow, PollRow, PostRow, Variables } from '../types';
+import { extractGameDescription } from './post-versions';
+import { cosineSimilarity, loadOrComputeInterestVector } from './recommender';
 
 const posts = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -313,7 +314,7 @@ posts.get('/posts', async (c) => {
 // GET /api/posts/trending - get trending posts based on engagement and time decay
 posts.get('/posts/trending', async (c) => {
   try {
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
     const cursor = c.req.query('cursor');
     const parts = cursor ? cursor.split(',') : [];
     const cursorScore = parts[0] || null;
@@ -369,7 +370,7 @@ posts.get('/posts/trending', async (c) => {
       EXP(1.5 * LN((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))) as score
       FROM posts p
       LEFT JOIN users u ON p.user_id = u.id
-      WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at > datetime('now', '-7 days')
+      WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')
       ORDER BY score DESC, p.created_at DESC
       LIMIT ?
     `;
@@ -536,7 +537,7 @@ const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, 
 // GET /api/posts/recommended - get recommended posts for the user (vector hybrid)
 posts.get('/posts/recommended', async (c) => {
   try {
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
     const cursor = c.req.query('cursor');
     let cursorScore: string | null = null;
     let cursorCreatedAt: string | null = null;
@@ -877,7 +878,7 @@ async function enrichRecommendedPosts(
 posts.get('/posts/:id/similar', async (c) => {
   try {
     const postId = c.req.param('id');
-    const limit = Math.min(Number(c.req.query('limit') || '5'), 20);
+    const limit = clampLimit(c.req.query('limit'), 5, 20);
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
 
     const currentUserId = c.get('user')?.id;
@@ -967,6 +968,16 @@ posts.get('/posts/:id/similar', async (c) => {
 // GET /api/ads/active - get active ads (public endpoint)
 posts.post('/posts/:id/impression', async (c) => {
   try {
+    // Unauthenticated counter endpoint: throttle per IP so it cannot be
+    // used as an engagement-inflation oracle.
+    if (
+      !(await checkRateLimit(c.env.CACHE, `post:impression:${getClientIp(c.req.raw)}`, {
+        maxRequests: 180,
+        windowSeconds: 60,
+      }))
+    ) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
     const postId = c.req.param('id');
 
     if (!c.env.DB) {
@@ -996,6 +1007,14 @@ posts.post('/posts/:id/impression', async (c) => {
 // POST /api/posts/impressions/batch - track multiple post impressions (public endpoint)
 posts.post('/posts/impressions/batch', async (c) => {
   try {
+    if (
+      !(await checkRateLimit(c.env.CACHE, `post:impression:${getClientIp(c.req.raw)}`, {
+        maxRequests: 180,
+        windowSeconds: 60,
+      }))
+    ) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
     const body = (await c.req.json()) as { post_ids: string[] };
 
     if (!body.post_ids || !Array.isArray(body.post_ids) || body.post_ids.length === 0) {
@@ -1115,6 +1134,16 @@ posts.post('/posts/:id/prepare-media', requireAuth, async (c) => {
   try {
     const user = c.get('user');
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    // Every call mints upload URLs: throttle per user so abandoned
+    // preparations cannot bloat R2/D1 without bound.
+    if (
+      !(await checkRateLimit(c.env.CACHE, `post:prepare:${user.id}`, {
+        maxRequests: 30,
+        windowSeconds: 60,
+      }))
+    ) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
     const postId = c.req.param('id');
     const { filename, contentType, reservedKeys } = (await c.req.json()) as {
       filename?: string;
@@ -1347,56 +1376,6 @@ posts.post('/posts/prepare', requireAuth, async (c) => {
   }
 });
 
-// Helper: extract game description from a game ZIP in R2
-async function extractGameDescription(
-  bucket: R2Bucket,
-  db: D1Database,
-  payloadKey: string,
-  postId: string,
-): Promise<void> {
-  try {
-    const result = await extractFileFromZip(bucket, payloadKey, 'index.html');
-    if (!result) return;
-    const decoder = new TextDecoder('utf-8');
-    const html = decoder.decode(result.data);
-    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-    const title = titleMatch ? titleMatch[1].trim() : '';
-
-    const contentMatch = (attrValue: string): string => {
-      const escaped = attrValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const patterns = [
-        new RegExp(`<meta[^>]+name=["']${escaped}["'][^>]+content=["']([^"']*)["']`, 'i'),
-        new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+name=["']${escaped}["']`, 'i'),
-        new RegExp(`<meta[^>]+property=["']${escaped}["'][^>]+content=["']([^"']*)["']`, 'i'),
-        new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+property=["']${escaped}["']`, 'i'),
-      ];
-      for (const pattern of patterns) {
-        const m = html.match(pattern);
-        if (m && m[1].trim()) return m[1].trim();
-      }
-      return '';
-    };
-
-    const metaDesc =
-      contentMatch('description') || contentMatch('og:description') || contentMatch('twitter:description');
-    const gameDescription = metaDesc || title || '';
-    if (gameDescription) {
-      const cleaned = gameDescription
-        .replace(/<[^>]*>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (cleaned) {
-        await db
-          .prepare('UPDATE posts SET game_description = ? WHERE id = ?')
-          .bind(cleaned.slice(0, 500), postId)
-          .run();
-      }
-    }
-  } catch (e) {
-    console.error(`Failed to extract game description for post ${postId}:`, e);
-  }
-}
-
 // Client-chosen post/reply IDs must be a safe, bounded format: IDs end up in
 // URLs, R2 keys and HTML, so accepting arbitrary strings invites injection and
 // key confusion. UUIDs and nanoids both match this pattern.
@@ -1438,7 +1417,9 @@ posts.post('/posts/commit', requireAuth, async (c) => {
     let swfKey: string | undefined;
     let text: string;
     let requestHashtags: string[] = [];
-    let pollData: any;
+    let pollData:
+      | { question?: string; options?: string[]; multipleChoice?: boolean; endsAt?: string | null }
+      | undefined;
     let zipKey: string | undefined;
     let thumbnailKey: string | undefined;
     let quotedPostId: string | undefined;
@@ -1696,6 +1677,18 @@ posts.post('/posts/commit', requireAuth, async (c) => {
 
     // Create poll if poll data was provided
     if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
+      // Cap the batch fan-out: options become one INSERT each plus one poll row.
+      if (pollData.options.length > 10) {
+        return c.json({ error: 'Polls support at most 10 options' }, 400);
+      }
+      if (typeof pollData.question !== 'string' || pollData.question.length > 200) {
+        return c.json({ error: 'Poll question must be ≤200 characters' }, 400);
+      }
+      for (const label of pollData.options) {
+        if (typeof label !== 'string' || label.length === 0 || label.length > 100) {
+          return c.json({ error: 'Poll options must be 1–100 characters' }, 400);
+        }
+      }
       try {
         const pollId = crypto.randomUUID();
         await c.env.DB.prepare(`
@@ -1810,7 +1803,7 @@ posts.post('/posts/commit', requireAuth, async (c) => {
             if (post.mentions) {
               const mentionData = JSON.parse(post.mentions) as Array<{ username: string; user_id: string }>;
               for (const m of mentionData) {
-                mentionActorUrls.push(`${c.env.BASE_URL}/actors/${m.username}`);
+                mentionActorUrls.push(`${c.env.BASE_URL}/api/actors/${m.username}`);
               }
             }
           } catch {}
@@ -1850,6 +1843,18 @@ posts.post('/posts/commit', requireAuth, async (c) => {
       .first()) as PostRow;
 
     if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
+      // Cap the batch fan-out: options become one INSERT each plus one poll row.
+      if (pollData.options.length > 10) {
+        return c.json({ error: 'Polls support at most 10 options' }, 400);
+      }
+      if (typeof pollData.question !== 'string' || pollData.question.length > 200) {
+        return c.json({ error: 'Poll question must be ≤200 characters' }, 400);
+      }
+      for (const label of pollData.options) {
+        if (typeof label !== 'string' || label.length === 0 || label.length > 100) {
+          return c.json({ error: 'Poll options must be 1–100 characters' }, 400);
+        }
+      }
       try {
         await enrichPostsWithPolls([fullPost], c.env.DB, c.get('user')?.id);
       } catch (e) {
@@ -1937,7 +1942,7 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
     await c.env.DB.prepare('DELETE FROM freshs WHERE post_id = ? AND user_id = ?').bind(postId, userId).run();
 
     const result = await c.env.DB.prepare(
-      'UPDATE posts SET fresh_count = fresh_count - 1, engagement_hotness = engagement_hotness - 2.0 WHERE id = ? RETURNING fresh_count',
+      'UPDATE posts SET fresh_count = MAX(0, fresh_count - 1), engagement_hotness = engagement_hotness - 2.0 WHERE id = ? RETURNING fresh_count',
     )
       .bind(postId)
       .first<{ fresh_count: number }>();
@@ -2016,7 +2021,7 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
               '@context': 'https://www.w3.org/ns/activitystreams',
               id: `${c.env.BASE_URL}/activities/like-${nanoid()}`,
               type: 'Like',
-              actor: `${c.env.BASE_URL}/actors/${currentUser.username}`,
+              actor: `${c.env.BASE_URL}/api/actors/${currentUser.username}`,
               object: `${c.env.BASE_URL}/notes/${postId}`,
               to: [post.actor_id],
             };
@@ -2137,7 +2142,7 @@ posts.post('/posts/:id/reactions', requireAuth, async (c) => {
 posts.get('/bookmarks', requireAuth, async (c) => {
   try {
     const cursor = c.req.query('cursor');
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
     const userId = c.get('user')?.id || '';
 
     let query: string;
@@ -2199,7 +2204,7 @@ posts.get('/bookmarks', requireAuth, async (c) => {
 posts.get('/freshs', requireAuth, async (c) => {
   try {
     const cursor = c.req.query('cursor');
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
     const userId = c.get('user')?.id || '';
 
     let query: string;
@@ -2473,9 +2478,9 @@ posts.post('/posts/:id/share', requireAuth, async (c) => {
       // Add share
       const shareId = nanoid();
       await c.env.DB.prepare(
-        "INSERT INTO shares (id, post_id, user_id, actor_id, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
+        "INSERT INTO shares (id, post_id, user_id, actor_id, created_at) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
       )
-        .bind(shareId, postId, currentUser.id, `${c.env.BASE_URL}/actors/${currentUser.username}`)
+        .bind(shareId, postId, currentUser.id, `${c.env.BASE_URL}/api/actors/${currentUser.username}`)
         .run();
 
       await c.env.DB.prepare(
@@ -2498,7 +2503,7 @@ posts.post('/posts/:id/share', requireAuth, async (c) => {
                 '@context': 'https://www.w3.org/ns/activitystreams',
                 id: `${c.env.BASE_URL}/activities/announce-${shareId}`,
                 type: 'Announce',
-                actor: `${c.env.BASE_URL}/actors/${currentUser.username}`,
+                actor: `${c.env.BASE_URL}/api/actors/${currentUser.username}`,
                 object: `${c.env.BASE_URL}/notes/${postId}`,
                 to: [post.actor_id, 'https://www.w3.org/ns/activitystreams#Public'],
               };
@@ -2529,7 +2534,7 @@ posts.get('/posts/:id/replies', async (c) => {
   try {
     const postId = c.req.param('id');
     const cursor = c.req.query('cursor');
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
 
     // Get current user ID from session (optional)
     const token = getSessionToken(c.req.raw);
@@ -2932,10 +2937,13 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
         return c.json({ error: 'Invalid or expired reply preparation' }, 422);
       }
 
-      // Check if GIF exists in R2 (simplified check for now)
-      const gifExists = true; // Placeholder - implement actual R2 check
-
-      if (!gifExists) {
+      // The key must be an object this reply's prepare step minted
+      // (`gif/<replyId>.<ext>` or `audio/<replyId>.<ext>`) and actually
+      // present in R2: otherwise any reachable object could be attached.
+      if (!gifKey.startsWith(`gif/${replyId}.`) && !gifKey.startsWith(`audio/${replyId}.`)) {
+        return c.json({ error: 'Invalid reply media key' }, 422);
+      }
+      if (c.env.BUCKET && !(await c.env.BUCKET.head(gifKey))) {
         return c.json({ error: 'GIF not uploaded' }, 422);
       }
 
@@ -3193,7 +3201,7 @@ posts.get('/search', async (c) => {
   try {
     const query = c.req.query('q');
     const type = c.req.query('type') || 'posts';
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
 
     if (!query || query.trim().length === 0) {
       return c.json({ error: 'Search query required' }, 400);
@@ -3797,17 +3805,19 @@ posts.put('/posts/:id', async (c) => {
     // Re-screen on every edit: a swapped-in image kept the old post's verdict,
     // because submitDetectNsfw skips objects already marked done. Reconciling
     // here also drops rows for images that were removed.
+    // Runs in the background like the commit path: crowd round-trips can take
+    // up to the workload timeout (120s+), which must not gate the edit response.
     const currentGif = typeof updated?.gif_key === 'string' ? updated.gif_key : null;
-    await screenPostImages(c.env.DB, c.env, postId, [
+    screenPostImages(c.env.DB, c.env, postId, [
       ...(isImageKey(currentGif) ? [currentGif] : []),
       ...imageAttachmentKeys(updated?.attachments),
-    ]);
+    ]).catch((e) => console.error('Background NSFW re-screen failed:', e));
 
     return c.json({ post: updated });
   } catch (error: unknown) {
     const err = error as { message: string; stack?: string };
     console.error('Edit post error:', error);
-    return c.json({ error: 'Failed to edit post', details: err.message || String(error), stack: err.stack }, 500);
+    return c.json({ error: 'Failed to edit post', details: err.message || String(error) }, 500);
   }
 });
 
@@ -3884,80 +3894,6 @@ posts.get('/posts/:id', async (c) => {
     return c.json({ error: 'Failed to get post', details: err.message || 'Unknown error' }, 500);
   }
 });
-
-// Helper function to get threshold for a category
-function getThreshold(category: ReportCategory): number {
-  const thresholds: Record<ReportCategory, number> = {
-    spam: 3,
-    harassment: 3,
-    inappropriate: 3,
-    misinformation: 3,
-    other: 3,
-    hate_speech: 3,
-    copyright: 1,
-    csam: 1,
-    malware: 1,
-    privacy: 3,
-    nsfw_untagged: 2,
-  };
-  return thresholds[category];
-}
-
-// Helper function to get priority for a category
-function getPriority(category: ReportCategory): 'critical' | 'high' | 'normal' {
-  if (category === 'csam' || category === 'malware') {
-    return 'critical';
-  }
-  if (category === 'copyright') {
-    return 'high';
-  }
-  return 'normal';
-}
-
-// Helper function to resolve mentioned usernames to {username, user_id} objects
-async function resolveMentions(db: D1Database, mentionedUsernames: string[], currentUsername: string): Promise<string> {
-  if (mentionedUsernames.length === 0) return '[]';
-  const placeholders = mentionedUsernames.map(() => '?').join(',');
-  const rows = await db
-    .prepare(`SELECT id, username FROM users WHERE LOWER(username) IN (${placeholders})`)
-    .bind(...mentionedUsernames.map((u) => u.toLowerCase()))
-    .all<{ id: string; username: string }>();
-  const userMap = new Map(rows.results?.map((r) => [r.username.toLowerCase(), r]) || []);
-  // 同一ユーザーが大文字小文字違いなどで複数回メンションされても1件に集約する
-  const seenUserIds = new Set<string>();
-  const resolved = mentionedUsernames
-    .map((u) => {
-      const user = userMap.get(u.toLowerCase());
-      return user ? { username: user.username, user_id: user.id } : null;
-    })
-    .filter((m): m is { username: string; user_id: string } => m !== null)
-    .filter((m) => {
-      if (seenUserIds.has(m.user_id)) return false;
-      seenUserIds.add(m.user_id);
-      return true;
-    });
-  return JSON.stringify(resolved);
-}
-
-// Helper function to insert notification
-async function insertNotification(
-  db: D1Database,
-  userId: string,
-  type: 'fresh' | 'reported' | 'warned' | 'hidden',
-  postId: string,
-  actorId?: string,
-) {
-  const _messages: Record<string, string> = {
-    fresh: 'fresed your post',
-    reported: 'reported your post',
-    warned: 'Your post has been reported for {category}. It may be removed if it violates our ToS.',
-    hidden: 'Your post has been removed due to a {category} report.',
-  };
-  await db
-    .prepare('INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)')
-    .bind(nanoid(), userId, type, postId, actorId || null)
-    .run();
-}
 
 // Helper function to insert admin alert
 async function insertAdminAlert(
@@ -4199,18 +4135,6 @@ async function enrichPostsWithReactions(
     post.reactions = grouped.get(post.id) || [];
   }
 }
-// Helper: add N business days to a date (weekdays only, no holiday calendar)
-function addBusinessDays(date: Date, days: number): Date {
-  const d = new Date(date);
-  let added = 0;
-  while (added < days) {
-    d.setDate(d.getDate() + 1);
-    const dow = d.getDay();
-    if (dow !== 0 && dow !== 6) added++;
-  }
-  return d;
-}
-
 // POST /api/posts/:id/counter-notice - file a DMCA counter-notification (protected)
 posts.post('/posts/:id/counter-notice', requireAuth, async (c) => {
   try {
@@ -4310,184 +4234,6 @@ posts.post('/posts/:id/counter-notice', requireAuth, async (c) => {
     const err = error as { message?: string };
     console.error('Counter-notice error:', error);
     return c.json({ error: 'Failed to file counter-notice', details: err.message || 'Unknown error' }, 500);
-  }
-});
-
-// GET /api/posts/:id/versions - list archived versions of a game (public)
-posts.get('/posts/:id/versions', async (c) => {
-  try {
-    const postId = c.req.param('id');
-    if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
-
-    const { results } = (await c.env.DB.prepare(
-      'SELECT id, version_number, changelog, thumbnail_key, created_at FROM game_versions WHERE post_id = ? ORDER BY version_number DESC',
-    )
-      .bind(postId)
-      .all()) as {
-      results: Array<{
-        id: string;
-        version_number: number;
-        changelog: string | null;
-        thumbnail_key: string | null;
-        created_at: string;
-      }>;
-    };
-
-    const versions = results.map((r) => ({
-      id: r.id,
-      versionNumber: r.version_number,
-      changelog: r.changelog || null,
-      thumbnailKey: r.thumbnail_key || null,
-      createdAt: r.created_at,
-    }));
-
-    return c.json({ versions });
-  } catch (error: unknown) {
-    const err = error as { message?: string };
-    console.error('List game versions error:', error);
-    return c.json({ error: 'Failed to list versions', details: err.message }, 500);
-  }
-});
-
-// POST /api/posts/:id/versions/prepare - reserve an upload slot for a new version (owner only)
-posts.post('/posts/:id/versions/prepare', requireAuth, async (c) => {
-  try {
-    const user = c.get('user');
-    if (!user) return c.json({ error: 'Unauthorized' }, 401);
-    const postId = c.req.param('id');
-    if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
-
-    const post = (await c.env.DB.prepare('SELECT id, user_id, payload_key, status FROM posts WHERE id = ?')
-      .bind(postId)
-      .first()) as { id: string; user_id: string; payload_key: string | null; status: string } | null;
-
-    if (!post) return c.json({ error: 'Post not found' }, 404);
-    if (post.user_id !== user.id) return c.json({ error: 'Forbidden' }, 403);
-    if (post.status !== 'published') return c.json({ error: 'Post is not published' }, 400);
-    if (
-      !post.payload_key ||
-      !(
-        post.payload_key.startsWith('zip/') ||
-        post.payload_key.startsWith('html/') ||
-        post.payload_key.startsWith('versions/')
-      )
-    ) {
-      return c.json({ error: 'Only ZIP/HTML5 games can be versioned' }, 400);
-    }
-
-    const versionId = crypto.randomUUID();
-    const storageKey = `versions/${postId}/${versionId}.zip`;
-    const origin = new URL(c.req.url).origin;
-    const uploadUrl = `${origin}/api/upload/${storageKey}`;
-
-    return c.json({ postId, versionId, zipUploadUrl: uploadUrl, zipKey: storageKey });
-  } catch (error: unknown) {
-    const err = error as { message?: string };
-    console.error('Prepare game version error:', error);
-    return c.json({ error: 'Failed to prepare version', details: err.message }, 500);
-  }
-});
-
-// POST /api/posts/:id/versions/commit - finalize a newly uploaded version (owner only)
-posts.post('/posts/:id/versions/commit', requireAuth, async (c) => {
-  try {
-    const user = c.get('user');
-    if (!user) return c.json({ error: 'Unauthorized' }, 401);
-    const postId = c.req.param('id')!;
-    if (!c.env.DB || !c.env.BUCKET) return c.json({ error: 'Database/Storage not available' }, 500);
-
-    const body = (await c.req.json()) as { versionId?: string; changelog?: string };
-    if (!body.versionId) return c.json({ error: 'versionId is required' }, 400);
-
-    const post = (await c.env.DB.prepare('SELECT id, user_id, payload_key, status, created_at FROM posts WHERE id = ?')
-      .bind(postId)
-      .first()) as {
-      id: string;
-      user_id: string;
-      payload_key: string | null;
-      status: string;
-      created_at: string;
-    } | null;
-
-    if (!post || post.user_id !== user.id) return c.json({ error: 'Forbidden' }, 403);
-    if (post.status !== 'published') return c.json({ error: 'Post is not published' }, 400);
-
-    const newKey = `versions/${postId}/${body.versionId}.zip`;
-    const head = await c.env.BUCKET.head(newKey);
-    if (!head) return c.json({ error: 'Uploaded file not found' }, 400);
-
-    const maxRow = (await c.env.DB.prepare('SELECT MAX(version_number) as m FROM game_versions WHERE post_id = ?')
-      .bind(postId)
-      .first()) as { m: number | null } | null;
-    const max = maxRow?.m ?? 0;
-
-    const now = new Date().toISOString();
-    const changelog = typeof body.changelog === 'string' ? body.changelog.trim().slice(0, 2000) || null : null;
-
-    // Archive the original release as v1 the first time a game is versioned,
-    // so players can still roll back to it after an update.
-    const archiveOriginal = max === 0 && !!post.payload_key && post.payload_key !== newKey;
-    if (archiveOriginal) {
-      await c.env.DB.prepare(
-        'INSERT INTO game_versions (id, post_id, version_number, payload_key, thumbnail_key, changelog, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      )
-        .bind(crypto.randomUUID(), postId, 1, post.payload_key, null, null, user.id, post.created_at)
-        .run();
-    }
-
-    // When the original was archived as v1, the new release becomes v2.
-    const newVersionNumber = archiveOriginal ? 2 : max + 1;
-    await c.env.DB.prepare(
-      'INSERT INTO game_versions (id, post_id, version_number, payload_key, thumbnail_key, changelog, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    )
-      .bind(body.versionId, postId, newVersionNumber, newKey, null, changelog, user.id, now)
-      .run();
-
-    await c.env.DB.prepare('UPDATE posts SET payload_key = ?, edited_at = ?, created_at = ? WHERE id = ?')
-      .bind(newKey, now, now, postId)
-      .run();
-
-    const execCtx = (c as unknown as { executionCtx?: { waitUntil: (p: Promise<unknown>) => void } }).executionCtx;
-    if (execCtx?.waitUntil) {
-      const bucket = c.env.BUCKET;
-      const db = c.env.DB;
-      const versionId = body.versionId ?? null;
-      if (bucket && db) {
-        execCtx.waitUntil(
-          (async () => {
-            try {
-              // Clear old extraction manifests so the new version's files
-              // overwrite the stale ones instead of being silently skipped.
-              await Promise.all([
-                bucket.delete(`wvfs/${postId}/.wvfs-manifest`),
-                versionId ? bucket.delete(`wvfs/${postId}/${versionId}/.wvfs-manifest`) : Promise.resolve(),
-              ]);
-
-              // Extract to the default (non-versioned) path so the latest version
-              // serves from the plain /api/wvfs-zip/<postId> URL, and to the
-              // versioned path so ?v=<id> also resolves to it.
-              await extractZipToR2(bucket, newKey, postId);
-              if (versionId) {
-                await extractZipToR2(bucket, newKey, postId, versionId);
-              }
-            } catch (e) {
-              console.error('Background ZIP extraction failed for version:', e);
-            }
-            try {
-              await extractGameDescription(bucket, db, newKey, postId);
-            } catch (e) {
-              console.error('Background game description extraction failed:', e);
-            }
-          })(),
-        );
-      }
-    }
-
-    return c.json({ ok: true, versionId: body.versionId, versionNumber: newVersionNumber });
-  } catch (error: unknown) {
-    const err = error as { message?: string };
-    console.error('Commit game version error:', error);
-    return c.json({ error: 'Failed to commit version', details: err.message }, 500);
   }
 });
 

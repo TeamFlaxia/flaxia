@@ -26,8 +26,11 @@ let vapidKeys: { publicKey: string; privateKey: string } | null = null;
  */
 function ensureVapid(vapidPublicKey?: string, vapidPrivateKey?: string, subject?: string) {
   if (vapidKeys) return;
-  const pub = vapidPublicKey || VAPID_PUBLIC_KEY;
-  const priv = vapidPrivateKey || VAPID_PRIVATE_KEY;
+  // The globals only exist when the secrets are configured; a bare read
+  // throws ReferenceError otherwise (500 on /api/push/vapid-key), so probe
+  // with typeof first and fall through to generated dev keys.
+  const pub = vapidPublicKey || (typeof VAPID_PUBLIC_KEY !== 'undefined' ? VAPID_PUBLIC_KEY : undefined);
+  const priv = vapidPrivateKey || (typeof VAPID_PRIVATE_KEY !== 'undefined' ? VAPID_PRIVATE_KEY : undefined);
   if (pub && priv) {
     vapidKeys = { publicKey: pub, privateKey: priv };
   } else {

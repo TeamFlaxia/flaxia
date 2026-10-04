@@ -98,9 +98,14 @@ export function createDocumentViewer(props: DocumentViewerProps): HTMLElement {
 
   let frame: HTMLIFrameElement | null = null;
   let readyTimer: ReturnType<typeof setTimeout> | null = null;
+  const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN as string;
 
   function onMessage(event: MessageEvent): void {
     if (!frame || event.source !== frame.contentWindow) return;
+    // The frame URL is sandbox-origin, but a navigation inside the frame
+    // (or a failed load landing on an error page) would change who listens:
+    // only accept control messages from the expected origin.
+    if (event.origin !== sandboxOrigin) return;
     if (!isParentMessage(event.data)) return;
     switch (event.data.type) {
       case 'DOCUMENT_READY':
@@ -128,7 +133,10 @@ export function createDocumentViewer(props: DocumentViewerProps): HTMLElement {
       if (!res.ok) throw new Error(`document fetch failed with ${res.status}`);
       const bytes = await res.arrayBuffer();
       // Transferred, not copied: the viewer takes ownership of the buffer.
-      frame?.contentWindow?.postMessage({ type: 'DOCUMENT_DATA', requestId, bytes }, '*', [bytes]);
+      // Target the sandbox origin explicitly — a wildcard would hand private
+      // document bytes to whatever origin occupies the frame after a
+      // navigation or failed load.
+      frame?.contentWindow?.postMessage({ type: 'DOCUMENT_DATA', requestId, bytes }, sandboxOrigin, [bytes]);
     } catch (err) {
       console.error('PDF delivery failed:', err);
       failViewer();
