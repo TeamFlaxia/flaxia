@@ -34,8 +34,12 @@ ads.get('/ads/:id/payload', async (c) => {
       return c.json({ error: 'Storage not available' }, 500);
     }
 
-    // Fetch ad to get payload_key, payload_type, and thumbnail_key
-    const ad = await c.env.DB.prepare('SELECT payload_key, payload_type, thumbnail_key FROM ads WHERE id = ?')
+    // Fetch ad to get payload_key, payload_type, and thumbnail_key.
+    // Only active ads are servable: a deactivated (e.g. policy-violating)
+    // ad must not stay fetchable by direct ID.
+    const ad = await c.env.DB.prepare(
+      'SELECT payload_key, payload_type, thumbnail_key FROM ads WHERE id = ? AND active = 1',
+    )
       .bind(adId)
       .first();
 
@@ -118,7 +122,10 @@ ads.get('/ads/active', async (c) => {
     // Shuffle results in JS
     const shuffled = [...(result.results || [])].sort(() => Math.random() - 0.5);
 
-    return c.json({ ads: shuffled });
+    // Public, low-churn inventory: safe for short edge caching (success only).
+    return c.json({ ads: shuffled }, 200, {
+      'Cache-Control': 'public, max-age=60',
+    });
   } catch (error: unknown) {
     const err = error as { message?: string };
     console.error('Get active ads error:', error);

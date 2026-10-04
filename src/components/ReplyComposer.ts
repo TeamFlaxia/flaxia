@@ -269,14 +269,6 @@ export class ReplyComposer {
       this.handlePaste(e);
     });
 
-    this.element.addEventListener('dragover', (e) => {
-      console.log('Dragover event:', e);
-    });
-
-    this.element.addEventListener('drop', (e) => {
-      console.log('Drop event:', e);
-    });
-
     // Set user avatar
     this.initAvatar();
   }
@@ -737,8 +729,6 @@ export class ReplyComposer {
 
   private async uploadFileDirect(file: File, uploadUrl: string): Promise<boolean> {
     try {
-      console.log('Uploading file', 'Type:', file.type, 'Size:', file.size);
-
       const response = await fetch(uploadUrl, {
         method: 'PUT',
         body: file,
@@ -747,8 +737,6 @@ export class ReplyComposer {
         },
         credentials: 'include',
       });
-
-      console.log('Upload response status:', response.status, response.statusText);
 
       if (!response.ok) {
         console.error('Upload failed:', response.status);

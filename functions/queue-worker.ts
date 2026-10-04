@@ -38,6 +38,13 @@ export default {
     } catch (error) {
       console.error('Dataset export failed:', (error as Error).message);
     }
+    try {
+      const { reapStalePendingPosts } = await import('./lib/pending-reap');
+      const reaped = await reapStalePendingPosts(env);
+      if (reaped > 0) console.log(`Reaped ${reaped} stale pending posts`);
+    } catch (error) {
+      console.error('Pending reap failed:', (error as Error).message);
+    }
   },
 
   async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
@@ -310,7 +317,7 @@ async function handleCreateActivity(
 
   await env.DB.prepare(`
     INSERT INTO posts (id, user_id, username, text, hashtags, status, parent_id, root_id, depth, actor_id, created_at)
-    VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
     .bind(postId, userId, username, plainContent, JSON.stringify(hashtags), parentId, rootId, depth, actorId)
     .run();
@@ -435,7 +442,7 @@ async function handleFollowActivity(
   const followerId = generateId();
   await env.DB.prepare(`
     INSERT INTO ap_followers (id, local_user_id, actor_url, inbox_url, created_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
     .bind(followerId, localUserId, actorId, inboxUrl)
     .run();
@@ -635,7 +642,7 @@ async function handleLikeActivity(
   const likeId = generateId();
   await env.DB.prepare(`
     INSERT INTO likes (id, post_id, user_id, actor_id, created_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
     .bind(likeId, postId, 'unknown', actorId)
     .run();
@@ -689,7 +696,7 @@ async function handleAnnounceActivity(
   const shareId = generateId();
   await env.DB.prepare(`
     INSERT INTO shares (id, post_id, user_id, actor_id, created_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
     .bind(shareId, postId, 'unknown', actorId)
     .run();

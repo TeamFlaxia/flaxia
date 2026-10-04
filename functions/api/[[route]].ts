@@ -13,6 +13,7 @@ import meRouter from './routes/me';
 import mediaRouter from './routes/media';
 import multiplayerRouter from './routes/multiplayer';
 import pollsRouter from './routes/polls';
+import postVersionsRouter from './routes/post-versions';
 import postsRouter from './routes/posts';
 import pushRouter from './routes/push';
 import reportRouter from './routes/report';
@@ -122,6 +123,9 @@ app.route('/api', gamesRouter);
 
 // Post routes (extracted to routes/posts.ts)
 app.route('/api', postsRouter);
+
+// Game version routes (extracted to routes/post-versions.ts)
+app.route('/api', postVersionsRouter);
 
 // Test routes (extracted to routes/tests.ts)
 app.route('/', testsRouter);

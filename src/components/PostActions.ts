@@ -136,10 +136,6 @@ function createActionButton(type: ActionButtonType, count: string, isActive: boo
 
   if (isActive) {
     button.classList.add('action-button--active');
-    // Console debug for Fresh status
-    if (type === 'fresh') {
-      console.log('Fresh button is active - user has freshed this post. Fresh count:', count);
-    }
   }
 
   // Create icon (universal Lucide icon, not OS-dependent emoji)
@@ -154,11 +150,6 @@ function createActionButton(type: ActionButtonType, count: string, isActive: boo
     const countSpan = document.createElement('span');
     countSpan.className = 'action-count';
     countSpan.textContent = count;
-
-    // Add debug styling for freshed posts
-    if (type === 'fresh' && isActive) {
-      console.log('Applying green color to fresh count for freshed post');
-    }
 
     button.appendChild(countSpan);
   }
