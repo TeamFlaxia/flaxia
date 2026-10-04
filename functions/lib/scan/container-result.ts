@@ -18,8 +18,15 @@ export function parseContainerOutput(output: unknown): ContainerOutput | null {
   const stdout = typeof record.stdout === 'string' ? record.stdout : '';
   const stderr = typeof record.stderr === 'string' ? record.stderr : '';
   const rawExit = record.exitCode;
-  const exitCode = typeof rawExit === 'number' ? rawExit : typeof rawExit === 'string' ? Number(rawExit) : NaN;
-  if (Number.isNaN(exitCode)) return null;
+  // #96: Number('') is 0, so a missing/empty code would read as CLEAN.
+  // Only finite numbers and non-blank numeric strings are admissible.
+  let exitCode = NaN;
+  if (typeof rawExit === 'number') {
+    exitCode = rawExit;
+  } else if (typeof rawExit === 'string' && rawExit.trim() !== '') {
+    exitCode = Number(rawExit);
+  }
+  if (!Number.isInteger(exitCode)) return null;
   return { stdout, stderr, exitCode };
 }
 
