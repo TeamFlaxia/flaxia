@@ -20,6 +20,8 @@ interface MultiplayerConfig {
 
 const STUN_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
 const WS_OPEN = 1;
+// #123: P2P/relay payload ceiling before anything reaches the game iframe.
+const MAX_PEER_DATA_BYTES = 8_000;
 
 export class MultiplayerManager {
   private ws: WebSocket | null = null;
@@ -166,7 +168,10 @@ export class MultiplayerManager {
     }
 
     if (msgType === 'peer_data') {
-      this.sendPeerDataToGame(data.data);
+      // #123: only members' data reaches the game iframe, bounded in size.
+      if (typeof data.userId === 'string' && this.peerIds.includes(data.userId)) {
+        this.sendPeerDataToGame(data.data);
+      }
       return;
     }
 
@@ -215,6 +220,8 @@ export class MultiplayerManager {
       this.onP2PDisconnected();
     };
     this.dataChannel.onmessage = (event) => {
+      // #123: bound P2P payloads before they reach the game iframe.
+      if (typeof event.data === 'string' && event.data.length > MAX_PEER_DATA_BYTES) return;
       try {
         const parsed = JSON.parse(event.data);
         this.sendPeerDataToGame(parsed);
@@ -236,6 +243,10 @@ export class MultiplayerManager {
   }
 
   private async handleSignal(data: { userId: string; signal: { type: string; payload: unknown } }): Promise<void> {
+    // #123: only room members may drive negotiation. Joining the room is the
+    // consent; strangers' offers/answers/candidates are never applied, so a
+    // non-member cannot force a P2P session (and the ICE exchange it leaks).
+    if (!data.userId || !this.peerIds.includes(data.userId)) return;
     if (!this.pc) {
       this.createPeerConnection();
     }
@@ -388,6 +399,12 @@ export class MultiplayerManager {
   }
 
   private sendPeerDataToGame(data: unknown): void {
+    // Final gate: no peer payload larger than the ceiling reaches the game.
+    try {
+      if (JSON.stringify(data).length > MAX_PEER_DATA_BYTES) return;
+    } catch {
+      return;
+    }
     try {
       this.config.iframe.contentWindow?.postMessage({ type: 'MULTIPLAYER_PEER_DATA', data }, this.config.sandboxOrigin);
     } catch {
