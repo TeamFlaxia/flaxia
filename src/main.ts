@@ -16,6 +16,8 @@ import { canRunFlaxiaNode, initCrowdNode, notifyCrowdConsentChanged } from './li
 import { initI18n, t } from './lib/i18n.js';
 import { lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from './lib/lazy-nav.js';
 import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
+import type { LeftNavHandlers } from './lib/left-nav-handlers.js';
+import { createLeftNavHandlers } from './lib/left-nav-handlers.js';
 import {
   clearNativeBadge,
   initNativeNotify,
@@ -688,9 +690,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             activeItem: 'explore',
             unreadCount: unreadNotificationCount,
             currentUser: currentUser || undefined,
-            onNavigate: leftNavNavigateHandler,
-            onSignIn: leftNavSignInHandler,
-            onSignUp: leftNavSignUpHandler,
+            ...leftNavHandlers(),
           });
 
           leftNavInstances.add(leftNav);
@@ -757,9 +757,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             activeItem: 'explore',
             unreadCount: unreadNotificationCount,
             currentUser: currentUser || undefined,
-            onNavigate: leftNavNavigateHandler,
-            onSignIn: leftNavSignInHandler,
-            onSignUp: leftNavSignUpHandler,
+            ...leftNavHandlers(),
           });
 
           leftNavInstances.add(leftNav);
@@ -822,9 +820,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             activeItem: 'arcade',
             unreadCount: unreadNotificationCount,
             currentUser: currentUser || undefined,
-            onNavigate: leftNavNavigateHandler,
-            onSignIn: leftNavSignInHandler,
-            onSignUp: leftNavSignUpHandler,
+            ...leftNavHandlers(),
           });
 
           leftNavInstances.add(leftNav);
@@ -897,9 +893,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             activeItem: 'profile',
             unreadCount: unreadNotificationCount,
             currentUser: currentUser || undefined,
-            onNavigate: leftNavNavigateHandler,
-            onSignIn: leftNavSignInHandler,
-            onSignUp: leftNavSignUpHandler,
+            ...leftNavHandlers(),
           });
 
           leftNavInstances.add(leftNav);
@@ -972,9 +966,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             activeItem: 'bookmarks',
             unreadCount: unreadNotificationCount,
             currentUser: currentUser || undefined,
-            onNavigate: leftNavNavigateHandler,
-            onSignIn: leftNavSignInHandler,
-            onSignUp: leftNavSignUpHandler,
+            ...leftNavHandlers(),
           });
           leftNavInstances.add(leftNav);
 
@@ -1029,9 +1021,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             activeItem: 'notifications',
             unreadCount: unreadNotificationCount,
             currentUser: currentUser || undefined,
-            onNavigate: leftNavNavigateHandler,
-            onSignIn: leftNavSignInHandler,
-            onSignUp: leftNavSignUpHandler,
+            ...leftNavHandlers(),
           });
 
           leftNavInstances.add(leftNav);
@@ -1102,9 +1092,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             activeItem: 'settings',
             unreadCount: unreadNotificationCount,
             currentUser: currentUser || undefined,
-            onNavigate: leftNavNavigateHandler,
-            onSignIn: leftNavSignInHandler,
-            onSignUp: leftNavSignUpHandler,
+            ...leftNavHandlers(),
           });
 
           leftNavInstances.add(leftNav);
@@ -1237,9 +1225,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             activeItem: 'home',
             unreadCount: unreadNotificationCount,
             currentUser: currentUser || undefined,
-            onNavigate: leftNavNavigateHandler,
-            onSignIn: leftNavSignInHandler,
-            onSignUp: leftNavSignUpHandler,
+            ...leftNavHandlers(),
           });
 
           leftNavInstances.add(leftNav);
@@ -1321,46 +1307,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     };
 
-    // Shared LeftNav callbacks to avoid duplication across all createLeftNav calls
-    const leftNavNavigateHandler = async (item: string): Promise<void> => {
-      if (item === 'home') {
-        window.history.pushState({}, '', '/home');
-        navigateTo('timeline');
-      } else if (item === 'explore') {
-        window.history.pushState({}, '', '/explore');
-        navigateTo('explore');
-      } else if (item === 'arcade') {
-        window.history.pushState({}, '', '/arcade');
-        navigateTo('arcade');
-      } else if (item === 'notifications') {
-        window.history.pushState({}, '', '/notifications');
-        navigateTo('notifications');
-      } else if (item === 'bookmarks') {
-        window.history.pushState({}, '', '/bookmarks');
-        navigateTo('bookmarks');
-      } else if (item === 'settings') {
-        window.history.pushState({}, '', '/settings');
-        navigateTo('settings');
-      } else if (item === 'profile') {
-        if (!currentUser) {
-          window.history.pushState({}, '', '/arcade');
-          navigateTo('arcade');
-          return;
-        }
-        window.history.pushState({}, '', `/profile/${currentUser.username}`);
-        navigateTo('profile', undefined, currentUser.username);
-      }
-    };
-
-    const leftNavSignInHandler = (): void => {
-      window.history.pushState({}, '', '/login');
-      navigateTo('login');
-    };
-
-    const leftNavSignUpHandler = (): void => {
-      window.history.pushState({}, '', '/register');
-      navigateTo('register');
-    };
+    // Shared LeftNav callbacks (see src/lib/left-nav-handlers.ts)
+    const leftNavHandlers = (): LeftNavHandlers =>
+      createLeftNavHandlers({
+        navigate: navigateTo,
+        getCurrentUsername: () => currentUser?.username ?? null,
+      });
 
     async function safeNavigate(
       view: string,
