@@ -208,17 +208,23 @@ app.get('/api/game-storage', (c) => {
         if(event.source!==window.parent||!allowedOrigins.has(event.origin))return;
         var message=event.data;
         if(!message||typeof message!=='object')return;
+        var namespace=typeof message.namespace==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(message.namespace)?message.namespace:null;
+        if(!namespace)return;
+        var prefix='flaxia:game:'+namespace+':';
         try{
           if(message.type==='FLAXIA_STORAGE_READ'&&typeof message.requestId==='string'){
             var entries=[];
-            for(var i=0;i<localStorage.length;i++){var key=localStorage.key(i);if(key!==null){var value=localStorage.getItem(key);if(value!==null)entries.push([key,value])}}
+            for(var i=0;i<localStorage.length;i++){var key=localStorage.key(i);if(key!==null&&key.indexOf(prefix)===0){var value=localStorage.getItem(key);if(value!==null)entries.push([key.slice(prefix.length),value])}}
             send(event.origin,{type:'FLAXIA_STORAGE_SNAPSHOT',requestId:message.requestId,entries:entries});
           }else if(message.type==='FLAXIA_STORAGE_SET'&&typeof message.key==='string'&&typeof message.value==='string'){
-            localStorage.setItem(message.key,message.value);
+            if(message.key.length>512||message.value.length>100000)return;
+            localStorage.setItem(prefix+message.key,message.value);
           }else if(message.type==='FLAXIA_STORAGE_REMOVE'&&typeof message.key==='string'){
-            localStorage.removeItem(message.key);
+            localStorage.removeItem(prefix+message.key);
           }else if(message.type==='FLAXIA_STORAGE_CLEAR'){
-            localStorage.clear();
+            var doomed=[];
+            for(var j=0;j<localStorage.length;j++){var k=localStorage.key(j);if(k!==null&&k.indexOf(prefix)===0)doomed.push(k)}
+            for(var d=0;d<doomed.length;d++)localStorage.removeItem(doomed[d]);
           }
         }catch(error){send(event.origin,{type:'FLAXIA_STORAGE_ERROR',message:String(error)})}
       });

@@ -46,7 +46,7 @@ export async function executeWvfsZip(
 
     let storageSnapshot: Record<string, string> = {};
     try {
-      storageSnapshot = await loadLegacyGameStorage(sandboxOrigin);
+      storageSnapshot = await loadLegacyGameStorage(sandboxOrigin, postId);
     } catch (error) {
       console.warn('Legacy game storage is unavailable:', error);
     }
@@ -56,7 +56,7 @@ export async function executeWvfsZip(
       prefix: PREFIX,
       storageSnapshot,
     });
-    const disconnectStorage = connectGameStorage(iframe, sandboxOrigin);
+    const disconnectStorage = connectGameStorage(iframe, sandboxOrigin, postId);
 
     const loaded = await waitForZipIframeLoad(iframe, loadingEl);
 
