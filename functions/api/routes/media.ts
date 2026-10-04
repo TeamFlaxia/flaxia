@@ -48,7 +48,7 @@ async function postMediaAllowed(c: MediaContext, postId: string): Promise<boolea
   if (!row.hidden && row.status === 'published') return true;
   const viewer = c.get('user');
   if (!viewer) return false;
-  return viewer.id === row.user_id || isAdmin(c.env, viewer.username);
+  return viewer.id === row.user_id || isAdmin(c.env, viewer);
 }
 
 /**
@@ -68,7 +68,7 @@ async function postKeyMediaAllowed(c: MediaContext, key: string): Promise<boolea
   if (!row.hidden && row.status === 'published') return true;
   const viewer = c.get('user');
   if (!viewer) return false;
-  return viewer.id === row.user_id || isAdmin(c.env, viewer.username);
+  return viewer.id === row.user_id || isAdmin(c.env, viewer);
 }
 
 /**
@@ -650,7 +650,7 @@ media.get('/thumbnail/:id', async (c) => {
     // Hidden or unpublished posts keep their thumbnail for owner/admins only.
     if (isPostRow && post && (post.hidden || post.status !== 'published')) {
       const viewer = c.get('user');
-      const allowed = viewer !== null && (viewer.id === String(post.user_id) || isAdmin(c.env, viewer.username));
+      const allowed = viewer !== null && (viewer.id === String(post.user_id) || isAdmin(c.env, viewer));
       if (!allowed) {
         return c.json({ error: 'Thumbnail not found' }, 404);
       }

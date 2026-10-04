@@ -238,7 +238,7 @@ admin.get('/users', requireAuth, requireAdmin, async (c) => {
     }
 
     const result = await c.env.DB.prepare(`
-      SELECT id, username, display_name, email, created_at
+      SELECT id, username, display_name, email, created_at, role
       FROM users
       ORDER BY created_at DESC
     `).all();
@@ -261,16 +261,16 @@ admin.delete('/users/:id', requireAuth, requireAdmin, async (c) => {
     }
 
     // Get the target user
-    const targetUser = (await c.env.DB.prepare('SELECT id, username FROM users WHERE id = ?')
+    const targetUser = (await c.env.DB.prepare('SELECT id, username, role FROM users WHERE id = ?')
       .bind(targetUserId)
-      .first()) as { id: string; username: string } | null;
+      .first()) as { id: string; username: string; role: string | null } | null;
 
     if (!targetUser) {
       return c.json({ error: 'User not found' }, 404);
     }
 
     // Check if trying to delete an admin
-    if (isAdmin(c.env, targetUser.username)) {
+    if (isAdmin(c.env, targetUser)) {
       return c.json({ error: 'Cannot delete admin accounts' }, 403);
     }
 
@@ -361,7 +361,7 @@ admin.post('/counter/:id/reject', requireAuth, requireAdmin, async (c) => {
 admin.get('/ads/config', async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env, user.username)) {
+    if (!user || !isAdmin(c.env, user)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -386,7 +386,7 @@ admin.get('/ads/config', async (c) => {
 admin.patch('/ads/config', requireAuth, async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env, user.username)) {
+    if (!user || !isAdmin(c.env, user)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -421,7 +421,7 @@ admin.patch('/ads/config', requireAuth, async (c) => {
 admin.get('/ads', requireAuth, async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env, user.username)) {
+    if (!user || !isAdmin(c.env, user)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -464,7 +464,7 @@ admin.get('/ads', requireAuth, async (c) => {
 admin.post('/ads', requireAuth, async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env, user.username)) {
+    if (!user || !isAdmin(c.env, user)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -676,7 +676,7 @@ admin.post('/ads', requireAuth, async (c) => {
 admin.patch('/ads/:id', requireAuth, async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env, user.username)) {
+    if (!user || !isAdmin(c.env, user)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 
@@ -808,7 +808,7 @@ admin.put('/ads/:id', requireAdmin, async (c) => {
 admin.delete('/ads/:id', requireAuth, async (c) => {
   try {
     const user = c.get('user');
-    if (!user || !isAdmin(c.env, user.username)) {
+    if (!user || !isAdmin(c.env, user)) {
       return c.json({ error: 'Admin access required' }, 403);
     }
 

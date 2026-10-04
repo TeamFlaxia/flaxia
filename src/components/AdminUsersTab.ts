@@ -8,14 +8,14 @@ export interface AdminUser {
   display_name: string;
   email: string;
   created_at: string;
+  role?: string | null;
 }
 
 export interface AdminUsersTabProps {
   onNavigateToTab: (tab: 'alerts' | 'hidden' | 'users' | 'ads') => void;
-  adminUsernames?: string[];
 }
 
-export function createAdminUsersTab({ onNavigateToTab, adminUsernames = [] }: AdminUsersTabProps) {
+export function createAdminUsersTab({ onNavigateToTab }: AdminUsersTabProps) {
   let element: HTMLElement;
   let users: AdminUser[] = [];
   let filteredUsers: AdminUser[] = [];
@@ -108,8 +108,9 @@ export function createAdminUsersTab({ onNavigateToTab, adminUsernames = [] }: Ad
     joined.textContent = formatDate(user.created_at);
     row.appendChild(joined);
 
-    const isAdmin = adminUsernames.includes(user.username);
-    if (!isAdmin) {
+    // #134: server enforces admin-only delete; this only hides the button.
+    const isTargetAdmin = user.role === 'admin';
+    if (!isTargetAdmin) {
       const deleteBtn = document.createElement('button');
       deleteBtn.textContent = t('admin_users.delete_account');
       deleteBtn.style.cssText = `

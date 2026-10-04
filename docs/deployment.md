@@ -1,5 +1,16 @@
 # Deployment
 
+## Admin bootstrap (#134)
+
+Admin rights live on `users.role`, not on usernames. After migrating, assign the first admin directly in D1:
+
+```bash
+npm run migrate:prod
+wrangler d1 execute flaxia --remote --command "UPDATE users SET role='admin' WHERE username='<name>'"
+```
+
+`ADMIN_USERNAMES` in `wrangler.toml` stays empty in the repo; it is only a bootstrap fallback (local `dev:*` scripts set a test value). Never commit a real username there.
+
 ## Overview
 
 Flaxia consists of 3 deployable components:

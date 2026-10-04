@@ -9,6 +9,7 @@ export interface User {
   email: string;
   username: string;
   display_name: string;
+  role?: string | null;
   bio: string;
   avatar_key?: string;
   language?: string;
@@ -131,7 +132,7 @@ export async function getSession(env: Env, token: string): Promise<{ user: User;
 
   // Get user from database
   const user = (await env.DB.prepare(`
-    SELECT id, email, username, display_name, bio, avatar_key, badge_type, created_at
+    SELECT id, email, username, display_name, bio, avatar_key, badge_type, created_at, role
     FROM users WHERE id = ?
   `)
     .bind(session.user_id)
@@ -151,7 +152,7 @@ export async function getMeWithSession(env: Env, token: string): Promise<{ user:
   const result = (await env.DB.prepare(`
     SELECT 
       u.id, u.email, u.username, u.display_name, 
-      u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.created_at
+      u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.created_at, u.role, u.role
     FROM sessions s
     JOIN users u ON s.user_id = u.id
     WHERE s.id = ?

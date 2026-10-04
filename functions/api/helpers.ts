@@ -51,8 +51,8 @@ export const requireAuth = async (c: Context<{ Bindings: Bindings; Variables: Va
 
 // Require admin role
 export const requireAdmin = async (c: Context<{ Bindings: Bindings; Variables: Variables }>, next: Next) => {
-  const username = c.get('user')?.username;
-  if (!username || !isAdmin(c.env as { ADMIN_USERNAMES: string }, username)) {
+  const user = c.get('user');
+  if (!user || !isAdmin(c.env as { ADMIN_USERNAMES?: string }, user)) {
     return c.json({ error: 'Forbidden' }, 403);
   }
   await next();
