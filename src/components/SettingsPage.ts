@@ -1098,7 +1098,9 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
         const message =
           errorData.error === 'vault_rewrap_required'
             ? t('settings.vault_rewrap_required')
-            : errorData.error || t('settings.password_save_failed');
+            : errorData.error === 'vault_key_version_conflict'
+              ? t('settings.vault_changed')
+              : errorData.error || t('settings.password_save_failed');
         passwordMessage.textContent = message;
         passwordMessage.style.color = 'var(--danger)';
       }

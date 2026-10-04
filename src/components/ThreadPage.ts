@@ -107,7 +107,6 @@ export class ThreadPage {
       unreadCount: this.props.unreadCount ?? 0,
       currentUser: this.props.currentUser || undefined,
       onNavigate: async (item) => {
-        console.log('Navigate to:', item);
         if (item === 'home') {
           window.history.pushState({}, '', '/home');
           window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'timeline' } }));

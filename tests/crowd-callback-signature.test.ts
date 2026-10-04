@@ -86,10 +86,16 @@ describe('callback signing', () => {
     assert.equal(await verifyCallbackSignature(reordered, WITH_API_KEY), true);
   });
 
-  it('leaves unsigned URLs alone when Crowd cannot submit anything', async () => {
+  it('leaves unsigned URLs alone only in local/test deployments', async () => {
     const unsigned = new URL('https://flaxia.app/api/crowd/webhook?type=file-scan&key=a');
     assert.equal(await verifyCallbackSignature(unsigned, UNCONFIGURED), true, 'local dev and tests stay usable');
     assert.equal(await verifyCallbackSignature(unsigned, WITH_API_KEY), false, 'a configured Crowd must verify');
+    const unconfiguredProd = crowdConfig({ BASE_URL: 'https://flaxia.app' });
+    assert.equal(
+      await verifyCallbackSignature(unsigned, unconfiguredProd),
+      false,
+      'production must never accept unsigned callbacks',
+    );
     assert.equal((await signedWith(UNCONFIGURED)).searchParams.get('sig'), null);
   });
 });

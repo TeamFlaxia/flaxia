@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
+import { checkRateLimit } from '../../lib/rate-limit';
 import {
   getPriority,
   getThreshold,
@@ -89,6 +90,13 @@ report.post('/report', requireAuth, async (c) => {
       return c.json({ error: 'Already reported' }, 409);
     }
 
+    // Cap reports per account so a single user cannot mass-flag the timeline.
+    // Falls through when KV is unavailable, like the other limiters.
+    const allowed = await checkRateLimit(c.env.CACHE, `report:${userId}`, { maxRequests: 20, windowSeconds: 3600 });
+    if (!allowed) {
+      return c.json({ error: 'Too many reports. Please try again later.' }, 429);
+    }
+
     // Insert report with optional DMCA fields
     const reportId = nanoid();
     if (dmca && category === 'copyright') {
@@ -114,11 +122,20 @@ report.post('/report', requireAuth, async (c) => {
 
     // Process based on category
     if (category === 'csam' || category === 'malware') {
-      // Immediate hide - no threshold check
-      await c.env.DB.prepare('UPDATE posts SET hidden = 1 WHERE id = ?').bind(post_id).run();
-      await insertNotification(c.env.DB, post.user_id, 'hidden', post_id);
-      await insertAdminAlert(c.env.DB, post_id, category, 'critical');
-    } else if (category === 'nsfw_untagged') {
+      // Alert moderators immediately (once), but do not hide on a single
+      // report: an unverified report must not be a one-click takedown. The
+      // shared threshold below hides the post once a second reporter confirms.
+      const { count: categoryReports } = (await c.env.DB.prepare(
+        'SELECT COUNT(*) as count FROM reports WHERE post_id = ? AND category = ?',
+      )
+        .bind(post_id, category)
+        .first()) as { count: number };
+      if (categoryReports <= 1) {
+        await insertAdminAlert(c.env.DB, post_id, category, 'critical');
+      }
+    }
+
+    if (category === 'nsfw_untagged') {
       const threshold = getThreshold(category);
       const { count } = (await c.env.DB.prepare(
         'SELECT COUNT(*) as count FROM reports WHERE post_id = ? AND category = ?',
@@ -161,8 +178,11 @@ report.post('/report', requireAuth, async (c) => {
         await c.env.DB.prepare('UPDATE posts SET hidden = 1 WHERE id = ?').bind(post_id).run();
         await insertNotification(c.env.DB, post.user_id, 'hidden', post_id);
 
-        const priority = getPriority(category);
-        await insertAdminAlert(c.env.DB, post_id, category, priority);
+        // csam/malware already raised a critical alert on the first report.
+        if (category !== 'csam' && category !== 'malware') {
+          const priority = getPriority(category);
+          await insertAdminAlert(c.env.DB, post_id, category, priority);
+        }
       }
     }
 

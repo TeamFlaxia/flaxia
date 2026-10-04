@@ -1,3 +1,4 @@
+import { connectGameStorage, loadLegacyGameStorage } from './game-storage-broker.js';
 import {
   createZipLoadingIndicator,
   createZipSandboxIframe,
@@ -43,10 +44,19 @@ export async function executeWvfsZip(
     const preWarmUrl = `${zipUrl}/index.html`;
     fetch(preWarmUrl, { method: 'GET', mode: 'cors' }).catch(() => {});
 
+    let storageSnapshot: Record<string, string> = {};
+    try {
+      storageSnapshot = await loadLegacyGameStorage(sandboxOrigin);
+    } catch (error) {
+      console.warn('Legacy game storage is unavailable:', error);
+    }
+
     const { iframe, cleanup } = createZipSandboxIframe(containerEl, zipUrl, {
       hideFullscreen,
       prefix: PREFIX,
+      storageSnapshot,
     });
+    const disconnectStorage = connectGameStorage(iframe, sandboxOrigin);
 
     const loaded = await waitForZipIframeLoad(iframe, loadingEl);
 
@@ -62,6 +72,7 @@ export async function executeWvfsZip(
       postId,
       destroy: () => {
         clearTimeout((iframe as HTMLIFrameElement & { _zipLoadTimeout?: number })._zipLoadTimeout);
+        disconnectStorage();
         cleanup();
         const fullscreenBtn = containerEl.querySelector(`.${PREFIX}-fullscreen-btn`);
         if (fullscreenBtn) {

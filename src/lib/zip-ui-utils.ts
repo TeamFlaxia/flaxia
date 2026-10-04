@@ -6,6 +6,8 @@ export interface ZipIframeHandle {
   cleanup: () => void;
 }
 
+const ZIP_SANDBOX = 'allow-scripts allow-pointer-lock allow-fullscreen';
+
 export function createZipLoadingIndicator(prefix: string): HTMLElement {
   ensureZipSpinKeyframe(prefix);
 
@@ -63,9 +65,9 @@ export function ensureZipSpinKeyframe(prefix: string): void {
 export function createZipSandboxIframe(
   containerEl: HTMLElement,
   src: string,
-  options: { sandbox?: string; hideFullscreen?: boolean; prefix?: string } = {},
+  options: { hideFullscreen?: boolean; prefix?: string; storageSnapshot?: Record<string, string> } = {},
 ): ZipIframeHandle {
-  const { sandbox, hideFullscreen = false, prefix = 'zip' } = options;
+  const { hideFullscreen = false, prefix = 'zip', storageSnapshot = {} } = options;
 
   const iframeContainer = document.createElement('div');
   iframeContainer.style.cssText = `
@@ -79,10 +81,9 @@ export function createZipSandboxIframe(
   `;
 
   const iframe = document.createElement('iframe');
+  iframe.sandbox = ZIP_SANDBOX;
+  iframe.name = `FLAXIA_STORAGE_V1:${JSON.stringify(storageSnapshot)}`;
   iframe.src = src;
-  if (sandbox) {
-    iframe.sandbox = sandbox;
-  }
   iframe.setAttribute('allow', 'fullscreen');
   iframe.setAttribute('referrerpolicy', 'no-referrer');
   iframe.style.cssText = `

@@ -1,9 +1,9 @@
+import { t } from '../lib/i18n.js';
 import type { PostAttachment } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { createDocumentViewer } from './DocumentViewer.js';
 import { createImagePreview } from './ImagePreview.js';
 import { createVideoPlayer } from './VideoPlayer.js';
-import { t } from '../lib/i18n.js';
 
 export interface MediaCarouselProps {
   postId: string;

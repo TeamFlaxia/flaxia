@@ -43,6 +43,9 @@ STRIPE_PRICE_FLXIA_PLUS = "price_1UI3sxGMn6YcUp3x8rC58pdt"  # Stripe Price ID „Å
 # Callbacks on POST /api/crowd/webhook are signed with CROWD_API_KEY by
 # default; set CROWD_WEBHOOK_SECRET only to rotate the signing key separately:
 #   npx wrangler pages secret put CROWD_WEBHOOK_SECRET --project-name flaxia
+# Ops kill-switch for a Crowd outage: screening/embedding submissions are
+# skipped (embeds queue for later) without a redeploy. Uncomment to shed load:
+# CROWD_SCREENING_DISABLED = "1"
 
 [[r2_buckets]]
 binding = "BUCKET"

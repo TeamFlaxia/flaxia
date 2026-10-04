@@ -145,7 +145,6 @@ export async function executeSwZip(
     await waitForZipReady(postId);
 
     const { iframe, cleanup } = createZipSandboxIframe(containerEl, `/sw-zip/${postId}/index.html`, {
-      sandbox: 'allow-scripts allow-pointer-lock allow-fullscreen',
       hideFullscreen,
       prefix: PREFIX,
     });

@@ -189,6 +189,10 @@ function createThumbnailWithOverlay(props: {
   // Thumbnail image
   const image = document.createElement('img');
   image.src = `/api/thumbnail/${props.postId}`;
+  // Timeline mounts dozens of stages: decode lazily so off-screen
+  // thumbnails don't contend with first paint.
+  image.loading = 'lazy';
+  image.decoding = 'async';
   image.style.cssText = `
     width: 100%;
     height: 100%;

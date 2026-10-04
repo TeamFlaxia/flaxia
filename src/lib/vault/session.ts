@@ -49,6 +49,7 @@ export type EnableResult =
 export type UnlockResult = 'ok' | 'wrong' | 'network' | 'malformed';
 
 let sessionVk: Uint8Array | null = null;
+let sessionVkVersion: number | null = null;
 const listeners = new Set<() => void>();
 
 function notify(): void {
@@ -68,18 +69,25 @@ export function getVaultKey(): Uint8Array | null {
   return sessionVk;
 }
 
+/** Version of the in-memory VK, used to reject writes after another device rotates it. */
+export function getVaultKeyVersion(): number | null {
+  return sessionVkVersion;
+}
+
 export function isVaultUnlocked(): boolean {
   return sessionVk !== null;
 }
 
-export function setVaultKey(vk: Uint8Array | null): void {
+export function setVaultKey(vk: Uint8Array | null, version: number | null = null): void {
   sessionVk = vk;
+  sessionVkVersion = vk ? version : null;
   notify();
 }
 
 /** Drop VK from memory only — the device's wrapped copy survives a reload. */
 export function lockVault(): void {
   sessionVk = null;
+  sessionVkVersion = null;
   notify();
 }
 
@@ -147,7 +155,7 @@ export async function enableVault(password: string, recoveryPhrase: string): Pro
   if (!res.ok) return { ok: false, error: 'failed' };
 
   await rememberOnThisDevice(vk, deviceId);
-  setVaultKey(vk);
+  setVaultKey(vk, 1);
   return { ok: true };
 }
 
@@ -164,7 +172,15 @@ export async function enableVault(password: string, recoveryPhrase: string): Pro
 export async function unlockVault(password: string): Promise<UnlockResult> {
   const keys = await fetchVaultKeys();
   if (keys === null) return 'network';
-  if (!keys.enabled || !keys.salt || !keys.kdf_params || !keys.wrapped_vk) return 'malformed';
+  if (
+    !keys.enabled ||
+    !keys.salt ||
+    !keys.kdf_params ||
+    !keys.wrapped_vk ||
+    !Number.isInteger(keys.vk_version) ||
+    (keys.vk_version ?? 0) < 1
+  )
+    return 'malformed';
 
   try {
     const vk = await unlockVaultWithPassword(password, {
@@ -173,7 +189,7 @@ export async function unlockVault(password: string): Promise<UnlockResult> {
       wrapped_vk: keys.wrapped_vk,
     });
     await rememberOnThisDevice(vk);
-    setVaultKey(vk);
+    setVaultKey(vk, keys.vk_version ?? null);
     return 'ok';
   } catch (error) {
     return isEnvelopeShapeError(error) ? 'malformed' : 'wrong';
@@ -182,11 +198,20 @@ export async function unlockVault(password: string): Promise<UnlockResult> {
 
 /** Auto-unlock on page load via this device's non-extractable key. */
 export async function tryDeviceUnlock(): Promise<boolean> {
-  if (!getCurrentDeviceId()) return false;
+  const deviceId = getCurrentDeviceId();
+  if (!deviceId) return false;
   try {
+    const keys = await fetchVaultKeys();
+    if (
+      !keys?.enabled ||
+      !Number.isInteger(keys.vk_version) ||
+      (keys.vk_version ?? 0) < 1 ||
+      !keys.devices?.some((device) => device.id === deviceId && device.state === 'active')
+    )
+      return false;
     const vk = await unlockWithDevice();
     if (!vk) return false;
-    setVaultKey(vk);
+    setVaultKey(vk, keys.vk_version);
     return true;
   } catch {
     return false;
@@ -213,8 +238,16 @@ export async function adoptPairedVaultKey(
   try {
     const approvedPub = decodeB64(approvedPubB64);
     const vk = await unwrapVaultKeyForPairing(wrappedVk, ephemeralSecret, approvedPub, pairingId);
+    const keys = await fetchVaultKeys();
+    if (
+      !keys?.enabled ||
+      !Number.isInteger(keys.vk_version) ||
+      (keys.vk_version ?? 0) < 1 ||
+      !keys.devices?.some((device) => device.id === pairingId && device.state === 'active')
+    )
+      return false;
     await rememberOnThisDevice(vk, pairingId);
-    setVaultKey(vk);
+    setVaultKey(vk, keys.vk_version);
     return true;
   } catch {
     return false;
@@ -258,6 +291,7 @@ export async function revokeDeviceWithRotation(
     items.map(async (item) => ({
       item_id: item.id,
       item_key_wrapped: await rewrapItemKeyForVaultKey(currentVk, newVk, item.id, item.item_key_wrapped),
+      item_key_wrapped_before: item.item_key_wrapped,
     })),
   );
 
@@ -283,7 +317,7 @@ export async function revokeDeviceWithRotation(
   });
   if (!ok) return false;
 
-  setVaultKey(newVk);
+  setVaultKey(newVk, keys.vk_version + 1);
   const device = await getOrCreateCurrentDevice();
   await saveVaultKeyForDevice(device, newVk);
   return true;

@@ -1,8 +1,18 @@
 import { Hono } from 'hono';
+import { clampLimit } from '../../lib/pagination';
+import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
 const multiplayer = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+/** Room creation throttle: minting a room also instantiates a Durable Object. */
+async function checkRoomRateLimit(c: { req: { raw: Request }; env: Bindings }, userId: string): Promise<boolean> {
+  const ip = getClientIp(c.req.raw);
+  const byUser = await checkRateLimit(c.env.CACHE, `mp:rooms:user:${userId}`, { maxRequests: 10, windowSeconds: 60 });
+  if (!byUser) return false;
+  return checkRateLimit(c.env.CACHE, `mp:rooms:ip:${ip}`, { maxRequests: 30, windowSeconds: 60 });
+}
 
 // POST /api/multiplayer/rooms - Create a room
 multiplayer.post('/rooms', requireAuth, async (c) => {
@@ -23,10 +33,28 @@ multiplayer.post('/rooms', requireAuth, async (c) => {
     if (!body.gameId) {
       return c.json({ error: 'gameId is required' }, 400);
     }
+    if (typeof body.gameId !== 'string' || body.gameId.length > 128) {
+      return c.json({ error: 'Invalid gameId' }, 400);
+    }
+    if (body.metadata !== undefined) {
+      let metadataSize = 0;
+      try {
+        metadataSize = JSON.stringify(body.metadata).length;
+      } catch {
+        return c.json({ error: 'Invalid metadata' }, 400);
+      }
+      if (metadataSize > 4096) {
+        return c.json({ error: 'Metadata too large' }, 400);
+      }
+    }
+    if (!(await checkRoomRateLimit(c, user.id))) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
 
     const roomId = crypto.randomUUID();
     const now = new Date().toISOString();
-    const maxPlayers = body.maxPlayers || 2;
+    // Clamp player count: unbounded maxPlayers breaks capacity checks and DO sizing.
+    const maxPlayers = Math.min(Math.max(Math.floor(Number(body.maxPlayers) || 2), 2), 8);
     const isPublic = body.isPublic !== false;
 
     await c.env.DB.prepare(`
@@ -125,6 +153,21 @@ multiplayer.get('/rooms/:id', requireAuth, async (c) => {
 
     if (!room) return c.json({ error: 'Room not found' }, 404);
 
+    // Private rooms are confidential: only the host and participants may read them.
+    const roomRow = room as { is_public?: number; host_id?: string };
+    if (!roomRow.is_public) {
+      const user = c.get('user')!;
+      const member =
+        roomRow.host_id === user.id
+          ? { ok: true }
+          : await c.env.DB.prepare(
+              'SELECT 1 FROM multiplayer_room_participants WHERE room_id = ? AND user_id = ? AND left_at IS NULL',
+            )
+              .bind(roomId, user.id)
+              .first();
+      if (!member) return c.json({ error: 'Forbidden' }, 403);
+    }
+
     const participantsResult = (await c.env.DB.prepare(`
       SELECT p.user_id, p.username, p.display_name, p.avatar_key, p.joined_at, p.is_host
       FROM multiplayer_room_participants p
@@ -153,6 +196,17 @@ multiplayer.post('/rooms/:id/join', requireAuth, async (c) => {
       .first()) as Record<string, unknown> | null;
     if (!room) return c.json({ error: 'Room not found' }, 404);
     if (room.status !== 'lobby') return c.json({ error: 'Game already in progress' }, 400);
+
+    // No invite system exists: private rooms are joinable only by members
+    // (rejoin). Anyone else learning the UUID must not enter.
+    if (!room.is_public) {
+      const member = await c.env.DB.prepare(
+        'SELECT 1 FROM multiplayer_room_participants WHERE room_id = ? AND user_id = ?',
+      )
+        .bind(roomId, user.id)
+        .first();
+      if (!member) return c.json({ error: 'Forbidden' }, 403);
+    }
 
     const playerCount = (await c.env.DB.prepare(
       'SELECT COUNT(*) as count FROM multiplayer_room_participants WHERE room_id = ? AND left_at IS NULL',
@@ -247,6 +301,11 @@ multiplayer.post('/matchmaking', requireAuth, async (c) => {
       });
       const data = (await resp.json()) as { matched: boolean; players?: Array<{ userId: string; username: string }> };
       if (data.matched && data.players) {
+        // Defense in depth (the DO also enforces this): only create a room
+        // when the caller is one of the matched players.
+        if (!data.players.some((p) => p.userId === user.id)) {
+          return c.json({ error: 'Forbidden' }, 403);
+        }
         // Create a room for the matched players
         const roomId = crypto.randomUUID();
         const now = new Date().toISOString();
@@ -293,6 +352,31 @@ multiplayer.post('/scores', requireAuth, async (c) => {
     if (!gameId || typeof score !== 'number' || Number.isNaN(score)) {
       return c.json({ error: 'Invalid score data' }, 400);
     }
+    if (typeof gameId !== 'string' || gameId.length === 0 || gameId.length > 128) {
+      return c.json({ error: 'Invalid gameId' }, 400);
+    }
+    // Scores are client-asserted (no server-side game result exists yet):
+    // bound them so forged leaderboard entries stay within sane ranges.
+    if (!Number.isFinite(score) || score < 0 || score > 1000000000) {
+      return c.json({ error: 'Invalid score value' }, 400);
+    }
+    if (label !== undefined && (typeof label !== 'string' || label.length > 64)) {
+      return c.json({ error: 'Invalid label' }, 400);
+    }
+    if (metadata !== undefined) {
+      let metadataSize = 0;
+      try {
+        metadataSize = JSON.stringify(metadata).length;
+      } catch {
+        return c.json({ error: 'Invalid metadata' }, 400);
+      }
+      if (metadataSize > 2048) {
+        return c.json({ error: 'Metadata too large' }, 400);
+      }
+    }
+    if (!(await checkRateLimit(c.env.CACHE, `mp:scores:${user.id}`, { maxRequests: 30, windowSeconds: 60 }))) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
 
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
@@ -316,7 +400,7 @@ multiplayer.post('/scores', requireAuth, async (c) => {
 multiplayer.get('/scores/:gameId', async (c) => {
   try {
     const gameId = c.req.param('gameId');
-    const limit = Math.min(Number(c.req.query('limit')) || 50, 100);
+    const limit = clampLimit(c.req.query('limit'), 50, 100);
     const userId = c.req.query('userId');
 
     let query = `

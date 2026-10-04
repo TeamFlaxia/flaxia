@@ -9,7 +9,7 @@ Flaxia consists of 3 deployable components:
 | Main Pages (SPA + API) | `wrangler.toml` | `pnpm deploy` |
 | Backend Worker (Queue consumer) | `wrangler.toml.worker` | Manual `wrangler deploy` |
 | Sandbox Worker | `wrangler.sandbox.toml` | `pnpm deploy:sandbox` |
-| Status Worker (`status.flaxia.app`) | `status-worker/wrangler.toml` | `pnpm deploy:status` |
+| Status Worker (`status.flaxia.app`) | `status-worker/wrangler.toml.example`（設定は未作成） | 現在デプロイ不可（下記参照） |
 
 ## Main Pages Deployment
 
@@ -55,44 +55,44 @@ The sandbox worker serves ZIP/HTML5 content from R2 at the sandbox origin (`sand
 ## Status Worker (`status.flaxia.app`)
 
 `status.flaxia.app` は Flaxia の各コンポーネント（Web / API / 認証 / Crowd）を定期チェックする
-ステータスサイトです。独自の D1 データベース・Cron トリガー・静的アセットを持ちます。
+ステータスサイトでしたが、コミット `0f0eadf`（"Remove status-worker and flaxia-status deployment"）で
+ワーカー一式（`wrangler.toml` / `src/index.ts` / `public/` / `migrations/`）が削除されました。
+現在リポジトリに残るのはテスト用の純粋関数 `status-worker/src/transition.ts` のみで、
+`status.flaxia.app` はデプロイされていません。
 
-**初回セットアップ（手動で 1 回だけ）:**
+削除に合わせて `package.json` の `deploy:status` / `dev:status` / `migrate:status` /
+`migrate:status:local` も削除済みです（存在しない `status-worker/wrangler.toml` を参照して
+必ず失敗するため）。再開する場合の設定雛形として
+`status-worker/wrangler.toml.example`（削除前の name / compatibility_date / bindings を復元）を置いてあります。
+
+**再構築手順:**
 
 ```bash
-# 1. D1 データベースを作成し、database_id を status-worker/wrangler.toml に記述
+# 1. 雛形をコピー
+cp status-worker/wrangler.toml.example status-worker/wrangler.toml
+
+# 2. D1 データベースを作成し、database_id を status-worker/wrangler.toml に記述
 npx wrangler d1 create flaxia-status
 
-# 2. マイグレーションを適用
-pnpm migrate:status:local   # ローカル
-pnpm migrate:status         # 本番
+# 3. ワーカー実装・public/・migrations/ を復元（0f0eadf^ から取得できる。
+#    transition.ts は現在の実装に置き換わっているため引数の整合が必要）
+git show 0f0eadf^:status-worker/src/index.ts
 
-# 3. シークレットを設定（認証シナリオと Crowd 検証に必要）
+# 4. シークレットを設定（認証シナリオと Crowd 検証に必要）
 npx wrangler secret put CROWD_API_KEY        --config status-worker/wrangler.toml
 npx wrangler secret put STATUS_TEST_EMAIL    --config status-worker/wrangler.toml
 npx wrangler secret put STATUS_TEST_PASSWORD --config status-worker/wrangler.toml
 
-# 4. ログイン検証用のテストアカウントを本番に作成（1 回だけ）
-curl -X POST https://flaxia.app/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"dev@flaxia.app","password":"<強固なパスワード>","username":"devstatus","display_name":"Status Monitor"}'
-# STATUS_TEST_USERNAME (wrangler.toml) と username を一致させること
-
-# 5. デプロイ（routes により status.flaxia.app が自動で付与される）
-pnpm deploy:status
+# 5. マイグレーションを適用してデプロイ
+npm run migrate:status:local   # ローカル
+npm run migrate:status         # 本番
+npm run deploy:status
 ```
 
-**ローカル開発:**
-
-```bash
-# シークレットは status-worker/.dev.vars に記載（.dev.vars.example 参照）
-pnpm dev:status                    # 起動後 http://localhost:8791
-curl -X POST "http://localhost:8791/__scheduled?cron=* * * * *"  # 手動トリガー
-```
-
-- チェック間隔: `wrangler.toml` の `[triggers] crons`（毎分）。認証は 2 分おき、Crowd 実タスクは 5 分おきに絞られています。
-- 公開 API: `/api/status`（最新状態）、`/api/history?check=&days=`（稼働率グラフ用）。
-- テストアカウントは本番 DB に永続化されるため、強固なパスワードを使い、誤ってコミットしないこと。
+削除前の構成では、チェック間隔は `[triggers] crons`（毎分。認証は 2 分おき、Crowd 実タスクは 5 分おき）、
+公開 API は `/api/status`（最新状態）と `/api/history?check=&days=`（稼働率グラフ用）でした。
+ログイン検証用テストアカウント（`STATUS_TEST_USERNAME` と一致させる）は本番 DB に永続化されるため、
+強固なパスワードを使い、誤ってコミットしないこと。
 
 ## Post-Deployment Steps
 

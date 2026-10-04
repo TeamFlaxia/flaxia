@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { getUserPlan } from '../../lib/billing';
+import { validateImageDimensions } from '../../lib/image-dimensions';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { detectMimeType, isAllowedImageMime, requireAuth } from '../helpers';
@@ -113,6 +114,10 @@ stamps.post('/stamps', requireAuth, async (c) => {
     const detectedMime = detectMimeType(fileData);
     if (!isAllowedImageMime(detectedMime)) {
       return c.json({ error: 'Invalid image format. Allowed: PNG, JPEG, GIF, WebP' }, 400);
+    }
+    const dimError = validateImageDimensions(fileData, detectedMime);
+    if (dimError) {
+      return c.json({ error: dimError }, 413);
     }
 
     const ext =

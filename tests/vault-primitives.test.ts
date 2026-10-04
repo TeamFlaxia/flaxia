@@ -13,6 +13,8 @@
 //      password.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { generateMnemonic } from '@scure/bip39';
+import { wordlist } from '@scure/bip39/wordlists/english.js';
 import {
   CONTEXT_ITEM_KEY,
   CONTEXT_PAYLOAD,
@@ -189,7 +191,9 @@ test('recovery phrase normalisation makes whitespace canonical', () => {
   assert.equal(normalizeRecoveryPhrase(messy), PHRASE);
   assert.equal(recoveryWordCount(PHRASE), 12);
   assert.ok(isValidRecoveryPhrase(PHRASE));
-  assert.ok(isValidRecoveryPhrase('one two three four five six seven eight nine ten eleven twelve'));
+  // Same word count, broken checksum: the phrase must be rejected so it can
+  // never overwrite a recoverable envelope.
+  assert.ok(!isValidRecoveryPhrase('one two three four five six seven eight nine ten eleven twelve'));
   assert.ok(!isValidRecoveryPhrase('one two three'), 'too few words');
   assert.ok(!isValidRecoveryPhrase(''), 'empty');
 });
@@ -599,9 +603,16 @@ test('a foreign vault key cannot re-wrap an item key', async () => {
 // ─── Recovery phrase boundaries and normalisation ───────────────────────────
 
 test('recovery phrase word counts are exactly the BIP-39 lengths', async () => {
+  const validAt = (n: number): string => generateMnemonic(wordlist, (n * 32) / 3);
+  for (const n of [12, 15, 18, 21, 24]) assert.ok(isValidRecoveryPhrase(validAt(n)), `${n} words are valid`);
+
+  // Count-valid but checksum-invalid phrases are rejected.
   const words = PHRASE.split(' ');
   const at = (n: number): string => Array.from({ length: n }, (_, i) => words[i % words.length]).join(' ');
-  for (const n of [12, 15, 18, 21, 24]) assert.ok(isValidRecoveryPhrase(at(n)), `${n} words are valid`);
+  assert.ok(
+    !isValidRecoveryPhrase('one two three four five six seven eight nine ten eleven twelve'),
+    'a broken checksum is not a valid phrase',
+  );
   for (const n of [11, 13, 23, 25]) assert.ok(!isValidRecoveryPhrase(at(n)), `${n} words are not a BIP-39 length`);
 
   // The failure message must name the real lengths — a "12-24" hint would
@@ -612,26 +623,25 @@ test('recovery phrase word counts are exactly the BIP-39 lengths', async () => {
   await assert.rejects(rewrapVaultKeyForRecovery(generateVaultKeyBytes(), at(13), generateVaultSalt()), phraseError);
 
   // A valid 24-word phrase really derives and opens.
-  const { envelope, vk } = await createVaultEnvelope(PASSWORD, at(24));
-  assert.ok(equalBytes(await unlockVaultWithRecovery(at(24), envelope), vk));
+  const phrase24 = validAt(24);
+  const { envelope, vk } = await createVaultEnvelope(PASSWORD, phrase24);
+  assert.ok(equalBytes(await unlockVaultWithRecovery(phrase24, envelope), vk));
 });
 
-test('phrases normalise to NFKD, so NFC and NFD typing derive the same REK', async () => {
+test('phrases normalise to NFKD so NFC and NFD typing produce one form', () => {
   const nfc = PHRASE.replace('yellow', 'caf\u00e9'); // precomposed é (U+00E9)
   const nfd = PHRASE.replace('yellow', 'cafe\u0301'); // e + combining acute (U+0301)
   assert.notEqual(nfc, nfd, 'the two encodings must differ as typed');
   assert.equal(normalizeRecoveryPhrase(nfc), normalizeRecoveryPhrase(nfd));
 
-  const { envelope, vk } = await createVaultEnvelope(PASSWORD, nfd);
-  assert.ok(
-    equalBytes(await unlockVaultWithRecovery(nfc, envelope), vk),
-    'NFC typing must open an NFD-derived envelope',
-  );
-
   // Full-width ideographic space (U+3000) counts as whitespace too.
   const ideographic = PHRASE.replace(/ /g, '　');
   assert.equal(normalizeRecoveryPhrase(ideographic), PHRASE);
   assert.ok(isValidRecoveryPhrase(ideographic));
+
+  // A word outside the BIP-39 wordlist is rejected even though the encoding
+  // equivalence above still holds.
+  assert.ok(!isValidRecoveryPhrase(nfd), 'non-wordlist words cannot form a phrase');
 });
 
 test('vault item ids are validated at their boundaries', () => {

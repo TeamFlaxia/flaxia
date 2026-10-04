@@ -2,9 +2,29 @@ import { Hono } from 'hono';
 import { exportPrivateKey, exportPublicKey, generateKeyPair } from '../../lib/activitypub/crypto';
 import { buildCreateActivity, buildNoteObject } from '../../lib/activitypub/note';
 import { fetchActorPublicKey, verifyDigest, verifyHttpSignature } from '../../lib/activitypub/signature';
+import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import type { Bindings, Variables } from '../types';
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+/**
+ * Max accepted ActivityPub inbox body: activities are small JSON documents.
+ * The declared Content-Length is checked first so oversized payloads are
+ * rejected before the body is buffered.
+ */
+const MAX_INBOX_BODY_BYTES = 256 * 1024;
+
+async function readInboxBody(req: Request): Promise<string | null> {
+  const declared = Number(req.headers.get('content-length') || 0);
+  if (Number.isFinite(declared) && declared > MAX_INBOX_BODY_BYTES) return null;
+  const text = await req.text();
+  if (text.length > MAX_INBOX_BODY_BYTES) return null;
+  return text;
+}
+
+async function checkInboxRateLimit(env: Bindings, req: Request): Promise<boolean> {
+  return checkRateLimit(env.CACHE, `ap:inbox:${getClientIp(req)}`, { maxRequests: 60, windowSeconds: 60 });
+}
 
 // GET /.well-known/webfinger - WebFinger endpoint for ActivityPub discovery (first variant)
 app.get('/.well-known/webfinger', async (c) => {
@@ -91,7 +111,7 @@ app.get('/api/actors/:username', async (c) => {
       const keyPair = await generateKeyPair();
       publicKeyPem = await exportPublicKey(keyPair.publicKey);
       await c.env.DB.prepare(
-        `INSERT INTO actor_keys (user_id, public_key_pem, private_key_pem, created_at) VALUES (?, ?, ?, datetime('now'))`,
+        `INSERT INTO actor_keys (user_id, public_key_pem, private_key_pem, created_at) VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
       )
         .bind(user.id, publicKeyPem, await exportPrivateKey(keyPair.privateKey))
         .run();
@@ -145,6 +165,10 @@ app.post('/api/actors/:username/inbox', async (c) => {
       return c.json({ error: 'Invalid content type' }, 400);
     }
 
+    if (!(await checkInboxRateLimit(c.env, c.req.raw))) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
+
     const targetUser = (await c.env.DB.prepare('SELECT id, username FROM users WHERE username = ? COLLATE NOCASE')
       .bind(username)
       .first()) as { id: string; username: string } | null;
@@ -153,7 +177,10 @@ app.post('/api/actors/:username/inbox', async (c) => {
       return c.json({ error: 'User not found' }, 404);
     }
 
-    const body = await c.req.text();
+    const body = await readInboxBody(c.req.raw);
+    if (body === null) {
+      return c.json({ error: 'Inbox body too large' }, 413);
+    }
     let activity: Record<string, unknown>;
     try {
       activity = JSON.parse(body) as Record<string, unknown>;
@@ -198,7 +225,7 @@ app.post('/api/actors/:username/inbox', async (c) => {
         .first()) as { private_key_pem: string } | null;
       if (keyRecord?.private_key_pem) {
         signKeyPem = keyRecord.private_key_pem;
-        signKeyId = `${c.env.BASE_URL}/actors/${username}#main-key`;
+        signKeyId = `${c.env.BASE_URL}/api/actors/${username}#main-key`;
       }
     } catch {
       // Proceed without signing
@@ -237,6 +264,30 @@ app.post('/api/actors/:username/inbox', async (c) => {
   }
 });
 
+// Extract a local username from an actor URL, but only when the URL really
+// points at this instance. startsWith(baseUrl) accepted look-alikes such as
+// `https://flaxia.app@evil.example/actors/victim`, which let a remote actor
+// address an arbitrary local user in to/cc/object.
+function localActorUsername(value: unknown, baseUrl: string): string | null {
+  if (typeof value !== 'string') return null;
+  let parsed: URL;
+  let base: URL;
+  try {
+    parsed = new URL(value);
+    base = new URL(baseUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.origin !== base.origin) return null;
+  const match = parsed.pathname.match(/^\/actors\/([^/]+)/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
 // POST /api/inbox - ActivityPub sharedInbox endpoint
 app.post('/api/inbox', async (c) => {
   try {
@@ -246,7 +297,14 @@ app.post('/api/inbox', async (c) => {
       return c.json({ error: 'Invalid content type' }, 400);
     }
 
-    const body = await c.req.text();
+    if (!(await checkInboxRateLimit(c.env, c.req.raw))) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
+
+    const body = await readInboxBody(c.req.raw);
+    if (body === null) {
+      return c.json({ error: 'Inbox body too large' }, 413);
+    }
     let activity: Record<string, unknown>;
     try {
       activity = JSON.parse(body) as Record<string, unknown>;
@@ -290,7 +348,7 @@ app.post('/api/inbox', async (c) => {
       ).first()) as { private_key_pem: string; username: string } | null;
       if (anyKey?.private_key_pem) {
         signKeyPem = anyKey.private_key_pem;
-        signKeyId = `${c.env.BASE_URL}/actors/${anyKey.username}#main-key`;
+        signKeyId = `${c.env.BASE_URL}/api/actors/${anyKey.username}#main-key`;
       }
     } catch {
       // Proceed without signing
@@ -311,31 +369,26 @@ app.post('/api/inbox', async (c) => {
     if (!digestValid) {
       return c.json({ error: 'Invalid Digest' }, 401);
     }
-    const targetAudience = [(activity.to as string[] | undefined) ?? [], (activity.cc as string[] | undefined) ?? []]
-      .flat()
-      .filter(Boolean) as string[];
-    const localActorUrls = targetAudience.filter(
-      (url: string) => typeof url === 'string' && url.startsWith(baseUrl) && url.includes('/actors/'),
-    );
+    const audienceValues: unknown[] = [
+      ...(Array.isArray(activity.to) ? activity.to : activity.to ? [activity.to] : []),
+      ...(Array.isArray(activity.cc) ? activity.cc : activity.cc ? [activity.cc] : []),
+    ];
 
-    // Extract usernames from local actor URLs
+    // Extract usernames from URLs that canonically point at local actors.
     const targetUsernames = new Set<string>();
-    for (const url of localActorUrls) {
-      const match = (url as string).match(/\/actors\/([^/]+)/);
-      if (match) targetUsernames.add(match[1]);
+    for (const value of audienceValues) {
+      const username = localActorUsername(value, baseUrl);
+      if (username) targetUsernames.add(username);
     }
 
-    // If no local target found via to/cc, try the object field (for Follow activities)
-    if (targetUsernames.size === 0 && activity.object && typeof activity.object === 'string') {
-      const match = (activity.object as string).match(/\/actors\/([^/]+)/);
-      if (match) targetUsernames.add(match[1]);
-    }
-
-    // Fallback: if still no target, try all local users by checking the activity object
-    if (targetUsernames.size === 0 && activity.object && typeof activity.object === 'object') {
-      const objId = (activity.object as Record<string, unknown>).id || '';
-      const match = (objId as string).match(/\/actors\/([^/]+)/);
-      if (match) targetUsernames.add(match[1]);
+    // If no local target found via to/cc, try the object field (for Follow
+    // activities). It is held to the same canonical-origin rule.
+    if (targetUsernames.size === 0) {
+      const objectValue = activity.object as unknown;
+      const candidate =
+        typeof objectValue === 'string' ? objectValue : ((objectValue as { id?: unknown } | null)?.id ?? '');
+      const username = localActorUsername(candidate, baseUrl);
+      if (username) targetUsernames.add(username);
     }
 
     if (targetUsernames.size === 0) {

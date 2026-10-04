@@ -12,7 +12,6 @@ type Bindings = Env;
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.get('/:postId', async (c) => {
-  console.log('Sandbox POST function called for:', c.req.url);
   const postId = c.req.param('postId');
 
   console.log('Extracted postId:', postId);

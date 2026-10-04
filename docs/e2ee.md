@@ -77,6 +77,18 @@ error-prone operation unnecessary.
 
 ## Storage (D1)
 
+Post drafts and private notes use the same per-item encryption format as vault
+items. Their item payloads and item keys are encrypted in the browser before
+being sent to D1. The server may see the item kind and timestamps, but never the
+text. Legacy composer drafts are moved from localStorage into the vault after
+the vault is unlocked, then their plaintext localStorage copies are removed.
+Vault item requests are bounded to 200 rows and 5 MB of ciphertext per account;
+each payload is limited to 128 KB.
+
+Browser-local Studio projects also use the same format: project payloads are
+encrypted in the browser before IndexedDB stores them. Studio keeps no plaintext
+files in IndexedDB. The local item key is re-wrapped when VK rotates. Files
+passed from Studio to the post composer stay in tab memory during navigation.
 ```sql
 vault_keys(user_id PK, salt,                                  -- password path (KEK)
            recovery_salt,                                     -- recovery path (REK)
@@ -133,17 +145,32 @@ Migrations `0091_add_vault.sql` (tables) and `0092_pairing_devices.sql`
 | `GET /api/vault/keys` | Fetch the envelope + device list to unlock | session |
 | `POST /api/vault/keys` | Enable the vault (409 if one exists); optional `device_id`/`device_label` self-registers the enabling device | `current_srp` |
 | `PUT /api/vault/keys` | Rotate the whole envelope (bumps `vk_version`) | `current_srp` + `vk_version` |
+| `GET /api/vault/items` | Fetch item-key inventory for VK rotation; omits payloads | session |
+| `GET /api/vault/items?kind=…` | Fetch one kind's ciphertext rows for the unlocked client | session |
+| `PUT /api/vault/items/:id` | Create or replace one encrypted item; rejects stale `vk_version` | session + `vk_version` |
+| `DELETE /api/vault/items/:id` | Delete one encrypted item | session + `vk_version` |
+| `DELETE /api/vault/items?kind=…&vk_version=…` | Delete a collection of the caller's items | session + `vk_version` |
 | `PATCH /users/me/password` | Swap verifier **and** re-wrap VK atomically | `current_srp` + `vault_kek` |
 | `POST /api/vault/devices` | Start a pairing → `{ id, expires_at }` (`ttl_seconds` 1–600) | session |
 | `GET /api/vault/devices` | List devices — ids, labels, states; never blobs | session |
 | `GET /api/vault/devices/:id` | Joiner poll: `pending` → `active` or `expired` | session |
 | `POST /api/vault/devices/:id/approve` | Hand VK to the joiner (409 reused, 410 expired) | session + QR |
 | `DELETE /api/vault/devices/:id` | Revoke a device | session |
+| `POST /api/vault/keys/revoke-device` | Revoke paired devices and rotate VK while re-wrapping every item key | `current_srp` + `vk_version` + full item-key snapshot |
 
 If an account has `vault_keys` and the password change omits `vault_kek`, the
 request fails with **409 `vault_rewrap_required`** — an envelope left wrapped
 around the old password would be unreachable afterwards. If no vault exists,
 sending `vault_kek` fails with 400 rather than silently creating rows.
+`vault_kek.vk_version` is required and must match the envelope the client
+unwrapped. The transaction checks it again before changing the verifier or
+envelope; a concurrent vault rotation fails with 409 instead of replacing the
+new VK with a stale copy.
+
+Device revocation with VK rotation includes every item's previous wrapped key
+alongside its new wrap. The server checks that the complete inventory still
+matches inside the envelope update; if an item changed while the client was
+rewrapping keys, it returns 409 without changing the envelope or device rows.
 
 ### Pairing a second device
 
@@ -178,6 +205,7 @@ when a device is lost without ever being paired.
 | Unlock (password) | Derives KEK, unwraps VK | nothing |
 | Recovery | Derives REK from phrase, unwraps VK, then re-establishes KEK/devices | nothing |
 | Password change | Re-derives KEK, re-wraps **VK only** — atomically in the same `PATCH /users/me/password` | new `wrapped_vk` (opaque) |
+| Save a draft or private note | Encrypts the value and its item key in the browser before storage | item kind, id, ciphertext, wrapped key |
 | Device revoke | Generates a new VK, re-wraps every `item_key`, re-wraps own paths; other device rows deleted | n wrapped keys, no bodies |
 | Account with vault, no re-wrap | **Rejected (409)** — the vault would be orphaned | — |
 

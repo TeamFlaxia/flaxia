@@ -1,4 +1,5 @@
 /// <reference types="@cloudflare/workers-types" />
+import { fetchWithSsrfGuard, parsePublicHttpUrl, SsrfError } from '../url-guard.ts';
 import { importPublicKey } from './crypto.ts';
 
 /**
@@ -171,6 +172,10 @@ export async function verifyDigest(request: Request, body: string): Promise<bool
 /**
  * Fetch actor's public key from their URL
  * Optionally signs the request if privateKeyPem and keyId are provided (for authorized fetch)
+ *
+ * The actor URL is attacker-controlled (it arrives in the unsigned inbox
+ * body), so it goes through the shared SSRF guard: only public http(s)
+ * targets pass, every redirect hop is re-validated, and fetches time out.
  */
 export async function fetchActorPublicKey(
   actorUrl: string,
@@ -187,15 +192,24 @@ export async function fetchActorPublicKey(
 
     // Fall back to unsigned fetch if signed fetch failed or no keys provided
     if (!response || !response.ok) {
-      response = await fetch(actorUrl, {
-        headers: {
-          Accept: 'application/activity+json, application/ld+json',
-        },
-      });
+      try {
+        response = await fetchWithSsrfGuard(actorUrl, {
+          headers: {
+            Accept: 'application/activity+json, application/ld+json',
+          },
+          timeoutMs: 10000,
+        });
+      } catch (error: unknown) {
+        if (error instanceof SsrfError) {
+          console.error('Refusing actor fetch:', (error as Error).message);
+          return null;
+        }
+        throw error;
+      }
     }
 
-    if (!response.ok) {
-      console.error(`Failed to fetch actor: ${response.status}`);
+    if (!response || !response.ok) {
+      console.error(`Failed to fetch actor: ${response?.status}`);
       return null;
     }
 
@@ -242,13 +256,7 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
 /**
  * Sign an outgoing ActivityPub request with HTTP Signature
  */
-export async function signRequest(
-  url: string,
-  body: string,
-  privateKeyPem: string,
-  publicKeyPem: string,
-  keyId: string,
-): Promise<Headers> {
+export async function signRequest(url: string, body: string, privateKeyPem: string, keyId: string): Promise<Headers> {
   const headers = new Headers();
 
   // Calculate digest
@@ -278,40 +286,18 @@ export async function signRequest(
     `digest: sha-256=${digest}`,
   ].join('\n');
 
-  console.log('Signing string:');
-  console.log(signingString);
-
-  // Import private key
-  console.log('Importing private key for signing...');
+  // Import private key. Never log the signing string or signature: either can
+  // expose request details, and the signature can be replayed during its date window.
   const privateKey = await importPrivateKey(privateKeyPem);
-  console.log('Private key imported successfully');
 
   // Sign
   const signingArray = encoder.encode(signingString);
-  console.log('Signing string length:', signingString.length);
-  console.log('Signing string (first 200 chars):', signingString.substring(0, 200));
 
   const signatureBuffer = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privateKey, signingArray);
 
   // Convert signature to base64 (not base64url)
   const signatureArray = new Uint8Array(signatureBuffer);
   const signature = btoa(String.fromCharCode(...signatureArray));
-
-  console.log('Signature generated successfully, length:', signature.length);
-  console.log('Signature (first 50 chars):', signature.substring(0, 50));
-
-  // Verify our own signature for debugging
-  try {
-    console.log('Verifying our own signature...');
-    const publicKey = await importPublicKey(publicKeyPem);
-    const isValid = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', publicKey, signatureArray, signingArray);
-    console.log('Self-verification result:', isValid);
-    if (!isValid) {
-      console.error('WARNING: Our own signature verification failed!');
-    }
-  } catch (error) {
-    console.error('Self-verification error:', error);
-  }
 
   // Set Signature header
   headers.set(
@@ -328,6 +314,14 @@ export async function signRequest(
  */
 export async function signedFetch(url: string, privateKeyPem: string, keyId: string): Promise<Response | null> {
   try {
+    // The URL is remote input: reject non-public targets before signing.
+    // Redirects are not followed (the signature covers the request target,
+    // so a hop would invalidate it anyway).
+    try {
+      parsePublicHttpUrl(url);
+    } catch {
+      return null;
+    }
     const headers = new Headers();
     headers.set('Accept', 'application/activity+json, application/ld+json');
     headers.set('Date', new Date().toUTCString());
@@ -355,12 +349,13 @@ export async function signedFetch(url: string, privateKeyPem: string, keyId: str
     const response = await fetch(url, {
       method: 'GET',
       headers,
+      redirect: 'manual',
       signal: AbortSignal.timeout(15000),
     });
 
     return response;
-  } catch (error) {
-    console.error('Signed GET error:', error);
+  } catch {
+    console.error('Signed GET request failed');
     return null;
   }
 }

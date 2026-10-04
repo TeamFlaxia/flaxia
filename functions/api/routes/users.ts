@@ -4,13 +4,30 @@ import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../s
 import { deleteAccount } from '../../lib/account-deletion';
 import { enrichPostsWithAttachments } from '../../lib/attachments';
 import { deleteSession, getMeWithSession, getSessionToken, verifySrpPassword } from '../../lib/auth';
+import { validateImageDimensions } from '../../lib/image-dimensions';
+import { clampLimit } from '../../lib/pagination';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { isSupportedSrpKdf } from '../../lib/srp';
+import { parsePublicHttpUrl, SsrfError } from '../../lib/url-guard';
 import { detectMimeType, isAllowedImageMime, requireAuth } from '../helpers';
 import type { Bindings, PostRow, SrpProofBody, Variables } from '../types';
 
 const users = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+/**
+ * Fetch a JSON document from a URL that ultimately came from user input or a
+ * remote server. validate + timeout + no redirect surprises beyond the policy
+ * in url-guard; callers map SsrfError to a 400.
+ */
+async function fetchRemoteJson(url: string, accept: string): Promise<{ url: string; response: Response }> {
+  const parsed = parsePublicHttpUrl(url);
+  const response = await fetch(parsed.toString(), {
+    headers: { Accept: accept },
+    signal: AbortSignal.timeout(10_000),
+  });
+  return { url: parsed.toString(), response };
+}
 
 const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
   COALESCE(p.reply_count, 0) as reply_count, 
@@ -193,9 +210,13 @@ users.post('/remote-follow', requireAuth, async (c) => {
     const localUser = user;
 
     const webfingerUrl = `https://${domain}/.well-known/webfinger?resource=acct:${remoteUsername}@${domain}`;
-    const wfResponse = await fetch(webfingerUrl, {
-      headers: { Accept: 'application/jrd+json, application/json' },
-    });
+    let wfResponse: Response;
+    try {
+      wfResponse = (await fetchRemoteJson(webfingerUrl, 'application/jrd+json, application/json')).response;
+    } catch (error: unknown) {
+      if (error instanceof SsrfError) return c.json({ error: 'Invalid target domain' }, 400);
+      throw error;
+    }
 
     if (!wfResponse.ok) {
       return c.json({ error: 'Could not resolve remote user' }, 404);
@@ -207,20 +228,27 @@ users.post('/remote-follow', requireAuth, async (c) => {
       return c.json({ error: 'Remote user has no ActivityPub actor link' }, 400);
     }
 
-    const actorUrl = selfLink.href;
-
-    const actorResponse = await fetch(actorUrl, {
-      headers: { Accept: 'application/activity+json, application/ld+json' },
-    });
+    let actorUrl: string;
+    let actorResponse: Response;
+    try {
+      const actorResult = await fetchRemoteJson(selfLink.href, 'application/activity+json, application/ld+json');
+      actorUrl = actorResult.url;
+      actorResponse = actorResult.response;
+    } catch (error: unknown) {
+      if (error instanceof SsrfError) return c.json({ error: 'Remote user has an invalid actor URL' }, 400);
+      throw error;
+    }
 
     if (!actorResponse.ok) {
       return c.json({ error: 'Could not fetch remote actor' }, 404);
     }
 
     const actorData = (await actorResponse.json()) as { inbox?: string };
-    const inboxUrl = actorData.inbox;
-    if (!inboxUrl) {
-      return c.json({ error: 'Remote actor has no inbox' }, 400);
+    let inboxUrl: string;
+    try {
+      inboxUrl = parsePublicHttpUrl(String(actorData.inbox ?? '')).toString();
+    } catch {
+      return c.json({ error: 'Remote actor has no valid inbox' }, 400);
     }
 
     const existing = await c.env.DB.prepare(
@@ -236,7 +264,7 @@ users.post('/remote-follow', requireAuth, async (c) => {
     const followId = nanoid();
     await c.env.DB.prepare(`
       INSERT INTO ap_following (id, local_user_id, target_actor_url, target_inbox_url, target_username, target_domain, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'pending', datetime('now'))
+      VALUES (?, ?, ?, ?, ?, ?, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     `)
       .bind(followId, localUser.id, actorUrl, inboxUrl, remoteUsername, domain)
       .run();
@@ -245,7 +273,7 @@ users.post('/remote-follow', requireAuth, async (c) => {
       '@context': 'https://www.w3.org/ns/activitystreams',
       id: `${c.env.BASE_URL}/activities/follow-${followId}`,
       type: 'Follow',
-      actor: `${c.env.BASE_URL}/actors/${localUser.username}`,
+      actor: `${c.env.BASE_URL}/api/actors/${localUser.username}`,
       object: actorUrl,
       to: [actorUrl],
     };
@@ -294,9 +322,15 @@ users.delete('/remote-follow', requireAuth, async (c) => {
     const localUser = user;
 
     const webfingerUrl = `https://${domain}/.well-known/webfinger?resource=acct:${remoteUsername}@${domain}`;
-    const wfResponse = await fetch(webfingerUrl, {
-      headers: { Accept: 'application/jrd+json, application/json' },
-    });
+    let wfResponse: Response;
+    let actorUrl: string;
+    try {
+      const wfResult = await fetchRemoteJson(webfingerUrl, 'application/jrd+json, application/json');
+      wfResponse = wfResult.response;
+    } catch (error: unknown) {
+      if (error instanceof SsrfError) return c.json({ error: 'Invalid target domain' }, 400);
+      throw error;
+    }
 
     if (!wfResponse.ok) {
       return c.json({ error: 'Could not resolve remote user' }, 404);
@@ -308,7 +342,11 @@ users.delete('/remote-follow', requireAuth, async (c) => {
       return c.json({ error: 'Remote user has no ActivityPub actor link' }, 400);
     }
 
-    const actorUrl = selfLink.href;
+    try {
+      actorUrl = parsePublicHttpUrl(selfLink.href).toString();
+    } catch {
+      return c.json({ error: 'Remote user has an invalid actor URL' }, 400);
+    }
 
     const following = (await c.env.DB.prepare(
       'SELECT id, target_inbox_url FROM ap_following WHERE local_user_id = ? AND target_actor_url = ?',
@@ -327,11 +365,11 @@ users.delete('/remote-follow', requireAuth, async (c) => {
       '@context': 'https://www.w3.org/ns/activitystreams',
       id: `${c.env.BASE_URL}/activities/undo-${following.id}`,
       type: 'Undo',
-      actor: `${c.env.BASE_URL}/actors/${localUser.username}`,
+      actor: `${c.env.BASE_URL}/api/actors/${localUser.username}`,
       object: {
         id: followActivityId,
         type: 'Follow',
-        actor: `${c.env.BASE_URL}/actors/${localUser.username}`,
+        actor: `${c.env.BASE_URL}/api/actors/${localUser.username}`,
         object: actorUrl,
       },
       to: [actorUrl],
@@ -365,7 +403,7 @@ users.get('/users/suggest', async (c) => {
       return c.json({ users: [] });
     }
 
-    const limit = Math.min(parseInt(c.req.query('limit') || '10', 10), 20);
+    const limit = clampLimit(c.req.query('limit'), 10, 20);
     const prefix = q.toLowerCase();
 
     const result = await c.env.DB.prepare(`
@@ -573,7 +611,7 @@ users.get('/users/:username/followers', async (c) => {
   try {
     const username = c.req.param('username');
     const cursor = c.req.query('cursor');
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
 
     if (!username) {
       return c.json({ error: 'Username required' }, 400);
@@ -686,7 +724,7 @@ users.get('/users/:username/following', async (c) => {
   try {
     const username = c.req.param('username');
     const cursor = c.req.query('cursor');
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
 
     if (!username) {
       return c.json({ error: 'Username required' }, 400);
@@ -845,6 +883,10 @@ users.patch('/users/me', requireAuth, async (c) => {
         if (!isAllowedImageMime(detected)) {
           return c.json({ error: 'File content does not match allowed image types' }, 400);
         }
+        const dimError = validateImageDimensions(fileBuffer, detected);
+        if (dimError) {
+          return c.json({ error: dimError }, 413);
+        }
         const hashBuffer = await crypto.subtle.digest('SHA-256', fileBuffer);
         const hashArray = Array.from(new Uint8Array(hashBuffer));
         const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -901,6 +943,10 @@ users.patch('/users/me', requireAuth, async (c) => {
         const detected = detectMimeType(fileBuffer);
         if (!isAllowedImageMime(detected)) {
           return c.json({ error: 'File content does not match allowed image types' }, 400);
+        }
+        const dimError = validateImageDimensions(fileBuffer, detected);
+        if (dimError) {
+          return c.json({ error: dimError }, 413);
         }
         const hashBuffer = await crypto.subtle.digest('SHA-256', fileBuffer);
         const hashArray = Array.from(new Uint8Array(hashBuffer));
@@ -1134,6 +1180,10 @@ users.patch('/users/me/password', requireAuth, async (c) => {
     }
     if (srp_group !== '2048') return c.json({ error: 'Unsupported SRP group' }, 400);
     if (!isSupportedSrpKdf(srp_kdf)) return c.json({ error: 'Unsupported SRP KDF' }, 400);
+    // Same shape checks as registration: a degenerate verifier would make the
+    // account undecryptable / trivially attackable.
+    if (!isValidB64(srp_salt, 16)) return c.json({ error: 'Invalid SRP salt' }, 400);
+    if (!isValidB64(srp_verifier, 256)) return c.json({ error: 'Invalid SRP verifier' }, 400);
 
     const proof = current_srp as SrpProofBody | undefined;
     if (!proof?.challenge_id || !proof.A || !proof.M1) {
@@ -1150,37 +1200,66 @@ users.patch('/users/me/password', requireAuth, async (c) => {
     // A vault exists ⇒ VK is wrapped under a KEK derived from the OLD password.
     // The client holds that password right now, so it must re-wrap VK in the
     // same request; otherwise the vault is orphaned the moment this lands.
-    const vaultRow = (await c.env.DB.prepare('SELECT user_id FROM vault_keys WHERE user_id = ?')
+    const vaultRow = (await c.env.DB.prepare('SELECT vk_version FROM vault_keys WHERE user_id = ?')
       .bind(userId)
-      .first()) as { user_id: string } | null;
+      .first()) as { vk_version: number } | null;
     const vaultUpdate = await (async () => {
       if (!vaultRow) {
         if (vault_kek !== undefined) return { error: 'No vault is enabled' } as const;
         return null;
       }
-      const rewrap = vault_kek as { salt?: unknown; kdf_params?: unknown; wrapped_vk?: unknown } | undefined;
+      const rewrap = vault_kek as
+        | { salt?: unknown; kdf_params?: unknown; wrapped_vk?: unknown; vk_version?: unknown }
+        | undefined;
       if (!rewrap) return { error: 'vault_rewrap_required' } as const;
       if (!isValidB64(rewrap.salt, 16)) return { error: 'Invalid vault salt' } as const;
       if (!isValidVaultKdfParams(rewrap.kdf_params)) return { error: 'Unsupported vault KDF parameters' } as const;
       if (!isValidWrappedKey(rewrap.wrapped_vk)) return { error: 'Invalid wrapped vault key' } as const;
+      if (!Number.isSafeInteger(rewrap.vk_version) || (rewrap.vk_version as number) < 1) {
+        return { error: 'Invalid vault key version' } as const;
+      }
+      if (rewrap.vk_version !== vaultRow.vk_version) return { error: 'vault_key_version_conflict' } as const;
       return {
         sql: `UPDATE vault_keys SET salt = ?, kdf_params = ?, wrapped_vk = ?,
                      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-              WHERE user_id = ?`,
-        binds: [rewrap.salt as string, JSON.stringify(rewrap.kdf_params), rewrap.wrapped_vk as string, userId],
+              WHERE user_id = ? AND vk_version = ?`,
+        binds: [
+          rewrap.salt as string,
+          JSON.stringify(rewrap.kdf_params),
+          rewrap.wrapped_vk as string,
+          userId,
+          rewrap.vk_version as number,
+        ],
+        version: rewrap.vk_version as number,
       } as const;
     })();
     if (vaultUpdate && 'error' in vaultUpdate) {
-      const status = vaultUpdate.error === 'vault_rewrap_required' ? 409 : 400;
+      const status =
+        vaultUpdate.error === 'vault_rewrap_required' || vaultUpdate.error === 'vault_key_version_conflict' ? 409 : 400;
       return c.json({ error: vaultUpdate.error }, status);
     }
 
     // password_hash is blanked unconditionally: the account must stop carrying
     // a value a dump could dictionary-attack outside the SRP protocol.
+    const expectedVaultVersion = vaultUpdate?.version ?? null;
     const statements = [
       c.env.DB.prepare(
-        `UPDATE users SET password_hash = '', srp_salt = ?, srp_verifier = ?, srp_group = ?, srp_kdf = ? WHERE id = ?`,
-      ).bind(srp_salt, srp_verifier, srp_group, srp_kdf, userId),
+        `UPDATE users SET password_hash = '', srp_salt = ?, srp_verifier = ?, srp_group = ?, srp_kdf = ?
+         WHERE id = ? AND (
+           (? IS NULL AND NOT EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ?))
+           OR EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ? AND vk_version = ?)
+         )`,
+      ).bind(
+        srp_salt,
+        srp_verifier,
+        srp_group,
+        srp_kdf,
+        userId,
+        expectedVaultVersion,
+        userId,
+        userId,
+        expectedVaultVersion,
+      ),
     ];
     if (vaultUpdate) {
       statements.push(c.env.DB.prepare(vaultUpdate.sql).bind(...vaultUpdate.binds));
@@ -1191,6 +1270,7 @@ users.patch('/users/me/password', requireAuth, async (c) => {
     if (results.some((r) => !r.success)) {
       return c.json({ error: 'Failed to update password' }, 500);
     }
+    if (results[0].meta.changes === 0) return c.json({ error: 'vault_key_version_conflict' }, 409);
 
     return c.json({ ok: true });
   } catch (error: unknown) {
@@ -1211,7 +1291,17 @@ users.delete('/users/me', requireAuth, async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
+    // Irreversible and session-cookie-sufficient otherwise: require the same
+    // SRP proof of the current password as email/password changes, so a
+    // stolen session alone cannot destroy the account.
+    const { current_srp } = (await c.req.json().catch(() => ({}))) as { current_srp?: SrpProofBody };
+    if (!current_srp?.challenge_id || !current_srp.A || !current_srp.M1) {
+      return c.json({ error: 'Current password proof is required' }, 400);
+    }
     const userId = user.id;
+    if (!(await verifySrpPassword(c.env, userId, current_srp.challenge_id, current_srp.A, current_srp.M1))) {
+      return c.json({ error: 'Current password is incorrect' }, 401);
+    }
 
     await deleteAccount(c.env, userId);
 
@@ -1268,6 +1358,10 @@ users.post('/users/me/avatar', requireAuth, async (c) => {
     const detected = detectMimeType(fileData);
     if (!isAllowedImageMime(detected)) {
       return c.json({ error: 'File content does not match allowed image types' }, 400);
+    }
+    const dimError = validateImageDimensions(fileData, detected);
+    if (dimError) {
+      return c.json({ error: dimError }, 413);
     }
 
     const hashBuffer = await crypto.subtle.digest('SHA-256', fileData);

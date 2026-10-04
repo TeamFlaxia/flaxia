@@ -651,7 +651,7 @@ admin.post('/ads', requireAuth, async (c) => {
 
     const result = await c.env.DB.prepare(`
       INSERT INTO ads (id, title, body_text, click_url, payload_key, payload_type, thumbnail_key, impressions, clicks, active, created_at, ad_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 1, datetime('now'), ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?)
     `)
       .bind(adId, title, body_text, click_url || null, payload_key, payload_type, thumbnail_key, ad_type)
       .run();

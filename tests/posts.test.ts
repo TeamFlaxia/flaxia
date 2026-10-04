@@ -2,6 +2,52 @@ import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
 import { BASE_URL, resetDb, seedUserAndLogin } from './helpers/setup.ts';
 
+describe('chronological timeline updates', () => {
+  beforeEach(resetDb);
+
+  it('reflects publish, edit, and delete on repeated first-page reads', async () => {
+    const { cookie, username } = await seedUserAndLogin('timeline');
+    const tag = `debug${crypto.randomUUID().replaceAll('-', '').slice(0, 15)}`;
+    const paths = [
+      '/api/posts?limit=3',
+      `/api/posts?username=${username}`,
+      '/api/posts?following=true',
+      `/api/posts?hashtag=${tag}`,
+    ];
+    const read = async (path: string) => {
+      const response = await fetch(`${BASE_URL}${path}`, { headers: { Cookie: cookie } });
+      assert.equal(response.status, 200);
+      return (await response.json()) as { posts: Array<{ id: string; text: string }>; count?: number };
+    };
+    for (const path of paths) await read(path);
+
+    const id = crypto.randomUUID();
+    const published = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ postId: id, text: `first #${tag}`, hashtags: [tag] }),
+    });
+    assert.equal(published.status, 200);
+    for (const path of paths) {
+      const data = await read(path);
+      assert.equal(data.posts[0]?.id, id, `new post missing from ${path}`);
+      if (path.includes('hashtag=')) assert.equal(data.count, 1);
+    }
+
+    const edited = await fetch(`${BASE_URL}/api/posts/${id}`, {
+      method: 'PUT',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: `edited #${tag}` }),
+    });
+    assert.equal(edited.status, 200);
+    for (const path of paths) assert.equal((await read(path)).posts[0]?.text, `edited #${tag}`);
+
+    const deleted = await fetch(`${BASE_URL}/api/posts/${id}`, { method: 'DELETE', headers: { Cookie: cookie } });
+    assert.equal(deleted.status, 200);
+    for (const path of paths) assert.ok(!(await read(path)).posts.some((post) => post.id === id));
+  });
+});
+
 describe('POST /api/posts', () => {
   beforeEach(resetDb);
 
@@ -955,5 +1001,103 @@ describe('GET /api/posts?username= — visibility', () => {
     assert.equal(res.status, 200);
     const body = (await res.json()) as { posts: Array<{ id: string }> };
     assert.ok(!body.posts.some((post) => post.id === postId), 'pending posts must stay private');
+  });
+});
+
+describe('PUT /api/posts/:id — authorization', () => {
+  beforeEach(resetDb);
+
+  async function createTextPost(cookie: string, text: string): Promise<string> {
+    const res = await fetch(`${BASE_URL}/api/posts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ text }),
+    });
+    assert.equal(res.status, 201);
+    return ((await res.json()) as { id: string }).id;
+  }
+
+  it("rejects editing another user's post → 403", async () => {
+    const { cookie: ownerCookie } = await seedUserAndLogin('put-owner');
+    const { cookie: otherCookie } = await seedUserAndLogin('put-other');
+    const id = await createTextPost(ownerCookie, 'not yours');
+    const res = await fetch(`${BASE_URL}/api/posts/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: otherCookie },
+      body: JSON.stringify({ text: 'hijacked' }),
+    });
+    assert.equal(res.status, 403);
+  });
+
+  it('rejects unauthenticated edit → 401', async () => {
+    const { cookie } = await seedUserAndLogin('put-owner2');
+    const id = await createTextPost(cookie, 'mine');
+    const res = await fetch(`${BASE_URL}/api/posts/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'anon edit' }),
+    });
+    assert.equal(res.status, 401);
+  });
+});
+
+describe('malformed input hardening', () => {
+  beforeEach(resetDb);
+
+  const post = (cookie: string, body: unknown) =>
+    fetch(`${BASE_URL}/api/posts/prepare`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify(body),
+    });
+
+  it('rejects empty files array → 400', async () => {
+    const { cookie } = await seedUserAndLogin('mal-1');
+    assert.equal((await post(cookie, { files: [] })).status, 400);
+  });
+
+  it('rejects game container as attachment → 400', async () => {
+    const { cookie } = await seedUserAndLogin('mal-2');
+    assert.equal((await post(cookie, { files: [{ filename: 'game.zip' }] })).status, 400);
+  });
+
+  it('rejects malformed postId on commit → 422', async () => {
+    const { cookie } = await seedUserAndLogin('mal-3');
+    const res = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ postId: 'not a valid id!!!', text: 'hi' }),
+    });
+    assert.equal(res.status, 422);
+  });
+
+  it('rejects unknown quotedPostId on commit → 404', async () => {
+    const { cookie } = await seedUserAndLogin('mal-4');
+    const res = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ text: '', quotedPostId: '00000000-0000-4000-8000-000000000000' }),
+    });
+    assert.equal(res.status, 404);
+  });
+
+  it('rejects vote on missing poll → 404', async () => {
+    const { cookie } = await seedUserAndLogin('mal-5');
+    const res = await fetch(`${BASE_URL}/api/polls/00000000-0000-4000-8000-000000000000/vote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ optionId: 'nope' }),
+    });
+    assert.equal(res.status, 404);
+  });
+
+  it('rejects vote without optionId → 400', async () => {
+    const { cookie } = await seedUserAndLogin('mal-6');
+    const res = await fetch(`${BASE_URL}/api/polls/00000000-0000-4000-8000-000000000000/vote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 400);
   });
 });

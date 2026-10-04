@@ -76,3 +76,19 @@ describe('GET /api/posts?hashtag=xxx', () => {
     assert.equal(res.status, 200);
   });
 });
+
+describe('public cache headers', () => {
+  beforeEach(resetDb);
+
+  it('trending tags are edge-cacheable', async () => {
+    const res = await fetch(`${BASE_URL}/api/tags/trending`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('cache-control') ?? '', /public/);
+  });
+
+  it('active ads are edge-cacheable', async () => {
+    const res = await fetch(`${BASE_URL}/api/ads/active`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('cache-control') ?? '', /public/);
+  });
+});

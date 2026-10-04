@@ -43,7 +43,18 @@ export async function onRequest(context: { request: Request; env: Env; params: {
   }
 }
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function serveZipPlayer(postId: string, sandboxOrigin: string): Response {
+  const safeId = escapeHtml(encodeURIComponent(postId));
+  const safeOrigin = escapeHtml(sandboxOrigin);
   const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -56,7 +67,7 @@ function serveZipPlayer(postId: string, sandboxOrigin: string): Response {
   </style>
 </head>
 <body>
-  <iframe src="${sandboxOrigin}/api/wvfs-zip/${postId}"
+  <iframe src="${safeOrigin}/api/wvfs-zip/${safeId}"
     sandbox="allow-scripts allow-pointer-lock allow-fullscreen"
     allow="fullscreen"
     referrerpolicy="no-referrer"></iframe>
@@ -72,6 +83,8 @@ function serveZipPlayer(postId: string, sandboxOrigin: string): Response {
 }
 
 function serveSwfPlayer(postId: string, baseUrl: string): Response {
+  const safeId = escapeHtml(encodeURIComponent(postId));
+  const safeBase = escapeHtml(baseUrl);
   const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -84,7 +97,7 @@ function serveSwfPlayer(postId: string, baseUrl: string): Response {
   <script src="https://unpkg.com/@ruffle-rs/ruffle"></script>
 </head>
 <body>
-  <embed src="${baseUrl}/api/swf/${postId}"
+  <embed src="${safeBase}/api/swf/${safeId}"
     style="width:100%;height:100%"
     type="application/x-shockwave-flash">
 </body>

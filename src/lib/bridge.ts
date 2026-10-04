@@ -72,6 +72,22 @@ function isRecord(msg: unknown): msg is Record<string, unknown> {
   return typeof msg === 'object' && msg !== null;
 }
 
+/** Bounded string check for bridge payloads (malformed-state / relay caps). */
+function isCappedString(value: unknown, max = 2048): value is string {
+  return typeof value === 'string' && value.length <= max;
+}
+
+/** Bounded JSON-serializable payload check for peer-data relay. */
+function isCappedPayload(value: unknown, maxBytes = 65536): boolean {
+  if (value === null || value === undefined) return true;
+  try {
+    const json = JSON.stringify(value);
+    return typeof json === 'string' && json.length <= maxBytes;
+  } catch {
+    return false;
+  }
+}
+
 export function isParentMessage(msg: unknown): msg is ParentMessage {
   if (!isRecord(msg)) return false;
 
@@ -103,13 +119,20 @@ export function isParentMessage(msg: unknown): msg is ParentMessage {
     case 'MULTIPLAYER_PLAYER_READY':
     case 'MULTIPLAYER_GAME_START':
     case 'MULTIPLAYER_GAME_OVER':
-    case 'MULTIPLAYER_PLAYER_INPUT':
     case 'MULTIPLAYER_HOST_CHANGED':
-    case 'MULTIPLAYER_CHAT':
-    case 'MULTIPLAYER_ERROR':
-    case 'MULTIPLAYER_P2P_STATE':
-    case 'MULTIPLAYER_PEER_DATA':
       return true;
+    case 'MULTIPLAYER_PLAYER_INPUT':
+      // Unbounded peer input relayed into game state: cap the payload, but
+      // keep the old shape-agnostic acceptance otherwise.
+      return msg.input === undefined || isCappedPayload(msg.input);
+    case 'MULTIPLAYER_CHAT':
+      return msg.message === undefined || isCappedString(msg.message, 500);
+    case 'MULTIPLAYER_ERROR':
+      return msg.message === undefined || isCappedString(msg.message, 500);
+    case 'MULTIPLAYER_P2P_STATE':
+      return msg.state === undefined || (typeof msg.state === 'string' && msg.state.length <= 64);
+    case 'MULTIPLAYER_PEER_DATA':
+      return msg.data === undefined || isCappedPayload(msg.data);
     default:
       return false;
   }
@@ -134,15 +157,18 @@ export function isSandboxMessage(msg: unknown): msg is SandboxMessage {
     case 'CAPTURE_GIF':
       return typeof msg.requestId === 'string';
     case 'MULTIPLAYER_CONNECT':
-      return typeof msg.gameId === 'string';
+      return typeof msg.gameId === 'string' && (msg.roomId === undefined || typeof msg.roomId === 'string');
     case 'MULTIPLAYER_DISCONNECT':
-    case 'MULTIPLAYER_INPUT':
     case 'MULTIPLAYER_START_GAME':
     case 'MULTIPLAYER_SET_READY':
-    case 'MULTIPLAYER_CHAT':
     case 'MULTIPLAYER_REQUEST_STATE':
-    case 'MULTIPLAYER_SEND_PEER_DATA':
       return true;
+    case 'MULTIPLAYER_INPUT':
+      return msg.input === undefined || isCappedPayload(msg.input);
+    case 'MULTIPLAYER_CHAT':
+      return msg.message === undefined || isCappedString(msg.message, 500);
+    case 'MULTIPLAYER_SEND_PEER_DATA':
+      return msg.data === undefined || isCappedPayload(msg.data);
     default:
       return false;
   }

@@ -69,6 +69,11 @@ async function readDevices(
 
 /** One pending pairing per user at a time would be nicer UX but is not a security property. */
 const MAX_ACTIVE_DEVICES = 10;
+/** Vault items are for small personal records; media belongs in encrypted local storage. */
+const MAX_VAULT_ITEM_CIPHERTEXT_CHARS = 128_000;
+const MAX_VAULT_ITEMS = 200;
+const MAX_VAULT_STORAGE_CHARS = 5_000_000;
+const VAULT_ITEM_KINDS = new Set(['post_autosave', 'post_draft', 'private_note', 'personal_setting']);
 /** A QR left on screen should stop working quickly; clients may ask for less. */
 const DEFAULT_PAIRING_TTL_SECONDS = 600;
 const NOW_SQL = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
@@ -234,48 +239,205 @@ vault.put('/vault/keys', requireAuth, async (c) => {
     return c.json({ error: 'Vault key version conflict' }, 409);
   }
 
-  const result = await c.env.DB.prepare(
-    `UPDATE vault_keys
-     SET salt = ?, recovery_salt = ?, kdf_params = ?, wrapped_vk = ?, recovery_blob = ?,
-         vk_version = vk_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-     WHERE user_id = ? AND vk_version = ?`,
-  )
-    .bind(
+  // This route re-wraps the same VK (for example, a recovery phrase change),
+  // so item-key ciphertext stays valid. Advance item row versions atomically
+  // with the envelope to keep unlocked clients from mistaking them as stale.
+  const version = body.vk_version as number;
+  const results = await c.env.DB.batch([
+    c.env.DB.prepare(
+      `UPDATE vault_keys
+       SET salt = ?, recovery_salt = ?, kdf_params = ?, wrapped_vk = ?, recovery_blob = ?,
+           vk_version = vk_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+       WHERE user_id = ? AND vk_version = ?`,
+    ).bind(
       body.salt as string,
       body.recovery_salt as string,
       JSON.stringify(body.kdf_params),
       body.wrapped_vk as string,
       body.recovery_blob as string,
       user.id,
-      body.vk_version,
-    )
-    .run();
-  if (!result.success) return c.json({ error: 'Failed to update vault keys' }, 500);
-  if (result.meta.changes === 0) return c.json({ error: 'Vault key version conflict' }, 409);
+      version,
+    ),
+    c.env.DB.prepare(
+      `UPDATE vault_items SET vk_version = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+       WHERE user_id = ? AND vk_version = ?
+         AND EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ? AND vk_version = ?)`,
+    ).bind(version + 1, user.id, version, user.id, version + 1),
+  ]);
+  if (results.some((result) => !result.success)) return c.json({ error: 'Failed to update vault keys' }, 500);
+  if (results[0].meta.changes === 0) return c.json({ error: 'Vault key version conflict' }, 409);
 
-  return c.json({ enabled: true });
+  return c.json({ enabled: true, vk_version: version + 1 });
 });
 
-// GET /vault/items — wrapped item-key blobs needed for VK rotation.
-// Payloads are deliberately omitted: the server never needs to inspect or
-// return ciphertext bodies for a re-wrap, and the client has the item ids.
+// GET /vault/items — item-key inventory for rotation. Supplying a kind also
+// returns that kind's opaque payloads to the unlocked client.
 vault.get('/vault/items', requireAuth, async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
+  const kind = c.req.query('kind');
+  if (kind !== undefined && !VAULT_ITEM_KINDS.has(kind)) return c.json({ error: 'Invalid vault item kind' }, 400);
   const result = await c.env.DB.prepare(
-    'SELECT id, item_key_wrapped, kind, vk_version, created_at, updated_at FROM vault_items WHERE user_id = ? ORDER BY created_at',
+    `SELECT id, item_key_wrapped, ${kind ? 'payload,' : ''} kind, vk_version, created_at, updated_at
+     FROM vault_items WHERE user_id = ?${kind ? ' AND kind = ?' : ''} ORDER BY created_at`,
   )
-    .bind(user.id)
+    .bind(...(kind ? [user.id, kind] : [user.id]))
     .all<{
       id: string;
       item_key_wrapped: string;
+      payload?: string;
       kind: string;
       vk_version: number;
       created_at: string;
       updated_at: string;
     }>();
   return c.json({ items: result.results ?? [] });
+});
+
+function validVaultItemBody(body: Record<string, unknown>): body is Record<string, unknown> & {
+  item_key_wrapped: string;
+  payload: string;
+  kind: string;
+  vk_version: number;
+} {
+  return (
+    isValidWrappedKey(body.item_key_wrapped) &&
+    typeof body.payload === 'string' &&
+    body.payload.length <= MAX_VAULT_ITEM_CIPHERTEXT_CHARS &&
+    isValidWrappedKey(body.payload) &&
+    typeof body.kind === 'string' &&
+    VAULT_ITEM_KINDS.has(body.kind) &&
+    Number.isInteger(body.vk_version) &&
+    (body.vk_version as number) > 0
+  );
+}
+
+// PUT /vault/items/:id — create or replace one encrypted personal item.
+// vk_version is an optimistic lock: a client with a stale VK cannot write an
+// envelope that appears current after another device rotated the vault.
+vault.put('/vault/items/:id', requireAuth, async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  const id = c.req.param('id') ?? '';
+  if (!isValidVaultItemId(id)) return c.json({ error: 'Invalid vault item id' }, 400);
+  const parsed = await c.req.json().catch(() => null);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return c.json({ error: 'Invalid vault item' }, 400);
+  }
+  const body = parsed as Record<string, unknown>;
+  if (!validVaultItemBody(body)) return c.json({ error: 'Invalid vault item' }, 400);
+
+  const result = await c.env.DB.prepare(
+    `INSERT INTO vault_items (user_id, id, item_key_wrapped, payload, kind, vk_version)
+     SELECT ?, ?, ?, ?, ?, ?
+     WHERE EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ? AND vk_version = ?)
+       AND (
+         EXISTS (SELECT 1 FROM vault_items WHERE user_id = ? AND id = ?)
+         OR (SELECT COUNT(*) FROM vault_items WHERE user_id = ?) < ${MAX_VAULT_ITEMS}
+       )
+       AND (
+         (SELECT COALESCE(SUM(length(item_key_wrapped) + length(payload)), 0)
+          FROM vault_items WHERE user_id = ? AND id <> ?)
+         + length(?) + length(?) <= ${MAX_VAULT_STORAGE_CHARS}
+       )
+     ON CONFLICT(user_id, id) DO UPDATE SET
+       item_key_wrapped = excluded.item_key_wrapped,
+       payload = excluded.payload,
+       kind = excluded.kind,
+       vk_version = excluded.vk_version,
+       updated_at = ${NOW_SQL}`,
+  )
+    .bind(
+      user.id,
+      id,
+      body.item_key_wrapped,
+      body.payload,
+      body.kind,
+      body.vk_version,
+      user.id,
+      body.vk_version,
+      user.id,
+      id,
+      user.id,
+      user.id,
+      id,
+      body.payload,
+      body.item_key_wrapped,
+    )
+    .run();
+  if (!result.success) return c.json({ error: 'Failed to save vault item' }, 500);
+  if (result.meta.changes === 0) {
+    const envelope = await readEnvelope(c, user.id);
+    if (!envelope) return c.json({ error: 'Vault not enabled' }, 404);
+    if (envelope.vk_version === body.vk_version) {
+      const limits = await c.env.DB.prepare(
+        `SELECT COUNT(*) AS total, COALESCE(SUM(length(item_key_wrapped) + length(payload)), 0) AS chars
+         FROM vault_items WHERE user_id = ? AND id <> ?`,
+      )
+        .bind(user.id, id)
+        .first<{ total: number; chars: number }>();
+      const existing = await c.env.DB.prepare('SELECT id FROM vault_items WHERE user_id = ? AND id = ?')
+        .bind(user.id, id)
+        .first();
+      if (
+        (!existing && (limits?.total ?? 0) >= MAX_VAULT_ITEMS) ||
+        (limits?.chars ?? 0) + body.payload.length + body.item_key_wrapped.length > MAX_VAULT_STORAGE_CHARS
+      ) {
+        return c.json({ error: 'Vault item storage limit reached' }, 409);
+      }
+    }
+    return c.json({ error: 'Vault key version conflict' }, 409);
+  }
+  return c.json({ id, kind: body.kind, vk_version: body.vk_version });
+});
+
+// DELETE /vault/items/:id — remove one encrypted personal item.
+vault.delete('/vault/items/:id', requireAuth, async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  const id = c.req.param('id') ?? '';
+  if (!isValidVaultItemId(id)) return c.json({ error: 'Invalid vault item id' }, 400);
+  const version = Number(c.req.query('vk_version'));
+  if (!Number.isInteger(version) || version < 1) return c.json({ error: 'Invalid vault key version' }, 400);
+  const removed = await c.env.DB.prepare(
+    `DELETE FROM vault_items WHERE user_id = ? AND id = ? AND vk_version = ?
+     AND EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ? AND vk_version = ?)`,
+  )
+    .bind(user.id, id, version, user.id, version)
+    .run();
+  if (!removed.success) return c.json({ error: 'Failed to delete vault item' }, 500);
+  if (removed.meta.changes === 0) {
+    const envelope = await readEnvelope(c, user.id);
+    if (!envelope) return c.json({ error: 'Vault not enabled' }, 404);
+    if (envelope.vk_version !== version) return c.json({ error: 'Vault key version conflict' }, 409);
+    return c.json({ error: 'Vault item not found' }, 404);
+  }
+  return c.json({ ok: true });
+});
+
+// DELETE /vault/items?kind=…&vk_version=… — bounded bulk deletion for a
+// user's own encrypted collection, used by the draft manager.
+vault.delete('/vault/items', requireAuth, async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  const kind = c.req.query('kind');
+  const version = Number(c.req.query('vk_version'));
+  if (!kind || !VAULT_ITEM_KINDS.has(kind)) return c.json({ error: 'Invalid vault item kind' }, 400);
+  if (!Number.isInteger(version) || version < 1) return c.json({ error: 'Invalid vault key version' }, 400);
+  const removed = await c.env.DB.prepare(
+    `DELETE FROM vault_items WHERE user_id = ? AND kind = ? AND vk_version = ?
+     AND EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ? AND vk_version = ?)`,
+  )
+    .bind(user.id, kind, version, user.id, version)
+    .run();
+  if (!removed.success) return c.json({ error: 'Failed to delete vault items' }, 500);
+  if (removed.meta.changes === 0) {
+    const envelope = await readEnvelope(c, user.id);
+    if (!envelope) return c.json({ error: 'Vault not enabled' }, 404);
+    if (envelope.vk_version !== version) return c.json({ error: 'Vault key version conflict' }, 409);
+  }
+  return c.json({ ok: true, deleted: removed.meta.changes });
 });
 
 // POST /vault/keys/revoke-device — rotate VK and remove the revoked device.
@@ -305,9 +467,25 @@ vault.post('/vault/keys/revoke-device', requireAuth, async (c) => {
     return c.json({ error: 'Invalid current device id' }, 400);
   }
   if (body.device_id === body.current_device_id) return c.json({ error: 'Cannot revoke the current device' }, 400);
-  if (!Array.isArray(body.item_keys)) return c.json({ error: 'Invalid vault item keys' }, 400);
-  const itemKeys = body.item_keys as Array<{ item_id?: unknown; item_key_wrapped?: unknown }>;
-  if (itemKeys.some((item) => !isValidVaultItemId(item.item_id) || !isValidWrappedKey(item.item_key_wrapped))) {
+  if (!Array.isArray(body.item_keys) || body.item_keys.length > MAX_VAULT_ITEMS) {
+    return c.json({ error: 'Invalid vault item keys' }, 400);
+  }
+  const itemKeys = body.item_keys as Array<{
+    item_id?: unknown;
+    item_key_wrapped?: unknown;
+    item_key_wrapped_before?: unknown;
+  }>;
+  if (
+    itemKeys.some(
+      (item) =>
+        typeof item !== 'object' ||
+        item === null ||
+        Array.isArray(item) ||
+        !isValidVaultItemId(item.item_id) ||
+        !isValidWrappedKey(item.item_key_wrapped) ||
+        !isValidWrappedKey(item.item_key_wrapped_before),
+    )
+  ) {
     return c.json({ error: 'Invalid vault item keys' }, 400);
   }
   const submittedItemIds = itemKeys.map((item) => item.item_id as string);
@@ -332,13 +510,27 @@ vault.post('/vault/keys/revoke-device', requireAuth, async (c) => {
   }
 
   const version = body.vk_version as number;
+  const itemInventorySnapshot = JSON.stringify(
+    itemKeys.map((item) => ({ item_id: item.item_id, item_key_wrapped_before: item.item_key_wrapped_before })),
+  );
   const statements: D1PreparedStatement[] = [
     c.env.DB.prepare(
       `UPDATE vault_keys
        SET salt = ?, recovery_salt = ?, kdf_params = ?, wrapped_vk = ?, recovery_blob = ?,
            vk_version = vk_version + 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE user_id = ? AND vk_version = ?
-         AND EXISTS (SELECT 1 FROM device_keys WHERE user_id = ? AND id = ?)`,
+         AND EXISTS (SELECT 1 FROM device_keys WHERE user_id = ? AND id = ?)
+         AND (SELECT COUNT(*) FROM vault_items WHERE user_id = ?) = ?
+         AND NOT EXISTS (
+           SELECT 1 FROM vault_items AS current_item
+           WHERE current_item.user_id = ?
+             AND NOT EXISTS (
+               SELECT 1 FROM json_each(?) AS requested_item
+               WHERE json_extract(requested_item.value, '$.item_id') = current_item.id
+                 AND json_extract(requested_item.value, '$.item_key_wrapped_before') = current_item.item_key_wrapped
+                 AND current_item.vk_version = ?
+             )
+         )`,
     ).bind(
       body.salt as string,
       body.recovery_salt as string,
@@ -349,20 +541,18 @@ vault.post('/vault/keys/revoke-device', requireAuth, async (c) => {
       version,
       user.id,
       String(body.device_id),
+      user.id,
+      itemKeys.length,
+      user.id,
+      itemInventorySnapshot,
+      version,
     ),
-    c.env.DB.prepare(
-      `DELETE FROM device_keys
-       WHERE user_id = ? AND id <> ?
-         AND EXISTS (
-           SELECT 1 FROM vault_keys WHERE user_id = ? AND vk_version = ? AND wrapped_vk = ?
-         )`,
-    ).bind(user.id, String(body.current_device_id), user.id, version + 1, body.wrapped_vk as string),
   ];
   for (const item of itemKeys)
     statements.push(
       c.env.DB.prepare(
-        `UPDATE vault_items SET item_key_wrapped = ?, vk_version = ?
-         WHERE user_id = ? AND id = ?
+        `UPDATE vault_items SET item_key_wrapped = ?, vk_version = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE user_id = ? AND id = ? AND item_key_wrapped = ? AND vk_version = ?
            AND EXISTS (
              SELECT 1 FROM vault_keys WHERE user_id = ? AND vk_version = ? AND wrapped_vk = ?
            )`,
@@ -371,11 +561,31 @@ vault.post('/vault/keys/revoke-device', requireAuth, async (c) => {
         version + 1,
         user.id,
         item.item_id as string,
+        item.item_key_wrapped_before as string,
+        version,
         user.id,
         version + 1,
         body.wrapped_vk as string,
       ),
     );
+  statements.push(
+    c.env.DB.prepare(
+      `DELETE FROM device_keys
+       WHERE user_id = ? AND id <> ?
+         AND EXISTS (
+           SELECT 1 FROM vault_keys WHERE user_id = ? AND vk_version = ? AND wrapped_vk = ?
+         )
+         AND EXISTS (SELECT 1 FROM device_keys WHERE user_id = ? AND id = ?)`,
+    ).bind(
+      user.id,
+      String(body.current_device_id),
+      user.id,
+      version + 1,
+      body.wrapped_vk as string,
+      user.id,
+      String(body.device_id),
+    ),
+  );
 
   const results = await c.env.DB.batch(statements);
   if (results.some((result) => !result.success)) return c.json({ error: 'Failed to revoke device' }, 500);
@@ -383,9 +593,13 @@ vault.post('/vault/keys/revoke-device', requireAuth, async (c) => {
     const latest = await readEnvelope(c, user.id);
     if (!latest) return c.json({ error: 'Vault not enabled' }, 404);
     if (latest.vk_version !== version) return c.json({ error: 'Vault key version conflict' }, 409);
-    return c.json({ error: 'Pairing not found' }, 404);
+    const target = await c.env.DB.prepare('SELECT id FROM device_keys WHERE user_id = ? AND id = ?')
+      .bind(user.id, String(body.device_id))
+      .first();
+    if (!target) return c.json({ error: 'Pairing not found' }, 404);
+    return c.json({ error: 'Vault item key inventory changed' }, 409);
   }
-  if ((results[1].meta?.changes ?? 0) === 0) return c.json({ error: 'Pairing not found' }, 404);
+  if ((results[results.length - 1].meta?.changes ?? 0) === 0) return c.json({ error: 'Pairing not found' }, 404);
   return c.json({ enabled: true, vk_version: version + 1 });
 });
 

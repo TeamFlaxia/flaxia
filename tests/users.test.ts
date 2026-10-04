@@ -430,20 +430,45 @@ describe('PATCH /api/users/me/password — validation', () => {
 describe('DELETE /api/users/me', () => {
   beforeEach(resetDb);
 
-  it('deletes account → 200', async () => {
+  it('rejects missing password proof → 400', async () => {
     const { cookie } = await seedUserAndLogin('1');
     const res = await fetch(`${BASE_URL}/api/users/me`, {
       method: 'DELETE',
-      headers: { Cookie: cookie },
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it('rejects a proof from the wrong password → 401', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const proof = await createSrpProof(cookie, 'wrongpassword');
+    const res = await fetch(`${BASE_URL}/api/users/me`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ current_srp: proof }),
+    });
+    assert.equal(res.status, 401);
+  });
+
+  it('deletes account → 200', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const proof = await createSrpProof(cookie, 'password123');
+    const res = await fetch(`${BASE_URL}/api/users/me`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ current_srp: proof }),
     });
     assert.equal(res.status, 200);
   });
 
   it('login fails after deletion → 401', async () => {
     const { cookie } = await seedUserAndLogin('1');
+    const proof = await createSrpProof(cookie, 'password123');
     await fetch(`${BASE_URL}/api/users/me`, {
       method: 'DELETE',
-      headers: { Cookie: cookie },
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ current_srp: proof }),
     });
 
     const { res } = await loginUser('user1@test.com', 'password123');
@@ -462,9 +487,11 @@ describe('DELETE /api/users/me', () => {
     });
     const createData = await createRes.json();
 
+    const proof = await createSrpProof(cookie, 'password123');
     await fetch(`${BASE_URL}/api/users/me`, {
       method: 'DELETE',
-      headers: { Cookie: cookie },
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ current_srp: proof }),
     });
 
     const postsRes = await fetch(`${BASE_URL}/api/posts`);

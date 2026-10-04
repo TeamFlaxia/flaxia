@@ -20,6 +20,58 @@ async function fetchNotifications(cookie: string): Promise<Array<Record<string, 
   return data.notifications as Array<Record<string, unknown>>;
 }
 
+describe('notification WebSocket', () => {
+  beforeEach(resetDb);
+
+  it('delivers a mention and unread count through the notification Worker', async (t) => {
+    const recipient = await seedUserAndLogin('socket1');
+    const sender = await seedUserAndLogin('socket2');
+    const token = recipient.cookie.match(/session=([^;]+)/)?.[1];
+    assert.ok(token);
+    const url = new URL('/api/ws/notifications', BASE_URL);
+    url.protocol = 'ws:';
+    url.searchParams.set('token', token);
+    const socket = new WebSocket(url);
+    t.after(() => socket.close());
+
+    const waitForEvent = (type: 'open' | 'message') =>
+      new Promise<Event>((resolve, reject) => {
+        const cleanup = () => {
+          clearTimeout(timer);
+          socket.removeEventListener(type, onEvent);
+          socket.removeEventListener('error', onError);
+        };
+        const onEvent = (event: Event) => {
+          cleanup();
+          resolve(event);
+        };
+        const onError = () => {
+          cleanup();
+          reject(new Error('Notification WebSocket failed to connect'));
+        };
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new Error(`Notification WebSocket did not receive ${type}`));
+        }, 5000);
+        t.after(cleanup);
+        socket.addEventListener(type, onEvent);
+        socket.addEventListener('error', onError);
+      });
+
+    await waitForEvent('open');
+    const message = waitForEvent('message');
+    const id = await createPost(sender.cookie, `@${recipient.username} hello`);
+    const payload = JSON.parse(String(((await message) as MessageEvent).data)) as {
+      type: string;
+      unread_count: number;
+      push: { url?: string };
+    };
+    assert.equal(payload.type, 'notification');
+    assert.equal(payload.unread_count, 1);
+    assert.ok(JSON.stringify(payload.push).includes(id));
+  });
+});
+
 describe('GET /api/notifications', () => {
   beforeEach(resetDb);
 

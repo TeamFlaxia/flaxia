@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import { createHmac } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { BASE_URL, loginUser, registerUser, resetDb } from './helpers/setup.ts';
 
@@ -72,13 +73,21 @@ async function sendWebhook(
   body: Record<string, unknown>,
   params: Record<string, string> = {},
 ): Promise<Response> {
-  const query = new URLSearchParams({ type, ...params }).toString();
+  // Signed like the orchestrator would: the webhook rejects unsigned callers.
+  const query = new URLSearchParams({ type, ...params });
+  query.sort();
+  const sig = createHmac('sha256', CROWD_WEBHOOK_SECRET).update(`/api/crowd/webhook?${query}`).digest('hex');
+  query.set('sig', sig);
   return fetch(`${BASE_URL}/api/crowd/webhook?${query}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 }
+
+// Dummy secret bound into the dev:test server (see package.json). Never a
+// production value: it only lets the suite speak the webhook protocol.
+const CROWD_WEBHOOK_SECRET = 'test-callback-secret';
 
 async function getPost(cookie: string, postId: string): Promise<{ hashtags: string[] }> {
   const res = await fetch(`${BASE_URL}/api/posts/${postId}`, { headers: { Cookie: cookie } });
@@ -141,13 +150,26 @@ describe('POST /api/crowd/webhook — protocol', () => {
   });
 
   it('acks invalid JSON bodies gracefully (permanent callback retries)', async () => {
-    const res = await fetch(`${BASE_URL}/api/crowd/webhook?type=nsfw`, {
+    const query = new URLSearchParams({ type: 'nsfw' });
+    query.sort();
+    const sig = createHmac('sha256', CROWD_WEBHOOK_SECRET).update(`/api/crowd/webhook?${query}`).digest('hex');
+    query.set('sig', sig);
+    const res = await fetch(`${BASE_URL}/api/crowd/webhook?${query}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: 'not-json{{{',
     });
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), { received: true });
+  });
+
+  it('rejects unsigned callbacks → 401', async () => {
+    const res = await fetch(`${BASE_URL}/api/crowd/webhook?type=nsfw`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskId: 't-nosig', status: 'done', result: {} }),
+    });
+    assert.equal(res.status, 401);
   });
 });
 

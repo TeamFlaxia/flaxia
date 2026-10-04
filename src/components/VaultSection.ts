@@ -43,6 +43,7 @@ import {
   tryDeviceUnlock,
   unlockVault,
 } from '../lib/vault/session.js';
+import { createPrivateNotesSection } from './PrivateNotesSection.js';
 
 type View = 'loading' | 'setup' | 'phrase' | 'locked' | 'pairJoin' | 'unlocked' | 'scan';
 
@@ -575,6 +576,7 @@ export function createVaultSection() {
     buttons.appendChild(scanButton);
     buttons.appendChild(lockButton);
     body.appendChild(buttons);
+    body.appendChild(createPrivateNotesSection());
     body.appendChild(trailingMessage());
   }
 

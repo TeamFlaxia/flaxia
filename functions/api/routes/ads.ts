@@ -1,10 +1,22 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
+import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { isKeyBlocked } from '../../lib/scan/db';
 import { requireAdmin } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
 const ads = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+/**
+ * Metric endpoints are public and write on every call: throttle per IP so
+ * they cannot be used for D1 write floods or billing-metric inflation.
+ */
+async function checkMetricRateLimit(c: { req: { raw: Request }; env: Bindings }): Promise<boolean> {
+  return checkRateLimit(c.env.CACHE, `ads:metric:${getClientIp(c.req.raw)}`, {
+    maxRequests: 120,
+    windowSeconds: 60,
+  });
+}
 
 ads.get('/ads/:id/payload', async (c) => {
   try {
@@ -22,8 +34,12 @@ ads.get('/ads/:id/payload', async (c) => {
       return c.json({ error: 'Storage not available' }, 500);
     }
 
-    // Fetch ad to get payload_key, payload_type, and thumbnail_key
-    const ad = await c.env.DB.prepare('SELECT payload_key, payload_type, thumbnail_key FROM ads WHERE id = ?')
+    // Fetch ad to get payload_key, payload_type, and thumbnail_key.
+    // Only active ads are servable: a deactivated (e.g. policy-violating)
+    // ad must not stay fetchable by direct ID.
+    const ad = await c.env.DB.prepare(
+      'SELECT payload_key, payload_type, thumbnail_key FROM ads WHERE id = ? AND active = 1',
+    )
       .bind(adId)
       .first();
 
@@ -106,7 +122,10 @@ ads.get('/ads/active', async (c) => {
     // Shuffle results in JS
     const shuffled = [...(result.results || [])].sort(() => Math.random() - 0.5);
 
-    return c.json({ ads: shuffled });
+    // Public, low-churn inventory: safe for short edge caching (success only).
+    return c.json({ ads: shuffled }, 200, {
+      'Cache-Control': 'public, max-age=60',
+    });
   } catch (error: unknown) {
     const err = error as { message?: string };
     console.error('Get active ads error:', error);
@@ -117,6 +136,9 @@ ads.get('/ads/active', async (c) => {
 // POST /api/ads/:id/impression - track ad impression (public endpoint)
 ads.post('/ads/:id/impression', async (c) => {
   try {
+    if (!(await checkMetricRateLimit(c))) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
     const adId = c.req.param('id');
 
     if (!c.env.DB) {
@@ -142,6 +164,9 @@ ads.post('/ads/:id/impression', async (c) => {
 // POST /api/posts/:id/impression - track post impression (public endpoint)
 ads.post('/ads/:id/click', async (c) => {
   try {
+    if (!(await checkMetricRateLimit(c))) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
     const adId = c.req.param('id');
 
     if (!c.env.DB) {
@@ -167,8 +192,14 @@ ads.post('/ads/:id/click', async (c) => {
 // POST /api/ads/:id/interaction - track ad interaction (public endpoint)
 ads.post('/ads/:id/interaction', async (c) => {
   try {
+    if (!(await checkMetricRateLimit(c))) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
     const adId = c.req.param('id');
     const { duration_ms } = await c.req.json();
+    if (typeof duration_ms !== 'number' || !Number.isFinite(duration_ms) || duration_ms < 0) {
+      return c.json({ error: 'Invalid duration' }, 400);
+    }
 
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);
@@ -195,6 +226,9 @@ ads.post('/ads/:id/interaction', async (c) => {
 // POST /api/ads/:id/play - track game play start (public endpoint)
 ads.post('/ads/:id/play', async (c) => {
   try {
+    if (!(await checkMetricRateLimit(c))) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
     const adId = c.req.param('id');
 
     if (!c.env.DB) {
@@ -243,6 +277,19 @@ ads.put('/ads/:id', requireAdmin, async (c) => {
       values.push(body.body_text);
     }
     if (body.click_url !== undefined) {
+      if (body.click_url !== null) {
+        if (typeof body.click_url !== 'string') {
+          return c.json({ error: 'Invalid click_url format' }, 400);
+        }
+        try {
+          const parsed = new URL(body.click_url);
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            return c.json({ error: 'Invalid click_url format' }, 400);
+          }
+        } catch {
+          return c.json({ error: 'Invalid click_url format' }, 400);
+        }
+      }
       updates.push('click_url = ?');
       values.push(body.click_url);
     }

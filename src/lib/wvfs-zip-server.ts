@@ -236,8 +236,15 @@ async function extractFileFromR2(bucket: R2Bucket, zipKey: string, entry: ZipInd
     }
 
     if (entry.compressionMethod === 8) {
+      // A decompression bomb must not exhaust the isolate: reject a declared
+      // size above the archive budget and pass an output buffer as well, so
+      // fflate cannot allocate past the cap even if the declared size lies.
+      if (entry.uncompressedSize > ZIP_MAX_TOTAL_SIZE) {
+        console.warn(`ZIP entry exceeds size limit: ${entry.fileName} (${entry.uncompressedSize} bytes)`);
+        return null;
+      }
       const fflate = await import('fflate');
-      return fflate.inflateSync(compressedData);
+      return fflate.inflateSync(compressedData, { out: new Uint8Array(Math.max(entry.uncompressedSize, 1)) });
     }
 
     console.warn(`Unsupported compression method: ${entry.compressionMethod} for ${entry.fileName}`);
@@ -693,16 +700,21 @@ function rewriteLocalAbsolutePaths(htmlContent: string): string {
 
 export function injectBaseTag(htmlContent: string, postId: string, subPath: string = ''): string {
   const baseUrl = `/api/wvfs-zip/${postId}/${subPath}`;
+  // ZIP games run with an opaque origin, so the browser's storage getters
+  // throw. Seed the compatibility shim before game scripts run and relay
+  // writes to the trusted sandbox-origin broker.
+  const storageCompatScript = `<script>(function(){var prefix='FLAXIA_STORAGE_V1:';var initial={};try{if(window.name.indexOf(prefix)===0)initial=JSON.parse(window.name.slice(prefix.length))||{}}catch{}try{window.name=''}catch{}function makeStorage(seed,persistent){var values=new Map(Object.entries(seed));function relay(operation,key,value){if(!persistent)return;try{window.parent.postMessage({type:'FLAXIA_GAME_STORAGE_WRITE',operation:operation,key:key,value:value},'*')}catch{}}return{get length(){return values.size},key:function(index){return Array.from(values.keys())[index]??null},getItem:function(key){key=String(key);return values.has(key)?values.get(key):null},setItem:function(key,value){key=String(key);value=String(value);values.set(key,value);relay('set',key,value)},removeItem:function(key){key=String(key);values.delete(key);relay('remove',key)},clear:function(){values.clear();relay('clear')}}}try{Object.defineProperty(window,'localStorage',{configurable:true,value:makeStorage(initial,true)})}catch{}try{Object.defineProperty(window,'sessionStorage',{configurable:true,value:makeStorage({},false)})}catch{}})();</script>`;
   const captureScript = `<script>${CAPTURE_BRIDGE_IIFE}</script>`;
+  const injectedScripts = `${storageCompatScript}\n  ${captureScript}`;
 
   htmlContent = rewriteLocalAbsolutePaths(htmlContent);
 
   if (htmlContent.includes('<head>')) {
-    return htmlContent.replace(/<head>/i, `<head>\n  <base href="${baseUrl}">\n  ${captureScript}`);
+    return htmlContent.replace(/<head>/i, `<head>\n  <base href="${baseUrl}">\n  ${injectedScripts}`);
   } else if (htmlContent.includes('<meta charset')) {
-    return htmlContent.replace(/(<meta charset[^>]*>)/i, `$1\n  <base href="${baseUrl}">\n  ${captureScript}`);
+    return htmlContent.replace(/(<meta charset[^>]*>)/i, `$1\n  <base href="${baseUrl}">\n  ${injectedScripts}`);
   } else {
-    return `<base href="${baseUrl}">\n${captureScript}\n${htmlContent}`;
+    return `<base href="${baseUrl}">\n${injectedScripts}\n${htmlContent}`;
   }
 }
 

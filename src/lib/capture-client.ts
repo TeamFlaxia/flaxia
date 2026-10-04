@@ -45,7 +45,10 @@ export class ArcadeCaptureClient {
 
   constructor(options: ArcadeCaptureClientOptions) {
     this.iframe = options.iframe;
-    this.targetOrigin = options.targetOrigin;
+    // Sandboxed ZIP frames have an opaque origin ("null"), so a specific
+    // target origin causes postMessage to throw. The exact contentWindow is
+    // still checked on every response in handleMessage.
+    this.targetOrigin = options.iframe.sandbox.contains('allow-same-origin') ? options.targetOrigin : '*';
     this.onReady = options.onReady;
     this.onError = options.onError;
     this.onPostScore = options.onPostScore;

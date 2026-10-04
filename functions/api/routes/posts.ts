@@ -2,7 +2,7 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { isAdmin } from '../../../src/lib/admin';
-import { copyHtmlToWvfs, extractFileFromZip, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
+import { copyHtmlToWvfs, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
 import type { ReportCategory } from '../../../src/types/post';
 import { buildCreateActivity, buildDeleteActivity, buildNoteObject } from '../../lib/activitypub/note';
 import {
@@ -27,22 +27,23 @@ import { getUserPlan } from '../../lib/billing';
 import { embedPost, isImageKey, screenPostImages } from '../../lib/crowd';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { sendPushToAll } from '../../lib/notify';
+import { clampLimit } from '../../lib/pagination';
+import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
-import { batchGetFreshAndBookmarkStatus, kvCacheGet, kvCacheSet, makeCacheKey, requireAuth } from '../helpers';
-import type { ActorData, Bindings, PollOptionRow, PollRow, PostRow, Variables } from '../types';
 import {
-  applyBanditRewards,
-  cosineSimilarity,
-  getProjection,
-  loadBanditConfig,
-  loadBanditPrior,
-  loadBanditState,
-  loadDwellStats,
-  loadOrComputeInterestVector,
-  saveBanditState,
-} from './recommender';
+  addBusinessDays,
+  batchGetFreshAndBookmarkStatus,
+  kvCacheGet,
+  kvCacheSet,
+  makeCacheKey,
+  requireAuth,
+  resolveMentions,
+} from '../helpers';
+import type { ActorData, Bindings, PollOptionRow, PollRow, PostRow, Variables } from '../types';
+import { extractGameDescription } from './post-versions';
+import { cosineSimilarity, loadOrComputeInterestVector } from './recommender';
 
 const posts = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -105,6 +106,12 @@ posts.post('/posts', requireAuth, async (c) => {
     const userId = c.get('user')?.id || '';
     const username = c.get('user')?.username || 'anonymous';
     const postId = crypto.randomUUID();
+
+    for (const key of [gifKey, payloadKey]) {
+      if (key && !(await isOwnedMediaKey(c.env.DB, userId, key))) {
+        return c.json({ error: 'Media key does not belong to this account' }, 422);
+      }
+    }
     const hashtagRegex = /#([a-zA-Z0-9_\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}ー]+)/gu;
     const hashtags = Array.from(text.matchAll(hashtagRegex), (m) => m[1]);
     const now = new Date().toISOString();
@@ -162,37 +169,8 @@ posts.get('/posts', async (c) => {
       return c.json({ error: 'Authentication required for Following tab' }, 401);
     }
 
-    // Try cache hit (first page only)
-    if (!cursor) {
-      const cacheKey = makeCacheKey(
-        'timeline',
-        c,
-        `${limit}:${hashtag || ''}:${following ? 'following' : ''}:${username || ''}`,
-        following || Boolean(username),
-      );
-      const cached = await kvCacheGet<{ posts: Record<string, unknown>[] }>(c, cacheKey);
-      if (cached) {
-        // User-agnostic cache: shared feeds must re-apply the current user's block list.
-        let posts = cached.posts;
-        if (!following && !username) {
-          posts = (await filterBlockedAuthors(c.env.DB, currentUserId, posts)).slice(0, limit);
-        }
-        if (currentUserId && posts.length > 0) {
-          const postIds = posts.map((p) => String(p.id));
-          const { freshed, bookmarked } = await batchGetFreshAndBookmarkStatus(c.env.DB, currentUserId, postIds);
-          posts.forEach((post: Record<string, unknown>) => {
-            post.is_freshed = freshed.has(post.id as string);
-            post.is_bookmarked = bookmarked.has(post.id as string);
-          });
-        }
-        await enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId);
-        await enrichPostsWithQuotes(posts as PostRow[], c.env.DB);
-        await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
-        await enrichPostsWithReactions(posts as PostRow[], c.env.DB, currentUserId);
-        return c.json({ posts });
-      }
-    }
-
+    // Chronological feeds read the current rows. A KV snapshot cannot reflect
+    // publishing, edits, moderation, or deletion consistently across edges.
     let query: string;
     let params: Array<string | number> = [];
 
@@ -201,18 +179,14 @@ posts.get('/posts', async (c) => {
       ? 'AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
       : '';
     const blockParam = currentUserId ? [currentUserId] : [];
-    // Shared first pages fetch a small surplus so the user-agnostic cache can
-    // still return a full page after the per-user block filter runs in JS.
-    const fetchLimit = limit + 20;
-
     if (hashtag) {
       // Filter by hashtag using json_each
       if (cursor) {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [hashtag, cursor, ...blockParam, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ORDER BY p.created_at DESC LIMIT ?`;
-        params = [hashtag, fetchLimit];
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        params = [hashtag, ...blockParam, limit];
       }
     } else if (following && currentUserId) {
       // Following tab - show posts from followed users and current user's own posts
@@ -259,13 +233,13 @@ posts.get('/posts', async (c) => {
         params = [username, limit];
       }
     } else {
-      // Regular timeline query (For You tab)
+      // Global timeline
       if (cursor) {
         query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [cursor, ...blockParam, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ORDER BY p.created_at DESC LIMIT ?`;
-        params = [fetchLimit];
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, p.status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        params = [...blockParam, limit];
       }
     }
 
@@ -278,15 +252,7 @@ posts.get('/posts', async (c) => {
       return c.json({ error: 'Failed to fetch posts' }, 500);
     }
 
-    const rawPosts = result.results || [];
-
-    // Shared first pages (For You / hashtag) fetch without the SQL block filter
-    // so the cache can be shared across users; apply the block list in JS here
-    // and trim back to the requested page size.
-    const posts =
-      !cursor && !following && !username
-        ? (await filterBlockedAuthors(c.env.DB, currentUserId, rawPosts)).slice(0, limit)
-        : rawPosts;
+    const posts = result.results || [];
 
     // Parallel: fresh/bookmark status, poll enrichment, vector embedding check
     await Promise.all([
@@ -327,21 +293,6 @@ posts.get('/posts', async (c) => {
       })(),
     ]);
 
-    // Write to KV cache (first page only). Shared feeds cache the raw
-    // (unblocked) post list so any user's block list can be applied on read.
-    if (!cursor && c.env.CACHE) {
-      const cacheKey = makeCacheKey(
-        'timeline',
-        c,
-        `${limit}:${hashtag || ''}:${following ? 'following' : ''}:${username || ''}`,
-        following || Boolean(username),
-      );
-      const cacheData = {
-        posts: (rawPosts as Record<string, unknown>[]).map((p) => ({ ...p, is_freshed: false, is_bookmarked: false })),
-      };
-      await kvCacheSet(c, cacheKey, cacheData, 60);
-    }
-
     // Return total count when filtering by hashtag
     if (hashtag) {
       const countResult = await c.env.DB.prepare(`
@@ -363,7 +314,7 @@ posts.get('/posts', async (c) => {
 // GET /api/posts/trending - get trending posts based on engagement and time decay
 posts.get('/posts/trending', async (c) => {
   try {
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
     const cursor = c.req.query('cursor');
     const parts = cursor ? cursor.split(',') : [];
     const cursorScore = parts[0] || null;
@@ -419,7 +370,7 @@ posts.get('/posts/trending', async (c) => {
       EXP(1.5 * LN((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))) as score
       FROM posts p
       LEFT JOIN users u ON p.user_id = u.id
-      WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at > datetime('now', '-7 days')
+      WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')
       ORDER BY score DESC, p.created_at DESC
       LIMIT ?
     `;
@@ -586,7 +537,7 @@ const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, 
 // GET /api/posts/recommended - get recommended posts for the user (vector hybrid)
 posts.get('/posts/recommended', async (c) => {
   try {
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
     const cursor = c.req.query('cursor');
     let cursorScore: string | null = null;
     let cursorCreatedAt: string | null = null;
@@ -927,7 +878,7 @@ async function enrichRecommendedPosts(
 posts.get('/posts/:id/similar', async (c) => {
   try {
     const postId = c.req.param('id');
-    const limit = Math.min(Number(c.req.query('limit') || '5'), 20);
+    const limit = clampLimit(c.req.query('limit'), 5, 20);
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
 
     const currentUserId = c.get('user')?.id;
@@ -986,7 +937,7 @@ posts.get('/posts/:id/similar', async (c) => {
     if (similarIds.length === 0) return c.json({ posts: [] });
 
     const postsResult = await c.env.DB.prepare(
-      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id IN (${similarIds.map(() => '?').join(',')})`,
+      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id IN (${similarIds.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0`,
     )
       .bind(...similarIds)
       .all();
@@ -1017,6 +968,16 @@ posts.get('/posts/:id/similar', async (c) => {
 // GET /api/ads/active - get active ads (public endpoint)
 posts.post('/posts/:id/impression', async (c) => {
   try {
+    // Unauthenticated counter endpoint: throttle per IP so it cannot be
+    // used as an engagement-inflation oracle.
+    if (
+      !(await checkRateLimit(c.env.CACHE, `post:impression:${getClientIp(c.req.raw)}`, {
+        maxRequests: 180,
+        windowSeconds: 60,
+      }))
+    ) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
     const postId = c.req.param('id');
 
     if (!c.env.DB) {
@@ -1046,6 +1007,14 @@ posts.post('/posts/:id/impression', async (c) => {
 // POST /api/posts/impressions/batch - track multiple post impressions (public endpoint)
 posts.post('/posts/impressions/batch', async (c) => {
   try {
+    if (
+      !(await checkRateLimit(c.env.CACHE, `post:impression:${getClientIp(c.req.raw)}`, {
+        maxRequests: 180,
+        windowSeconds: 60,
+      }))
+    ) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
     const body = (await c.req.json()) as { post_ids: string[] };
 
     if (!body.post_ids || !Array.isArray(body.post_ids) || body.post_ids.length === 0) {
@@ -1165,6 +1134,16 @@ posts.post('/posts/:id/prepare-media', requireAuth, async (c) => {
   try {
     const user = c.get('user');
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    // Every call mints upload URLs: throttle per user so abandoned
+    // preparations cannot bloat R2/D1 without bound.
+    if (
+      !(await checkRateLimit(c.env.CACHE, `post:prepare:${user.id}`, {
+        maxRequests: 30,
+        windowSeconds: 60,
+      }))
+    ) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
     const postId = c.req.param('id');
     const { filename, contentType, reservedKeys } = (await c.req.json()) as {
       filename?: string;
@@ -1397,54 +1376,36 @@ posts.post('/posts/prepare', requireAuth, async (c) => {
   }
 });
 
-// Helper: extract game description from a game ZIP in R2
-async function extractGameDescription(
-  bucket: R2Bucket,
-  db: D1Database,
-  payloadKey: string,
-  postId: string,
-): Promise<void> {
-  try {
-    const result = await extractFileFromZip(bucket, payloadKey, 'index.html');
-    if (!result) return;
-    const decoder = new TextDecoder('utf-8');
-    const html = decoder.decode(result.data);
-    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-    const title = titleMatch ? titleMatch[1].trim() : '';
+// Client-chosen post/reply IDs must be a safe, bounded format: IDs end up in
+// URLs, R2 keys and HTML, so accepting arbitrary strings invites injection and
+// key confusion. UUIDs and nanoids both match this pattern.
+const POST_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+function isValidPostId(value: unknown): value is string {
+  return typeof value === 'string' && POST_ID_PATTERN.test(value);
+}
 
-    const contentMatch = (attrValue: string): string => {
-      const escaped = attrValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const patterns = [
-        new RegExp(`<meta[^>]+name=["']${escaped}["'][^>]+content=["']([^"']*)["']`, 'i'),
-        new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+name=["']${escaped}["']`, 'i'),
-        new RegExp(`<meta[^>]+property=["']${escaped}["'][^>]+content=["']([^"']*)["']`, 'i'),
-        new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+property=["']${escaped}["']`, 'i'),
-      ];
-      for (const pattern of patterns) {
-        const m = html.match(pattern);
-        if (m && m[1].trim()) return m[1].trim();
-      }
-      return '';
-    };
+const LEGACY_MEDIA_KEY_RE = /^(?:gif|audio|video|payload|swf|zip|html|thumbnail)\/([A-Za-z0-9_-]{1,64})(?:\..+)?$/;
+const VERSION_MEDIA_KEY_RE = /^versions\/([A-Za-z0-9_-]{1,64})\//;
 
-    const metaDesc =
-      contentMatch('description') || contentMatch('og:description') || contentMatch('twitter:description');
-    const gameDescription = metaDesc || title || '';
-    if (gameDescription) {
-      const cleaned = gameDescription
-        .replace(/<[^>]*>/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (cleaned) {
-        await db
-          .prepare('UPDATE posts SET game_description = ? WHERE id = ?')
-          .bind(cleaned.slice(0, 500), postId)
-          .run();
-      }
-    }
-  } catch (e) {
-    console.error(`Failed to extract game description for post ${postId}:`, e);
-  }
+/**
+ * True when a client-supplied R2 key names one of the caller's own posts.
+ *
+ * Without this, a request could attach another user's object to its own post
+ * (hotlink/misattribution) or, worse, pass the victim's key on an edit so the
+ * cleanup path deletes it from R2.
+ */
+async function isOwnedMediaKey(db: D1Database, userId: string, key: unknown): Promise<boolean> {
+  if (typeof key !== 'string' || key.length === 0 || key.length > 256) return false;
+  const attachment = parseAttachmentKey(key);
+  let postId: string | null = attachment?.postId ?? null;
+  if (!postId) postId = key.match(LEGACY_MEDIA_KEY_RE)?.[1] ?? null;
+  if (!postId) postId = key.match(VERSION_MEDIA_KEY_RE)?.[1] ?? null;
+  if (!postId) return false;
+  const row = await db
+    .prepare("SELECT id FROM posts WHERE id = ? AND user_id = ? AND status IN ('pending', 'published')")
+    .bind(postId, userId)
+    .first();
+  return Boolean(row);
 }
 
 // Step 3 — POST /api/posts/commit (protected)
@@ -1456,7 +1417,9 @@ posts.post('/posts/commit', requireAuth, async (c) => {
     let swfKey: string | undefined;
     let text: string;
     let requestHashtags: string[] = [];
-    let pollData: any;
+    let pollData:
+      | { question?: string; options?: string[]; multipleChoice?: boolean; endsAt?: string | null }
+      | undefined;
     let zipKey: string | undefined;
     let thumbnailKey: string | undefined;
     let quotedPostId: string | undefined;
@@ -1466,6 +1429,16 @@ posts.post('/posts/commit', requireAuth, async (c) => {
       const formData = await c.req.formData();
       text = formData.get('text') as string;
       postId = (formData.get('postId') as string) || undefined;
+      if (postId) {
+        // Reject another user's post id before the thumbnail write below:
+        // ownership was only checked after the R2 put.
+        const existingOwner = (await c.env.DB.prepare('SELECT user_id FROM posts WHERE id = ?')
+          .bind(postId)
+          .first()) as { user_id: string } | null;
+        if (existingOwner && existingOwner.user_id !== (c.get('user')?.id || '')) {
+          return c.json({ error: 'Forbidden' }, 403);
+        }
+      }
       gifKey = (formData.get('gifKey') as string) || undefined;
       swfKey = (formData.get('swfKey') as string) || undefined;
       zipKey = (formData.get('payloadKey') as string) || undefined;
@@ -1522,9 +1495,25 @@ posts.post('/posts/commit', requireAuth, async (c) => {
       quotedPostId = body.quotedPostId;
       attachmentInputs = body.attachments;
     }
+
+    if (postId !== undefined && postId !== null && postId !== '' && !isValidPostId(postId)) {
+      return c.json({ error: 'Invalid post ID format' }, 422);
+    }
+
     const payloadKey = zipKey;
     const userId = c.get('user')?.id || '';
     const username = c.get('user')?.username || 'anonymous';
+
+    for (const [field, value] of [
+      ['gifKey', gifKey],
+      ['swfKey', swfKey],
+      ['zipKey', zipKey],
+      ['thumbnailKey', thumbnailKey],
+    ] as const) {
+      if (value && !(await isOwnedMediaKey(c.env.DB, userId, value))) {
+        return c.json({ error: `Media key ${field} does not belong to this account` }, 422);
+      }
+    }
 
     // Validate multi-media attachments (image/audio/video, plan-dependent max)
     if (attachmentInputs !== undefined) {
@@ -1688,6 +1677,18 @@ posts.post('/posts/commit', requireAuth, async (c) => {
 
     // Create poll if poll data was provided
     if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
+      // Cap the batch fan-out: options become one INSERT each plus one poll row.
+      if (pollData.options.length > 10) {
+        return c.json({ error: 'Polls support at most 10 options' }, 400);
+      }
+      if (typeof pollData.question !== 'string' || pollData.question.length > 200) {
+        return c.json({ error: 'Poll question must be ≤200 characters' }, 400);
+      }
+      for (const label of pollData.options) {
+        if (typeof label !== 'string' || label.length === 0 || label.length > 100) {
+          return c.json({ error: 'Poll options must be 1–100 characters' }, 400);
+        }
+      }
       try {
         const pollId = crypto.randomUUID();
         await c.env.DB.prepare(`
@@ -1802,7 +1803,7 @@ posts.post('/posts/commit', requireAuth, async (c) => {
             if (post.mentions) {
               const mentionData = JSON.parse(post.mentions) as Array<{ username: string; user_id: string }>;
               for (const m of mentionData) {
-                mentionActorUrls.push(`${c.env.BASE_URL}/actors/${m.username}`);
+                mentionActorUrls.push(`${c.env.BASE_URL}/api/actors/${m.username}`);
               }
             }
           } catch {}
@@ -1842,6 +1843,18 @@ posts.post('/posts/commit', requireAuth, async (c) => {
       .first()) as PostRow;
 
     if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
+      // Cap the batch fan-out: options become one INSERT each plus one poll row.
+      if (pollData.options.length > 10) {
+        return c.json({ error: 'Polls support at most 10 options' }, 400);
+      }
+      if (typeof pollData.question !== 'string' || pollData.question.length > 200) {
+        return c.json({ error: 'Poll question must be ≤200 characters' }, 400);
+      }
+      for (const label of pollData.options) {
+        if (typeof label !== 'string' || label.length === 0 || label.length > 100) {
+          return c.json({ error: 'Poll options must be 1–100 characters' }, 400);
+        }
+      }
       try {
         await enrichPostsWithPolls([fullPost], c.env.DB, c.get('user')?.id);
       } catch (e) {
@@ -1929,7 +1942,7 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
     await c.env.DB.prepare('DELETE FROM freshs WHERE post_id = ? AND user_id = ?').bind(postId, userId).run();
 
     const result = await c.env.DB.prepare(
-      'UPDATE posts SET fresh_count = fresh_count - 1, engagement_hotness = engagement_hotness - 2.0 WHERE id = ? RETURNING fresh_count',
+      'UPDATE posts SET fresh_count = MAX(0, fresh_count - 1), engagement_hotness = engagement_hotness - 2.0 WHERE id = ? RETURNING fresh_count',
     )
       .bind(postId)
       .first<{ fresh_count: number }>();
@@ -2008,7 +2021,7 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
               '@context': 'https://www.w3.org/ns/activitystreams',
               id: `${c.env.BASE_URL}/activities/like-${nanoid()}`,
               type: 'Like',
-              actor: `${c.env.BASE_URL}/actors/${currentUser.username}`,
+              actor: `${c.env.BASE_URL}/api/actors/${currentUser.username}`,
               object: `${c.env.BASE_URL}/notes/${postId}`,
               to: [post.actor_id],
             };
@@ -2129,7 +2142,7 @@ posts.post('/posts/:id/reactions', requireAuth, async (c) => {
 posts.get('/bookmarks', requireAuth, async (c) => {
   try {
     const cursor = c.req.query('cursor');
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
     const userId = c.get('user')?.id || '';
 
     let query: string;
@@ -2191,7 +2204,7 @@ posts.get('/bookmarks', requireAuth, async (c) => {
 posts.get('/freshs', requireAuth, async (c) => {
   try {
     const cursor = c.req.query('cursor');
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
     const userId = c.get('user')?.id || '';
 
     let query: string;
@@ -2284,7 +2297,7 @@ posts.post('/posts/fresh/batch', requireAuth, async (c) => {
 
     // Get posts to check ownership for notifications
     const posts = await c.env.DB.prepare(`
-      SELECT id, user_id FROM posts WHERE id IN (${post_ids.map(() => '?').join(',')}) AND status = 'published'
+      SELECT id, user_id FROM posts WHERE id IN (${post_ids.map(() => '?').join(',')}) AND status = 'published' AND hidden = 0
     `)
       .bind(...post_ids)
       .all();
@@ -2392,19 +2405,31 @@ posts.post('/posts/fresh/batch', requireAuth, async (c) => {
 
       return c.json({ freshed: toFresh, already_freshed: Array.from(alreadyFreshed) });
     } else {
-      // Remove freshes
-      await c.env.DB.prepare(`
-        DELETE FROM freshs WHERE user_id = ? AND post_id IN (${post_ids.map(() => '?').join(',')})
+      // Remove freshes — only for posts the caller had actually freshed. The
+      // previous version decremented every listed post, letting any account
+      // drive other users' counters negative.
+      const existingFreshes = await c.env.DB.prepare(`
+        SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${post_ids.map(() => '?').join(',')})
       `)
         .bind(userId, ...post_ids)
-        .run();
+        .all();
 
-      // Batch update fresh counts
-      await c.env.DB.prepare(`
-        UPDATE posts SET fresh_count = fresh_count - 1, engagement_hotness = engagement_hotness - 2.0 WHERE id IN (${post_ids.map(() => '?').join(',')})
-      `)
-        .bind(...post_ids)
-        .run();
+      const actuallyFreshed = (existingFreshes.results?.map((f) => f.post_id) || []) as string[];
+
+      if (actuallyFreshed.length > 0) {
+        await c.env.DB.prepare(`
+          DELETE FROM freshs WHERE user_id = ? AND post_id IN (${actuallyFreshed.map(() => '?').join(',')})
+        `)
+          .bind(userId, ...actuallyFreshed)
+          .run();
+
+        // Clamp at zero so counters cannot go negative.
+        await c.env.DB.prepare(`
+          UPDATE posts SET fresh_count = MAX(fresh_count - 1, 0), engagement_hotness = MAX(engagement_hotness - 2.0, 0) WHERE id IN (${actuallyFreshed.map(() => '?').join(',')})
+        `)
+          .bind(...actuallyFreshed)
+          .run();
+      }
 
       return c.json({ unfreshed: post_ids });
     }
@@ -2453,9 +2478,9 @@ posts.post('/posts/:id/share', requireAuth, async (c) => {
       // Add share
       const shareId = nanoid();
       await c.env.DB.prepare(
-        "INSERT INTO shares (id, post_id, user_id, actor_id, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
+        "INSERT INTO shares (id, post_id, user_id, actor_id, created_at) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
       )
-        .bind(shareId, postId, currentUser.id, `${c.env.BASE_URL}/actors/${currentUser.username}`)
+        .bind(shareId, postId, currentUser.id, `${c.env.BASE_URL}/api/actors/${currentUser.username}`)
         .run();
 
       await c.env.DB.prepare(
@@ -2478,7 +2503,7 @@ posts.post('/posts/:id/share', requireAuth, async (c) => {
                 '@context': 'https://www.w3.org/ns/activitystreams',
                 id: `${c.env.BASE_URL}/activities/announce-${shareId}`,
                 type: 'Announce',
-                actor: `${c.env.BASE_URL}/actors/${currentUser.username}`,
+                actor: `${c.env.BASE_URL}/api/actors/${currentUser.username}`,
                 object: `${c.env.BASE_URL}/notes/${postId}`,
                 to: [post.actor_id, 'https://www.w3.org/ns/activitystreams#Public'],
               };
@@ -2509,7 +2534,7 @@ posts.get('/posts/:id/replies', async (c) => {
   try {
     const postId = c.req.param('id');
     const cursor = c.req.query('cursor');
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
 
     // Get current user ID from session (optional)
     const token = getSessionToken(c.req.raw);
@@ -2522,7 +2547,7 @@ posts.get('/posts/:id/replies', async (c) => {
 
     // Verify parent post exists and is published
     const parentPost = await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published'",
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
     )
       .bind(postId)
       .first();
@@ -2535,7 +2560,7 @@ posts.get('/posts/:id/replies', async (c) => {
        u.display_name, u.avatar_key, u.badge_type, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
-       WHERE p.parent_id = ? AND p.status = 'published' 
+       WHERE p.parent_id = ? AND p.status = 'published' AND p.hidden = 0 
        ORDER BY p.created_at ASC LIMIT ?`;
     const params: Array<unknown> = [postId, limit];
 
@@ -2544,7 +2569,7 @@ posts.get('/posts/:id/replies', async (c) => {
        u.display_name, u.avatar_key, u.badge_type, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
-       WHERE p.parent_id = ? AND p.status = 'published' AND p.created_at < ?
+       WHERE p.parent_id = ? AND p.status = 'published' AND p.hidden = 0 AND p.created_at < ?
        ORDER BY p.created_at ASC LIMIT ?`;
       params.splice(1, 0, cursor);
     }
@@ -2616,7 +2641,7 @@ posts.get('/posts/:id/thread', async (c) => {
     }
 
     const post = await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published'",
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
     )
       .bind(postId)
       .first();
@@ -2632,7 +2657,7 @@ posts.get('/posts/:id/thread', async (c) => {
        u.display_name, u.avatar_key, u.badge_type, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
-       WHERE p.id = ? AND p.status = 'published'`,
+       WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0`,
     )
       .bind(rootId)
       .first();
@@ -2646,7 +2671,7 @@ posts.get('/posts/:id/thread', async (c) => {
        u.display_name, u.avatar_key, u.badge_type, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
-       WHERE p.root_id = ? AND p.status = 'published' AND p.id != ?
+       WHERE p.root_id = ? AND p.status = 'published' AND p.hidden = 0 AND p.id != ?
        ORDER BY p.created_at ASC LIMIT 200`,
     )
       .bind(rootId, rootId)
@@ -2749,7 +2774,7 @@ posts.post('/posts/:id/replies/prepare', requireAuth, async (c) => {
 
     // Validate parent post exists and is published
     const parentPost = await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published'",
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
     )
       .bind(postId)
       .first();
@@ -2838,6 +2863,10 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
   try {
     const { replyId, gifKey, text, hashtags } = await c.req.json();
 
+    if (!isValidPostId(replyId)) {
+      return c.json({ error: 'Invalid reply ID format' }, 422);
+    }
+
     // Validate text
     if (!text || text.length < 1 || text.length > 200) {
       return c.json({ error: 'Text must be 1-200 characters' }, 422);
@@ -2873,7 +2902,7 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
 
     // Validate parent still exists and is published
     const parentPost = (await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published'",
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
     )
       .bind(postId)
       .first()) as {
@@ -2897,21 +2926,24 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       const replyUsername = c.get('user')?.username || 'anonymous';
       mentionsJson = await resolveMentions(c.env.DB, mentionedUsernames, replyUsername);
 
-      // Validate that this is a pending reply and gifKey matches
+      // Validate that this is a pending reply of the CALLER and gifKey matches
       const pendingReply = await c.env.DB.prepare(`
-        SELECT * FROM posts WHERE id = ? AND status = 'pending' AND gif_key = ? AND parent_id = ?
+        SELECT * FROM posts WHERE id = ? AND status = 'pending' AND gif_key = ? AND parent_id = ? AND user_id = ?
       `)
-        .bind(replyId, gifKey, postId)
+        .bind(replyId, gifKey, postId, c.get('user')?.id || '')
         .first();
 
       if (!pendingReply) {
         return c.json({ error: 'Invalid or expired reply preparation' }, 422);
       }
 
-      // Check if GIF exists in R2 (simplified check for now)
-      const gifExists = true; // Placeholder - implement actual R2 check
-
-      if (!gifExists) {
+      // The key must be an object this reply's prepare step minted
+      // (`gif/<replyId>.<ext>` or `audio/<replyId>.<ext>`) and actually
+      // present in R2: otherwise any reachable object could be attached.
+      if (!gifKey.startsWith(`gif/${replyId}.`) && !gifKey.startsWith(`audio/${replyId}.`)) {
+        return c.json({ error: 'Invalid reply media key' }, 422);
+      }
+      if (c.env.BUCKET && !(await c.env.BUCKET.head(gifKey))) {
         return c.json({ error: 'GIF not uploaded' }, 422);
       }
 
@@ -2919,9 +2951,9 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       const updateResult = await c.env.DB.prepare(`
         UPDATE posts 
         SET text = ?, hashtags = ?, mentions = ?, status = 'published', created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-        WHERE id = ?
+        WHERE id = ? AND user_id = ?
       `)
-        .bind(text, JSON.stringify(hashtags), mentionsJson, replyId)
+        .bind(text, JSON.stringify(hashtags), mentionsJson, replyId, c.get('user')?.id || '')
         .run();
 
       if (!updateResult.success) {
@@ -3091,7 +3123,7 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       if (referencedIndices.size > 0) {
         const rootId = parentPost.root_id || parentPost.id;
         const allRepliesResult = await c.env.DB.prepare(
-          "SELECT id, user_id, username FROM posts WHERE root_id = ? AND status = 'published' AND id != ? ORDER BY created_at ASC",
+          "SELECT id, user_id, username FROM posts WHERE root_id = ? AND status = 'published' AND hidden = 0 AND id != ? ORDER BY created_at ASC",
         )
           .bind(rootId, rootId)
           .all();
@@ -3169,7 +3201,7 @@ posts.get('/search', async (c) => {
   try {
     const query = c.req.query('q');
     const type = c.req.query('type') || 'posts';
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
 
     if (!query || query.trim().length === 0) {
       return c.json({ error: 'Search query required' }, 400);
@@ -3634,6 +3666,24 @@ posts.put('/posts/:id', async (c) => {
     }
 
     // Handle attachment key updates and cleanup old files
+    // Client-supplied media keys must name the caller's own posts: otherwise
+    // the cleanup below could delete another user's R2 object.
+    for (const [field, value] of [
+      ['gif_key', body.gif_key],
+      ['payload_key', body.payload_key],
+      ['swf_key', body.swf_key],
+      ['thumbnail_key', body.thumbnail_key],
+    ] as const) {
+      if (
+        value !== undefined &&
+        value !== null &&
+        value !== '' &&
+        !(await isOwnedMediaKey(c.env.DB, post.user_id, value))
+      ) {
+        return c.json({ error: `Media key ${field} does not belong to this account` }, 422);
+      }
+    }
+
     const updatedGifKey = body.gif_key !== undefined ? body.gif_key : post.gif_key;
     const updatedPayloadKey = body.payload_key !== undefined ? body.payload_key : post.payload_key;
     const updatedSwfKey = body.swf_key !== undefined ? body.swf_key : post.swf_key;
@@ -3755,17 +3805,19 @@ posts.put('/posts/:id', async (c) => {
     // Re-screen on every edit: a swapped-in image kept the old post's verdict,
     // because submitDetectNsfw skips objects already marked done. Reconciling
     // here also drops rows for images that were removed.
+    // Runs in the background like the commit path: crowd round-trips can take
+    // up to the workload timeout (120s+), which must not gate the edit response.
     const currentGif = typeof updated?.gif_key === 'string' ? updated.gif_key : null;
-    await screenPostImages(c.env.DB, c.env, postId, [
+    screenPostImages(c.env.DB, c.env, postId, [
       ...(isImageKey(currentGif) ? [currentGif] : []),
       ...imageAttachmentKeys(updated?.attachments),
-    ]);
+    ]).catch((e) => console.error('Background NSFW re-screen failed:', e));
 
     return c.json({ post: updated });
   } catch (error: unknown) {
     const err = error as { message: string; stack?: string };
     console.error('Edit post error:', error);
-    return c.json({ error: 'Failed to edit post', details: err.message || String(error), stack: err.stack }, 500);
+    return c.json({ error: 'Failed to edit post', details: err.message || String(error) }, 500);
   }
 });
 
@@ -3798,8 +3850,9 @@ posts.get('/posts/:id', async (c) => {
       if (refreshed) post.hidden = refreshed.hidden;
     }
 
-    // Check if post is hidden - allow admin bypass
-    if (post.hidden && !isAdmin(c.env, c.get('user')?.username ?? '')) {
+    // Check if post is hidden or not published - allow admin bypass
+    const isPostAdmin = isAdmin(c.env, c.get('user')?.username ?? '');
+    if ((post.hidden || (post.status && post.status !== 'published')) && !isPostAdmin) {
       return c.json({ error: 'Gone' }, 410);
     }
 
@@ -3841,80 +3894,6 @@ posts.get('/posts/:id', async (c) => {
     return c.json({ error: 'Failed to get post', details: err.message || 'Unknown error' }, 500);
   }
 });
-
-// Helper function to get threshold for a category
-function getThreshold(category: ReportCategory): number {
-  const thresholds: Record<ReportCategory, number> = {
-    spam: 3,
-    harassment: 3,
-    inappropriate: 3,
-    misinformation: 3,
-    other: 3,
-    hate_speech: 3,
-    copyright: 1,
-    csam: 1,
-    malware: 1,
-    privacy: 3,
-    nsfw_untagged: 2,
-  };
-  return thresholds[category];
-}
-
-// Helper function to get priority for a category
-function getPriority(category: ReportCategory): 'critical' | 'high' | 'normal' {
-  if (category === 'csam' || category === 'malware') {
-    return 'critical';
-  }
-  if (category === 'copyright') {
-    return 'high';
-  }
-  return 'normal';
-}
-
-// Helper function to resolve mentioned usernames to {username, user_id} objects
-async function resolveMentions(db: D1Database, mentionedUsernames: string[], currentUsername: string): Promise<string> {
-  if (mentionedUsernames.length === 0) return '[]';
-  const placeholders = mentionedUsernames.map(() => '?').join(',');
-  const rows = await db
-    .prepare(`SELECT id, username FROM users WHERE LOWER(username) IN (${placeholders})`)
-    .bind(...mentionedUsernames.map((u) => u.toLowerCase()))
-    .all<{ id: string; username: string }>();
-  const userMap = new Map(rows.results?.map((r) => [r.username.toLowerCase(), r]) || []);
-  // 同一ユーザーが大文字小文字違いなどで複数回メンションされても1件に集約する
-  const seenUserIds = new Set<string>();
-  const resolved = mentionedUsernames
-    .map((u) => {
-      const user = userMap.get(u.toLowerCase());
-      return user ? { username: user.username, user_id: user.id } : null;
-    })
-    .filter((m): m is { username: string; user_id: string } => m !== null)
-    .filter((m) => {
-      if (seenUserIds.has(m.user_id)) return false;
-      seenUserIds.add(m.user_id);
-      return true;
-    });
-  return JSON.stringify(resolved);
-}
-
-// Helper function to insert notification
-async function insertNotification(
-  db: D1Database,
-  userId: string,
-  type: 'fresh' | 'reported' | 'warned' | 'hidden',
-  postId: string,
-  actorId?: string,
-) {
-  const _messages: Record<string, string> = {
-    fresh: 'fresed your post',
-    reported: 'reported your post',
-    warned: 'Your post has been reported for {category}. It may be removed if it violates our ToS.',
-    hidden: 'Your post has been removed due to a {category} report.',
-  };
-  await db
-    .prepare('INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)')
-    .bind(nanoid(), userId, type, postId, actorId || null)
-    .run();
-}
 
 // Helper function to insert admin alert
 async function insertAdminAlert(
@@ -4156,18 +4135,6 @@ async function enrichPostsWithReactions(
     post.reactions = grouped.get(post.id) || [];
   }
 }
-// Helper: add N business days to a date (weekdays only, no holiday calendar)
-function addBusinessDays(date: Date, days: number): Date {
-  const d = new Date(date);
-  let added = 0;
-  while (added < days) {
-    d.setDate(d.getDate() + 1);
-    const dow = d.getDay();
-    if (dow !== 0 && dow !== 6) added++;
-  }
-  return d;
-}
-
 // POST /api/posts/:id/counter-notice - file a DMCA counter-notification (protected)
 posts.post('/posts/:id/counter-notice', requireAuth, async (c) => {
   try {
@@ -4267,184 +4234,6 @@ posts.post('/posts/:id/counter-notice', requireAuth, async (c) => {
     const err = error as { message?: string };
     console.error('Counter-notice error:', error);
     return c.json({ error: 'Failed to file counter-notice', details: err.message || 'Unknown error' }, 500);
-  }
-});
-
-// GET /api/posts/:id/versions - list archived versions of a game (public)
-posts.get('/posts/:id/versions', async (c) => {
-  try {
-    const postId = c.req.param('id');
-    if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
-
-    const { results } = (await c.env.DB.prepare(
-      'SELECT id, version_number, changelog, thumbnail_key, created_at FROM game_versions WHERE post_id = ? ORDER BY version_number DESC',
-    )
-      .bind(postId)
-      .all()) as {
-      results: Array<{
-        id: string;
-        version_number: number;
-        changelog: string | null;
-        thumbnail_key: string | null;
-        created_at: string;
-      }>;
-    };
-
-    const versions = results.map((r) => ({
-      id: r.id,
-      versionNumber: r.version_number,
-      changelog: r.changelog || null,
-      thumbnailKey: r.thumbnail_key || null,
-      createdAt: r.created_at,
-    }));
-
-    return c.json({ versions });
-  } catch (error: unknown) {
-    const err = error as { message?: string };
-    console.error('List game versions error:', error);
-    return c.json({ error: 'Failed to list versions', details: err.message }, 500);
-  }
-});
-
-// POST /api/posts/:id/versions/prepare - reserve an upload slot for a new version (owner only)
-posts.post('/posts/:id/versions/prepare', requireAuth, async (c) => {
-  try {
-    const user = c.get('user');
-    if (!user) return c.json({ error: 'Unauthorized' }, 401);
-    const postId = c.req.param('id');
-    if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
-
-    const post = (await c.env.DB.prepare('SELECT id, user_id, payload_key, status FROM posts WHERE id = ?')
-      .bind(postId)
-      .first()) as { id: string; user_id: string; payload_key: string | null; status: string } | null;
-
-    if (!post) return c.json({ error: 'Post not found' }, 404);
-    if (post.user_id !== user.id) return c.json({ error: 'Forbidden' }, 403);
-    if (post.status !== 'published') return c.json({ error: 'Post is not published' }, 400);
-    if (
-      !post.payload_key ||
-      !(
-        post.payload_key.startsWith('zip/') ||
-        post.payload_key.startsWith('html/') ||
-        post.payload_key.startsWith('versions/')
-      )
-    ) {
-      return c.json({ error: 'Only ZIP/HTML5 games can be versioned' }, 400);
-    }
-
-    const versionId = crypto.randomUUID();
-    const storageKey = `versions/${postId}/${versionId}.zip`;
-    const origin = new URL(c.req.url).origin;
-    const uploadUrl = `${origin}/api/upload/${storageKey}`;
-
-    return c.json({ postId, versionId, zipUploadUrl: uploadUrl, zipKey: storageKey });
-  } catch (error: unknown) {
-    const err = error as { message?: string };
-    console.error('Prepare game version error:', error);
-    return c.json({ error: 'Failed to prepare version', details: err.message }, 500);
-  }
-});
-
-// POST /api/posts/:id/versions/commit - finalize a newly uploaded version (owner only)
-posts.post('/posts/:id/versions/commit', requireAuth, async (c) => {
-  try {
-    const user = c.get('user');
-    if (!user) return c.json({ error: 'Unauthorized' }, 401);
-    const postId = c.req.param('id')!;
-    if (!c.env.DB || !c.env.BUCKET) return c.json({ error: 'Database/Storage not available' }, 500);
-
-    const body = (await c.req.json()) as { versionId?: string; changelog?: string };
-    if (!body.versionId) return c.json({ error: 'versionId is required' }, 400);
-
-    const post = (await c.env.DB.prepare('SELECT id, user_id, payload_key, status, created_at FROM posts WHERE id = ?')
-      .bind(postId)
-      .first()) as {
-      id: string;
-      user_id: string;
-      payload_key: string | null;
-      status: string;
-      created_at: string;
-    } | null;
-
-    if (!post || post.user_id !== user.id) return c.json({ error: 'Forbidden' }, 403);
-    if (post.status !== 'published') return c.json({ error: 'Post is not published' }, 400);
-
-    const newKey = `versions/${postId}/${body.versionId}.zip`;
-    const head = await c.env.BUCKET.head(newKey);
-    if (!head) return c.json({ error: 'Uploaded file not found' }, 400);
-
-    const maxRow = (await c.env.DB.prepare('SELECT MAX(version_number) as m FROM game_versions WHERE post_id = ?')
-      .bind(postId)
-      .first()) as { m: number | null } | null;
-    const max = maxRow?.m ?? 0;
-
-    const now = new Date().toISOString();
-    const changelog = typeof body.changelog === 'string' ? body.changelog.trim().slice(0, 2000) || null : null;
-
-    // Archive the original release as v1 the first time a game is versioned,
-    // so players can still roll back to it after an update.
-    const archiveOriginal = max === 0 && !!post.payload_key && post.payload_key !== newKey;
-    if (archiveOriginal) {
-      await c.env.DB.prepare(
-        'INSERT INTO game_versions (id, post_id, version_number, payload_key, thumbnail_key, changelog, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      )
-        .bind(crypto.randomUUID(), postId, 1, post.payload_key, null, null, user.id, post.created_at)
-        .run();
-    }
-
-    // When the original was archived as v1, the new release becomes v2.
-    const newVersionNumber = archiveOriginal ? 2 : max + 1;
-    await c.env.DB.prepare(
-      'INSERT INTO game_versions (id, post_id, version_number, payload_key, thumbnail_key, changelog, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    )
-      .bind(body.versionId, postId, newVersionNumber, newKey, null, changelog, user.id, now)
-      .run();
-
-    await c.env.DB.prepare('UPDATE posts SET payload_key = ?, edited_at = ?, created_at = ? WHERE id = ?')
-      .bind(newKey, now, now, postId)
-      .run();
-
-    const execCtx = (c as unknown as { executionCtx?: { waitUntil: (p: Promise<unknown>) => void } }).executionCtx;
-    if (execCtx?.waitUntil) {
-      const bucket = c.env.BUCKET;
-      const db = c.env.DB;
-      const versionId = body.versionId ?? null;
-      if (bucket && db) {
-        execCtx.waitUntil(
-          (async () => {
-            try {
-              // Clear old extraction manifests so the new version's files
-              // overwrite the stale ones instead of being silently skipped.
-              await Promise.all([
-                bucket.delete(`wvfs/${postId}/.wvfs-manifest`),
-                versionId ? bucket.delete(`wvfs/${postId}/${versionId}/.wvfs-manifest`) : Promise.resolve(),
-              ]);
-
-              // Extract to the default (non-versioned) path so the latest version
-              // serves from the plain /api/wvfs-zip/<postId> URL, and to the
-              // versioned path so ?v=<id> also resolves to it.
-              await extractZipToR2(bucket, newKey, postId);
-              if (versionId) {
-                await extractZipToR2(bucket, newKey, postId, versionId);
-              }
-            } catch (e) {
-              console.error('Background ZIP extraction failed for version:', e);
-            }
-            try {
-              await extractGameDescription(bucket, db, newKey, postId);
-            } catch (e) {
-              console.error('Background game description extraction failed:', e);
-            }
-          })(),
-        );
-      }
-    }
-
-    return c.json({ ok: true, versionId: body.versionId, versionNumber: newVersionNumber });
-  } catch (error: unknown) {
-    const err = error as { message?: string };
-    console.error('Commit game version error:', error);
-    return c.json({ error: 'Failed to commit version', details: err.message }, 500);
   }
 });
 

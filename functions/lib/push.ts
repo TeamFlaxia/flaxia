@@ -26,8 +26,11 @@ let vapidKeys: { publicKey: string; privateKey: string } | null = null;
  */
 function ensureVapid(vapidPublicKey?: string, vapidPrivateKey?: string, subject?: string) {
   if (vapidKeys) return;
-  const pub = vapidPublicKey || VAPID_PUBLIC_KEY;
-  const priv = vapidPrivateKey || VAPID_PRIVATE_KEY;
+  // The globals only exist when the secrets are configured; a bare read
+  // throws ReferenceError otherwise (500 on /api/push/vapid-key), so probe
+  // with typeof first and fall through to generated dev keys.
+  const pub = vapidPublicKey || (typeof VAPID_PUBLIC_KEY !== 'undefined' ? VAPID_PUBLIC_KEY : undefined);
+  const priv = vapidPrivateKey || (typeof VAPID_PRIVATE_KEY !== 'undefined' ? VAPID_PRIVATE_KEY : undefined);
   if (pub && priv) {
     vapidKeys = { publicKey: pub, privateKey: priv };
   } else {
@@ -59,8 +62,7 @@ export async function sendPushToSubscription(
     });
 
     if (!res.ok) {
-      const body = await res.text();
-      console.error('Web Push send failed', res.status, body);
+      console.error('Web Push send failed', res.status);
       // 410 Gone = subscription expired, should be removed
       if (res.status === 410) {
         return false; // signal that subscription should be deleted
@@ -69,8 +71,8 @@ export async function sendPushToSubscription(
     }
 
     return true;
-  } catch (err) {
-    console.error('Web Push send error', err);
+  } catch {
+    console.error('Web Push send error');
     return false;
   }
 }
