@@ -137,7 +137,11 @@ postVersions.post('/posts/:id/versions/commit', requireAuth, async (c) => {
     if (!c.env.DB || !c.env.BUCKET) return c.json({ error: 'Database/Storage not available' }, 500);
 
     const body = (await c.req.json()) as { versionId?: string; changelog?: string };
-    if (!body.versionId) return c.json({ error: 'versionId is required' }, 400);
+    // #86: versionId must be a prepare-minted UUID — the storage key is
+    // derived from it, so free-form values mean orphan R2 writes.
+    if (!body.versionId || !/^[0-9a-fA-F-]{36}$/.test(body.versionId)) {
+      return c.json({ error: 'versionId is required' }, 400);
+    }
 
     const post = (await c.env.DB.prepare('SELECT id, user_id, payload_key, status, created_at FROM posts WHERE id = ?')
       .bind(postId)
@@ -155,11 +159,18 @@ postVersions.post('/posts/:id/versions/commit', requireAuth, async (c) => {
     const newKey = `versions/${postId}/${body.versionId}.zip`;
     const head = await c.env.BUCKET.head(newKey);
     if (!head) return c.json({ error: 'Uploaded file not found' }, 400);
+    // #86: bound per-post storage — the upload route caps bytes, the commit
+    // caps count, so a single game cannot accumulate unbounded versions.
+    if (head.size > 25 * 1024 * 1024) return c.json({ error: 'File too large' }, 413);
 
-    const maxRow = (await c.env.DB.prepare('SELECT MAX(version_number) as m FROM game_versions WHERE post_id = ?')
+    const maxRow = (await c.env.DB.prepare(
+      'SELECT MAX(version_number) as m, COUNT(*) as n FROM game_versions WHERE post_id = ?',
+    )
       .bind(postId)
-      .first()) as { m: number | null } | null;
+      .first()) as { m: number | null; n: number } | null;
     const max = maxRow?.m ?? 0;
+    // #86: cap archived versions per game (orphan rows + R2 objects).
+    if ((maxRow?.n ?? 0) >= 20) return c.json({ error: 'Version limit reached' }, 400);
 
     const now = new Date().toISOString();
     const changelog = typeof body.changelog === 'string' ? body.changelog.trim().slice(0, 2000) || null : null;

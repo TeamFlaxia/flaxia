@@ -185,8 +185,14 @@ media.put('/upload/*', requireAuth, async (c) => {
         }
       } else if (key.startsWith('versions/')) {
         // Versioned game uploads live under versions/<postId>/<versionId>.zip
-        const postId = key.split('/')[1];
-        if (!postId) return c.json({ error: 'Invalid key' }, 400);
+        // (#86). The tail is not free-form: prepare mints UUID version ids,
+        // so anything else is an orphan-storage write and is rejected.
+        const parts = key.split('/');
+        const postId = parts[1];
+        const tail = parts[2];
+        if (!postId || parts.length !== 3 || !/^[0-9a-fA-F-]{36}\.zip$/.test(tail || '')) {
+          return c.json({ error: 'Invalid key' }, 400);
+        }
         const publishedPost = (await c.env.DB.prepare(
           'SELECT id FROM posts WHERE id = ? AND user_id = ? AND status = ?',
         )
