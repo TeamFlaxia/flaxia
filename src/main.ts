@@ -1,7 +1,6 @@
 import './styles/main.css';
 import type { ArcadePageHandle } from './components/ArcadePage.js';
 import type { BookmarksPage } from './components/BookmarksPage.js';
-import type { BottomNav } from './components/BottomNav.js';
 import { showCrowdConsentModal } from './components/CrowdConsentModal.js';
 import type { ExplorePage } from './components/ExplorePage.js';
 import type { LeftNav } from './components/LeftNav.js';
@@ -9,10 +8,12 @@ import type { NotificationsPage } from './components/NotificationsPage.js';
 import type { ThreadPage } from './components/ThreadPage.js';
 import type { Timeline } from './components/Timeline.js';
 import { getMe } from './lib/auth-cache.js';
+import type { BottomNavDeps } from './lib/bottom-nav-setup.js';
+import { ensureBottomNav, getBottomNav } from './lib/bottom-nav-setup.js';
 import { initContentProtection } from './lib/content-protection.js';
 import { canRunFlaxiaNode, initCrowdNode, notifyCrowdConsentChanged } from './lib/crowd-node.js';
 import { initI18n, t } from './lib/i18n.js';
-import { lazyCreateBottomNav, lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from './lib/lazy-nav.js';
+import { lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from './lib/lazy-nav.js';
 import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
 import {
   clearNativeBadge,
@@ -103,51 +104,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     let adminUsersTab: PageComponent | null = null;
     let adminAdsTab: PageComponent | null = null;
     const leftNavInstances: Set<LeftNav> = new Set();
-    let bottomNav: BottomNav | null = null;
 
-    /** Map a top-level view to the matching bottom-nav item id ('' = none). */
-    /** Shared navigation handler for the mobile bottom bar. */
-    const handleBottomNavNavigate = (item: string): void => {
-      if (item === 'home') {
-        window.history.pushState({}, '', '/home');
-        navigateTo('timeline');
-      } else if (item === 'explore') {
-        window.history.pushState({}, '', '/explore');
-        navigateTo('explore');
-      } else if (item === 'arcade') {
-        window.history.pushState({}, '', '/arcade');
-        navigateTo('arcade');
-      } else if (item === 'notifications') {
-        window.history.pushState({}, '', '/notifications');
-        navigateTo('notifications');
-      } else if (item === 'account') {
-        if (!currentUser) {
-          window.history.pushState({}, '', '/login');
-          navigateTo('login');
-          return;
-        }
-        window.history.pushState({}, '', `/profile/${currentUser.username}`);
-        navigateTo('profile', undefined, currentUser.username);
-      }
-    };
-    /** Create the single global bottom-nav instance once and mount it. */
-    const ensureBottomNav = async (): Promise<void> => {
-      if (bottomNav) return;
-      bottomNav = await lazyCreateBottomNav({
-        activeItem: 'home',
-        currentUser: currentUser || undefined,
-        onNavigate: handleBottomNavNavigate,
-        onSignIn: () => {
-          window.history.pushState({}, '', '/login');
-          navigateTo('login');
-        },
-        onSignUp: () => {
-          window.history.pushState({}, '', '/register');
-          navigateTo('register');
-        },
-      });
-      document.body.appendChild(bottomNav.getElement());
-    };
+    /** Deps for the mobile bottom bar (see src/lib/bottom-nav-setup.ts). */
+    const bottomNavDeps = (): BottomNavDeps => ({
+      navigate: navigateTo,
+      getCurrentUser: () => currentUser,
+    });
     let currentUser: {
       username: string;
       id: string;
@@ -292,8 +254,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
 
           // Create/update the mobile bottom nav with the signed-in user
-          await ensureBottomNav();
-          bottomNav?.updateUser(currentUser);
+          (await ensureBottomNav(bottomNavDeps())).updateUser(currentUser);
 
           // 初回の未読通知数を取得（以降は WebSocket でリアルタイム更新）
           startNotificationPolling();
@@ -317,8 +278,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
 
       // Create/update the mobile bottom nav for the guest state
-      await ensureBottomNav();
-      bottomNav?.updateUser(null);
+      (await ensureBottomNav(bottomNavDeps())).updateUser(null);
 
       // If user was logged in and now is not, they were logged out
       if (wasLoggedIn) {
@@ -440,9 +400,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       closeLeftNav();
 
       // Sync active item on the mobile bottom nav
-      if (bottomNav) {
+      const syncedNav = getBottomNav();
+      if (syncedNav) {
         const navId = viewToBottomNavId(view);
-        if (navId) bottomNav.setActiveItem(navId);
+        if (navId) syncedNav.setActiveItem(navId);
       }
 
       // For auth routes, proceed directly
