@@ -261,6 +261,25 @@ app.post('/inbox', async (c) => {
       return c.json({ error: 'Invalid actor' }, 400);
     }
 
+    // #116: same keyId/actor origin binding as the API inboxes (H-5).
+    // Without it a key from one origin could vouch for another's actor.
+    const signatureHeader = c.req.header('Signature');
+    if (signatureHeader) {
+      const keyIdMatch = signatureHeader.match(/keyId="([^"]+)"/);
+      if (keyIdMatch) {
+        try {
+          const keyIdOrigin = new URL(keyIdMatch[1]).origin;
+          const actorOrigin = new URL(actorId).origin;
+          if (keyIdOrigin !== actorOrigin) {
+            console.error(`keyId origin ${keyIdOrigin} does not match actor origin ${actorOrigin}`);
+            return c.json({ error: 'Invalid HTTP Signature: keyId/actor origin mismatch' }, 401);
+          }
+        } catch {
+          return c.json({ error: 'Invalid keyId or actor URL' }, 400);
+        }
+      }
+    }
+
     // Try to get local user's keys for signed fetch (authorized fetch support)
     let signKeyPem: string | undefined;
     let signKeyId: string | undefined;
