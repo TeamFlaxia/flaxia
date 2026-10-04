@@ -73,6 +73,21 @@ export class MultiplayerManager {
 
   disconnect(): void {
     this.closeP2P();
+    // #121: tell D1 we left. The DO forgets the socket on close, but the
+    // participants row would otherwise stay forever (ghost seat that still
+    // counts toward capacity). Best-effort + keepalive so navigation-time
+    // disconnects still land.
+    try {
+      if (this.config.roomId) {
+        void fetch(`/api/multiplayer/rooms/${this.config.roomId}/leave`, {
+          method: 'POST',
+          credentials: 'include',
+          keepalive: true,
+        }).catch(() => {});
+      }
+    } catch {
+      // ignore — socket close below is the primary signal
+    }
     if (this.ws) {
       try {
         this.ws.close(1000, 'Game disconnected');
