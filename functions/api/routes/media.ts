@@ -685,11 +685,22 @@ media.get('/thumbnail/:id', async (c) => {
         break;
     }
 
+    // #132: ETag revalidation so a repaired thumbnail replaces the bad
+    // bytes as soon as caches revalidate, instead of lingering to max-age.
+    const etag = object.httpEtag ? `"${object.httpEtag}"` : `W/"${object.size}-${thumbKey.length}"`;
+    if (c.req.header('If-None-Match') === etag) {
+      return new Response(null, {
+        status: 304,
+        headers: { ETag: etag, 'Cache-Control': MEDIA_CACHE_CONTROL },
+      });
+    }
+
     // Stream the thumbnail with proper headers
     return new Response(object.body, {
       headers: {
         'Content-Type': contentType,
         'Cache-Control': MEDIA_CACHE_CONTROL,
+        ETag: etag,
         'Access-Control-Allow-Origin': 'https://flaxia.app',
         ...MEDIA_SECURITY_HEADERS,
       },
