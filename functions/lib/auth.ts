@@ -289,6 +289,22 @@ export async function startSrpLogin(
     .run();
   if (!insert.success) throw new Error('Failed to store SRP handshake');
 
+  // #90: handshakes hold server secrets and expired rows were never reaped.
+  // Opportunistically delete them here (best-effort, never blocks login).
+  // Also cap live handshakes per user so abandoned challenges cannot pile up.
+  try {
+    await env.DB.prepare("DELETE FROM srp_handshakes WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')").run();
+    await env.DB.prepare(
+      `DELETE FROM srp_handshakes WHERE user_id = ? AND id NOT IN (
+         SELECT id FROM srp_handshakes WHERE user_id = ? ORDER BY expires_at DESC LIMIT 5
+       )`,
+    )
+      .bind(user.id, user.id)
+      .run();
+  } catch {
+    // ignore cleanup failures
+  }
+
   return {
     challengeId,
     salt: user.srp_salt,
