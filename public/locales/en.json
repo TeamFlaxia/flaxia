@@ -19,6 +19,8 @@
   "common.delete": "Delete",
   "common.submit": "Submit",
   "common.loading": "Loading...",
+  "common.offline": "You are offline. Some features may be unavailable.",
+  "common.online": "Back online.",
   "common.error": "Error",
   "common.close": "Close",
   "common.back": "← Back",

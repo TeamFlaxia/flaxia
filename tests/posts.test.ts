@@ -1040,3 +1040,64 @@ describe('PUT /api/posts/:id — authorization', () => {
     assert.equal(res.status, 401);
   });
 });
+
+describe('malformed input hardening', () => {
+  beforeEach(resetDb);
+
+  const post = (cookie: string, body: unknown) =>
+    fetch(`${BASE_URL}/api/posts/prepare`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify(body),
+    });
+
+  it('rejects empty files array → 400', async () => {
+    const { cookie } = await seedUserAndLogin('mal-1');
+    assert.equal((await post(cookie, { files: [] })).status, 400);
+  });
+
+  it('rejects game container as attachment → 400', async () => {
+    const { cookie } = await seedUserAndLogin('mal-2');
+    assert.equal((await post(cookie, { files: [{ filename: 'game.zip' }] })).status, 400);
+  });
+
+  it('rejects malformed postId on commit → 422', async () => {
+    const { cookie } = await seedUserAndLogin('mal-3');
+    const res = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ postId: 'not a valid id!!!', text: 'hi' }),
+    });
+    assert.equal(res.status, 422);
+  });
+
+  it('rejects unknown quotedPostId on commit → 404', async () => {
+    const { cookie } = await seedUserAndLogin('mal-4');
+    const res = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ text: '', quotedPostId: '00000000-0000-4000-8000-000000000000' }),
+    });
+    assert.equal(res.status, 404);
+  });
+
+  it('rejects vote on missing poll → 404', async () => {
+    const { cookie } = await seedUserAndLogin('mal-5');
+    const res = await fetch(`${BASE_URL}/api/polls/00000000-0000-4000-8000-000000000000/vote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ optionId: 'nope' }),
+    });
+    assert.equal(res.status, 404);
+  });
+
+  it('rejects vote without optionId → 400', async () => {
+    const { cookie } = await seedUserAndLogin('mal-6');
+    const res = await fetch(`${BASE_URL}/api/polls/00000000-0000-4000-8000-000000000000/vote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 400);
+  });
+});

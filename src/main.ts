@@ -6,16 +6,17 @@ import { showCrowdConsentModal } from './components/CrowdConsentModal.js';
 import type { ExplorePage } from './components/ExplorePage.js';
 import type { LeftNav } from './components/LeftNav.js';
 import type { NotificationsPage } from './components/NotificationsPage.js';
-import type { RightPanel } from './components/RightPanel.js';
 import type { ThreadPage } from './components/ThreadPage.js';
 import type { Timeline } from './components/Timeline.js';
 import { getMe } from './lib/auth-cache.js';
 import { initContentProtection } from './lib/content-protection.js';
 import { canRunFlaxiaNode, initCrowdNode, notifyCrowdConsentChanged } from './lib/crowd-node.js';
-import { initI18n } from './lib/i18n.js';
+import { initI18n, t } from './lib/i18n.js';
 import { lazyCreateBottomNav, lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from './lib/lazy-nav.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
+import { createPushSocket } from './lib/push-socket.js';
 import { initTheme } from './lib/theme.js';
+import { showToast } from './lib/toast.js';
 
 interface PageComponent {
   getElement(): HTMLElement;
@@ -238,71 +239,52 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     /// WebSocket 経由のプッシュ通知を受け取り OS 通知を表示する
-    let pushWs: WebSocket | null = null;
-    let _pushWsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
-
+    /// (接続管理・backoff は src/lib/push-socket.ts)
     const isCapacitorNative =
       typeof window !== 'undefined' &&
       typeof window.Capacitor !== 'undefined' &&
       typeof window.Capacitor.isNativePlatform === 'function' &&
       window.Capacitor.isNativePlatform();
 
-    const connectPushWebSocket = () => {
-      if (pushWs) return;
-
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const sessionToken = localStorage.getItem('flaxia_session');
-      const url = `${protocol}//${window.location.host}/api/ws/notifications${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`;
-
-      console.log('[push] connecting to notification stream');
-      try {
-        const ws = new WebSocket(url);
-        ws.onopen = () => {
+    const pushSocket = createPushSocket(
+      () => {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const sessionToken = localStorage.getItem('flaxia_session');
+        return `${protocol}//${window.location.host}/api/ws/notifications${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`;
+      },
+      {
+        onOpen: () => {
           console.log('[push] connected');
           refreshNotificationBadges();
-        };
-        ws.onmessage = (ev) => {
-          try {
-            const data = JSON.parse(ev.data);
-            if (data.type === 'notification') {
+        },
+        onMessage: (raw) => {
+          const data = raw as {
+            type?: string;
+            unread_count?: number;
+            push?: { title: string; body: string };
+            title?: string;
+            body?: string;
+          };
+          if (data.type === 'notification') {
+            if (typeof data.unread_count === 'number') {
               unreadNotificationCount = data.unread_count;
               updateBadgeUI();
-              if (data.push && typeof tauriNotify === 'function') {
-                tauriNotify(data.push.title, data.push.body);
-              }
-              // OS 通知の表示は Push (FCM / Web Push) が担当する。
-              // Tauri には Push サービスが無いため WebSocket 経由でのみ表示する。
-            } else if (data.title) {
-              if (typeof tauriNotify === 'function') {
-                tauriNotify(data.title, data.body || 'New notification');
-              }
-              refreshNotificationBadges();
             }
-          } catch (e) {
-            console.error('[push] parse error:', e);
+            if (data.push && typeof tauriNotify === 'function') {
+              tauriNotify(data.push.title, data.push.body);
+            }
+            // OS 通知の表示は Push (FCM / Web Push) が担当する。
+            // Tauri には Push サービスが無いため WebSocket 経由でのみ表示する。
+          } else if (data.title) {
+            if (typeof tauriNotify === 'function') {
+              tauriNotify(data.title, data.body || 'New notification');
+            }
+            refreshNotificationBadges();
           }
-        };
-        ws.onclose = (ev) => {
-          console.log(`[push] disconnected (code=${ev.code}), reconnecting in 10s`);
-          pushWs = null;
-          _pushWsReconnectTimer = setTimeout(() => {
-            _pushWsReconnectTimer = null;
-            connectPushWebSocket();
-          }, 10000);
-        };
-        ws.onerror = () => {
-          console.error('[push] WebSocket error');
-        };
-        pushWs = ws;
-      } catch {
-        console.error('[push] connection error');
-        pushWs = null;
-        _pushWsReconnectTimer = setTimeout(() => {
-          _pushWsReconnectTimer = null;
-          connectPushWebSocket();
-        }, 10000);
-      }
-    };
+        },
+      },
+    );
+    const connectPushWebSocket = () => pushSocket.connect();
 
     const initCapacitorNotifications = async () => {
       try {
@@ -458,7 +440,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         await App.addListener('appStateChange', ({ isActive }) => {
           if (isActive) {
             // フォアグラウンド復帰時、WebSocket を再接続 & 未読カウント即時取得
-            if (!pushWs) connectPushWebSocket();
+            // (connect は接続中なら何もしない)
+            connectPushWebSocket();
             refreshNotificationBadges();
           }
         });
@@ -466,6 +449,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.log('[push] @capacitor/app not available');
       }
     }
+
+    // Offline / online をトーストで統一表示する
+    window.addEventListener('offline', () => showToast(t('common.offline'), true));
+    window.addEventListener('online', () => showToast(t('common.online')));
 
     const updateBadgeUI = () => {
       leftNavInstances.forEach((leftNav) => {
