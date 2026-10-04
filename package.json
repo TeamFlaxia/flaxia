@@ -45,7 +45,7 @@
     "test:crowd": "node --test --experimental-strip-types tests/crowd.test.ts",
     "test:unit": "node --test --experimental-strip-types tests/file-extensions.test.ts tests/zip-validation.test.ts tests/signature.test.ts",
     "test:billing": "node --test --experimental-strip-types tests/billing.test.ts",
-    "dev:test": "npm run migrate:local && wrangler pages dev dist --d1=DB_TEST --port 8788 --inspector-port 9231 --binding BASE_URL=http://localhost:8788 --binding ENVIRONMENT=test --binding CROWD_ORCHESTRATOR_URL=https://crowd.example --binding CROWD_API_KEY=test-api-key --binding CROWD_WEBHOOK_SECRET=test-callback-secret --do NOTIFICATION_STREAM=NotificationStream@notif-stream --do MULTIPLAYER_ROOM=MultiplayerRoom@multiplayer-worker --do MATCHMAKER=Matchmaker@multiplayer-worker",
+    "dev:test": "npm run migrate:local && wrangler pages dev dist --d1=DB_TEST --port 8788 --inspector-port 9231 --binding BASE_URL=http://localhost:8788 --binding ENVIRONMENT=test --binding CROWD_ORCHESTRATOR_URL=http://127.0.0.1:9 --binding CROWD_API_KEY=test-api-key --binding CROWD_WEBHOOK_SECRET=test-callback-secret --do NOTIFICATION_STREAM=NotificationStream@notif-stream --do MULTIPLAYER_ROOM=MultiplayerRoom@multiplayer-worker --do MATCHMAKER=Matchmaker@multiplayer-worker",
     "tauri": "tauri",
     "tauri:dev": "node scripts/merge-tauri-config.mjs && tauri dev",
     "tauri:build": "node scripts/merge-tauri-config.mjs && tauri build",
