@@ -64,6 +64,13 @@ export function isSupportedSrpKdf(value: unknown): value is SrpKdfId {
   return value === SRP_KDF_V1 || value === SRP_KDF_V2;
 }
 
+// Creation allowlist (#89): v1 verifiers remain verifiable so pre-existing
+// accounts keep signing in, but no NEW verifier may use the single-hash KDF —
+// anyone holding a DB dump could dictionary-attack it for ~1 hash per guess.
+export function isCreatableSrpKdf(value: unknown): value is SrpKdfId {
+  return value === SRP_KDF_V2;
+}
+
 async function deriveX(password: string, salt: Uint8Array, kdf: SrpKdfId): Promise<Uint8Array> {
   if (kdf === SRP_KDF_V1) {
     return sha256(concat(salt, new TextEncoder().encode(password)));
