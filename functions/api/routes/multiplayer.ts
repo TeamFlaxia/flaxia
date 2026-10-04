@@ -376,6 +376,18 @@ multiplayer.post('/scores', requireAuth, async (c) => {
       return c.json({ error: 'Rate limit exceeded' }, 429);
     }
 
+    // #122: bound rows per user/game/day on top of the rate limit so a
+    // sustained script cannot grow the table without bound.
+    const todayCount = (await c.env.DB.prepare(
+      `SELECT COUNT(*) as n FROM multiplayer_scores
+       WHERE user_id = ? AND game_id = ? AND created_at >= date('now')`,
+    )
+      .bind(user.id, gameId)
+      .first()) as { n: number } | null;
+    if ((todayCount?.n ?? 0) >= 100) {
+      return c.json({ error: 'Daily score limit reached' }, 429);
+    }
+
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
 
