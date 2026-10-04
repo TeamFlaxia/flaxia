@@ -407,6 +407,43 @@ describe('POST /api/multiplayer/matchmaking', () => {
     });
     assert.equal(res.status, 401);
   });
+
+  it('records the polling caller as host so the room can start', async () => {
+    const a = await seedUserAndLogin('mm-host-a');
+    const b = await seedUserAndLogin('mm-host-b');
+    // A queues first, B second; B polls first and consumes the pair.
+    for (const u of [a, b]) {
+      const join = await fetch(`${BASE_URL}/api/multiplayer/matchmaking`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: u.cookie },
+        body: JSON.stringify({ gameId: 'mm-host-game', action: 'join' }),
+      });
+      assert.equal(join.status, 200);
+    }
+    const check = await fetch(`${BASE_URL}/api/multiplayer/matchmaking`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: b.cookie },
+      body: JSON.stringify({ gameId: 'mm-host-game', action: 'check' }),
+    });
+    assert.equal(check.status, 200);
+    const data = (await check.json()) as { matched: boolean; roomId: string };
+    assert.equal(data.matched, true);
+    assert.ok(data.roomId);
+    // The caller (B) must be the recorded host: it is the only player
+    // who learned the roomId, and only the host may start the game.
+    const roomRes = await fetch(`${BASE_URL}/api/multiplayer/rooms/${data.roomId}`, {
+      headers: { Cookie: b.cookie },
+    });
+    assert.equal(roomRes.status, 200);
+    const { room, participants } = (await roomRes.json()) as {
+      room: { host_id: string };
+      participants: Array<{ user_id: string; username: string; is_host: number }>;
+    };
+    const hostEntry = participants.find((p) => p.username === b.username);
+    assert.ok(hostEntry);
+    assert.equal(room.host_id, hostEntry.user_id);
+    assert.equal(hostEntry.is_host, 1);
+  });
 });
 
 describe('POST /api/multiplayer/rooms/:id/join — error cases', () => {
