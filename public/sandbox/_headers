@@ -1,3 +1,3 @@
 /*
   X-Frame-Options: SAMEORIGIN
-  Content-Security-Policy: sandbox allow-scripts allow-pointer-lock allow-forms allow-popups; frame-ancestors 'self' https://flaxia.app https://*.pages.dev
+  Content-Security-Policy: sandbox allow-scripts allow-pointer-lock allow-forms; frame-ancestors 'self' https://flaxia.app https://*.pages.dev
