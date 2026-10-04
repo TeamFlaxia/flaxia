@@ -13,6 +13,7 @@ import { initContentProtection } from './lib/content-protection.js';
 import { canRunFlaxiaNode, initCrowdNode, notifyCrowdConsentChanged } from './lib/crowd-node.js';
 import { initI18n, t } from './lib/i18n.js';
 import { lazyCreateBottomNav, lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from './lib/lazy-nav.js';
+import { hidePageLoader, showPageLoader, showPageLoaderFailure } from './lib/page-loader.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
 import { createPushSocket } from './lib/push-socket.js';
 import { initTheme } from './lib/theme.js';
@@ -1019,52 +1020,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       return { view: 'timeline' as const, postId: null, username: null, tag: null };
     };
 
-    // Page loading overlay
-    let pageLoader: HTMLDivElement | null = null;
-    let pageLoaderTimer: ReturnType<typeof setTimeout> | null = null;
-
-    function showPageLoader() {
-      if (!pageLoader) {
-        pageLoader = document.createElement('div');
-        pageLoader.className = 'page-loader';
-        pageLoader.id = 'page-loader';
-        pageLoader.innerHTML =
-          '<div class="page-loader-content"><div class="page-loader-spinner"></div><div>Loading...</div></div>';
-        document.body.appendChild(pageLoader);
-      } else {
-        const content = pageLoader.querySelector('.page-loader-content')!;
-        content.innerHTML = '<div class="page-loader-spinner"></div><div>Loading...</div>';
-        content.className = 'page-loader-content';
-      }
-      pageLoader!.classList.add('active');
-
-      if (pageLoaderTimer) clearTimeout(pageLoaderTimer);
-      pageLoaderTimer = setTimeout(() => {
-        if (!pageLoader || !pageLoader.classList.contains('active')) return;
-        const content = pageLoader.querySelector('.page-loader-content')!;
-        content.innerHTML =
-          '<div style="font-size:2rem;margin-bottom:1rem;">⚠</div><div>Failed to load page</div><button class="page-loader-reload-btn" style="margin-top:1rem;padding:0.6rem 1.5rem;border:1px solid var(--border);border-radius:8px;background:var(--accent);color:#000;font-family:inherit;font-size:0.9rem;font-weight:600;cursor:pointer;transition:background .2s">Reload</button>';
-        content.className = 'page-loader-content';
-        const btn = content.querySelector('.page-loader-reload-btn') as HTMLButtonElement;
-        btn.onclick = () => {
-          window.location.reload();
-        };
-        btn.onmouseenter = () => {
-          btn.style.background = 'var(--accent-dark)';
-        };
-        btn.onmouseleave = () => {
-          btn.style.background = 'var(--accent)';
-        };
-      }, 15000);
-    }
-
-    function hidePageLoader() {
-      if (pageLoader) pageLoader.classList.remove('active');
-      if (pageLoaderTimer) {
-        clearTimeout(pageLoaderTimer);
-        pageLoaderTimer = null;
-      }
-    }
+    // Page loading overlay (see src/lib/page-loader.ts)
 
     // Navigate to view
     const navigateTo = async (
@@ -2088,16 +2044,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         hidePageLoader();
       } catch (e) {
         console.error('Navigation error:', e);
-        if (pageLoader) {
-          const c = pageLoader.querySelector('.page-loader-content')!;
-          c.innerHTML =
-            '<div style="font-size:2rem;margin-bottom:1rem;">⚠</div><div>Failed to load page</div><button class="page-loader-reload-btn" style="margin-top:1rem;padding:0.6rem 1.5rem;border:1px solid var(--border);border-radius:8px;background:var(--accent);color:#000;font-family:inherit;font-size:0.9rem;font-weight:600;cursor:pointer">Reload</button>';
-          c.className = 'page-loader-content';
-          const btn = c.querySelector('.page-loader-reload-btn') as HTMLButtonElement;
-          btn.onclick = () => {
-            window.location.reload();
-          };
-        }
+        showPageLoaderFailure();
       }
     };
 
@@ -2180,18 +2127,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       } catch (e) {
         console.error('Navigation failed:', e);
         // Show error on the loading overlay if it's visible, otherwise reload
-        if (pageLoader && pageLoader.classList.contains('active')) {
-          const c = pageLoader.querySelector('.page-loader-content')!;
-          c.innerHTML =
-            '<div style="font-size:2rem;margin-bottom:1rem;">⚠</div><div>Failed to load page</div><button class="page-loader-reload-btn" style="margin-top:1rem;padding:0.6rem 1.5rem;border:1px solid var(--border);border-radius:8px;background:var(--accent);color:#000;font-family:inherit;font-size:0.9rem;font-weight:600;cursor:pointer">Reload</button>';
-          c.className = 'page-loader-content';
-          const btn = c.querySelector('.page-loader-reload-btn') as HTMLButtonElement;
-          btn.onclick = () => {
-            window.location.reload();
-          };
-        } else {
-          window.location.reload();
-        }
+        showPageLoaderFailure();
       }
     }
 
