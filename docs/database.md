@@ -318,4 +318,7 @@ popcount and the table stays small).
 - `post_thumbnails` — Generated thumbnails for ZIP/SWF posts
 - `polls` — Poll options and votes
 - `post_nsfw_scans` — NudeNet screening progress, one row per (post, media_key)
-  (migration 0095); multi-image posts get a verdict per attached image
+  (migration 0095); multi-image posts get a verdict per attached image.
+  `content_sha` (migration 0100) binds each verdict to the exact bytes screened
+  so an image swapped in under the same key is re-screened, and `task_id` ties
+  a callback to the submission it answers so a stale verdict is ignored.

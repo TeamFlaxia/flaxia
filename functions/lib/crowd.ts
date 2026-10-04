@@ -30,9 +30,13 @@ export interface CrowdEnv {
   CROWD_WEBHOOK_SECRET?: string;
   FILE_SCAN_CLAMAV_IMAGE?: string;
   FILE_SCAN_VIDEO_PHASH_IMAGE?: string;
+  /** Orchestrator task-body cap in bytes; defaults to 1 MiB. */
+  CROWD_MAX_PAYLOAD_BYTES?: string;
   BASE_URL?: string;
   CACHE?: KVNamespace;
   VECTORIZE?: VectorizeLike;
+  /** R2 bucket holding uploads; binds a verdict to the bytes it screened. */
+  BUCKET?: R2Bucket;
 }
 
 /** Minimal Vectorize surface used by the vector-embed callback. */
@@ -69,7 +73,10 @@ const PENDING_EMBED_MAX_ATTEMPTS = 5;
 
 // One row per (post, media object): a post with 4 image attachments needs 4
 // verdicts, and a post_id-only key could only ever hold one.
-const NSFW_SCAN_SCHEMA = `post_id TEXT NOT NULL, media_key TEXT NOT NULL DEFAULT '', task_id TEXT, status TEXT NOT NULL DEFAULT 'submitted' CHECK(status IN ('submitted', 'done', 'failed')), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), scanned_at TEXT, PRIMARY KEY (post_id, media_key)`;
+// `content_sha` records the bytes a verdict belongs to: media keys are stable
+// across overwrites (gif/{postId}/{position}.{ext}), so a verdict keyed only on
+// (post, key) would keep vouching for an image that was swapped in later.
+const NSFW_SCAN_SCHEMA = `post_id TEXT NOT NULL, media_key TEXT NOT NULL DEFAULT '', task_id TEXT, content_sha TEXT, status TEXT NOT NULL DEFAULT 'submitted' CHECK(status IN ('submitted', 'done', 'failed')), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), scanned_at TEXT, PRIMARY KEY (post_id, media_key)`;
 const PENDING_EMBEDS_SCHEMA = `post_id TEXT PRIMARY KEY, text TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), last_error TEXT`;
 
 // In-flight / rate-limit guards. Kept module-scoped so every route bundled into
@@ -164,9 +171,24 @@ export async function verifyCallbackSignature(url: URL, config: CrowdConfig): Pr
 
 // ── Schema bootstrap ──
 
+// Databases created before `content_sha` existed need the column added once per
+// isolate; SQLite has no `ADD COLUMN IF NOT EXISTS`.
+const nsfwShaColumnChecked = new WeakSet<D1Database>();
+
+async function ensureNsfwContentShaColumn(db: D1Database): Promise<void> {
+  if (nsfwShaColumnChecked.has(db)) return;
+  try {
+    await db.prepare('ALTER TABLE post_nsfw_scans ADD COLUMN content_sha TEXT').run();
+  } catch {
+    // Already present (fresh CREATE above, or a previous ALTER).
+  }
+  nsfwShaColumnChecked.add(db);
+}
+
 export async function ensureNsfwScansTable(db: D1Database): Promise<void> {
   try {
     await db.prepare(`CREATE TABLE IF NOT EXISTS post_nsfw_scans (${NSFW_SCAN_SCHEMA})`).run();
+    await ensureNsfwContentShaColumn(db);
     await db.prepare('CREATE INDEX IF NOT EXISTS idx_nsfw_scans_status ON post_nsfw_scans(status, created_at)').run();
   } catch (e) {
     console.error('Failed to ensure post_nsfw_scans table:', e);
@@ -186,25 +208,49 @@ export async function ensurePendingEmbedsTable(db: D1Database): Promise<void> {
 
 // ── NSFW screening (NudeNet) ──
 
+/**
+ * SHA-256 of the stored object, used to decide whether an existing verdict
+ * still describes the bytes at `mediaKey`. Returns null when the bucket is
+ * unavailable or the object is gone, in which case callers keep the previous
+ * "already scanned" behaviour instead of re-submitting blindly.
+ */
+async function mediaContentSha(env: CrowdEnv, mediaKey: string): Promise<string | null> {
+  const bucket = env.BUCKET;
+  if (!bucket) return null;
+  try {
+    const object = await bucket.get(mediaKey);
+    if (!object) return null;
+    const digest = await crypto.subtle.digest('SHA-256', await object.arrayBuffer());
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) {
+    console.error(`Failed to hash ${mediaKey} for NSFW screening:`, e);
+    return null;
+  }
+}
+
 async function markNsfwScan(
   db: D1Database,
   postId: string,
   mediaKey: string,
   status: string,
-  taskId?: string,
+  opts: { taskId?: string; contentSha?: string | null } = {},
 ): Promise<void> {
   try {
     if (status === 'submitted') {
+      // A re-submission rebinds the row to the new task and content, so a late
+      // verdict for the previous task is rejected by handleNsfwResult.
       await db
-        .prepare('INSERT OR IGNORE INTO post_nsfw_scans (post_id, media_key, status) VALUES (?, ?, ?)')
-        .bind(postId, mediaKey, status)
+        .prepare(
+          `INSERT INTO post_nsfw_scans (post_id, media_key, status, task_id, content_sha)
+           VALUES (?, ?, 'submitted', ?, ?)
+           ON CONFLICT(post_id, media_key) DO UPDATE SET
+             status = 'submitted',
+             task_id = excluded.task_id,
+             content_sha = excluded.content_sha,
+             scanned_at = NULL`,
+        )
+        .bind(postId, mediaKey, opts.taskId ?? null, opts.contentSha ?? null)
         .run();
-      if (taskId) {
-        await db
-          .prepare('UPDATE post_nsfw_scans SET task_id = ? WHERE post_id = ? AND media_key = ?')
-          .bind(taskId, postId, mediaKey)
-          .run();
-      }
     } else {
       await db
         .prepare('UPDATE post_nsfw_scans SET status = ?, scanned_at = ? WHERE post_id = ? AND media_key = ?')
@@ -244,13 +290,23 @@ export async function submitDetectNsfw(
   try {
     await ensureNsfwScansTable(db);
 
+    // A verdict only stands for the bytes it screened. Media keys are reused
+    // across overwrites, so "row is done" is not enough: compare the stored
+    // hash with the live object and re-screen whenever it moved.
+    const contentSha = await mediaContentSha(env, mediaKey);
+
     // Checked before the throttle: an already-screened image must not consume
     // the shared budget when a caller walks a post's image list.
     const existing = (await db
-      .prepare('SELECT status FROM post_nsfw_scans WHERE post_id = ? AND media_key = ?')
+      .prepare('SELECT status, content_sha FROM post_nsfw_scans WHERE post_id = ? AND media_key = ?')
       .bind(postId, mediaKey)
-      .first()) as { status: string } | null;
-    if (existing?.status === 'done') return false;
+      .first()) as { status: string; content_sha: string | null } | null;
+    if (existing?.status === 'done') {
+      // No hash available (no bucket binding, or the object vanished): keep the
+      // old behaviour rather than re-submitting on every call.
+      if (!contentSha || existing.content_sha === contentSha) return false;
+      console.log(`NSFW verdict for post ${postId} [${mediaKey}] no longer matches the stored image; re-screening`);
+    }
 
     if (opts.respectThrottle !== false && Date.now() - lastNsfwSubmitTime < NSFW_RATE_LIMIT_MS) return false;
 
@@ -271,7 +327,7 @@ export async function submitDetectNsfw(
       callbackUrl,
       timeoutMs: DEFAULT_WORKLOAD_TIMEOUT_MS.nudenet,
     });
-    await markNsfwScan(db, postId, mediaKey, 'submitted', res.taskId);
+    await markNsfwScan(db, postId, mediaKey, 'submitted', { taskId: res.taskId, contentSha });
     console.log(`NSFW detection task submitted for post ${postId} [${mediaKey}] (task ${res.taskId})`);
     return true;
   } catch (err) {
@@ -459,16 +515,33 @@ export async function embedPost(
 
 // ── Webhook handling ──
 
-function json(body: Record<string, unknown>): Response {
-  return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
+function json(body: Record<string, unknown>, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
 async function handleNsfwResult(url: URL, event: CrowdWebhookEvent, db: D1Database): Promise<void> {
   const postId = url.searchParams.get('postId');
   // Older callbacks carry no key: they screened the post's single legacy image.
   const mediaKey = url.searchParams.get('key') ?? '';
-  const detections = (event.result?.detections as NudeNetDetection[] | undefined) ?? [];
   if (!postId) return;
+
+  // Only the task we last submitted for this (post, key) may write a verdict.
+  // Without this, a slow callback for an image that has since been replaced at
+  // the same key would mark the new bytes as screened.
+  const row = (await db
+    .prepare('SELECT task_id FROM post_nsfw_scans WHERE post_id = ? AND media_key = ?')
+    .bind(postId, mediaKey)
+    .first()) as { task_id: string | null } | null;
+  if (row?.task_id && row.task_id !== event.taskId) {
+    console.log(`Ignoring stale NSFW callback for post ${postId} [${mediaKey}]: ${event.taskId} != ${row.task_id}`);
+    return;
+  }
+
+  // `extractCallbackOutput` unwraps `{result:{output}}` shapes; the SDK allows
+  // both, and reading `event.result` directly would silently yield no
+  // detections if the orchestrator ever nests the workload output.
+  const output = extractCallbackOutput(event) as { detections?: NudeNetDetection[] } | undefined;
+  const detections = output?.detections ?? [];
 
   const { nsfw, tags } = resolveNsfwTags(detections);
   const applied = await applyNsfwTags(db, postId, tags);
@@ -655,8 +728,12 @@ async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Da
 /**
  * Handle an orchestrator callback. Returns the HTTP response for the route:
  * `401` for a missing or invalid callback signature, `400` for malformed
- * payloads, `200 { received: true }` otherwise (including failures, so the
- * orchestrator does not retry a callback we already observed).
+ * payloads, `200 { received: true }` for a callback we observed (a verdict we
+ * deliberately drop as stale, or an undeliverable body — the orchestrator
+ * could never deliver those successfully, so retrying them would only loop),
+ * and `500` when an unexpected error left the row unwritten — the orchestrator
+ * retries non-2xx responses, so a transient D1 failure no longer loses a
+ * verdict.
  */
 export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1Database): Promise<Response> {
   const url = new URL(request.url);
@@ -669,7 +746,13 @@ export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1
       return new Response('Forbidden', { status: 401 });
     }
 
-    const event = parseCrowdWebhook(await request.json());
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ received: true });
+    }
+    const event = parseCrowdWebhook(body);
     if (!event) return new Response('Bad Request', { status: 400 });
 
     if (event.status === 'done') {
@@ -688,9 +771,14 @@ export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1
         const postId = url.searchParams.get('postId');
         const mediaKey = url.searchParams.get('key') ?? '';
         if (postId) {
+          // Same staleness rule as the done path: a failure report for a task we
+          // already replaced must not mark the current attempt as failed.
           await db
-            .prepare('UPDATE post_nsfw_scans SET status = ?, scanned_at = ? WHERE post_id = ? AND media_key = ?')
-            .bind('failed', new Date().toISOString(), postId, mediaKey)
+            .prepare(
+              `UPDATE post_nsfw_scans SET status = ?, scanned_at = ?
+               WHERE post_id = ? AND media_key = ? AND (task_id IS NULL OR task_id = ?)`,
+            )
+            .bind('failed', new Date().toISOString(), postId, mediaKey, event.taskId)
             .run();
         }
       } else if (callbackType === 'file-scan') {
@@ -700,8 +788,10 @@ export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1
 
     return json({ received: true });
   } catch (e) {
+    // Fail loudly: the row was not written, and answering 200 would make the
+    // orchestrator drop a verdict it could still deliver on a retry.
     console.error('Webhook error:', e);
-    return json({ received: true });
+    return json({ received: false, error: 'callback_failed' }, 500);
   }
 }
 

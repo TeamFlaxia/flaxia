@@ -14,10 +14,26 @@ import { ensureFileScansTable, getFileScan, setScanStatus, setScanTask } from '.
 import { extensionOf } from './mime.ts';
 
 /**
- * Cap for container payloads: bytes are base64-inlined into the task body
- * (~1.37x). 20MB raw keeps the request near 27MB.
+ * Cap for container payloads. The orchestrator rejects any request body above
+ * MAX_PAYLOAD_SIZE (1 MiB in packages/worker/wrangler.toml) and base64 inflates
+ * the file by ~4/3, so the effective raw limit is ~768 KiB — far below the
+ * 25 MiB the upload path accepts. Sizing this to the real limit turns those
+ * uploads into an explicit `skipped/too_large` row instead of a 413 that leaves
+ * them unscanned. Raise CROWD_MAX_PAYLOAD_BYTES together with the orchestrator.
  */
-export const CLAMAV_MAX_BYTES = 20 * 1024 * 1024;
+const DEFAULT_MAX_PAYLOAD_BYTES = 1_048_576;
+/** Room for the JSON scaffolding around the base64 file. */
+const PAYLOAD_SCAFFOLD_BYTES = 4_096;
+
+/** Largest raw file that still fits one task body for the configured cap. */
+export function clamavMaxBytes(env?: CrowdEnv): number {
+  const configured = Number(env?.CROWD_MAX_PAYLOAD_BYTES ?? '');
+  const cap = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_PAYLOAD_BYTES;
+  return Math.max(0, Math.floor(((cap - PAYLOAD_SCAFFOLD_BYTES) * 3) / 4));
+}
+
+/** Default raw-file cap for the stock orchestrator body limit. */
+export const CLAMAV_MAX_BYTES = clamavMaxBytes();
 
 /**
  * WASM images the browser node fetches for container tasks. The node rejects
@@ -64,7 +80,7 @@ export async function submitFileScans(
     }
 
     const raw = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-    if (raw.byteLength > CLAMAV_MAX_BYTES) {
+    if (raw.byteLength > clamavMaxBytes(env)) {
       await setScanStatus(db, r2Key, 'skipped', { detail: 'too_large', sha256: row.sha256 });
       return;
     }
