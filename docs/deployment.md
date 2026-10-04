@@ -60,8 +60,9 @@ The sandbox worker serves ZIP/HTML5 content from R2 at the sandbox origin (`sand
 現在リポジトリに残るのはテスト用の純粋関数 `status-worker/src/transition.ts` のみで、
 `status.flaxia.app` はデプロイされていません。
 
-そのため `package.json` の `deploy:status` / `dev:status` / `migrate:status` / `migrate:status:local` は
-`status-worker/wrangler.toml` が無いため失敗します。再開する場合の設定雛形として
+削除に合わせて `package.json` の `deploy:status` / `dev:status` / `migrate:status` /
+`migrate:status:local` も削除済みです（存在しない `status-worker/wrangler.toml` を参照して
+必ず失敗するため）。再開する場合の設定雛形として
 `status-worker/wrangler.toml.example`（削除前の name / compatibility_date / bindings を復元）を置いてあります。
 
 **再構築手順:**
