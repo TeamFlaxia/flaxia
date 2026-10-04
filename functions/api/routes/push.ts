@@ -6,6 +6,22 @@ import type { Bindings, Variables } from '../types';
 
 const push = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
+/**
+ * Web Push endpoints are server-fetched on every notification, so only
+ * genuine https push-service URLs are accepted (no intranet hosts).
+ */
+function isValidWebPushEndpoint(endpoint: string): boolean {
+  if (typeof endpoint !== 'string' || endpoint.length === 0 || endpoint.length > 2048) return false;
+  try {
+    const parsed = new URL(endpoint);
+    if (parsed.protocol !== 'https:') return false;
+    if (parsed.username || parsed.password) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // GET /api/push/vapid-key - Expose VAPID public key for clients
 push.get('/push/vapid-key', async (c) => {
   return c.json({ publicKey: getVapidPublicKey(c.env.VAPID_PUBLIC_KEY, c.env.VAPID_PRIVATE_KEY) });
@@ -24,17 +40,24 @@ push.post('/push/register', requireAuth, async (c) => {
     const subscriptionType = body.type || 'webpush';
 
     if (subscriptionType === 'fcm') {
-      if (!body.endpoint) {
+      if (!body.endpoint || body.endpoint.length > 1024) {
         return c.json({ error: 'Invalid FCM token' }, 400);
       }
-      const existing = await c.env.DB.prepare('SELECT id FROM push_subscriptions WHERE endpoint = ? AND type = ?')
+      const existing = await c.env.DB.prepare(
+        'SELECT id, user_id FROM push_subscriptions WHERE endpoint = ? AND type = ?',
+      )
         .bind(body.endpoint, 'fcm')
-        .first();
+        .first<{ id: string; user_id: string }>();
       if (existing) {
+        // An endpoint belongs to whoever registered it first: never rebind
+        // another user's subscription to the caller (push hijacking).
+        if (existing.user_id !== user.id) {
+          return c.json({ error: 'Endpoint already registered' }, 409);
+        }
         await c.env.DB.prepare(
-          "UPDATE push_subscriptions SET user_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE endpoint = ? AND type = ?",
+          "UPDATE push_subscriptions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
         )
-          .bind(user.id, body.endpoint, 'fcm')
+          .bind(existing.id)
           .run();
       } else {
         await c.env.DB.prepare(
@@ -49,14 +72,23 @@ push.post('/push/register', requireAuth, async (c) => {
     if (!body.endpoint || !body.keys?.p256dh || !body.keys?.auth) {
       return c.json({ error: 'Invalid subscription' }, 400);
     }
-    const existing = await c.env.DB.prepare('SELECT id FROM push_subscriptions WHERE endpoint = ?')
+    if (!isValidWebPushEndpoint(body.endpoint)) {
+      return c.json({ error: 'Invalid subscription endpoint' }, 400);
+    }
+    if (body.keys.p256dh.length > 256 || body.keys.auth.length > 256) {
+      return c.json({ error: 'Invalid subscription keys' }, 400);
+    }
+    const existing = await c.env.DB.prepare('SELECT id, user_id FROM push_subscriptions WHERE endpoint = ?')
       .bind(body.endpoint)
-      .first();
+      .first<{ id: string; user_id: string }>();
     if (existing) {
+      if (existing.user_id !== user.id) {
+        return c.json({ error: 'Endpoint already registered' }, 409);
+      }
       await c.env.DB.prepare(
-        "UPDATE push_subscriptions SET user_id = ?, auth_key = ?, p256dh_key = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE endpoint = ?",
+        "UPDATE push_subscriptions SET auth_key = ?, p256dh_key = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
       )
-        .bind(user.id, body.keys.auth, body.keys.p256dh, body.endpoint)
+        .bind(body.keys.auth, body.keys.p256dh, existing.id)
         .run();
     } else {
       await c.env.DB.prepare(
@@ -75,9 +107,13 @@ push.post('/push/register', requireAuth, async (c) => {
 // POST /api/push/unregister - Remove a Web Push subscription (protected)
 push.post('/push/unregister', requireAuth, async (c) => {
   try {
+    const user = c.get('user') as { id: string } | undefined;
     const { endpoint } = (await c.req.json()) as { endpoint: string };
     if (!endpoint) return c.json({ error: 'Missing endpoint' }, 400);
-    await c.env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(endpoint).run();
+    // Scoped to the caller: one user must not silence another's notifications.
+    await c.env.DB.prepare('DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?')
+      .bind(endpoint, user?.id || '')
+      .run();
     return c.json({ ok: true });
   } catch (e) {
     console.error('Failed to unregister push subscription:', e);

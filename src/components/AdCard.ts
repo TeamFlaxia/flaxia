@@ -132,6 +132,10 @@ function handleDirectClick(ad: Ad): void {
 function mountAdmax(ad: Ad, placeholder: HTMLElement): void {
   // Create iframe for isolated ad environment
   const iframe = document.createElement('iframe');
+  // Sandbox: third-party ad scripts must never share the app origin (no DOM,
+  // cookie, or storage access). Scripts + popups stay enabled so ad rendering
+  // and click-through keep working; same-origin access stays blocked.
+  iframe.sandbox.add('allow-scripts', 'allow-popups');
   iframe.style.width = '100%';
   iframe.style.height = '250px';
   iframe.style.border = 'none';

@@ -281,6 +281,11 @@
 
     window.addEventListener('message', async (event) => {
       if (event.data?.type === 'EXECUTE_ZIP') {
+        // event.origin is browser-supplied (unforgeable); event.data.origin
+        // would be attacker-controlled — never use message data as the reply
+        // target.
+        if (typeof event.origin !== 'string' || event.origin.indexOf('http') !== 0) return;
+        const replyTo = event.origin;
         loading.style.display = 'flex';
         errorEl.style.display = 'none';
 
@@ -295,7 +300,7 @@
           window.parent.postMessage({
             type: 'ZIP_READY',
             postId: event.data.postId
-          }, event.data.origin || '*');
+          }, replyTo);
 
           window.zipCleanup = () => {
             result.blobUrlMap.forEach(url => void URL.revokeObjectURL(url));
@@ -307,7 +312,7 @@
             type: 'ZIP_ERROR',
             postId: event.data?.postId,
             error: err.message
-          }, event.data?.origin || '*');
+          }, replyTo);
         }
       }
     });

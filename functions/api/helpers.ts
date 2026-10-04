@@ -249,15 +249,18 @@ export async function resolveMentions(
   currentUsername: string,
 ): Promise<string> {
   if (mentionedUsernames.length === 0) return '[]';
-  const placeholders = mentionedUsernames.map(() => '?').join(',');
+  void currentUsername;
+  // Cap: one query with unbounded placeholders plus one push per mention.
+  const capped = mentionedUsernames.slice(0, 10);
+  const placeholders = capped.map(() => '?').join(',');
   const rows = await db
     .prepare(`SELECT id, username FROM users WHERE LOWER(username) IN (${placeholders})`)
-    .bind(...mentionedUsernames.map((u) => u.toLowerCase()))
+    .bind(...capped.map((u) => u.toLowerCase()))
     .all<{ id: string; username: string }>();
   const userMap = new Map(rows.results?.map((r) => [r.username.toLowerCase(), r]) || []);
   // 同一ユーザーが大文字小文字違いなどで複数回メンションされても1件に集約する
   const seenUserIds = new Set<string>();
-  const resolved = mentionedUsernames
+  const resolved = capped
     .map((u) => {
       const user = userMap.get(u.toLowerCase());
       return user ? { username: user.username, user_id: user.id } : null;

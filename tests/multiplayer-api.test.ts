@@ -412,21 +412,121 @@ describe('POST /api/multiplayer/matchmaking', () => {
 describe('POST /api/multiplayer/rooms/:id/join — error cases', () => {
   beforeEach(resetDb);
 
-  it('returns 400 when joining a room that is playing', async () => {
+  it('returns 400 when joining a full room', async () => {
     const { cookie } = await seedUserAndLogin('err1');
     const createRes = await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: cookie },
-      body: JSON.stringify({ gameId: 'err-game', maxPlayers: 1 }),
+      body: JSON.stringify({ gameId: 'err-game', maxPlayers: 2 }),
     });
     const { roomId } = (await createRes.json()) as { roomId: string };
 
-    // When maxPlayers=1, second join would be rejected
+    // Fill the two-player room, then a third join must be rejected.
     const { cookie: err2 } = await seedUserAndLogin('err2');
-    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms/${roomId}/join`, {
+    const second = await fetch(`${BASE_URL}/api/multiplayer/rooms/${roomId}/join`, {
       method: 'POST',
       headers: { Cookie: err2 },
     });
+    assert.equal(second.status, 200);
+    const { cookie: err3 } = await seedUserAndLogin('err3');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms/${roomId}/join`, {
+      method: 'POST',
+      headers: { Cookie: err3 },
+    });
     assert.equal(res.status, 400);
+  });
+});
+
+function sessionToken(cookie: string): string {
+  const token = /(?:^|;\s*)session=([^;]+)/.exec(cookie)?.[1];
+  assert.ok(token, 'session cookie should contain a token');
+  return decodeURIComponent(token);
+}
+
+// Opens a multiplayer socket the way the client does (session token in the
+// query). Resolves true when the server upgrades the connection.
+function connectMultiplayer(
+  roomId: string,
+  gameId: string,
+  cookie: string,
+): { socket: WebSocket; opened: Promise<boolean> } {
+  const url = new URL(`${BASE_URL}/api/ws/multiplayer`);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.searchParams.set('roomId', roomId);
+  url.searchParams.set('gameId', gameId);
+  url.searchParams.set('token', sessionToken(cookie));
+
+  const socket = new WebSocket(url);
+  const opened = new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (accepted: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (!accepted && socket.readyState === WebSocket.OPEN) socket.close();
+      resolve(accepted);
+    };
+    const timeout = setTimeout(() => finish(false), 5000);
+    socket.addEventListener(
+      'open',
+      () => {
+        clearTimeout(timeout);
+        finish(true);
+      },
+      { once: true },
+    );
+    socket.addEventListener(
+      'error',
+      () => {
+        clearTimeout(timeout);
+        finish(false);
+      },
+      { once: true },
+    );
+  });
+  return { socket, opened };
+}
+
+async function createWsRoom(cookie: string, gameId: string, maxPlayers: number): Promise<string> {
+  const response = await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ gameId, maxPlayers }),
+  });
+  assert.equal(response.status, 201);
+  return ((await response.json()) as { roomId: string }).roomId;
+}
+
+describe('WebSocket /api/ws/multiplayer — membership gate', () => {
+  beforeEach(resetDb);
+
+  it('refuses sockets from non-members', async () => {
+    const { cookie: hostCookie } = await seedUserAndLogin('ws-host');
+    const roomId = await createWsRoom(hostCookie, 'ws-gate', 4);
+
+    // Never joins over REST: the socket gate (not just capacity) must refuse.
+    const { cookie: outsiderCookie } = await seedUserAndLogin('ws-outsider');
+    const { socket, opened } = connectMultiplayer(roomId, 'ws-gate', outsiderCookie);
+    assert.equal(await opened, false);
+    socket.close();
+  });
+
+  it('admits the host and REST-joined members', async () => {
+    const { cookie: hostCookie } = await seedUserAndLogin('ws-host2');
+    const roomId = await createWsRoom(hostCookie, 'ws-gate2', 4);
+
+    const host = connectMultiplayer(roomId, 'ws-gate2', hostCookie);
+    assert.equal(await host.opened, true);
+
+    const { cookie: memberCookie } = await seedUserAndLogin('ws-member');
+    const joinRes = await fetch(`${BASE_URL}/api/multiplayer/rooms/${roomId}/join`, {
+      method: 'POST',
+      headers: { Cookie: memberCookie },
+    });
+    assert.equal(joinRes.status, 200);
+    const member = connectMultiplayer(roomId, 'ws-gate2', memberCookie);
+    assert.equal(await member.opened, true);
+
+    host.socket.close();
+    member.socket.close();
   });
 });

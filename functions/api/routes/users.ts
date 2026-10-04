@@ -5,6 +5,7 @@ import { deleteAccount } from '../../lib/account-deletion';
 import { enrichPostsWithAttachments } from '../../lib/attachments';
 import { deleteSession, getMeWithSession, getSessionToken, verifySrpPassword } from '../../lib/auth';
 import { validateImageDimensions } from '../../lib/image-dimensions';
+import { clampLimit } from '../../lib/pagination';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { isSupportedSrpKdf } from '../../lib/srp';
@@ -272,7 +273,7 @@ users.post('/remote-follow', requireAuth, async (c) => {
       '@context': 'https://www.w3.org/ns/activitystreams',
       id: `${c.env.BASE_URL}/activities/follow-${followId}`,
       type: 'Follow',
-      actor: `${c.env.BASE_URL}/actors/${localUser.username}`,
+      actor: `${c.env.BASE_URL}/api/actors/${localUser.username}`,
       object: actorUrl,
       to: [actorUrl],
     };
@@ -364,11 +365,11 @@ users.delete('/remote-follow', requireAuth, async (c) => {
       '@context': 'https://www.w3.org/ns/activitystreams',
       id: `${c.env.BASE_URL}/activities/undo-${following.id}`,
       type: 'Undo',
-      actor: `${c.env.BASE_URL}/actors/${localUser.username}`,
+      actor: `${c.env.BASE_URL}/api/actors/${localUser.username}`,
       object: {
         id: followActivityId,
         type: 'Follow',
-        actor: `${c.env.BASE_URL}/actors/${localUser.username}`,
+        actor: `${c.env.BASE_URL}/api/actors/${localUser.username}`,
         object: actorUrl,
       },
       to: [actorUrl],
@@ -402,7 +403,7 @@ users.get('/users/suggest', async (c) => {
       return c.json({ users: [] });
     }
 
-    const limit = Math.min(parseInt(c.req.query('limit') || '10', 10), 20);
+    const limit = clampLimit(c.req.query('limit'), 10, 20);
     const prefix = q.toLowerCase();
 
     const result = await c.env.DB.prepare(`
@@ -610,7 +611,7 @@ users.get('/users/:username/followers', async (c) => {
   try {
     const username = c.req.param('username');
     const cursor = c.req.query('cursor');
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
 
     if (!username) {
       return c.json({ error: 'Username required' }, 400);
@@ -723,7 +724,7 @@ users.get('/users/:username/following', async (c) => {
   try {
     const username = c.req.param('username');
     const cursor = c.req.query('cursor');
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
 
     if (!username) {
       return c.json({ error: 'Username required' }, 400);
@@ -1290,7 +1291,17 @@ users.delete('/users/me', requireAuth, async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
+    // Irreversible and session-cookie-sufficient otherwise: require the same
+    // SRP proof of the current password as email/password changes, so a
+    // stolen session alone cannot destroy the account.
+    const { current_srp } = (await c.req.json().catch(() => ({}))) as { current_srp?: SrpProofBody };
+    if (!current_srp?.challenge_id || !current_srp.A || !current_srp.M1) {
+      return c.json({ error: 'Current password proof is required' }, 400);
+    }
     const userId = user.id;
+    if (!(await verifySrpPassword(c.env, userId, current_srp.challenge_id, current_srp.A, current_srp.M1))) {
+      return c.json({ error: 'Current password is incorrect' }, 401);
+    }
 
     await deleteAccount(c.env, userId);
 

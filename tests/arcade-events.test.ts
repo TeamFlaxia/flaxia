@@ -1,5 +1,6 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
+import JSZip from 'jszip';
 import { BASE_URL, loginUser, registerUser } from './helpers/setup.ts';
 
 // NOTE: self-contained (no resetDb) because the local `--d1=DB_TEST` binding is
@@ -164,6 +165,36 @@ describe('POST /api/games/events', () => {
     const user = ((await reg.json()) as { user: { id: string } }).user;
     const { cookie } = await loginUser(`evt-${suffix}@test.com`, 'password123');
 
+    // Events are only recorded for real, published game posts (unknown ids
+    // are dropped): create one game post and one throwaway for the skip.
+    async function createGamePost(text: string): Promise<string> {
+      const prep = await fetch(`${BASE_URL}/api/posts/prepare`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ filename: 'game.zip' }),
+      });
+      const prepData = (await prep.json()) as { postId?: string; zipUploadUrl?: string; zipKey?: string };
+      assert.ok(prepData.postId && prepData.zipUploadUrl && prepData.zipKey);
+      const zip = new JSZip();
+      zip.file('index.html', '<!doctype html><html><body>game</body></html>');
+      const bytes = new Uint8Array(await zip.generateAsync({ type: 'uint8array' }));
+      const upload = await fetch(prepData.zipUploadUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/zip', Cookie: cookie },
+        body: bytes,
+      });
+      assert.equal(upload.status, 200);
+      const commit = await fetch(`${BASE_URL}/api/posts/commit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ postId: prepData.postId, zipKey: prepData.zipKey, text }),
+      });
+      assert.equal(commit.status, 200);
+      return prepData.postId!;
+    }
+    const watchId = await createGamePost('watch game');
+    const skipId = await createGamePost('skip game');
+
     const res = await fetch(`${BASE_URL}/api/games/events`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Cookie: cookie },
@@ -171,7 +202,7 @@ describe('POST /api/games/events', () => {
         sessionId: 'mirror-session',
         events: [
           {
-            postId: 'p-watch',
+            postId: watchId,
             eventType: 'view',
             dwellMs: 15000,
             didSkip: 0,
@@ -180,7 +211,7 @@ describe('POST /api/games/events', () => {
             gameType: 'zip',
           },
           {
-            postId: 'p-skip',
+            postId: skipId,
             eventType: 'view',
             dwellMs: 800,
             didSkip: 1,
@@ -198,8 +229,8 @@ describe('POST /api/games/events', () => {
     const { plays } = (await playsRes.json()) as {
       plays: Array<{ post_id: string; dwell_ms: number; source: string }>;
     };
-    assert.deepEqual(plays.map((p) => p.post_id).sort(), ['p-watch']);
-    const watch = plays.find((p) => p.post_id === 'p-watch');
+    assert.deepEqual(plays.map((p) => p.post_id).sort(), [watchId]);
+    const watch = plays.find((p) => p.post_id === watchId);
     assert.equal(watch?.dwell_ms, 15000);
     assert.equal(watch?.source, 'arcade');
   });

@@ -1,4 +1,5 @@
 /// <reference types="@cloudflare/workers-types" />
+import { fetchWithSsrfGuard, parsePublicHttpUrl, SsrfError } from '../url-guard.ts';
 import { importPublicKey } from './crypto.ts';
 
 /**
@@ -171,6 +172,10 @@ export async function verifyDigest(request: Request, body: string): Promise<bool
 /**
  * Fetch actor's public key from their URL
  * Optionally signs the request if privateKeyPem and keyId are provided (for authorized fetch)
+ *
+ * The actor URL is attacker-controlled (it arrives in the unsigned inbox
+ * body), so it goes through the shared SSRF guard: only public http(s)
+ * targets pass, every redirect hop is re-validated, and fetches time out.
  */
 export async function fetchActorPublicKey(
   actorUrl: string,
@@ -187,15 +192,24 @@ export async function fetchActorPublicKey(
 
     // Fall back to unsigned fetch if signed fetch failed or no keys provided
     if (!response || !response.ok) {
-      response = await fetch(actorUrl, {
-        headers: {
-          Accept: 'application/activity+json, application/ld+json',
-        },
-      });
+      try {
+        response = await fetchWithSsrfGuard(actorUrl, {
+          headers: {
+            Accept: 'application/activity+json, application/ld+json',
+          },
+          timeoutMs: 10000,
+        });
+      } catch (error: unknown) {
+        if (error instanceof SsrfError) {
+          console.error('Refusing actor fetch:', (error as Error).message);
+          return null;
+        }
+        throw error;
+      }
     }
 
-    if (!response.ok) {
-      console.error(`Failed to fetch actor: ${response.status}`);
+    if (!response || !response.ok) {
+      console.error(`Failed to fetch actor: ${response?.status}`);
       return null;
     }
 
@@ -300,6 +314,14 @@ export async function signRequest(url: string, body: string, privateKeyPem: stri
  */
 export async function signedFetch(url: string, privateKeyPem: string, keyId: string): Promise<Response | null> {
   try {
+    // The URL is remote input: reject non-public targets before signing.
+    // Redirects are not followed (the signature covers the request target,
+    // so a hop would invalidate it anyway).
+    try {
+      parsePublicHttpUrl(url);
+    } catch {
+      return null;
+    }
     const headers = new Headers();
     headers.set('Accept', 'application/activity+json, application/ld+json');
     headers.set('Date', new Date().toUTCString());
@@ -327,6 +349,7 @@ export async function signedFetch(url: string, privateKeyPem: string, keyId: str
     const response = await fetch(url, {
       method: 'GET',
       headers,
+      redirect: 'manual',
       signal: AbortSignal.timeout(15000),
     });
 

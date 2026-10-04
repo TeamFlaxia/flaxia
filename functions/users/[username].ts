@@ -11,6 +11,7 @@ import {
   type UserRow,
 } from '../../src/lib/render-html';
 import { fetchActorPublicKey, verifyDigest, verifyHttpSignature } from '../lib/activitypub/signature';
+import { checkRateLimit, getClientIp } from '../lib/rate-limit';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import { renderBreadcrumbJsonLd, renderSsrFooter, renderSsrHeader, renderSsrLayoutCss } from '../lib/ssr-layout';
 
@@ -18,7 +19,11 @@ type Bindings = {
   DB: D1Database;
   BASE_URL: string;
   AP_DELIVERY_QUEUE: Queue;
+  CACHE: KVNamespace;
 };
+
+/** Shared inbox body cap with the API inbox endpoints (small JSON docs). */
+const MAX_INBOX_BODY_BYTES = 256 * 1024;
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -228,7 +233,22 @@ app.post('/inbox', async (c) => {
       return c.json({ error: 'User not found' }, 404);
     }
 
+    const allowed = await checkRateLimit(c.env.CACHE, `ap:inbox:${getClientIp(c.req.raw)}`, {
+      maxRequests: 60,
+      windowSeconds: 60,
+    });
+    if (!allowed) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
+
+    const declared = Number(c.req.header('content-length') || 0);
+    if (Number.isFinite(declared) && declared > MAX_INBOX_BODY_BYTES) {
+      return c.json({ error: 'Inbox body too large' }, 413);
+    }
     const body = await c.req.text();
+    if (body.length > MAX_INBOX_BODY_BYTES) {
+      return c.json({ error: 'Inbox body too large' }, 413);
+    }
     let activity: Record<string, unknown>;
     try {
       activity = JSON.parse(body) as Record<string, unknown>;
@@ -254,7 +274,7 @@ app.post('/inbox', async (c) => {
         .first()) as { private_key_pem: string } | null;
       if (keyRecord?.private_key_pem) {
         signKeyPem = keyRecord.private_key_pem;
-        signKeyId = `${c.env.BASE_URL}/actors/${username}#main-key`;
+        signKeyId = `${c.env.BASE_URL}/api/actors/${username}#main-key`;
       }
     } catch {
       // Proceed without signing

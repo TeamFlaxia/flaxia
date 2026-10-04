@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { fetchWithSsrfGuard, SsrfError } from '../../lib/url-guard';
 import type { Bindings, Variables } from '../types';
 
@@ -141,6 +142,17 @@ function parseMetaTags(html: string, baseUrl: string) {
 
 // GET /api/link-preview - Scrape OpenGraph meta tags of a URL
 link.get('/link-preview', async (c) => {
+  // Authenticated endpoint, but still rate-limited per user: each call makes
+  // the Worker fetch an arbitrary remote URL, so it must not be callable
+  // in a tight loop to turn the backend into a fetch oracle.
+  const limited = await checkRateLimit(c.env.CACHE, `linkpreview:${c.get('user')?.id ?? getClientIp(c.req.raw)}`, {
+    maxRequests: 30,
+    windowSeconds: 60,
+  });
+  if (!limited) {
+    return c.json({ error: 'Rate limit exceeded' }, 429);
+  }
+
   const urlString = c.req.query('url');
   if (!urlString) {
     return c.json({ error: 'Missing url parameter' }, 400);

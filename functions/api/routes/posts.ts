@@ -27,6 +27,8 @@ import { getUserPlan } from '../../lib/billing';
 import { embedPost, isImageKey, screenPostImages } from '../../lib/crowd';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { sendPushToAll } from '../../lib/notify';
+import { clampLimit } from '../../lib/pagination';
+import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
@@ -313,7 +315,7 @@ posts.get('/posts', async (c) => {
 // GET /api/posts/trending - get trending posts based on engagement and time decay
 posts.get('/posts/trending', async (c) => {
   try {
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
     const cursor = c.req.query('cursor');
     const parts = cursor ? cursor.split(',') : [];
     const cursorScore = parts[0] || null;
@@ -536,7 +538,7 @@ const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, 
 // GET /api/posts/recommended - get recommended posts for the user (vector hybrid)
 posts.get('/posts/recommended', async (c) => {
   try {
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
     const cursor = c.req.query('cursor');
     let cursorScore: string | null = null;
     let cursorCreatedAt: string | null = null;
@@ -877,7 +879,7 @@ async function enrichRecommendedPosts(
 posts.get('/posts/:id/similar', async (c) => {
   try {
     const postId = c.req.param('id');
-    const limit = Math.min(Number(c.req.query('limit') || '5'), 20);
+    const limit = clampLimit(c.req.query('limit'), 5, 20);
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
 
     const currentUserId = c.get('user')?.id;
@@ -967,6 +969,16 @@ posts.get('/posts/:id/similar', async (c) => {
 // GET /api/ads/active - get active ads (public endpoint)
 posts.post('/posts/:id/impression', async (c) => {
   try {
+    // Unauthenticated counter endpoint: throttle per IP so it cannot be
+    // used as an engagement-inflation oracle.
+    if (
+      !(await checkRateLimit(c.env.CACHE, `post:impression:${getClientIp(c.req.raw)}`, {
+        maxRequests: 180,
+        windowSeconds: 60,
+      }))
+    ) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
     const postId = c.req.param('id');
 
     if (!c.env.DB) {
@@ -996,6 +1008,14 @@ posts.post('/posts/:id/impression', async (c) => {
 // POST /api/posts/impressions/batch - track multiple post impressions (public endpoint)
 posts.post('/posts/impressions/batch', async (c) => {
   try {
+    if (
+      !(await checkRateLimit(c.env.CACHE, `post:impression:${getClientIp(c.req.raw)}`, {
+        maxRequests: 180,
+        windowSeconds: 60,
+      }))
+    ) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
     const body = (await c.req.json()) as { post_ids: string[] };
 
     if (!body.post_ids || !Array.isArray(body.post_ids) || body.post_ids.length === 0) {
@@ -1115,6 +1135,16 @@ posts.post('/posts/:id/prepare-media', requireAuth, async (c) => {
   try {
     const user = c.get('user');
     if (!user) return c.json({ error: 'Unauthorized' }, 401);
+    // Every call mints upload URLs: throttle per user so abandoned
+    // preparations cannot bloat R2/D1 without bound.
+    if (
+      !(await checkRateLimit(c.env.CACHE, `post:prepare:${user.id}`, {
+        maxRequests: 30,
+        windowSeconds: 60,
+      }))
+    ) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
     const postId = c.req.param('id');
     const { filename, contentType, reservedKeys } = (await c.req.json()) as {
       filename?: string;
@@ -1696,6 +1726,18 @@ posts.post('/posts/commit', requireAuth, async (c) => {
 
     // Create poll if poll data was provided
     if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
+      // Cap the batch fan-out: options become one INSERT each plus one poll row.
+      if (pollData.options.length > 10) {
+        return c.json({ error: 'Polls support at most 10 options' }, 400);
+      }
+      if (typeof pollData.question !== 'string' || pollData.question.length > 200) {
+        return c.json({ error: 'Poll question must be ≤200 characters' }, 400);
+      }
+      for (const label of pollData.options) {
+        if (typeof label !== 'string' || label.length === 0 || label.length > 100) {
+          return c.json({ error: 'Poll options must be 1–100 characters' }, 400);
+        }
+      }
       try {
         const pollId = crypto.randomUUID();
         await c.env.DB.prepare(`
@@ -1810,7 +1852,7 @@ posts.post('/posts/commit', requireAuth, async (c) => {
             if (post.mentions) {
               const mentionData = JSON.parse(post.mentions) as Array<{ username: string; user_id: string }>;
               for (const m of mentionData) {
-                mentionActorUrls.push(`${c.env.BASE_URL}/actors/${m.username}`);
+                mentionActorUrls.push(`${c.env.BASE_URL}/api/actors/${m.username}`);
               }
             }
           } catch {}
@@ -1850,6 +1892,18 @@ posts.post('/posts/commit', requireAuth, async (c) => {
       .first()) as PostRow;
 
     if (pollData && pollData.question && pollData.options && pollData.options.length >= 2) {
+      // Cap the batch fan-out: options become one INSERT each plus one poll row.
+      if (pollData.options.length > 10) {
+        return c.json({ error: 'Polls support at most 10 options' }, 400);
+      }
+      if (typeof pollData.question !== 'string' || pollData.question.length > 200) {
+        return c.json({ error: 'Poll question must be ≤200 characters' }, 400);
+      }
+      for (const label of pollData.options) {
+        if (typeof label !== 'string' || label.length === 0 || label.length > 100) {
+          return c.json({ error: 'Poll options must be 1–100 characters' }, 400);
+        }
+      }
       try {
         await enrichPostsWithPolls([fullPost], c.env.DB, c.get('user')?.id);
       } catch (e) {
@@ -1937,7 +1991,7 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
     await c.env.DB.prepare('DELETE FROM freshs WHERE post_id = ? AND user_id = ?').bind(postId, userId).run();
 
     const result = await c.env.DB.prepare(
-      'UPDATE posts SET fresh_count = fresh_count - 1, engagement_hotness = engagement_hotness - 2.0 WHERE id = ? RETURNING fresh_count',
+      'UPDATE posts SET fresh_count = MAX(0, fresh_count - 1), engagement_hotness = engagement_hotness - 2.0 WHERE id = ? RETURNING fresh_count',
     )
       .bind(postId)
       .first<{ fresh_count: number }>();
@@ -2016,7 +2070,7 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
               '@context': 'https://www.w3.org/ns/activitystreams',
               id: `${c.env.BASE_URL}/activities/like-${nanoid()}`,
               type: 'Like',
-              actor: `${c.env.BASE_URL}/actors/${currentUser.username}`,
+              actor: `${c.env.BASE_URL}/api/actors/${currentUser.username}`,
               object: `${c.env.BASE_URL}/notes/${postId}`,
               to: [post.actor_id],
             };
@@ -2137,7 +2191,7 @@ posts.post('/posts/:id/reactions', requireAuth, async (c) => {
 posts.get('/bookmarks', requireAuth, async (c) => {
   try {
     const cursor = c.req.query('cursor');
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
     const userId = c.get('user')?.id || '';
 
     let query: string;
@@ -2199,7 +2253,7 @@ posts.get('/bookmarks', requireAuth, async (c) => {
 posts.get('/freshs', requireAuth, async (c) => {
   try {
     const cursor = c.req.query('cursor');
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
     const userId = c.get('user')?.id || '';
 
     let query: string;
@@ -2475,7 +2529,7 @@ posts.post('/posts/:id/share', requireAuth, async (c) => {
       await c.env.DB.prepare(
         "INSERT INTO shares (id, post_id, user_id, actor_id, created_at) VALUES (?, ?, ?, ?, datetime('now'))",
       )
-        .bind(shareId, postId, currentUser.id, `${c.env.BASE_URL}/actors/${currentUser.username}`)
+        .bind(shareId, postId, currentUser.id, `${c.env.BASE_URL}/api/actors/${currentUser.username}`)
         .run();
 
       await c.env.DB.prepare(
@@ -2498,7 +2552,7 @@ posts.post('/posts/:id/share', requireAuth, async (c) => {
                 '@context': 'https://www.w3.org/ns/activitystreams',
                 id: `${c.env.BASE_URL}/activities/announce-${shareId}`,
                 type: 'Announce',
-                actor: `${c.env.BASE_URL}/actors/${currentUser.username}`,
+                actor: `${c.env.BASE_URL}/api/actors/${currentUser.username}`,
                 object: `${c.env.BASE_URL}/notes/${postId}`,
                 to: [post.actor_id, 'https://www.w3.org/ns/activitystreams#Public'],
               };
@@ -2529,7 +2583,7 @@ posts.get('/posts/:id/replies', async (c) => {
   try {
     const postId = c.req.param('id');
     const cursor = c.req.query('cursor');
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
 
     // Get current user ID from session (optional)
     const token = getSessionToken(c.req.raw);
@@ -2932,10 +2986,13 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
         return c.json({ error: 'Invalid or expired reply preparation' }, 422);
       }
 
-      // Check if GIF exists in R2 (simplified check for now)
-      const gifExists = true; // Placeholder - implement actual R2 check
-
-      if (!gifExists) {
+      // The key must be an object this reply's prepare step minted
+      // (`gif/<replyId>.<ext>` or `audio/<replyId>.<ext>`) and actually
+      // present in R2: otherwise any reachable object could be attached.
+      if (!gifKey.startsWith(`gif/${replyId}.`) && !gifKey.startsWith(`audio/${replyId}.`)) {
+        return c.json({ error: 'Invalid reply media key' }, 422);
+      }
+      if (c.env.BUCKET && !(await c.env.BUCKET.head(gifKey))) {
         return c.json({ error: 'GIF not uploaded' }, 422);
       }
 
@@ -3193,7 +3250,7 @@ posts.get('/search', async (c) => {
   try {
     const query = c.req.query('q');
     const type = c.req.query('type') || 'posts';
-    const limit = Math.min(Number(c.req.query('limit') || '20'), 50);
+    const limit = clampLimit(c.req.query('limit'), 20, 50);
 
     if (!query || query.trim().length === 0) {
       return c.json({ error: 'Search query required' }, 400);
@@ -3807,7 +3864,7 @@ posts.put('/posts/:id', async (c) => {
   } catch (error: unknown) {
     const err = error as { message: string; stack?: string };
     console.error('Edit post error:', error);
-    return c.json({ error: 'Failed to edit post', details: err.message || String(error), stack: err.stack }, 500);
+    return c.json({ error: 'Failed to edit post', details: err.message || String(error) }, 500);
   }
 });
 
@@ -3917,15 +3974,19 @@ function getPriority(category: ReportCategory): 'critical' | 'high' | 'normal' {
 // Helper function to resolve mentioned usernames to {username, user_id} objects
 async function resolveMentions(db: D1Database, mentionedUsernames: string[], currentUsername: string): Promise<string> {
   if (mentionedUsernames.length === 0) return '[]';
-  const placeholders = mentionedUsernames.map(() => '?').join(',');
+  void currentUsername;
+  // Cap: one query with unbounded placeholders plus one push per mention.
+  // 200-char posts fit ~10 mentions; anything more is notification spam.
+  const capped = mentionedUsernames.slice(0, 10);
+  const placeholders = capped.map(() => '?').join(',');
   const rows = await db
     .prepare(`SELECT id, username FROM users WHERE LOWER(username) IN (${placeholders})`)
-    .bind(...mentionedUsernames.map((u) => u.toLowerCase()))
+    .bind(...capped.map((u) => u.toLowerCase()))
     .all<{ id: string; username: string }>();
   const userMap = new Map(rows.results?.map((r) => [r.username.toLowerCase(), r]) || []);
   // 同一ユーザーが大文字小文字違いなどで複数回メンションされても1件に集約する
   const seenUserIds = new Set<string>();
-  const resolved = mentionedUsernames
+  const resolved = capped
     .map((u) => {
       const user = userMap.get(u.toLowerCase());
       return user ? { username: user.username, user_id: user.id } : null;

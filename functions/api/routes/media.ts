@@ -132,6 +132,27 @@ media.put('/upload/*', requireAuth, async (c) => {
       return c.json({ error: 'Missing file key' }, 400);
     }
 
+    // Keys are path-shaped: reject traversal and unexpected characters
+    // before they reach ownership checks or R2.
+    if (key.includes('..') || key.includes('\\') || !/^[A-Za-z0-9_./-]+$/.test(key) || key.length > 256) {
+      return c.json({ error: 'Invalid key' }, 400);
+    }
+
+    // Byte ingest is the most expensive path per request: throttle uploads
+    // per user as well as per IP (GET paths are IP-throttled already).
+    // Local dev and the test server are exempt: the integration suite uploads
+    // dozens of fixtures from a single IP.
+    const isLocalEnv = c.env.ENVIRONMENT === 'test' || (c.env.BASE_URL ?? '').startsWith('http://localhost');
+    if (!isLocalEnv) {
+      const uploadIp = getClientIp(c.req.raw);
+      if (
+        !(await checkRateLimit(c.env.CACHE, `upload:user:${user.id}`, { maxRequests: 20, windowSeconds: 60 })) ||
+        !(await checkRateLimit(c.env.CACHE, `upload:ip:${uploadIp}`, { maxRequests: 60, windowSeconds: 60 }))
+      ) {
+        return c.json({ error: 'Rate limit exceeded' }, 429);
+      }
+    }
+
     // Check file size limit (25MB = 25 * 1024 * 1024 bytes)
     const maxSize = 25 * 1024 * 1024;
     if (contentLength && Number(contentLength) > maxSize) {
