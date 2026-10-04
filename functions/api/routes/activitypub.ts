@@ -26,6 +26,29 @@ async function checkInboxRateLimit(env: Bindings, req: Request): Promise<boolean
   return checkRateLimit(env.CACHE, `ap:inbox:${getClientIp(req)}`, { maxRequests: 60, windowSeconds: 60 });
 }
 
+/**
+ * Replay fingerprint for an inbox delivery (#117): the same signed request
+ * stays cryptographically valid for the ±30 minute Date window, so remember
+ * recently seen (signature, date, digest) triples in KV for 35 minutes and
+ * acknowledge repeats without re-queueing. KV failure fails open — replays
+ * are then bounded by the signature window alone.
+ */
+async function inboxReplayKey(req: Request): Promise<string | null> {
+  const sig = req.headers.get('Signature');
+  const date = req.headers.get('Date');
+  const digest = req.headers.get('Digest');
+  if (!sig || !date || !digest) return null;
+  try {
+    const bytes = new TextEncoder().encode(`${sig}\n${date}\n${digest}`);
+    const hash = await crypto.subtle.digest('SHA-256', bytes);
+    return `ap:replay:${Array.from(new Uint8Array(hash))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')}`;
+  } catch {
+    return null;
+  }
+}
+
 // GET /.well-known/webfinger - WebFinger endpoint for ActivityPub discovery (first variant)
 app.get('/.well-known/webfinger', async (c) => {
   try {
@@ -369,10 +392,27 @@ app.post('/api/inbox', async (c) => {
     if (!digestValid) {
       return c.json({ error: 'Invalid Digest' }, 401);
     }
+
+    // #117: drop exact replays of an already-accepted delivery instead of
+    // re-queueing its fan-out a second time.
+    const replayKey = await inboxReplayKey(c.req.raw);
+    if (replayKey && c.env.CACHE) {
+      try {
+        if (await c.env.CACHE.get(replayKey)) {
+          return c.json({ ok: true, duplicate: true }, 202);
+        }
+        await c.env.CACHE.put(replayKey, '1', { expirationTtl: 2100 });
+      } catch {
+        // fail open: bounded by the signature Date window alone
+      }
+    }
+    // #117: bound the fan-out surface before expanding it. Only the first
+    // entries are considered and only a handful of local targets are queued.
     const audienceValues: unknown[] = [
       ...(Array.isArray(activity.to) ? activity.to : activity.to ? [activity.to] : []),
       ...(Array.isArray(activity.cc) ? activity.cc : activity.cc ? [activity.cc] : []),
-    ];
+    ].slice(0, 50);
+    const MAX_INBOX_TARGETS = 10;
 
     // Extract usernames from URLs that canonically point at local actors.
     const targetUsernames = new Set<string>();
@@ -404,15 +444,19 @@ app.post('/api/inbox', async (c) => {
       return c.json({ ok: true }, 202);
     }
 
-    // Queue for async processing for each target
+    // Queue for async processing for each target, capped: one signed
+    // activity must not fan out to an unbounded number of queue messages.
     if (c.env.AP_DELIVERY_QUEUE) {
+      let queued = 0;
       for (const username of targetUsernames) {
+        if (queued >= MAX_INBOX_TARGETS) break;
         await c.env.AP_DELIVERY_QUEUE.send({
           type: 'inbox' as const,
           username,
           activity,
           actorId,
         });
+        queued++;
       }
     }
 
