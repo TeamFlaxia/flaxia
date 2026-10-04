@@ -142,17 +142,11 @@ export default defineConfig({
           }
           console.log('Copied @flaxia/node assets (excluding transformers.web and nudenet.js)');
 
-          const aiFile = entries.find((e) => e.name.startsWith('ai-inference'));
-          if (aiFile) {
-            const aiPath = join(crowdDest, aiFile.name);
-            const src = readFileSync(aiPath, 'utf-8');
-            const patched = src.replace(
-              /"\.\/transformers\.web-[^"]+\.js"/,
-              '"https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0/dist/transformers.web.js"',
-            );
-            writeFileSync(aiPath, patched);
-            console.log('Patched ai-inference import to use CDN');
-          }
+          // #129: no runtime CDN rewrites. A previous revision replaced the
+          // transformers import with an SRI-less jsdelivr URL; the pattern no
+          // longer matches anything and must never come back — remote code
+          // without integrity is a supply-chain hole. If the 61MB web bundle
+          // is ever needed in-browser, vendor it same-origin instead.
         }
       },
     },
