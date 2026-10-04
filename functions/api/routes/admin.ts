@@ -512,6 +512,19 @@ admin.post('/ads', requireAuth, async (c) => {
       return c.json({ error: 'title and body_text are required' }, 400);
     }
 
+    // #119: click_url is rendered to every visitor — reject non-http(s)
+    // schemes (e.g. `javascript:`) at creation, like the update paths do.
+    if (click_url) {
+      try {
+        const parsed = new URL(click_url);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          return c.json({ error: 'Invalid click_url format' }, 400);
+        }
+      } catch {
+        return c.json({ error: 'Invalid click_url format' }, 400);
+      }
+    }
+
     // Validate ad_type
     if (!ad_type || !['self_hosted', 'admax'].includes(ad_type)) {
       return c.json({ error: 'ad_type must be either "self_hosted" or "admax"' }, 400);

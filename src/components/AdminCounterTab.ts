@@ -110,18 +110,32 @@ export function createAdminCounterTab({ onNavigateToTab }: AdminCounterTabProps)
       font-size: 13px;
       color: #94a3b8;
     `;
-    details.innerHTML = `
-      <div><strong style="color: #cbd5e1;">${t('admin_counter.name')}:</strong> ${cn.name}</div>
-      <div><strong style="color: #cbd5e1;">${t('admin_counter.email')}:</strong> ${cn.email}</div>
-      <div><strong style="color: #cbd5e1;">${t('admin_counter.address')}:</strong> ${cn.address}</div>
-      <div><strong style="color: #cbd5e1;">${t('admin_counter.phone')}:</strong> ${cn.phone}</div>
-      <div style="margin-top: 8px; color: ${cn.statement ? '#22c55e' : '#ef4444'};">
-        ${cn.statement ? '✓' : '✗'} ${t('admin_counter.statement')}
-      </div>
-      <div style="color: ${cn.consent_jurisdiction ? '#22c55e' : '#ef4444'};">
-        ${cn.consent_jurisdiction ? '✓' : '✗'} ${t('admin_counter.consent')}
-      </div>
-    `;
+    // NOTE: filer-supplied values must never reach innerHTML (stored XSS, #114).
+    // Every row below is built with textContent so markup in name/email/
+    // address/phone is rendered as inert text.
+    const fieldRows: Array<[string, string]> = [
+      [t('admin_counter.name'), cn.name],
+      [t('admin_counter.email'), cn.email],
+      [t('admin_counter.address'), cn.address],
+      [t('admin_counter.phone'), cn.phone],
+    ];
+    for (const [label, value] of fieldRows) {
+      const line = document.createElement('div');
+      const strong = document.createElement('strong');
+      strong.style.color = '#cbd5e1';
+      strong.textContent = `${label}:`;
+      line.appendChild(strong);
+      line.appendChild(document.createTextNode(` ${value}`));
+      details.appendChild(line);
+    }
+    const statementRow = document.createElement('div');
+    statementRow.style.cssText = `margin-top: 8px; color: ${cn.statement ? '#22c55e' : '#ef4444'};`;
+    statementRow.textContent = `${cn.statement ? '✓' : '✗'} ${t('admin_counter.statement')}`;
+    details.appendChild(statementRow);
+    const consentRow = document.createElement('div');
+    consentRow.style.color = cn.consent_jurisdiction ? '#22c55e' : '#ef4444';
+    consentRow.textContent = `${cn.consent_jurisdiction ? '✓' : '✗'} ${t('admin_counter.consent')}`;
+    details.appendChild(consentRow);
     row.appendChild(details);
 
     const actions = document.createElement('div');
