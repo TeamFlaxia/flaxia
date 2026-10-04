@@ -13,6 +13,7 @@ import {
   computeVerifier,
   DEFAULT_SRP_KDF,
   generateSalt,
+  isCreatableSrpKdf,
   isSupportedSrpKdf,
   SRP_KDF_V1,
   SRP_KDF_V2,
@@ -94,4 +95,14 @@ test('the KDF id is an allowlist, not a passthrough', () => {
   assert.ok(!isSupportedSrpKdf(undefined));
   assert.ok(!isSupportedSrpKdf(null));
   assert.ok(!isSupportedSrpKdf(600000));
+});
+
+test('only v2 may back a newly created verifier (#89)', () => {
+  // v1 stays verifiable for pre-existing accounts, but registration and
+  // upgrade must refuse to mint new single-hash verifiers.
+  assert.ok(isCreatableSrpKdf(SRP_KDF_V2));
+  assert.ok(!isCreatableSrpKdf(SRP_KDF_V1), 'v1 must not back new verifiers');
+  assert.ok(!isCreatableSrpKdf('pbkdf2-1-v2'));
+  assert.ok(!isCreatableSrpKdf(undefined));
+  assert.ok(!isCreatableSrpKdf(null));
 });

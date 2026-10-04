@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid';
 // Extension kept explicit: this module is also imported by Node-run tests
 // (tests/security-guards.test.ts reaches it through routes/tests.ts), and Node
 // ESM does not resolve extensionless relative specifiers.
-import { isSupportedSrpKdf, serverStep1, serverStep2 } from './srp.ts';
+import { isCreatableSrpKdf, serverStep1, serverStep2 } from './srp.ts';
 
 export interface User {
   id: string;
@@ -231,7 +231,9 @@ export async function registerUser(
   const userId = nanoid();
 
   if (srp.group !== '2048') throw new Error('Unsupported SRP group');
-  if (!isSupportedSrpKdf(srp.kdf)) throw new Error('Unsupported SRP KDF');
+  // #89: new accounts must use the 600k-iteration KDF. v1 stays verifiable
+  // at login (pre-existing accounts), but must never back a new verifier.
+  if (!isCreatableSrpKdf(srp.kdf)) throw new Error('Unsupported SRP KDF');
   // Basic length sanity checks (16-byte salt, 256-byte verifier).
   if (base64ToUint8Array(srp.salt).length !== 16) throw new Error('Invalid SRP salt');
   if (base64ToUint8Array(srp.verifier).length !== 256) throw new Error('Invalid SRP verifier');
@@ -362,7 +364,8 @@ export async function verifySrpLogin(
 // The server never derives x itself; it only records what the client computed.
 export async function upgradeSrp(env: Env, userId: string, srp: SrpRegistration): Promise<void> {
   if (srp.group !== '2048') throw new Error('Unsupported SRP group');
-  if (!isSupportedSrpKdf(srp.kdf)) throw new Error('Unsupported SRP KDF');
+  // #89: upgrades and v1→v2 migrations must also land on v2, never mint v1.
+  if (!isCreatableSrpKdf(srp.kdf)) throw new Error('Unsupported SRP KDF');
   if (base64ToUint8Array(srp.salt).length !== 16) throw new Error('Invalid SRP salt');
   if (base64ToUint8Array(srp.verifier).length !== 256) throw new Error('Invalid SRP verifier');
   const result = await env.DB.prepare(
