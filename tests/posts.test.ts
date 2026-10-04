@@ -1003,3 +1003,40 @@ describe('GET /api/posts?username= — visibility', () => {
     assert.ok(!body.posts.some((post) => post.id === postId), 'pending posts must stay private');
   });
 });
+
+describe('PUT /api/posts/:id — authorization', () => {
+  beforeEach(resetDb);
+
+  async function createTextPost(cookie: string, text: string): Promise<string> {
+    const res = await fetch(`${BASE_URL}/api/posts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ text }),
+    });
+    assert.equal(res.status, 201);
+    return ((await res.json()) as { id: string }).id;
+  }
+
+  it("rejects editing another user's post → 403", async () => {
+    const { cookie: ownerCookie } = await seedUserAndLogin('put-owner');
+    const { cookie: otherCookie } = await seedUserAndLogin('put-other');
+    const id = await createTextPost(ownerCookie, 'not yours');
+    const res = await fetch(`${BASE_URL}/api/posts/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: otherCookie },
+      body: JSON.stringify({ text: 'hijacked' }),
+    });
+    assert.equal(res.status, 403);
+  });
+
+  it('rejects unauthenticated edit → 401', async () => {
+    const { cookie } = await seedUserAndLogin('put-owner2');
+    const id = await createTextPost(cookie, 'mine');
+    const res = await fetch(`${BASE_URL}/api/posts/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: 'anon edit' }),
+    });
+    assert.equal(res.status, 401);
+  });
+});

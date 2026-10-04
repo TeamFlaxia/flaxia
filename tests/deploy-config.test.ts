@@ -9,7 +9,7 @@
 // suites run against a local database with migrations already applied — so
 // the flag is asserted here instead.
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { test } from 'node:test';
 
 const PKG_URL = new URL('../package.json', import.meta.url);
@@ -79,4 +79,26 @@ test('CSP script-src stays explicit (no unsafe-eval, no scheme allowlist)', asyn
   for (const host of ['https://cdn.jsdelivr.net', 'https://unpkg.com']) {
     assert.ok(scriptSrc.includes(host), `script-src must keep ${host} (runtime-loaded libs)`);
   }
+});
+
+test('bundles stay within budget (initial entry + total JS)', async () => {
+  const assets = new URL('../dist/assets/', import.meta.url);
+  let files: string[];
+  try {
+    files = await readdir(assets);
+  } catch {
+    console.log('skip: dist/ not built (run npm run build first)');
+    return;
+  }
+  const js = files.filter((f) => f.endsWith('.js'));
+  let total = 0;
+  let entry = 0;
+  for (const f of js) {
+    const size = (await stat(new URL(f, assets))).size;
+    total += size;
+    if (/^main-[A-Za-z0-9_-]+\.js$/.test(f)) entry = size;
+  }
+  assert.ok(entry > 0, 'expected a main-* entry chunk in dist/assets');
+  assert.ok(entry <= 200 * 1024, `initial entry grew past budget: ${entry} bytes`);
+  assert.ok(total <= 2 * 1024 * 1024, `total client JS grew past budget: ${total} bytes`);
 });
