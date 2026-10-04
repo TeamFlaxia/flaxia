@@ -28,6 +28,11 @@ export interface CrowdEnv {
   CROWD_API_KEY?: string;
   /** Optional dedicated callback secret; falls back to the API key. */
   CROWD_WEBHOOK_SECRET?: string;
+  /**
+   * Ops kill-switch: when '1', screening/embedding submissions are skipped
+   * (embeds queue for later) so a Crowd outage can be shed without a deploy.
+   */
+  CROWD_SCREENING_DISABLED?: string;
   FILE_SCAN_CLAMAV_IMAGE?: string;
   FILE_SCAN_VIDEO_PHASH_IMAGE?: string;
   BASE_URL?: string;
@@ -52,6 +57,8 @@ export interface CrowdConfig {
    * deployment must reject unsigned callbacks instead of accepting anything.
    */
   allowUnsignedCallbacks: boolean;
+  /** Ops kill-switch (CROWD_SCREENING_DISABLED=1): shed Crowd load on outage. */
+  screeningDisabled: boolean;
 }
 
 export const IMAGE_KEY_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
@@ -94,7 +101,15 @@ export function crowdConfig(env: CrowdEnv): CrowdConfig {
   // Without a secret, unsigned callbacks are only tolerated when the instance
   // is a local dev/test server. Production fails closed.
   const allowUnsignedCallbacks = !configured && /^http:\/\/localhost(:\d+)?$/.test(baseUrl);
-  return { orchestratorUrl, apiKey, baseUrl, webhookSecret, configured, allowUnsignedCallbacks };
+  return {
+    orchestratorUrl,
+    apiKey,
+    baseUrl,
+    webhookSecret,
+    configured,
+    allowUnsignedCallbacks,
+    screeningDisabled: env.CROWD_SCREENING_DISABLED === '1',
+  };
 }
 
 /** Build a client, or null when Crowd is unconfigured (calls become no-ops). */
@@ -236,6 +251,8 @@ export async function submitDetectNsfw(
 ): Promise<boolean> {
   const config = crowdConfig(env);
   if (!config.configured || !mediaKey || !isImageKey(mediaKey)) return false;
+  // Ops kill-switch: shed screening load during a Crowd outage.
+  if (config.screeningDisabled) return false;
 
   const dedupeKey = postId + ' ' + mediaKey;
   if (nsfwScanPosts.has(dedupeKey)) return false;
@@ -437,7 +454,7 @@ export async function embedPost(
   embeddingPosts.add(postId);
   try {
     const config = crowdConfig(env);
-    if (!config.configured) {
+    if (!config.configured || config.screeningDisabled) {
       await enqueuePendingEmbed(db, postId, text);
       return;
     }
