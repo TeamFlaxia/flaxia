@@ -52,7 +52,17 @@ function ensureStorageBroker(sandboxOrigin: string): Promise<HTMLIFrameElement> 
   return pending;
 }
 
-export async function loadLegacyGameStorage(sandboxOrigin: string): Promise<Record<string, string>> {
+// Storage namespace: one game's keys must never be visible to another (#118).
+// The post id doubles as the namespace; the broker prefixes every key with it.
+function namespaceFor(postId: string): string | null {
+  if (typeof postId !== 'string' || postId.length === 0 || postId.length > 128) return null;
+  if (!/^[A-Za-z0-9_-]+$/.test(postId)) return null;
+  return postId;
+}
+
+export async function loadLegacyGameStorage(sandboxOrigin: string, postId: string): Promise<Record<string, string>> {
+  const namespace = namespaceFor(postId);
+  if (!namespace) throw new Error('Invalid game storage namespace');
   const iframe = await ensureStorageBroker(sandboxOrigin);
   const origin = brokerOriginFor(sandboxOrigin);
   const id = `snapshot-${++requestId}`;
@@ -94,13 +104,15 @@ export async function loadLegacyGameStorage(sandboxOrigin: string): Promise<Reco
     }
 
     window.addEventListener('message', onMessage);
-    iframe.contentWindow?.postMessage({ type: 'FLAXIA_STORAGE_READ', requestId: id }, origin);
+    iframe.contentWindow?.postMessage({ type: 'FLAXIA_STORAGE_READ', requestId: id, namespace }, origin);
   });
 }
 
-export function connectGameStorage(iframe: HTMLIFrameElement, sandboxOrigin: string): () => void {
+export function connectGameStorage(iframe: HTMLIFrameElement, sandboxOrigin: string, postId: string): () => void {
+  const namespace = namespaceFor(postId);
   const brokerOrigin = brokerOriginFor(sandboxOrigin);
   const onMessage = (event: MessageEvent<StorageMessage>) => {
+    if (!namespace) return;
     if (event.source !== iframe.contentWindow || event.origin !== 'null') return;
     const data = event.data;
     if (data?.type !== 'FLAXIA_GAME_STORAGE_WRITE') return;
@@ -109,11 +121,15 @@ export function connectGameStorage(iframe: HTMLIFrameElement, sandboxOrigin: str
 
     const operation = data.operation;
     if (operation === 'clear') {
-      broker.contentWindow.postMessage({ type: 'FLAXIA_STORAGE_CLEAR' }, brokerOrigin);
+      broker.contentWindow.postMessage({ type: 'FLAXIA_STORAGE_CLEAR', namespace }, brokerOrigin);
     } else if (operation === 'set' && typeof data.key === 'string' && typeof data.value === 'string') {
-      broker.contentWindow.postMessage({ type: 'FLAXIA_STORAGE_SET', key: data.key, value: data.value }, brokerOrigin);
+      if (data.key.length > 512 || data.value.length > 100_000) return;
+      broker.contentWindow.postMessage(
+        { type: 'FLAXIA_STORAGE_SET', namespace, key: data.key, value: data.value },
+        brokerOrigin,
+      );
     } else if (operation === 'remove' && typeof data.key === 'string') {
-      broker.contentWindow.postMessage({ type: 'FLAXIA_STORAGE_REMOVE', key: data.key }, brokerOrigin);
+      broker.contentWindow.postMessage({ type: 'FLAXIA_STORAGE_REMOVE', namespace, key: data.key }, brokerOrigin);
     }
   };
 
