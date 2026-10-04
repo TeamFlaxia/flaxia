@@ -97,6 +97,9 @@ export async function executeFlash(
 
     var script = document.createElement('script');
     script.src = 'https://unpkg.com/@ruffle-rs/ruffle@0.1.0-nightly.2025.3.8/ruffle.js';
+    // #95: pin the exact nightly with SRI — unpkg serves it byte-stable.
+    script.integrity = 'sha384-w75+P3sM7trOxKqGYRXCs9wo5AHk7ArjlnQXp/0lg3snxMjUW+FWDm90ItjUnNks';
+    script.crossOrigin = 'anonymous';
     script.onload = function() {
       ruffleLoaded = true;
       tryStart();
