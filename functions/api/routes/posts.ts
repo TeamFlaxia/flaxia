@@ -32,7 +32,15 @@ import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
-import { batchGetFreshAndBookmarkStatus, kvCacheGet, kvCacheSet, makeCacheKey, requireAuth } from '../helpers';
+import {
+  addBusinessDays,
+  batchGetFreshAndBookmarkStatus,
+  kvCacheGet,
+  kvCacheSet,
+  makeCacheKey,
+  requireAuth,
+  resolveMentions,
+} from '../helpers';
 import type { ActorData, Bindings, PollOptionRow, PollRow, PostRow, Variables } from '../types';
 import { extractGameDescription } from './post-versions';
 import { cosineSimilarity, loadOrComputeInterestVector } from './recommender';
@@ -3887,35 +3895,6 @@ posts.get('/posts/:id', async (c) => {
   }
 });
 
-// Helper function to resolve mentioned usernames to {username, user_id} objects
-async function resolveMentions(db: D1Database, mentionedUsernames: string[], currentUsername: string): Promise<string> {
-  if (mentionedUsernames.length === 0) return '[]';
-  void currentUsername;
-  // Cap: one query with unbounded placeholders plus one push per mention.
-  // 200-char posts fit ~10 mentions; anything more is notification spam.
-  const capped = mentionedUsernames.slice(0, 10);
-  const placeholders = capped.map(() => '?').join(',');
-  const rows = await db
-    .prepare(`SELECT id, username FROM users WHERE LOWER(username) IN (${placeholders})`)
-    .bind(...capped.map((u) => u.toLowerCase()))
-    .all<{ id: string; username: string }>();
-  const userMap = new Map(rows.results?.map((r) => [r.username.toLowerCase(), r]) || []);
-  // 同一ユーザーが大文字小文字違いなどで複数回メンションされても1件に集約する
-  const seenUserIds = new Set<string>();
-  const resolved = capped
-    .map((u) => {
-      const user = userMap.get(u.toLowerCase());
-      return user ? { username: user.username, user_id: user.id } : null;
-    })
-    .filter((m): m is { username: string; user_id: string } => m !== null)
-    .filter((m) => {
-      if (seenUserIds.has(m.user_id)) return false;
-      seenUserIds.add(m.user_id);
-      return true;
-    });
-  return JSON.stringify(resolved);
-}
-
 // Helper function to insert admin alert
 async function insertAdminAlert(
   db: D1Database,
@@ -4156,18 +4135,6 @@ async function enrichPostsWithReactions(
     post.reactions = grouped.get(post.id) || [];
   }
 }
-// Helper: add N business days to a date (weekdays only, no holiday calendar)
-function addBusinessDays(date: Date, days: number): Date {
-  const d = new Date(date);
-  let added = 0;
-  while (added < days) {
-    d.setDate(d.getDate() + 1);
-    const dow = d.getDay();
-    if (dow !== 0 && dow !== 6) added++;
-  }
-  return d;
-}
-
 // POST /api/posts/:id/counter-notice - file a DMCA counter-notification (protected)
 posts.post('/posts/:id/counter-notice', requireAuth, async (c) => {
   try {
