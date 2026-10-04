@@ -1,0 +1,12 @@
+-- Bind every NudeNet verdict to the bytes it screened.
+--
+-- Media keys are deterministic (gif/{postId}/{position}.{ext}) and the upload
+-- endpoint overwrites the same key in place, so a verdict keyed only on
+-- (post_id, media_key) kept vouching for an image swapped in after the scan:
+-- submitDetectNsfw skipped objects already marked done. crowd.ts now stores the
+-- SHA-256 of the screened object here, re-screens when it changes, and rejects
+-- a callback whose task id no longer matches the row.
+--
+-- The runtime bootstrap (ensureNsfwScansTable in functions/lib/crowd.ts) adds
+-- the same column for databases created outside the migration path.
+ALTER TABLE post_nsfw_scans ADD COLUMN content_sha TEXT;

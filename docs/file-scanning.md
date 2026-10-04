@@ -99,7 +99,10 @@ GIF ≤ 16 MP, PDF text ≤ 256 KB.
   local/private hosts. With the orchestrator unconfigured (local dev) the row
   is marked `skipped / orchestrator_unconfigured`; with an orchestrator but no
   ClamAV image it is marked `skipped / scan_image_unconfigured` so the gap is
-  visible instead of leaving uploads pending forever.
+  visible instead of leaving uploads pending forever. Files larger than the
+orchestrator's task-body cap (base64 inflates ~4/3, so ~768 KiB at the stock
+1 MiB limit) are marked `skipped / too_large` instead of a 413 that leaves them
+unscanned (`clamavMaxBytes`, overridable via `CROWD_MAX_PAYLOAD_BYTES`).
 - The callback URL carries `type=file-scan`, `key=<r2Key>`, `kind=clamav|video-phash`
   and `sha=<first 16 hex of sha256>`; a callback whose sha prefix no longer
   matches the row is ignored (guards stale verdicts after re-upload).

@@ -97,7 +97,14 @@ describe('file scan verdict races', () => {
 
     await ensureFileScansTable(db);
     await upsertFileScan(db, key, features(data));
-    const res = await handleCrowdWebhook(cleanCallback(key, sha.slice(0, 16)), { CACHE: cache }, db);
+    // BASE_URL marks this as a local dev/test deployment, which is the only
+    // place crowdConfig() tolerates unsigned callbacks; without it the webhook
+    // is rejected 401 before the clean path runs and the test proves nothing.
+    const res = await handleCrowdWebhook(
+      cleanCallback(key, sha.slice(0, 16)),
+      { CACHE: cache, BASE_URL: 'http://localhost' },
+      db,
+    );
     assert.equal(res.status, 200);
 
     assert.equal((await getFileScan(db, key))?.status, 'infected', 'the infection must stay sticky');

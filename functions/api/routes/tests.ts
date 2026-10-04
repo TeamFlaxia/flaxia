@@ -169,12 +169,13 @@ app.get('/api/test/nsfw-scans', requireTestEnvironment, async (c) => {
   const db = c.env.DB;
   const rows = await db
     .prepare(
-      `SELECT post_id, media_key, task_id, status, created_at, scanned_at FROM post_nsfw_scans ORDER BY created_at DESC`,
+      `SELECT post_id, media_key, task_id, content_sha, status, created_at, scanned_at FROM post_nsfw_scans ORDER BY created_at DESC`,
     )
     .all<{
       post_id: string;
       media_key: string;
       task_id: string;
+      content_sha: string | null;
       status: string;
       created_at: string;
       scanned_at: string;
