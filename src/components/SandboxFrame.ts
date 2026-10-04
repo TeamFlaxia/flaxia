@@ -17,6 +17,10 @@ export function createSandboxFrame(props: SandboxFrameProps): HTMLElement {
 
   const messageHandler = (event: MessageEvent) => {
     if (event.origin !== props.sandboxOrigin) return;
+    // #126: origin alone is not enough — every game card shares the sandbox
+    // origin, so a message must also come from THIS card's frame, otherwise
+    // one game could forge another card's scores and multiplayer actions.
+    if (event.source !== iframe.contentWindow) return;
 
     const data = event.data as Record<string, unknown>;
 
