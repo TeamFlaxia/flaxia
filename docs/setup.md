@@ -90,7 +90,7 @@ pnpm test:tags
 
 ## Local Test Accounts
 
-See `local-test-accounts.md` for credentials.
+See `local-test-accounts.md` for how to create a local test account (no shared passwords).
 
 ## Configuration Files
 
