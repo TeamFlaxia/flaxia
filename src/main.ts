@@ -14,6 +14,13 @@ import { canRunFlaxiaNode, initCrowdNode, notifyCrowdConsentChanged } from './li
 import { initI18n, t } from './lib/i18n.js';
 import { lazyCreateBottomNav, lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from './lib/lazy-nav.js';
 import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
+import {
+  clearNativeBadge,
+  initNativeNotify,
+  initNativePushRegistration,
+  notifyViaTauri,
+  setNativeBadge,
+} from './lib/native-notify.js';
 import { fetchNotifications, invalidateNotificationsCache } from './lib/notifications-api.js';
 import { hidePageLoader, showPageLoader, showPageLoaderFailure } from './lib/page-loader.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
@@ -149,78 +156,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     } | null = null;
     let unreadNotificationCount = 0;
 
-    let tauriNotify: ((title: string, body: string) => Promise<void>) | null = null;
-    let tauriBadge: ((count: number) => Promise<void>) | null = null;
-    let tauriSetNotificationCount: ((count: number) => Promise<void>) | null = null;
-    let capacitorNotify: ((title: string, body: string) => Promise<void>) | null = null;
-    let capacitorBadge: ((count: number) => Promise<void>) | null = null;
-
-    const initTauriNotifications = async () => {
-      try {
-        const { isPermissionGranted, requestPermission, sendNotification } = await import(
-          '@tauri-apps/plugin-notification'
-        );
-
-        try {
-          const granted = await isPermissionGranted();
-          if (!granted) {
-            await requestPermission();
-          }
-        } catch {
-          // permission API not supported on this platform — proceed anyway
-        }
-
-        tauriNotify = async (title: string, body: string) => {
-          try {
-            await sendNotification({ title, body: body || title });
-          } catch (err) {
-            console.error('[notif] sendNotification failed:', err);
-          }
-        };
-      } catch {
-        console.log('[notif] Tauri notification plugin not available — OS notifications disabled');
-      }
-    };
-
-    /** Dock/taskbar badge + tray icon badge — independent of the notification plugin. */
-    const initTauriBadge = async () => {
-      const isTauriEnv = typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__);
-
-      if (!isTauriEnv) {
-        console.log('[badge] Not in Tauri environment — skipping badge init');
-        return;
-      }
-
-      // Dock/taskbar badge count (macOS, Windows, some Linux DEs)
-      try {
-        const { getCurrentWindow } = await import('@tauri-apps/api/window');
-        tauriBadge = async (count: number) => {
-          try {
-            await getCurrentWindow().setBadgeCount(count);
-          } catch (err) {
-            console.log('[badge] setBadgeCount failed:', err);
-          }
-        };
-      } catch {
-        console.log('[badge] @tauri-apps/api/window not available');
-      }
-
-      // Desktop tray icon: invoke Rust set_notification_count
-      if (!/Android/i.test(navigator.userAgent)) {
-        try {
-          const { invoke } = await import('@tauri-apps/api/core');
-          tauriSetNotificationCount = async (count: number) => {
-            try {
-              await invoke('set_notification_count', { count });
-            } catch (err) {
-              console.log('[badge] invoke error:', err);
-            }
-          };
-        } catch {
-          console.log('[badge] @tauri-apps/api/core not available');
-        }
-      }
-    };
+    // Native notification platforms (see src/lib/native-notify.ts)
 
     /// WebSocket 経由のプッシュ通知を受け取り OS 通知を表示する
     /// (接続管理・backoff は src/lib/push-socket.ts)
@@ -254,116 +190,19 @@ document.addEventListener('DOMContentLoaded', async () => {
               unreadNotificationCount = data.unread_count;
               updateBadgeUI();
             }
-            if (data.push && typeof tauriNotify === 'function') {
-              tauriNotify(data.push.title, data.push.body);
+            if (data.push) {
+              notifyViaTauri(data.push.title, data.push.body);
             }
             // OS 通知の表示は Push (FCM / Web Push) が担当する。
             // Tauri には Push サービスが無いため WebSocket 経由でのみ表示する。
           } else if (data.title) {
-            if (typeof tauriNotify === 'function') {
-              tauriNotify(data.title, data.body || 'New notification');
-            }
+            notifyViaTauri(data.title, data.body || 'New notification');
             refreshNotificationBadges();
           }
         },
       },
     );
     const connectPushWebSocket = () => pushSocket.connect();
-
-    const initCapacitorNotifications = async () => {
-      try {
-        const isNative =
-          typeof window !== 'undefined' &&
-          typeof window.Capacitor !== 'undefined' &&
-          typeof window.Capacitor.isNativePlatform === 'function' &&
-          window.Capacitor.isNativePlatform();
-        if (!isNative) return;
-
-        const { LocalNotifications } = await import('@capacitor/local-notifications');
-        const { Badge } = await import('@capawesome/capacitor-badge');
-
-        await LocalNotifications.requestPermissions();
-
-        try {
-          await LocalNotifications.createChannel({
-            id: 'flaxia_notifications',
-            name: 'Flaxia Notifications',
-            importance: 5,
-            sound: 'default',
-            visibility: 1,
-          });
-        } catch {
-          // channel may already exist
-        }
-
-        let notifId = 0;
-        capacitorNotify = async (title: string, body: string) => {
-          try {
-            notifId = (notifId + 1) % 2147483647;
-            await LocalNotifications.schedule({
-              notifications: [
-                {
-                  title,
-                  body,
-                  id: notifId,
-                  channelId: 'flaxia_notifications',
-                  smallIcon: 'ic_stat_flaxia',
-                },
-              ],
-            });
-          } catch (err) {
-            console.error('[notif] Capacitor sendNotification failed:', err);
-          }
-        };
-
-        capacitorBadge = async (count: number) => {
-          try {
-            await Badge.set({ count });
-          } catch {
-            // badge not supported
-          }
-        };
-      } catch {
-        // Not running in Capacitor
-      }
-    };
-
-    const initCapacitorPushRegistration = async () => {
-      if (!isCapacitorNative) return;
-      try {
-        const { PushNotifications } = await import('@capacitor/push-notifications');
-        await PushNotifications.requestPermissions();
-        await PushNotifications.register();
-
-        await PushNotifications.addListener('registration', (token) => {
-          fetch('/api/push/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ type: 'fcm', endpoint: token.value }),
-          }).catch((err) => console.error('[push] FCM register failed:', err));
-        });
-
-        await PushNotifications.addListener('registrationError', (err) => {
-          console.error('[push] FCM registration error:', err);
-        });
-
-        await PushNotifications.addListener('pushNotificationReceived', (notification) => {
-          if (notification.title && typeof capacitorNotify === 'function') {
-            capacitorNotify(notification.title, notification.body || '');
-          }
-        });
-
-        await PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
-          const clickUrl = action.notification?.data?.click_url;
-          if (clickUrl) {
-            window.location.href = clickUrl;
-          }
-        });
-      } catch {
-        console.log('[push] @capacitor/push-notifications not available');
-      }
-    };
 
     /** Register Web Push in browser (Service Worker), or skip in Tauri/Capacitor. */
     /** Convert VAPID base64 key to Uint8Array for PushManager.subscribe(). */
@@ -438,17 +277,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       });
 
-      if (capacitorBadge) {
-        capacitorBadge(unreadNotificationCount);
-      } else if (tauriBadge) {
-        tauriBadge(unreadNotificationCount);
-      }
-
-      if (tauriSetNotificationCount) {
-        tauriSetNotificationCount(unreadNotificationCount).catch((err) => {
-          console.log('[badge] set_notification_count failed:', err);
-        });
-      }
+      setNativeBadge(unreadNotificationCount);
     };
 
     const refreshNotificationBadges = async () => {
@@ -1522,17 +1351,12 @@ document.addEventListener('DOMContentLoaded', async () => {
               unreadNotificationCount = 0;
               // キャッシュをクリアして次回のfetchで最新データを取得
               invalidateNotificationsCache();
+              await clearNativeBadge();
               leftNavInstances.forEach((ln) => {
                 if (typeof ln.setUnreadCount === 'function') {
                   ln.setUnreadCount(0);
                 }
               });
-              if (capacitorBadge) {
-                await capacitorBadge(0);
-              }
-              if (tauriBadge) {
-                await tauriBadge(0);
-              }
             },
             onNavigateToPost: (postId) => {
               window.history.pushState({}, '', `/thread/${postId}`);
@@ -1953,10 +1777,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     deferInit(async () => {
       // Defer platform-specific notification init (not critical for first paint)
-      initTauriNotifications().catch(() => {});
-      initTauriBadge().catch(() => {});
-      initCapacitorNotifications().catch(() => {});
-      initCapacitorPushRegistration().catch(() => {});
+      initNativeNotify().catch(() => {});
+      initNativePushRegistration().catch(() => {});
 
       if (!canRunFlaxiaNode()) return;
 
