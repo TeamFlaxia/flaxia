@@ -10,7 +10,8 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { type CrowdEnv, crowdConfig, getCrowdClient, signedCallbackUrl } from '../crowd.ts';
-import { ensureFileScansTable, getFileScan, setScanStatus, setScanTask } from './db.ts';
+import { ensureFileScansTable, getFileScan, setScanStatus, setScanTask, upsertFileScan } from './db.ts';
+import { extractFileFeatures } from './features.ts';
 import { extensionOf } from './mime.ts';
 
 /**
@@ -70,7 +71,21 @@ export async function submitFileScans(
 ): Promise<void> {
   try {
     await ensureFileScansTable(db);
-    const row = await getFileScan(db, r2Key);
+    let row = await getFileScan(db, r2Key);
+    if (!row) {
+      // #85: the sync upsert may have failed while the upload itself passed.
+      // Without a row the scan would silently never happen, so rebuild the
+      // pending row from the bytes in hand instead of returning early.
+      // A row that already reached a terminal state is left alone.
+      try {
+        const raw = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+        await upsertFileScan(db, r2Key, await extractFileFeatures(raw, mime));
+        row = await getFileScan(db, r2Key);
+      } catch (e) {
+        console.error(`File scan row rebuild failed for ${r2Key}:`, e);
+        return;
+      }
+    }
     if (!row || row.status !== 'pending') return;
 
     const config = crowdConfig(env);
