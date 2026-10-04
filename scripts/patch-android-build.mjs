@@ -83,16 +83,20 @@ const keystorePassword = process.env.ANDROID_KEYSTORE_PASSWORD;
 const keyAlias = process.env.ANDROID_KEY_ALIAS;
 const keyPassword = process.env.ANDROID_KEY_PASSWORD;
 
+// #106: Groovy single-quoted strings treat backslash as the escape
+// character, so escape backslashes first — otherwise a trailing backslash
+// would escape the closing quote and corrupt the build file.
+const gradleEscape = (s) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 if (keystoreFile && keystorePassword && keyAlias && keyPassword) {
   content = content.replace(
     /android\s*\{/,
     `android {
     signingConfigs {
         release {
-            storeFile file('${keystoreFile.replace(/'/g, "\\'")}')
-            storePassword '${keystorePassword.replace(/'/g, "\\'")}'
-            keyAlias '${keyAlias.replace(/'/g, "\\'")}'
-            keyPassword '${keyPassword.replace(/'/g, "\\'")}'
+            storeFile file('${gradleEscape(keystoreFile)}')
+            storePassword '${gradleEscape(keystorePassword)}'
+            keyAlias '${gradleEscape(keyAlias)}'
+            keyPassword '${gradleEscape(keyPassword)}'
         }
     }`,
   );
