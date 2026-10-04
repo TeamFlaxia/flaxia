@@ -172,9 +172,17 @@ export async function initNativePushRegistration(): Promise<void> {
     });
 
     await PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
+      // #105: same gate as the service worker — no javascript: URLs, no
+      // off-origin navigation from notification payloads.
       const clickUrl = action.notification?.data?.click_url;
-      if (clickUrl) {
-        window.location.href = clickUrl;
+      if (typeof clickUrl !== 'string' || clickUrl.length === 0 || clickUrl.length > 2048) return;
+      try {
+        const parsed = new URL(clickUrl, window.location.origin);
+        if (parsed.origin !== window.location.origin) return;
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return;
+        window.location.href = parsed.pathname + parsed.search + parsed.hash || '/';
+      } catch {
+        // ignore malformed URLs
       }
     });
   } catch {
