@@ -15,7 +15,8 @@ describe('ALLOWED_EXTENSIONS map', () => {
     assert.equal(ALLOWED_EXTENSIONS['.jpg'], 'image/jpeg');
     assert.equal(ALLOWED_EXTENSIONS['.gif'], 'image/gif');
     assert.equal(ALLOWED_EXTENSIONS['.webp'], 'image/webp');
-    assert.equal(ALLOWED_EXTENSIONS['.svg'], 'image/svg+xml');
+    // H-4/M-5: scriptable SVG stays out of game ZIPs.
+    assert.ok(!('.svg' in ALLOWED_EXTENSIONS));
   });
 
   it('includes font extensions', () => {
@@ -60,7 +61,7 @@ describe('isExtensionAllowed', () => {
     assert.ok(isExtensionAllowed('image.jpeg'));
     assert.ok(isExtensionAllowed('image.gif'));
     assert.ok(isExtensionAllowed('image.webp'));
-    assert.ok(isExtensionAllowed('image.svg'));
+    assert.ok(!isExtensionAllowed('image.svg'), 'scriptable SVG must stay out (H-4/M-5)');
     assert.ok(isExtensionAllowed('favicon.ico'));
   });
 
