@@ -10,6 +10,7 @@
 // the flag is asserted here instead.
 import assert from 'node:assert/strict';
 import { readdir, readFile, stat } from 'node:fs/promises';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
 const PKG_URL = new URL('../package.json', import.meta.url);
@@ -101,4 +102,57 @@ test('bundles stay within budget (initial entry + total JS)', async () => {
   assert.ok(entry > 0, 'expected a main-* entry chunk in dist/assets');
   assert.ok(entry <= 200 * 1024, `initial entry grew past budget: ${entry} bytes`);
   assert.ok(total <= 2 * 1024 * 1024, `total client JS grew past budget: ${total} bytes`);
+});
+
+test('every env binding used in code exists in wrangler.toml (prod parity)', async () => {
+  const root = new URL('..', import.meta.url).pathname;
+  const wrangler = await readFile(join(root, 'wrangler.toml'), 'utf8');
+  const declared = new Set<string>();
+  for (const m of wrangler.matchAll(/(?:binding|queue)\s*=\s*"([A-Z][A-Z0-9_]*)"/g)) declared.add(m[1]);
+  for (const m of wrangler.matchAll(/(?:^|[\s[])name\s*=\s*"([A-Z][A-Z0-9_]*)"/gm)) declared.add(m[1]);
+  for (const m of wrangler.matchAll(/^#?\s*([A-Z][A-Z0-9_]*)\s*=/gm)) declared.add(m[1]);
+  for (const m of wrangler.matchAll(/secret put ([A-Z][A-Z0-9_]*)/g)) declared.add(m[1]);
+
+  // Test-only or gracefully-optional bindings: absent in production on purpose.
+  const knownOptional = new Map<string, string>([
+    ['DB_TEST', 'used only by the /api/test/reset helper'],
+    ['HF_TOKEN', 'dataset export skips HuggingFace upload without it'],
+    ['HF_REPO', 'dataset export skips HuggingFace upload without it'],
+    ['EXPORT_BUCKET', 'dataset export artifact falls back when unset'],
+    ['EXPORT_KV', 'dataset export artifact falls back when unset'],
+  ]);
+
+  async function walk(dir: string): Promise<string[]> {
+    const out: string[] = [];
+    for (const e of await readdir(join(root, dir), { withFileTypes: true })) {
+      if (e.isDirectory()) out.push(...(await walk(join(dir, e.name))));
+      else if (e.name.endsWith('.ts')) out.push(join(dir, e.name));
+    }
+    return out;
+  }
+  const envNameConsts = new Map<string, string>();
+  const used = new Map<string, Set<string>>();
+  for (const f of await walk('functions')) {
+    const src = await readFile(join(root, f), 'utf8');
+    for (const m of src.matchAll(/export const ([A-Z][A-Z0-9_]*_ENV)\s*=\s*'([A-Z][A-Z0-9_]*)'/g)) {
+      envNameConsts.set(m[1], m[2]);
+    }
+    const keys = new Set<string>();
+    for (const m of src.matchAll(/(?:^|[^\w$.])(?:c\.env|env)\.([A-Z][A-Z0-9_]*)/g)) keys.add(m[1]);
+    for (const m of src.matchAll(/env\[([A-Z][A-Z0-9_]*)\]/g)) {
+      keys.add(envNameConsts.get(m[1]) ?? m[1]);
+    }
+    if (keys.size > 0) used.set(f, keys);
+  }
+  const missing: string[] = [];
+  for (const [f, keys] of used) {
+    for (const k of keys) {
+      if (!declared.has(k) && !knownOptional.has(k)) missing.push(`${f}: ${k}`);
+    }
+  }
+  assert.deepEqual(missing, [], 'env bindings used in code but missing from wrangler.toml');
+
+  // DB_TEST must stay confined to the test-reset helper.
+  const dbTestUsers = [...used].filter(([, keys]) => keys.has('DB_TEST')).map(([f]) => f);
+  assert.deepEqual(dbTestUsers, ['functions/api/routes/tests.ts'], 'DB_TEST leaked outside the test helper');
 });

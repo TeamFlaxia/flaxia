@@ -17,6 +17,8 @@ import { initPerformanceMonitoring } from './lib/performance.js';
 import { createPushSocket } from './lib/push-socket.js';
 import { initTheme } from './lib/theme.js';
 import { showToast } from './lib/toast.js';
+import { viewToBottomNavId } from './lib/view-nav.js';
+import { urlBase64ToUint8Array } from './lib/web-push.js';
 
 interface PageComponent {
   getElement(): HTMLElement;
@@ -93,27 +95,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     let bottomNav: BottomNav | null = null;
 
     /** Map a top-level view to the matching bottom-nav item id ('' = none). */
-    const viewToBottomNavId = (view: string): string => {
-      switch (view) {
-        case 'timeline':
-        case 'thread':
-          return 'home';
-        case 'explore':
-        case 'search':
-          return 'explore';
-        case 'arcade':
-          return 'arcade';
-        case 'profile':
-        case 'settings':
-        case 'bookmarks':
-          return 'account';
-        case 'notifications':
-          return 'notifications';
-        default:
-          return '';
-      }
-    };
-
     /** Shared navigation handler for the mobile bottom bar. */
     const handleBottomNavNavigate = (item: string): void => {
       if (item === 'home') {
@@ -383,13 +364,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     /** Register Web Push in browser (Service Worker), or skip in Tauri/Capacitor. */
     /** Convert VAPID base64 key to Uint8Array for PushManager.subscribe(). */
-    function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
-      const padding = '='.repeat((4 - (base64.length % 4)) % 4);
-      const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
-      const raw = atob(b64);
-      return Uint8Array.from(raw, (c) => c.charCodeAt(0));
-    }
-
     /** Register for Web Push via Service Worker (browser only). */
     const registerPushToken = async () => {
       if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
