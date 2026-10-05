@@ -395,6 +395,14 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
     assert.ok(primitives.includes('validateMnemonic'), 'recovery phrases must carry a valid checksum');
   });
 
+  it('does not read the games cache for cursor pages', () => {
+    const games = readFileSync(join(ROOT, 'functions/api/routes/games.ts'), 'utf8');
+    const cacheGuard = games.indexOf('if (!shuffle && !cursor) {');
+    const cacheRead = games.indexOf('cachedData = await c.env.CACHE?.get(cacheKey);');
+    assert.ok(cacheGuard !== -1, 'games cache reads must be limited to first pages');
+    assert.ok(cacheRead > cacheGuard, 'cursor pages must not enter the games cache-read path');
+  });
+
   it('drops arcade events for unknown games and keeps media cache short', () => {
     const games = readFileSync(join(ROOT, 'functions/api/routes/games.ts'), 'utf8');
     assert.ok(games.includes('loadValidGamePostIds'), 'arcade events must target published games');

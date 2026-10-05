@@ -37,15 +37,15 @@ games.get('/games', async (c) => {
     // cannot inflate the KV keyspace.
     const cacheKey = `games:${shuffle ? 'shuffle' : trending ? 'trending' : 'recent'}:${limit}:first`;
 
-    // Try cache only for non-shuffle requests
-    if (!shuffle) {
+    // Only first-page, non-shuffle requests can use this cache.
+    if (!shuffle && !cursor) {
       let cachedData: string | null | undefined;
       try {
         cachedData = await c.env.CACHE?.get(cacheKey);
       } catch {
         // proceed without cache on KV failure
       }
-      if (cachedData && !cursor) {
+      if (cachedData) {
         const parsed = JSON.parse(cachedData);
 
         const token = getSessionToken(c.req.raw);
