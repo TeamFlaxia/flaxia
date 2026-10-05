@@ -32,8 +32,10 @@ games.get('/games', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    // Generate cache key based on query parameters
-    const cacheKey = `games:${shuffle ? 'shuffle' : trending ? 'trending' : 'recent'}:${limit}:${cursor || 'first'}`;
+    // Generate cache key based on query parameters. Caching applies only
+    // to first pages (#143), so the client cursor never enters the key and
+    // cannot inflate the KV keyspace.
+    const cacheKey = `games:${shuffle ? 'shuffle' : trending ? 'trending' : 'recent'}:${limit}:first`;
 
     // Try cache only for non-shuffle requests
     if (!shuffle) {
@@ -574,7 +576,7 @@ games.get('/games', async (c) => {
     return c.json(responseData);
   } catch (error: unknown) {
     console.error('Games fetch error:', error);
-    return c.json({ error: 'Failed to fetch games', details: (error as { message?: string })?.message }, 500);
+    return c.json({ error: 'Failed to fetch games' }, 500);
   }
 });
 // D1 permits at most 100 bound parameters per query.
