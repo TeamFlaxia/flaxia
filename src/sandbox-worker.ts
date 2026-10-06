@@ -295,6 +295,20 @@ app.get('/api/game-storage', (c) => {
         function loadSnapshot(){
           var currentRaw=localStorage.getItem(storageKey);
           if(currentRaw!==null)return decodeSnapshot(currentRaw)||{};
+
+          var prefix=storageKey+':';
+          var prefixed={};
+          for(var i=0;i<localStorage.length;i++){
+            var key=localStorage.key(i);
+            if(key===null||key.indexOf(prefix)!==0)continue;
+            var value=localStorage.getItem(key);
+            if(value!==null)prefixed[key.slice(prefix.length)]=value;
+          }
+          if(Object.keys(prefixed).length>0){
+            localStorage.setItem(storageKey,JSON.stringify(prefixed));
+            return prefixed;
+          }
+
           var legacyRaw=localStorage.getItem(legacyKey);
           var legacy=decodeSnapshot(legacyRaw);
           if(legacy!==null){
