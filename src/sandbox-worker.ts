@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { isKeyBlocked } from '../functions/lib/scan/db';
 import { MULTIPLAYER_SDK_IIFE } from './lib/multiplayer-sdk.generated';
+import { loadMigratedGameStorage } from './lib/game-storage-migration';
 import { pdfViewerAssetBody, pdfViewerAssetHeaders } from './lib/pdf-viewer-page';
 import {
   copyHtmlToWvfs,
@@ -92,6 +93,8 @@ function withCsp(response: Response): Response {
     headers,
   });
 }
+
+const GAME_STORAGE_MIGRATION_RUNTIME = loadMigratedGameStorage.toString();
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -278,44 +281,10 @@ app.get('/api/game-storage', (c) => {
         if(!message||typeof message!=='object')return;
         var namespace=typeof message.namespace==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(message.namespace)?message.namespace:null;
         if(!namespace)return;
+        ${GAME_STORAGE_MIGRATION_RUNTIME}
         var storageKey='flaxia:game:'+namespace;
-        var legacyKey=namespace;
-        function decodeSnapshot(raw){
-          if(raw===null)return null;
-          try{
-            var parsed=JSON.parse(raw);
-            if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))return null;
-            var snapshot={};
-            for(var key in parsed){
-              if(Object.prototype.hasOwnProperty.call(parsed,key)&&typeof parsed[key]==='string')snapshot[key]=parsed[key];
-            }
-            return snapshot;
-          }catch{return null}
-        }
         function loadSnapshot(){
-          var currentRaw=localStorage.getItem(storageKey);
-          if(currentRaw!==null)return decodeSnapshot(currentRaw)||{};
-
-          var prefix=storageKey+':';
-          var prefixed={};
-          for(var i=0;i<localStorage.length;i++){
-            var key=localStorage.key(i);
-            if(key===null||key.indexOf(prefix)!==0)continue;
-            var value=localStorage.getItem(key);
-            if(value!==null)prefixed[key.slice(prefix.length)]=value;
-          }
-          if(Object.keys(prefixed).length>0){
-            localStorage.setItem(storageKey,JSON.stringify(prefixed));
-            return prefixed;
-          }
-
-          var legacyRaw=localStorage.getItem(legacyKey);
-          var legacy=decodeSnapshot(legacyRaw);
-          if(legacy!==null){
-            localStorage.setItem(storageKey,JSON.stringify(legacy));
-            return legacy;
-          }
-          return {};
+          return loadMigratedGameStorage(localStorage,namespace);
         }
         function saveSnapshot(snapshot){
           localStorage.setItem(storageKey,JSON.stringify(snapshot));
