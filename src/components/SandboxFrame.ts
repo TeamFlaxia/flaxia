@@ -1,6 +1,7 @@
-import { isParentMessage, ParentMessage } from '../lib/bridge.js';
+import type { ParentMessage } from '../lib/bridge.js';
+import { isParentMessage } from '../lib/bridge.js';
 import { MultiplayerManager } from '../lib/multiplayer-manager.js';
-import { SandboxFrameProps } from '../types/post.js';
+import type { SandboxFrameProps } from '../types/post.js';
 
 export function createSandboxFrame(props: SandboxFrameProps): HTMLElement {
   const container = document.createElement('div');
@@ -8,21 +9,26 @@ export function createSandboxFrame(props: SandboxFrameProps): HTMLElement {
 
   const iframe = document.createElement('iframe');
   iframe.className = 'sandbox-frame';
-  iframe.src = `${props.sandboxOrigin}/run/${props.postId}${props.versionId ? `?v=${props.versionId}` : ''}`;
-  iframe.sandbox = 'allow-scripts allow-forms allow-popups';
+  const gameUrl = new URL(
+    `/api/wvfs-zip/${encodeURIComponent(props.postId)}/index.html`,
+    new URL(props.sandboxOrigin).origin,
+  );
+  if (props.versionId) gameUrl.searchParams.set('v', props.versionId);
+  iframe.src = gameUrl.toString();
+  iframe.sandbox = 'allow-scripts allow-pointer-lock allow-forms allow-popups';
   iframe.allow = 'fullscreen; web-share';
   iframe.referrerPolicy = 'no-referrer';
 
   let multiplayerManager: MultiplayerManager | null = null;
 
   const messageHandler = (event: MessageEvent) => {
-    if (event.origin !== props.sandboxOrigin) return;
-    // #126: origin alone is not enough — every game card shares the sandbox
-    // origin, so a message must also come from THIS card's frame, otherwise
-    // one game could forge another card's scores and multiplayer actions.
-    if (event.source !== iframe.contentWindow) return;
+    // The game's response CSP and iframe sandbox both give it an opaque origin.
+    // Source identity is therefore the per-card boundary; the runtime schema
+    // validates the message before any game or multiplayer action is handled.
+    if (event.source !== iframe.contentWindow || event.origin !== 'null') return;
 
-    const data = event.data as Record<string, unknown>;
+    const data: unknown = event.data;
+    if (!isParentMessage(data)) return;
 
     if (data.type === 'MULTIPLAYER_CONNECT') {
       handleMultiplayerConnect(data, iframe, props, multiplayerManager, (mgr) => {
@@ -31,14 +37,12 @@ export function createSandboxFrame(props: SandboxFrameProps): HTMLElement {
       return;
     }
 
-    if (multiplayerManager && typeof data.type === 'string' && data.type.startsWith('MULTIPLAYER_')) {
-      multiplayerManager.handleGameMessage(data);
+    if (multiplayerManager && data.type.startsWith('MULTIPLAYER_')) {
+      multiplayerManager.handleGameMessage(data as unknown as Record<string, unknown>);
       return;
     }
 
-    if (!isParentMessage(data)) return;
-
-    handleSandboxMessage(data as ParentMessage, iframe);
+    handleSandboxMessage(data, iframe);
   };
 
   window.addEventListener('message', messageHandler);
@@ -57,8 +61,17 @@ export function createSandboxFrame(props: SandboxFrameProps): HTMLElement {
   return container;
 }
 
+function postToGame(iframe: HTMLIFrameElement, message: ParentMessage): void {
+  if (!isParentMessage(message)) return;
+  try {
+    iframe.contentWindow?.postMessage(message, '*');
+  } catch {
+    // ignore
+  }
+}
+
 function handleMultiplayerConnect(
-  data: Record<string, unknown>,
+  data: Extract<ParentMessage, { type: 'MULTIPLAYER_CONNECT' }>,
   iframe: HTMLIFrameElement,
   props: SandboxFrameProps,
   existing: MultiplayerManager | null,
@@ -68,32 +81,18 @@ function handleMultiplayerConnect(
     existing.disconnect();
   }
 
-  const gameId = data.gameId as string;
-  const roomId = data.roomId as string | undefined;
+  const gameId = data.gameId;
+  const roomId = data.roomId;
 
   if (!gameId) {
-    try {
-      iframe.contentWindow?.postMessage(
-        { type: 'MULTIPLAYER_ERROR', code: 'INVALID_CONFIG', message: 'gameId is required' },
-        props.sandboxOrigin,
-      );
-    } catch {
-      // ignore
-    }
+    postToGame(iframe, { type: 'MULTIPLAYER_ERROR', code: 'INVALID_CONFIG', message: 'gameId is required' });
     return;
   }
 
   joinOrCreateRoom(gameId, roomId, props.postId)
     .then((result) => {
       if (!result) {
-        try {
-          iframe.contentWindow?.postMessage(
-            { type: 'MULTIPLAYER_ERROR', code: 'ROOM_JOIN_FAILED', message: 'Failed to join room' },
-            props.sandboxOrigin,
-          );
-        } catch {
-          // ignore
-        }
+        postToGame(iframe, { type: 'MULTIPLAYER_ERROR', code: 'ROOM_JOIN_FAILED', message: 'Failed to join room' });
         return;
       }
 
@@ -103,20 +102,12 @@ function handleMultiplayerConnect(
         userId: result.userId,
         wsUrl: result.wsUrl,
         iframe,
-        sandboxOrigin: props.sandboxOrigin,
       });
       setManager(manager);
       manager.connect();
     })
     .catch(() => {
-      try {
-        iframe.contentWindow?.postMessage(
-          { type: 'MULTIPLAYER_ERROR', code: 'ROOM_JOIN_FAILED', message: 'Failed to join room' },
-          props.sandboxOrigin,
-        );
-      } catch {
-        // ignore
-      }
+      postToGame(iframe, { type: 'MULTIPLAYER_ERROR', code: 'ROOM_JOIN_FAILED', message: 'Failed to join room' });
     });
 }
 

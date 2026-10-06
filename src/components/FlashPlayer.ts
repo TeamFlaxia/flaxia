@@ -1,3 +1,4 @@
+import { buildFlashPlayerDocument } from '../lib/flash-player-document.js';
 import { t } from '../lib/i18n.js';
 
 export interface FlashPlayerHandle {
@@ -47,108 +48,14 @@ export async function executeFlash(
       flex-direction: column;
     `;
 
-    const loadFailedText = t('flash_player.load_failed');
-    const htmlContent = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>${t('flash_player.title')}</title>
-  <style>
-    body, html {
-      margin: 0;
-      padding: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-    }
-    #player {
-      width: 100%;
-      height: 100%;
-      position: relative;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    #flash-player {
-      width: 100% !important;
-      height: 100% !important;
-      position: relative;
-      max-width: 133.33vh;
-      max-height: 75vw;
-      object-fit: contain;
-    }
-  </style>
-</head>
-<body>
-  <div id="player"></div>
-  <script>
-    var swfData = null;
-    var ruffleLoaded = false;
-
-    window.addEventListener('message', function(e) {
-      if (e.data && e.data.type === 'SWF_DATA') {
-        swfData = e.data.data;
-        tryStart();
-      }
-    });
-
-    window.parent.postMessage('FLASH_IFRAME_READY', '*');
-
-    var script = document.createElement('script');
-    script.src = 'https://unpkg.com/@ruffle-rs/ruffle@0.1.0-nightly.2025.3.8/ruffle.js';
-    // #95: pin the exact nightly with SRI — unpkg serves it byte-stable.
-    script.integrity = 'sha384-w75+P3sM7trOxKqGYRXCs9wo5AHk7ArjlnQXp/0lg3snxMjUW+FWDm90ItjUnNks';
-    script.crossOrigin = 'anonymous';
-    script.onload = function() {
-      ruffleLoaded = true;
-      tryStart();
-    };
-    script.onerror = function() {
-      document.getElementById('player').innerHTML =
-        '<div style="color:#666;text-align:center;padding:20px;">Failed to load Ruffle runtime.</div>';
-    };
-    document.head.appendChild(script);
-
-    function tryStart() {
-      if (!ruffleLoaded || !swfData) return;
-
-      window.RufflePlayer = window.RufflePlayer || {};
-      var ruffle = window.RufflePlayer.newest();
-      var player = ruffle.createPlayer();
-      player.id = 'flash-player';
-      player.config = {
-        autoplay: 'on',
-        unmuteOverlay: 'visible',
-        letterbox: 'on',
-        allowScriptAccess: 'never',
-        allowNetworking: 'none',
-        maxExecutionDuration: 15,
-        frameRate: 60,
-        base: window.location.origin,
-        quality: 'high',
-        scale: 'showAll'
-      };
-
-      var container = document.getElementById('player');
-      container.appendChild(player);
-
-      player.load({ data: new Uint8Array(swfData) }).catch(function(error) {
-        console.error('Failed to load SWF:', error);
-        container.innerHTML = '<div style="color:#666;text-align:center;padding:20px;">${loadFailedText}</div>';
-      });
-    }
-  </script>
-</body>
-</html>
-    `;
+    const htmlContent = buildFlashPlayerDocument(t('flash_player.title'), t('flash_player.load_failed'));
 
     const htmlBlob = new Blob([htmlContent], { type: 'text/html' });
     const htmlBlobUrl = URL.createObjectURL(htmlBlob);
 
     const iframe = document.createElement('iframe');
     iframe.src = htmlBlobUrl;
-    iframe.sandbox = 'allow-scripts allow-pointer-lock allow-fullscreen';
+    iframe.sandbox = 'allow-scripts allow-pointer-lock allow-forms allow-popups';
     iframe.setAttribute('allow', 'fullscreen');
     iframe.setAttribute('referrerpolicy', 'no-referrer');
     iframe.style.cssText = `

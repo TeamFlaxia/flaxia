@@ -13,10 +13,11 @@ export async function onRequest(context: {
   next: () => Promise<Response>;
 }): Promise<Response> {
   // Cloudflare Pages の自動生成ドメイン (*.pages.dev) 経由では動作させない
-  const hostname = new URL(context.request.url).hostname;
+  const url = new URL(context.request.url);
+  const hostname = url.hostname;
   if (hostname.endsWith('.pages.dev')) {
-    return applySecurityHeaders(renderNotFoundPage());
+    return applySecurityHeaders(renderNotFoundPage(), url.pathname);
   }
 
-  return applySecurityHeaders(await context.next());
+  return applySecurityHeaders(await context.next(), url.pathname);
 }
