@@ -104,10 +104,6 @@ test('main CSP applies to legacy paths; game previews use sandbox.flaxia.app', a
   const sandboxWorker = await readFile(new URL('../src/sandbox-worker.ts', import.meta.url), 'utf8');
   assert.match(sandboxWorker, /app\.get\('\/zip-preview'/);
   assert.match(sandboxWorker, /ZIP_PREVIEW_CSP/);
-  assert.match(sandboxWorker, /GAME_STORAGE_MIGRATION_RUNTIME/);
-  assert.match(sandboxWorker, /loadMigratedGameStorage\\(localStorage,namespace\\)/);
-  assert.match(sandboxWorker, /var storageKey='flaxia:game:'\\+namespace/);
-  assert.match(sandboxWorker, /saveSnapshot\\(\\{\\}\\)/);
   assert.match(sandboxPreview, /src="\/zip-preview\.js"/);
   assert.match(sandboxScript, /event\.source !== window\.parent/);
   assert.match(sandboxScript, /setAttribute\('sandbox', 'allow-scripts/);

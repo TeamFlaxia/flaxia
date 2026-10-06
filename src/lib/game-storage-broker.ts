@@ -53,8 +53,8 @@ function ensureStorageBroker(sandboxOrigin: string): Promise<HTMLIFrameElement> 
 }
 
 // Storage namespace: one game's keys must never be visible to another (#118).
-// The post id selects one serialized snapshot at flaxia:game:<postId>.
-// The sandbox broker falls back to the legacy <postId> key and migrates it on read.
+// The sandbox broker reads current blobs and #118's per-key prefix in place,
+// with a legacy <postId> blob fallback; unattributed origin-wide keys are ignored.
 function namespaceFor(postId: string): string | null {
   if (typeof postId !== 'string' || postId.length === 0 || postId.length > 128) return null;
   if (!/^[A-Za-z0-9_-]+$/.test(postId)) return null;

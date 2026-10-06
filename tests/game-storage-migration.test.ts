@@ -1,6 +1,20 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { loadMigratedGameStorage, type GameStorageLike } from '../src/lib/game-storage-migration.ts';
+import {
+  clearGameStorage,
+  loadGameStorageSnapshot,
+  removeGameStorageValue,
+  setGameStorageValue,
+} from '../sandbox/game-storage-runtime.js';
+
+interface GameStorageLike {
+  readonly length: number;
+  key(index: number): string | null;
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
 
 class MemoryStorage implements GameStorageLike {
   private readonly values = new Map<string, string>();
@@ -24,78 +38,108 @@ class MemoryStorage implements GameStorageLike {
   setItem(key: string, value: string): void {
     this.values.set(key, value);
   }
+
+  removeItem(key: string): void {
+    this.values.delete(key);
+  }
 }
 
-test('new per-game blob is authoritative', () => {
+const blobKeyFor = (postId: string) => `flaxia:game:${postId}`;
+const prefixedKeyFor = (postId: string, key: string) => `${blobKeyFor(postId)}:${key}`;
+
+test('current per-game blob is authoritative and updated in place', () => {
   const postId = 'game-new';
   const storage = new MemoryStorage({
-    cuteTankSave_v2: 'shared-old',
-    [postId]: JSON.stringify({ cuteTankSave_v2: 'post-old' }),
-    ['flaxia:game:' + postId + ':cuteTankSave_v2']: 'prefixed-old',
-    ['flaxia:game:' + postId]: JSON.stringify({ cuteTankSave_v2: 'new-save' }),
+    [prefixedKeyFor(postId, 'score')]: 'stale-prefix',
+    [postId]: JSON.stringify({ score: 'stale-legacy' }),
+    [blobKeyFor(postId)]: JSON.stringify({ score: 'new-save' }),
+    unrelated: 'must-not-be-visible',
   });
 
-  assert.deepEqual(loadMigratedGameStorage(storage, postId), {
-    cuteTankSave_v2: 'new-save',
-  });
+  assert.deepEqual(loadGameStorageSnapshot(storage, postId), { score: 'new-save' });
+  setGameStorageValue(storage, postId, 'score', 'updated');
+  assert.deepEqual(JSON.parse(storage.getItem(blobKeyFor(postId)) ?? 'null'), { score: 'updated' });
 });
 
-test('current prefixed layout migrates into the new blob', () => {
+test('#118 per-key storage is read and written without copying the save', () => {
   const postId = 'game-prefixed';
-  const storage = new MemoryStorage({
-    ['flaxia:game:' + postId + ':cuteTankSave_v2']: '{"fish":"ぷりん"}',
-    ['flaxia:game:' + postId + ':volume']: '0.5',
-  });
+  const scoreKey = prefixedKeyFor(postId, 'score');
+  const volumeKey = prefixedKeyFor(postId, 'volume');
+  const storage = new MemoryStorage({ [scoreKey]: '7', [volumeKey]: '0.5' });
 
-  const snapshot = loadMigratedGameStorage(storage, postId);
+  assert.deepEqual(loadGameStorageSnapshot(storage, postId), { score: '7', volume: '0.5' });
+  assert.equal(storage.getItem(blobKeyFor(postId)), null);
 
-  assert.deepEqual(snapshot, {
-    cuteTankSave_v2: '{"fish":"ぷりん"}',
-    volume: '0.5',
-  });
-  assert.deepEqual(JSON.parse(storage.getItem('flaxia:game:' + postId) ?? 'null'), snapshot);
+  setGameStorageValue(storage, postId, 'score', '8');
+  assert.equal(storage.getItem(scoreKey), '8');
+  assert.equal(storage.getItem(blobKeyFor(postId)), null);
+  assert.deepEqual(loadGameStorageSnapshot(storage, postId), { score: '8', volume: '0.5' });
 });
 
-test('legacy postId JSON blob migrates when newer formats are absent', () => {
+test('legacy postId blob remains in place and can still be updated', () => {
   const postId = 'game-post-id';
-  const legacy = {
-    cuteTankSave_v2: '{"level":7}',
-    volume: '0.5',
-  };
-  const storage = new MemoryStorage({
-    [postId]: JSON.stringify(legacy),
-  });
+  const legacy = { score: '7', volume: '0.5' };
+  const storage = new MemoryStorage({ [postId]: JSON.stringify(legacy) });
 
-  assert.deepEqual(loadMigratedGameStorage(storage, postId), legacy);
-  assert.deepEqual(JSON.parse(storage.getItem('flaxia:game:' + postId) ?? 'null'), legacy);
+  assert.deepEqual(loadGameStorageSnapshot(storage, postId), legacy);
+  setGameStorageValue(storage, postId, 'volume', '0.75');
+  assert.deepEqual(JSON.parse(storage.getItem(postId) ?? 'null'), { score: '7', volume: '0.75' });
+  assert.equal(storage.getItem(blobKeyFor(postId)), null);
 });
 
-test('old shared storage is exposed to an unmigrated game and copied into its new blob', () => {
-  const postId = '769f7687-93e3-4990-894c-13e9268ab950';
+test('unattributed shared storage is never exposed to a game', () => {
+  const postId = 'new-game';
+  const otherPostId = 'other-game';
   const storage = new MemoryStorage({
-    cuteTankSave_v2: '{"v":3,"fish":"ぷりん"}',
     anotherLegacyGameSave: '{"score":9001}',
+    cuteTankSave_v2: '{"fish":"ぷりん"}',
+    [prefixedKeyFor(otherPostId, 'private-save')]: 'other-game-data',
   });
 
-  const snapshot = loadMigratedGameStorage(storage, postId);
+  assert.deepEqual(loadGameStorageSnapshot(storage, postId), {});
+  assert.equal(storage.getItem(blobKeyFor(postId)), null);
+  assert.equal(storage.getItem(prefixedKeyFor(otherPostId, 'private-save')), 'other-game-data');
 
-  assert.deepEqual(snapshot, {
-    cuteTankSave_v2: '{"v":3,"fish":"ぷりん"}',
-    anotherLegacyGameSave: '{"score":9001}',
-  });
-  assert.deepEqual(JSON.parse(storage.getItem('flaxia:game:' + postId) ?? 'null'), snapshot);
-
-  // Migration copies legacy data; it does not delete or rewrite the original shared keys.
-  assert.equal(storage.getItem('cuteTankSave_v2'), '{"v":3,"fish":"ぷりん"}');
+  setGameStorageValue(storage, postId, 'own-save', 'only-this-game');
+  assert.equal(storage.getItem(prefixedKeyFor(postId, 'own-save')), 'only-this-game');
   assert.equal(storage.getItem('anotherLegacyGameSave'), '{"score":9001}');
 });
 
-test('an intentionally empty new blob prevents legacy data from being resurrected', () => {
+test('removing the last prefixed key prevents a lower-priority legacy blob from returning', () => {
   const postId = 'game-cleared';
+  const oldPrefixKey = prefixedKeyFor(postId, 'score');
   const storage = new MemoryStorage({
-    cuteTankSave_v2: 'old-save',
-    ['flaxia:game:' + postId]: '{}',
+    [oldPrefixKey]: 'newer-prefix-save',
+    [postId]: JSON.stringify({ score: 'older-legacy-save' }),
   });
 
-  assert.deepEqual(loadMigratedGameStorage(storage, postId), {});
+  removeGameStorageValue(storage, postId, 'score');
+
+  assert.equal(storage.getItem(oldPrefixKey), null);
+  assert.deepEqual(loadGameStorageSnapshot(storage, postId), {});
+  assert.equal(storage.getItem(blobKeyFor(postId)), '{}');
+});
+
+test('clearing prefixed storage removes its keys and leaves an empty tombstone', () => {
+  const postId = 'game-clear';
+  const storage = new MemoryStorage({
+    [prefixedKeyFor(postId, 'score')]: '9',
+    [prefixedKeyFor(postId, 'volume')]: '0.8',
+  });
+
+  clearGameStorage(storage, postId);
+
+  assert.equal(storage.getItem(prefixedKeyFor(postId, 'score')), null);
+  assert.equal(storage.getItem(prefixedKeyFor(postId, 'volume')), null);
+  assert.deepEqual(loadGameStorageSnapshot(storage, postId), {});
+});
+
+test('broker uses the standalone browser runtime instead of stringifying a bundled function', async () => {
+  const worker = await readFile(new URL('../src/sandbox-worker.ts', import.meta.url), 'utf8');
+  const runtime = await readFile(new URL('../sandbox/game-storage-runtime.js', import.meta.url), 'utf8');
+
+  assert.match(worker, /app\.get\('\/api\/game-storage-runtime\.js'/);
+  assert.match(worker, /from '\/api\/game-storage-runtime\.js'/);
+  assert.doesNotMatch(worker, /\.toString\(\)/);
+  assert.doesNotMatch(runtime, /__name\s*\(/);
 });
