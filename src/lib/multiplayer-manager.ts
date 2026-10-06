@@ -8,8 +8,8 @@ type WsMessage =
   | { type: 'signal'; targetUserId: string; signal: { type: string; payload: unknown } }
   | { type: 'peer_data'; data: unknown };
 
-import type { ParentMessage } from './bridge.js';
-import { isParentMessage } from './bridge.js';
+import type { ParentMessage } from './bridge.ts';
+import { isParentMessage } from './bridge.ts';
 
 interface MultiplayerConfig {
   gameId: string;

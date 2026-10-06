@@ -41,9 +41,13 @@ test('migrate:local stays on the local database', async () => {
   assert.doesNotMatch(value, /--remote\b/, 'migrate:local must never touch production');
 });
 
-test('status worker migration scripts keep their explicit target', async () => {
-  assert.match(await script('migrate:status'), /--remote\b/);
-  assert.match(await script('migrate:status:local'), /--local\b/);
+test('removed status worker scripts are not advertised as runnable', async () => {
+  const pkg = JSON.parse(await readFile(PKG_URL, 'utf8')) as { scripts: Record<string, string> };
+  for (const name of ['deploy:status', 'dev:status', 'migrate:status', 'migrate:status:local']) {
+    assert.equal(pkg.scripts[name], undefined, `${name} must stay removed until the status worker is restored`);
+  }
+  const doc = await readFile(DEPLOYMENT_DOC_URL, 'utf8');
+  assert.doesNotMatch(doc, /npm run (?:deploy|dev|migrate):status(?::local)?\b/);
 });
 
 test('deployment docs run migrate:prod and verify no migrations are pending', async () => {

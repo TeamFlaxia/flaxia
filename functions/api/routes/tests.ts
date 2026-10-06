@@ -261,6 +261,31 @@ app.post('/api/test/subscription', requireTestEnvironment, async (c) => {
   return c.json({ id, userId: user.id });
 });
 
+// POST /api/test/seed-srp-v1-user - simulate an account created before KDF v2.
+// Public registration rejects sha256-v1; this test-only helper seeds the legacy
+// verifier format so the login-and-upgrade path remains covered.
+app.post('/api/test/seed-srp-v1-user', requireTestEnvironment, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    email?: string;
+    username?: string;
+    display_name?: string;
+    srp_salt?: string;
+    srp_verifier?: string;
+  };
+  if (!body.email || !body.username || !body.srp_salt || !body.srp_verifier) {
+    return c.json({ error: 'email, username, srp_salt and srp_verifier are required' }, 400);
+  }
+
+  const id = crypto.randomUUID();
+  await c.env.DB.prepare(
+    `INSERT INTO users (id, email, password_hash, username, display_name, bio, srp_salt, srp_verifier, srp_group, srp_kdf)
+     VALUES (?, ?, '', ?, ?, '', ?, ?, '2048', 'sha256-v1')`,
+  )
+    .bind(id, body.email, body.username, body.display_name ?? body.username, body.srp_salt, body.srp_verifier)
+    .run();
+  return c.json({ id }, 201);
+});
+
 // POST /api/test/seed-legacy-user - create an account that predates SRP.
 //
 // Registration is SRP-only, but the deprecated plaintext POST /api/auth/login

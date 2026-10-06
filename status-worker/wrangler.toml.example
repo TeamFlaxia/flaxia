@@ -1,7 +1,7 @@
 # status.flaxia.app 用 wrangler 設定の雛形。
 #
-# これは雛形であり wrangler は読み込まない（`--config status-worker/wrangler.toml` を
-# 参照する package.json のスクリプトは、このファイルをコピーするまで動かない）。
+# これは雛形であり wrangler は読み込まない。利用するにはこのファイルを
+# status-worker/wrangler.toml にコピーして、`--config` で指定する。
 #
 # 背景: status-worker 一式（wrangler.toml / src/index.ts / src/checks.ts /
 # public/ / migrations/）はコミット 0f0eadf "Remove status-worker and flaxia-status
@@ -18,7 +18,8 @@
 #   4. npx wrangler secret put CROWD_API_KEY        --config status-worker/wrangler.toml
 #      npx wrangler secret put STATUS_TEST_EMAIL    --config status-worker/wrangler.toml
 #      npx wrangler secret put STATUS_TEST_PASSWORD --config status-worker/wrangler.toml
-#   5. npm run migrate:status && npm run deploy:status
+#   5. npx wrangler d1 migrations apply flaxia-status --remote --config status-worker/wrangler.toml
+#      npx wrangler deploy --config status-worker/wrangler.toml
 #
 # 以下は削除前の設定（cafb7e0）から復元した値。database_id は既存 DB が
 # 残っている場合のみ再利用できる（削除前の値: deda1482-d5f0-44a1-a120-e6fb9b31c269）。
