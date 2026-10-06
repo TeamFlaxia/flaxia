@@ -1,4 +1,5 @@
 import { adImpressionTracker } from '../lib/ad-impression-tracker.js';
+import { ADSENSE_INLINE_BOOTSTRAP } from '../lib/adsense-bootstrap.js';
 import { t } from '../lib/i18n.js';
 import { executeUniversalZip, UniversalZipExecutorHandle } from '../lib/zip-manager.js';
 import { Ad } from '../types/post.js';
@@ -168,9 +169,7 @@ function mountAdmax(ad: Ad, placeholder: HTMLElement): void {
                  data-ad-slot="1386532572"
                  data-ad-format="auto"
                  data-full-width-responsive="true"></ins>
-            <script>
-            (adsbygoogle = window.adsbygoogle || []).push({});
-            </script>
+            <script>${ADSENSE_INLINE_BOOTSTRAP}</script>
           </body>
           </html>
         `);

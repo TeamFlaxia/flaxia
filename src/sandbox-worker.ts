@@ -1,3 +1,4 @@
+import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { isKeyBlocked } from '../functions/lib/scan/db';
@@ -16,20 +17,71 @@ type Bindings = {
   BUCKET: R2Bucket;
   DB: D1Database;
   CACHE?: KVNamespace;
+  ASSETS?: { fetch: (request: Request) => Promise<Response> };
 };
 
 const SANDBOX_CSP = [
-  'sandbox allow-scripts allow-pointer-lock',
+  'sandbox allow-scripts allow-pointer-lock allow-forms allow-popups',
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:",
   "style-src 'self' 'unsafe-inline' data: blob: https:",
   "worker-src 'self' blob:",
   "img-src 'self' data: blob: https:",
   "media-src 'self' data: blob: https:",
-  "font-src 'self' data: https:",
+  "font-src 'self' data: blob: https:",
   "connect-src 'self' data: blob: https: wss:",
-  'frame-ancestors https://flaxia.app',
+  "frame-src 'self' blob: data: https:",
+  'frame-ancestors https://flaxia.app https://*.pages.dev http://localhost:5173 http://localhost:8787 http://localhost:8788',
 ].join('; ');
+
+const ZIP_PREVIEW_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:",
+  "style-src 'self' 'unsafe-inline' data: blob: https:",
+  "worker-src 'self' blob:",
+  "img-src 'self' data: blob: https:",
+  "media-src 'self' data: blob: https:",
+  "font-src 'self' data: blob: https:",
+  "connect-src 'self' data: blob: https: wss:",
+  'frame-src blob: data: https:',
+  'frame-ancestors https://flaxia.app https://*.pages.dev http://localhost:5173 http://localhost:8787 http://localhost:8788',
+].join('; ');
+
+const PDF_VIEWER_CSP = [
+  "default-src 'none'",
+  "script-src 'self' 'sha256-G4/emu0SNnFJECp6THR3fUV6IVS9yM8Y/dhtETHdW+E=' 'wasm-unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' blob: data:",
+  "font-src 'self' blob: data:",
+  "connect-src 'self' blob: data:",
+  "worker-src 'self' blob:",
+  "frame-src 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  'frame-ancestors https://flaxia.app https://*.pages.dev http://localhost:5173 http://localhost:8787 http://localhost:8788',
+].join('; ');
+
+function withPdfViewerCsp(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set('Content-Security-Policy', PDF_VIEWER_CSP);
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('Referrer-Policy', 'no-referrer');
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function withZipPreviewCsp(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set('Content-Security-Policy', ZIP_PREVIEW_CSP);
+  headers.set('Cache-Control', 'no-store');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('Referrer-Policy', 'no-referrer');
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
 
 function withCsp(response: Response): Response {
   const headers = new Headers(response.headers);
@@ -44,6 +96,22 @@ function withCsp(response: Response): Response {
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use('/*', cors());
+
+async function serveZipPreviewAsset(
+  c: Context<{ Bindings: Bindings }>,
+  path: '/zip-preview.html' | '/zip-preview.js' | '/zip-preview-protocol.js',
+): Promise<Response> {
+  if (!c.env.ASSETS) return c.text('ZIP preview assets unavailable', 503);
+  const assetUrl = new URL(path, c.req.url);
+  const response = await c.env.ASSETS.fetch(new Request(assetUrl));
+  if (!response.ok) return c.text('ZIP preview asset not found', 404);
+  return withZipPreviewCsp(response);
+}
+
+app.get('/zip-preview', (c) => serveZipPreviewAsset(c, '/zip-preview.html'));
+app.get('/zip-preview.html', (c) => serveZipPreviewAsset(c, '/zip-preview.html'));
+app.get('/zip-preview.js', (c) => serveZipPreviewAsset(c, '/zip-preview.js'));
+app.get('/zip-preview-protocol.js', (c) => serveZipPreviewAsset(c, '/zip-preview-protocol.js'));
 
 app.get('/api/wvfs-zip/:postId/*', async (c) => {
   try {
@@ -260,7 +328,7 @@ app.get('/pdf/*', (c) => {
   const body = pdfViewerAssetBody(asset);
   const headers = pdfViewerAssetHeaders(asset);
   if (body === null || headers === null) return c.text('Not found', 404);
-  return withCsp(new Response(body, { headers }));
+  return withPdfViewerCsp(new Response(body, { headers }));
 });
 
 app.notFound(async (c) => {

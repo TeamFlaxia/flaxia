@@ -18,12 +18,10 @@ import { PDFJS_MAIN_MJS, PDFJS_WORKER_MJS } from './pdfjs.generated.ts';
  * loads a frame src with content in it — `/api/documents/*` stays same-origin
  * on the parent side and the bytes are transferred across.
  *
- * The HTML is one self-contained document (inline style + inline module) so
- * the Worker route needs a single response and no asset pipeline: CSP
- * `script-src 'self' 'unsafe-inline'` on the sandbox Worker covers it, and
- * pdf.js itself is imported lazily from `/pdf/pdfjs.mjs` only once a
- * document actually arrives. Keep the inline script free of backticks and
- * `${` — it lives inside this template literal.
+ * The HTML is a trusted cross-origin viewer shell (inline style + module) and
+ * loads bundled pdf.js modules lazily from /pdf/*. The Worker applies a
+ * narrow PDF_VIEWER_CSP without CSP sandboxing so the typed bridge can verify
+ * the real sandbox origin. Keep the inline script free of template delimiters.
  */
 export const PDF_VIEWER_HTML = `<!doctype html>
 <html lang="en">
@@ -189,8 +187,16 @@ const requestId =
     ? crypto.randomUUID()
     : String(Date.now()) + '-' + String(Math.random()).slice(2);
 
+const ALLOWED_PARENT_ORIGINS = new Set([
+  'https://flaxia.app',
+  'http://localhost:5173',
+  'http://localhost:8787',
+  'http://localhost:8788',
+]);
+let parentOrigin = null;
+
 function send(message) {
-  window.parent.postMessage(message, '*');
+  window.parent.postMessage(message, parentOrigin || '*');
 }
 
 function showStatus(text, isError) {
@@ -323,13 +329,18 @@ window.addEventListener('resize', () => {
   resizeTimer = setTimeout(() => void renderPage(), 150);
 });
 
-// Bytes arrive from the parent over the bridge; only the parent window may
-// supply them (the frame itself is opaque-origin, so no origin string check
-// is possible — the source window is the unforgeable part).
+// Bytes arrive from the cross-origin parent over the typed bridge.
 window.addEventListener('message', (event) => {
-  if (event.source !== window.parent) return;
+  if (event.source !== window.parent || !ALLOWED_PARENT_ORIGINS.has(event.origin)) return;
   const data = event.data;
-  if (!data || data.type !== 'DOCUMENT_DATA' || data.requestId !== requestId) return;
+  if (
+    !data ||
+    typeof data !== 'object' ||
+    data.type !== 'DOCUMENT_DATA' ||
+    data.requestId !== requestId ||
+    !(data.bytes instanceof ArrayBuffer)
+  ) return;
+  parentOrigin = event.origin;
   void openDocument(data.bytes);
 });
 

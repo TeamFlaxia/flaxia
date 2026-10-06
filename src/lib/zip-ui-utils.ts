@@ -6,7 +6,7 @@ export interface ZipIframeHandle {
   cleanup: () => void;
 }
 
-const ZIP_SANDBOX = 'allow-scripts allow-pointer-lock allow-fullscreen';
+const ZIP_SANDBOX = 'allow-scripts allow-pointer-lock allow-forms allow-popups';
 
 export function createZipLoadingIndicator(prefix: string): HTMLElement {
   ensureZipSpinKeyframe(prefix);

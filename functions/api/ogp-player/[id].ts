@@ -78,6 +78,7 @@ function serveZipPlayer(postId: string, sandboxOrigin: string): Response {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'public, max-age=3600',
+      'X-Frame-Options': 'SAMEORIGIN',
     },
   });
 }
@@ -107,6 +108,7 @@ function serveSwfPlayer(postId: string, baseUrl: string): Response {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'public, max-age=3600',
+      'X-Frame-Options': 'SAMEORIGIN',
     },
   });
 }

@@ -167,7 +167,7 @@ function createSandboxIframe(
 
   const iframe = document.createElement('iframe');
   iframe.src = blobUrl;
-  iframe.sandbox = 'allow-scripts allow-pointer-lock allow-fullscreen';
+  iframe.sandbox = 'allow-scripts allow-pointer-lock allow-forms allow-popups';
   iframe.setAttribute('allow', 'fullscreen');
   iframe.setAttribute('referrerpolicy', 'no-referrer');
   iframe.style.cssText = `

@@ -7,6 +7,11 @@ routes = [
   { pattern = "sandbox.flaxia.app/*", zone_name = "flaxia.app" }
 ]
 
+[assets]
+directory = "./sandbox"
+binding = "ASSETS"
+run_worker_first = true
+
 [[r2_buckets]]
 binding = "BUCKET"
 bucket_name = "flaxia-content"

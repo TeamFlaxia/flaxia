@@ -70,13 +70,19 @@ test('CSP script-src stays explicit (no unsafe-eval, no scheme allowlist)', asyn
   const csp = headers.split('\n').find((line) => line.includes('Content-Security-Policy'));
   assert.ok(csp, 'public/_headers must define a Content-Security-Policy');
   const scriptSrc = /script-src ([^;]+)/.exec(csp)?.[1] ?? '';
+  assert.doesNotMatch(scriptSrc, /'unsafe-inline'/, 'inline scripts must be hash-authorized');
   assert.doesNotMatch(scriptSrc, /'unsafe-eval'/, 'eval-compiled scripts must not run in the app origin');
+  assert.match(scriptSrc, /'sha256-[A-Za-z0-9+/]+=*'/, 'fixed inline scripts need hash sources');
+  assert.ok(scriptSrc.includes("'wasm-unsafe-eval'"), 'Ruffle needs WebAssembly compilation');
+  assert.ok(scriptSrc.includes('blob:'), 'game assets may load from sandboxed blob URLs');
   assert.doesNotMatch(
     scriptSrc,
     /(?:^|\s)https:(?:\s|;|$)/,
     'a bare https: scheme lets any host run scripts — allowlist hosts instead',
   );
   assert.doesNotMatch(scriptSrc, /'https'/, 'quoted schemes are invalid CSP and only add noise');
+  const scriptAttr = /script-src-attr ([^;]+)/.exec(csp)?.[1];
+  assert.equal(scriptAttr, "'none'", 'inline event handler attributes must be blocked');
   for (const host of ['https://cdn.jsdelivr.net', 'https://unpkg.com']) {
     assert.ok(scriptSrc.includes(host), `script-src must keep ${host} (runtime-loaded libs)`);
   }
