@@ -5,22 +5,22 @@ export interface GameStorageLike {
   setItem(key: string, value: string): void;
 }
 
-function decodeSnapshot(raw: string | null): Record<string, string> | null {
-  if (raw === null) return null;
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const snapshot: Record<string, string> = {};
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof value === 'string') snapshot[key] = value;
-    }
-    return snapshot;
-  } catch {
-    return null;
-  }
-}
-
 export function loadMigratedGameStorage(storage: GameStorageLike, namespace: string): Record<string, string> {
+  function decodeSnapshot(raw: string | null): Record<string, string> | null {
+    if (raw === null) return null;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+      const snapshot: Record<string, string> = {};
+      for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof value === 'string') snapshot[key] = value;
+      }
+      return snapshot;
+    } catch {
+      return null;
+    }
+  }
+
   const storageKey = `flaxia:game:${namespace}`;
   const currentRaw = storage.getItem(storageKey);
 
