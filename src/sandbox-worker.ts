@@ -263,11 +263,38 @@ app.get('/', (c) => c.json({ status: 'ok', worker: 'flaxia-sandbox' }, 200));
 
 app.get('/favicon.ico', (c) => c.body(null, 204));
 
+async function serveGameStorageRuntime(c: Context<{ Bindings: Bindings }>): Promise<Response> {
+  if (!c.env.ASSETS) return c.text('Game storage runtime unavailable', 503);
+  const assetUrl = new URL('/game-storage-runtime.js', c.req.url);
+  const response = await c.env.ASSETS.fetch(new Request(assetUrl));
+  if (!response.ok) return c.text('Game storage runtime not found', 404);
+
+  const headers = new Headers(response.headers);
+  headers.set('Content-Type', 'text/javascript; charset=utf-8');
+  headers.set('Cache-Control', 'no-store');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('Referrer-Policy', 'no-referrer');
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+app.get('/api/game-storage-runtime.js', (c) => serveGameStorageRuntime(c));
+
 // Trusted compatibility broker for game localStorage. This endpoint is kept
 // outside the worker's CSP sandbox so it can read the sandbox origin's legacy
 // storage; untrusted game documents continue to receive SANDBOX_CSP.
 app.get('/api/game-storage', (c) => {
-  const html = `<!doctype html><meta charset="utf-8"><script>
+  const html = `<!doctype html><meta charset="utf-8"><script type="module">
+    import {
+      clearGameStorage,
+      loadGameStorageSnapshot,
+      removeGameStorageValue,
+      setGameStorageValue,
+    } from '/api/game-storage-runtime.js';
+
     (function(){
       'use strict';
       var allowedOrigins=new Set(['https://flaxia.app','http://localhost:5173','http://localhost:8787','http://localhost:8788']);
@@ -278,21 +305,18 @@ app.get('/api/game-storage', (c) => {
         if(!message||typeof message!=='object')return;
         var namespace=typeof message.namespace==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(message.namespace)?message.namespace:null;
         if(!namespace)return;
-        var prefix='flaxia:game:'+namespace+':';
         try{
           if(message.type==='FLAXIA_STORAGE_READ'&&typeof message.requestId==='string'){
-            var entries=[];
-            for(var i=0;i<localStorage.length;i++){var key=localStorage.key(i);if(key!==null&&key.indexOf(prefix)===0){var value=localStorage.getItem(key);if(value!==null)entries.push([key.slice(prefix.length),value])}}
-            send(event.origin,{type:'FLAXIA_STORAGE_SNAPSHOT',requestId:message.requestId,entries:entries});
+            var snapshot=loadGameStorageSnapshot(localStorage,namespace);
+            send(event.origin,{type:'FLAXIA_STORAGE_SNAPSHOT',requestId:message.requestId,entries:Object.entries(snapshot)});
           }else if(message.type==='FLAXIA_STORAGE_SET'&&typeof message.key==='string'&&typeof message.value==='string'){
             if(message.key.length>512||message.value.length>100000)return;
-            localStorage.setItem(prefix+message.key,message.value);
+            setGameStorageValue(localStorage,namespace,message.key,message.value);
           }else if(message.type==='FLAXIA_STORAGE_REMOVE'&&typeof message.key==='string'){
-            localStorage.removeItem(prefix+message.key);
+            if(message.key.length>512)return;
+            removeGameStorageValue(localStorage,namespace,message.key);
           }else if(message.type==='FLAXIA_STORAGE_CLEAR'){
-            var doomed=[];
-            for(var j=0;j<localStorage.length;j++){var k=localStorage.key(j);if(k!==null&&k.indexOf(prefix)===0)doomed.push(k)}
-            for(var d=0;d<doomed.length;d++)localStorage.removeItem(doomed[d]);
+            clearGameStorage(localStorage,namespace);
           }
         }catch(error){send(event.origin,{type:'FLAXIA_STORAGE_ERROR',message:String(error)})}
       });
@@ -304,7 +328,7 @@ app.get('/api/game-storage', (c) => {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
       'Content-Security-Policy':
-        "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors https://flaxia.app http://localhost:5173 http://localhost:8787 http://localhost:8788",
+        "default-src 'none'; script-src 'self' 'unsafe-inline'; frame-ancestors https://flaxia.app http://localhost:5173 http://localhost:8787 http://localhost:8788",
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
     },
