@@ -41,8 +41,9 @@ jobs:
         env:
           SANDBOX_ORIGIN: https://sandbox.flaxia.app
       - name: Deploy to Cloudflare Pages
-        run: npx wrangler pages deploy dist
+        run: npx wrangler pages deploy dist --branch "$DEPLOY_BRANCH"
         env:
+          DEPLOY_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
