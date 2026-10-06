@@ -278,21 +278,49 @@ app.get('/api/game-storage', (c) => {
         if(!message||typeof message!=='object')return;
         var namespace=typeof message.namespace==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(message.namespace)?message.namespace:null;
         if(!namespace)return;
-        var prefix='flaxia:game:'+namespace+':';
+        var storageKey='flaxia:game:'+namespace;
+        var legacyKey=namespace;
+        function decodeSnapshot(raw){
+          if(raw===null)return null;
+          try{
+            var parsed=JSON.parse(raw);
+            if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))return null;
+            var snapshot={};
+            for(var key in parsed){
+              if(Object.prototype.hasOwnProperty.call(parsed,key)&&typeof parsed[key]==='string')snapshot[key]=parsed[key];
+            }
+            return snapshot;
+          }catch{return null}
+        }
+        function loadSnapshot(){
+          var currentRaw=localStorage.getItem(storageKey);
+          if(currentRaw!==null)return decodeSnapshot(currentRaw)||{};
+          var legacyRaw=localStorage.getItem(legacyKey);
+          var legacy=decodeSnapshot(legacyRaw);
+          if(legacy!==null){
+            localStorage.setItem(storageKey,JSON.stringify(legacy));
+            return legacy;
+          }
+          return {};
+        }
+        function saveSnapshot(snapshot){
+          localStorage.setItem(storageKey,JSON.stringify(snapshot));
+        }
         try{
           if(message.type==='FLAXIA_STORAGE_READ'&&typeof message.requestId==='string'){
-            var entries=[];
-            for(var i=0;i<localStorage.length;i++){var key=localStorage.key(i);if(key!==null&&key.indexOf(prefix)===0){var value=localStorage.getItem(key);if(value!==null)entries.push([key.slice(prefix.length),value])}}
-            send(event.origin,{type:'FLAXIA_STORAGE_SNAPSHOT',requestId:message.requestId,entries:entries});
+            var snapshot=loadSnapshot();
+            send(event.origin,{type:'FLAXIA_STORAGE_SNAPSHOT',requestId:message.requestId,entries:Object.entries(snapshot)});
           }else if(message.type==='FLAXIA_STORAGE_SET'&&typeof message.key==='string'&&typeof message.value==='string'){
             if(message.key.length>512||message.value.length>100000)return;
-            localStorage.setItem(prefix+message.key,message.value);
+            var snapshot=loadSnapshot();
+            snapshot[message.key]=message.value;
+            saveSnapshot(snapshot);
           }else if(message.type==='FLAXIA_STORAGE_REMOVE'&&typeof message.key==='string'){
-            localStorage.removeItem(prefix+message.key);
+            var snapshot=loadSnapshot();
+            delete snapshot[message.key];
+            saveSnapshot(snapshot);
           }else if(message.type==='FLAXIA_STORAGE_CLEAR'){
-            var doomed=[];
-            for(var j=0;j<localStorage.length;j++){var k=localStorage.key(j);if(k!==null&&k.indexOf(prefix)===0)doomed.push(k)}
-            for(var d=0;d<doomed.length;d++)localStorage.removeItem(doomed[d]);
+            saveSnapshot({});
           }
         }catch(error){send(event.origin,{type:'FLAXIA_STORAGE_ERROR',message:String(error)})}
       });
