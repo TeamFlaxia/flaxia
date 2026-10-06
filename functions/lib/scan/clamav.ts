@@ -15,12 +15,10 @@ import { extractFileFeatures } from './features.ts';
 import { extensionOf } from './mime.ts';
 
 /**
- * Cap for container payloads. The orchestrator rejects any request body above
- * MAX_PAYLOAD_SIZE (1 MiB in packages/worker/wrangler.toml) and base64 inflates
- * the file by ~4/3, so the effective raw limit is ~768 KiB — far below the
- * 25 MiB the upload path accepts. Sizing this to the real limit turns those
- * uploads into an explicit `skipped/too_large` row instead of a 413 that leaves
- * them unscanned. Raise CROWD_MAX_PAYLOAD_BYTES together with the orchestrator.
+ * Cap for container payloads. Crowd checks the serialized task body against its
+ * MAX_PAYLOAD_SIZE (1 MiB by default in flaxia-crowd), and base64 inflates the
+ * file by 4/3. Keep CROWD_MAX_PAYLOAD_BYTES equal to Crowd's configured value;
+ * oversized uploads remain explicitly `skipped/too_large` and quarantined.
  */
 const DEFAULT_MAX_PAYLOAD_BYTES = 1_048_576;
 /** Room for the JSON scaffolding around the base64 file. */
@@ -30,7 +28,7 @@ const PAYLOAD_SCAFFOLD_BYTES = 4_096;
 export function clamavMaxBytes(env?: CrowdEnv): number {
   const configured = Number(env?.CROWD_MAX_PAYLOAD_BYTES ?? '');
   const cap = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_PAYLOAD_BYTES;
-  return Math.max(0, Math.floor(((cap - PAYLOAD_SCAFFOLD_BYTES) * 3) / 4));
+  return Math.max(0, Math.floor((cap - PAYLOAD_SCAFFOLD_BYTES) / 4) * 3);
 }
 
 /** Default raw-file cap for the stock orchestrator body limit. */
@@ -88,31 +86,29 @@ export async function submitFileScans(
     }
     if (!row || row.status !== 'pending') return;
 
-    const config = crowdConfig(env);
-    if (!config.configured) {
-      await setScanStatus(db, r2Key, 'skipped', { detail: 'orchestrator_unconfigured', sha256: row.sha256 });
-      return;
-    }
-
     const raw = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-    if (raw.byteLength > clamavMaxBytes(env)) {
-      await setScanStatus(db, r2Key, 'skipped', { detail: 'too_large', sha256: row.sha256 });
-      return;
-    }
-
-    // Bind the submission to the bytes we actually hold. The background task
-    // may run after the same key has been re-uploaded; using only the row's
-    // current sha would scan bytes A while labelling the callback as bytes B,
-    // and B would inherit A's verdict.
+    // The waitUntil task may run after a same-key re-upload. Check the content
+    // digest before recording any skip state or submitting this older buffer.
     const submittedSha = bytesToHex(sha256(raw));
     if (row.sha256 !== submittedSha) return;
+
+    const config = crowdConfig(env);
+    if (!config.configured) {
+      await setScanStatus(db, r2Key, 'skipped', { detail: 'orchestrator_unconfigured', sha256: submittedSha });
+      return;
+    }
+
+    if (raw.byteLength > clamavMaxBytes(env)) {
+      await setScanStatus(db, r2Key, 'skipped', { detail: 'too_large', sha256: submittedSha });
+      return;
+    }
 
     const client = getCrowdClient(config);
     if (!client) return;
 
-    // The sha prefix ties the eventual verdict back to this exact content, so
-    // a slow callback cannot mark a re-uploaded file with a stale result.
-    const shaPrefix = submittedSha.slice(0, 16);
+    // Carry the full digest in Crowd's signed callback URL. The receiver uses
+    // it both as an exact row guard and to blocklist the scanned bytes if this
+    // key has been overwritten before the verdict arrives.
     const payload = toBase64(raw);
     const ext = extensionOf(r2Key) ?? 'bin';
     const fileName = `input.${ext}`;
@@ -136,7 +132,7 @@ export async function submitFileScans(
         callbackUrl: await signedCallbackUrl(config, {
           baseUrl: config.baseUrl,
           type: 'file-scan',
-          params: { key: r2Key, kind: 'clamav', sha: shaPrefix },
+          params: { key: r2Key, kind: 'clamav', sha: submittedSha },
         }),
         timeoutMs: CONTAINER_TIMEOUT_MS,
       });
@@ -149,7 +145,7 @@ export async function submitFileScans(
 
     const videoPhashImage = (env[VIDEO_PHASH_IMAGE_ENV] || '').trim();
     if (mime.startsWith('video/') && videoPhashImage) {
-      await submitVideoPhash(config, r2Key, shaPrefix, raw, videoPhashImage);
+      await submitVideoPhash(config, r2Key, submittedSha, raw, videoPhashImage);
     }
   } catch (e) {
     console.error(`File scan submission failed for ${r2Key}:`, e);
@@ -160,7 +156,7 @@ export async function submitFileScans(
 async function submitVideoPhash(
   config: ReturnType<typeof crowdConfig>,
   r2Key: string,
-  shaPrefix: string,
+  submittedSha: string,
   raw: Uint8Array,
   image: string,
 ): Promise<void> {
@@ -177,7 +173,7 @@ async function submitVideoPhash(
       callbackUrl: await signedCallbackUrl(config, {
         baseUrl: config.baseUrl,
         type: 'file-scan',
-        params: { key: r2Key, kind: 'video-phash', sha: shaPrefix },
+        params: { key: r2Key, kind: 'video-phash', sha: submittedSha },
       }),
       timeoutMs: CONTAINER_TIMEOUT_MS,
     });

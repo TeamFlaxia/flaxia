@@ -193,13 +193,12 @@ export async function setScanPhash(db: D1Database, r2Key: string, phash: string,
 }
 
 /**
- * Record a confirmed malicious file: mark the row infected, add its sha256 to
- * the blocklist (so re-uploads are rejected synchronously) and flag the key in
- * KV so the media routes stop serving it.
+ * Record a confirmed malicious file. The callback's full SHA is the immutable
+ * verdict target: blocklist it even if the R2 key has since been reused, while
+ * only marking the scan row infected when it still contains those exact bytes.
  *
- * `shaPrefix` ties the callback to the content it was issued for. The row is
- * read first and re-checked by `setScanStatus`, so a stale or forged callback
- * for different bytes neither blocklists the current sha nor marks the row.
+ * 16-character hashes are accepted for callbacks submitted before the full-SHA
+ * rollout. They can only be resolved while the current row still matches.
  */
 export async function recordInfection(
   db: D1Database,
@@ -207,25 +206,38 @@ export async function recordInfection(
   r2Key: string,
   signature: string | null,
   reason: string,
-  shaPrefix?: string,
+  submittedSha?: string,
 ): Promise<void> {
-  // The row read is only used to learn which sha this callback refers to. The
-  // conditional update below is the authority: a stale callback for bytes that
-  // were replaced no longer matches, so its sha is never blocklisted.
-  const row = await getFileScan(db, r2Key);
-  if (!row) return;
-  if (shaPrefix && !row.sha256.startsWith(shaPrefix)) return;
-  const applied = await setScanStatus(db, r2Key, 'infected', { detail: signature ?? reason, shaPrefix });
-  if (!applied) return;
-  await db
-    .prepare(
-      `INSERT INTO file_blocklist (kind, value, signature, reason, added_by)
-       VALUES ('sha256', ?, ?, ?, 'system')
-       ON CONFLICT(kind, value) DO UPDATE SET signature = excluded.signature, reason = excluded.reason`,
-    )
-    .bind(row.sha256, signature, reason)
-    .run();
-  await markKeyBlocked(cache, r2Key);
+  if (!submittedSha) return;
+  const normalizedSha = submittedSha.toLowerCase();
+  let targetSha: string;
+  if (/^[0-9a-f]{64}$/.test(normalizedSha)) {
+    targetSha = normalizedSha;
+  } else if (/^[0-9a-f]{16}$/.test(normalizedSha)) {
+    const row = await getFileScan(db, r2Key);
+    if (!row || !row.sha256.startsWith(normalizedSha)) return;
+    targetSha = row.sha256;
+  } else {
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const results = await db.batch([
+    db
+      .prepare('UPDATE file_scans SET status = ?, detail = ?, scanned_at = ? WHERE r2_key = ? AND sha256 = ?')
+      .bind('infected', signature ?? reason, now, r2Key, targetSha),
+    db
+      .prepare(
+        `INSERT INTO file_blocklist (kind, value, signature, reason, added_by)
+         VALUES ('sha256', ?, ?, ?, 'system')
+         ON CONFLICT(kind, value) DO UPDATE SET signature = excluded.signature, reason = excluded.reason`,
+      )
+      .bind(targetSha, signature, reason),
+  ]);
+
+  // The blocklist is content-scoped and remains useful after a key is reused.
+  // The key-level KV marker is only valid when the row update matched this sha.
+  if ((results[0]?.meta.changes ?? 0) > 0) await markKeyBlocked(cache, r2Key);
 }
 
 /** Flag an R2 key as blocked in KV. Replaced bytes are cleared lazily below. */
@@ -239,29 +251,29 @@ export async function markKeyBlocked(cache: KVNamespace | undefined, r2Key: stri
 }
 
 /**
- * Serve-time gate: has this key been flagged by an async verdict?
+ * Serve-time gate for infected files and files that exceeded Crowd's task cap.
  *
- * One KV read is the common path. The D1 check runs only after a marker is
- * present, so a key reused with fresh bytes recovers as soon as that upload's
- * scan row leaves `infected` — while a marker whose row cannot be verified
- * still fails closed.
+ * The scan row is authoritative even when the KV marker is missing or a marker
+ * write failed. Checking D1 on delivery also lets fresh bytes recover from a
+ * stale infection marker without unblocking skipped/too_large content.
  */
 export async function isKeyBlocked(cache: KVNamespace | undefined, r2Key: string, db?: D1Database): Promise<boolean> {
-  // Fail closed (#81, docs/file-scanning.md): when the verdict cannot be
-  // verified — no KV binding or a read error — the key must be withheld
-  // rather than served. CACHE is a required production binding.
+  // Fail closed (#81, docs/file-scanning.md): CACHE is required in production.
   if (!cache) return true;
   try {
-    if ((await cache.get(`fileblk:${r2Key}`)) === null) return false;
-    if (!db) return true;
-    const row = await getFileScan(db, r2Key).catch(() => null);
-    if (row && row.status !== 'infected') {
+    const hasMarker = (await cache.get(`fileblk:${r2Key}`)) !== null;
+    if (!db) return hasMarker;
+
+    const row = await getFileScan(db, r2Key);
+    if (row?.status === 'infected' || (row?.status === 'skipped' && row.detail === 'too_large')) return true;
+
+    if (hasMarker && row) {
       await clearKeyBlocked(cache, r2Key);
       return false;
     }
-    return true;
+    return hasMarker;
   } catch (e) {
-    console.warn('KV block marker read failed:', e);
+    console.warn('File scan delivery check failed:', e);
     return true;
   }
 }

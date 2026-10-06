@@ -20,10 +20,11 @@ upload ──► detect + allowlist ──► attachment kind ──► dimensio
         Crowd: clamav.wasm (+ flaxia-video-phash.wasm for video)
               │
               ▼ (callback)
-        verdict ── clean: row=clean │ infected: row=infected + fileblk:{key}=1 + auto-blocklist
+        verdict ── clean: row=clean │ infected: row=infected + auto-blocklist
+                  skipped/too_large ──► quarantined at serve time
               │
               ▼ (serve time)
-        canAccessMediaKey: fileblk marker ──► 404
+        isKeyBlocked: KV + D1 scan state ──► 404
 ```
 
 ## Stage 1 — synchronous (upload)
@@ -81,8 +82,11 @@ code (Cloudflare Workers constraint):
 | video | ✔ | — | — | deferred — orchestrator keyframe pHash |
 | audio / other | ✔ | — | — | — |
 
-Hard limits: ClamAV task ≤ 20 MB, ZIP ≤ 4096 entries, PNG inflate ≤ 32 MB,
-GIF ≤ 16 MP, PDF text ≤ 256 KB.
+Hard limits: ZIP ≤ 4096 entries, PNG inflate ≤ 32 MB, GIF ≤ 16 MP, PDF text
+≤ 256 KB. ClamAV's raw-file ceiling is derived from Crowd's serialized task-body
+cap (1 MiB by default, about 783 KiB raw after base64 and JSON overhead). The
+Flaxia `CROWD_MAX_PAYLOAD_BYTES` setting must match Crowd's `MAX_PAYLOAD_SIZE`;
+raising only one side does not expand scan coverage safely.
 
 ## Stage 2 — asynchronous (Crowd orchestrator)
 
@@ -100,12 +104,15 @@ GIF ≤ 16 MP, PDF text ≤ 256 KB.
   is marked `skipped / orchestrator_unconfigured`; with an orchestrator but no
   ClamAV image it is marked `skipped / scan_image_unconfigured` so the gap is
   visible instead of leaving uploads pending forever. Files larger than the
-orchestrator's task-body cap (base64 inflates ~4/3, so ~768 KiB at the stock
-1 MiB limit) are marked `skipped / too_large` instead of a 413 that leaves them
-unscanned (`clamavMaxBytes`, overridable via `CROWD_MAX_PAYLOAD_BYTES`).
-- The callback URL carries `type=file-scan`, `key=<r2Key>`, `kind=clamav|video-phash`
-  and `sha=<first 16 hex of sha256>`; a callback whose sha prefix no longer
-  matches the row is ignored (guards stale verdicts after re-upload).
+  configured task-body cap are marked `skipped / too_large` before submission;
+  the delivery gate withholds them until replaced with scannable bytes. The cap
+  accounts for base64's 4/3 expansion and a JSON margin (`clamavMaxBytes`,
+  overridable via `CROWD_MAX_PAYLOAD_BYTES`, which must mirror Crowd's
+  `MAX_PAYLOAD_SIZE`).
+- The signed callback URL carries `type=file-scan`, `key=<r2Key>`,
+  `kind=clamav|video-phash`, and `sha=<full 64-hex sha256>`. The full digest is
+  the immutable scan target; 16-hex prefixes remain accepted only for callbacks
+  already in flight during rollout.
 - `POST /api/crowd/webhook` → `{ received: true }`. The route is a standalone
   Pages Function, so no Hono middleware runs on it; instead every callback URL
   is signed with `sig=<HMAC-SHA256>` over the canonical path+query
@@ -119,10 +126,11 @@ unscanned (`clamavMaxBytes`, overridable via `CROWD_MAX_PAYLOAD_BYTES`).
   task id is only written when the row still has that exact sha. Without this,
   a background task that runs after a re-upload could scan bytes A while
   labelling the callback as bytes B.
-- Because the `sha` param is attacker-controllable, it is also checked against
-  the row on every destructive path — `recordInfection` and `setScanPhash` both
-  refuse a prefix that does not match, so a replayed or forged callback can
-  neither blocklist the current bytes nor downgrade a re-uploaded file.
+- Callback query parameters are covered by the HMAC signature. Infected verdicts
+  atomically upsert the submitted full SHA into `file_blocklist` and update the
+  scan row only when its SHA still matches. Thus a same-key overwrite cannot
+  discard the old infected digest or mark the replacement infected; the KV key
+  marker is written only when the current row matches the verdict.
 
 ### Container contract
 
@@ -142,8 +150,9 @@ Input: `files: { [name]: base64 }` in the `submit` payload. Output envelope:
 | Verdict | Effect |
 |---|---|
 | clean | row → `clean` (after a final blocklist re-check) |
-| infected | row → `infected` + signature in `detail`, KV `fileblk:{key}=1`, **auto-adds sha256 to `file_blocklist`** (`added_by = system`) |
+| infected | exact-SHA row → `infected` when still current; **always auto-adds submitted sha256 to `file_blocklist`** (`added_by = system`); KV key marker only when the row matches |
 | failed / task failure | row → `failed` with reason; serving fails open |
+| skipped / `too_large` | row remains explicitly skipped; delivery is quarantined until newer bytes replace it and enter the normal scan lifecycle |
 | clean/infected never downgrades: re-upload of the same bytes keeps the verdict (sha-aware upsert) | |
 
 A `signature` blocklist entry is matched at verdict time against the ClamAV
@@ -169,16 +178,18 @@ copies together.
 
 - **Upload (fail closed):** stage-1 checks block anything known-bad before
   storage; the synchronous blocklist match is the hard gate.
-- **Serve (asynchronous):** every path that returns bytes checks the KV
-  `fileblk:{key}` marker → `404`: `/api/images/*`, `/api/audio/*`,
+- **Serve (asynchronous):** every path that returns bytes checks the KV marker
+  and D1 scan row: infected rows and `skipped/too_large` rows return `404`, even
+  if a KV marker write was lost. This covers `/api/images/*`, `/api/audio/*`,
   `/api/video/*`, `/api/zip/:postId`, `/api/thumbnail/:id`, `/api/swf/:postId`,
   `/api/ads/:id/payload`, and the sandbox's `wvfs/` and `zip/` lookups. The
   sandbox checks the source archive before serving any CDN-cached extracted
-  file, so a blocked ZIP cannot keep leaking through `wvfs/`. When the marker
-  exists but the row is no longer `infected`, the marker is deleted and the
-  current bytes are served; an unverifiable marker fails closed.
-- **Post-verdict (fail open):** orchestrator/DB outages mark rows
-  `failed`/`skipped` — serving continues, next re-upload re-evaluates.
+  file, so a blocked ZIP cannot keep leaking through `wvfs/`. Reused keys clear
+  stale infection markers only after D1 confirms the row is no longer infected;
+  KV or D1 read errors fail closed.
+- **Post-verdict:** Crowd outages may leave rows `failed`/`skipped` (except
+  `skipped/too_large`, which is quarantined); the next upload is evaluated
+  again. KV or D1 errors during serve-time verification fail closed.
 
 ## Blocklist admin API
 
@@ -195,8 +206,9 @@ substring of the ClamAV verdict name).
 ## Testing
 
 - Unit: `tests/file-features.test.ts`, `tests/file-blocklist.test.ts`,
-  `tests/mime-guard.test.ts`, `tests/security-guards.test.ts`
-  (regression guard: every R2-writing route must call `scanUploadSync`).
+  `tests/clamav-payload.test.ts`, `tests/file-scan-race.test.ts`,
+  `tests/mime-guard.test.ts`, `tests/security-guards.test.ts` (regression guard:
+  every R2-writing route must call `scanUploadSync`).
 - Integration: `tests/file-scans.test.ts` against `npm run dev:test`
   (upload → row, blocklist CRUD, webhook clean/infected paths).
 - `GET /api/test/file-scans` (test env only) returns recent rows for
