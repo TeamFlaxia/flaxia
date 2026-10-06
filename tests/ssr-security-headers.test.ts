@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { onRequest } from '../functions/_middleware.ts';
+import { onRequest as onOgpPlayerRequest } from '../functions/api/ogp-player/[id].ts';
 import { applySecurityHeaders, SECURITY_HEADERS } from '../functions/lib/ssr-security-headers.ts';
 
 test('Pages middleware adds security headers to dynamic responses', async () => {
@@ -46,6 +47,32 @@ test('Pages middleware adds security headers to unsupported-domain 404s', async 
   assert.equal(response.status, 404);
   assert.equal(response.headers.get('content-security-policy')?.includes("frame-ancestors 'self'"), true);
   assert.equal(response.headers.get('x-frame-options'), 'DENY');
+});
+
+test('OGP game player responses allow same-origin arcade embedding', async () => {
+  const games = [
+    { row: { payload_key: 'payload.zip', swf_key: null }, expectedTag: '<iframe src=' },
+    { row: { payload_key: null, swf_key: 'game.swf' }, expectedTag: '<embed src=' },
+  ];
+
+  for (const { row, expectedTag } of games) {
+    const env = {
+      DB: {
+        prepare: () => ({
+          bind: () => ({ first: async () => row }),
+        }),
+      },
+      BASE_URL: 'https://flaxia.app',
+      SANDBOX_ORIGIN: 'https://sandbox.flaxia.app',
+    } as unknown as Parameters<typeof onOgpPlayerRequest>[0]['env'];
+    const request = new Request('https://flaxia.app/api/ogp-player/game-1');
+    const playerResponse = await onOgpPlayerRequest({ request, env, params: { id: 'game-1' } });
+    const response = await onRequest({ request, env: {}, next: async () => playerResponse });
+
+    assert.equal(response.headers.get('x-frame-options'), 'SAMEORIGIN');
+    assert.equal(response.headers.get('content-security-policy')?.includes("frame-ancestors 'self'"), true);
+    assert.ok((await response.text()).includes(expectedTag));
+  }
 });
 
 test('middleware policy matches static asset security headers', async () => {
