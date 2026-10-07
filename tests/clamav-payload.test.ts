@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { describe, it } from 'node:test';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
-import type { CrowdEnv } from '../functions/lib/crowd.ts';
+import { type CrowdEnv, FILE_SCAN_SOURCE_MAX_BYTES, verifyFileScanTicket } from '../functions/lib/crowd.ts';
 import { CLAMAV_MAX_BYTES, clamavMaxBytes, submitFileScans } from '../functions/lib/scan/clamav.ts';
 import { ensureFileScansTable, getFileScan, upsertFileScan } from '../functions/lib/scan/db.ts';
 
@@ -37,13 +37,14 @@ function fileFeatures(bytes: Uint8Array) {
   return { sha256: bytesToHex(sha256(bytes)), kind: 'other' as const };
 }
 
-function crowdEnv(bodyCap = DEFAULT_CROWD_BODY_CAP): CrowdEnv {
+function crowdEnv(bodyCap = DEFAULT_CROWD_BODY_CAP, fileSources = false): CrowdEnv {
   return {
     CROWD_ORCHESTRATOR_URL: 'https://crowd.example',
     CROWD_API_KEY: 'test-api-key',
     CROWD_WEBHOOK_SECRET: 'test-webhook-secret',
     BASE_URL: 'https://flaxia.app',
     CROWD_MAX_PAYLOAD_BYTES: String(bodyCap),
+    CROWD_SCAN_FILE_SOURCES: fileSources ? '1' : '0',
     FILE_SCAN_CLAMAV_IMAGE: 'https://scanner.example/clamav.wasm',
   };
 }
@@ -59,6 +60,9 @@ describe('ClamAV payload sizing and Crowd contract', () => {
     const nextBodyBytes = Math.ceil((rawLimit + 1) / 3) * 4 + PAYLOAD_SCAFFOLD_BYTES;
     assert.ok(currentBodyBytes <= cap);
     assert.ok(nextBodyBytes > cap);
+    // The inline path never exceeds the 1 MiB DO/WebSocket-safe task body,
+    // even if a mismatched environment value attempts to raise it.
+    assert.equal(clamavMaxBytes({ CROWD_MAX_PAYLOAD_BYTES: String(40 * 1024 * 1024) }), CLAMAV_MAX_BYTES);
   });
 
   it('submits an at-limit raw file within Crowd MAX_PAYLOAD_SIZE and signs its full SHA', async () => {
@@ -99,6 +103,60 @@ describe('ClamAV payload sizing and Crowd contract', () => {
     assert.equal((await getFileScan(db, key))?.status, 'submitted');
   });
 
+  it('keeps a 25 MiB scan task small and binds its file source ticket to the uploaded bytes', async () => {
+    const env = crowdEnv(DEFAULT_CROWD_BODY_CAP, true);
+    const raw = new Uint8Array(FILE_SCAN_SOURCE_MAX_BYTES);
+    const features = fileFeatures(raw);
+    const key = 'uploads/large-scan.jpg';
+    const { db } = testDb();
+    await ensureFileScansTable(db);
+    await upsertFileScan(db, key, features);
+
+    const originalFetch = globalThis.fetch;
+    let requestBody: BodyInit | null | undefined;
+    globalThis.fetch = async (_input, init) => {
+      requestBody = init?.body;
+      return new Response(JSON.stringify({ taskId: 'crowd-large-task' }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    try {
+      await submitFileScans(db, env, key, 'image/jpeg', raw);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    assert.equal(typeof requestBody, 'string');
+    const bodyText = requestBody as string;
+    assert.ok(new TextEncoder().encode(bodyText).byteLength < DEFAULT_CROWD_BODY_CAP);
+    const task = JSON.parse(bodyText) as {
+      payload: {
+        files: Record<string, string>;
+        fileSources?: Record<string, { url: string; token: string; size: number; sha256: string }>;
+      };
+      callbackUrl: string;
+    };
+    assert.deepEqual(task.payload.files, {});
+    const source = task.payload.fileSources?.['input.jpg'];
+    assert.ok(source);
+    assert.equal(source.size, raw.byteLength);
+    assert.equal(source.sha256, features.sha256);
+    assert.equal(new URL(source.url).pathname, '/api/crowd/scan-file');
+    assert.equal(new URL(source.url).search, '');
+    assert.equal(new URL(task.callbackUrl).searchParams.get('sha'), features.sha256);
+    const claims = await verifyFileScanTicket(env, source.token);
+    assert.deepEqual(claims && { ...claims, expiresAt: 'future' }, {
+      version: 1,
+      key,
+      sha256: features.sha256,
+      size: raw.byteLength,
+      expiresAt: 'future',
+    });
+    assert.ok(claims && claims.expiresAt > Date.now());
+    assert.equal((await getFileScan(db, key))?.status, 'submitted');
+  });
+
   it('does not mark a newer key too_large from a stale background upload', async () => {
     const env = crowdEnv();
     const staleBytes = new Uint8Array(clamavMaxBytes(env) + 1);
@@ -124,6 +182,32 @@ describe('ClamAV payload sizing and Crowd contract', () => {
     assert.equal(row?.sha256, fileFeatures(currentBytes).sha256);
     assert.equal(row?.status, 'pending');
     assert.equal(submitted, false);
+  });
+
+  it('rejects bytes above 25 MiB even when file-source support is enabled', async () => {
+    const env = crowdEnv(DEFAULT_CROWD_BODY_CAP, true);
+    const raw = new Uint8Array(FILE_SCAN_SOURCE_MAX_BYTES + 1);
+    const key = 'uploads/above-file-source-limit.bin';
+    const { db } = testDb();
+    await ensureFileScansTable(db);
+    await upsertFileScan(db, key, fileFeatures(raw));
+
+    const originalFetch = globalThis.fetch;
+    let submitted = false;
+    globalThis.fetch = async () => {
+      submitted = true;
+      return new Response(JSON.stringify({ taskId: 'unexpected' }), { status: 201 });
+    };
+    try {
+      await submitFileScans(db, env, key, 'application/octet-stream', raw);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    assert.equal(submitted, false);
+    const row = await getFileScan(db, key);
+    assert.equal(row?.status, 'skipped');
+    assert.equal(row?.detail, 'too_large');
   });
 
   it('records over-cap bytes as too_large without submitting them to Crowd', async () => {

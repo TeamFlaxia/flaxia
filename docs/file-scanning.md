@@ -83,10 +83,12 @@ code (Cloudflare Workers constraint):
 | audio / other | ✔ | — | — | — |
 
 Hard limits: ZIP ≤ 4096 entries, PNG inflate ≤ 32 MB, GIF ≤ 16 MP, PDF text
-≤ 256 KB. ClamAV's raw-file ceiling is derived from Crowd's serialized task-body
-cap (1 MiB by default, about 783 KiB raw after base64 and JSON overhead). The
-Flaxia `CROWD_MAX_PAYLOAD_BYTES` setting must match Crowd's `MAX_PAYLOAD_SIZE`;
-raising only one side does not expand scan coverage safely.
+≤ 256 KB. The legacy inline ClamAV path is limited to about 783 KiB raw (1 MiB
+Crowd task-body cap after Base64 and JSON overhead). That cap is deliberately
+clamped at 1 MiB: a Base64 task is also stored as one Durable Object value and
+sent over its WebSocket, so increasing the JSON cap alone cannot safely carry a
+25 MiB file. With the R2 file-source rollout enabled, files up to 25 MiB are
+fetched by the node at execution time; larger files remain quarantined.
 
 ## Stage 2 — asynchronous (Crowd orchestrator)
 
@@ -103,12 +105,22 @@ raising only one side does not expand scan coverage safely.
   local/private hosts. With the orchestrator unconfigured (local dev) the row
   is marked `skipped / orchestrator_unconfigured`; with an orchestrator but no
   ClamAV image it is marked `skipped / scan_image_unconfigured` so the gap is
-  visible instead of leaving uploads pending forever. Files larger than the
-  configured task-body cap are marked `skipped / too_large` before submission;
-  the delivery gate withholds them until replaced with scannable bytes. The cap
-  accounts for base64's 4/3 expansion and a JSON margin (`clamavMaxBytes`,
-  overridable via `CROWD_MAX_PAYLOAD_BYTES`, which must mirror Crowd's
-  `MAX_PAYLOAD_SIZE`).
+  visible instead of leaving uploads pending forever.
+- Files up to `clamavMaxBytes` continue using the legacy Base64 task. Its body
+  ceiling is at most 1 MiB even if `CROWD_MAX_PAYLOAD_BYTES` is set higher. Files
+  larger than that but no more than 25 MiB use an R2 file source only when
+  `CROWD_SCAN_FILE_SOURCES=1`; with the flag absent or disabled they remain
+  `skipped / too_large` and quarantined. Files above 25 MiB are always skipped.
+  Roll out in order: deploy the Crowd worker, publish and deploy the updated
+  `@flaxia/sdk`/`@flaxia/node`, update `CROWD_NODE_VERSION` only to that published
+  node release, then enable the flag after an eligible `container` node is online.
+- Configure `CROWD_NODE_ORIGINS` as a comma-separated list of exact browser
+  page origins allowed to read the ticket endpoint. Each node host must opt in
+  with both `containerImageOrigins` (for the trusted ClamAV WASM image) and
+  `fileSourceOrigins` (for the Flaxia API origin); the Crowd coordinator only
+  assigns reference tasks to nodes that advertise file-source support. The
+  Flaxia page configures its own API origin. No cookies are used by the file
+  fetch; CORS allows only configured origins and the `Authorization` header.
 - The signed callback URL carries `type=file-scan`, `key=<r2Key>`,
   `kind=clamav|video-phash`, and `sha=<full 64-hex sha256>`. The full digest is
   the immutable scan target; 16-hex prefixes remain accepted only for callbacks
@@ -121,11 +133,20 @@ raising only one side does not expand scan coverage safely.
   The key defaults to `CROWD_API_KEY` (set `CROWD_WEBHOOK_SECRET` to rotate it
   independently) and is empty while Crowd is unconfigured, which is what keeps
   local dev and the integration suites working unsigned.
-- The submission path binds the callback to the bytes it actually holds: the
-  sha is computed from the same buffer that is base64'd into the task, and the
-  task id is only written when the row still has that exact sha. Without this,
-  a background task that runs after a re-upload could scan bytes A while
-  labelling the callback as bytes B.
+- `GET /api/crowd/scan-file` streams R2 bytes only when a short-lived HMAC
+  bearer ticket is valid. The ticket binds key, SHA-256, size, and expiry; the
+  handler also requires the current `file_scans` row to remain `pending`,
+  `submitted`, or `clean` with the same SHA and verifies the R2 object size.
+  `clean` remains readable only to support already-queued secondary video-hash
+  work while its ticket is valid. The response is
+  `application/octet-stream`, attachment-only, no-store, and streamed directly
+  from R2. The ticket is sent in `Authorization`, never in the URL.
+- The submission path binds the callback and file ticket to the bytes it
+  actually holds: the full sha is computed from the upload buffer, and the task
+  id is only written when the row still has that exact sha. For a large file,
+  the task contains only a signed reference; the node verifies both byte count
+  and SHA-256 before mounting the downloaded bytes. A same-key re-upload makes
+  an old ticket unusable because the current D1 row no longer matches.
 - Callback query parameters are covered by the HMAC signature. Infected verdicts
   atomically upsert the submitted full SHA into `file_blocklist` and update the
   scan row only when its SHA still matches. Thus a same-key overwrite cannot
@@ -134,7 +155,11 @@ raising only one side does not expand scan coverage safely.
 
 ### Container contract
 
-Input: `files: { [name]: base64 }` in the `submit` payload. Output envelope:
+Small legacy inputs use `files: { [name]: base64 }`. Large scan inputs use
+`fileSources: { [name]: { url, token, size, sha256 } }`; the node fetches these
+immediately before execution, with its configured origin allowlist, a 25 MiB
+aggregate limit, and size/hash verification. The Crowd coordinator sends
+file-source tasks only to nodes that advertised support. Output envelope:
 
 ```json
 { "result": { "output": { "stdout": "...", "stderr": "...", "exitCode": 0 } } }
@@ -206,7 +231,7 @@ substring of the ClamAV verdict name).
 ## Testing
 
 - Unit: `tests/file-features.test.ts`, `tests/file-blocklist.test.ts`,
-  `tests/clamav-payload.test.ts`, `tests/file-scan-race.test.ts`,
+  `tests/clamav-payload.test.ts`, `tests/crowd-scan-file.test.ts`, `tests/file-scan-race.test.ts`,
   `tests/mime-guard.test.ts`, `tests/security-guards.test.ts` (regression guard:
   every R2-writing route must call `scanUploadSync`).
 - Integration: `tests/file-scans.test.ts` against `npm run dev:test`
