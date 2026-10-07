@@ -16,9 +16,9 @@ export type Bindings = {
   /** Optional dedicated secret for signing orchestrator callbacks and scan-file tickets. */
   CROWD_WEBHOOK_SECRET?: string;
   /** Comma-separated page origins permitted to fetch signed Crowd scan-file responses. */
-  CROWD_NODE_ORIGINS?: string;
+  CROWD_NODE_ORIGINS: string;
   /** Enable R2-backed file references for scans after Crowd and nodes are deployed. */
-  CROWD_SCAN_FILE_SOURCES?: string;
+  CROWD_SCAN_FILE_SOURCES: string;
   /** HTTPS URL of the ClamAV WASM image used by the browser container. */
   FILE_SCAN_CLAMAV_IMAGE?: string;
   /** Optional HTTPS URL of the video keyframe pHash WASM image. */
