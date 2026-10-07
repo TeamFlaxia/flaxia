@@ -216,6 +216,24 @@ copies together.
   `skipped/too_large`, which is quarantined); the next upload is evaluated
   again. KV or D1 errors during serve-time verification fail closed.
 
+## Re-screening quarantined images
+
+`POST /api/admin/rescreen-quarantined` is a bounded, admin-only recovery path
+for image objects recorded in `file_scans` as `skipped` with `detail` equal to
+`too_large` or `orchestrator_unconfigured`. The endpoint processes at most 100 rows per request (default 25;
+optional JSON body `{ "limit": 50 }`). It re-reads the R2 object, accepts only
+images within the configured scan limits, requires the bytes' SHA-256 to match
+the quarantined scan row, and submits those exact bytes to ClamAV. Inline scan
+size is constrained by the configured Crowd payload limit. When
+`CROWD_SCAN_FILE_SOURCES=1` is explicitly enabled, images up to 25 MiB may use
+R2-backed scan tickets; this feature flag remains off by default. Candidates
+above the active scan limit stay quarantined and are reported as `too_large`.
+The endpoint never serves the object early or
+clears an infection verdict; it remains blocked until
+a matching clean callback arrives.
+Missing, changed, unsupported, and failed objects are reported separately in
+the response's `results` counts.
+
 ## Blocklist admin API
 
 | Method | Endpoint | Description |

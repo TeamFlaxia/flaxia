@@ -13,6 +13,7 @@ import {
 } from '../../lib/scan/blocklist';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
+import { rescreenQuarantinedObject } from '../../lib/scan/rescreen';
 import { requireAdmin, requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
@@ -1046,6 +1047,42 @@ admin.get('/auth-migration', requireAuth, requireAdmin, async (c) => {
 });
 
 // ─── File blocklist ──────────────────────────────────────────────────────────
+
+// POST /api/admin/rescreen-quarantined — retry skipped image scans after confirming
+// their current R2 bytes still match the D1 row.
+admin.post('/rescreen-quarantined', requireAuth, requireAdmin, async (c) => {
+  if (!c.env.DB || !c.env.BUCKET) return c.json({ error: 'Database or bucket unavailable' }, 500);
+
+  let body: { limit?: unknown } = {};
+  try {
+    body = await c.req.json<{ limit?: unknown }>();
+  } catch {
+    // An empty request body is allowed; the default batch is small.
+  }
+  const requested = typeof body.limit === 'number' ? body.limit : Number(body.limit ?? 25);
+  const limit = Number.isFinite(requested) ? Math.min(Math.max(Math.floor(requested), 1), 100) : 25;
+
+  try {
+    const rows = await c.env.DB.prepare(
+      `SELECT r2_key FROM file_scans
+       WHERE status = 'skipped' AND detail IN ('too_large', 'orchestrator_unconfigured')
+         AND kind = 'image'
+       ORDER BY created_at ASC LIMIT ?`,
+    )
+      .bind(limit)
+      .all<{ r2_key: string }>();
+
+    const results: Record<string, number> = {};
+    for (const row of rows.results ?? []) {
+      const result = await rescreenQuarantinedObject(c.env.DB, c.env.BUCKET, c.env, row.r2_key);
+      results[result] = (results[result] ?? 0) + 1;
+    }
+    return c.json({ success: true, considered: rows.results?.length ?? 0, results });
+  } catch (error: unknown) {
+    console.error('Quarantined media rescreen error:', error);
+    return c.json({ error: 'Failed to rescreen quarantined media' }, 500);
+  }
+});
 
 // GET /api/admin/file-blocklist — list all entries.
 admin.get('/file-blocklist', requireAuth, requireAdmin, async (c) => {
