@@ -34,8 +34,10 @@ type Bindings = {
   AP_DELIVERY_QUEUE: Queue;
   CROWD_ORCHESTRATOR_URL: string;
   CROWD_API_KEY: string;
-  /** Optional dedicated secret for signing orchestrator callbacks. */
+  /** Optional dedicated secret for signing callbacks and scan-file tickets. */
   CROWD_WEBHOOK_SECRET?: string;
+  CROWD_NODE_ORIGINS: string;
+  CROWD_SCAN_FILE_SOURCES: string;
   FILE_SCAN_CLAMAV_IMAGE?: string;
   FILE_SCAN_VIDEO_PHASH_IMAGE?: string;
   VAPID_PUBLIC_KEY?: string;

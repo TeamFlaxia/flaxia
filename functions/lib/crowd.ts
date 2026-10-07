@@ -37,6 +37,8 @@ export interface CrowdEnv {
   FILE_SCAN_VIDEO_PHASH_IMAGE?: string;
   /** Orchestrator task-body cap in bytes; defaults to 1 MiB. */
   CROWD_MAX_PAYLOAD_BYTES?: string;
+  /** Enable R2-backed file references for scans after Crowd and nodes are deployed. */
+  CROWD_SCAN_FILE_SOURCES?: string;
   BASE_URL?: string;
   CACHE?: KVNamespace;
   VECTORIZE?: VectorizeLike;
@@ -182,6 +184,114 @@ export async function verifyCallbackSignature(url: URL, config: CrowdConfig): Pr
   const provided = url.searchParams.get('sig');
   if (!provided) return false;
   return signatureEquals(provided, await hmacHex(config.webhookSecret, signingMessage(url)));
+}
+
+// ── Short-lived R2 scan-file tickets ──
+// The ticket is carried in an Authorization header (never a query string) and
+// binds a node's one-file GET to the exact R2 key, bytes, and size Flaxia queued.
+export const FILE_SCAN_SOURCE_MAX_BYTES = 25 * 1024 * 1024;
+export const FILE_SCAN_TICKET_TTL_MS = 30 * 60 * 1000;
+
+export interface FileScanTicketClaims {
+  version: 1;
+  key: string;
+  sha256: string;
+  size: number;
+  expiresAt: number;
+}
+
+function base64UrlEncodeText(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function base64UrlDecodeText(value: string): string | null {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) return null;
+  try {
+    const base64 = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (value.length % 4)) % 4);
+    const binary = atob(base64);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+function validScanFileKey(key: unknown): key is string {
+  if (typeof key !== 'string' || key.length === 0 || key.length > 1024) return false;
+  for (let i = 0; i < key.length; i++) {
+    const code = key.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return false;
+  }
+  return !key.split('/').some((part) => part === '.' || part === '..');
+}
+
+/** Mint a narrowly scoped, 30-minute bearer for one scanned object. */
+export async function createFileScanTicket(
+  config: CrowdConfig,
+  input: { key: string; sha256: string; size: number },
+): Promise<string> {
+  if (!config.webhookSecret) throw new Error('Crowd file-scan signing secret is not configured');
+  if (!validScanFileKey(input.key)) throw new Error('Invalid R2 key for file-scan ticket');
+  if (!/^[a-f0-9]{64}$/i.test(input.sha256)) throw new Error('Invalid SHA-256 for file-scan ticket');
+  if (!Number.isSafeInteger(input.size) || input.size < 0 || input.size > FILE_SCAN_SOURCE_MAX_BYTES) {
+    throw new Error('File exceeds the Crowd scan-file limit');
+  }
+
+  const claims: FileScanTicketClaims = {
+    version: 1,
+    key: input.key,
+    sha256: input.sha256.toLowerCase(),
+    size: input.size,
+    expiresAt: Date.now() + FILE_SCAN_TICKET_TTL_MS,
+  };
+  const body = base64UrlEncodeText(JSON.stringify(claims));
+  const signature = await hmacHex(config.webhookSecret, `flaxia-file-scan-v1.${body}`);
+  return `${body}.${signature}`;
+}
+
+/** Verify signature, scope, size, and expiry before touching R2 or D1. */
+export async function verifyFileScanTicket(
+  env: CrowdEnv,
+  ticket: string,
+  now = Date.now(),
+): Promise<FileScanTicketClaims | null> {
+  const secret = crowdConfig(env).webhookSecret;
+  if (!secret || typeof ticket !== 'string' || ticket.length > 4096) return null;
+  const parts = ticket.split('.');
+  if (parts.length !== 2 || !/^[a-f0-9]{64}$/.test(parts[1]!)) return null;
+  const [body, signature] = parts as [string, string];
+  if (!/^[A-Za-z0-9_-]+$/.test(body)) return null;
+  const expected = await hmacHex(secret, `flaxia-file-scan-v1.${body}`);
+  if (!signatureEquals(signature, expected)) return null;
+
+  const decoded = base64UrlDecodeText(body);
+  if (!decoded) return null;
+  let claims: unknown;
+  try {
+    claims = JSON.parse(decoded);
+  } catch {
+    return null;
+  }
+  if (!claims || typeof claims !== 'object') return null;
+  const value = claims as Partial<FileScanTicketClaims>;
+  if (
+    value.version !== 1 ||
+    !validScanFileKey(value.key) ||
+    typeof value.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(value.sha256) ||
+    !Number.isSafeInteger(value.size) ||
+    (value.size as number) < 0 ||
+    (value.size as number) > FILE_SCAN_SOURCE_MAX_BYTES ||
+    !Number.isSafeInteger(value.expiresAt) ||
+    (value.expiresAt as number) <= now ||
+    (value.expiresAt as number) > now + FILE_SCAN_TICKET_TTL_MS + 60_000
+  ) {
+    return null;
+  }
+  return value as FileScanTicketClaims;
 }
 
 // ── Schema bootstrap ──

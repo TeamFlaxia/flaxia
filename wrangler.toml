@@ -28,6 +28,10 @@ SANDBOX_ORIGIN = "https://sandbox.flaxia.app"
 BASE_URL = "https://flaxia.app"
 ENVIRONMENT = "production"
 CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
+# Keep file-source scanning disabled until the Crowd worker/node release is deployed.
+CROWD_SCAN_FILE_SOURCES = "0"
+# Add external node page origins here when they are approved for signed scan-file reads.
+CROWD_NODE_ORIGINS = ""
 # Full HTTPS URLs of the browser-node WASM images used by the file scan
 # pipeline. The container workload rejects bare filenames and local/private
 # hosts, so these must be publicly reachable. While empty, uploads are stored

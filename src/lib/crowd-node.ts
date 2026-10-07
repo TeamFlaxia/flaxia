@@ -49,6 +49,10 @@ export interface CrowdNodeConfig {
     onConsentRequired?: (controls: CrowdConsentControls) => void;
   };
   capabilities?: string[];
+  /** Exact HTTPS origins allowed to serve executable container WASM images. */
+  containerImageOrigins?: string[];
+  /** Exact same-origin API host allowed to serve signed scan-file tickets. */
+  fileSourceOrigins?: string[];
   maxCpuLoad?: number;
 }
 
@@ -132,6 +136,7 @@ function buildNodeConfig(onConsentRequired?: (controls: CrowdConsentControls) =>
       onConsentRequired,
     },
     capabilities: CROWD_SITE_CAPABILITIES,
+    fileSourceOrigins: typeof window !== 'undefined' ? [window.location.origin] : [],
     maxCpuLoad: CROWD_NODE_MAX_CPU_LOAD,
   };
 }

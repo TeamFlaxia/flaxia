@@ -130,6 +130,7 @@ test('every env binding used in code exists in wrangler.toml (prod parity)', asy
     ['HF_REPO', 'dataset export skips HuggingFace upload without it'],
     ['EXPORT_BUCKET', 'dataset export artifact falls back when unset'],
     ['EXPORT_KV', 'dataset export artifact falls back when unset'],
+    ['CROWD_NODE_ORIGINS', 'file-source CORS origins are optional for same-origin nodes'],
   ]);
 
   async function walk(dir: string): Promise<string[]> {

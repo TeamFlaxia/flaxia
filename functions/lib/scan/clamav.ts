@@ -9,25 +9,32 @@
 
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
-import { type CrowdEnv, crowdConfig, getCrowdClient, signedCallbackUrl } from '../crowd.ts';
+import {
+  type CrowdEnv,
+  createFileScanTicket,
+  crowdConfig,
+  FILE_SCAN_SOURCE_MAX_BYTES,
+  getCrowdClient,
+  signedCallbackUrl,
+} from '../crowd.ts';
 import { ensureFileScansTable, getFileScan, setScanStatus, setScanTask, upsertFileScan } from './db.ts';
 import { extractFileFeatures } from './features.ts';
 import { extensionOf } from './mime.ts';
 
 /**
- * Cap for container payloads. Crowd checks the serialized task body against its
- * MAX_PAYLOAD_SIZE (1 MiB by default in flaxia-crowd), and base64 inflates the
- * file by 4/3. Keep CROWD_MAX_PAYLOAD_BYTES equal to Crowd's configured value;
- * oversized uploads remain explicitly `skipped/too_large` and quarantined.
+ * Legacy inline payload ceiling. It must stay at or below Crowd's 1 MiB task
+ * cap: Base64 tasks are stored as one Durable Object value and sent over its
+ * WebSocket, so raising this to fit 25 MiB files would exceed Cloudflare limits.
  */
 const DEFAULT_MAX_PAYLOAD_BYTES = 1_048_576;
 /** Room for the JSON scaffolding around the base64 file. */
 const PAYLOAD_SCAFFOLD_BYTES = 4_096;
 
-/** Largest raw file that still fits one task body for the configured cap. */
+/** Largest raw file that is safe to inline in the current Crowd task format. */
 export function clamavMaxBytes(env?: CrowdEnv): number {
   const configured = Number(env?.CROWD_MAX_PAYLOAD_BYTES ?? '');
-  const cap = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_PAYLOAD_BYTES;
+  const requested = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_PAYLOAD_BYTES;
+  const cap = Math.min(requested, DEFAULT_MAX_PAYLOAD_BYTES);
   return Math.max(0, Math.floor((cap - PAYLOAD_SCAFFOLD_BYTES) / 4) * 3);
 }
 
@@ -98,7 +105,8 @@ export async function submitFileScans(
       return;
     }
 
-    if (raw.byteLength > clamavMaxBytes(env)) {
+    const useFileSource = raw.byteLength > clamavMaxBytes(env);
+    if (raw.byteLength > FILE_SCAN_SOURCE_MAX_BYTES || (useFileSource && env.CROWD_SCAN_FILE_SOURCES !== '1')) {
       await setScanStatus(db, r2Key, 'skipped', { detail: 'too_large', sha256: submittedSha });
       return;
     }
@@ -109,7 +117,6 @@ export async function submitFileScans(
     // Carry the full digest in Crowd's signed callback URL. The receiver uses
     // it both as an exact row guard and to blocklist the scanned bytes if this
     // key has been overwritten before the verdict arrives.
-    const payload = toBase64(raw);
     const ext = extensionOf(r2Key) ?? 'bin';
     const fileName = `input.${ext}`;
     const clamavImage = (env[CLAMAV_IMAGE_ENV] || '').trim();
@@ -121,13 +128,24 @@ export async function submitFileScans(
       return;
     }
 
+    let fileSource: { url: string; token: string; size: number; sha256: string } | undefined;
     try {
+      fileSource = useFileSource
+        ? {
+            url: new URL('/api/crowd/scan-file', config.baseUrl).toString(),
+            token: await createFileScanTicket(config, { key: r2Key, sha256: submittedSha, size: raw.byteLength }),
+            size: raw.byteLength,
+            sha256: submittedSha,
+          }
+        : undefined;
       const res = await client.submit({
         workload: 'container',
         payload: {
           image: clamavImage,
           command: ['clamscan', '--infected', '--no-summary', fileName],
-          files: { [fileName]: payload },
+          ...(fileSource
+            ? { files: {}, fileSources: { [fileName]: fileSource } }
+            : { files: { [fileName]: toBase64(raw) } }),
         },
         callbackUrl: await signedCallbackUrl(config, {
           baseUrl: config.baseUrl,
@@ -145,7 +163,7 @@ export async function submitFileScans(
 
     const videoPhashImage = (env[VIDEO_PHASH_IMAGE_ENV] || '').trim();
     if (mime.startsWith('video/') && videoPhashImage) {
-      await submitVideoPhash(config, r2Key, submittedSha, raw, videoPhashImage);
+      await submitVideoPhash(config, r2Key, submittedSha, raw, videoPhashImage, fileSource);
     }
   } catch (e) {
     console.error(`File scan submission failed for ${r2Key}:`, e);
@@ -159,6 +177,7 @@ async function submitVideoPhash(
   submittedSha: string,
   raw: Uint8Array,
   image: string,
+  fileSource?: { url: string; token: string; size: number; sha256: string },
 ): Promise<void> {
   try {
     const client = getCrowdClient(config);
@@ -168,7 +187,9 @@ async function submitVideoPhash(
       payload: {
         image,
         command: ['video-phash', 'input.mp4'],
-        files: { 'input.mp4': toBase64(raw) },
+        ...(fileSource
+          ? { files: {}, fileSources: { 'input.mp4': fileSource } }
+          : { files: { 'input.mp4': toBase64(raw) } }),
       },
       callbackUrl: await signedCallbackUrl(config, {
         baseUrl: config.baseUrl,
