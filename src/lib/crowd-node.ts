@@ -3,7 +3,7 @@
 export const CROWD_ORCHESTRATOR_URL = 'https://crowd.flaxia.app';
 
 /** Pinned `@flaxia/node` version served through the /api/crowd asset proxy. */
-export const CROWD_NODE_VERSION = '0.3.7';
+export const CROWD_NODE_VERSION = '0.5.0';
 
 export const CROWD_SITE_ID = 'flaxia';
 
