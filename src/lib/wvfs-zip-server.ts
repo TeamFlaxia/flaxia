@@ -1,5 +1,6 @@
 import { CAPTURE_BRIDGE_IIFE } from './capture-bridge.generated.ts';
 import { getMimeType, validateFileType } from './file-extensions.ts';
+import { createWvfsImageCorsCompatScript } from './wvfs-image-cors.ts';
 import { ZIP_MAX_PATH_DEPTH, ZIP_MAX_PATH_LENGTH, ZIP_MAX_TOTAL_SIZE, ZIP_TTL } from './zip-constants.ts';
 
 const WVFS_TTL = ZIP_TTL;
@@ -733,12 +734,13 @@ export function injectBaseTag(htmlContent: string, postId: string, subPath: stri
   const safeId = /^[A-Za-z0-9_-]{1,128}$/.test(postId) ? postId : 'invalid';
   const safeSub = /^[A-Za-z0-9_.\/\-]{0,256}$/.test(subPath) ? subPath.replace(/\$+/g, '') : '';
   const baseUrl = `/api/wvfs-zip/${safeId}/${safeSub}`;
-  // ZIP games run with an opaque origin, so the browser's storage getters
-  // throw. Seed the compatibility shim before game scripts run and relay
-  // writes to the trusted sandbox-origin broker.
+  // ZIP games run with an opaque origin, so storage getters throw and no-CORS
+  // images taint canvases. Seed both compatibility shims before game scripts;
+  // storage writes still relay to the trusted sandbox-origin broker.
   const storageCompatScript = `<script>(function(){var prefix='FLAXIA_STORAGE_V1:';var initial={};try{if(window.name.indexOf(prefix)===0)initial=JSON.parse(window.name.slice(prefix.length))||{}}catch{}try{window.name=''}catch{}function makeStorage(seed,persistent){var values=new Map(Object.entries(seed));function relay(operation,key,value){if(!persistent)return;try{window.parent.postMessage({type:'FLAXIA_GAME_STORAGE_WRITE',operation:operation,key:key,value:value},'*')}catch{}}return{get length(){return values.size},key:function(index){return Array.from(values.keys())[index]??null},getItem:function(key){key=String(key);return values.has(key)?values.get(key):null},setItem:function(key,value){key=String(key);value=String(value);values.set(key,value);relay('set',key,value)},removeItem:function(key){key=String(key);values.delete(key);relay('remove',key)},clear:function(){values.clear();relay('clear')}}}try{Object.defineProperty(window,'localStorage',{configurable:true,value:makeStorage(initial,true)})}catch{}try{Object.defineProperty(window,'sessionStorage',{configurable:true,value:makeStorage({},false)})}catch{}})();</script>`;
+  const imageCorsCompatScript = `<script>${createWvfsImageCorsCompatScript(baseUrl)}</script>`;
   const captureScript = `<script>${CAPTURE_BRIDGE_IIFE}</script>`;
-  const injectedScripts = `${storageCompatScript}\n  ${captureScript}`;
+  const injectedScripts = `${storageCompatScript}\n  ${imageCorsCompatScript}\n  ${captureScript}`;
 
   htmlContent = rewriteLocalAbsolutePaths(htmlContent);
 
