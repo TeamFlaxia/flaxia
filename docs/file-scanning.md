@@ -21,7 +21,7 @@ upload ──► detect + allowlist ──► attachment kind ──► dimensio
               │
               ▼ (callback)
         verdict ── clean: row=clean │ infected: row=infected + auto-blocklist
-                  skipped/too_large ──► quarantined at serve time
+                  skipped/too_large ──► served as unscanned (not clean)
               │
               ▼ (serve time)
         isKeyBlocked: KV + D1 scan state ──► 404
@@ -88,7 +88,8 @@ Crowd task-body cap after Base64 and JSON overhead). That cap is deliberately
 clamped at 1 MiB: a Base64 task is also stored as one Durable Object value and
 sent over its WebSocket, so increasing the JSON cap alone cannot safely carry a
 25 MiB file. With the R2 file-source rollout enabled, files up to 25 MiB are
-fetched by the node at execution time; larger files remain quarantined.
+fetched by the node at execution time; larger files are marked `too_large` and
+remain viewable but unscanned.
 
 ## Stage 2 — asynchronous (Crowd orchestrator)
 
@@ -110,7 +111,8 @@ fetched by the node at execution time; larger files remain quarantined.
   ceiling is at most 1 MiB even if `CROWD_MAX_PAYLOAD_BYTES` is set higher. Files
   larger than that but no more than 25 MiB use an R2 file source only when
   `CROWD_SCAN_FILE_SOURCES=1`; with the flag absent or disabled they remain
-  `skipped / too_large` and quarantined. Files above 25 MiB are always skipped.
+  `skipped / too_large` but are viewable without a clean verdict. Files above
+  25 MiB are also skipped and viewable as unscanned.
   Roll out in order: deploy the Crowd worker, publish and deploy the updated
   `@flaxia/sdk`/`@flaxia/node`, update `CROWD_NODE_VERSION` only to that published
   node release, then enable the flag after an eligible `container` node is online.
@@ -177,7 +179,7 @@ file-source tasks only to nodes that advertised support. Output envelope:
 | clean | row → `clean` (after a final blocklist re-check) |
 | infected | exact-SHA row → `infected` when still current; **always auto-adds submitted sha256 to `file_blocklist`** (`added_by = system`); KV key marker only when the row matches |
 | failed / task failure | row → `failed` with reason; serving fails open |
-| skipped / `too_large` | row remains explicitly skipped; delivery is quarantined until newer bytes replace it and enter the normal scan lifecycle |
+| skipped / `too_large` | row remains explicitly skipped and unscanned, but the file is viewable; rescan or newer bytes can still update the verdict |
 | clean/infected never downgrades: re-upload of the same bytes keeps the verdict (sha-aware upsert) | |
 
 A `signature` blocklist entry is matched at verdict time against the ClamAV
@@ -204,33 +206,33 @@ copies together.
 - **Upload (fail closed):** stage-1 checks block anything known-bad before
   storage; the synchronous blocklist match is the hard gate.
 - **Serve (asynchronous):** every path that returns bytes checks the KV marker
-  and D1 scan row: infected rows and `skipped/too_large` rows return `404`, even
-  if a KV marker write was lost. This covers `/api/images/*`, `/api/audio/*`,
+  and D1 scan row: infected rows return `404`, even if a KV marker write was
+  lost. A `skipped/too_large` file remains viewable but is not marked clean. This
+  covers `/api/images/*`, `/api/audio/*`,
   `/api/video/*`, `/api/zip/:postId`, `/api/thumbnail/:id`, `/api/swf/:postId`,
   `/api/ads/:id/payload`, and the sandbox's `wvfs/` and `zip/` lookups. The
   sandbox checks the source archive before serving any CDN-cached extracted
   file, so a blocked ZIP cannot keep leaking through `wvfs/`. Reused keys clear
   stale infection markers only after D1 confirms the row is no longer infected;
   KV or D1 read errors fail closed.
-- **Post-verdict:** Crowd outages may leave rows `failed`/`skipped` (except
-  `skipped/too_large`, which is quarantined); the next upload is evaluated
+- **Post-verdict:** Crowd outages may leave rows `failed`/`skipped`; `skipped/too_large`
+  files remain viewable without a clean verdict. The next upload is evaluated
   again. KV or D1 errors during serve-time verification fail closed.
 
 ## Re-screening quarantined images
 
 `POST /api/admin/rescreen-quarantined` is a bounded, admin-only recovery path
 for image objects recorded in `file_scans` as `skipped` with `detail` equal to
-`too_large` or `orchestrator_unconfigured`. The endpoint processes at most 100 rows per request (default 25;
-optional JSON body `{ "limit": 50 }`). It re-reads the R2 object, accepts only
-images within the configured scan limits, requires the bytes' SHA-256 to match
-the quarantined scan row, and submits those exact bytes to ClamAV. Inline scan
-size is constrained by the configured Crowd payload limit. When
-`CROWD_SCAN_FILE_SOURCES=1` is explicitly enabled, images up to 25 MiB may use
-R2-backed scan tickets; this feature flag remains off by default. Candidates
-above the active scan limit stay quarantined and are reported as `too_large`.
-The endpoint never serves the object early or
-clears an infection verdict; it remains blocked until
-a matching clean callback arrives.
+`too_large` or `orchestrator_unconfigured`. The endpoint processes at most 100
+rows per request (default 25; optional JSON body `{ "limit": 50 }`). It re-reads
+the R2 object, accepts only images within the configured scan limits, requires
+the bytes' SHA-256 to match the skipped scan row, and submits those exact bytes
+to ClamAV. Inline scan size is constrained by the configured Crowd payload
+limit. When `CROWD_SCAN_FILE_SOURCES=1` is explicitly enabled, images up to
+25 MiB may use R2-backed scan tickets; this feature flag remains off by default.
+Candidates above the active scan limit are reported as `too_large` and remain
+viewable but unscanned. Rescreening does not clear an infection verdict; an
+infected callback remains blocked, and a clean callback updates the scan row.
 Missing, changed, unsupported, and failed objects are reported separately in
 the response's `results` counts.
 

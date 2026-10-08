@@ -253,7 +253,7 @@ describe('file scan verdict races', () => {
     assert.equal(await isKeyBlocked(cache, key, db), false);
   });
 
-  it('withholds payloads skipped as too large until the content is replaced', async () => {
+  it('serves files skipped as too large and clears stale quarantine markers', async () => {
     const key = 'uploads/oversized.bin';
     const oversized = bytes('oversized payload');
     const replacement = bytes('replacement payload');
@@ -262,9 +262,11 @@ describe('file scan verdict races', () => {
     await ensureFileScansTable(db);
     await upsertFileScan(db, key, features(oversized));
     await setScanStatus(db, key, 'skipped', { detail: 'too_large', sha256: features(oversized).sha256 });
+    await cache.put('fileblk:' + key, '1');
 
-    assert.equal(await cache.get('fileblk:' + key), null, 'the D1 status alone must enforce quarantine');
-    assert.equal(await isKeyBlocked(cache, key, db), true);
+    assert.equal(await isKeyBlocked(cache, key, db), false, 'too-large files remain viewable');
+    assert.equal(await cache.get('fileblk:' + key), null, 'stale quarantine markers are cleared');
+    assert.equal((await getFileScan(db, key))?.status, 'skipped', 'the file remains explicitly unscanned');
 
     await upsertFileScan(db, key, features(replacement));
     assert.equal((await getFileScan(db, key))?.status, 'pending');

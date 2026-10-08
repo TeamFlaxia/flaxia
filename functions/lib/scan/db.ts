@@ -251,11 +251,12 @@ export async function markKeyBlocked(cache: KVNamespace | undefined, r2Key: stri
 }
 
 /**
- * Serve-time gate for infected files and files that exceeded Crowd's task cap.
+ * Serve-time gate for infected files. Files skipped only because they exceeded
+ * Crowd's task cap remain viewable but are still recorded as unscanned.
  *
  * The scan row is authoritative even when the KV marker is missing or a marker
  * write failed. Checking D1 on delivery also lets fresh bytes recover from a
- * stale infection marker without unblocking skipped/too_large content.
+ * stale infection marker without unblocking infected content.
  */
 export async function isKeyBlocked(cache: KVNamespace | undefined, r2Key: string, db?: D1Database): Promise<boolean> {
   // Fail closed (#81, docs/file-scanning.md): CACHE is required in production.
@@ -265,7 +266,7 @@ export async function isKeyBlocked(cache: KVNamespace | undefined, r2Key: string
     if (!db) return hasMarker;
 
     const row = await getFileScan(db, r2Key);
-    if (row?.status === 'infected' || (row?.status === 'skipped' && row.detail === 'too_large')) return true;
+    if (row?.status === 'infected') return true;
 
     if (hasMarker && row) {
       await clearKeyBlocked(cache, r2Key);
