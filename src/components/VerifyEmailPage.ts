@@ -1,4 +1,4 @@
-import { resendVerificationEmail } from '../lib/auth-srp.js';
+import { clearMeCache } from '../lib/auth-cache.js';
 import { t } from '../lib/i18n.js';
 
 export function createVerifyEmailPage() {
@@ -22,38 +22,6 @@ export function createVerifyEmailPage() {
   message.style.textAlign = 'center';
   message.setAttribute('aria-live', 'polite');
 
-  const resendForm = document.createElement('form');
-  resendForm.className = 'auth-form';
-  resendForm.style.display = 'none';
-  const emailInput = document.createElement('input');
-  emailInput.type = 'email';
-  emailInput.required = true;
-  emailInput.maxLength = 254;
-  emailInput.className = 'auth-input';
-  emailInput.placeholder = t('verify.email_placeholder');
-  emailInput.autocomplete = 'email';
-  const resendButton = document.createElement('button');
-  resendButton.type = 'submit';
-  resendButton.className = 'auth-button';
-  resendButton.textContent = t('verify.resend');
-  const resendMessage = document.createElement('p');
-  resendMessage.className = 'field-hint';
-  resendMessage.style.display = 'none';
-  resendMessage.setAttribute('aria-live', 'polite');
-  resendForm.appendChild(emailInput);
-  resendForm.appendChild(resendButton);
-  resendForm.appendChild(resendMessage);
-
-  resendForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    resendButton.disabled = true;
-    resendMessage.textContent = '';
-    const sent = await resendVerificationEmail(emailInput.value.trim());
-    resendMessage.textContent = sent ? t('verify.resend_sent') : t('verify.resend_failed');
-    resendMessage.style.display = 'block';
-    resendButton.disabled = false;
-  });
-
   const loginLink = document.createElement('div');
   loginLink.className = 'auth-link';
   loginLink.innerHTML = `<a href="/login">${t('verify.login_link')}</a>`;
@@ -66,14 +34,12 @@ export function createVerifyEmailPage() {
   card.appendChild(logo);
   card.appendChild(heading);
   card.appendChild(message);
-  card.appendChild(resendForm);
   card.appendChild(loginLink);
   container.appendChild(card);
 
   if (!token) {
     message.textContent = t('verify.invalid');
     message.style.color = 'var(--danger)';
-    resendForm.style.display = 'block';
   } else {
     message.textContent = t('verify.working');
     void fetch('/api/auth/email/verify', {
@@ -85,6 +51,10 @@ export function createVerifyEmailPage() {
       .then(async (response) => {
         if (!response.ok) throw new Error('invalid');
         const data = (await response.json()) as { purpose?: string };
+        if (data.purpose === 'email_change') {
+          // The active address changed on the server; refresh it before Settings renders again.
+          clearMeCache();
+        }
         message.textContent =
           data.purpose === 'email_change' ? t('verify.success_email_change') : t('verify.success_registration');
         message.style.color = 'var(--success, #10b981)';
@@ -92,7 +62,6 @@ export function createVerifyEmailPage() {
       .catch(() => {
         message.textContent = t('verify.invalid');
         message.style.color = 'var(--danger)';
-        resendForm.style.display = 'block';
       });
   }
 

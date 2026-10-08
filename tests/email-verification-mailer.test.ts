@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Bindings } from '../functions/api/types.ts';
-import { isEmailDeliveryConfigured, sendVerificationEmail } from '../functions/lib/email-verification.ts';
+import {
+  consumeEmailVerificationToken,
+  isEmailDeliveryConfigured,
+  issueEmailVerification,
+  sendVerificationEmail,
+} from '../functions/lib/email-verification.ts';
 
 function mailEnv(overrides: Partial<Bindings> = {}): Bindings {
   return {
@@ -22,6 +27,62 @@ function mailEnv(overrides: Partial<Bindings> = {}): Bindings {
     ...overrides,
   };
 }
+
+describe('verification persistence ordering', () => {
+  it('keeps an existing link when the replacement delivery fails', async () => {
+    let databaseCalls = 0;
+    const env = mailEnv({
+      RESEND_API_KEY: 'test-api-key',
+      DB: {
+        batch: async () => {
+          databaseCalls++;
+          return [];
+        },
+      } as unknown as D1Database,
+    });
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response('provider failure', { status: 503 });
+    try {
+      assert.equal(
+        await issueEmailVerification(env, {
+          email: 'person@example.com',
+          purpose: 'registration',
+          userId: 'existing-user',
+        }),
+        false,
+      );
+      assert.equal(databaseCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('does not delete a link when the user update fails', async () => {
+    const token = 'a'.repeat(43);
+    const preparedStatements: string[] = [];
+    let batchCalled = false;
+    const env = mailEnv({
+      DB: {
+        prepare: (sql: string) => {
+          preparedStatements.push(sql);
+          return {
+            bind: (..._values: unknown[]) => ({
+              first: async () => ({ purpose: 'registration', user_id: 'user-1', candidate_email: 'a@example.com' }),
+            }),
+          };
+        },
+        batch: async () => {
+          batchCalled = true;
+          throw new Error('database update failed');
+        },
+      } as unknown as D1Database,
+    });
+    await assert.rejects(consumeEmailVerificationToken(env, token), /database update failed/);
+    assert.equal(batchCalled, true);
+    assert.match(preparedStatements[1], /^UPDATE users/);
+    assert.match(preparedStatements[2], /^DELETE FROM email_verification_tokens/);
+  });
+});
 
 describe('Resend verification mail transport', () => {
   it('requires a key outside the test mock and sends through Resend HTTPS', async () => {

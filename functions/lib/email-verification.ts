@@ -143,8 +143,12 @@ export async function issueEmailVerification(env: Bindings, request: Verificatio
   const expiresAt = new Date(Date.now() + TOKEN_TTL_MS).toISOString();
   const url = getVerificationUrl(env, token);
 
-  // D1 batch is transactional: the previous link is invalidated exactly when
-  // its replacement is recorded, before any external delivery attempt.
+  // A failed delivery must not invalidate an existing working link. The
+  // provider can accept a message before DB persistence fails; in that case
+  // the new link is unusable, but the previous link remains valid.
+  if (!(await sendVerificationEmail(env, email, request.purpose, url))) return false;
+
+  // D1 batch commits the replacement atomically after successful delivery.
   await env.DB.batch([
     env.DB.prepare('DELETE FROM email_verification_tokens WHERE user_id = ? AND purpose = ?').bind(
       request.userId,
@@ -155,7 +159,7 @@ export async function issueEmailVerification(env: Bindings, request: Verificatio
     ).bind(tokenHash, request.purpose, request.userId, email, expiresAt),
   ]);
 
-  return sendVerificationEmail(env, email, request.purpose, url);
+  return true;
 }
 
 export async function consumeEmailVerificationToken(
@@ -171,38 +175,42 @@ export async function consumeEmailVerificationToken(
     .first<VerificationTokenRow>();
   if (!record) return null;
 
-  // Delete with the expiry predicate before applying the change. Concurrent
-  // requests race on this delete, so only the winner can use the token.
-  const consumed = await env.DB.prepare(
-    "DELETE FROM email_verification_tokens WHERE token_hash = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
-  )
-    .bind(tokenHash)
-    .run();
-  if (!consumed.success || (consumed.meta?.changes ?? 0) !== 1) return null;
-
+  // Both statements run in one D1 transaction. The UPDATE only succeeds if
+  // this token still exists and is unexpired, so competing consumers cannot
+  // update the same user after the winning request deletes the token. If the
+  // UPDATE does not apply, the conditional DELETE leaves the link intact.
   const verifiedAt = new Date().toISOString();
-  if (record.purpose === 'registration') {
-    const updated = await env.DB.prepare(
-      'UPDATE users SET email_verified_at = ? WHERE id = ? AND email = ? AND email_verified_at IS NULL',
-    )
-      .bind(verifiedAt, record.user_id, record.candidate_email)
-      .run();
-    if (!updated.success || (updated.meta?.changes ?? 0) !== 1) return null;
-  } else {
-    const updated = await env.DB.prepare(
-      `UPDATE users
-       SET email = ?, email_verified_at = ?
-       WHERE id = ? AND email_verified_at IS NOT NULL
-         AND NOT EXISTS (
-           SELECT 1 FROM users other
-           WHERE lower(other.email) = lower(?) AND other.id != users.id
-         )`,
-    )
-      .bind(record.candidate_email, verifiedAt, record.user_id, record.candidate_email)
-      .run();
-    if (!updated.success || (updated.meta?.changes ?? 0) !== 1) return null;
-  }
-
-  await env.DB.prepare('DELETE FROM email_verification_tokens WHERE user_id = ?').bind(record.user_id).run();
+  const tokenStillValid =
+    "EXISTS (SELECT 1 FROM email_verification_tokens WHERE token_hash = ? AND user_id = users.id AND purpose = ? AND candidate_email = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))";
+  const update =
+    record.purpose === 'registration'
+      ? env.DB.prepare(
+          `UPDATE users SET email_verified_at = ?
+           WHERE id = ? AND email = ? AND email_verified_at IS NULL AND ${tokenStillValid}`,
+        ).bind(verifiedAt, record.user_id, record.candidate_email, tokenHash, record.purpose, record.candidate_email)
+      : env.DB.prepare(
+          `UPDATE users SET email = ?, email_verified_at = ?
+           WHERE id = ? AND email_verified_at IS NOT NULL AND ${tokenStillValid}
+             AND NOT EXISTS (
+               SELECT 1 FROM users other
+               WHERE lower(other.email) = lower(?) AND other.id != users.id
+             )`,
+        ).bind(
+          record.candidate_email,
+          verifiedAt,
+          record.user_id,
+          tokenHash,
+          record.purpose,
+          record.candidate_email,
+          record.candidate_email,
+        );
+  const [updated] = await env.DB.batch([
+    update,
+    env.DB.prepare(
+      `DELETE FROM email_verification_tokens WHERE user_id = ?
+       AND EXISTS (SELECT 1 FROM users WHERE users.id = ? AND users.email_verified_at = ? AND users.email = ?)`,
+    ).bind(record.user_id, record.user_id, verifiedAt, record.candidate_email),
+  ]);
+  if (!updated.success || (updated.meta?.changes ?? 0) !== 1) return null;
   return record.purpose;
 }

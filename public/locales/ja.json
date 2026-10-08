@@ -725,7 +725,7 @@
   "login.error_network": "接続に失敗しました。もう一度お試しください。",
   "verify.title": "メールアドレスを認証",
   "verify.working": "認証リンクを確認しています…",
-  "verify.invalid": "リンクが無効か期限切れです。新規登録の場合は下から確認メールを再送してください。メール変更の場合はログインして設定から再度申請してください。",
+  "verify.invalid": "リンクが無効か期限切れです。新規登録の場合はログイン画面から確認メールを再送してください。メール変更の場合はログインして設定から再度申請してください。",
   "verify.success_registration": "メールアドレスを認証しました。Flaxiaにログインできます。",
   "verify.success_email_change": "メールアドレスを変更しました。",
   "verify.email_placeholder": "メールアドレス",

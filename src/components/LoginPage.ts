@@ -142,7 +142,7 @@ export function createLoginPage({ onSuccess }: LoginProps) {
         errorDiv.textContent =
           result === 'email_verification_required' ? t('login.error_unverified') : t('login.error_invalid');
         errorDiv.style.display = 'block';
-        resendButton.style.display = 'block';
+        resendButton.style.display = result === 'email_verification_required' ? 'block' : 'none';
       }
     } catch (error) {
       console.error('Login error:', error);

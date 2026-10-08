@@ -725,7 +725,7 @@
   "login.error_network": "Failed to connect. Please try again.",
   "verify.title": "Verify your email",
   "verify.working": "Checking your confirmation link…",
-  "verify.invalid": "This link is invalid or expired. For signup, request another confirmation email below. For an email change, sign in and submit the request again in Settings.",
+  "verify.invalid": "This link is invalid or expired. For signup, request another confirmation email from the sign-in page. For an email change, sign in and submit the request again in Settings.",
   "verify.success_registration": "Email verified. You can now sign in to Flaxia.",
   "verify.success_email_change": "Your email address has been updated.",
   "verify.email_placeholder": "Email address",
