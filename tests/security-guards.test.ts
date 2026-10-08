@@ -128,6 +128,9 @@ describe('security guards', () => {
       'auth:srp-start:email',
       'auth:srp-verify:ip',
       'auth:srp-verify:email',
+      'auth:verification-resend:ip',
+      'auth:verification-resend:email',
+      'auth:verification-resend:cooldown',
     ]) {
       assert.ok(src.includes(scope), `missing rate limit for ${scope}`);
     }

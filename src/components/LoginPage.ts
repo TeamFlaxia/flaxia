@@ -1,4 +1,4 @@
-import { loginWithSrp } from '../lib/auth-srp.js';
+import { loginWithSrp, resendVerificationEmail } from '../lib/auth-srp.js';
 import { t } from '../lib/i18n.js';
 
 interface LoginProps {
@@ -62,6 +62,23 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   errorDiv.className = 'auth-error';
   errorDiv.style.display = 'none';
 
+  const resendButton = document.createElement('button');
+  resendButton.type = 'button';
+  resendButton.className = 'auth-link';
+  resendButton.textContent = t('login.resend_verification');
+  resendButton.style.display = 'none';
+  const resendMessage = document.createElement('div');
+  resendMessage.className = 'field-hint';
+  resendMessage.style.display = 'none';
+  resendMessage.setAttribute('aria-live', 'polite');
+  resendButton.addEventListener('click', async () => {
+    resendButton.disabled = true;
+    const ok = await resendVerificationEmail(emailInput.value.trim());
+    resendMessage.textContent = ok ? t('login.resend_sent') : t('login.resend_failed');
+    resendMessage.style.display = 'block';
+    resendButton.disabled = false;
+  });
+
   // Submit button
   const submitButton = document.createElement('button');
   submitButton.type = 'submit';
@@ -111,15 +128,21 @@ export function createLoginPage({ onSuccess }: LoginProps) {
 
     submitButton.disabled = true;
     submitButton.textContent = t('login.submitting');
+    errorDiv.style.display = 'none';
+    resendButton.style.display = 'none';
+    resendMessage.textContent = '';
+    resendMessage.style.display = 'none';
 
     try {
-      const ok = await loginWithSrp(email, password);
+      const result = await loginWithSrp(email, password);
 
-      if (ok) {
+      if (result === 'success') {
         onSuccess();
       } else {
-        errorDiv.textContent = t('login.error_invalid');
+        errorDiv.textContent =
+          result === 'email_verification_required' ? t('login.error_unverified') : t('login.error_invalid');
         errorDiv.style.display = 'block';
+        resendButton.style.display = 'block';
       }
     } catch (error) {
       console.error('Login error:', error);
@@ -137,6 +160,8 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   form.appendChild(emailGroup);
   form.appendChild(passwordGroup);
   form.appendChild(errorDiv);
+  form.appendChild(resendButton);
+  form.appendChild(resendMessage);
   form.appendChild(submitButton);
 
   // Assemble card
