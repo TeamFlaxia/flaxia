@@ -55,7 +55,7 @@ describe('loadLinkPreview: guest UI policy', () => {
       () => Response.json({ url: '' }),
       async (requests) => {
         loadLinkPreview('Look: www.example.com/article', {} as HTMLElement, true);
-        assert.deepEqual(requests, ['/api/link-preview?url=' + encodeURIComponent(PUBLIC_URL)]);
+        assert.deepEqual(requests, ['/api/link-preview?url=' + encodeURIComponent('https://www.example.com/article')]);
         await new Promise<void>((resolve) => setImmediate(resolve));
       },
     );
