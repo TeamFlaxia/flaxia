@@ -24,9 +24,7 @@ function createEnv(options: { rateLimited?: boolean } = {}): Bindings {
       prepare: () => ({
         bind: (token: string) => ({
           first: async () =>
-            token === 'valid-preview-session'
-              ? { id: 'preview-user', username: 'tester', role: 'user' }
-              : null,
+            token === 'valid-preview-session' ? { id: 'preview-user', username: 'tester', role: 'user' } : null,
         }),
       }),
     },
