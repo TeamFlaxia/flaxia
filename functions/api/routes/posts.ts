@@ -29,6 +29,7 @@ import { validateImageDimensions } from '../../lib/image-dimensions';
 import { sendPushToAll } from '../../lib/notify';
 import { clampLimit } from '../../lib/pagination';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
+import { fetchWithSsrfGuard } from '../../lib/url-guard';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
@@ -2002,8 +2003,9 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
     // If the post is from a remote actor, send Like activity
     if (post.actor_id && currentUser && c.env.AP_DELIVERY_QUEUE) {
       try {
-        const actorResponse = await fetch(post.actor_id, {
+        const actorResponse = await fetchWithSsrfGuard(post.actor_id, {
           headers: { Accept: 'application/activity+json, application/ld+json' },
+          timeoutMs: 10_000,
         });
         if (actorResponse.ok) {
           const actorData = (await actorResponse.json()) as ActorData;
@@ -2482,8 +2484,9 @@ posts.post('/posts/:id/share', requireAuth, async (c) => {
       // Send Announce for remote posts
       if (post.actor_id && c.env.AP_DELIVERY_QUEUE) {
         try {
-          const actorResponse = await fetch(post.actor_id, {
+          const actorResponse = await fetchWithSsrfGuard(post.actor_id, {
             headers: { Accept: 'application/activity+json, application/ld+json' },
+            timeoutMs: 10_000,
           });
           if (actorResponse.ok) {
             const actorData = (await actorResponse.json()) as ActorData;
