@@ -17,7 +17,6 @@ export function isPublicRoute(pathname: string): boolean {
     cleanPath === '/arcade' ||
     cleanPath === '/login' ||
     cleanPath === '/register' ||
-    cleanPath === '/verify-email' ||
     cleanPath === '/terms' ||
     cleanPath === '/privacy' ||
     cleanPath === '/about' ||

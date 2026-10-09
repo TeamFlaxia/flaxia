@@ -29,14 +29,12 @@ function unb64(s: string): Uint8Array {
   return new Uint8Array(Buffer.from(s, 'base64'));
 }
 
-export type TestRegistration = {
+export async function registerUser(data: {
   email: string;
   password: string;
   username: string;
   display_name: string;
-};
-
-export async function registerUnverifiedUser(data: TestRegistration): Promise<Response> {
+}): Promise<Response> {
   const salt = generateSalt();
   const verifier = await computeVerifier(data.password, salt, DEFAULT_SRP_KDF);
   return fetch(`${BASE_URL}/api/auth/register`, {
@@ -52,34 +50,6 @@ export async function registerUnverifiedUser(data: TestRegistration): Promise<Re
       srp_kdf: DEFAULT_SRP_KDF,
     }),
   });
-}
-
-export async function takeVerificationToken(email: string): Promise<string> {
-  const response = await fetch(`${BASE_URL}/api/test/email-verification-link?email=${encodeURIComponent(email)}`);
-  if (!response.ok) throw new Error('Could not read test verification inbox');
-  const body = (await response.json()) as { url?: string | null };
-  if (!body.url) throw new Error('No verification message in test inbox');
-  const token = new URL(body.url).searchParams.get('token');
-  if (!token) throw new Error('Verification link did not contain a token');
-  return token;
-}
-
-export async function verifyEmailAddress(email: string): Promise<Response> {
-  const token = await takeVerificationToken(email);
-  return fetch(`${BASE_URL}/api/auth/email/verify`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token }),
-  });
-}
-
-export async function registerUser(data: TestRegistration): Promise<Response> {
-  const response = await registerUnverifiedUser(data);
-  if (response.status === 201) {
-    const verified = await verifyEmailAddress(data.email);
-    if (!verified.ok) throw new Error('Test account email verification failed');
-  }
-  return response;
 }
 
 // Run the SRP handshake for an account whose verifier was derived with `kdf`.

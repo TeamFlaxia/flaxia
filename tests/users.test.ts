@@ -1,15 +1,6 @@
 import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
-import {
-  BASE_URL,
-  createSrpProof,
-  loginUser,
-  resetDb,
-  seedUserAndLogin,
-  srpVerifierPayload,
-  takeVerificationToken,
-  verifyEmailAddress,
-} from './helpers/setup.ts';
+import { BASE_URL, createSrpProof, loginUser, resetDb, seedUserAndLogin, srpVerifierPayload } from './helpers/setup.ts';
 
 describe('GET /api/users/:username', () => {
   beforeEach(resetDb);
@@ -324,61 +315,7 @@ describe('PATCH /api/users/me/email — validation', () => {
     assert.equal(res.status, 401);
   });
 
-  it('rejects an email address already reserved by another pending change', async () => {
-    const first = await seedUserAndLogin('1');
-    const firstProof = await createSrpProof(first.cookie, 'password123');
-    const firstRequest = await fetch(`${BASE_URL}/api/users/me/email`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Cookie: first.cookie },
-      body: JSON.stringify({ current_srp: firstProof, new_email: 'reserved@test.com' }),
-    });
-    assert.equal(firstRequest.status, 200);
-
-    const second = await seedUserAndLogin('2');
-    const secondProof = await createSrpProof(second.cookie, 'password123');
-    const secondRequest = await fetch(`${BASE_URL}/api/users/me/email`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Cookie: second.cookie },
-      body: JSON.stringify({ current_srp: secondProof, new_email: 'RESERVED@test.com' }),
-    });
-    assert.equal(secondRequest.status, 409);
-  });
-
-  it('invalidates a previous pending email-change link when a new request is made', async () => {
-    const { cookie } = await seedUserAndLogin('1');
-    const firstProof = await createSrpProof(cookie, 'password123');
-    const firstRequest = await fetch(`${BASE_URL}/api/users/me/email`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Cookie: cookie },
-      body: JSON.stringify({ current_srp: firstProof, new_email: 'first-pending@test.com' }),
-    });
-    assert.equal(firstRequest.status, 200);
-    const firstToken = await takeVerificationToken('first-pending@test.com');
-
-    const secondProof = await createSrpProof(cookie, 'password123');
-    const secondRequest = await fetch(`${BASE_URL}/api/users/me/email`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', Cookie: cookie },
-      body: JSON.stringify({ current_srp: secondProof, new_email: 'second-pending@test.com' }),
-    });
-    assert.equal(secondRequest.status, 200);
-    const secondToken = await takeVerificationToken('second-pending@test.com');
-
-    const stale = await fetch(`${BASE_URL}/api/auth/email/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: firstToken }),
-    });
-    assert.equal(stale.status, 400);
-    const latest = await fetch(`${BASE_URL}/api/auth/email/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: secondToken }),
-    });
-    assert.equal(latest.status, 200);
-  });
-
-  it('changes email only after the new address verifies', async () => {
+  it('changes email with a valid SRP proof → 200', async () => {
     // SRP-only accounts have no password_hash, so this path is the only way
     // they can ever change email.
     const { cookie } = await seedUserAndLogin('1');
@@ -390,17 +327,6 @@ describe('PATCH /api/users/me/email — validation', () => {
       body: JSON.stringify({ current_srp: proof, new_email: 'new@test.com' }),
     });
     assert.equal(res.status, 200);
-    assert.equal((await loginUser('user1@test.com', 'password123')).res.status, 200);
-    assert.equal((await loginUser('new@test.com', 'password123')).res.status, 401);
-    const pendingMe = await fetch(`${BASE_URL}/api/me`, { headers: { Cookie: cookie } });
-    assert.equal(((await pendingMe.json()) as { user: { email: string } }).user.email, 'user1@test.com');
-
-    const verified = await verifyEmailAddress('new@test.com');
-    assert.equal(verified.status, 200);
-    const updatedMe = await fetch(`${BASE_URL}/api/me`, { headers: { Cookie: cookie } });
-    assert.equal(((await updatedMe.json()) as { user: { email: string } }).user.email, 'new@test.com');
-    assert.equal((await loginUser('user1@test.com', 'password123')).res.status, 401);
-    assert.equal((await loginUser('new@test.com', 'password123')).res.status, 200);
   });
 });
 

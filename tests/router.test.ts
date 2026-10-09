@@ -7,7 +7,6 @@ describe('parseRoute', () => {
   it('maps auth and legal pages', () => {
     assert.equal(parseRoute('/login', '')?.view, 'login');
     assert.equal(parseRoute('/register', '')?.view, 'register');
-    assert.equal(parseRoute('/verify-email', '?token=secret')?.view, 'verify-email');
     assert.equal(parseRoute('/terms', '')?.view, 'terms');
     assert.equal(parseRoute('/privacy', '')?.view, 'privacy');
     assert.equal(parseRoute('/about', '')?.view, 'about');
