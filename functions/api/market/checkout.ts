@@ -29,7 +29,9 @@ async function getUserId(env: Env, request: Request): Promise<string | null> {
   // Expiry is part of the session check: an expired or leaked token must not
   // keep creating checkout sessions forever.
   const session = await env.DB.prepare(
-    "SELECT user_id FROM sessions WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+    `SELECT s.user_id FROM sessions s
+     JOIN users u ON u.id = s.user_id AND u.email_verified_at IS NOT NULL
+     WHERE s.id = ? AND s.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
   )
     .bind(token)
     .first<{ user_id: string }>();

@@ -2,7 +2,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { type CrowdEnv, FILE_SCAN_SOURCE_MAX_BYTES } from '../crowd.ts';
 import { clamavMaxBytes, submitFileScans } from './clamav.ts';
-import { ensureFileScansTable, getFileScan, setScanStatus } from './db.ts';
+import { ensureFileScansTable, getFileScan } from './db.ts';
 import { extractFileFeatures } from './features.ts';
 import { detectMimeType } from './mime.ts';
 
@@ -65,11 +65,9 @@ export async function rescreenQuarantinedObject(
     return 'failed';
   } catch (error) {
     console.error(`Admin rescreen failed for ${key}:`, error);
-    try {
-      await setScanStatus(db, key, 'failed');
-    } catch {
-      // Preserve the original failure if the state write also failed.
-    }
+    // Do not overwrite a newer scan or an infected verdict after an asynchronous
+    // failure. In particular, an unguarded status write here could undo a
+    // quarantine row that another request just established.
     return 'failed';
   }
 }
