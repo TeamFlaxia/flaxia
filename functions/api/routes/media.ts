@@ -64,11 +64,31 @@ async function postKeyMediaAllowed(c: MediaContext, key: string): Promise<boolea
   )
     .bind(key, key, key, key)
     .first()) as { user_id: string; hidden: number; status: string } | null;
-  if (!row) return true;
-  if (!row.hidden && row.status === 'published') return true;
-  const viewer = c.get('user');
-  if (!viewer) return false;
-  return viewer.id === row.user_id || isAdmin(c.env, viewer);
+  if (row) {
+    if (!row.hidden && row.status === 'published') return true;
+    const viewer = c.get('user');
+    if (!viewer) return false;
+    return viewer.id === row.user_id || isAdmin(c.env, viewer);
+  }
+  // Multi-media flow (post_attachments.r2_key -> post_id): without this,
+  // a moderated-hidden post keeps serving its attachments to everyone.
+  try {
+    const attached = (await c.env.DB.prepare(
+      `SELECT p.user_id, p.hidden, p.status FROM post_attachments a
+       JOIN posts p ON p.id = a.post_id WHERE a.r2_key = ? LIMIT 1`,
+    )
+      .bind(key)
+      .first()) as { user_id: string; hidden: number; status: string } | null;
+    if (attached) {
+      if (!attached.hidden && attached.status === 'published') return true;
+      const viewer = c.get('user');
+      if (!viewer) return false;
+      return viewer.id === attached.user_id || isAdmin(c.env, viewer);
+    }
+  } catch {
+    // fail open to the previous behavior when the join fails
+  }
+  return true;
 }
 
 /**
