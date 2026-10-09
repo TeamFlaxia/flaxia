@@ -248,8 +248,9 @@ export function createLinkPreviewCard(data: LinkPreviewData): HTMLElement {
   return card;
 }
 
-export function loadLinkPreview(text: string, container: HTMLElement): void {
-  if (!text) return;
+export function loadLinkPreview(text: string, container: HTMLElement, isAuthenticated: boolean): void {
+  // Defense in depth: never ask the authenticated API for a guest preview.
+  if (!isAuthenticated || !text) return;
 
   const urlRegex = /(https?:\/\/[^\s<>()]+|www\.[^\s<>()]+)/i;
   const match = text.match(urlRegex);

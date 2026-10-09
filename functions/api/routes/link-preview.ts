@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { fetchWithSsrfGuard, SsrfError } from '../../lib/url-guard';
+import { requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
 const link = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -140,8 +141,10 @@ function parseMetaTags(html: string, baseUrl: string) {
 // fetchWithSsrfGuard below). The previous local checks only inspected the
 // first URL and let a redirect hop to a private address.
 
-// GET /api/link-preview - Scrape OpenGraph meta tags of a URL
-link.get('/link-preview', async (c) => {
+// GET /api/link-preview - Scrape OpenGraph meta tags of a URL (authenticated:
+// PoC confirmed an unauthenticated fetch oracle on production, so this route
+// now requires a session).
+link.get('/link-preview', requireAuth, async (c) => {
   // Authenticated endpoint, but still rate-limited per user: each call makes
   // the Worker fetch an arbitrary remote URL, so it must not be callable
   // in a tight loop to turn the backend into a fetch oracle.
