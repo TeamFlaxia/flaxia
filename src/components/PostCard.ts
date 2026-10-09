@@ -222,12 +222,14 @@ export class PostCard {
       container.appendChild(pollEl);
     }
 
-    // Link Preview section (under text/poll/tags, above PostStage/Actions)
-    const previewContainer = document.createElement('div');
-    previewContainer.className = 'post-link-preview-container';
-    previewContainer.style.cssText = 'overflow: hidden;';
-    container.appendChild(previewContainer);
-    loadLinkPreview(this.props.post.text, previewContainer);
+    // Only signed-in viewers can request link previews. Guest posts remain readable.
+    if (this.props.currentUser) {
+      const previewContainer = document.createElement('div');
+      previewContainer.className = 'post-link-preview-container';
+      previewContainer.style.cssText = 'overflow: hidden;';
+      container.appendChild(previewContainer);
+      loadLinkPreview(this.props.post.text, previewContainer, true);
+    }
 
     // Quoted post card
     if (this.props.post.quoted_post_id) {
