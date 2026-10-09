@@ -27,7 +27,6 @@ database_id = "7c99f35f-69a0-4644-96a1-34c716a3e82d"
 SANDBOX_ORIGIN = "https://sandbox.flaxia.app"
 BASE_URL = "https://flaxia.app"
 ENVIRONMENT = "production"
-RESEND_FROM_EMAIL = "Flaxia <no-reply@flaxia.app>"
 CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
 # Keep file-source scanning disabled until the Crowd worker/node release is deployed.
 CROWD_SCAN_FILE_SOURCES = "0"
@@ -55,10 +54,6 @@ STRIPE_PRICE_FLXIA_PLUS = "price_1UI3sxGMn6YcUp3x8rC58pdt"  # Stripe Price ID „Å
 # Ops kill-switch for a Crowd outage: screening/embedding submissions are
 # skipped (embeds queue for later) without a redeploy. Uncomment to shed load:
 # CROWD_SCREENING_DISABLED = "1"
-
-# Email verification uses Resend. Keep the API key out of [vars] and store it
-# as a Pages secret; the sender is public and configured above.
-#   npx wrangler pages secret put RESEND_API_KEY --project-name flaxia
 
 [[r2_buckets]]
 binding = "BUCKET"

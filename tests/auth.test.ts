@@ -18,11 +18,9 @@ describe('POST /api/auth/register', () => {
       display_name: 'User A',
     });
     assert.equal(res.status, 201);
-    // Registration alone must never mint a session; email confirmation happens separately.
-    assert.equal(res.headers.get('set-cookie'), null);
-    const login = await loginUser('a@test.com', 'password123');
-    assert.equal(login.res.status, 200);
-    assert.ok(login.cookie.includes('session='), 'verified login should set an HttpOnly session cookie');
+    // The session is delivered as an HttpOnly cookie (never exposed to JS).
+    const cookie = res.headers.get('set-cookie') ?? '';
+    assert.ok(cookie.includes('session='), 'response should set a session cookie');
   });
 
   it('rejects duplicate email → 409', async () => {

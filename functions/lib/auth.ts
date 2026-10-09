@@ -133,7 +133,7 @@ export async function getSession(env: Env, token: string): Promise<{ user: User;
   // Get user from database
   const user = (await env.DB.prepare(`
     SELECT id, email, username, display_name, bio, avatar_key, badge_type, created_at, role
-    FROM users WHERE id = ? AND email_verified_at IS NOT NULL
+    FROM users WHERE id = ?
   `)
     .bind(session.user_id)
     .first()) as User | undefined;
@@ -157,7 +157,6 @@ export async function getMeWithSession(env: Env, token: string): Promise<{ user:
     JOIN users u ON s.user_id = u.id
     WHERE s.id = ?
       AND s.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-      AND u.email_verified_at IS NOT NULL
   `)
     .bind(token)
     .first()) as User | undefined;
@@ -213,12 +212,10 @@ export async function registerUser(
     srp: SrpRegistration;
   },
 ): Promise<User> {
-  const { username, display_name, srp } = userData;
-  const email = userData.email.trim().toLowerCase();
+  const { email, username, display_name, srp } = userData;
 
-  // Match addresses case-insensitively so pre-existing mixed-case addresses
-  // cannot be duplicated by a newly canonicalized registration.
-  const existingEmail = await env.DB.prepare('SELECT id FROM users WHERE lower(email) = ?').bind(email).first();
+  // Check if email already exists
+  const existingEmail = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
   if (existingEmail) {
     throw new Error('Email already registered');
   }
@@ -273,8 +270,8 @@ export async function startSrpLogin(
   env: Env,
   email: string,
 ): Promise<{ challengeId: string; salt: string; B: string; kdf: string } | null> {
-  const user = (await env.DB.prepare('SELECT id, srp_salt, srp_verifier, srp_kdf FROM users WHERE lower(email) = ?')
-    .bind(email.trim().toLowerCase())
+  const user = (await env.DB.prepare('SELECT id, srp_salt, srp_verifier, srp_kdf FROM users WHERE email = ?')
+    .bind(email)
     .first()) as { id: string; srp_salt: string | null; srp_verifier: string | null; srp_kdf: string | null } | null;
 
   if (!user || !user.srp_verifier || !user.srp_salt) return null;
@@ -324,7 +321,7 @@ export async function verifySrpLogin(
   challengeId: string,
   A: string,
   M1: string,
-): Promise<{ user: User; session: Session; M2: string } | { needsVerification: true } | null> {
+): Promise<{ user: User; session: Session; M2: string } | null> {
   const hs = (await env.DB.prepare(
     "SELECT * FROM srp_handshakes WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
   )
@@ -340,14 +337,13 @@ export async function verifySrpLogin(
   if (!consumed.success || (consumed.meta?.changes ?? 0) === 0) return null;
 
   const user = (await env.DB.prepare(`
-    SELECT id, email, email_verified_at, srp_salt, srp_verifier, username, display_name, bio, avatar_key, badge_type, created_at
+    SELECT id, email, srp_salt, srp_verifier, username, display_name, bio, avatar_key, badge_type, created_at
     FROM users WHERE id = ?
   `)
     .bind(hs.user_id)
     .first()) as {
     id: string;
     email: string;
-    email_verified_at: string | null;
     srp_salt: string | null;
     srp_verifier: string | null;
     username: string;
@@ -364,8 +360,7 @@ export async function verifySrpLogin(
   const M1_bytes = base64ToUint8Array(M1);
 
   const result = await serverStep2(A_bytes, B, BigInt(hs.b_scalar), v, M1_bytes);
-  if (!result || user.email.trim().toLowerCase() !== email.trim().toLowerCase()) return null;
-  if (!user.email_verified_at) return { needsVerification: true };
+  if (!result) return null;
 
   const session = await createSession(env, user.id);
   const safeUser: User = {
@@ -443,14 +438,13 @@ export async function verifySrpPassword(
 export async function loginUser(env: Env, email: string, password: string): Promise<{ user: User; session: Session }> {
   // Get user with password hash
   const userWithPassword = (await env.DB.prepare(`
-    SELECT id, email, email_verified_at, password_hash, srp_salt, srp_verifier, username, display_name, bio, avatar_key, badge_type, created_at
-    FROM users WHERE lower(email) = ?
+    SELECT id, email, password_hash, srp_salt, srp_verifier, username, display_name, bio, avatar_key, badge_type, created_at
+    FROM users WHERE email = ?
   `)
-    .bind(email.trim().toLowerCase())
+    .bind(email)
     .first()) as {
     id: string;
     email: string;
-    email_verified_at: string | null;
     password_hash: string;
     srp_salt: string | null;
     srp_verifier: string | null;
@@ -475,9 +469,6 @@ export async function loginUser(env: Env, email: string, password: string): Prom
   const isValid = await verifyPassword(password, userWithPassword.password_hash);
   if (!isValid) {
     throw new Error('Invalid credentials');
-  }
-  if (!userWithPassword.email_verified_at) {
-    throw new Error('email_not_verified');
   }
 
   // Create session

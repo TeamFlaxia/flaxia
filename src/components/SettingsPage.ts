@@ -796,12 +796,6 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   `;
 
   emailSection.appendChild(emailTitle);
-  if (currentUser?.email) {
-    const currentEmail = document.createElement('p');
-    currentEmail.className = 'field-hint';
-    currentEmail.textContent = `${t('settings.email_current')}: ${currentUser.email}`;
-    emailSection.appendChild(currentEmail);
-  }
   emailSection.appendChild(currentPasswordLabel);
   emailSection.appendChild(currentPasswordInput);
   emailSection.appendChild(newEmailLabel);
@@ -1002,9 +996,10 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
       });
 
       if (response.ok) {
-        emailMessage.textContent = t('settings.email_pending');
+        emailMessage.textContent = t('settings.email_saved');
         emailMessage.style.color = 'var(--success, #10b981)';
         currentPasswordInput.value = '';
+        newEmailInput.value = '';
       } else {
         const errorData = (await response.json()) as { error?: string };
         emailMessage.textContent = errorData.error || t('settings.email_save_failed');

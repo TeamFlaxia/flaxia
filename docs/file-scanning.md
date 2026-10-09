@@ -116,17 +116,6 @@ remain viewable but unscanned.
   Roll out in order: deploy the Crowd worker, publish and deploy the updated
   `@flaxia/sdk`/`@flaxia/node`, update `CROWD_NODE_VERSION` only to that published
   node release, then enable the flag after an eligible `container` node is online.
-  **Deployment caveat (2026-10):** the live `flaxia-worker` coordinator does not
-  implement file-source-aware node registration or assignment; the Flaxia page
-  advertises no `container` capability and supplies no `containerImageOrigins`.
-  No verified, publicly hosted WASI ClamAV executable or signature database is
-  provided by this repo, the pinned node package, or the node-v0.5.0 release.
-  `FILE_SCAN_CLAMAV_IMAGE` is an executable standalone WASI `.wasm` URL, **not**
-  a Docker image or a generic ClamAV CDN path. ClamAV needs signature databases
-  and substantial memory; supplying a guessed URL or flipping the flag cannot
-  make scans run. Verify a real WASI scanner, updated signatures, a working
-  `container` node, a clean and EICAR callback, and an updated Crowd coordinator
-  before enabling production file sources or re-screening quarantined uploads.
 - Configure `CROWD_NODE_ORIGINS` as a comma-separated list of exact browser
   page origins allowed to read the ticket endpoint. Each node host must opt in
   with both `containerImageOrigins` (for the trusted ClamAV WASM image) and

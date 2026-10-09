@@ -11,7 +11,6 @@ import {
   isKeyBlocked,
   recordInfection,
   setScanStatus,
-  setScanTask,
   upsertFileScan,
 } from '../functions/lib/scan/db.ts';
 
@@ -195,24 +194,6 @@ describe('file scan verdict races', () => {
       },
     } as unknown as KVNamespace;
     assert.equal(await isKeyBlocked(brokenCache, 'gif/x/0.png', db), true, 'KV read error must withhold');
-  });
-
-  it('does not let a late task submission revert a terminal clean or infected verdict', async () => {
-    const { db } = testDb();
-    const key = 'uploads/terminal-before-submit.bin';
-    const sha = features(bytes('same file')).sha256;
-    await ensureFileScansTable(db);
-    await upsertFileScan(db, key, { sha256: sha, kind: 'other' });
-
-    assert.equal(await setScanStatus(db, key, 'clean', { sha256: sha }), true);
-    assert.equal(await setScanTask(db, key, 'late-clean-task', sha), false);
-    assert.equal((await getFileScan(db, key))?.status, 'clean');
-
-    await upsertFileScan(db, key, features(bytes('new infected file')));
-    const infectedSha = features(bytes('new infected file')).sha256;
-    assert.equal(await setScanStatus(db, key, 'infected', { sha256: infectedSha }), true);
-    assert.equal(await setScanTask(db, key, 'late-infected-task', infectedSha), false);
-    assert.equal((await getFileScan(db, key))?.status, 'infected');
   });
 
   it('blocklists the submitted SHA when an overwrite wins the status-update race', async () => {

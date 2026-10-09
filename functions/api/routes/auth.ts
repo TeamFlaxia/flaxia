@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import {
   clearSessionCookie,
+  createSession,
   deleteSession,
   getSession,
   getSessionToken,
@@ -13,12 +14,6 @@ import {
   verifySrpLogin,
   verifySrpPassword,
 } from '../../lib/auth';
-import {
-  consumeEmailVerificationToken,
-  isEmailDeliveryConfigured,
-  issueEmailVerification,
-  normalizeEmail,
-} from '../../lib/email-verification';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { requireAuth } from '../helpers';
 import type { Bindings, SrpProofBody, Variables } from '../types';
@@ -66,33 +61,19 @@ auth.post('/register', async (c) => {
     const limited = await rateLimit(c, 'auth:register', getClientIp(c.req.raw), 5, 60);
     if (limited) return limited;
 
-    const {
-      email: submittedEmail,
-      username,
-      display_name,
-      srp_salt,
-      srp_verifier,
-      srp_group,
-      srp_kdf,
-    } = (await c.req.json()) as {
-      email?: unknown;
-      username?: unknown;
-      display_name?: unknown;
-      srp_salt?: unknown;
-      srp_verifier?: unknown;
-      srp_group?: unknown;
-      srp_kdf?: unknown;
-    };
+    const { email, username, display_name, srp_salt, srp_verifier, srp_group, srp_kdf } = await c.req.json();
 
-    if (typeof submittedEmail !== 'string' || typeof username !== 'string' || typeof display_name !== 'string') {
+    if (!email || !username || !display_name) {
       return c.json({ error: 'Missing required fields' }, 400);
     }
 
-    const email = normalizeEmail(submittedEmail);
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     // Bound the string before it reaches the regex: overlapping `[^\s@]+`
     // classes backtrack quadratically on long dot-heavy input.
-    if (email.length > 254 || !emailRegex.test(email)) {
+    if (typeof email !== 'string' || email.length > 254) {
+      return c.json({ error: 'Invalid email format' }, 400);
+    }
+    if (!emailRegex.test(email)) {
       return c.json({ error: 'Invalid email format' }, 400);
     }
 
@@ -105,36 +86,27 @@ auth.post('/register', async (c) => {
       return c.json({ error: 'Display name must be ≤50 characters' }, 400);
     }
 
-    if (
-      typeof srp_salt !== 'string' ||
-      typeof srp_verifier !== 'string' ||
-      typeof srp_group !== 'string' ||
-      typeof srp_kdf !== 'string'
-    ) {
+    if (!srp_salt || !srp_verifier || !srp_group || !srp_kdf) {
       return c.json({ error: 'SRP verifier required (plaintext registration is not supported)' }, 400);
-    }
-    if (!isEmailDeliveryConfigured(c.env)) {
-      return c.json({ error: 'Email verification is temporarily unavailable.' }, 503);
     }
 
     const user = await registerUser(c.env, {
       email,
       username,
       display_name,
-      srp: { salt: srp_salt, verifier: srp_verifier, group: srp_group, kdf: srp_kdf },
+      srp: {
+        salt: srp_salt as string,
+        verifier: srp_verifier as string,
+        group: srp_group as string,
+        kdf: srp_kdf as string,
+      },
     });
 
-    const sent = await issueEmailVerification(c.env, { purpose: 'registration', userId: user.id, email });
-    if (!sent) {
-      return c.json(
-        { error: 'Verification email could not be sent. Please request another email.', verification_pending: true },
-        503,
-      );
-    }
+    const session = await createSession(c.env, user.id);
+    const response = c.json({ user }, 201);
+    setSessionCookie(response, session.id);
 
-    // Return the safe user profile for compatibility, but never mint a session
-    // until the email token has been consumed.
-    return c.json({ user, verification_required: true }, 201);
+    return response;
   } catch (error: unknown) {
     const message = (error as { message?: string })?.message || 'Unknown error';
     console.error('Registration error:', message);
@@ -142,56 +114,6 @@ auth.post('/register', async (c) => {
       return c.json({ error: message }, 409);
     }
     return c.json({ error: 'Registration failed. Please try again.' }, 400);
-  }
-});
-
-// POST /api/auth/verification/resend
-// The response for unknown, verified, and unverified addresses is intentionally
-// the same. Throttles are keyed by both client IP and canonical email.
-auth.post('/verification/resend', async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { email?: unknown };
-  if (typeof body.email !== 'string' || body.email.length > 254) {
-    return c.json({ error: 'Email required' }, 400);
-  }
-  const email = normalizeEmail(body.email);
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: 'Invalid email format' }, 400);
-  if (!isEmailDeliveryConfigured(c.env)) {
-    return c.json({ error: 'Email delivery is temporarily unavailable.' }, 503);
-  }
-
-  const ip = getClientIp(c.req.raw);
-  const ipLimit = await rateLimit(c, 'auth:verification-resend:ip', ip, 10, 3600);
-  if (ipLimit) return ipLimit;
-  const emailLimit = await rateLimit(c, 'auth:verification-resend:email', email, 3, 3600);
-  if (emailLimit) return emailLimit;
-  const cooldown = await rateLimit(c, 'auth:verification-resend:cooldown', email, 1, 60);
-  if (cooldown) return cooldown;
-
-  const genericResponse = {
-    message: 'If this address needs verification, check your inbox. If nothing arrives, try again later.',
-  };
-  const user = await c.env.DB.prepare('SELECT id FROM users WHERE lower(email) = ? AND email_verified_at IS NULL')
-    .bind(email)
-    .first<{ id: string }>();
-  if (!user) return c.json(genericResponse, 202);
-
-  const sent = await issueEmailVerification(c.env, { purpose: 'registration', userId: user.id, email });
-  if (!sent) console.error('Verification resend delivery failed');
-  return c.json(genericResponse, 202);
-});
-
-// POST /api/auth/email/verify — consume an expiring, single-use token.
-auth.post('/email/verify', async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { token?: unknown };
-  if (typeof body.token !== 'string' || body.token.length > 128) {
-    return c.json({ error: 'Invalid or expired verification link.' }, 400);
-  }
-  try {
-    const purpose = await consumeEmailVerificationToken(c.env, body.token);
-    if (!purpose) return c.json({ error: 'Invalid or expired verification link.' }, 400);
-    return c.json({ verified: true, purpose });
-  } catch {
-    return c.json({ error: 'Verification could not be completed. Please try again.' }, 500);
   }
 });
 
@@ -228,9 +150,6 @@ auth.post('/login', async (c) => {
 
     return response;
   } catch (error: unknown) {
-    if ((error as { message?: string })?.message === 'email_not_verified') {
-      return c.json({ error: 'email_verification_required' }, 403);
-    }
     console.error('Login error:', error);
     return c.json({ error: 'Invalid credentials' }, 401);
   }
@@ -279,7 +198,6 @@ auth.post('/login/verify', async (c) => {
 
     const result = await verifySrpLogin(c.env, email, challenge_id, A, M1);
     if (!result) return c.json({ error: 'Invalid credentials' }, 401);
-    if ('needsVerification' in result) return c.json({ error: 'email_verification_required' }, 403);
 
     const response = c.json({ user: result.user, M2: result.M2 });
     setSessionCookie(response, result.session.id);
