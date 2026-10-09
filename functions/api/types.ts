@@ -9,6 +9,10 @@ export type Bindings = {
   BASE_URL: string;
   /** Deployment environment. 'test' enables the /api/test/* helper routes. */
   ENVIRONMENT?: string;
+  /** Resend API key stored as a Pages secret, never in wrangler vars. */
+  RESEND_API_KEY?: string;
+  /** Verified Resend sender address; defaults to no-reply@flaxia.app. */
+  RESEND_FROM_EMAIL?: string;
   ADMIN_USERNAMES: string;
   AP_DELIVERY_QUEUE: Queue;
   CROWD_ORCHESTRATOR_URL: string;
