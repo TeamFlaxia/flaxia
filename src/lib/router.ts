@@ -20,7 +20,8 @@ export type RouteView =
   | 'settings'
   | 'arcade'
   | 'billing-success'
-  | 'billing-canceled';
+  | 'billing-canceled'
+  | 'verify-email';
 
 export interface RouteInfo {
   view: RouteView;
@@ -48,6 +49,11 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
   if (cleanPath === '/register') {
     console.log('Register route detected');
     return { view: 'register', postId: null, username: null, tag: null };
+  }
+
+  if (cleanPath === '/verify-email') {
+    console.log('Email verification route detected');
+    return { view: 'verify-email', postId: null, username: null, tag: null };
   }
 
   // Legal pages (public)
