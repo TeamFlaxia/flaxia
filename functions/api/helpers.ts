@@ -27,7 +27,6 @@ export const authMiddleware = async (c: Context<{ Bindings: Bindings; Variables:
       path.startsWith('/api/audio/') ||
       path.startsWith('/api/video/') ||
       path.startsWith('/api/documents/') ||
-      path === '/api/link-preview' ||
       path === '/api/games' ||
       (path.startsWith('/api/ads/') && path.endsWith('/payload')) ||
       path.startsWith('/api/wvfs-zip/'));
