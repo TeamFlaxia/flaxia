@@ -8,18 +8,19 @@ export async function reapStalePendingPosts(env: { DB: D1Database; BUCKET?: R2Bu
     return 0;
   }
 
-  const rows = (
-    await env.DB.prepare(
-      `SELECT id, gif_key, payload_key, swf_key, thumbnail_key FROM posts
+  const rows =
+    (
+      await env.DB.prepare(
+        `SELECT id, gif_key, payload_key, swf_key, thumbnail_key FROM posts
        WHERE status = 'pending' AND created_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-24 hours') LIMIT 100`,
-    ).all<{
-      id: string;
-      gif_key: string | null;
-      payload_key: string | null;
-      swf_key: string | null;
-      thumbnail_key: string | null;
-    }>()
-  ).results ?? [];
+      ).all<{
+        id: string;
+        gif_key: string | null;
+        payload_key: string | null;
+        swf_key: string | null;
+        thumbnail_key: string | null;
+      }>()
+    ).results ?? [];
 
   let reaped = 0;
   for (const row of rows) {
@@ -44,9 +45,7 @@ export async function reapStalePendingPosts(env: { DB: D1Database; BUCKET?: R2Bu
       for (let i = 0; i < allKeys.length; i += 1000) {
         await env.BUCKET.delete(allKeys.slice(i, i + 1000));
       }
-      const deleted = await env.DB.prepare(
-        "DELETE FROM posts WHERE id = ? AND status = 'pending'",
-      ).bind(row.id).run();
+      const deleted = await env.DB.prepare("DELETE FROM posts WHERE id = ? AND status = 'pending'").bind(row.id).run();
       if (deleted.meta.changes > 0) reaped++;
     } catch (error) {
       // Leave the row for a retry; a failed cleanup must not leak R2 bytes.
