@@ -5,18 +5,24 @@
   "identifier": "app.flaxia.app",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "https://flaxia.app",
-    "beforeDevCommand": "",
+    "devUrl": "http://localhost:3000",
+    "beforeDevCommand": "npm run dev:local",
     "beforeBuildCommand": ""
   },
   "app": {
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; object-src 'none'; base-uri 'self'; worker-src 'self' blob: https://flaxia.app; connect-src 'self' https: wss: blob:; img-src * blob: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com blob:; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com blob:; script-src 'self' 'sha256-fHNVwPbW99e+pMNlG6l4u/Qa4ZXgCiY4NEErpg7xNKA=' 'sha256-8UZ1xbdoEGBJfbCFW7UdTEkjFZkH/d+8yO/eZ/JEOM0=' 'sha256-vUuU2Vr0x5KLfztNEae0/JgoGKIsMgHAm8i3fMzvHZo=' 'sha256-lf+0nM1TqVv41CHz3DTo1q7DzxErxegCLlYtVBZlTWg=' 'sha256-2noITtBmjNoi295cUQM1dJ7ioF61E0NeKuweqwK4O1M=' 'sha256-L9NtTqBLxf1z3sIza7z/JTtm01m91a8xVl07p4WTMYw=' 'sha256-9jpcqwJpr7kicF5b0vRUbAJtyA6CqjotdcnTjIv8i4U=' 'wasm-unsafe-eval' blob: https://cdn.jsdelivr.net https://unpkg.com https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net https://www.google.com https://www.googletagmanager.com https://www.google-analytics.com; script-src-attr 'none'; media-src 'self' https: blob:; frame-src 'self' blob: https://*.flaxia.app https://googleads.g.doubleclick.net https://www.youtube.com https://ep2.adtrafficquality.google https://www.google.com; frame-ancestors 'self'"
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
   }
 }

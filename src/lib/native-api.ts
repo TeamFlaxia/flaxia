@@ -1,7 +1,12 @@
 const API_ORIGIN = 'https://flaxia.app';
 
 function isNativeApp(): boolean {
-  return typeof window !== 'undefined' && window.location.protocol.startsWith('capacitor');
+  return (
+    typeof window !== 'undefined' &&
+    (window.location.protocol.startsWith('capacitor') ||
+      window.location.protocol === 'tauri:' ||
+      window.location.hostname === 'tauri.localhost')
+  );
 }
 
 export function nativeApiUrl(input: RequestInfo | URL): RequestInfo | URL {

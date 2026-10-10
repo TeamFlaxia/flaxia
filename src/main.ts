@@ -48,7 +48,7 @@ initPerformanceMonitoring();
 // Capacitor SPA. Browser builds and non-API asset requests are unchanged.
 const originalFetch = window.fetch.bind(window);
 window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  if (window.location.hostname === 'localhost' && input instanceof Request && input.body !== null && !init) {
+  if (window.location.protocol.startsWith('capacitor') && input instanceof Request && input.body !== null && !init) {
     const url = new URL(input.url);
     if (url.pathname.startsWith('/api/')) {
       const destination = `https://flaxia.app${url.pathname}${url.search}${url.hash}`;
@@ -59,7 +59,9 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   }
   const rewrittenInput = nativeApiUrl(input);
   if (
-    window.location.protocol.startsWith('capacitor') &&
+    (window.location.protocol.startsWith('capacitor') ||
+      window.location.protocol === 'tauri:' ||
+      window.location.hostname === 'tauri.localhost') &&
     new URL(input instanceof Request ? input.url : input.toString(), window.location.href).pathname.startsWith('/api/')
   ) {
     const request = new Request(rewrittenInput, init);
@@ -163,9 +165,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const pushSocket = createPushSocket(
       () => {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        // A packaged native WebView has a local origin but the WebSocket API
+        // is hosted by the production backend, not by the app protocol.
+        const nativeShell = isCapacitorNative ||
+          window.location.protocol === 'tauri:' ||
+          window.location.hostname === 'tauri.localhost';
+        const protocol = nativeShell || window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = nativeShell ? 'flaxia.app' : window.location.host;
         const sessionToken = localStorage.getItem('flaxia_session');
-        return `${protocol}//${window.location.host}/api/ws/notifications${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`;
+        return `${protocol}//${host}/api/ws/notifications${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`;
       },
       {
         onOpen: () => {
