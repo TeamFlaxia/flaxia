@@ -729,15 +729,22 @@ vault.post('/vault/devices/:id/approve', requireAuth, async (c) => {
   return c.json({ ok: true });
 });
 
-// DELETE /vault/devices/:id — revoke a device. Its copy of VK stops mattering
-// only together with a VK rotation (rewrap of every item key); this removes the
-// row so the device cannot re-unlock after a reload.
+// DELETE only cancels a pending pairing. Active-device revocation always
+// requires an SRP proof and VK rotation via /vault/keys/revoke-device.
+// A stolen session must not be able to silently disable auto-unlock devices.
 vault.delete('/vault/devices/:id', requireAuth, async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const removed = await c.env.DB.prepare('DELETE FROM device_keys WHERE id = ? AND user_id = ?')
-    .bind(c.req.param('id') ?? '', user.id)
+  const id = c.req.param('id') ?? '';
+  const row = await readDevice(c, user.id, id);
+  if (!row) return c.json({ error: 'Pairing not found' }, 404);
+  if (row.state !== 'pending') {
+    return c.json({ error: 'Active devices must be revoked with password proof and vault key rotation' }, 403);
+  }
+
+  const removed = await c.env.DB.prepare("DELETE FROM device_keys WHERE id = ? AND user_id = ? AND state = 'pending'")
+    .bind(id, user.id)
     .run();
   if (!removed.success || removed.meta.changes === 0) return c.json({ error: 'Pairing not found' }, 404);
   return c.json({ ok: true });

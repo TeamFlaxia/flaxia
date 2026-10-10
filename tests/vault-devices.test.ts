@@ -310,7 +310,7 @@ describe('POST /api/vault/devices/:id/approve — approver hands over VK', () =>
 describe('device management', () => {
   beforeEach(resetDb);
 
-  it('lists state transitions and lets a device be revoked → 200', async () => {
+  it('requires proof and VK rotation to revoke an active device', async () => {
     const { cookie } = await seedUserAndLogin('1');
     const { vk } = await enableVault(cookie);
     const joiner = generateEphemeralKeyPair();
@@ -349,13 +349,27 @@ describe('device management', () => {
       method: 'DELETE',
       headers: headers(cookie),
     });
-    assert.equal(removed.status, 200);
-    assert.equal((await getPairing(cookie, id)).status, 404, 'a revoked device disappears');
+    assert.equal(removed.status, 403);
+    assert.equal((await getPairing(cookie, id)).status, 200, 'active device must survive session-only DELETE');
     assert.equal(
       (await fetch(`${BASE_URL}/api/vault/devices/${id}`, { method: 'DELETE', headers: headers(cookie) })).status,
-      404,
-      'revoking twice is a no-op, not an error path worth hiding',
+      403,
+      'repeat removal attempts must not revoke an active device',
     );
+  });
+
+  it('allows a joiner to cancel only its pending pairing', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    await enableVault(cookie);
+    const joiner = generateEphemeralKeyPair();
+    const { id } = (await (
+      await createPairing(cookie, { label: 'Cancelled QR', peer_pub: encodeB64(joiner.publicKey) })
+    ).json()) as { id: string };
+    assert.equal(
+      (await fetch(`${BASE_URL}/api/vault/devices/${id}`, { method: 'DELETE', headers: headers(cookie) })).status,
+      200,
+    );
+    assert.equal((await getPairing(cookie, id)).status, 404);
   });
 
   it('keeps devices scoped to their owner → 404', async () => {
