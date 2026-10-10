@@ -12,6 +12,7 @@ import {
   startSrpLogin,
   upgradeSrp,
   verifySrpLogin,
+  verifyPassword,
   verifySrpPassword,
 } from '../../lib/auth';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
@@ -260,17 +261,18 @@ auth.post('/upgrade-srp', requireAuth, async (c) => {
     const limiterUserId = c.get('user')?.id ?? getClientIp(c.req.raw);
     const limited = await rateLimit(c, 'auth:upgrade-srp', limiterUserId, 10, 3600);
     if (limited) return limited;
-    const { srp_salt, srp_verifier, srp_group, srp_kdf, current_srp } = await c.req.json();
+    const { srp_salt, srp_verifier, srp_group, srp_kdf, current_srp, legacy_password } = await c.req.json();
     if (!srp_salt || !srp_verifier || !srp_group || !srp_kdf) {
       return c.json({ error: 'Missing SRP parameters' }, 400);
     }
     const userId = c.get('user')?.id;
     if (!userId) return c.json({ error: 'Unauthorized' }, 401);
-    const existing = (await c.env.DB.prepare('SELECT srp_verifier, srp_salt FROM users WHERE id = ?')
+    const existing = (await c.env.DB.prepare('SELECT srp_verifier, srp_salt, password_hash FROM users WHERE id = ?')
       .bind(userId)
       .first()) as {
       srp_verifier: string | null;
       srp_salt: string | null;
+      password_hash: string | null;
     } | null;
     if (existing?.srp_verifier || existing?.srp_salt) {
       const proof = current_srp as SrpProofBody | undefined;
@@ -286,13 +288,30 @@ auth.post('/upgrade-srp', requireAuth, async (c) => {
       if (!session?.session.srp_upgrade_allowed) {
         return c.json({ error: 'Legacy login required for SRP upgrade' }, 403);
       }
+      // A session bit is not a password proof. Legacy accounts have no SRP
+      // verifier yet, so require the original password and verify its hash
+      // before permanently replacing the account's login credential.
+      if (
+        typeof legacy_password !== 'string' ||
+        legacy_password.length === 0 ||
+        legacy_password.length > 1024 ||
+        !existing?.password_hash ||
+        !(await verifyPassword(legacy_password, existing.password_hash))
+      ) {
+        return c.json({ error: 'Current password is incorrect' }, 401);
+      }
     }
-    await upgradeSrp(c.env, userId, {
-      salt: srp_salt,
-      verifier: srp_verifier,
-      group: srp_group,
-      kdf: srp_kdf,
-    });
+    await upgradeSrp(
+      c.env,
+      userId,
+      {
+        salt: srp_salt,
+        verifier: srp_verifier,
+        group: srp_group,
+        kdf: srp_kdf,
+      },
+      { onlyIfLegacy: !(existing?.srp_verifier || existing?.srp_salt) },
+    );
     const token = getSessionToken(c.req.raw);
     if (token) {
       await c.env.DB.prepare('UPDATE sessions SET srp_upgrade_allowed = 0 WHERE id = ?').bind(token).run();
