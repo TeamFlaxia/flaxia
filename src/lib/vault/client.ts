@@ -163,7 +163,12 @@ export async function pollPairing(id: string): Promise<PairingPoll | null> {
   }
 }
 
-export async function approvePairing(id: string, peerPub: string, approvedPub: string, wrappedVk: string): Promise<ApproveResult> {
+export async function approvePairing(
+  id: string,
+  peerPub: string,
+  approvedPub: string,
+  wrappedVk: string,
+): Promise<ApproveResult> {
   try {
     const res = await fetch(`/api/vault/devices/${encodeURIComponent(id)}/approve`, {
       method: 'POST',
