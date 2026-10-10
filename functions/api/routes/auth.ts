@@ -27,7 +27,16 @@ type AuthContext = Context<{ Bindings: Bindings; Variables: Variables }>;
  * integration suite registers and logs in many users from a single IP.
  */
 function isLocalEnvironment(c: AuthContext): boolean {
-  return c.env.ENVIRONMENT === 'test' || (c.env.BASE_URL ?? '').startsWith('http://localhost');
+  // A single misconfigured BASE_URL or ENVIRONMENT must not disable protection.
+  const localEnvironment = c.env.ENVIRONMENT === 'test' || c.env.ENVIRONMENT === 'development';
+  let localAddress = false;
+  try {
+    const url = new URL(c.env.BASE_URL ?? '');
+    localAddress = url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname);
+  } catch {
+    // A missing or invalid URL is never an authorization bypass.
+  }
+  return localEnvironment && localAddress;
 }
 
 /**
@@ -43,7 +52,19 @@ async function rateLimit(
   windowSeconds: number,
 ): Promise<Response | null> {
   if (isLocalEnvironment(c)) return null;
-  const allowed = await checkRateLimit(c.env.CACHE, `${scope}:${id}`, { maxRequests, windowSeconds });
+  let allowed: boolean;
+  try {
+    allowed = await checkRateLimit(c.env.CACHE, `${scope}:${id}`, {
+      maxRequests,
+      windowSeconds,
+      failureMode: 'closed',
+    });
+  } catch (error) {
+    console.error('Auth rate-limit storage unavailable', { scope, error });
+    return c.json({ error: 'Authentication temporarily unavailable. Please retry shortly.' }, 503, {
+      'Retry-After': '60',
+    });
+  }
   if (!allowed) {
     return c.json({ error: 'Too many requests. Please try again later.' }, 429);
   }
