@@ -3,7 +3,13 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 const root = new URL('../src-tauri/', import.meta.url);
-const configs = ['tauri.conf.json', 'tauri.conf.base.json', 'tauri.conf.windows.json', 'tauri.conf.linux.json', 'tauri.conf.macos.json'];
+const configs = [
+  'tauri.conf.json',
+  'tauri.conf.base.json',
+  'tauri.conf.windows.json',
+  'tauri.conf.linux.json',
+  'tauri.conf.macos.json',
+];
 
 test('Tauri never loads the public site as its privileged application UI', () => {
   for (const path of configs) {
