@@ -64,14 +64,17 @@ if (!existsSync(buildGradlePath)) {
 
 let content = readFileSync(buildGradlePath, 'utf8');
 
-// APK output filename
+// APK output filename. App bundle outputs are not APKs and must retain the
+// Gradle-generated .aab name for Play Console uploads.
 if (!content.includes('flaxia_install')) {
   content = content.replace(
     /(android\s*\{)/,
     `$1
     applicationVariants.all { variant ->
         variant.outputs.all {
-            outputFileName = "flaxia_install.apk"
+            if (outputFile.name.endsWith('.apk')) {
+                outputFileName = "flaxia_install.apk"
+            }
         }
     }`,
   );

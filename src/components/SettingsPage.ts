@@ -232,10 +232,21 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
         t('settings.delete_account_confirm', { username: currentUser.username }),
       );
       if (!confirmed) return;
+      const password = window.prompt(
+        t('settings.current_password') || 'Enter your current password to confirm deletion',
+      );
+      if (!password) return;
       try {
+        const current_srp = await createSrpProof(password);
+        if (!current_srp) {
+          alert(t('settings.password_proof_failed') || 'Could not verify your password');
+          return;
+        }
         const response = await fetch('/api/users/me', {
           method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
+          body: JSON.stringify({ current_srp }),
         });
 
         if (response.ok) {
@@ -1313,8 +1324,14 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     loadStamps();
   }
 
-  // Billing Section (Flaxia+ only)
-  if (currentUser) {
+  // Billing Section (Flaxia+ only). Play-distributed builds must use Play Billing
+  // for digital subscriptions; keep the current Stripe flow web-only until that
+  // integration and its purchase verification are implemented.
+  const isCapacitorApp =
+    typeof window !== 'undefined' &&
+    typeof window.Capacitor?.isNativePlatform === 'function' &&
+    window.Capacitor.isNativePlatform();
+  if (currentUser && !isCapacitorApp) {
     const billingSection = document.createElement('div');
     billingSection.className = 'settings-section';
     billingSection.style.cssText = `

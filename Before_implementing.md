@@ -608,8 +608,9 @@ npm run tauri:build:windows  # Windows
 
 # Capacitor（モバイルアプリ）
 npm run cap:sync             # Capacitor 同期
-npm run cap:build:android    # Android APK
-npm run cap:build:ios        # iOS
+npm run cap:build:android          # Android debug APK
+ANDROID_KEYSTORE_FILE=... ANDROID_KEYSTORE_PASSWORD=... ANDROID_KEY_ALIAS=... ANDROID_KEY_PASSWORD=... npm run cap:build:android:release  # Play AAB
+npm run cap:build:ios              # iOS
 ```
 
 ---
@@ -1473,7 +1474,7 @@ git push origin v1.2.3
 | `create-release` | GitHub Release | ドラフトリリースを自動作成 |
 | `tauri-linux` | `.deb`, `.rpm`, `.AppImage` | Linux 用デスクトップアプリをビルド |
 | `tauri-windows` | `.msi` | Windows 用デスクトップアプリをビルド |
-| `android` | `.apk` | Android アプリをビルド |
+| `android` | `.aab` | Google Play 用 Android App Bundle をビルド |
 | `deploy-cloudflare` | — | Pages + Sandbox + Queue + DO をデプロイ |
 
 各ジョブのビルド成果物は自動的に GitHub Release にアップロードされます。
@@ -1488,8 +1489,8 @@ git push origin v1.2.3
 |--------|------|--------|
 | `CLOUDFLARE_API_TOKEN` | Cloudflare API トークン（権限: Pages, Workers, D1, R2, KV） | Cloudflare Dashboard → My Profile → API Tokens |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare アカウント ID | Cloudflare Dashboard の右側 |
-| `GOOGLE_SERVICES_JSON` | Firebase サービスアカウント JSON（base64） | Firebase Console |
-| `ANDROID_KEYSTORE` | Android 署名キーストア（base64） | `keytool` で生成 |
+| `GOOGLE_SERVICES_JSON` | Firebase アプリ設定 JSON（base64、Android プロジェクトで Firebase を使う場合） | Firebase Console |
+| `ANDROID_KEYSTORE` | Android 署名キーストア（base64）。Play App Signing を使い、アップロード鍵として登録 | `keytool` で生成 |
 | `ANDROID_KEYSTORE_PASSWORD` | キーストアのパスワード | 自身で設定 |
 | `ANDROID_KEY_ALIAS` | キーエイリアス | `keytool` で指定 |
 | `ANDROID_KEY_PASSWORD` | キーのパスワード | 自身で設定 |

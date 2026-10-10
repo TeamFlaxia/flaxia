@@ -82,7 +82,10 @@ export const csrfProtection = async (c: Context<{ Bindings: Bindings; Variables:
   const origin = c.req.header('Origin');
   if (origin) {
     const baseOrigin = getBaseOrigin(c);
-    if (!allowedOrigins.has(origin) && origin !== baseOrigin) {
+    const isNativeAppRequest =
+      c.req.header('X-Flaxia-Native-App') === '1' &&
+      (origin === 'capacitor://localhost' || origin === 'https://localhost');
+    if (!allowedOrigins.has(origin) && origin !== baseOrigin && !isNativeAppRequest) {
       return c.json({ error: 'CSRF validation failed' }, 403);
     }
   }

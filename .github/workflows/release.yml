@@ -177,11 +177,21 @@ jobs:
         run: |
           echo "$ANDROID_KEYSTORE" | base64 -d > "$ANDROID_KEYSTORE_FILE"
           node scripts/patch-android-build.mjs
-          cd android && ./gradlew assembleRelease
+          cd android && ./gradlew bundleRelease
+      - name: Verify release AAB
+        run: |
+          set -euo pipefail
+          AAB_PATH="android/app/build/outputs/bundle/release/app-release.aab"
+          if [ ! -f "$AAB_PATH" ]; then
+            echo "::error::$AAB_PATH was not produced — the release has no Play-uploadable artifact."
+            ls -la android/app/build/outputs/bundle/release/ 2>/dev/null || true
+            exit 1
+          fi
+          echo "Release AAB: $(du -h "$AAB_PATH" | cut -f1)"
       - name: Upload Release Artifacts
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          files: android/app/build/outputs/apk/release/*.apk
+          files: android/app/build/outputs/bundle/release/*.aab
 
 

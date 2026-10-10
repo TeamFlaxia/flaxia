@@ -93,7 +93,8 @@ async function initCapacitorNotifications(): Promise<void> {
     const { LocalNotifications } = await import('@capacitor/local-notifications');
     const { Badge } = await import('@capawesome/capacitor-badge');
 
-    await LocalNotifications.requestPermissions();
+    // Permission prompts should follow an explicit user action. Local notifications
+    // are only used after an FCM message arrives while the app is foregrounded.
 
     try {
       await LocalNotifications.createChannel({
@@ -149,7 +150,10 @@ export async function initNativePushRegistration(): Promise<void> {
   if (!isCapacitorNativePlatform()) return;
   try {
     const { PushNotifications } = await import('@capacitor/push-notifications');
-    await PushNotifications.requestPermissions();
+    // Ask for notification permission when the app explicitly enables push;
+    // registration itself is attempted only after permission has been granted.
+    const permission = await PushNotifications.checkPermissions();
+    if (permission.receive !== 'granted') return;
     await PushNotifications.register();
 
     await PushNotifications.addListener('registration', (token) => {

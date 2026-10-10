@@ -16,7 +16,8 @@ declare module '@capacitor/push-notifications' {
   }
 
   export const PushNotifications: {
-    requestPermissions(): Promise<void>;
+    checkPermissions(): Promise<{ receive: string }>;
+    requestPermissions(): Promise<{ receive: string }>;
     register(): Promise<void>;
     addListener(event: 'registration', handler: (token: PushNotificationToken) => void): Promise<void>;
     addListener(event: 'registrationError', handler: (err: { error: string }) => void): Promise<void>;
@@ -35,5 +36,7 @@ declare module '@capacitor/app' {
 
   export const App: {
     addListener(event: 'appStateChange', handler: (state: AppStateChange) => void): Promise<void>;
+    addListener(event: 'backButton', handler: (event: { canGoBack: boolean }) => void): Promise<void>;
+    exitApp(): Promise<void>;
   };
 }

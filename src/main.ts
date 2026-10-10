@@ -18,6 +18,7 @@ import { lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from '
 import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
 import type { LeftNavHandlers } from './lib/left-nav-handlers.js';
 import { createLeftNavHandlers } from './lib/left-nav-handlers.js';
+import { nativeApiUrl } from './lib/native-api.js';
 import {
   clearNativeBadge,
   initNativeNotify,
@@ -42,6 +43,22 @@ interface PageComponent {
 
 // Initialize performance monitoring
 initPerformanceMonitoring();
+
+// Rewrite same-origin API requests to the production origin for the bundled
+// Capacitor SPA. Browser builds and non-API asset requests are unchanged.
+const originalFetch = window.fetch.bind(window);
+window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  if (window.location.hostname === 'localhost' && input instanceof Request && input.body !== null && !init) {
+    const url = new URL(input.url);
+    if (url.pathname.startsWith('/api/')) {
+      const destination = `https://flaxia.app${url.pathname}${url.search}${url.hash}`;
+      const options: RequestInit = { method: input.method, headers: input.headers };
+      if (input.method !== 'GET' && input.method !== 'HEAD') options.body = await input.clone().text();
+      return originalFetch(destination, options);
+    }
+  }
+  return originalFetch(nativeApiUrl(input), init);
+}) as typeof window.fetch;
 
 // Initialize content protection (right-click, drag, keyboard shortcuts)
 initContentProtection();
@@ -1301,6 +1318,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
 
+    // Handle browser back/forward. Native Android back first traverses SPA
+    // history; the OS exits only when Capacitor has no in-app history to pop.
+    if (isCapacitorNative) {
+      void import('@capacitor/app')
+        .then(({ App }) =>
+          App.addListener('backButton', ({ canGoBack }) => {
+            if (canGoBack || window.history.length > 1) {
+              window.history.back();
+            } else {
+              void App.exitApp();
+            }
+          }),
+        )
+        .catch((error: unknown) => console.warn('Native back handling unavailable:', error));
+    }
+
     // Handle browser back/forward
     window.addEventListener('popstate', async (e) => {
       const route = parseCurrentRoute();
@@ -1373,6 +1406,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     deferInit(async () => {
       // Defer platform-specific notification init (not critical for first paint)
       initNativeNotify().catch(() => {});
+      // Only register for FCM after notification access has already been granted.
       initNativePushRegistration().catch(() => {});
 
       if (!canRunFlaxiaNode()) return;

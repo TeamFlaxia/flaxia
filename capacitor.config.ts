@@ -3,13 +3,14 @@ import { CapacitorConfig } from '@capacitor/cli';
 const config: CapacitorConfig = {
   appId: 'app.flaxia.app',
   appName: 'Flaxia',
+  // Bundle the built SPA in the native binary instead of loading the entire app
+  // from a remote URL.
   webDir: 'dist',
   server: {
-    url: 'https://flaxia.app',
     androidScheme: 'https',
-    iosScheme: 'https',
-    hostname: 'flaxia.app',
-    allowNavigation: ['flaxia.app', '*.flaxia.app'],
+    iosScheme: 'capacitor',
+    hostname: 'localhost',
+    allowNavigation: ['flaxia.app', '*.flaxia.app', 'sandbox.flaxia.app'],
   },
   plugins: {
     LocalNotifications: {
