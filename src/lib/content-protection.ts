@@ -101,7 +101,6 @@ export function initContentProtection(): void {
 
   // Drag prevention on media
   document.addEventListener('dragstart', handleDragStart, true);
-
 }
 
 /**
