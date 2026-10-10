@@ -270,3 +270,12 @@ password: legacy login (auto-upgrade), password change, and vault enable.
 | `tests/vault.test.ts`, `tests/vault-devices.test.ts` | envelope API + the full two-device handshake over HTTP — hostile values (salts, KDF params, `1e999`, `vk_version`), single-use proof replay, TTL clamp, 10-device cap |
 | `tests/vault-session.test.ts` | unlock outcome classification (wrong/network/malformed/ok), enable round-trip with device self-registration, re-wrap refusal paths |
 | `tests/security-guards.test.ts` | static guards (escrow, sandboxing, constant-time verify) |
+
+
+### Cancelling a pairing vs revoking an active device (#103)
+
+`DELETE /api/vault/devices/:id` only cancels **pending** QR pairings.
+It rejects an **active** device with HTTP 403 even for authenticated sessions.
+Active device revocation requires the SRP password proof and atomic vault-key
+rotation provided by `POST /api/vault/keys/revoke-device`; never use direct
+row deletion as a shortcut for an active device.
