@@ -152,6 +152,10 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '21'
+      - name: Install bundletool
+        run: |
+          curl -fsSL https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar -o "$RUNNER_TEMP/bundletool.jar"
+          echo "BUNDLETOOL_JAR=$RUNNER_TEMP/bundletool.jar" >> "$GITHUB_ENV"
       - name: Install Android SDK components
         run: |
           yes | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager \
@@ -174,11 +178,16 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           echo "$ANDROID_KEYSTORE" | base64 -d > "$ANDROID_KEYSTORE_FILE"
+          export ANDROID_VERSION_CODE="$(node scripts/android-version-code.mjs code "$GITHUB_REF_NAME")"
           node scripts/patch-android-build.mjs
           cd android && ./gradlew bundleRelease
       - name: Verify release AAB
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          BUNDLETOOL_JAR: ${{ runner.temp }}/bundletool.jar
         run: |
           set -euo pipefail
           AAB_PATH="android/app/build/outputs/bundle/release/app-release.aab"
@@ -188,6 +197,9 @@ jobs:
             exit 1
           fi
           echo "Release AAB: $(du -h "$AAB_PATH" | cut -f1)"
+          EXPECTED_VERSION_CODE="$(node scripts/android-version-code.mjs code "$GITHUB_REF_NAME")"
+          node scripts/android-version-code.mjs verify "$AAB_PATH" "$EXPECTED_VERSION_CODE"
+          echo "Verified Android versionCode: $EXPECTED_VERSION_CODE"
       - name: Upload Release Artifacts
         uses: softprops/action-gh-release@v2
         with:

@@ -1,6 +1,7 @@
 import { execSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { patchAndroidVersionCode, androidVersionCode as versionCodeFromReleaseTag } from './android-version-code.mjs';
 
 // launcher icons (generate from assets/icon.png via capacitor-assets)
 try {
@@ -15,6 +16,10 @@ try {
   console.error('dependencies (sharp) are properly installed.');
   console.error(`Error: ${err.stderr?.toString().trim() || err.message}`);
 }
+
+// RELEASE_TAG must be converted to ANDROID_VERSION_CODE by the build workflow.
+const releaseTag = process.env.GITHUB_REF_NAME ?? process.env.RELEASE_TAG;
+const androidVersionCode = releaseTag ? versionCodeFromReleaseTag(releaseTag) : process.env.ANDROID_VERSION_CODE;
 
 // Generate notification small icon (white leaf silhouette) for Android status bar
 try {
@@ -63,6 +68,16 @@ if (!existsSync(buildGradlePath)) {
 }
 
 let content = readFileSync(buildGradlePath, 'utf8');
+
+// Fail closed if a release tag could not be converted into a versionCode.
+if (releaseTag && !androidVersionCode) {
+  throw new Error(`No Android versionCode is available for ${releaseTag}`);
+}
+if (androidVersionCode) {
+  const versionCode = Number(androidVersionCode);
+  content = patchAndroidVersionCode(content, versionCode);
+  console.log(`Set Android defaultConfig versionCode ${versionCode}`);
+}
 
 // APK output filename. App bundle outputs are not APKs and must retain the
 // Gradle-generated .aab name for Play Console uploads.
