@@ -706,7 +706,11 @@ vault.post('/vault/devices/:id/approve', requireAuth, async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const body = (await c.req.json().catch(() => ({}))) as { approved_pub?: unknown; peer_pub?: unknown; wrapped_vk?: unknown };
+  const body = (await c.req.json().catch(() => ({}))) as {
+    approved_pub?: unknown;
+    peer_pub?: unknown;
+    wrapped_vk?: unknown;
+  };
   if (!isValidB64(body.approved_pub, 32)) return c.json({ error: 'Invalid pairing public key' }, 400);
   if (!isValidB64(body.peer_pub, 32)) return c.json({ error: 'Invalid QR public key' }, 400);
   if (!isValidWrappedKey(body.wrapped_vk)) return c.json({ error: 'Invalid wrapped vault key' }, 400);
