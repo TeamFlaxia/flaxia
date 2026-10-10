@@ -3,6 +3,17 @@ use tauri::Manager;
 
 struct TrayState(Mutex<Option<tauri::tray::TrayIcon<tauri::Wry>>>);
 
+// Never navigate the privileged Tauri window to a remote web page. A live
+// website must not inherit the app's native IPC / notification permissions.
+fn allow_app_navigation(url: &tauri::Url) -> bool {
+  match (url.scheme(), url.host_str()) {
+    ("tauri", Some("localhost")) => true,
+    ("http" | "https", Some("tauri.localhost")) => true,
+    ("http", Some("localhost" | "127.0.0.1")) if cfg!(debug_assertions) && url.port() == Some(3000) => true,
+    _ => false,
+  }
+}
+
 /// JS の refreshNotificationBadges から呼ばれる: トレイアイコン即時更新
 /// ビルド時に生成したバッジ付き PNG に切り替えるだけ (ランタイムの画像加工なし)
 #[tauri::command]
@@ -38,6 +49,16 @@ pub fn run() {
     .plugin(tauri_plugin_process::init())
     .invoke_handler(tauri::generate_handler![set_notification_count])
     .setup(|app| {
+      // The platform configs specify create=false so we can attach navigation
+      // guards before the main window is constructed.
+      let window_config = app.config().app.windows.iter()
+        .find(|config| config.label == "main")
+        .expect("main Tauri window configuration is missing");
+      tauri::WebviewWindowBuilder::from_config(app, window_config)?
+        .on_navigation(allow_app_navigation)
+        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+        .build()?;
+
       if cfg!(debug_assertions) {
         app.handle().plugin(
           tauri_plugin_log::Builder::default()
