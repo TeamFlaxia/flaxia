@@ -743,9 +743,7 @@ vault.delete('/vault/devices/:id', requireAuth, async (c) => {
     return c.json({ error: 'Active devices must be revoked with password proof and vault key rotation' }, 403);
   }
 
-  const removed = await c.env.DB.prepare(
-    "DELETE FROM device_keys WHERE id = ? AND user_id = ? AND state = 'pending'",
-  )
+  const removed = await c.env.DB.prepare("DELETE FROM device_keys WHERE id = ? AND user_id = ? AND state = 'pending'")
     .bind(id, user.id)
     .run();
   if (!removed.success || removed.meta.changes === 0) return c.json({ error: 'Pairing not found' }, 404);
