@@ -57,7 +57,17 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       return originalFetch(destination, options);
     }
   }
-  return originalFetch(nativeApiUrl(input), init);
+  const rewrittenInput = nativeApiUrl(input);
+  if (
+    window.location.protocol.startsWith('capacitor') &&
+    new URL(input instanceof Request ? input.url : input.toString(), window.location.href).pathname.startsWith('/api/')
+  ) {
+    const request = new Request(rewrittenInput, init);
+    const headers = new Headers(request.headers);
+    headers.set('X-Flaxia-Native-App', '1');
+    return originalFetch(new Request(request, { headers }));
+  }
+  return originalFetch(rewrittenInput, init);
 }) as typeof window.fetch;
 
 // Initialize content protection (right-click, drag, keyboard shortcuts)
@@ -133,6 +143,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentUser: {
       username: string;
       id: string;
+      email?: string;
       display_name?: string;
       avatar_key?: string;
       badge_type?: string | null;

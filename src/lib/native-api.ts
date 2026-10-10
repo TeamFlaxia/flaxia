@@ -7,25 +7,37 @@ function isNativeApp(): boolean {
 export function nativeApiUrl(input: RequestInfo | URL): RequestInfo | URL {
   if (!isNativeApp()) return input;
 
+  const requestInput = input as RequestInfo | URL;
   let url: URL;
-  if (typeof input === 'string' || input instanceof URL) {
-    url = new URL(input.toString(), window.location.href);
+  if (typeof requestInput === 'string' || requestInput instanceof URL) {
+    url = new URL(requestInput.toString(), window.location.href);
   } else {
-    url = new URL(input.url, window.location.href);
+    url = new URL(requestInput.url, window.location.href);
   }
 
   if (!url.pathname.startsWith('/api/')) return input;
   const destination = new URL(`${API_ORIGIN}${url.pathname}${url.search}${url.hash}`);
-  if (typeof input === 'string' || input instanceof URL) return destination.href;
-  if (input instanceof Request) {
-    const headers = new Headers(input.headers);
+  if (requestInput instanceof Request) {
+    const headers = new Headers(requestInput.headers);
     headers.set('X-Flaxia-Native-App', '1');
-    if (input.method === 'GET' || input.method === 'HEAD') {
-      return new Request(destination, { method: input.method, headers });
-    }
-    const rewritten = new Request(destination, input);
-    rewritten.headers.set('X-Flaxia-Native-App', '1');
-    return rewritten;
+    return new Request(destination, {
+      method: requestInput.method,
+      headers,
+      body: requestInput.body,
+      credentials: requestInput.credentials,
+      cache: requestInput.cache,
+      mode: requestInput.mode,
+      redirect: requestInput.redirect,
+      referrer: requestInput.referrer,
+      referrerPolicy: requestInput.referrerPolicy,
+      integrity: requestInput.integrity,
+      keepalive: requestInput.keepalive,
+      signal: requestInput.signal,
+    });
   }
-  return destination.href;
+  if (typeof requestInput === 'string' || requestInput instanceof URL) return destination.href;
+  const init = requestInput as RequestInit;
+  const headers = new Headers(init.headers);
+  headers.set('X-Flaxia-Native-App', '1');
+  return new Request(destination, { ...init, headers });
 }

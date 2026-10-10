@@ -94,6 +94,7 @@ describe('security guards', () => {
     );
     assert.ok(!helpers.includes('SANDBOX_ORIGIN'), 'sandbox origin must not receive credentialed CORS');
     assert.ok(!helpers.includes('sandbox.flaxia.app'), 'sandbox origin must not bypass CSRF validation');
+    assert.match(helpers, /\(origin === 'capacitor:\/\/localhost' \|\| origin === 'https:\/\/localhost'\)/);
   });
 
   it('does not gate test routes on request-derived data', () => {

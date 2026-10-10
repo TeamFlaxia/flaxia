@@ -24,6 +24,16 @@ test('native API URL redirects Capacitor API calls to the production origin', as
   assert.equal((result as string).split('?')[0], 'https://flaxia.app/api/me');
   assert.match(result as string, /foo=bar/);
   assert.equal(nativeApiUrl('/assets/main.js'), '/assets/main.js');
+  const rewrittenString = nativeApiUrl('/api/auth/login/start');
+  assert.equal(typeof rewrittenString, 'string');
+  assert.equal(rewrittenString, 'https://flaxia.app/api/auth/login/start');
+  const inputRequest = new Request('https://localhost/api/users/me', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+  });
+  const rewrittenRequestObject = nativeApiUrl(inputRequest);
+  assert.ok(rewrittenRequestObject instanceof Request);
+  assert.equal(rewrittenRequestObject.headers.get('X-Flaxia-Native-App'), '1');
   const request = new Request('https://localhost/api/users/me', {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },

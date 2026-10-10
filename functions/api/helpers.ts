@@ -79,13 +79,19 @@ export const csrfProtection = async (c: Context<{ Bindings: Bindings; Variables:
     await next();
     return;
   }
+  // Capacitor's native WebView is a trusted app container, not an arbitrary web
+  // origin. Its API requests use a dedicated marker; CORS still gates browser reads.
   const origin = c.req.header('Origin');
+  const isNativeAppRequest =
+    c.req.header('X-Flaxia-Native-App') === '1' &&
+    (origin === 'capacitor://localhost' || origin === 'https://localhost');
+  if (isNativeAppRequest) {
+    await next();
+    return;
+  }
   if (origin) {
     const baseOrigin = getBaseOrigin(c);
-    const isNativeAppRequest =
-      c.req.header('X-Flaxia-Native-App') === '1' &&
-      (origin === 'capacitor://localhost' || origin === 'https://localhost');
-    if (!allowedOrigins.has(origin) && origin !== baseOrigin && !isNativeAppRequest) {
+    if (!allowedOrigins.has(origin) && origin !== baseOrigin) {
       return c.json({ error: 'CSRF validation failed' }, 403);
     }
   }

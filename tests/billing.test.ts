@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
-import { BASE_URL, resetDb, seedUserAndLogin } from './helpers/setup.ts';
+import { BASE_URL, resetDb, seedUserAndLogin, srpLogin, srpVerifierPayload } from './helpers/setup.ts';
 
 // ---------------------------------------------------------------------------
 // Helper: create a post via the prepare/commit flow
@@ -29,6 +29,49 @@ async function createPost(cookie: string, text = 'test post'): Promise<string> {
 // ===========================================================================
 describe('GET /api/billing/plan', () => {
   beforeEach(resetDb);
+
+  it('grants permanent Flaxia+ to the exact Play reviewer account without a Stripe row', async () => {
+    const password = 'password123';
+    const register = await fetch(`${BASE_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'devtest@flaxia.app',
+        username: 'reviewdevtest',
+        display_name: 'Play Reviewer',
+        ...(await srpVerifierPayload(password)),
+      }),
+    });
+    assert.equal(register.status, 201);
+    const { cookie } = await srpLogin('devtest@flaxia.app', password);
+
+    const me = await fetch(`${BASE_URL}/api/me`, { headers: { Cookie: cookie } });
+    assert.equal(me.status, 200);
+    const meBody = (await me.json()) as { user: { badge_type: string } };
+    assert.equal(meBody.user.badge_type, 'flaxia_plus');
+
+    const planResponse = await fetch(`${BASE_URL}/api/billing/plan`, { headers: { Cookie: cookie } });
+    assert.equal(planResponse.status, 200);
+    const plan = (await planResponse.json()) as { plan: string; status: string; expiresAt: string | null };
+    assert.equal(plan.plan, 'flaxia_plus');
+    assert.equal(plan.status, 'active');
+    assert.equal(plan.expiresAt, null);
+
+    const row = await fetch(`${BASE_URL}/api/test/subscription`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'reviewdevtest', planId: 'flaxia_plus', status: 'canceled' }),
+    });
+    assert.ok(row.ok);
+    const stillPlus = await fetch(`${BASE_URL}/api/billing/plan`, { headers: { Cookie: cookie } });
+    const stillPlusBody = (await stillPlus.json()) as { plan: string; status: string };
+    assert.equal(stillPlusBody.plan, 'flaxia_plus');
+    assert.equal(stillPlusBody.status, 'active');
+
+    const persistedMe = await fetch(`${BASE_URL}/api/me`, { headers: { Cookie: cookie } });
+    const persistedMeBody = (await persistedMe.json()) as { user: { badge_type: string } };
+    assert.equal(persistedMeBody.user.badge_type, 'flaxia_plus');
+  });
 
   it('returns null plan for unauthenticated user', async () => {
     const res = await fetch(`${BASE_URL}/api/billing/plan`);
