@@ -1,4 +1,3 @@
-import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { isAdmin } from '../../../src/lib/admin';
@@ -340,18 +339,7 @@ posts.get('/posts/trending', async (c) => {
       if (cached) {
         // User-agnostic cache: re-apply the current user's block list.
         const posts = await filterBlockedAuthors(c.env.DB, currentUserId, cached.posts);
-        if (currentUserId && posts.length > 0) {
-          const postIds = posts.map((p) => String(p.id));
-          const { freshed, bookmarked } = await batchGetFreshAndBookmarkStatus(c.env.DB, currentUserId, postIds);
-          posts.forEach((post) => {
-            post.is_freshed = freshed.has(post.id as string);
-            post.is_bookmarked = bookmarked.has(post.id as string);
-          });
-        }
-        await enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId);
-        await enrichPostsWithQuotes(posts as PostRow[], c.env.DB);
-        await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
-        await enrichPostsWithReactions(posts as PostRow[], c.env.DB, currentUserId);
+        await enrichFeedPosts(posts as PostRow[], c.env.DB, currentUserId);
         return c.json({ posts });
       }
     }
@@ -470,20 +458,7 @@ posts.get('/posts/trending', async (c) => {
     // Re-apply the current user's block list for the response only.
     const visiblePosts = await filterBlockedAuthors(c.env.DB, currentUserId, posts);
 
-    // Add fresh and bookmark status for current user if logged in
-    if (currentUserId && visiblePosts.length > 0) {
-      const postIds = visiblePosts.map((p: Record<string, unknown>) => String(p.id));
-      const { freshed, bookmarked } = await batchGetFreshAndBookmarkStatus(c.env.DB, currentUserId, postIds);
-      visiblePosts.forEach((post: Record<string, unknown>) => {
-        post.is_freshed = freshed.has(post.id as string);
-        post.is_bookmarked = bookmarked.has(post.id as string);
-      });
-    }
-
-    await enrichPostsWithPolls(visiblePosts as PostRow[], c.env.DB, currentUserId);
-    await enrichPostsWithQuotes(visiblePosts as PostRow[], c.env.DB);
-    await enrichPostsWithAttachments(visiblePosts as PostRow[], c.env.DB);
-    await enrichPostsWithReactions(visiblePosts as PostRow[], c.env.DB, currentUserId);
+    await enrichFeedPosts(visiblePosts as PostRow[], c.env.DB, currentUserId);
 
     // Write to cache (non-cursor only)
     if (!cursor && c.env.CACHE) {
@@ -724,7 +699,7 @@ posts.get('/posts/recommended', async (c) => {
             return p;
           });
 
-          enrichedPosts = await enrichRecommendedPosts(posts, c.env.DB, currentUserId, c);
+          enrichedPosts = await enrichRecommendedPosts(posts, c.env.DB, currentUserId);
           if (enrichedPosts.length > 0) {
             const last = enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>;
             nextCursor = `${last.score},${last.created_at},${last.id}`;
@@ -835,7 +810,7 @@ posts.get('/posts/recommended', async (c) => {
         d.post.score = d.score;
         return d.post;
       });
-      enrichedPosts = await enrichRecommendedPosts(pagePosts, c.env.DB, currentUserId, c);
+      enrichedPosts = await enrichRecommendedPosts(pagePosts, c.env.DB, currentUserId);
       nextCursor =
         enrichedPosts.length > 0
           ? `${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).score},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).created_at},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).id}`
@@ -849,25 +824,33 @@ posts.get('/posts/recommended', async (c) => {
   }
 });
 
+async function enrichFeedPosts(posts: PostRow[], db: D1Database, currentUserId?: string | null): Promise<void> {
+  if (posts.length === 0) return;
+
+  // These batch lookups update separate fields, so overlap their D1 latency.
+  await Promise.all([
+    (async () => {
+      if (!currentUserId) return;
+      const postIds = posts.map((post) => String(post.id));
+      const { freshed, bookmarked } = await batchGetFreshAndBookmarkStatus(db, currentUserId, postIds);
+      posts.forEach((post) => {
+        post.is_freshed = freshed.has(post.id);
+        post.is_bookmarked = bookmarked.has(post.id);
+      });
+    })(),
+    enrichPostsWithPolls(posts, db, currentUserId),
+    enrichPostsWithQuotes(posts, db),
+    enrichPostsWithAttachments(posts, db),
+    enrichPostsWithReactions(posts, db, currentUserId),
+  ]);
+}
+
 async function enrichRecommendedPosts(
   posts: Record<string, unknown>[],
   db: D1Database,
   currentUserId: string | null | undefined,
-  c: Context<{ Bindings: Bindings; Variables: Variables }>,
 ): Promise<Record<string, unknown>[]> {
-  if (posts.length === 0) return [];
-  if (currentUserId) {
-    const postIds = posts.map((p) => String(p.id));
-    const { freshed, bookmarked } = await batchGetFreshAndBookmarkStatus(db, currentUserId, postIds);
-    posts.forEach((p) => {
-      p.is_freshed = freshed.has(p.id as string);
-      p.is_bookmarked = bookmarked.has(p.id as string);
-    });
-  }
-  await enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId);
-  await enrichPostsWithQuotes(posts as PostRow[], c.env.DB);
-  await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
-  await enrichPostsWithReactions(posts as PostRow[], c.env.DB, currentUserId);
+  await enrichFeedPosts(posts as PostRow[], db, currentUserId);
   return posts;
 }
 
@@ -940,19 +923,7 @@ posts.get('/posts/:id/similar', async (c) => {
       .all();
     const posts = postsResult.results || [];
 
-    if (currentUserId && posts.length > 0) {
-      const pids = posts.map((p: Record<string, unknown>) => String(p.id));
-      const { freshed, bookmarked } = await batchGetFreshAndBookmarkStatus(c.env.DB, currentUserId, pids);
-      posts.forEach((p: Record<string, unknown>) => {
-        p.is_freshed = freshed.has(p.id as string);
-        p.is_bookmarked = bookmarked.has(p.id as string);
-      });
-    }
-
-    await enrichPostsWithPolls(posts as PostRow[], c.env.DB, currentUserId);
-    await enrichPostsWithQuotes(posts as PostRow[], c.env.DB);
-    await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
-    await enrichPostsWithReactions(posts as PostRow[], c.env.DB, currentUserId);
+    await enrichFeedPosts(posts as PostRow[], c.env.DB, currentUserId);
 
     return c.json({ posts });
   } catch (error: unknown) {
