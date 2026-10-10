@@ -143,3 +143,24 @@ wrangler tail --config wrangler.toml.worker
 - The sandbox origin is a separate Worker with its own routes
 - `wrangler.toml` references the backend Worker by script name — ensure the backend Worker is deployed first
 - Environment-specific config is handled via Wrangler secrets/vars, not `.env` files in production
+
+## ActivityPub delivery dead-letter queue (#141)
+
+Before deploying `flaxia-backend` with `wrangler.toml.worker`, create its dead-letter
+queue in **the same Cloudflare account** (one-time infrastructure prerequisite):
+
+```bash
+npx wrangler queues create activitypub-delivery-dlq
+npx wrangler deploy --config wrangler.toml.worker
+```
+
+The `activitypub-delivery` consumer retries a failed delivery **at most three
+times** and then moves the message to `activitypub-delivery-dlq` rather than
+dropping it silently. The DLQ has **no automatic consumer**: inspect it via
+Cloudflare Queues metrics / dashboard, set up alerts for non-zero DLQ depth,
+and review quarantined messages before redelivery. Do not replay messages
+indiscriminately if the original failure was caused by a data constraint;
+fix the root cause first.
+
+If deployment reports that the DLQ does not exist, do **not** remove the
+`dead_letter_queue` setting. Create the queue and redeploy.
