@@ -10,7 +10,8 @@ const config: CapacitorConfig = {
     androidScheme: 'https',
     iosScheme: 'capacitor',
     hostname: 'localhost',
-    allowNavigation: ['flaxia.app', '*.flaxia.app', 'sandbox.flaxia.app'],
+    // Do not allow remote websites to navigate inside the privileged WebView.
+    // External links are handed to the system browser instead.
   },
   plugins: {
     LocalNotifications: {
