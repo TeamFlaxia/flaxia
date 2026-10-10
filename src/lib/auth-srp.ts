@@ -156,6 +156,7 @@ async function upgradeSrp(password: string, includeProof = false): Promise<boole
       srp_group: '2048',
       srp_kdf: DEFAULT_SRP_KDF,
       ...(current_srp ? { current_srp } : {}),
+      ...(!includeProof ? { legacy_password: password } : {}),
     }),
   });
   if (!response.ok) return false;
