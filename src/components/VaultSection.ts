@@ -647,7 +647,12 @@ export function createVaultSection() {
     const eph = generateEphemeralKeyPair();
     try {
       const wrapped = await wrapVaultKeyForPairing(vk, eph.secretKey, parsed.publicKey, parsed.pairingId);
-      const result = await approvePairing(parsed.pairingId, encodeB64(eph.publicKey), wrapped);
+      const result = await approvePairing(
+        parsed.pairingId,
+        encodeB64(parsed.publicKey),
+        encodeB64(eph.publicKey),
+        wrapped,
+      );
       if (result === 'ok') {
         stopCamera();
         devices = await listDevices();

@@ -136,7 +136,11 @@ test('device revocation refuses to rotate VK when item-key inventory cannot be f
   const approved = await fetch(`/api/vault/devices/${deviceToRevoke}/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ approved_pub: encodeB64(approver.publicKey), wrapped_vk: wrappedVk }),
+    body: JSON.stringify({
+      peer_pub: encodeB64(joiner.publicKey),
+      approved_pub: encodeB64(approver.publicKey),
+      wrapped_vk: wrappedVk,
+    }),
   });
   assert.equal(approved.status, 200);
 
@@ -347,7 +351,11 @@ test('adoptPairedVaultKey opens the handoff blob with the joiner secret', async 
   const approved = await fetch(`/api/vault/devices/${id}/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ approved_pub: encodeB64(approver.publicKey), wrapped_vk: wrapped }),
+    body: JSON.stringify({
+      peer_pub: encodeB64(joiner.publicKey),
+      approved_pub: encodeB64(approver.publicKey),
+      wrapped_vk: wrapped,
+    }),
   });
   assert.equal(approved.status, 200);
 
