@@ -27,7 +27,7 @@ import {
 } from '../lib/editor/studio-console.ts';
 import { sameStudioFileHistoryState } from '../lib/editor/studio-edit-history.ts';
 import { saveStudioHandoff } from '../lib/editor/studio-handoff.js';
-import { resolveStudioPostMode } from '../lib/editor/studio-post-plan.ts';
+import { hasMainStudioVideoClips, resolveStudioPostMode } from '../lib/editor/studio-post-plan.ts';
 import {
   deleteStudioProject,
   exportStudioProject,
@@ -54,6 +54,7 @@ import {
 } from '../lib/editor/video-sequence.ts';
 import { rippleOverlappingVideoClips, videoClipTransitionDuration } from '../lib/editor/video-timeline.ts';
 import { computeAudioPeaks } from '../lib/editor/waveform.ts';
+import { t } from '../lib/i18n.js';
 import { getVaultKey, tryDeviceUnlock } from '../lib/vault/session.js';
 import type { ZipExecutorHandle } from '../lib/zip-executor.js';
 import { executeFlash, type FlashPlayerHandle } from './FlashPlayer.js';
@@ -83,12 +84,12 @@ type StudioEditHistorySnapshot = {
 };
 
 const KIND_LABELS: Record<StudioKind, string> = {
-  image: 'IMAGE',
-  video: 'VIDEO',
-  audio: 'AUDIO',
-  code: 'CODE',
-  game: 'GAME',
-  other: 'FILE',
+  image: t('studio.image').toUpperCase(),
+  video: t('studio.video').toUpperCase(),
+  audio: t('studio.audio').toUpperCase(),
+  code: t('studio.code').toUpperCase(),
+  game: t('studio.game').toUpperCase(),
+  other: t('studio.file').toUpperCase(),
 };
 
 function kindOf(file: File): StudioKind {
@@ -338,32 +339,32 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   root.className = 'studio-page';
   root.innerHTML = `
     <header class="studio-topbar">
-      <a class="studio-brand" href="/home" aria-label="Flaxia home"><span class="studio-brand-mark">f</span> flaxia <i>/</i> studio</a>
-      <div class="studio-project-name"><span class="studio-live-dot"></span><span class="studio-project-title">Untitled project</span><span class="studio-save-state">Local workspace</span></div>
-      <div class="studio-top-actions"><button class="studio-button studio-project-library" type="button">Projects</button><button class="studio-button studio-open" type="button">＋ Import</button><button class="studio-button studio-new-file" type="button" aria-label="Create a new source file" title="Create a new source file" disabled>＋ New</button><button class="studio-button studio-project-import" type="button">Open project file</button><button class="studio-button studio-project-export" type="button" disabled>Export project</button><button class="studio-button studio-export" type="button" disabled>Export</button><button class="studio-button studio-create-post" type="button" disabled>Create post ↗</button></div>
+      <a class="studio-brand" href="/home" aria-label="${t('studio.home_label')}"><span class="studio-brand-mark">f</span> flaxia <i>/</i> ${t('studio.name')}</a>
+      <div class="studio-project-name"><span class="studio-live-dot"></span><span class="studio-project-title">${t('studio.untitled_project')}</span><span class="studio-save-state">${t('studio.local_workspace')}</span></div>
+      <div class="studio-top-actions"><button class="studio-button studio-project-library" type="button">${t('studio.projects')}</button><button class="studio-button studio-open" type="button">＋ ${t('studio.import')}</button><button class="studio-button studio-new-file" type="button" aria-label="${t('studio.new_source_file')}" title="${t('studio.new_source_file')}" disabled>＋ ${t('studio.new_file')}</button><button class="studio-button studio-project-import" type="button">${t('studio.open_project_file')}</button><button class="studio-button studio-project-export" type="button" disabled>${t('studio.export_project')}</button><button class="studio-button studio-export" type="button" disabled>${t('studio.export')}</button><button class="studio-button studio-create-post" type="button" disabled>${t('studio.create_post')} ↗</button></div>
     </header>
     <div class="studio-workspace">
-      <aside class="studio-rail" aria-label="Editor modes">
-        <button class="studio-tool active" data-tool="all" title="All assets"><b>▦</b><span>Project</span></button>
-        <button class="studio-tool" data-tool="image" title="Images"><b>▧</b><span>Image</span></button>
-        <button class="studio-tool" data-tool="video" title="Video"><b>▶</b><span>Video</span></button>
-        <button class="studio-tool" data-tool="audio" title="Audio"><b>♫</b><span>Audio</span></button>
-        <button class="studio-tool" data-tool="code" title="Code"><b>⌘</b><span>Code</span></button>
-        <button class="studio-tool" data-tool="game" title="Games"><b>◇</b><span>Game</span></button>
+      <aside class="studio-rail" aria-label="${t('studio.editor_modes')}">
+        <button class="studio-tool active" data-tool="all" title="${t('studio.all_assets')}"><b>▦</b><span>${t('studio.project')}</span></button>
+        <button class="studio-tool" data-tool="image" title="${t('studio.images')}"><b>▧</b><span>${t('studio.image')}</span></button>
+        <button class="studio-tool" data-tool="video" title="${t('studio.videos')}"><b>▶</b><span>${t('studio.video')}</span></button>
+        <button class="studio-tool" data-tool="audio" title="${t('studio.audio')}"><b>♫</b><span>${t('studio.audio')}</span></button>
+        <button class="studio-tool" data-tool="code" title="${t('studio.code')}"><b>⌘</b><span>${t('studio.code')}</span></button>
+        <button class="studio-tool" data-tool="game" title="${t('studio.games')}"><b>◇</b><span>${t('studio.game')}</span></button>
       </aside>
       <aside class="studio-assets">
-        <div class="studio-panel-heading"><span>PROJECT ASSETS</span><button class="studio-add" type="button" aria-label="Import files">＋</button></div>
-        <div class="studio-project-label"><span class="studio-folder">▾</span><span class="studio-project-label-name">Untitled project</span><span class="studio-count">0</span></div>
+        <div class="studio-panel-heading"><span>${t('studio.project_assets')}</span><button class="studio-add" type="button" aria-label="${t('studio.import_files')}">＋</button></div>
+        <div class="studio-project-label"><span class="studio-folder">▾</span><span class="studio-project-label-name">${t('studio.untitled_project')}</span><span class="studio-count">0</span></div>
         <div class="studio-file-list"></div>
-        <button class="studio-dropzone" type="button"><span>＋</span><b>Import media</b><small>Images, video, audio, code, games</small></button>
-        <div class="studio-sidebar-note">Projects autosave encrypted with Flaxia Vault when unlocked. <a href="/settings">Vault settings →</a></div>
+        <button class="studio-dropzone" type="button"><span>＋</span><b>${t('studio.import_media')}</b><small>${t('studio.media_types')}</small></button>
+        <div class="studio-sidebar-note">${t('studio.vault_autosave_note')} <a href="/settings">${t('studio.vault_settings')} →</a></div>
       </aside>
       <section class="studio-center">
-        <div class="studio-tabs"><button class="studio-tab studio-workspace-tab active" type="button">⌂ &nbsp;Workspace</button><div class="studio-document-tabs"></div><button class="studio-tab-open" type="button" aria-label="Open files">＋</button><span class="studio-center-spacer"></span><button class="studio-shortcut" type="button" title="Import files">⌘ O</button></div>
-        <div class="studio-stage"><div class="studio-empty"><div class="studio-empty-art"><div class="studio-orbit studio-orbit-one"></div><div class="studio-orbit studio-orbit-two"></div><div class="studio-empty-glyph">✳</div><span class="studio-float studio-float-image">▧</span><span class="studio-float studio-float-audio">♫</span><span class="studio-float studio-float-code">&lt;/&gt;</span><span class="studio-float studio-float-game">◇</span></div><h1>Your ideas, in one studio.</h1><p>Bring images, sound, video, code, and games into one creative workspace.</p><button class="studio-button studio-open studio-primary" type="button">Import files</button><small>or drop files anywhere in the workspace</small></div><div class="studio-preview"></div></div>
-        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;TIMELINE</span><span class="studio-timeline-hint">Drag clips between V1/V2 · V2 is picture-in-picture</span><button class="studio-history-undo" type="button" disabled title="Undo (⌘Z / Ctrl+Z)">↶</button><button class="studio-history-redo" type="button" disabled title="Redo (⌘⇧Z / Ctrl+Y)">↷</button><button class="studio-video-split" type="button" disabled>Split selected clip</button><button class="studio-clip-duplicate" type="button" disabled>Duplicate clip</button><button class="studio-video-play" type="button" disabled>▶ Preview video</button><button class="studio-video-export" type="button" disabled>Export MP4</button><button class="studio-add-track" type="button">＋ Audio track</button><button class="studio-audio-record" type="button" aria-pressed="false" title="Record microphone audio at the playhead">● Record audio</button><button class="studio-audio-solo" type="button" disabled>▶ Solo clip</button><button class="studio-mix-play" type="button">▶ Play mix</button><button class="studio-mix-export" type="button">Mixdown WAV</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="Add files">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">MEDIA</div><div class="studio-track-content"><span class="studio-track-empty">Drop an asset here to start creating</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
+        <div class="studio-tabs"><button class="studio-tab studio-workspace-tab active" type="button">⌂ &nbsp;${t('studio.workspace')}</button><div class="studio-document-tabs"></div><button class="studio-tab-open" type="button" aria-label="${t('studio.open_files')}">＋</button><span class="studio-center-spacer"></span><button class="studio-shortcut" type="button" title="${t('studio.import_files')}">⌘ O</button></div>
+        <div class="studio-stage"><div class="studio-empty"><div class="studio-empty-art"><div class="studio-orbit studio-orbit-one"></div><div class="studio-orbit studio-orbit-two"></div><div class="studio-empty-glyph">✳</div><span class="studio-float studio-float-image">▧</span><span class="studio-float studio-float-audio">♫</span><span class="studio-float studio-float-code">&lt;/&gt;</span><span class="studio-float studio-float-game">◇</span></div><h1>${t('studio.make_living')}</h1><p>${t('studio.inspector_intro')}</p><button class="studio-button studio-open studio-primary" type="button">${t('studio.import_files')}</button><small>${t('studio.drop_files_hint')}</small></div><div class="studio-preview"></div></div>
+        <div class="studio-timeline"><div class="studio-timeline-head"><span>⌁ &nbsp;${t('studio.timeline')}</span><span class="studio-timeline-hint">${t('studio.timeline_hint')}</span><button class="studio-history-undo" type="button" disabled title="${t('studio.undo')} (⌘Z / Ctrl+Z)">↶</button><button class="studio-history-redo" type="button" disabled title="${t('studio.redo')} (⌘⇧Z / Ctrl+Y)">↷</button><button class="studio-video-split" type="button" disabled>${t('studio.split_clip')}</button><button class="studio-clip-duplicate" type="button" disabled>${t('studio.duplicate_clip')}</button><button class="studio-video-play" type="button" disabled>▶ ${t('studio.preview_video')}</button><button class="studio-video-export" type="button" disabled>${t('studio.export_mp4')}</button><button class="studio-add-track" type="button">＋ ${t('studio.audio_track')}</button><button class="studio-audio-record" type="button" aria-pressed="false" title="${t('studio.record_audio_title')}">● ${t('studio.record_audio')}</button><button class="studio-audio-solo" type="button" disabled>▶ ${t('studio.solo_clip')}</button><button class="studio-mix-play" type="button">▶ ${t('studio.play_mix')}</button><button class="studio-mix-export" type="button">${t('studio.mixdown_wav')}</button><span class="studio-mix-status"></span><button class="studio-timeline-add" type="button" title="${t('studio.add_files')}">＋</button></div><div class="studio-video-workarea"><div class="studio-video-timeline"></div></div><div class="studio-track"><div class="studio-track-label">${t('studio.media')}</div><div class="studio-track-content"><span class="studio-track-empty">${t('studio.drop_asset_hint')}</span><div class="studio-clip-list"></div></div></div><div class="studio-audio-workarea"><div class="studio-audio-timeline"></div></div></div>
       </section>
-      <aside class="studio-inspector"><div class="studio-inspector-tabs"><span class="active">Inspector</span><span>Publish</span></div><div class="studio-inspector-body"><div class="studio-inspector-icon">✳</div><h2>Make something living</h2><p>Flaxia posts can hold playable games and interactive media. Import an asset to preview, edit, and prepare it for sharing.</p><div class="studio-inspector-divider"></div><div class="studio-format-title">SUPPORTED CREATIVE FILES</div><div class="studio-format-list"><span>IMAGE</span><small>PNG · JPG · GIF · WEBP</small><span>VIDEO</span><small>MP4 · WEBM · MOV</small><span>AUDIO</span><small>MP3 · WAV · OGG · M4A</small><span>CODE / GAME</span><small>HTML · JS · ZIP · SWF · WASM</small></div><div class="studio-local-badge">◉ &nbsp;Private by default</div></div></aside>
+      <aside class="studio-inspector"><div class="studio-inspector-tabs"><span class="active">${t('studio.inspector')}</span><span>${t('studio.publish')}</span></div><div class="studio-inspector-body"><div class="studio-inspector-icon">✳</div><h2>${t('studio.make_living')}</h2><p>${t('studio.inspector_intro')}</p><div class="studio-inspector-divider"></div><div class="studio-format-title">${t('studio.supported_files')}</div><div class="studio-format-list"><span>${t('studio.image').toUpperCase()}</span><small>PNG · JPG · GIF · WEBP</small><span>${t('studio.video').toUpperCase()}</span><small>MP4 · WEBM · MOV</small><span>${t('studio.audio').toUpperCase()}</span><small>MP3 · WAV · OGG · M4A</small><span>${t('studio.code')} / ${t('studio.game')}</span><small>HTML · JS · ZIP · SWF · WASM</small></div><div class="studio-local-badge">◉ &nbsp;${t('studio.private_default')}</div></div></aside>
     </div>
     <input class="studio-file-input" type="file" multiple accept="image/*,video/*,audio/*,.html,.htm,.css,.js,.mjs,.json,.txt,.md,.glsl,.wgsl,.rsp,.zip,.swf,.wasm" hidden />
     <input class="studio-project-input" type="file" accept=".flaxia-studio,application/vnd.flaxia.studio-project" hidden />
@@ -402,14 +403,15 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   const undoButton = root.querySelector<HTMLButtonElement>('.studio-history-undo')!;
   const redoButton = root.querySelector<HTMLButtonElement>('.studio-history-redo')!;
   const renderProjectIdentity = (): void => {
-    projectTitle.textContent = activeProjectName;
-    projectLabelName.textContent = activeProjectName;
+    const displayName = activeProjectName === 'Untitled project' ? t('studio.untitled_project') : activeProjectName;
+    projectTitle.textContent = displayName;
+    projectLabelName.textContent = displayName;
   };
-  duplicateClipButton.title = 'Duplicate selected clip (⌘D / Ctrl+D)';
-  videoSplitButton.title = 'Split selected clip at the playhead';
-  videoPlayButton.title = 'Start or stop video preview (Space)';
-  mixPlayButton.title = 'Play or pause audio mix (Space)';
-  soloAudioButton.title = 'Audition the selected audio clip';
+  duplicateClipButton.title = t('studio.duplicate_selected_clip_title');
+  videoSplitButton.title = t('studio.split_clip_at_playhead_title');
+  videoPlayButton.title = t('studio.start_stop_video_preview_title');
+  mixPlayButton.title = t('studio.play_pause_audio_mix_title');
+  soloAudioButton.title = t('studio.audition_audio_clip_title');
   const clearMixPreview = (): void => {
     audioRenderRevision++;
     mixPreview?.pause();
@@ -418,20 +420,18 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     mixPreviewUrl = null;
     mixPreviewTimelineOffset = 0;
     soloPreviewClipId = null;
-    mixPlayButton.textContent = '▶ Play mix';
-    soloAudioButton.textContent = '▶ Solo clip';
+    mixPlayButton.textContent = `▶ ${t('studio.play_mix')}`;
+    soloAudioButton.textContent = `▶ ${t('studio.solo_clip')}`;
   };
   const zoomLabel = document.createElement('label');
   zoomLabel.className = 'studio-timeline-zoom-control';
-  zoomLabel.innerHTML =
-    'Zoom <input class="studio-timeline-zoom" type="range" min="18" max="120" step="1" value="42" aria-label="Timeline zoom"><output>42 px/s</output>';
+  zoomLabel.innerHTML = `${t('studio.zoom')} <input class="studio-timeline-zoom" type="range" min="18" max="120" step="1" value="42" aria-label="${t('studio.timeline_zoom')}"><output>42 px/s</output>`;
   videoExportButton.parentNode?.insertBefore(zoomLabel, videoExportButton.nextSibling);
   const zoomInput = zoomLabel.querySelector<HTMLInputElement>('input')!;
   const zoomOutput = zoomLabel.querySelector<HTMLOutputElement>('output')!;
   const videoFormatLabel = document.createElement('label');
   videoFormatLabel.className = 'studio-video-format-control';
-  videoFormatLabel.innerHTML =
-    'Canvas <select class="studio-video-format" aria-label="Video canvas format"><option value="landscape">16:9</option><option value="square">1:1</option><option value="portrait">9:16</option></select>';
+  videoFormatLabel.innerHTML = `${t('studio.canvas')} <select class="studio-video-format" aria-label="${t('studio.video_format')}"><option value="landscape">16:9</option><option value="square">1:1</option><option value="portrait">9:16</option></select>`;
   videoExportButton.parentNode?.insertBefore(videoFormatLabel, addTrackButton);
   const videoFormatInput = videoFormatLabel.querySelector('select') as HTMLSelectElement;
   videoFormatInput.value = videoFormat;
@@ -524,7 +524,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     if (videoSequencePipUrl) URL.revokeObjectURL(videoSequencePipUrl);
     videoSequencePipUrl = null;
     videoSequenceIndex = -1;
-    videoPlayButton.textContent = '▶ Preview video';
+    videoPlayButton.textContent = `▶ ${t('studio.preview_video')}`;
   };
 
   const updateSplitButton = (): void => {
@@ -550,6 +550,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     if (videoPlayheadElement) videoPlayheadElement.style.left = left;
     audioPlayheadElements.forEach((element) => {
       element.style.left = left;
+    });
+    root.querySelectorAll<HTMLElement>('.studio-video-ruler, .studio-audio-ruler').forEach((ruler) => {
+      const max = Number(ruler.getAttribute('aria-valuemax')) || 0;
+      ruler.setAttribute('aria-valuenow', String(Math.min(max, timelinePlayheadTime)));
     });
     updateSplitButton();
   };
@@ -581,6 +585,27 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const sequenceEnd = Math.max(0, ...videoClips.map((clip) => clip.start + videoClipTimelineDuration(clip)));
     videoSequenceStartTime = Math.max(0, Math.min(time, sequenceEnd));
     videoPlayButton.click();
+  };
+
+  const configureTimelineRuler = (ruler: HTMLElement, end: number, label: string): void => {
+    ruler.tabIndex = 0;
+    ruler.setAttribute('role', 'slider');
+    ruler.setAttribute('aria-label', label);
+    ruler.setAttribute('aria-valuemin', '0');
+    ruler.setAttribute('aria-valuemax', String(end));
+    ruler.setAttribute('aria-valuenow', String(Math.min(end, timelinePlayheadTime)));
+    ruler.addEventListener('keydown', (event) => {
+      let nextTime: number;
+      if (event.key === 'Home') nextTime = 0;
+      else if (event.key === 'End') nextTime = end;
+      else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        const step = event.shiftKey ? 1 : 0.1;
+        nextTime = timelinePlayheadTime + (event.key === 'ArrowRight' ? step : -step);
+      } else return;
+      event.preventDefault();
+      event.stopPropagation();
+      requestVideoSeek(Math.max(0, Math.min(end, nextTime)));
+    });
   };
 
   videoSplitButton.addEventListener('click', () => {
@@ -755,7 +780,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     audioPeakTasks.set(fileIndex, peaksTask);
     void peaksTask
       .then(({ duration, peaks }) => {
-        if (destroyed) return;
+        if (destroyed || files[fileIndex] !== file || audioPeakTasks.get(fileIndex) !== peaksTask) return;
         audioDurations.set(fileIndex, duration);
         audioPeaks.set(fileIndex, peaks);
         const waveform = preview.querySelector<HTMLElement>('.studio-waveform');
@@ -767,7 +792,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         scheduleAutosave(false);
       })
       .catch(() => {
-        if (destroyed) return;
+        if (destroyed || files[fileIndex] !== file || audioPeakTasks.get(fileIndex) !== peaksTask) return;
         audioDurations.set(fileIndex, 1);
         renderAudioTimeline();
       })
@@ -796,7 +821,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     if (videoDurations.has(fileIndex)) return;
     void probeVideo(file)
       .then((meta) => {
-        if (destroyed) return;
+        if (destroyed || files[fileIndex] !== file) return;
         videoDurations.set(fileIndex, meta.duration);
         const videoClip = videoClips.find((item) => item.fileIndex === fileIndex);
         if (videoClip && expandToSource) {
@@ -820,7 +845,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         scheduleAutosave(false);
       })
       .catch(() => {
-        if (!destroyed) videoDurations.set(fileIndex, 1);
+        if (!destroyed && files[fileIndex] === file) videoDurations.set(fileIndex, 1);
       });
   };
 
@@ -907,11 +932,11 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const revision = ++saveRevision;
     const projectId = activeProjectId;
     const projectName = activeProjectName;
-    saveState.textContent = 'Saving locally…';
+    saveState.textContent = t('studio.saving_locally');
     autosaveTimer = setTimeout(() => {
       const vaultKey = getVaultKey();
       if (!vaultKey) {
-        saveState.textContent = 'Unlock Vault to save securely';
+        saveState.textContent = t('studio.unlock_vault_to_save');
         return;
       }
       const currentFile = files[activeIndex];
@@ -945,10 +970,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
               projectId,
               projectName,
             );
-            if (!destroyed && revision === saveRevision) saveState.textContent = 'Saved on this device';
-          } catch (error) {
+            if (!destroyed && revision === saveRevision) saveState.textContent = t('studio.saved_device');
+          } catch {
             if (!destroyed && revision === saveRevision) {
-              saveState.textContent = error instanceof Error ? error.message : 'Could not save encrypted project';
+              saveState.textContent = t('studio.save_failed');
             }
           }
         });
@@ -1034,6 +1059,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const contentWidth = Math.max(1200, end * timelinePixelsPerSecond);
     const ruler = document.createElement('div');
     ruler.className = 'studio-video-ruler';
+    configureTimelineRuler(ruler, end, t('studio.video_timeline'));
     ruler.style.width = `${contentWidth}px`;
     ruler.style.backgroundSize = `${timelinePixelsPerSecond * 5}px 100%`;
     for (let second = 0; second <= end; second += 5) {
@@ -1417,6 +1443,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const ruler = document.createElement('div');
     ruler.className = 'studio-audio-ruler';
     const end = Math.max(30, ...audioClips.map((clip) => clip.start + audioClipTimelineDuration(clip) + 5));
+    configureTimelineRuler(ruler, end, t('studio.audio_timeline'));
     const contentWidth = Math.max(1200, end * timelinePixelsPerSecond);
     ruler.style.width = `${contentWidth}px`;
     ruler.style.backgroundSize = `${timelinePixelsPerSecond * 5}px 100%`;
@@ -1597,7 +1624,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           const gain = Math.round(((18 - y) / 8) * 100) / 100;
           const points = audioClipGainEnvelopePoints(clip);
           if (points.length >= 64 && !points.some((point) => Math.abs(point.position - position) < 0.001)) {
-            mixStatus.textContent = 'An audio clip can have up to 64 volume points';
+            mixStatus.textContent = t('studio.volume_points_limit');
             return;
           }
           clip.gainEnvelope = setAudioClipGainEnvelopePoint(clip, position, gain);
@@ -1820,8 +1847,8 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         .filter((item) => item.track !== 'overlay')
         .sort((left, right) => left.start - right.start);
       const nextVideoClip = orderedVideoClips[orderedVideoClips.findIndex((item) => item.id === videoClip.id) + 1];
-      const trackControl = `<label class="studio-property"><span>Video track</span><select class="studio-video-track-select"><option value="main" ${videoClip.track !== 'overlay' ? 'selected' : ''}>V1 · Main</option><option value="overlay" ${videoClip.track === 'overlay' ? 'selected' : ''}>V2 · Picture-in-picture</option></select></label>`;
-      const transitionControl = `<label class="studio-property"><span>Transition out</span><select class="studio-video-transition" ${nextVideoClip ? '' : 'disabled'}>${[
+      const trackControl = `<label class="studio-property"><span>${t('studio.video_track')}</span><select class="studio-video-track-select"><option value="main" ${videoClip.track !== 'overlay' ? 'selected' : ''}>${t('studio.main_track')}</option><option value="overlay" ${videoClip.track === 'overlay' ? 'selected' : ''}>${t('studio.overlay_track')}</option></select></label>`;
+      const transitionControl = `<label class="studio-property"><span>${t('studio.transition_out')}</span><select class="studio-video-transition" ${nextVideoClip ? '' : 'disabled'}>${[
         [0, 'Off'],
         [0.5, 'Cross-dissolve · 0.5s'],
         [1, 'Cross-dissolve · 1s'],
@@ -1833,17 +1860,17 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
             `<option value="${value}" ${(videoClip.transitionOut ?? 0) === value ? 'selected' : ''}>${label}</option>`,
         )
         .join('')}</select></label>`;
-      const transitionStyleControl = `<label class="studio-property"><span>Style</span><select class="studio-video-transition-style" ${nextVideoClip ? '' : 'disabled'}>${[
-        ['fade', 'Cross-dissolve'],
-        ['wipeleft', 'Wipe left'],
-        ['wiperight', 'Wipe right'],
+      const transitionStyleControl = `<label class="studio-property"><span>${t('studio.transition_style')}</span><select class="studio-video-transition-style" ${nextVideoClip ? '' : 'disabled'}>${[
+        ['fade', t('studio.cross_dissolve')],
+        ['wipeleft', t('studio.wipe_left')],
+        ['wiperight', t('studio.wipe_right')],
       ]
         .map(
           ([value, label]) =>
             `<option value="${value}" ${(videoClip.transitionType ?? 'fade') === value ? 'selected' : ''}>${label}</option>`,
         )
         .join('')}</select></label>`;
-      inspectorBody.innerHTML = `<div class="studio-inspector-icon">▶</div><h2>${escapeHtml(videoFile.name)}</h2><p>Video clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-video-position" type="number" min="0" step="0.1" value="${videoClip.start.toFixed(1)}"><small>s</small></label>${trackControl}<label class="studio-property"><span>Framing</span><select class="studio-video-fit"><option value="contain" ${videoClip.fit !== 'cover' ? 'selected' : ''}>Fit · show whole frame</option><option value="cover" ${videoClip.fit === 'cover' ? 'selected' : ''}>Fill · crop to frame</option></select></label><label class="studio-property"><span>Speed</span><select class="studio-video-speed">${[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => `<option value="${speed}" ${videoClipSpeed(videoClip) === speed ? 'selected' : ''}>${speed}×</option>`).join('')}</select></label>${transitionControl}${transitionStyleControl}${colorControls}<label class="studio-property"><span>Trim in</span><input class="studio-video-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-video-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade in</span><input class="studio-video-fade-in" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeIn ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade out</span><input class="studio-video-fade-out" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeOut ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Clip audio</span><input class="studio-video-gain" type="range" min="0" max="100" value="${Math.round((videoClip.gain ?? 1) * 100)}"><small class="studio-video-gain-value">${Math.round((videoClip.gain ?? 1) * 100)}%</small></label><label class="studio-property studio-mute-property"><input class="studio-video-muted" type="checkbox" ${videoClip.muted ? 'checked' : ''}><span>Mute source audio</span></label><p class="studio-video-hint">V2 overlays the clip as picture-in-picture; its source audio is mixed into the export unless muted.</p><button class="studio-button studio-remove-video" type="button">Remove from timeline</button>`;
+      inspectorBody.innerHTML = `<div class="studio-inspector-icon">▶</div><h2>${escapeHtml(videoFile.name)}</h2><p>${t('studio.video_clip')} · ${duration.toFixed(1)}s ${t('studio.source_duration')}</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>${t('studio.position')}</span><input class="studio-video-position" type="number" min="0" step="0.1" value="${videoClip.start.toFixed(1)}"><small>s</small></label>${trackControl}<label class="studio-property"><span>${t('studio.framing')}</span><select class="studio-video-fit"><option value="contain" ${videoClip.fit !== 'cover' ? 'selected' : ''}>${t('studio.fit_show_frame')}</option><option value="cover" ${videoClip.fit === 'cover' ? 'selected' : ''}>${t('studio.fill_crop_frame')}</option></select></label><label class="studio-property"><span>${t('studio.speed')}</span><select class="studio-video-speed">${[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => `<option value="${speed}" ${videoClipSpeed(videoClip) === speed ? 'selected' : ''}>${speed}×</option>`).join('')}</select></label>${transitionControl}${transitionStyleControl}${colorControls}<label class="studio-property"><span>${t('studio.trim_in')}</span><input class="studio-video-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>${t('studio.trim_out')}</span><input class="studio-video-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${videoClip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>${t('studio.fade_in')}</span><input class="studio-video-fade-in" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeIn ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property"><span>${t('studio.fade_out')}</span><input class="studio-video-fade-out" type="number" min="0" max="${clipDuration.toFixed(1)}" step="0.1" value="${(videoClip.fadeOut ?? 0).toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>${t('studio.clip_audio')}</span><input class="studio-video-gain" type="range" min="0" max="100" value="${Math.round((videoClip.gain ?? 1) * 100)}"><small class="studio-video-gain-value">${Math.round((videoClip.gain ?? 1) * 100)}%</small></label><label class="studio-property studio-mute-property"><input class="studio-video-muted" type="checkbox" ${videoClip.muted ? 'checked' : ''}><span>${t('studio.mute_source_audio')}</span></label><p class="studio-video-hint">${t('studio.video_overlay_hint')}</p><button class="studio-button studio-remove-video" type="button">${t('studio.remove_from_timeline')}</button>`;
       const update = (selector: string, set: (value: number) => void): void => {
         inspectorBody.querySelector<HTMLInputElement>(selector)!.addEventListener('change', (event) => {
           const input = event.currentTarget as HTMLInputElement;
@@ -2023,25 +2050,24 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           `<label class="studio-property studio-gain-property"><span>${label}</span><input class="studio-clip-eq" data-eq="${band}" type="range" min="-18" max="18" step="1" value="${eqSettings[band]}"><small>${eqSettings[band]} dB</small></label>`,
       )
       .join('');
-    inspectorBody.innerHTML = `<div class="studio-inspector-icon">♫</div><h2>${escapeHtml(file.name)}</h2><p>Audio clip · ${duration.toFixed(1)}s source</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>Position</span><input class="studio-clip-position" type="number" min="0" step="0.1" value="${clip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim in</span><input class="studio-clip-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${clip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Trim out</span><input class="studio-clip-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${clip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>Gain</span><input class="studio-clip-gain" type="range" min="0" max="200" value="${Math.round(clip.gain * 100)}"><small class="studio-gain-value">${Math.round(clip.gain * 100)}%</small></label><label class="studio-property studio-gain-property"><span>Pan</span><input class="studio-clip-pan" type="range" min="-100" max="100" value="${Math.round(clip.pan * 100)}"><small class="studio-pan-value">${clip.pan === 0 ? 'Center' : `${Math.abs(Math.round(clip.pan * 100))}% ${clip.pan < 0 ? 'L' : 'R'}`}</small></label><div class="studio-inspector-divider"></div><div class="studio-format-title">VOLUME AUTOMATION</div><label class="studio-property studio-gain-property"><span>Start</span><input class="studio-clip-envelope" data-point="start" type="range" min="0" max="200" value="${Math.round(gainEnvelope.start * 100)}"><small>${Math.round(gainEnvelope.start * 100)}%</small></label><label class="studio-property studio-gain-property"><span>Middle</span><input class="studio-clip-envelope" data-point="middle" type="range" min="0" max="200" value="${Math.round(gainEnvelope.middle * 100)}"><small>${Math.round(gainEnvelope.middle * 100)}%</small></label><label class="studio-property studio-gain-property"><span>End</span><input class="studio-clip-envelope" data-point="end" type="range" min="0" max="200" value="${Math.round(gainEnvelope.end * 100)}"><small>${Math.round(gainEnvelope.end * 100)}%</small></label><p class="studio-eq-hint">Double-click the clip to add a point; drag points on the waveform to shape the curve; right-click a point to remove it.</p><div class="studio-inspector-divider"></div><div class="studio-format-title">3-BAND EQ</div>${eqControls}<p class="studio-eq-hint">EQ is applied when previewing or exporting the mix.</p><label class="studio-property"><span>Fade in</span><input class="studio-clip-fade-in" type="number" min="0" max="${(clip.sourceEnd - clip.sourceStart).toFixed(1)}" step="0.1" value="${clip.fadeIn.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>Fade out</span><input class="studio-clip-fade-out" type="number" min="0" max="${(clip.sourceEnd - clip.sourceStart).toFixed(1)}" step="0.1" value="${clip.fadeOut.toFixed(1)}"><small>s</small></label><label class="studio-property studio-mute-property"><input class="studio-clip-muted" type="checkbox" ${clip.muted ? 'checked' : ''}><span>Mute clip</span></label><div class="studio-inspector-divider"></div><button class="studio-button studio-remove-audio" type="button">Remove from timeline</button>`;
+    inspectorBody.innerHTML = `<div class="studio-inspector-icon">♫</div><h2>${escapeHtml(file.name)}</h2><p>${t('studio.audio_clip')} · ${duration.toFixed(1)}s ${t('studio.source_duration')}</p><div class="studio-inspector-divider"></div><label class="studio-property"><span>${t('studio.position')}</span><input class="studio-clip-position" type="number" min="0" step="0.1" value="${clip.start.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>${t('studio.trim_in')}</span><input class="studio-clip-in" type="number" min="0" max="${duration.toFixed(2)}" step="0.1" value="${clip.sourceStart.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>${t('studio.trim_out')}</span><input class="studio-clip-out" type="number" min="0.1" max="${duration.toFixed(2)}" step="0.1" value="${clip.sourceEnd.toFixed(1)}"><small>s</small></label><label class="studio-property studio-gain-property"><span>${t('studio.gain')}</span><input class="studio-clip-gain" type="range" min="0" max="200" value="${Math.round(clip.gain * 100)}"><small class="studio-gain-value">${Math.round(clip.gain * 100)}%</small></label><label class="studio-property studio-gain-property"><span>${t('studio.pan')}</span><input class="studio-clip-pan" type="range" min="-100" max="100" value="${Math.round(clip.pan * 100)}"><small class="studio-pan-value">${clip.pan === 0 ? t('studio.center') : `${Math.abs(Math.round(clip.pan * 100))}% ${clip.pan < 0 ? 'L' : 'R'}`}</small></label><div class="studio-inspector-divider"></div><div class="studio-format-title">${t('studio.volume_automation')}</div><label class="studio-property studio-gain-property"><span>${t('studio.start')}</span><input class="studio-clip-envelope" data-point="start" type="range" min="0" max="200" value="${Math.round(gainEnvelope.start * 100)}"><small>${Math.round(gainEnvelope.start * 100)}%</small></label><label class="studio-property studio-gain-property"><span>${t('studio.middle')}</span><input class="studio-clip-envelope" data-point="middle" type="range" min="0" max="200" value="${Math.round(gainEnvelope.middle * 100)}"><small>${Math.round(gainEnvelope.middle * 100)}%</small></label><label class="studio-property studio-gain-property"><span>${t('studio.end')}</span><input class="studio-clip-envelope" data-point="end" type="range" min="0" max="200" value="${Math.round(gainEnvelope.end * 100)}"><small>${Math.round(gainEnvelope.end * 100)}%</small></label><p class="studio-eq-hint">${t('studio.envelope_help')}</p><div class="studio-inspector-divider"></div><div class="studio-format-title">${t('studio.eq')}</div>${eqControls}<p class="studio-eq-hint">${t('studio.eq_export_help')}</p><label class="studio-property"><span>${t('studio.fade_in')}</span><input class="studio-clip-fade-in" type="number" min="0" max="${(clip.sourceEnd - clip.sourceStart).toFixed(1)}" step="0.1" value="${clip.fadeIn.toFixed(1)}"><small>s</small></label><label class="studio-property"><span>${t('studio.fade_out')}</span><input class="studio-clip-fade-out" type="number" min="0" max="${(clip.sourceEnd - clip.sourceStart).toFixed(1)}" step="0.1" value="${clip.fadeOut.toFixed(1)}"><small>s</small></label><label class="studio-property studio-mute-property"><input class="studio-clip-muted" type="checkbox" ${clip.muted ? 'checked' : ''}><span>${t('studio.mute_clip')}</span></label><div class="studio-inspector-divider"></div><button class="studio-button studio-remove-audio" type="button">${t('studio.remove_from_timeline')}</button>`;
     const automationHeading = inspectorBody.querySelector<HTMLElement>('.studio-format-title')!;
     const addEnvelopePointButton = document.createElement('button');
     addEnvelopePointButton.type = 'button';
     addEnvelopePointButton.className = 'studio-add-envelope-point';
-    addEnvelopePointButton.textContent = '＋ Add point at playhead';
-    addEnvelopePointButton.title = 'Add a volume automation point at the timeline playhead';
+    addEnvelopePointButton.textContent = t('studio.add_point_at_playhead');
+    addEnvelopePointButton.title = t('studio.add_volume_point_title');
     automationHeading.appendChild(addEnvelopePointButton);
-    inspectorBody.querySelector('.studio-eq-hint')!.textContent =
-      'Add points at the playhead, drag them to shape the curve, and right-click an interior point to remove it.';
+    inspectorBody.querySelector('.studio-eq-hint')!.textContent = t('studio.envelope_edit_help');
     addEnvelopePointButton.addEventListener('click', () => {
       const position = (timelinePlayheadTime - clip.start) / audioClipTimelineDuration(clip);
       if (!Number.isFinite(position) || position <= 0.005 || position >= 0.995) {
-        mixStatus.textContent = 'Move the playhead inside this clip to add a volume point';
+        mixStatus.textContent = t('studio.playhead_inside_clip');
         return;
       }
       const points = audioClipGainEnvelopePoints(clip);
       if (points.length >= 64 && !points.some((point) => Math.abs(point.position - position) < 0.001)) {
-        mixStatus.textContent = 'An audio clip can have up to 64 volume points';
+        mixStatus.textContent = t('studio.volume_points_limit');
         return;
       }
       clip.gainEnvelope = setAudioClipGainEnvelopePoint(clip, position, audioClipGainEnvelopeAt(clip, position));
@@ -2112,7 +2138,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     pan.addEventListener('input', () => {
       clip.pan = Number(pan.value) / 100;
       inspectorBody.querySelector('.studio-pan-value')!.textContent =
-        clip.pan === 0 ? 'Center' : `${Math.abs(Number(pan.value))}% ${clip.pan < 0 ? 'L' : 'R'}`;
+        clip.pan === 0 ? t('studio.center') : `${Math.abs(Number(pan.value))}% ${clip.pan < 0 ? 'L' : 'R'}`;
     });
     pan.addEventListener('change', () => {
       renderAudioTimeline();
@@ -2326,7 +2352,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         codeDirty = true;
         updatePendingEditorDraftFile();
         scheduleCodeHistoryCheckpoint();
-        saveState.textContent = 'Unsaved changes';
+        saveState.textContent = t('studio.unsaved_changes');
         exportButton.textContent = 'Save file';
         renderDocumentTabs();
       }
@@ -2560,7 +2586,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
             codeDirty = true;
             updatePendingEditorDraftFile();
             scheduleCodeHistoryCheckpoint();
-            saveState.textContent = 'Unsaved changes';
+            saveState.textContent = t('studio.unsaved_changes');
             exportButton.textContent = 'Save file';
             renderDocumentTabs();
           }
@@ -2611,7 +2637,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
             </form>
           </div>
           <button class="studio-zip-save" type="button" disabled>Save &amp; preview</button>
-          <button class="studio-composer-close" type="button" aria-label="Close">×</button>
+          <button class="studio-composer-close" type="button" aria-label="${t('studio.close')}">×</button>
         </div>
       </header>
       <div class="studio-zip-editor-body">
@@ -2961,12 +2987,14 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const initialLayer = imageLayers.find((layer) => layer.kind !== 'text' && layer.fileIndex === initialFileIndex);
     if (initialLayer) selectedImageLayerId = initialLayer.id;
 
+    const restoreFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const overlay = document.createElement('section');
+    overlay.tabIndex = -1;
     overlay.className = 'studio-composer-overlay';
     overlay.setAttribute('role', 'dialog');
     overlay.setAttribute('aria-modal', 'true');
     overlay.setAttribute('aria-label', 'Image layer composer');
-    overlay.innerHTML = `<header class="studio-composer-header"><div><b>Image composition</b><small>Drag to move · drag lower-right handle to resize · Shift keeps ratio · Arrow keys nudge</small></div><div><button class="studio-composer-export" type="button">Export PNG</button><button class="studio-composer-close" type="button" aria-label="Close">×</button></div></header><div class="studio-composer-preview-controls"><label><input class="studio-composer-preview-timing" type="checkbox"> Preview video timing</label><label>Time <input class="studio-composer-preview-time" type="range" min="0" max="180" step="0.1" value="${Math.min(180, timelinePlayheadTime).toFixed(1)}"><output>${Math.min(180, timelinePlayheadTime).toFixed(1)}s</output></label></div><div class="studio-composer-layout"><div class="studio-composer-board"><div class="studio-composer-tools" role="toolbar" aria-label="Image drawing tools"><button class="studio-composer-tool active" data-tool="select" type="button" aria-pressed="true">↖ Select</button><button class="studio-composer-tool" data-tool="brush" type="button" aria-pressed="false">✎ Brush</button><button class="studio-composer-tool" data-tool="eraser" type="button" aria-pressed="false">⌫ Eraser</button><label>Color <input class="studio-composer-brush-color" type="color" value="#ff4f81"></label><label>Size <input class="studio-composer-brush-size" type="range" min="1" max="120" value="24"><output>24 px</output></label></div><div class="studio-composer-canvas-wrap"><canvas class="studio-composer-canvas" width="1080" height="1080" tabindex="0" aria-label="Layer composition canvas"></canvas></div><div class="studio-composer-status" aria-live="polite"></div></div><aside class="studio-composer-panel"><div class="studio-composer-section"><div class="studio-composer-title">IMAGE ASSETS</div><div class="studio-composer-assets"></div></div><div class="studio-composer-section"><div class="studio-composer-title">LAYERS <span class="studio-composer-title-actions"><button class="studio-composer-add-paint" type="button">＋ Paint</button><button class="studio-composer-add-text" type="button">＋ Text</button></span><span class="studio-composer-count"></span></div><div class="studio-composer-layers"></div></div><div class="studio-composer-properties"></div></aside></div>`;
+    overlay.innerHTML = `<header class="studio-composer-header"><div><b>${t('studio.image_composition')}</b><small>${t('studio.image_composition_help')}</small></div><div><button class="studio-composer-export" type="button">${t('studio.export_png')}</button><button class="studio-composer-close" type="button" aria-label="${t('studio.close')}">×</button></div></header><div class="studio-composer-preview-controls"><label><input class="studio-composer-preview-timing" type="checkbox"> ${t('studio.preview_video_timing')}</label><label>${t('studio.time')} <input class="studio-composer-preview-time" type="range" min="0" max="180" step="0.1" value="${Math.min(180, timelinePlayheadTime).toFixed(1)}"><output>${Math.min(180, timelinePlayheadTime).toFixed(1)}s</output></label></div><div class="studio-composer-layout"><div class="studio-composer-board"><div class="studio-composer-tools" role="toolbar" aria-label="${t('studio.image_drawing_tools')}"><button class="studio-composer-tool active" data-tool="select" type="button" aria-pressed="true">↖ ${t('studio.select')}</button><button class="studio-composer-tool" data-tool="brush" type="button" aria-pressed="false">✎ ${t('studio.brush')}</button><button class="studio-composer-tool" data-tool="eraser" type="button" aria-pressed="false">⌫ ${t('studio.eraser')}</button><label>${t('studio.color')} <input class="studio-composer-brush-color" type="color" value="#ff4f81"></label><label>${t('studio.size')} <input class="studio-composer-brush-size" type="range" min="1" max="120" value="24"><output>24 px</output></label></div><div class="studio-composer-canvas-wrap"><canvas class="studio-composer-canvas" width="1080" height="1080" tabindex="0" aria-label="Layer composition canvas"></canvas></div><div class="studio-composer-status" aria-live="polite"></div></div><aside class="studio-composer-panel"><div class="studio-composer-section"><div class="studio-composer-title">${t('studio.image_assets').toUpperCase()}</div><div class="studio-composer-assets"></div></div><div class="studio-composer-section"><div class="studio-composer-title">${t('studio.layers').toUpperCase()} <span class="studio-composer-title-actions"><button class="studio-composer-add-paint" type="button">＋ ${t('studio.paint')}</button><button class="studio-composer-add-text" type="button">＋ ${t('studio.text')}</button></span><span class="studio-composer-count"></span></div><div class="studio-composer-layers"></div></div><div class="studio-composer-properties"></div></aside></div>`;
     root.appendChild(overlay);
     imageComposerOverlay = overlay;
     const canvas = overlay.querySelector<HTMLCanvasElement>('.studio-composer-canvas')!;
@@ -3005,9 +3033,35 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       overlay.remove();
       imageComposerOverlay = null;
       renderVideoTimeline();
+      if (restoreFocusTo?.isConnected) restoreFocusTo.focus();
     };
     overlay.querySelector<HTMLButtonElement>('.studio-composer-close')!.addEventListener('click', close);
+    const closeButton = overlay.querySelector<HTMLButtonElement>('.studio-composer-close')!;
+    closeButton.focus();
     overlay.addEventListener('keydown', (event) => {
+      if (event.key === 'Tab') {
+        const focusable = Array.from(
+          overlay.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
+          ),
+        ).filter((element) => !element.hidden && !element.closest('[hidden]') && element.tabIndex >= 0);
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (!first || !last) {
+          event.preventDefault();
+          overlay.focus();
+        } else if (!overlay.contains(document.activeElement)) {
+          event.preventDefault();
+          (event.shiftKey ? last : first).focus();
+        } else if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+        return;
+      }
       const target = event.target instanceof HTMLElement ? event.target : null;
       if (!target) return;
       const editingField = target.closest('input, textarea, select, [contenteditable="true"]');
@@ -3225,8 +3279,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       const layer = imageLayers.find((item) => item.id === selectedImageLayerId);
       const file = layer?.kind === 'image' ? files[layer.fileIndex] : null;
       if (!layer || (layer.kind === 'image' && !file)) {
-        properties.innerHTML =
-          '<div class="studio-composer-title">TRANSFORM</div><p>Select a layer to edit its transform.</p>';
+        properties.innerHTML = `<div class="studio-composer-title">${t('studio.transform')}</div><p>${t('studio.select_layer_to_edit_transform')}</p>`;
         return;
       }
       const layerName = layer.kind === 'text' ? 'Text layer' : (file?.name ?? 'Image layer');
@@ -3246,7 +3299,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           ? `<div class="studio-composer-title">SOURCE CROP</div><label class="studio-composer-range">Left <output data-value="cropX">${Math.round((layer.cropX ?? 0) * 100)}%</output><input data-prop="cropX" type="range" min="0" max="99" value="${Math.round((layer.cropX ?? 0) * 100)}"></label><label class="studio-composer-range">Top <output data-value="cropY">${Math.round((layer.cropY ?? 0) * 100)}%</output><input data-prop="cropY" type="range" min="0" max="99" value="${Math.round((layer.cropY ?? 0) * 100)}"></label><label class="studio-composer-range">Width <output data-value="cropWidth">${Math.round((layer.cropWidth ?? 1) * 100)}%</output><input data-prop="cropWidth" type="range" min="1" max="100" value="${Math.round((layer.cropWidth ?? 1) * 100)}"></label><label class="studio-composer-range">Height <output data-value="cropHeight">${Math.round((layer.cropHeight ?? 1) * 100)}%</output><input data-prop="cropHeight" type="range" min="1" max="100" value="${Math.round((layer.cropHeight ?? 1) * 100)}"></label>`
           : '';
       const timingControls = `<div class="studio-composer-title">VIDEO TIMING</div><label class="studio-composer-field">Start (s)<input data-prop="startTime" type="number" min="0" max="14399.9" step="0.1" value="${(layer.start ?? 0).toFixed(1)}"></label><label class="studio-composer-field">End (s)<input data-prop="endTime" type="number" min="0.1" max="14400" step="0.1" placeholder="Video end" value="${layer.end === undefined ? '' : layer.end.toFixed(1)}"></label><label class="studio-composer-field">Fade in (s)<input data-prop="fadeIn" type="number" min="0" max="30" step="0.1" value="${(layer.fadeIn ?? 0).toFixed(1)}"></label><label class="studio-composer-field">Fade out (s)<input data-prop="fadeOut" type="number" min="0" max="30" step="0.1" value="${(layer.fadeOut ?? 0).toFixed(1)}"></label><div class="studio-composer-order"><button class="studio-composer-start-playhead" type="button">Start at playhead</button><button class="studio-composer-end-playhead" type="button">End at playhead</button></div>`;
-      properties.innerHTML = `${paintControls}<div class="studio-composer-title">TRANSFORM</div><div class="studio-composer-layer-name">${escapeHtml(layerName)}</div>${textControls}${adjustmentControls}${cropControls}${timingControls}<div class="studio-composer-grid"><label>X<input data-prop="x" type="number" value="${Math.round(layer.x)}"></label><label>Y<input data-prop="y" type="number" value="${Math.round(layer.y)}"></label><label>Width<input data-prop="width" type="number" min="1" max="4096" value="${Math.round(layer.width)}"></label><label>Height<input data-prop="height" type="number" min="1" max="4096" value="${Math.round(layer.height)}"></label></div><label class="studio-composer-range">Opacity <output data-value="opacity">${Math.round(layer.opacity * 100)}%</output><input data-prop="opacity" type="range" min="0" max="100" value="${Math.round(layer.opacity * 100)}"></label><label class="studio-composer-field">Rotation<input data-prop="rotation" type="number" min="-360" max="360" value="${Math.round(layer.rotation)}">°</label><label class="studio-composer-field">Blend mode<select data-prop="blend">${STUDIO_IMAGE_BLEND_MODES.map((mode) => `<option value="${mode}" ${layer.blend === mode ? 'selected' : ''}>${mode === 'normal' ? 'Normal' : mode.replaceAll('-', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())}</option>`).join('')}</select></label><div class="studio-composer-order"><button class="studio-composer-down" type="button">Send backward</button><button class="studio-composer-up" type="button">Bring forward</button></div><button class="studio-composer-remove" type="button">Remove layer</button>`;
+      properties.innerHTML = `${paintControls}<div class="studio-composer-title">${t('studio.transform')}</div><div class="studio-composer-layer-name">${escapeHtml(layerName)}</div>${textControls}${adjustmentControls}${cropControls}${timingControls}<div class="studio-composer-grid"><label>X<input data-prop="x" type="number" value="${Math.round(layer.x)}"></label><label>Y<input data-prop="y" type="number" value="${Math.round(layer.y)}"></label><label>Width<input data-prop="width" type="number" min="1" max="4096" value="${Math.round(layer.width)}"></label><label>Height<input data-prop="height" type="number" min="1" max="4096" value="${Math.round(layer.height)}"></label></div><label class="studio-composer-range">${t('studio.opacity')} <output data-value="opacity">${Math.round(layer.opacity * 100)}%</output><input data-prop="opacity" type="range" min="0" max="100" value="${Math.round(layer.opacity * 100)}"></label><label class="studio-composer-field">${t('studio.rotation')}<input data-prop="rotation" type="number" min="-360" max="360" value="${Math.round(layer.rotation)}">°</label><label class="studio-composer-field">${t('studio.blend_mode')}<select data-prop="blend">${STUDIO_IMAGE_BLEND_MODES.map((mode) => `<option value="${mode}" ${layer.blend === mode ? 'selected' : ''}>${mode === 'normal' ? 'Normal' : mode.replaceAll('-', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())}</option>`).join('')}</select></label><div class="studio-composer-order"><button class="studio-composer-down" type="button">${t('studio.send_backward')}</button><button class="studio-composer-up" type="button">${t('studio.bring_forward')}</button></div><button class="studio-composer-remove" type="button">${t('studio.remove_layer')}</button>`;
       if (layer.positionLocked) {
         properties
           .querySelectorAll<HTMLInputElement>(
@@ -3344,7 +3397,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       });
       properties.querySelector<HTMLButtonElement>('.studio-composer-end-playhead')!.addEventListener('click', () => {
         if (timelinePlayheadTime <= (layer.start ?? 0)) {
-          status.textContent = 'Move the playhead after this layer’s start to set its end.';
+          status.textContent = t('studio.move_playhead_after_layer_start');
           return;
         }
         status.textContent = '';
@@ -3492,7 +3545,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     };
     overlay.querySelector<HTMLButtonElement>('.studio-composer-add-paint')!.addEventListener('click', async () => {
       if (imageLayers.length >= 32) {
-        status.textContent = 'A composition can have up to 32 layers';
+        status.textContent = t('studio.composition_layers_limit');
         return;
       }
       const surface = document.createElement('canvas');
@@ -3539,7 +3592,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     });
     overlay.querySelector<HTMLButtonElement>('.studio-composer-add-text')!.addEventListener('click', () => {
       if (imageLayers.length >= 32) {
-        status.textContent = 'A composition can have up to 32 layers';
+        status.textContent = t('studio.composition_layers_limit');
         return;
       }
       const layer: StudioImageLayer = {
@@ -3592,10 +3645,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         if (tool !== 'brush' && tool !== 'eraser') return;
         const selected = imageLayers.find((layer) => layer.id === selectedImageLayerId);
         if (!selected || selected.kind !== 'image' || selected.paintLayer !== true) {
-          status.textContent = 'Select or add a paint layer before drawing.';
+          status.textContent = t('studio.select_paint_layer');
           return;
         }
-        status.textContent = 'Loading paint layer…';
+        status.textContent = t('studio.loading_paint_layer');
         void getPaintSurface(selected)
           .then(() => {
             status.textContent = '';
@@ -3618,7 +3671,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           (layer) => layer.id === selectedImageLayerId && isLayerVisibleAt(layer, previewTime),
         );
         if (!selected || selected.kind !== 'image' || selected.paintLayer !== true || !paintSurfaces.has(selected.id)) {
-          status.textContent = 'Select or add a visible paint layer before drawing.';
+          status.textContent = t('studio.select_visible_paint_layer');
           return;
         }
         paintStroke = { pointerId: event.pointerId, layerId: selected.id, lastPoint: point };
@@ -3767,7 +3820,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         exportButton.disabled = false;
         void draw();
         if (!blob) {
-          status.textContent = 'Could not export this composition';
+          status.textContent = t('studio.could_not_export_composition');
           return;
         }
         const output = new File([blob], 'flaxia-composition.png', { type: 'image/png' });
@@ -3777,7 +3830,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         close();
         scheduleAutosave();
         select(files.length - 1);
-        status.textContent = 'PNG exported';
+        status.textContent = t('studio.png_exported');
       }, 'image/png');
     });
     if (!initialLayer) await addLayer(initialFileIndex);
@@ -3819,7 +3872,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const kind = kindOf(file);
     const url = URL.createObjectURL(file);
     objectUrl = url;
-    preview.innerHTML = `<div class="studio-preview-chrome"><span>${KIND_LABELS[kind]} &nbsp;/&nbsp; ${escapeHtml(file.name)}</span><div class="studio-preview-actions"><button class="studio-compose-button studio-composer-button" type="button" ${kind === 'image' ? '' : 'hidden'}>Layers</button><button class="studio-edit-button" type="button">Edit</button><button class="studio-download-button" type="button" aria-label="Download">↓</button></div></div><div class="studio-preview-content"></div>`;
+    preview.innerHTML = `<div class="studio-preview-chrome"><span>${KIND_LABELS[kind]} &nbsp;/&nbsp; ${escapeHtml(file.name)}</span><div class="studio-preview-actions"><button class="studio-compose-button studio-composer-button" type="button" ${kind === 'image' ? '' : 'hidden'}>${t('studio.layers')}</button><button class="studio-edit-button" type="button">${t('studio.edit')}</button><button class="studio-download-button" type="button" aria-label="${t('studio.download')}">↓</button></div></div><div class="studio-preview-content"></div>`;
     const content = preview.querySelector<HTMLElement>('.studio-preview-content')!;
     if (kind === 'image') {
       const image = document.createElement('img');
@@ -3875,7 +3928,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           const run = document.createElement('button');
           run.type = 'button';
           run.className = 'studio-code-run';
-          run.textContent = '▶ Run sandbox preview';
+          run.textContent = t('studio.run_sandbox_preview');
           const output = document.createElement('div');
           output.className = 'studio-code-output';
           run.addEventListener('click', () => {
@@ -3966,7 +4019,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
             }
             ensureVideoClip(index, true);
           }
-          saveState.textContent = 'Edited locally';
+          saveState.textContent = t('studio.saved_locally');
           interacted = true;
           scheduleAutosave();
           render();
@@ -3980,7 +4033,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         if (htmlEditing) {
           commitActiveEditorDraft();
           htmlEditing = false;
-          saveState.textContent = 'Saved locally';
+          saveState.textContent = t('studio.saved_locally');
           interacted = true;
           scheduleAutosave();
           select(index);
@@ -3992,7 +4045,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           htmlEditing = true;
           content.innerHTML = '';
           content.appendChild(createCodeEditor(html, file.name, () => scheduleAutosave(false)));
-          preview.querySelector<HTMLButtonElement>('.studio-edit-button')!.textContent = 'Preview';
+          preview.querySelector<HTMLButtonElement>('.studio-edit-button')!.textContent = t('studio.preview');
         });
       } else {
         button.disabled = true;
@@ -4011,7 +4064,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       ensureAudioClip(files.length - additions.length + index, true);
       ensureVideoClip(files.length - additions.length + index, true);
     });
-    saveState.textContent = 'Local files';
+    saveState.textContent = t('studio.local_workspace');
     select(files.length - additions.length);
     scheduleAutosave();
   };
@@ -4034,7 +4087,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     overlay.setAttribute('aria-labelledby', 'studio-starter-title');
     overlay.innerHTML = `
       <form class="studio-starter-dialog">
-        <header><div><h2 id="studio-starter-title">Create a source file</h2><p>Start a game or code file in this project.</p></div><button class="studio-starter-close" type="button" aria-label="Close">×</button></header>
+        <header><div><h2 id="studio-starter-title">${t('studio.create_source_file')}</h2><p>${t('studio.source_file_intro')}</p></div><button class="studio-starter-close" type="button" aria-label="${t('studio.close')}">×</button></header>
         <label>Template<select class="studio-starter-template" name="template">${STUDIO_STARTER_TEMPLATES.map((template) => `<option value="${template.id}">${template.label} (${template.extension})</option>`).join('')}</select></label>
         <label>File name<input class="studio-starter-name" name="name" type="text" autocomplete="off" spellcheck="false" required></label>
         <p class="studio-starter-help">The selected extension is added automatically. HTML games open in Flaxia’s isolated preview.</p>
@@ -4086,7 +4139,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       if (creating) return;
       creating = true;
       createButton.disabled = true;
-      createButton.textContent = 'Creating…';
+      createButton.textContent = t('studio.creating');
       try {
         const templateId = templateSelect.value as StudioStarterTemplateId;
         const file = await createStudioStarterFile(templateId, nameInput.value);
@@ -4108,7 +4161,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         creating = false;
         if (!closed) {
           createButton.disabled = false;
-          createButton.textContent = 'Create file';
+          createButton.textContent = t('studio.create_file');
         }
       }
     });
@@ -4146,7 +4199,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         manuallyPlacedVideoClips.add(clip.id);
       });
       audioTrackCount = Math.max(1, ...audioClips.map((clip) => clip.track + 1));
-      saveState.textContent = 'Project restored';
+      saveState.textContent = t('studio.project_restored');
       files.forEach((_file, index) => {
         ensureAudioClip(index);
         ensureVideoClip(index);
@@ -4268,7 +4321,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     renderInspector();
     editHistoryBaseline = captureEditHistory();
     updateHistoryControls();
-    saveState.textContent = 'Project opened';
+    saveState.textContent = t('studio.project_opened');
   };
 
   const createLocalProject = async (name: string, persistCurrent = true): Promise<void> => {
@@ -4293,10 +4346,10 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     overlay.setAttribute('aria-labelledby', 'studio-project-library-title');
     overlay.innerHTML = `
       <div class="studio-project-library-dialog">
-        <header><div><h2 id="studio-project-library-title">Local projects</h2><p>Each project is encrypted with your Flaxia Vault on this device.</p></div><button class="studio-project-library-close" type="button" aria-label="Close">×</button></header>
+        <header><div><h2 id="studio-project-library-title">${t('studio.local_projects')}</h2><p>${t('studio.project_encrypted_desc')}</p></div><button class="studio-project-library-close" type="button" aria-label="${t('studio.close')}">×</button></header>
         <p class="studio-project-library-status" aria-live="polite"></p>
         <div class="studio-project-library-list"></div>
-        <form class="studio-project-library-create"><input type="text" maxlength="100" aria-label="New project name" placeholder="New project name" required><button type="submit">＋ Create project</button></form>
+        <form class="studio-project-library-create"><input type="text" maxlength="100" aria-label="${t('studio.new_project_name')}" placeholder="${t('studio.new_project_name')}" required><button type="submit">＋ ${t('studio.create_project')}</button></form>
       </div>`;
     root.appendChild(overlay);
     const listElement = overlay.querySelector<HTMLElement>('.studio-project-library-list')!;
@@ -4319,7 +4372,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
 
     const refresh = async (): Promise<void> => {
       listElement.replaceChildren();
-      status.textContent = 'Loading encrypted projects…';
+      status.textContent = t('studio.loading_encrypted_projects');
       try {
         const projects = await listStudioProjects(vaultKey);
         status.textContent = projects.length
@@ -4346,7 +4399,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           openButton.appendChild(detail);
           openButton.addEventListener('click', async () => {
             openButton.disabled = true;
-            status.textContent = `Opening ${project.name}…`;
+            status.textContent = t('studio.opening_project', { name: project.name });
             try {
               await persistCurrentProjectNow();
               activateLocalProject(await loadStudioProject(vaultKey, project.id));
@@ -4359,7 +4412,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           const renameButton = document.createElement('button');
           renameButton.type = 'button';
           renameButton.className = 'studio-project-library-action';
-          renameButton.textContent = 'Rename';
+          renameButton.textContent = t('studio.rename');
           renameButton.addEventListener('click', async () => {
             const nextName = window.prompt('Project name', project.name);
             if (nextName === null) return;
@@ -4378,7 +4431,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           const deleteButton = document.createElement('button');
           deleteButton.type = 'button';
           deleteButton.className = 'studio-project-library-action danger';
-          deleteButton.textContent = 'Delete';
+          deleteButton.textContent = t('studio.delete');
           deleteButton.addEventListener('click', async () => {
             if (!window.confirm(`Delete “${project.name}” from this device?`)) return;
             deleteButton.disabled = true;
@@ -4411,7 +4464,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       if (!name) return;
       const button = createForm.querySelector<HTMLButtonElement>('button')!;
       button.disabled = true;
-      status.textContent = 'Saving current project…';
+      status.textContent = t('studio.saving_current_project');
       try {
         await createLocalProject(name);
         close();
@@ -4439,7 +4492,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     const passphrase = window.prompt('Enter the project passphrase. It is only used in this browser.');
     if (passphrase === null) return;
     projectImportButton.disabled = true;
-    projectImportButton.textContent = 'Opening…';
+    projectImportButton.textContent = t('studio.opening');
     try {
       const restored = await importStudioProject(projectFile, passphrase);
       if (autosaveTimer) clearTimeout(autosaveTimer);
@@ -4473,7 +4526,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       redoHistory.length = 0;
       editHistoryBaseline = captureEditHistory();
       updateHistoryControls();
-      saveState.textContent = 'Project opened · saving to this device…';
+      saveState.textContent = t('studio.project_saving');
       render();
       if (files.length > 0) select(0);
       scheduleAutosave();
@@ -4481,7 +4534,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       window.alert(error instanceof Error ? error.message : 'Could not open this project');
     } finally {
       projectImportButton.disabled = false;
-      projectImportButton.textContent = 'Open project';
+      projectImportButton.textContent = t('studio.open_project');
     }
   });
   projectExportButton.addEventListener('click', async () => {
@@ -4501,7 +4554,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       return;
     }
     projectExportButton.disabled = true;
-    projectExportButton.textContent = 'Encrypting…';
+    projectExportButton.textContent = t('studio.encrypting');
     try {
       const snapshot = [...files];
       const activeFile = snapshot[activeIndex];
@@ -4529,12 +4582,12 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           activeProjectName,
         ),
       );
-      saveState.textContent = 'Encrypted project downloaded';
+      saveState.textContent = t('studio.encrypted_project_downloaded');
     } catch (error) {
       window.alert(error instanceof Error ? error.message : 'Could not export this project');
     } finally {
       projectExportButton.disabled = files.length === 0;
-      projectExportButton.textContent = 'Save project';
+      projectExportButton.textContent = t('studio.save_project');
     }
   });
   root
@@ -4557,7 +4610,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
     if (!file) return;
     if (codeDirty && (kindOf(file) === 'code' || (kindOf(file) === 'game' && /\.html?$/i.test(file.name)))) {
       commitActiveEditorDraft();
-      saveState.textContent = 'Saved locally';
+      saveState.textContent = t('studio.saved_locally');
       exportButton.textContent = 'Export';
       interacted = true;
       scheduleAutosave();
@@ -4611,7 +4664,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
   createPostButton.addEventListener('click', async () => {
     if (files.length === 0 || createPostButton.disabled) return;
     createPostButton.disabled = true;
-    createPostButton.textContent = 'Preparing…';
+    createPostButton.textContent = t('studio.preparing');
     try {
       const currentFile = files[activeIndex];
       if (
@@ -4657,7 +4710,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
           ) > 0,
       );
       const mode = resolveStudioPostMode({
-        hasVideoClips: videoClips.length > 0,
+        hasVideoClips: hasMainStudioVideoClips(videoClips),
         selectedIsGame,
         hasAudioClips: audibleAudioTimelineClips(audioClips).length > 0,
         hasVisibleImageLayers,
@@ -4665,14 +4718,14 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       });
       let postFiles: File[];
       if (mode === 'video') {
-        createPostButton.textContent = 'Rendering video…';
+        createPostButton.textContent = t('studio.rendering_video');
         const output = await renderVideoSequence(
           files,
           videoClips,
           audioClips,
           imageLayers,
           (progress) => {
-            mixStatus.textContent = `Preparing post · ${Math.round(progress * 100)}%`;
+            mixStatus.textContent = t('studio.preparing_post_progress', { progress: Math.round(progress * 100) });
           },
           videoFormat,
         );
@@ -4680,23 +4733,23 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       } else if (mode === 'game') {
         postFiles = selectedFile ? [selectedFile] : [];
       } else if (mode === 'timeline-assets') {
-        createPostButton.textContent = 'Rendering assets…';
+        createPostButton.textContent = t('studio.rendering_assets');
         postFiles = [];
         if (audibleAudioTimelineClips(audioClips).length > 0) postFiles.push(await renderMixdown());
         if (hasVisibleImageLayers) postFiles.push(await renderStillImageComposition());
       } else if (mode === 'selected-file') {
         postFiles = selectedFile ? [selectedFile] : [];
       } else {
-        throw new Error('Select a postable asset or add media to the timeline before creating a post');
+        throw new Error(t('studio.select_postable_asset_error'));
       }
-      if (postFiles.length === 0) throw new Error('Studio could not prepare a postable export');
+      if (postFiles.length === 0) throw new Error(t('studio.post_export_failed'));
       const token = saveStudioHandoff(postFiles);
       window.history.pushState({}, '', `/home?studio_handoff=${encodeURIComponent(token)}`);
       window.dispatchEvent(new PopStateEvent('popstate'));
-    } catch (error) {
-      saveState.textContent = error instanceof Error ? error.message : 'Could not prepare post';
+    } catch {
+      saveState.textContent = t('studio.could_not_prepare_post');
       createPostButton.disabled = false;
-      createPostButton.textContent = 'Create post ↗';
+      createPostButton.textContent = `${t('studio.create_post')} ↗`;
     }
   });
   addTrackButton.addEventListener('click', () => {
@@ -4806,7 +4859,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       audioRecordingStream = stream;
       audioRecordingStartedAt = Date.now();
       audioRecordButton.disabled = false;
-      audioRecordButton.textContent = '■ Stop recording';
+      audioRecordButton.textContent = `■ ${t('studio.stop_recording')}`;
       audioRecordButton.title = 'Stop and add this recording to the audio timeline';
       audioRecordButton.setAttribute('aria-pressed', 'true');
       mixPlayButton.disabled = true;
@@ -4860,11 +4913,11 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       if (mixPreview.paused) {
         if (mixPreview.ended) mixPreview.currentTime = 0;
         await mixPreview.play().catch(() => undefined);
-        soloAudioButton.textContent = 'Ⅱ Pause clip';
+        soloAudioButton.textContent = `Ⅱ ${t('studio.pause_clip')}`;
         mixStatus.textContent = `Previewing ${files[clip.fileIndex]?.name ?? 'clip'}`;
       } else {
         mixPreview.pause();
-        soloAudioButton.textContent = '▶ Resume clip';
+        soloAudioButton.textContent = `▶ ${t('studio.resume_clip')}`;
         mixStatus.textContent = `Paused · ${mixPreview.currentTime.toFixed(1)}s into clip`;
       }
       return;
@@ -4879,7 +4932,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       if (destroyed) return;
       if (revision !== audioRenderRevision || !audioClips.some((item) => item.id === clip.id)) {
         soloAudioButton.disabled = !audioClips.some((item) => item.id === selectedAudioClipId);
-        soloAudioButton.textContent = '▶ Solo clip';
+        soloAudioButton.textContent = `▶ ${t('studio.solo_clip')}`;
         return;
       }
       mixPreviewTimelineOffset = clip.start;
@@ -4899,13 +4952,13 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       });
       await player.play();
       if (mixPreview === player) {
-        soloAudioButton.textContent = 'Ⅱ Pause clip';
+        soloAudioButton.textContent = `Ⅱ ${t('studio.pause_clip')}`;
         mixStatus.textContent = `Previewing ${files[clip.fileIndex]?.name ?? 'clip'}`;
       }
     } catch (error) {
       if (revision === audioRenderRevision) {
         soloAudioButton.disabled = !audioClips.some((item) => item.id === selectedAudioClipId);
-        soloAudioButton.textContent = '▶ Solo clip';
+        soloAudioButton.textContent = `▶ ${t('studio.solo_clip')}`;
         mixStatus.textContent = error instanceof Error ? error.message : 'Could not preview selected clip';
       }
     }
@@ -4919,11 +4972,11 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
         if (mixPreview.paused) {
           if (mixPreview.ended) mixPreview.currentTime = 0;
           await mixPreview.play();
-          mixPlayButton.textContent = 'Ⅱ Pause mix';
+          mixPlayButton.textContent = `Ⅱ ${t('studio.pause_mix')}`;
           mixStatus.textContent = 'Playing rendered mix';
         } else {
           mixPreview.pause();
-          mixPlayButton.textContent = '▶ Resume mix';
+          mixPlayButton.textContent = `▶ ${t('studio.resume_mix')}`;
           mixStatus.textContent = `Paused · ${mixPreview.currentTime.toFixed(1)}s`;
         }
         return;
@@ -4940,11 +4993,11 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       });
       player.addEventListener('ended', () => {
         if (mixPreview !== player) return;
-        mixPlayButton.textContent = '▶ Play mix';
+        mixPlayButton.textContent = `▶ ${t('studio.play_mix')}`;
         mixStatus.textContent = 'Mix finished';
       });
       await player.play();
-      mixPlayButton.textContent = 'Ⅱ Pause mix';
+      mixPlayButton.textContent = `Ⅱ ${t('studio.pause_mix')}`;
       mixStatus.textContent = 'Playing rendered mix';
     } catch {
       // The render status already explains the failure.
@@ -5148,7 +5201,7 @@ export function createStudioPage(): { getElement(): HTMLElement; destroy(): void
       syncPictureInPicture(time, playing);
     };
     videoSequencePlayer = player;
-    videoPlayButton.textContent = '■ Stop preview';
+    videoPlayButton.textContent = `■ ${t('studio.stop_preview')}`;
     let activeClip: StudioVideoClip | null = null;
     let advancing = false;
     let playAt: (index: number) => void = () => undefined;

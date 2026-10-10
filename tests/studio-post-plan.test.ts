@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { resolveStudioPostMode } from '../src/lib/editor/studio-post-plan.ts';
+import { hasMainStudioVideoClips, resolveStudioPostMode } from '../src/lib/editor/studio-post-plan.ts';
 
 describe('Studio post handoff planning', () => {
   it('posts a rendered video sequence before considering individual project assets', () => {
@@ -49,6 +49,21 @@ describe('Studio post handoff planning', () => {
         selectedIsPostable: false,
       }),
       'timeline-assets',
+    );
+  });
+
+  it('falls back to a selected postable file when only overlay clips remain', () => {
+    const hasVideoClips = hasMainStudioVideoClips([{ track: 'overlay' }]);
+    assert.equal(hasVideoClips, false);
+    assert.equal(
+      resolveStudioPostMode({
+        hasVideoClips,
+        selectedIsGame: false,
+        hasAudioClips: false,
+        hasVisibleImageLayers: false,
+        selectedIsPostable: true,
+      }),
+      'selected-file',
     );
   });
 

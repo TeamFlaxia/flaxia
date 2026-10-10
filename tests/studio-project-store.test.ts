@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { exportStudioProject, importStudioProject } from '../src/lib/editor/studio-project-store.ts';
+import {
+  deriveVaultKeBits,
+  encryptVaultItem,
+  VAULT_KDF_ITERATIONS,
+  VAULT_SALT_BYTES,
+} from '../src/lib/vault/primitives.ts';
 
 describe('portable Studio projects', () => {
   it('round-trips code, game, image, audio, and video assets with their edit references', async () => {
@@ -137,5 +143,51 @@ describe('portable Studio projects', () => {
     assert.equal(restored.imageLayers[0].paintLayer, true);
     assert.equal(restored.imageLayers[1].kind, 'text');
     assert.equal(restored.imageLayers[1].text, 'Studio project');
+  });
+
+  it('drops imported audio clips with an unsupported track index', async () => {
+    const passphrase = 'portable test passphrase';
+    const salt = new Uint8Array(VAULT_SALT_BYTES).fill(7);
+    const key = await deriveVaultKeBits(passphrase, salt, { alg: 'PBKDF2-SHA256', iterations: VAULT_KDF_ITERATIONS });
+    const manifest = new TextEncoder().encode(
+      JSON.stringify({
+        files: [{ name: 'voice.wav', type: 'audio/wav', lastModified: 1, offset: 0, size: 4 }],
+        audioClips: [
+          {
+            id: 'malicious-track',
+            fileIndex: 0,
+            track: 1_000_000_000,
+            start: 0,
+            sourceStart: 0,
+            sourceEnd: 1,
+            gain: 1,
+            muted: false,
+          },
+        ],
+        videoClips: [],
+        imageLayers: [],
+        videoFormat: 'landscape',
+      }),
+    );
+    const plaintext = new Uint8Array(4 + manifest.length + 4);
+    new DataView(plaintext.buffer).setUint32(0, manifest.length);
+    plaintext.set(manifest, 4);
+    plaintext.set(new Uint8Array([1, 2, 3, 4]), 4 + manifest.length);
+    try {
+      const encrypted = await encryptVaultItem(key, 'studio_portable_project_v1', plaintext);
+      const record = new TextEncoder().encode(JSON.stringify(encrypted));
+      const bytes = new Uint8Array(5 + salt.length + record.length);
+      bytes.set([0x46, 0x58, 0x53, 0x54, 1]);
+      bytes.set(salt, 5);
+      bytes.set(record, 5 + salt.length);
+      const restored = await importStudioProject(
+        new File([bytes], 'malicious.flaxia-studio', { type: 'application/vnd.flaxia.studio-project' }),
+        passphrase,
+      );
+      assert.deepEqual(restored.audioClips, []);
+    } finally {
+      plaintext.fill(0);
+      key.fill(0);
+    }
   });
 });

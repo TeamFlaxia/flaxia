@@ -1,5 +1,10 @@
 export type StudioPostMode = 'video' | 'game' | 'timeline-assets' | 'selected-file' | 'unsupported';
 
+/** Overlay-only clips do not form a renderable video sequence. */
+export function hasMainStudioVideoClips(clips: readonly { track?: string }[]): boolean {
+  return clips.some((clip) => clip.track !== 'overlay');
+}
+
 /** Choose one valid post handoff from a mixed Studio workspace. */
 export function resolveStudioPostMode(options: {
   hasVideoClips: boolean;

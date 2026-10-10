@@ -1144,6 +1144,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     ) => {
       console.log('Navigate to:', view, postId, username, tag, 'Current view:', currentView, 'adminTab:', adminTab);
 
+      // Studio hands local assets to the post composer, so guests must not enter a workflow that drops them.
+      if (view === 'studio' && !currentUser) {
+        window.history.replaceState({}, '', '/login');
+        await navigateTo('login');
+        return;
+      }
+
       // Close mobile nav if open
       closeLeftNav();
 

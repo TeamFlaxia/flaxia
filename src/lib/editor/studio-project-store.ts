@@ -353,6 +353,7 @@ function decodeFiles(plaintext: Uint8Array): {
         clip.fileIndex < files.length &&
         Number.isInteger(clip.track) &&
         clip.track >= 0 &&
+        clip.track < 8 &&
         Number.isFinite(clip.start) &&
         Number.isFinite(clip.sourceStart) &&
         Number.isFinite(clip.sourceEnd) &&
@@ -761,10 +762,14 @@ export async function rewrapStudioProjectKey(oldVk: Uint8Array, newVk: Uint8Arra
       key === CURRENT_PROJECT_KEY ||
       (typeof key === 'string' && (key.startsWith(PROJECT_DATA_KEY_PREFIX) || key.startsWith(PROJECT_META_KEY_PREFIX))),
   );
+  const staged: Array<{ key: string; value: EncryptedProjectRecord }> = [];
   for (const key of recordKeys) {
     const record = (await transaction('readonly', (store) => store.get(key))) as EncryptedProjectRecord | undefined;
     if (!record || typeof record.item_id !== 'string' || typeof record.item_key_wrapped !== 'string') continue;
     const item_key_wrapped = await rewrapItemKeyForVaultKey(oldVk, newVk, record.item_id, record.item_key_wrapped);
-    await transaction('readwrite', (store) => store.put({ ...record, item_key_wrapped }, key));
+    staged.push({ key, value: { ...record, item_key_wrapped } });
   }
+  // Do not update any project until every item key has been rewrapped. The single
+  // readwrite transaction makes the commit atomic if IndexedDB rejects a write.
+  await writeProjectRecords(staged);
 }
