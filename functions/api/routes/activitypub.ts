@@ -132,12 +132,18 @@ app.get('/api/actors/:username', async (c) => {
     let publicKeyPem = keyRecord?.public_key_pem;
     if (!publicKeyPem) {
       const keyPair = await generateKeyPair();
-      publicKeyPem = await exportPublicKey(keyPair.publicKey);
+      const generatedPublicKey = await exportPublicKey(keyPair.publicKey);
+      // Concurrent GETs must never replace an already published actor key.
       await c.env.DB.prepare(
-        `INSERT INTO actor_keys (user_id, public_key_pem, private_key_pem, created_at) VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
+        `INSERT OR IGNORE INTO actor_keys (user_id, public_key_pem, private_key_pem, created_at) VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
       )
-        .bind(user.id, publicKeyPem, await exportPrivateKey(keyPair.privateKey))
+        .bind(user.id, generatedPublicKey, await exportPrivateKey(keyPair.privateKey))
         .run();
+      const stored = await c.env.DB.prepare('SELECT public_key_pem FROM actor_keys WHERE user_id = ?')
+        .bind(user.id)
+        .first<{ public_key_pem: string }>();
+      if (!stored) throw new Error('Actor key could not be initialized');
+      publicKeyPem = stored.public_key_pem;
     }
 
     const actorUrl = `${c.env.BASE_URL}/api/actors/${username}`;
@@ -361,24 +367,10 @@ app.post('/api/inbox', async (c) => {
     // Determine target username(s) from the activity
     const baseUrl = c.env.BASE_URL;
 
-    // Try to get any local user's keys for signed fetch
-    let signKeyPem: string | undefined;
-    let signKeyId: string | undefined;
-    try {
-      const anyKey = (await c.env.DB.prepare(
-        `SELECT ak.private_key_pem, u.username FROM actor_keys ak
-         JOIN users u ON u.id = ak.user_id LIMIT 1`,
-      ).first()) as { private_key_pem: string; username: string } | null;
-      if (anyKey?.private_key_pem) {
-        signKeyPem = anyKey.private_key_pem;
-        signKeyId = `${c.env.BASE_URL}/api/actors/${anyKey.username}#main-key`;
-      }
-    } catch {
-      // Proceed without signing
-    }
-
-    // Verify HTTP Signature (with signed fetch if keys available)
-    const publicKeyPem = await fetchActorPublicKey(actorId, signKeyPem, signKeyId);
+    // Shared inbox is not owned by any one local user. Do not sign remote
+    // actor lookups with a randomly selected user's private key: doing so
+    // leaks that user's identity to an unrelated remote instance.
+    const publicKeyPem = await fetchActorPublicKey(actorId);
     if (!publicKeyPem) {
       return c.json({ error: 'Could not fetch actor public key' }, 401);
     }
@@ -880,64 +872,6 @@ app.get('/notes/:noteId', async (c) => {
   } catch (error: unknown) {
     console.error('Note endpoint error:', error);
     return c.json({ error: 'Note endpoint failed' }, 500);
-  }
-});
-
-// GET /.well-known/webfinger - WebFinger endpoint for ActivityPub discovery (second variant)
-app.get('/.well-known/webfinger', async (c) => {
-  try {
-    const resource = c.req.query('resource');
-    if (!resource || !resource.startsWith('acct:')) {
-      return c.json({ error: 'Invalid resource parameter' }, 400);
-    }
-
-    // Extract username from acct:username@domain
-    const match = resource.match(/^acct:([^@]+)@/);
-    if (!match) {
-      return c.json({ error: 'Invalid resource format' }, 400);
-    }
-
-    const username = match[1];
-    if (!username) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500);
-    }
-
-    // Find user in database
-    const user = await c.env.DB.prepare(`
-      SELECT username FROM users 
-      WHERE username = ? COLLATE NOCASE
-    `)
-      .bind(username)
-      .first();
-
-    if (!user) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    // Return WebFinger response
-    return c.json(
-      {
-        subject: resource,
-        links: [
-          {
-            rel: 'self',
-            type: 'application/activity+json',
-            href: `${c.env.BASE_URL}/api/actors/${username}`,
-          },
-        ],
-      },
-      200,
-      {
-        'Content-Type': 'application/jrd+json',
-      },
-    );
-  } catch (error: unknown) {
-    console.error('WebFinger error:', error);
-    return c.json({ error: 'WebFinger failed' }, 500);
   }
 });
 

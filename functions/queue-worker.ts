@@ -641,10 +641,10 @@ async function handleLikeActivity(
 
   const likeId = generateId();
   await env.DB.prepare(`
-    INSERT INTO likes (id, post_id, user_id, actor_id, created_at)
+    INSERT OR IGNORE INTO likes (id, post_id, user_id, actor_id, created_at)
     VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
-    .bind(likeId, postId, 'unknown', actorId)
+    .bind(likeId, postId, null, actorId)
     .run();
 
   console.log('Like recorded:', postId, actorId);
@@ -695,10 +695,10 @@ async function handleAnnounceActivity(
 
   const shareId = generateId();
   await env.DB.prepare(`
-    INSERT INTO shares (id, post_id, user_id, actor_id, created_at)
+    INSERT OR IGNORE INTO shares (id, post_id, user_id, actor_id, created_at)
     VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
-    .bind(shareId, postId, 'unknown', actorId)
+    .bind(shareId, postId, null, actorId)
     .run();
 
   console.log('Share recorded:', postId, actorId);
@@ -729,6 +729,13 @@ async function handleUndoActivity(
   const object = activity.object as Record<string, unknown>;
   if (!object) {
     console.error('Undo activity missing object');
+    return;
+  }
+
+  // The verified outer actor must own the activity being undone. Otherwise
+  // a signed Undo from A could delete B's follow/like/share records.
+  if (activity.actor !== actorId || (object.actor !== undefined && object.actor !== actorId)) {
+    console.warn('Ignoring Undo referring to a different actor');
     return;
   }
 
@@ -769,9 +776,9 @@ async function handleUndoActivity(
         await env.DB.prepare(`
           DELETE FROM ap_followers WHERE local_user_id = ? AND actor_url = ?
         `)
-          .bind(userResult.id, object.actor as string)
+          .bind(userResult.id, actorId)
           .run();
-        console.log('Follow removed:', object.actor);
+        console.log('Follow removed:', actorId);
       }
       break;
     default:
@@ -791,24 +798,14 @@ async function handleUpdateActivity(
     return;
   }
 
-  if (object.type === 'Person') {
-    // Remote user updated their profile - fetch latest info
-    try {
-      const actorResponse = await fetch(actorId, {
-        headers: { Accept: 'application/activity+json, application/ld+json' },
-      });
-      if (actorResponse.ok) {
-        console.log('Profile update received from:', actorId);
-        // In the future, store remote actor info in a remote_actors table
-      }
-    } catch (e) {
-      console.error('Failed to fetch updated actor:', e);
-    }
-  } else if (object.type === 'Note') {
-    console.log('Note update received:', object.id);
-  } else {
-    console.log('Update activity for unknown type:', object.type);
+  // Profile/note Update persistence is not implemented yet. Do not issue a
+  // network fetch at the whim of a remote actor when there is no consumer for
+  // the fetched data (and therefore no meaningful benefit).
+  if (activity.actor !== actorId || (object.attributedTo && object.attributedTo !== actorId)) {
+    console.warn('Ignoring Update from a mismatched actor');
+    return;
   }
+  console.log('Ignoring unsupported ActivityPub Update:', object.type);
 }
 
 function generateId(): string {
