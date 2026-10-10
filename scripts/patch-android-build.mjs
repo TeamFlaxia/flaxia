@@ -91,8 +91,12 @@ const keyPassword = process.env.ANDROID_KEY_PASSWORD;
 const requireSigning = Boolean(process.env.RELEASE_TAG) || process.env.REQUIRE_ANDROID_SIGNING === '1';
 if (
   requireSigning &&
-  (!keystoreFile || !keystorePassword || !keyAlias || !keyPassword ||
-    !existsSync(keystoreFile) || readFileSync(keystoreFile).byteLength === 0)
+  (!keystoreFile ||
+    !keystorePassword ||
+    !keyAlias ||
+    !keyPassword ||
+    !existsSync(keystoreFile) ||
+    readFileSync(keystoreFile).byteLength === 0)
 ) {
   throw new Error('Android release signing requires all four ANDROID_KEY* variables and a non-empty keystore file');
 }
