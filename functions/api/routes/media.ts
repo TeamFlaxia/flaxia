@@ -173,7 +173,6 @@ media.put('/upload/*', requireAuth, async (c) => {
       }
     }
 
-
     // Verify the user owns a pending or published post with this storage key
     // For published posts, extract the postId from the key path to verify ownership
     const ownedPost = (await c.env.DB.prepare(
