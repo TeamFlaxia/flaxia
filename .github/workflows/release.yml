@@ -233,15 +233,15 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
-          GITHUB_REF_NAME: ${{ needs.release-context.outputs.tag_name }}
+          RELEASE_TAG: ${{ needs.release-context.outputs.tag_name }}
         run: |
           echo "$ANDROID_KEYSTORE" | base64 -d > "$ANDROID_KEYSTORE_FILE"
-          export ANDROID_VERSION_CODE="$(node scripts/android-version-code.mjs code "$GITHUB_REF_NAME")"
+          export ANDROID_VERSION_CODE="$(node scripts/android-version-code.mjs code "$RELEASE_TAG")"
           node scripts/patch-android-build.mjs
           cd android && ./gradlew bundleRelease
       - name: Verify release AAB
         env:
-          GITHUB_REF_NAME: ${{ needs.release-context.outputs.tag_name }}
+          RELEASE_TAG: ${{ needs.release-context.outputs.tag_name }}
           BUNDLETOOL_JAR: ${{ runner.temp }}/bundletool.jar
         run: |
           set -euo pipefail
@@ -252,7 +252,7 @@ jobs:
             exit 1
           fi
           echo "Release AAB: $(du -h "$AAB_PATH" | cut -f1)"
-          EXPECTED_VERSION_CODE="$(node scripts/android-version-code.mjs code "$GITHUB_REF_NAME")"
+          EXPECTED_VERSION_CODE="$(node scripts/android-version-code.mjs code "$RELEASE_TAG")"
           node scripts/android-version-code.mjs verify "$AAB_PATH" "$EXPECTED_VERSION_CODE"
           echo "Verified Android versionCode: $EXPECTED_VERSION_CODE"
       - name: Upload Release Artifacts
