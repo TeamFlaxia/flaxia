@@ -806,7 +806,6 @@ async function handleUpdateActivity(
     return;
   }
   console.log('Ignoring unsupported ActivityPub Update:', object.type);
-
 }
 
 function generateId(): string {
