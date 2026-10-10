@@ -165,7 +165,7 @@ describe('POST /api/vault/devices — joiner starts pairing', () => {
       const approver = generateEphemeralKeyPair();
       const approved = await approve(cookie, id, {
         peer_pub: encodeB64(joiner.publicKey),
-      approved_pub: encodeB64(approver.publicKey),
+        approved_pub: encodeB64(approver.publicKey),
         wrapped_vk: wellFormedDummy,
       });
       assert.equal(approved.status, 200, `approval ${i} must count towards the cap`);
@@ -272,7 +272,11 @@ describe('POST /api/vault/devices/:id/approve — approver hands over VK', () =>
     ).json()) as {
       id: string;
     };
-    assert.equal((await approve(cookie, id, { peer_pub: encodeB64(joiner.publicKey), approved_pub: 'nope', wrapped_vk: 'x.y' })).status, 400);
+    assert.equal(
+      (await approve(cookie, id, { peer_pub: encodeB64(joiner.publicKey), approved_pub: 'nope', wrapped_vk: 'x.y' }))
+        .status,
+      400,
+    );
 
     const wrongPeer = await approve(cookie, id, {
       peer_pub: encodeB64(generateEphemeralKeyPair().publicKey),
@@ -284,8 +288,13 @@ describe('POST /api/vault/devices/:id/approve — approver hands over VK', () =>
     const approver = generateEphemeralKeyPair();
     const blob = await wrapVaultKeyForPairing(vk, approver.secretKey, joiner.publicKey, id);
     assert.equal(
-      (await approve(cookie, id, { peer_pub: encodeB64(joiner.publicKey),
-      approved_pub: encodeB64(approver.publicKey), wrapped_vk: `${blob}.extra` })).status,
+      (
+        await approve(cookie, id, {
+          peer_pub: encodeB64(joiner.publicKey),
+          approved_pub: encodeB64(approver.publicKey),
+          wrapped_vk: `${blob}.extra`,
+        })
+      ).status,
       400,
       'blob must be exactly base64(iv).base64(ct)',
     );
@@ -346,7 +355,7 @@ describe('device management', () => {
       (
         await approve(cookie, id, {
           peer_pub: encodeB64(joiner.publicKey),
-      approved_pub: encodeB64(approver.publicKey),
+          approved_pub: encodeB64(approver.publicKey),
           wrapped_vk: await wrapVaultKeyForPairing(vk, approver.secretKey, joiner.publicKey, id),
         })
       ).status,
