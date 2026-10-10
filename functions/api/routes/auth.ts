@@ -29,7 +29,13 @@ type AuthContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 function isLocalEnvironment(c: AuthContext): boolean {
   // A single misconfigured BASE_URL or ENVIRONMENT must not disable protection.
   const localEnvironment = c.env.ENVIRONMENT === 'test' || c.env.ENVIRONMENT === 'development';
-  const localAddress = /^http:\/\/(?:localhost|127\\.0\\.0\\.1)(?::\\d+)?\\/?$/.test(c.env.BASE_URL ?? '');
+  let localAddress = false;
+  try {
+    const url = new URL(c.env.BASE_URL ?? '');
+    localAddress = url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname);
+  } catch {
+    // A missing or invalid URL is never an authorization bypass.
+  }
   return localEnvironment && localAddress;
 }
 
