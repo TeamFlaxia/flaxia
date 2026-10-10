@@ -79,27 +79,27 @@ if (androidVersionCode) {
   console.log(`Set Android defaultConfig versionCode ${versionCode}`);
 }
 
-// APK output filename. App bundle outputs are not APKs and must retain the
-// Gradle-generated .aab name for Play Console uploads.
-if (!content.includes('flaxia_install')) {
-  content = content.replace(
-    /(android\s*\{)/,
-    `$1
-    applicationVariants.all { variant ->
-        variant.outputs.all {
-            if (outputFile.name.endsWith('.apk')) {
-                outputFileName = "flaxia_install.apk"
-            }
-        }
-    }`,
-  );
-  console.log('Patched APK output filename');
-}
+// Leave Gradle's default APK/AAB filenames unchanged.
 
 const keystoreFile = process.env.ANDROID_KEYSTORE_FILE;
 const keystorePassword = process.env.ANDROID_KEYSTORE_PASSWORD;
 const keyAlias = process.env.ANDROID_KEY_ALIAS;
 const keyPassword = process.env.ANDROID_KEY_PASSWORD;
+
+// A release must never publish an unsigned bundle. Local debug builds may omit
+// signing credentials, but tagged/explicit release builds fail closed.
+const requireSigning = Boolean(process.env.RELEASE_TAG) || process.env.REQUIRE_ANDROID_SIGNING === '1';
+if (
+  requireSigning &&
+  (!keystoreFile ||
+    !keystorePassword ||
+    !keyAlias ||
+    !keyPassword ||
+    !existsSync(keystoreFile) ||
+    readFileSync(keystoreFile).byteLength === 0)
+) {
+  throw new Error('Android release signing requires all four ANDROID_KEY* variables and a non-empty keystore file');
+}
 
 // #106: Groovy single-quoted strings treat backslash as the escape
 // character, so escape backslashes first — otherwise a trailing backslash

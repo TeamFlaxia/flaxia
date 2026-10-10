@@ -235,7 +235,20 @@ jobs:
           ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
           RELEASE_TAG: ${{ needs.release-context.outputs.tag_name }}
         run: |
-          echo "$ANDROID_KEYSTORE" | base64 -d > "$ANDROID_KEYSTORE_FILE"
+          set -euo pipefail
+          for var in ANDROID_KEYSTORE ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!var:-}" ]; then
+              echo "::error::Missing required Android signing secret: $var"
+              exit 1
+            fi
+          done
+          printf '%s' "$ANDROID_KEYSTORE" | base64 --decode > "$ANDROID_KEYSTORE_FILE"
+          if [ ! -s "$ANDROID_KEYSTORE_FILE" ]; then
+            echo "::error::Decoded Android keystore is empty"
+            exit 1
+          fi
+          keytool -list -keystore "$ANDROID_KEYSTORE_FILE" -storepass:env ANDROID_KEYSTORE_PASSWORD -alias "$ANDROID_KEY_ALIAS" > /dev/null
+          export REQUIRE_ANDROID_SIGNING=1
           export ANDROID_VERSION_CODE="$(node scripts/android-version-code.mjs code "$RELEASE_TAG")"
           node scripts/patch-android-build.mjs
           cd android && ./gradlew bundleRelease
@@ -252,6 +265,7 @@ jobs:
             exit 1
           fi
           echo "Release AAB: $(du -h "$AAB_PATH" | cut -f1)"
+          jarsigner -verify -strict "$AAB_PATH" > /dev/null || { echo "::error::Release AAB is not correctly signed"; exit 1; }
           EXPECTED_VERSION_CODE="$(node scripts/android-version-code.mjs code "$RELEASE_TAG")"
           node scripts/android-version-code.mjs verify "$AAB_PATH" "$EXPECTED_VERSION_CODE"
           echo "Verified Android versionCode: $EXPECTED_VERSION_CODE"
