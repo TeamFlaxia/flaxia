@@ -167,9 +167,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       () => {
         // A packaged native WebView has a local origin but the WebSocket API
         // is hosted by the production backend, not by the app protocol.
-        const nativeShell = isCapacitorNative ||
-          window.location.protocol === 'tauri:' ||
-          window.location.hostname === 'tauri.localhost';
+        const nativeShell =
+          isCapacitorNative || window.location.protocol === 'tauri:' || window.location.hostname === 'tauri.localhost';
         const protocol = nativeShell || window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const host = nativeShell ? 'flaxia.app' : window.location.host;
         const sessionToken = localStorage.getItem('flaxia_session');
