@@ -100,6 +100,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'bookmarks'
       | 'terms'
       | 'privacy'
+      | 'child-safety'
       | 'about'
       | 'docs'
       | 'admin'
@@ -518,7 +519,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         // Handle legal pages (public, no auth required, no layout)
-        if (view === 'terms' || view === 'privacy' || view === 'about') {
+        if (view === 'terms' || view === 'privacy' || view === 'child-safety' || view === 'about') {
           removeLeftNavOverlay();
           currentView = view;
           currentPostId = null;

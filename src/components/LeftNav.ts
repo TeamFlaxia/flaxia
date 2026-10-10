@@ -313,6 +313,17 @@ export class LeftNav {
     legalLinks.appendChild(aboutLink);
     legalLinks.appendChild(termsLink);
     legalLinks.appendChild(privacyLink);
+    const childSafetyLink = document.createElement('a');
+    childSafetyLink.href = '/child-safety';
+    childSafetyLink.textContent = t('legal.footer_child_safety');
+    childSafetyLink.style.cssText = privacyLink.style.cssText;
+    childSafetyLink.addEventListener('mouseenter', () => {
+      childSafetyLink.style.color = 'var(--text-primary)';
+    });
+    childSafetyLink.addEventListener('mouseleave', () => {
+      childSafetyLink.style.color = 'var(--text-muted)';
+    });
+    legalLinks.appendChild(childSafetyLink);
 
     // Create Docs link (blog)
     const docsLink = document.createElement('a');
@@ -735,6 +746,17 @@ export function updateLeftNavUser(
   legalLinks.appendChild(aboutLink);
   legalLinks.appendChild(termsLink);
   legalLinks.appendChild(privacyLink);
+  const childSafetyLink = document.createElement('a');
+  childSafetyLink.href = '/child-safety';
+  childSafetyLink.textContent = t('legal.footer_child_safety');
+  childSafetyLink.style.cssText = privacyLink.style.cssText;
+  childSafetyLink.addEventListener('mouseenter', () => {
+    childSafetyLink.style.color = 'var(--text-primary)';
+  });
+  childSafetyLink.addEventListener('mouseleave', () => {
+    childSafetyLink.style.color = 'var(--text-muted)';
+  });
+  legalLinks.appendChild(childSafetyLink);
 
   // Create Docs link (blog)
   const docsLink = document.createElement('a');
