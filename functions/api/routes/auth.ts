@@ -291,18 +291,27 @@ auth.post('/upgrade-srp', requireAuth, async (c) => {
       // A session bit is not a password proof. Legacy accounts have no SRP
       // verifier yet, so require the original password and verify its hash
       // before permanently replacing the account's login credential.
-      if (typeof legacy_password !== 'string' || legacy_password.length === 0 ||
-          legacy_password.length > 1024 || !existing?.password_hash ||
-          !(await verifyPassword(legacy_password, existing.password_hash))) {
+      if (
+        typeof legacy_password !== 'string' ||
+        legacy_password.length === 0 ||
+        legacy_password.length > 1024 ||
+        !existing?.password_hash ||
+        !(await verifyPassword(legacy_password, existing.password_hash))
+      ) {
         return c.json({ error: 'Current password is incorrect' }, 401);
       }
     }
-    await upgradeSrp(c.env, userId, {
-      salt: srp_salt,
-      verifier: srp_verifier,
-      group: srp_group,
-      kdf: srp_kdf,
-    }, { onlyIfLegacy: !(existing?.srp_verifier || existing?.srp_salt) });
+    await upgradeSrp(
+      c.env,
+      userId,
+      {
+        salt: srp_salt,
+        verifier: srp_verifier,
+        group: srp_group,
+        kdf: srp_kdf,
+      },
+      { onlyIfLegacy: !(existing?.srp_verifier || existing?.srp_salt) },
+    );
     const token = getSessionToken(c.req.raw);
     if (token) {
       await c.env.DB.prepare('UPDATE sessions SET srp_upgrade_allowed = 0 WHERE id = ?').bind(token).run();
