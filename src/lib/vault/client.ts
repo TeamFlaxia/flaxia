@@ -163,13 +163,13 @@ export async function pollPairing(id: string): Promise<PairingPoll | null> {
   }
 }
 
-export async function approvePairing(id: string, approvedPub: string, wrappedVk: string): Promise<ApproveResult> {
+export async function approvePairing(id: string, peerPub: string, approvedPub: string, wrappedVk: string): Promise<ApproveResult> {
   try {
     const res = await fetch(`/api/vault/devices/${encodeURIComponent(id)}/approve`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ approved_pub: approvedPub, wrapped_vk: wrappedVk }),
+      body: JSON.stringify({ peer_pub: peerPub, approved_pub: approvedPub, wrapped_vk: wrappedVk }),
     });
     if (res.ok) return 'ok';
     if (res.status === 409) return 'reused';
