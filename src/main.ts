@@ -18,7 +18,7 @@ import { lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from '
 import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
 import type { LeftNavHandlers } from './lib/left-nav-handlers.js';
 import { createLeftNavHandlers } from './lib/left-nav-handlers.js';
-import { nativeApiUrl } from './lib/native-api.js';
+import { isCapacitorNativePlatform, nativeApiUrl } from './lib/native-api.js';
 import {
   clearNativeBadge,
   initNativeNotify,
@@ -59,7 +59,7 @@ window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   }
   const rewrittenInput = nativeApiUrl(input);
   if (
-    window.location.protocol.startsWith('capacitor') &&
+    isCapacitorNativePlatform() &&
     new URL(input instanceof Request ? input.url : input.toString(), window.location.href).pathname.startsWith('/api/')
   ) {
     const request = new Request(rewrittenInput, init);
@@ -155,17 +155,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     /// WebSocket 経由のプッシュ通知を受け取り OS 通知を表示する
     /// (接続管理・backoff は src/lib/push-socket.ts)
-    const isCapacitorNative =
-      typeof window !== 'undefined' &&
-      typeof window.Capacitor !== 'undefined' &&
-      typeof window.Capacitor.isNativePlatform === 'function' &&
-      window.Capacitor.isNativePlatform();
+    const isCapacitorNative = isCapacitorNativePlatform();
 
     const pushSocket = createPushSocket(
       () => {
+        // The bundled Capacitor app has no local server (androidScheme is
+        // https, so location.host is localhost). Route the WebSocket to the
+        // production origin like API requests; browsers keep using the
+        // same-origin host.
+        const host = isCapacitorNative ? 'flaxia.app' : window.location.host;
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const sessionToken = localStorage.getItem('flaxia_session');
-        return `${protocol}//${window.location.host}/api/ws/notifications${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`;
+        return `${protocol}//${host}/api/ws/notifications${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`;
       },
       {
         onOpen: () => {

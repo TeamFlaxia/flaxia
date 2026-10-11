@@ -1,7 +1,23 @@
 const API_ORIGIN = 'https://flaxia.app';
 
-function isNativeApp(): boolean {
-  return typeof window !== 'undefined' && window.location.protocol.startsWith('capacitor');
+export function isCapacitorNativePlatform(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.Capacitor !== 'undefined' &&
+    typeof window.Capacitor.isNativePlatform === 'function' &&
+    window.Capacitor.isNativePlatform()
+  );
+}
+
+export function isNativeApp(): boolean {
+  // Capacitor's Android build uses `androidScheme: 'https'`, so the WebView
+  // protocol is `https:` rather than `capacitor:`. Detecting the native app by
+  // protocol alone misses the Android build and routes API calls to
+  // https://localhost, which has no server. The Capacitor native-platform flag
+  // is the reliable signal.
+  return (
+    isCapacitorNativePlatform() || (typeof window !== 'undefined' && window.location.protocol.startsWith('capacitor'))
+  );
 }
 
 export function nativeApiUrl(input: RequestInfo | URL): RequestInfo | URL {
