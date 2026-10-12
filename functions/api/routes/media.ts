@@ -588,8 +588,7 @@ media.get('/zip/:postId', async (c) => {
 
     // Return the ZIP with proper headers (validate origin)
     const zipOrigin = c.req.header('Origin') || '';
-    const zipAllowed =
-      allowedOrigins.has(zipOrigin) || zipOrigin === getBaseOrigin(c) || zipOrigin === 'https://native.flaxia.app';
+    const zipAllowed = allowedOrigins.has(zipOrigin) || zipOrigin === getBaseOrigin(c);
     return new Response(object.body, {
       headers: {
         'Content-Type': 'application/zip',
@@ -750,8 +749,7 @@ media.get('/swf/:postId', async (c) => {
 
     // Return the SWF with proper headers (validate origin)
     const swfOrigin = c.req.header('Origin') || '';
-    const swfAllowed =
-      allowedOrigins.has(swfOrigin) || swfOrigin === getBaseOrigin(c) || swfOrigin === 'https://native.flaxia.app';
+    const swfAllowed = allowedOrigins.has(swfOrigin) || swfOrigin === getBaseOrigin(c);
     return new Response(object.body, {
       headers: {
         'Content-Type': 'application/x-shockwave-flash',

@@ -24,7 +24,7 @@ test('custom-scheme Capacitor calls target the first-party API origin', async ()
   assert.equal(nativeApiUrl('/assets/main.js'), '/assets/main.js');
   const rewrittenString = nativeApiUrl('/api/auth/login/start');
   assert.equal(rewrittenString, 'https://flaxia.app/api/auth/login/start');
-  const inputRequest = new Request('https://native.flaxia.app/api/users/me', {
+  const inputRequest = new Request('https://localhost/api/users/me', {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
   });
@@ -34,14 +34,14 @@ test('custom-scheme Capacitor calls target the first-party API origin', async ()
   delete (globalThis as { window?: unknown }).window;
 });
 
-// Android uses a dedicated first-party hostname so the API stays same-site
-// and can use the existing HttpOnly, SameSite=Strict session cookie.
+// Android's Capacitor HTTPS scheme uses localhost for bundled assets and
+// rewrites API requests to the real first-party app origin.
 test('native API URL treats https Capacitor Android as a native app', async () => {
   delete (globalThis as { window?: unknown }).window;
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
     value: {
-      location: { protocol: 'https:', href: 'https://native.flaxia.app/', origin: 'https://native.flaxia.app' },
+      location: { protocol: 'https:', href: 'https://localhost/', origin: 'https://localhost' },
       Capacitor: { isNativePlatform: () => true },
     },
   });
@@ -49,7 +49,7 @@ test('native API URL treats https Capacitor Android as a native app', async () =
   assert.equal(nativeApiHref('/api/images/avatar.png'), 'https://flaxia.app/api/images/avatar.png');
   assert.equal(nativeApiHref('/api/video/post-1'), 'https://flaxia.app/api/video/post-1');
   assert.equal(nativeApiHref('/api/games/html5/game-1'), 'https://flaxia.app/api/games/html5/game-1');
-  const request = new Request('https://native.flaxia.app/api/users/me', {
+  const request = new Request('https://localhost/api/users/me', {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
   });

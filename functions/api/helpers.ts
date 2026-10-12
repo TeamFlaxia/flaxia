@@ -86,14 +86,7 @@ export const csrfProtection = async (c: Context<{ Bindings: Bindings; Variables:
     await next();
     return;
   }
-  // The bundled Android WebView uses a dedicated exact first-party origin;
-  // allow its state-changing requests while preserving the session-cookie auth.
   const origin = c.req.header('Origin');
-  const isNativeAppOrigin = origin === 'https://native.flaxia.app';
-  if (isNativeAppOrigin) {
-    await next();
-    return;
-  }
   if (origin) {
     const baseOrigin = getBaseOrigin(c);
     if (!allowedOrigins.has(origin) && origin !== baseOrigin) {

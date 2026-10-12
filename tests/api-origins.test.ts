@@ -13,20 +13,6 @@ describe('development API origins', () => {
     assert.equal(response.headers.get('Access-Control-Allow-Origin'), 'http://localhost:3000');
   });
 
-  it('allows preflight from Android first-party native app origin', async () => {
-    const response = await fetch(`${BASE_URL}/api/me`, {
-      method: 'OPTIONS',
-      headers: {
-        Origin: 'https://native.flaxia.app',
-        'Access-Control-Request-Method': 'GET',
-        'Access-Control-Request-Headers': 'content-type',
-      },
-    });
-    assert.equal(response.status, 204);
-    assert.equal(response.headers.get('Access-Control-Allow-Origin'), 'https://native.flaxia.app');
-    assert.match(response.headers.get('Access-Control-Allow-Headers') ?? '', /Content-Type/i);
-  });
-
   it('allows preflight requests for profile edits and deletion', async () => {
     for (const method of ['PATCH', 'DELETE']) {
       const response = await fetch(`${BASE_URL}/api/users/me`, {

@@ -189,7 +189,6 @@ const requestId =
 
 const ALLOWED_PARENT_ORIGINS = new Set([
   'https://flaxia.app',
-  'https://native.flaxia.app',
   'http://localhost:5173',
   'http://localhost:8787',
   'http://localhost:8788',

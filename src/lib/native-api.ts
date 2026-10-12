@@ -15,7 +15,7 @@ export function isNativeApp(): boolean {
   );
 }
 
-/** Resolve API paths against the production origin for bundled Capacitor apps. */
+/** Resolve API paths to the first-party origin for native Capacitor apps. */
 export function nativeApiHref(input: string | URL): string {
   const url = new URL(input.toString(), typeof window === 'undefined' ? API_ORIGIN : window.location.href);
   if (isNativeApp() && url.pathname.startsWith('/api/')) {

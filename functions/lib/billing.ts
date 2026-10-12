@@ -286,7 +286,6 @@ const ALLOWED_ORIGINS = new Set([
   'http://localhost:5173',
   'https://flaxia.app',
   'https://sandbox.flaxia.app',
-  'https://native.flaxia.app',
 ]);
 
 /**

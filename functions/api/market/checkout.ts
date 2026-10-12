@@ -51,12 +51,7 @@ async function getUserId(env: Env, request: Request): Promise<string | null> {
 
 // This endpoint lives outside the Hono router, so it enforces the same origin
 // allowlist as the CSRF middleware itself.
-const CHECKOUT_ALLOWED_ORIGINS = new Set([
-  'http://localhost:8787',
-  'http://localhost:5173',
-  'https://flaxia.app',
-  'https://native.flaxia.app',
-]);
+const CHECKOUT_ALLOWED_ORIGINS = new Set(['http://localhost:8787', 'http://localhost:5173', 'https://flaxia.app']);
 
 function isAllowedOrigin(request: Request, env: Env): boolean {
   const origin = request.headers.get('Origin');

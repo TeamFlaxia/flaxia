@@ -44,7 +44,7 @@ interface PageComponent {
 // Initialize performance monitoring
 initPerformanceMonitoring();
 
-// Route API fetches to the production API origin for the bundled Capacitor SPA.
+// Keep API fetches on the first-party production origin for native Capacitor.
 // Direct media and iframe URLs use nativeApiHref at construction sites.
 const originalFetch = window.fetch.bind(window);
 window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
