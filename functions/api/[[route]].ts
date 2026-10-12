@@ -30,6 +30,9 @@ type Bindings = {
   CACHE: KVNamespace;
   SANDBOX_ORIGIN: string;
   BASE_URL: string;
+  RESEND_API_KEY?: string;
+  RESEND_FROM_EMAIL?: string;
+  ENVIRONMENT?: string;
   ADMIN_USERNAMES: string;
   AP_DELIVERY_QUEUE: Queue;
   CROWD_ORCHESTRATOR_URL: string;

@@ -22,6 +22,7 @@ describe('isPublicRoute', () => {
       '/docs/hello',
       '/login',
       '/register',
+      '/verify-email',
       '/home/',
     ]) {
       assert.equal(isPublicRoute(p), true, p);

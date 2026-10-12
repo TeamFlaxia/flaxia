@@ -60,7 +60,7 @@ export async function registerWithSrp(
   username: string,
   displayName: string,
   password: string,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; verificationPending?: boolean }> {
   const salt = generateSalt();
   const verifier = await computeVerifier(password, salt, DEFAULT_SRP_KDF);
   const res = await fetch('/api/auth/register', {
@@ -78,23 +78,39 @@ export async function registerWithSrp(
     }),
   });
   if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
-    return { ok: false, error: data.error };
+    const data = (await res.json().catch(() => ({}))) as { error?: string; verification_pending?: boolean };
+    return { ok: false, error: data.error, verificationPending: data.verification_pending === true };
   }
   storeSrpSalt(salt);
   return { ok: true };
 }
 
+export async function resendVerificationEmail(email: string): Promise<boolean> {
+  try {
+    const response = await fetch('/api/auth/verification/resend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ email }),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 // Log in via SRP. Legacy (non-SRP) accounts transparently fall back to the
 // plaintext endpoint, then upgrade to SRP on first login.
-export async function loginWithSrp(email: string, password: string): Promise<boolean> {
+export type SrpLoginResult = 'success' | 'invalid' | 'email_verification_required';
+
+export async function loginWithSrp(email: string, password: string): Promise<SrpLoginResult> {
   const start = await fetch('/api/auth/login/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
     body: JSON.stringify({ email }),
   });
-  if (!start.ok) return false;
+  if (!start.ok) return 'invalid';
   const s = (await start.json()) as {
     srp: boolean;
     challenge_id?: string;
@@ -111,8 +127,11 @@ export async function loginWithSrp(email: string, password: string): Promise<boo
       credentials: 'include',
       body: JSON.stringify({ email, password }),
     });
-    if (!legacy.ok) return false;
-    return await upgradeSrp(password);
+    if (!legacy.ok) {
+      const data = (await legacy.json().catch(() => ({}))) as { error?: string };
+      return data.error === 'email_verification_required' ? 'email_verification_required' : 'invalid';
+    }
+    return (await upgradeSrp(password)) ? 'success' : 'invalid';
   }
 
   const salt = unb64(s.salt!);
@@ -125,13 +144,16 @@ export async function loginWithSrp(email: string, password: string): Promise<boo
     credentials: 'include',
     body: JSON.stringify({ email, challenge_id: s.challenge_id, A: b64(A), M1: b64(finish.M1) }),
   });
-  if (!verify.ok) return false;
+  if (!verify.ok) {
+    const data = (await verify.json().catch(() => ({}))) as { error?: string };
+    return data.error === 'email_verification_required' ? 'email_verification_required' : 'invalid';
+  }
   const data = (await verify.json()) as { M2?: string };
   const ok = data.M2 ? await verifyServerProof(finish.A, finish.M1, finish.K, unb64(data.M2)) : false;
-  if (!ok) return false;
+  if (!ok) return 'invalid';
 
   storeSrpSalt(salt);
-  return true;
+  return 'success';
 }
 
 // Upgrade a legacy account to SRP, or migrate a v1 verifier to v2. Both only

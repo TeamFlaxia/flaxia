@@ -96,7 +96,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'settings'
       | 'arcade'
       | 'billing-success'
-      | 'billing-canceled' = 'timeline';
+      | 'billing-canceled'
+      | 'verify-email' = 'timeline';
     let currentPostId: string | null = null;
     let _currentUsername: string | null = null;
     let currentTag: string | null = null;
@@ -106,6 +107,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let savedScrollY = 0;
     let loginPage: PageComponent | null = null;
     let registerPage: PageComponent | null = null;
+    let verifyEmailPage: PageComponent | null = null;
     let profilePage: PageComponent | null = null;
     let explorePage: ExplorePage | null = null;
     let legalPage: PageComponent | null = null;
@@ -137,6 +139,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       display_name?: string;
       avatar_key?: string;
       badge_type?: string | null;
+      email?: string;
     } | null = null;
     let unreadNotificationCount = 0;
 
@@ -246,6 +249,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             display_name?: string;
             avatar_key?: string;
             badge_type?: string | null;
+            email?: string;
           };
           currentUser = {
             id: userData.id,
@@ -253,6 +257,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             display_name: userData.display_name,
             avatar_key: userData.avatar_key,
             badge_type: userData.badge_type,
+            email: userData.email,
           };
 
           // Update all existing LeftNav instances with new user data
@@ -342,7 +347,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
 
       // For auth routes, proceed directly
-      if (view === 'login' || view === 'register') {
+      if (view === 'login' || view === 'register' || view === 'verify-email') {
         // Cleanup current view
         if (timeline) {
           console.log('Cleaning up timeline');
@@ -361,6 +366,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (registerPage) {
           registerPage.destroy();
           registerPage = null;
+        }
+        if (verifyEmailPage) {
+          verifyEmailPage.destroy();
+          verifyEmailPage = null;
         }
         if (profilePage) {
           profilePage.destroy();
@@ -436,6 +445,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           registerPage.destroy();
           registerPage = null;
         }
+        if (verifyEmailPage) {
+          verifyEmailPage.destroy();
+          verifyEmailPage = null;
+        }
         if (profilePage) {
           profilePage.destroy();
           profilePage = null;
@@ -493,14 +506,22 @@ document.addEventListener('DOMContentLoaded', async () => {
           _currentUsername = null;
 
           const { createRegisterPage } = await import('./components/RegisterPage.js');
-          registerPage = createRegisterPage({
-            onSuccess: () => {
-              window.history.pushState({}, '', '/arcade');
-              navigateTo('arcade');
-            },
-          });
+          registerPage = createRegisterPage();
 
           app.appendChild(registerPage.getElement());
+          hidePageLoader();
+          return;
+        }
+
+        if (view === 'verify-email') {
+          removeLeftNavOverlay();
+          currentView = 'verify-email';
+          currentPostId = null;
+          _currentUsername = null;
+
+          const { createVerifyEmailPage } = await import('./components/VerifyEmailPage.js');
+          verifyEmailPage = createVerifyEmailPage();
+          app.appendChild(verifyEmailPage.getElement());
           hidePageLoader();
           return;
         }
@@ -1103,6 +1124,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     username: string;
                     display_name?: string;
                     avatar_key?: string;
+                    email?: string;
                   },
                 });
 

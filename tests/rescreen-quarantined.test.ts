@@ -158,6 +158,25 @@ describe('rescreenQuarantinedObject', () => {
     }
   });
 
+  it('does not overwrite a newer quarantine verdict if R2 fails while opening an object', async () => {
+    const { db, sqlite } = testDb();
+    const key = 'gif/rescreen-race/0.png';
+    await seedSkipped(db, sqlite, key);
+    const unavailableBucket = {
+      async get() {
+        sqlite.prepare("UPDATE file_scans SET status = 'skipped', detail = 'too_large' WHERE r2_key = ?").run(key);
+        throw new Error('temporary R2 outage');
+      },
+    } as unknown as R2Bucket;
+    assert.equal(await rescreenQuarantinedObject(db, unavailableBucket, crowdEnv(), key), 'failed');
+    const row = sqlite.prepare('SELECT status, detail FROM file_scans WHERE r2_key = ?').get(key) as {
+      status: string;
+      detail: string;
+    };
+    assert.equal(row.status, 'skipped');
+    assert.equal(row.detail, 'too_large');
+  });
+
   it('does not modify clean or infected scan rows', async () => {
     const { db, sqlite } = testDb();
     const key = 'gif/rescreen-ineligible/0.png';

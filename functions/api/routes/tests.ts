@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { getMeWithSession, getSessionToken, hashPassword } from '../../lib/auth.ts';
 import { badgeTypeForPlan } from '../../lib/billing.ts';
 import { ensureNsfwScansTable, ensurePendingEmbedsTable } from '../../lib/crowd.ts';
+import { clearTestVerificationOutbox, takeTestVerificationLink } from '../../lib/email-verification.ts';
 import { ensureFileScansTable } from '../../lib/scan/db.ts';
 import type { Bindings, Variables } from '../types';
 
@@ -47,6 +48,7 @@ const requireTestEnvironment: MiddlewareHandler<{ Bindings: Bindings; Variables:
 
 // POST /api/test/reset - reset database for testing (only allowed in test environment)
 app.post('/api/test/reset', requireTestEnvironment, async (c) => {
+  clearTestVerificationOutbox();
   const clears: D1Database[] = [];
   if (c.env.DB_TEST) clears.push(c.env.DB_TEST);
   if (c.env.DB) clears.push(c.env.DB);
@@ -96,6 +98,7 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
       'user_profiles',
       'push_subscriptions',
       'device_tokens',
+      'email_verification_tokens',
       'sessions',
       'ad_interactions',
       'admin_alerts',
@@ -116,6 +119,25 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
     }
   }
   return c.json({ ok: true });
+});
+
+// Test-only mock inbox: raw links are held only in process memory and are never
+// stored in D1 or exposed outside the guarded test environment.
+app.get('/api/test/email-verification-link', requireTestEnvironment, (c) => {
+  const email = c.req.query('email');
+  if (!email) return c.json({ error: 'email required' }, 400);
+  return c.json({ url: takeTestVerificationLink(email) });
+});
+
+app.post('/api/test/expire-email-verification', requireTestEnvironment, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { email?: unknown };
+  if (typeof body.email !== 'string') return c.json({ error: 'email required' }, 400);
+  const result = await c.env.DB.prepare(
+    'UPDATE email_verification_tokens SET expires_at = ? WHERE lower(candidate_email) = lower(?)',
+  )
+    .bind('2000-01-01T00:00:00.000Z', body.email)
+    .run();
+  return c.json({ expired: result.meta?.changes ?? 0 });
 });
 
 // POST /api/test/vault-item - seed an encrypted vault item for rotation tests.
@@ -278,10 +300,18 @@ app.post('/api/test/seed-srp-v1-user', requireTestEnvironment, async (c) => {
 
   const id = crypto.randomUUID();
   await c.env.DB.prepare(
-    `INSERT INTO users (id, email, password_hash, username, display_name, bio, srp_salt, srp_verifier, srp_group, srp_kdf)
-     VALUES (?, ?, '', ?, ?, '', ?, ?, '2048', 'sha256-v1')`,
+    `INSERT INTO users (id, email, password_hash, username, display_name, bio, srp_salt, srp_verifier, srp_group, srp_kdf, email_verified_at)
+     VALUES (?, ?, '', ?, ?, '', ?, ?, '2048', 'sha256-v1', ?)`,
   )
-    .bind(id, body.email, body.username, body.display_name ?? body.username, body.srp_salt, body.srp_verifier)
+    .bind(
+      id,
+      body.email,
+      body.username,
+      body.display_name ?? body.username,
+      body.srp_salt,
+      body.srp_verifier,
+      new Date().toISOString(),
+    )
     .run();
   return c.json({ id }, 201);
 });
@@ -297,6 +327,7 @@ app.post('/api/test/seed-legacy-user', requireTestEnvironment, async (c) => {
     password?: string;
     username?: string;
     display_name?: string;
+    unverified?: boolean;
   };
   if (!body.email || !body.password || !body.username) {
     return c.json({ error: 'email, password and username are required' }, 400);
@@ -310,10 +341,17 @@ app.post('/api/test/seed-legacy-user', requireTestEnvironment, async (c) => {
   const passwordHash = await hashPassword(body.password);
   await db
     .prepare(
-      `INSERT INTO users (id, email, password_hash, username, display_name, bio)
-       VALUES (?, ?, ?, ?, ?, '')`,
+      `INSERT INTO users (id, email, password_hash, username, display_name, bio, email_verified_at)
+       VALUES (?, ?, ?, ?, ?, '', ?)`,
     )
-    .bind(userId, body.email, passwordHash, body.username, body.display_name ?? body.username)
+    .bind(
+      userId,
+      body.email,
+      passwordHash,
+      body.username,
+      body.display_name ?? body.username,
+      body.unverified ? null : new Date().toISOString(),
+    )
     .run();
 
   return c.json({ id: userId }, 201);

@@ -1,12 +1,8 @@
-import { registerWithSrp } from '../lib/auth-srp.js';
+import { registerWithSrp, resendVerificationEmail } from '../lib/auth-srp.js';
 import { t } from '../lib/i18n.js';
 import { passwordLengthError } from '../lib/password-policy.js';
 
-interface RegisterProps {
-  onSuccess: () => void;
-}
-
-export function createRegisterPage({ onSuccess }: RegisterProps) {
+export function createRegisterPage() {
   // Create main container
   const container = document.createElement('div');
   container.className = 'auth-page';
@@ -139,6 +135,35 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
   loginLink.className = 'auth-link';
   loginLink.innerHTML = t('register.login_link');
 
+  const pendingView = document.createElement('div');
+  pendingView.style.display = 'none';
+  pendingView.setAttribute('aria-live', 'polite');
+  const pendingMessage = document.createElement('p');
+  const pendingEmail = document.createElement('p');
+  pendingEmail.className = 'field-hint';
+  pendingEmail.style.display = 'block';
+  const resendButton = document.createElement('button');
+  resendButton.type = 'button';
+  resendButton.className = 'auth-button';
+  resendButton.textContent = t('register.resend');
+  const resendMessage = document.createElement('p');
+  resendMessage.className = 'field-hint';
+  resendMessage.style.display = 'none';
+  pendingView.appendChild(pendingMessage);
+  pendingView.appendChild(pendingEmail);
+  pendingView.appendChild(resendButton);
+  pendingView.appendChild(resendMessage);
+
+  resendButton.addEventListener('click', async () => {
+    const email = emailInput.value.trim();
+    resendButton.disabled = true;
+    resendMessage.textContent = '';
+    const ok = await resendVerificationEmail(email);
+    resendMessage.textContent = ok ? t('register.resend_sent') : t('register.resend_failed');
+    resendMessage.style.display = 'block';
+    resendButton.disabled = false;
+  });
+
   // Validation
   const validateForm = () => {
     // Clear all errors
@@ -241,8 +266,13 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
     try {
       const result = await registerWithSrp(email, username, displayName, password);
 
-      if (result.ok) {
-        onSuccess();
+      if (result.ok || result.verificationPending) {
+        form.style.display = 'none';
+        pendingView.style.display = 'block';
+        pendingMessage.textContent = result.ok
+          ? t('register.verification_sent')
+          : t('register.verification_delivery_failed');
+        pendingEmail.textContent = email;
       } else {
         const msg = result.error || t('register.error_general');
         if (msg.toLowerCase().includes('email')) {
@@ -296,6 +326,7 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
   card.appendChild(logo);
   card.appendChild(heading);
   card.appendChild(form);
+  card.appendChild(pendingView);
   card.appendChild(loginLink);
 
   // Assemble container
