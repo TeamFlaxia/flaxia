@@ -31,7 +31,7 @@ const SANDBOX_CSP = [
   "font-src 'self' data: blob: https:",
   "connect-src 'self' data: blob: https: wss:",
   "frame-src 'self' blob: data: https:",
-  'frame-ancestors https://flaxia.app https://*.pages.dev http://localhost:5173 http://localhost:8787 http://localhost:8788',
+  'frame-ancestors https://flaxia.app https://native.flaxia.app https://*.pages.dev http://localhost:5173 http://localhost:8787 http://localhost:8788',
 ].join('; ');
 
 const ZIP_PREVIEW_CSP = [
@@ -44,7 +44,7 @@ const ZIP_PREVIEW_CSP = [
   "font-src 'self' data: blob: https:",
   "connect-src 'self' data: blob: https: wss:",
   'frame-src blob: data: https:',
-  'frame-ancestors https://flaxia.app https://*.pages.dev http://localhost:5173 http://localhost:8787 http://localhost:8788',
+  'frame-ancestors https://flaxia.app https://native.flaxia.app https://*.pages.dev http://localhost:5173 http://localhost:8787 http://localhost:8788',
 ].join('; ');
 
 const PDF_VIEWER_CSP = [
@@ -59,7 +59,7 @@ const PDF_VIEWER_CSP = [
   "object-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
-  'frame-ancestors https://flaxia.app https://*.pages.dev http://localhost:5173 http://localhost:8787 http://localhost:8788',
+  'frame-ancestors https://flaxia.app https://native.flaxia.app https://*.pages.dev http://localhost:5173 http://localhost:8787 http://localhost:8788',
 ].join('; ');
 
 function withPdfViewerCsp(response: Response): Response {
@@ -297,7 +297,7 @@ app.get('/api/game-storage', (c) => {
 
     (function(){
       'use strict';
-      var allowedOrigins=new Set(['https://flaxia.app','http://localhost:5173','http://localhost:8787','http://localhost:8788']);
+      var allowedOrigins=new Set(['https://flaxia.app','https://native.flaxia.app','http://localhost:5173','http://localhost:8787','http://localhost:8788']);
       function send(origin,message){try{window.parent.postMessage(message,origin)}catch{}}
       window.addEventListener('message',function(event){
         if(event.source!==window.parent||!allowedOrigins.has(event.origin))return;
@@ -328,7 +328,7 @@ app.get('/api/game-storage', (c) => {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
       'Content-Security-Policy':
-        "default-src 'none'; script-src 'self' 'unsafe-inline'; frame-ancestors https://flaxia.app http://localhost:5173 http://localhost:8787 http://localhost:8788",
+        "default-src 'none'; script-src 'self' 'unsafe-inline'; frame-ancestors https://flaxia.app https://native.flaxia.app http://localhost:5173 http://localhost:8787 http://localhost:8788",
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
     },

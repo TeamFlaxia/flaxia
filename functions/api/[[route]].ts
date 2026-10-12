@@ -65,10 +65,11 @@ app.use(
   cors({
     origin: (origin, c) => {
       if (!origin) return '';
-      const isNativeAppRequest =
-        c.req.header('X-Flaxia-Native-App') === '1' &&
-        (origin === 'capacitor://localhost' || origin === 'https://localhost');
-      return allowedOrigins.has(origin) || origin === getBaseOrigin(c) || isNativeAppRequest ? origin : '';
+      // Android's bundled WebView uses an app-controlled subdomain so its
+      // SameSite=Strict session cookie remains same-site with the API. OPTIONS
+      // requests are allowed by exact origin; no native marker is required.
+      const isNativeAppOrigin = origin === 'https://native.flaxia.app';
+      return allowedOrigins.has(origin) || origin === getBaseOrigin(c) || isNativeAppOrigin ? origin : '';
     },
     allowMethods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization', 'X-Flaxia-Native-App'],

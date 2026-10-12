@@ -4,6 +4,7 @@ import { t } from '../lib/i18n.js';
 import { attachIcons, type IconName, icon } from '../lib/icons.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { registerModal } from '../lib/modal-state.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { getReplyStyle } from '../lib/settings.js';
 import { buildTree } from '../lib/thread.js';
 import { showToast } from '../lib/toast.js';
@@ -1837,7 +1838,7 @@ export class ArcadePage {
       } else if (game.type === 'html5') {
         // HTML5 games would use iframe
         const iframe = document.createElement('iframe');
-        iframe.src = `/api/games/html5/${game.id}`;
+        iframe.src = nativeApiHref(`/api/games/html5/${game.id}`);
         iframe.style.cssText = `
           width: 100%;
           height: 100%;

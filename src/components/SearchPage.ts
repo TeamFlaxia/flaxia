@@ -1,6 +1,7 @@
 import { attachPlusBadge } from '../lib/avatar.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { Post, PostCardMode } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
@@ -523,7 +524,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       const avatar = document.createElement('div');
       avatar.style.cssText = `
         width: 40px; height: 40px; border-radius: 50%;
-        background: ${user.avatar_key ? `url('/api/images/${user.avatar_key}')` : 'var(--accent)'};
+        background: ${user.avatar_key ? `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')` : 'var(--accent)'};
         background-size: cover;
         background-position: center;
         color: var(--bg-primary);
@@ -606,7 +607,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         `;
         if (post.thumbnail_key) {
           const img = document.createElement('img');
-          img.src = `/api/images/${post.thumbnail_key}?_=${Date.now()}`;
+          img.src = nativeApiHref(`/api/images/${post.thumbnail_key}?_=${Date.now()}`);
           img.loading = 'lazy';
           img.width = 180;
           img.height = 101;
@@ -739,7 +740,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         `;
         if (post.thumbnail_key) {
           const img = document.createElement('img');
-          img.src = `/api/images/${post.thumbnail_key}?_=${Date.now()}`;
+          img.src = nativeApiHref(`/api/images/${post.thumbnail_key}?_=${Date.now()}`);
           img.loading = 'lazy';
           img.width = 150;
           img.height = 200;

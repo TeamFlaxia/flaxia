@@ -9,7 +9,10 @@ const config: CapacitorConfig = {
   server: {
     androidScheme: 'https',
     iosScheme: 'capacitor',
-    hostname: 'localhost',
+    // Keep Android API requests same-site with flaxia.app so the existing
+    // HttpOnly, SameSite=Strict session cookie works without exposing it to JS.
+    // iOS retains its Capacitor-local origin and config.
+    hostname: process.env.CAPACITOR_PLATFORM === 'android' ? 'native.flaxia.app' : 'localhost',
     allowNavigation: ['flaxia.app', '*.flaxia.app', 'sandbox.flaxia.app'],
   },
   plugins: {

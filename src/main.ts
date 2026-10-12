@@ -44,28 +44,17 @@ interface PageComponent {
 // Initialize performance monitoring
 initPerformanceMonitoring();
 
-// Rewrite same-origin API requests to the production origin for the bundled
-// Capacitor SPA. Browser builds and non-API asset requests are unchanged.
+// Route API fetches to the production API origin for the bundled Capacitor SPA.
+// Direct media and iframe URLs use nativeApiHref at construction sites.
 const originalFetch = window.fetch.bind(window);
 window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  if (window.location.hostname === 'localhost' && input instanceof Request && input.body !== null && !init) {
-    const url = new URL(input.url);
-    if (url.pathname.startsWith('/api/')) {
-      const destination = `https://flaxia.app${url.pathname}${url.search}${url.hash}`;
-      const options: RequestInit = { method: input.method, headers: input.headers };
-      if (input.method !== 'GET' && input.method !== 'HEAD') options.body = await input.clone().text();
-      return originalFetch(destination, options);
-    }
-  }
   const rewrittenInput = nativeApiUrl(input);
-  if (
-    isCapacitorNativePlatform() &&
-    new URL(input instanceof Request ? input.url : input.toString(), window.location.href).pathname.startsWith('/api/')
-  ) {
-    const request = new Request(rewrittenInput, init);
-    const headers = new Headers(request.headers);
-    headers.set('X-Flaxia-Native-App', '1');
-    return originalFetch(new Request(request, { headers }));
+  if (isCapacitorNativePlatform()) {
+    const requestUrl = new URL(input instanceof Request ? input.url : input.toString(), window.location.href);
+    const apiRequest = requestUrl.pathname.startsWith('/api/');
+    if (!apiRequest) return originalFetch(rewrittenInput, init);
+    const request = input instanceof Request ? new Request(rewrittenInput, input) : new Request(rewrittenInput, init);
+    return originalFetch(new Request(request, { credentials: 'include' }));
   }
   return originalFetch(rewrittenInput, init);
 }) as typeof window.fetch;
@@ -159,14 +148,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const pushSocket = createPushSocket(
       () => {
-        // The bundled Capacitor app has no local server (androidScheme is
-        // https, so location.host is localhost). Route the WebSocket to the
-        // production origin like API requests; browsers keep using the
-        // same-origin host.
+        // The bundled Android app shares the flaxia.app site; use the API
+        // host for its cross-origin WebSocket, and same-origin in browsers.
         const host = isCapacitorNative ? 'flaxia.app' : window.location.host;
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const sessionToken = localStorage.getItem('flaxia_session');
-        return `${protocol}//${host}/api/ws/notifications${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`;
+        return `${protocol}//${host}/api/ws/notifications`;
       },
       {
         onOpen: () => {

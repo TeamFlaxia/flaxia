@@ -286,6 +286,7 @@ const ALLOWED_ORIGINS = new Set([
   'http://localhost:5173',
   'https://flaxia.app',
   'https://sandbox.flaxia.app',
+  'https://native.flaxia.app',
 ]);
 
 /**
@@ -310,4 +311,14 @@ export function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+export function withBillingCors(request: Request, response: Response, env: BillingEnv): Response {
+  const origin = request.headers.get('Origin');
+  if (!origin || !isAllowedOrigin(env, request)) return response;
+  const headers = new Headers(response.headers);
+  headers.set('Access-Control-Allow-Origin', origin);
+  headers.set('Access-Control-Allow-Credentials', 'true');
+  headers.append('Vary', 'Origin');
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
