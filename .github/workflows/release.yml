@@ -221,7 +221,9 @@ jobs:
           HUSKY: 0
       - run: npm run build
       - run: npx cap add android
-      - run: npx cap sync
+      - run: npx cap sync android
+        env:
+          CAPACITOR_PLATFORM: android
       - name: Decode google-services.json
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
