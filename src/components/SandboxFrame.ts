@@ -1,6 +1,7 @@
 import type { ParentMessage } from '../lib/bridge.js';
 import { isParentMessage } from '../lib/bridge.js';
 import { MultiplayerManager } from '../lib/multiplayer-manager.js';
+import { createWvfsGameUrl } from '../lib/wvfs-game-url.js';
 import type { SandboxFrameProps } from '../types/post.js';
 
 export function createSandboxFrame(props: SandboxFrameProps): HTMLElement {
@@ -9,12 +10,7 @@ export function createSandboxFrame(props: SandboxFrameProps): HTMLElement {
 
   const iframe = document.createElement('iframe');
   iframe.className = 'sandbox-frame';
-  const gameUrl = new URL(
-    `/api/wvfs-zip/${encodeURIComponent(props.postId)}/index.html`,
-    new URL(props.sandboxOrigin).origin,
-  );
-  if (props.versionId) gameUrl.searchParams.set('v', props.versionId);
-  iframe.src = gameUrl.toString();
+  iframe.src = createWvfsGameUrl(props.sandboxOrigin, props.postId, { versionId: props.versionId, index: true });
   iframe.sandbox = 'allow-scripts allow-pointer-lock allow-forms allow-popups';
   iframe.allow = 'fullscreen; web-share';
   iframe.referrerPolicy = 'no-referrer';

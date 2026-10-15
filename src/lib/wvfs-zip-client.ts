@@ -1,4 +1,5 @@
 import { connectGameStorage, loadLegacyGameStorage } from './game-storage-broker.js';
+import { createWvfsGameUrl } from './wvfs-game-url.js';
 import {
   createZipLoadingIndicator,
   createZipSandboxIframe,
@@ -40,8 +41,8 @@ export async function executeWvfsZip(
     }
 
     const sandboxOrigin = workerUrl || import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
-    const zipUrl = `${sandboxOrigin}/api/wvfs-zip/${postId}${versionId ? `?v=${versionId}` : ''}`;
-    const preWarmUrl = `${zipUrl}/index.html`;
+    const zipUrl = createWvfsGameUrl(sandboxOrigin, postId, { versionId });
+    const preWarmUrl = createWvfsGameUrl(sandboxOrigin, postId, { versionId, index: true });
     fetch(preWarmUrl, { method: 'GET', mode: 'cors' }).catch(() => {});
 
     let storageSnapshot: Record<string, string> = {};

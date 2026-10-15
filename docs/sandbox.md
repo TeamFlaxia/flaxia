@@ -45,6 +45,10 @@ The main Pages policy stays strict: no `unsafe-inline` or `unsafe-eval` in `scri
 
 The Worker applies a response-header CSP to WVFS game responses. Its `sandbox` directive allows scripts, forms, popups and pointer lock, but never same-origin access. `script-src`/`frame-src` include HTTPS because Arcade games commonly load external libraries and embedded content.
 
+Before game scripts run, WVFS supplies disabled-cookie behavior (`document.cookie` reads as an empty string and writes are ignored) only when the native getter throws `SecurityError`. This lets SDKs such as Poki initialize without granting access to origin cookies. Game saves continue to use the localStorage bridge.
+
+Sandbox HTML responses include `Cache-Control: no-transform` to prevent Cloudflare from injecting analytics or JavaScript Detection scripts that assume same-origin access. WVFS HTML also requires cache revalidation so compatibility runtime updates reach existing games; binary assets retain their immutable cache policy. Game document URLs include `runtime=2` to bypass HTML previously cached as immutable, including Arcade prefetches and versioned prewarm requests.
+
 ### ZIP preview shell (`ZIP_PREVIEW_CSP`)
 
 The trusted wrapper has no CSP `sandbox` directive so `postMessage` can use exact origins. It validates the ZIP and creates a nested game iframe with the sandbox flags above; no game script executes in the wrapper document.

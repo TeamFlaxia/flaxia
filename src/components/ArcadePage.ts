@@ -8,6 +8,7 @@ import { nativeApiHref } from '../lib/native-api.js';
 import { getReplyStyle } from '../lib/settings.js';
 import { buildTree } from '../lib/thread.js';
 import { showToast } from '../lib/toast.js';
+import { createWvfsGameUrl } from '../lib/wvfs-game-url.js';
 import { executeWvfsZip } from '../lib/wvfs-zip-client.js';
 import type { ArcadePageProps, Game, GameType } from '../types/game.js';
 import type { Post } from '../types/post.js';
@@ -2015,7 +2016,7 @@ export class ArcadePage {
     try {
       if (game.type === 'zip') {
         const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
-        this.prefetchLink(`${sandboxOrigin}/api/wvfs-zip/${game.postId}`);
+        this.prefetchLink(createWvfsGameUrl(sandboxOrigin, game.postId));
       }
     } catch {
       // Prefetch failed — game will load normally on demand

@@ -86,6 +86,11 @@ function withZipPreviewCsp(response: Response): Response {
 function withCsp(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set('Content-Security-Policy', SANDBOX_CSP);
+  if (headers.get('Content-Type')?.toLowerCase().startsWith('text/html')) {
+    // HTML includes the current compatibility runtime even when game assets
+    // are immutable. Revalidate it so sandbox fixes can reach existing games.
+    headers.set('Cache-Control', 'public, no-cache');
+  }
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -96,6 +101,16 @@ function withCsp(response: Response): Response {
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use('/*', cors());
+
+app.use('/*', async (c, next) => {
+  await next();
+  if (!c.res.headers.get('Content-Type')?.toLowerCase().startsWith('text/html')) return;
+  // Cloudflare's injected analytics/challenge scripts assume cookie and child
+  // document access that sandboxed games do not have. Keep HTML unmodified:
+  // https://developers.cloudflare.com/cloudflare-challenges/challenge-types/javascript-detections/
+  const cacheControl = c.res.headers.get('Cache-Control');
+  c.header('Cache-Control', cacheControl ? `${cacheControl}, no-transform` : 'no-transform');
+});
 
 async function serveZipPreviewAsset(
   c: Context<{ Bindings: Bindings }>,
