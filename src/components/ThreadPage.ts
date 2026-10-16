@@ -1,5 +1,6 @@
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { updateMetaTags } from '../lib/seo-meta.js';
 import { getReplyStyle } from '../lib/settings.js';
 import { buildTree } from '../lib/thread.js';
@@ -696,7 +697,7 @@ export class ThreadPage {
 
     let ogImage: string | undefined;
     if (imageKey) {
-      ogImage = `${window.location.origin}/api/images/${imageKey}`;
+      ogImage = nativeApiHref(`/api/images/${imageKey}`);
     }
 
     updateMetaTags({

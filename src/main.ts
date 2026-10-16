@@ -18,7 +18,7 @@ import { lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from '
 import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
 import type { LeftNavHandlers } from './lib/left-nav-handlers.js';
 import { createLeftNavHandlers } from './lib/left-nav-handlers.js';
-import { nativeApiUrl } from './lib/native-api.js';
+import { isCapacitorNativePlatform, nativeApiUrl } from './lib/native-api.js';
 import {
   clearNativeBadge,
   initNativeNotify,
@@ -44,28 +44,17 @@ interface PageComponent {
 // Initialize performance monitoring
 initPerformanceMonitoring();
 
-// Rewrite same-origin API requests to the production origin for the bundled
-// Capacitor SPA. Browser builds and non-API asset requests are unchanged.
+// Keep API fetches on the first-party production origin for native Capacitor.
+// Direct media and iframe URLs use nativeApiHref at construction sites.
 const originalFetch = window.fetch.bind(window);
 window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  if (window.location.hostname === 'localhost' && input instanceof Request && input.body !== null && !init) {
-    const url = new URL(input.url);
-    if (url.pathname.startsWith('/api/')) {
-      const destination = `https://flaxia.app${url.pathname}${url.search}${url.hash}`;
-      const options: RequestInit = { method: input.method, headers: input.headers };
-      if (input.method !== 'GET' && input.method !== 'HEAD') options.body = await input.clone().text();
-      return originalFetch(destination, options);
-    }
-  }
   const rewrittenInput = nativeApiUrl(input);
-  if (
-    window.location.protocol.startsWith('capacitor') &&
-    new URL(input instanceof Request ? input.url : input.toString(), window.location.href).pathname.startsWith('/api/')
-  ) {
-    const request = new Request(rewrittenInput, init);
-    const headers = new Headers(request.headers);
-    headers.set('X-Flaxia-Native-App', '1');
-    return originalFetch(new Request(request, { headers }));
+  if (isCapacitorNativePlatform()) {
+    const requestUrl = new URL(input instanceof Request ? input.url : input.toString(), window.location.href);
+    const apiRequest = requestUrl.pathname.startsWith('/api/');
+    if (!apiRequest) return originalFetch(rewrittenInput, init);
+    const request = input instanceof Request ? new Request(rewrittenInput, input) : new Request(rewrittenInput, init);
+    return originalFetch(new Request(request, { credentials: 'include' }));
   }
   return originalFetch(rewrittenInput, init);
 }) as typeof window.fetch;
@@ -155,17 +144,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     /// WebSocket 経由のプッシュ通知を受け取り OS 通知を表示する
     /// (接続管理・backoff は src/lib/push-socket.ts)
-    const isCapacitorNative =
-      typeof window !== 'undefined' &&
-      typeof window.Capacitor !== 'undefined' &&
-      typeof window.Capacitor.isNativePlatform === 'function' &&
-      window.Capacitor.isNativePlatform();
+    const isCapacitorNative = isCapacitorNativePlatform();
 
     const pushSocket = createPushSocket(
       () => {
+        // The bundled Android app shares the flaxia.app site; use the API
+        // host for its cross-origin WebSocket, and same-origin in browsers.
+        const host = isCapacitorNative ? 'flaxia.app' : window.location.host;
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const sessionToken = localStorage.getItem('flaxia_session');
-        return `${protocol}//${window.location.host}/api/ws/notifications${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`;
+        return `${protocol}//${host}/api/ws/notifications`;
       },
       {
         onOpen: () => {

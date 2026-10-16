@@ -4,6 +4,7 @@ import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { createSkeletonCards } from '../lib/loading-ui.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
@@ -872,7 +873,7 @@ export class ExplorePage {
 
       if (game.thumbnailKey) {
         const img = document.createElement('img');
-        img.src = `/api/thumbnail/${game.postId}`;
+        img.src = nativeApiHref(`/api/thumbnail/${game.postId}`);
         img.alt = '';
         img.loading = 'lazy';
         img.width = 180;
@@ -958,7 +959,7 @@ export class ExplorePage {
       const avatar = document.createElement('div');
       avatar.style.cssText = `
         width: 40px; height: 40px; border-radius: 50%;
-        background: ${user.avatar_key ? `url('/api/images/${user.avatar_key}')` : 'var(--accent)'};
+        background: ${user.avatar_key ? `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')` : 'var(--accent)'};
         background-size: cover;
         background-position: center;
         color: var(--bg-primary);

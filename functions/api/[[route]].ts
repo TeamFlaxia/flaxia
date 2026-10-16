@@ -65,10 +65,7 @@ app.use(
   cors({
     origin: (origin, c) => {
       if (!origin) return '';
-      const isNativeAppRequest =
-        c.req.header('X-Flaxia-Native-App') === '1' &&
-        (origin === 'capacitor://localhost' || origin === 'https://localhost');
-      return allowedOrigins.has(origin) || origin === getBaseOrigin(c) || isNativeAppRequest ? origin : '';
+      return allowedOrigins.has(origin) || origin === getBaseOrigin(c) ? origin : '';
     },
     allowMethods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization', 'X-Flaxia-Native-App'],

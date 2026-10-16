@@ -221,7 +221,9 @@ jobs:
           HUSKY: 0
       - run: npm run build
       - run: npx cap add android
-      - run: npx cap sync
+      - run: npx cap sync android
+        env:
+          CAPACITOR_PLATFORM: android
       - name: Decode google-services.json
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
@@ -254,6 +256,9 @@ jobs:
           cd android && ./gradlew bundleRelease
       - name: Verify release AAB
         env:
+          ANDROID_KEYSTORE_FILE: ${{ github.workspace }}/android/app/release.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           RELEASE_TAG: ${{ needs.release-context.outputs.tag_name }}
           BUNDLETOOL_JAR: ${{ runner.temp }}/bundletool.jar
         run: |
@@ -265,7 +270,11 @@ jobs:
             exit 1
           fi
           echo "Release AAB: $(du -h "$AAB_PATH" | cut -f1)"
-          jarsigner -verify -strict "$AAB_PATH" > /dev/null || { echo "::error::Release AAB is not correctly signed"; exit 1; }
+          # Trust the upload certificate, including ordinary self-signed Android keys.
+          jarsigner -verify -strict \
+            -keystore "$ANDROID_KEYSTORE_FILE" \
+            -storepass:env ANDROID_KEYSTORE_PASSWORD \
+            "$AAB_PATH" "$ANDROID_KEY_ALIAS"
           EXPECTED_VERSION_CODE="$(node scripts/android-version-code.mjs code "$RELEASE_TAG")"
           node scripts/android-version-code.mjs verify "$AAB_PATH" "$EXPECTED_VERSION_CODE"
           echo "Verified Android versionCode: $EXPECTED_VERSION_CODE"
