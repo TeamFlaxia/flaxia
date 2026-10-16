@@ -8,8 +8,8 @@ import { validateImageDimensions } from '../../lib/image-dimensions';
 import { clampLimit } from '../../lib/pagination';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
-import { isSupportedSrpKdf } from '../../lib/srp';
-import { parsePublicHttpUrl, SsrfError } from '../../lib/url-guard';
+import { isCreatableSrpKdf } from '../../lib/srp';
+import { fetchWithSsrfGuard, parsePublicHttpUrl, SsrfError } from '../../lib/url-guard';
 import { detectMimeType, isAllowedImageMime, requireAuth } from '../helpers';
 import type { Bindings, PostRow, SrpProofBody, Variables } from '../types';
 
@@ -22,9 +22,11 @@ const users = new Hono<{ Bindings: Bindings; Variables: Variables }>();
  */
 async function fetchRemoteJson(url: string, accept: string): Promise<{ url: string; response: Response }> {
   const parsed = parsePublicHttpUrl(url);
-  const response = await fetch(parsed.toString(), {
+  // Follow redirects hop-by-hop through the guard so a remote server cannot
+  // bounce this fetch to localhost or a private range.
+  const response = await fetchWithSsrfGuard(parsed.toString(), {
     headers: { Accept: accept },
-    signal: AbortSignal.timeout(10_000),
+    timeoutMs: 10_000,
   });
   return { url: parsed.toString(), response };
 }
@@ -1179,7 +1181,7 @@ users.patch('/users/me/password', requireAuth, async (c) => {
       return c.json({ error: 'New SRP verifier required' }, 400);
     }
     if (srp_group !== '2048') return c.json({ error: 'Unsupported SRP group' }, 400);
-    if (!isSupportedSrpKdf(srp_kdf)) return c.json({ error: 'Unsupported SRP KDF' }, 400);
+    if (!isCreatableSrpKdf(srp_kdf)) return c.json({ error: 'Unsupported SRP KDF' }, 400);
     // Same shape checks as registration: a degenerate verifier would make the
     // account undecryptable / trivially attackable.
     if (!isValidB64(srp_salt, 16)) return c.json({ error: 'Invalid SRP salt' }, 400);
@@ -1271,6 +1273,19 @@ users.patch('/users/me/password', requireAuth, async (c) => {
       return c.json({ error: 'Failed to update password' }, 500);
     }
     if (results[0].meta.changes === 0) return c.json({ error: 'vault_key_version_conflict' }, 409);
+
+    // Password changed: revoke every other session so a stolen cookie does
+    // not survive the rotation. Best-effort, never blocks the response.
+    try {
+      const currentToken = getSessionToken(c.req.raw);
+      if (currentToken) {
+        await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?').bind(userId, currentToken).run();
+      } else {
+        await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId).run();
+      }
+    } catch {
+      // ignore revocation failures
+    }
 
     return c.json({ ok: true });
   } catch (error: unknown) {
