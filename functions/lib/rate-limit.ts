@@ -10,6 +10,15 @@ export interface RateLimitConfig {
   maxRequests: number;
   /** Time window in seconds */
   windowSeconds: number;
+  /** Whether a KV outage should be rejected instead of silently bypassed. */
+  failureMode?: 'open' | 'closed';
+}
+
+export class RateLimitUnavailableError extends Error {
+  constructor() {
+    super('Rate-limit storage unavailable');
+    this.name = 'RateLimitUnavailableError';
+  }
 }
 
 const DEFAULT_CONFIG: RateLimitConfig = {
@@ -26,7 +35,10 @@ export async function checkRateLimit(
   key: string,
   config: RateLimitConfig = DEFAULT_CONFIG,
 ): Promise<boolean> {
-  if (!kv) return true; // Allow if KV unavailable
+  if (!kv) {
+    if (config.failureMode === 'closed') throw new RateLimitUnavailableError();
+    return true;
+  }
 
   const now = Math.floor(Date.now() / 1000);
   const windowKey = `rl:${key}:${Math.floor(now / config.windowSeconds)}`;
@@ -44,8 +56,11 @@ export async function checkRateLimit(
     });
 
     return true;
-  } catch {
-    // On KV error, allow the request
+  } catch (error) {
+    if (config.failureMode === 'closed') {
+      console.error('Rate-limit KV read/write failed', error);
+      throw new RateLimitUnavailableError();
+    }
     return true;
   }
 }
