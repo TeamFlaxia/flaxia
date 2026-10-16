@@ -29,3 +29,6 @@ crons = ["0 4 * * *"]
 queue = "activitypub-delivery"
 max_batch_size = 10
 max_batch_timeout = 5
+# Retry transient failures a bounded number of times, then quarantine them.
+max_retries = 3
+dead_letter_queue = "activitypub-delivery-dlq"
