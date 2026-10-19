@@ -1,0 +1,16 @@
+-- Case-insensitive email uniqueness.
+--
+-- Registration and email changes used SQLite's default BINARY collation, so
+-- `DevTest@flaxia.app` could coexist with `devtest@flaxia.app`. Combined with
+-- the old email-keyed reviewer entitlement, that let anyone self-register a
+-- privileged account. The application now lowercases/trims emails at every
+-- write boundary; this index enforces the invariant in the database.
+--
+-- Preflight before deploying (must return no rows):
+--   SELECT lower(email) AS normalized, COUNT(*)
+--   FROM users GROUP BY lower(email) HAVING COUNT(*) > 1;
+--
+-- If it returns rows, resolve the duplicate accounts first (keep the owner,
+-- remove or rename the impostor); this index intentionally fails loudly
+-- rather than silently discarding an account.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_nocase ON users(lower(email));
