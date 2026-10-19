@@ -2,7 +2,13 @@ import { CAPTURE_BRIDGE_IIFE } from './capture-bridge.generated.ts';
 import { getMimeType, validateFileType } from './file-extensions.ts';
 import { createWvfsCookieCompatScript } from './wvfs-cookie-compat.ts';
 import { createWvfsImageCorsCompatScript } from './wvfs-image-cors.ts';
-import { ZIP_MAX_PATH_DEPTH, ZIP_MAX_PATH_LENGTH, ZIP_MAX_TOTAL_SIZE, ZIP_TTL } from './zip-constants.ts';
+import {
+  ZIP_MAX_FILE_COUNT,
+  ZIP_MAX_PATH_DEPTH,
+  ZIP_MAX_PATH_LENGTH,
+  ZIP_MAX_TOTAL_SIZE,
+  ZIP_TTL,
+} from './zip-constants.ts';
 
 const WVFS_TTL = ZIP_TTL;
 const WVFS_R2_PREFIX = 'wvfs/';
@@ -131,8 +137,8 @@ function validateZipCentralDirectory(cdData: Uint8Array, cdEntries: number): voi
     const commentLen = readUint16(view, offset + 32);
 
     entryCount++;
-    if (entryCount > 255) {
-      throw new Error('Too many files (max 255)');
+    if (entryCount > ZIP_MAX_FILE_COUNT) {
+      throw new Error(`Too many files (max ${ZIP_MAX_FILE_COUNT})`);
     }
 
     const fileNameBytes = cdData.slice(offset + 46, offset + 46 + fileNameLen);
