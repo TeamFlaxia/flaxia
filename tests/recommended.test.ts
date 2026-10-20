@@ -44,12 +44,21 @@ function unitVector(index: number): number[] {
 }
 
 async function recommendedIds(cookie: string, limit = 10): Promise<string[]> {
-  const response = await fetch(`${BASE_URL}/api/posts/recommended?limit=${limit}`, {
-    headers: { Cookie: cookie },
-  });
-  assert.equal(response.status, 200);
-  const data = (await response.json()) as { posts: Array<{ id: string }> };
-  return data.posts.map((post) => post.id);
+  const ids: string[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < 10; page++) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    const response = await fetch(`${BASE_URL}/api/posts/recommended?${params}`, {
+      headers: { Cookie: cookie },
+    });
+    assert.equal(response.status, 200);
+    const data = (await response.json()) as { posts: Array<{ id: string }>; next_cursor: string | null };
+    ids.push(...data.posts.map((post) => post.id));
+    cursor = data.next_cursor;
+    if (!cursor) break;
+  }
+  return ids;
 }
 
 describe('GET /api/posts/recommended — freshness', () => {
@@ -80,7 +89,7 @@ describe('GET /api/posts/recommended — freshness', () => {
     assert.ok(ids.includes(newPostId), `expected the unembedded post in For You, got ${JSON.stringify(ids)}`);
   });
 
-  it('can recommend posts the reader already freshed', async () => {
+  it('can recommend lower-ranked posts the reader already freshed', async () => {
     const reader = await seedUserAndLogin('rec-repeat');
     const author = await seedUserAndLogin('rec-source');
 
