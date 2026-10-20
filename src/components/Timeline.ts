@@ -40,7 +40,7 @@ export class Timeline {
   constructor(props: TimelineProps) {
     this.props = props;
     this.state = {
-      mode: 'foryou',
+      mode: 'global',
       hashtag: '',
       posts: [],
       ads: [],
