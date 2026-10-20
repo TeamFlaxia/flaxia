@@ -285,7 +285,7 @@ posts.get('/posts', async (c) => {
         const embeddedIds = new Set((embeddedResult.success ? embeddedResult.results : []).map((r) => r.post_id));
         for (const p of textPosts) {
           if (!embeddedIds.has(p.id)) {
-            embedPost(c.env.DB, c.env, p.id, p.text).catch((e) => console.error('Background embed failed:', e));
+            runInBackground(c, () => embedPost(c.env.DB, c.env, p.id, p.text), 'Background embed failed');
           }
         }
       })(),
@@ -503,6 +503,64 @@ function diversifyPosts(
   return result;
 }
 
+// Embeddings are produced asynchronously (Crowd), so a candidate pool built
+// only from post_embeddings freezes whenever that pipeline lags — the feed then
+// serves the same old matches forever. Reserve roughly one slot in three for
+// the newest posts, independent of whether they have been embedded yet. Each
+// injected item is scored just below the vector result it follows, so the page
+// stays in descending-score order and cursor pagination keeps working.
+const RECENT_CANDIDATE_WINDOW_HOURS = 72;
+const RECENT_SLOT_INTERVAL = 3;
+
+function compareScoredPosts(
+  a: { post: Record<string, unknown>; score: number },
+  b: { post: Record<string, unknown>; score: number },
+): number {
+  const diff = b.score - a.score;
+  if (diff !== 0) return diff;
+  const ca = String(b.post.created_at || '').localeCompare(String(a.post.created_at || ''));
+  if (ca !== 0) return ca;
+  return String(b.post.id || '').localeCompare(String(a.post.id || ''));
+}
+
+function interleaveRecentPosts(
+  ranked: Array<{ post: Record<string, unknown>; score: number }>,
+  recent: Array<Record<string, unknown>>,
+): Array<{ post: Record<string, unknown>; score: number }> {
+  if (recent.length === 0) return ranked;
+
+  const seen = new Set(ranked.map((item) => String(item.post.id)));
+  const merged: Array<{ post: Record<string, unknown>; score: number }> = [];
+  let recentIndex = 0;
+
+  const takeRecent = (): Record<string, unknown> | null => {
+    while (recentIndex < recent.length) {
+      const post = recent[recentIndex++];
+      if (post && !seen.has(String(post.id))) return post;
+    }
+    return null;
+  };
+
+  for (let i = 0; i < ranked.length; i++) {
+    const item = ranked[i]!;
+    merged.push(item);
+    if ((i + 1) % RECENT_SLOT_INTERVAL !== 0) continue;
+    const post = takeRecent();
+    if (post) merged.push({ post, score: Math.max(0, item.score - 1e-6) });
+  }
+
+  // The vector pool may be smaller than a page; keep new posts discoverable
+  // instead of stopping at a handful of stale matches.
+  let lastScore = merged.length > 0 ? merged[merged.length - 1]!.score : 1;
+  for (let post = takeRecent(); post; post = takeRecent()) {
+    lastScore = Math.max(0, lastScore - 1e-6);
+    merged.push({ post, score: lastScore });
+  }
+
+  merged.sort(compareScoredPosts);
+  return merged;
+}
+
 const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
   COALESCE(p.reply_count, 0) as reply_count, 
   COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at`;
@@ -591,18 +649,59 @@ posts.get('/posts/recommended', async (c) => {
           .all();
         const candidatePosts = (candResult.results || []) as Array<Record<string, unknown>>;
 
-        if (candidatePosts.length > 0) {
-          // Filter out posts from blocked users
+        // New posts may not have an embedding yet (Crowd processes them
+        // asynchronously), but they must still be able to reach For You.
+        const recentCutoff = new Date(Date.now() - RECENT_CANDIDATE_WINDOW_HOURS * 3600_000).toISOString();
+        const recentFilter = currentUserId
+          ? 'AND p.user_id != ? AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
+          : '';
+        const recentParams: Array<unknown> = currentUserId
+          ? [recentCutoff, currentUserId, currentUserId, limit * 4]
+          : [recentCutoff, limit * 4];
+        const recentResult = await c.env.DB.prepare(
+          `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
+           WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
+             AND p.created_at >= ? ${recentFilter}
+           ORDER BY p.created_at DESC LIMIT ?`,
+        )
+          .bind(...recentParams)
+          .all();
+        const recentPosts = (recentResult.results || []) as Array<Record<string, unknown>>;
+
+        if (candidatePosts.length > 0 || recentPosts.length > 0) {
+          // Filter out posts from blocked users and the user's own posts.
           if (currentUserId) {
             const blockedIds = await c.env.DB.prepare('SELECT blocked_id FROM blocks WHERE blocker_id = ?')
               .bind(currentUserId)
               .all<{ blocked_id: string }>();
-            if (blockedIds.success && blockedIds.results.length > 0) {
-              const blockedSet = new Set(blockedIds.results.map((r) => r.blocked_id));
-              const filteredPosts = candidatePosts.filter((p) => !blockedSet.has(p.user_id as string));
-              if (filteredPosts.length < candidatePosts.length) {
-                candidatePosts.length = 0;
-                candidatePosts.push(...filteredPosts);
+            const blockedSet = blockedIds.success
+              ? new Set(blockedIds.results.map((r) => r.blocked_id))
+              : new Set<string>();
+            for (const list of [candidatePosts, recentPosts]) {
+              for (let i = list.length - 1; i >= 0; i--) {
+                const post = list[i]!;
+                if (blockedSet.has(post.user_id as string) || post.user_id === currentUserId) list.splice(i, 1);
+              }
+            }
+          }
+
+          // Posts the user already freshed are the interest sources themselves;
+          // recommending them again is what makes the feed look frozen.
+          if (currentUserId) {
+            const poolIds = [...new Set([...candidatePosts, ...recentPosts].map((p) => String(p.id)))];
+            if (poolIds.length > 0) {
+              const freshRows = await c.env.DB.prepare(
+                `SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${poolIds.map(() => '?').join(',')})`,
+              )
+                .bind(currentUserId, ...poolIds)
+                .all<{ post_id: string }>();
+              const freshSet = new Set((freshRows.results || []).map((r) => r.post_id));
+              if (freshSet.size > 0) {
+                for (const list of [candidatePosts, recentPosts]) {
+                  for (let i = list.length - 1; i >= 0; i--) {
+                    if (freshSet.has(String(list[i]!.id))) list.splice(i, 1);
+                  }
+                }
               }
             }
           }
@@ -670,17 +769,13 @@ posts.get('/posts/recommended', async (c) => {
             };
           });
 
-          hybrid.sort((a, b) => {
-            const diff = b.score - a.score;
-            if (diff !== 0) return diff;
-            const ca = String(b.post.created_at || '').localeCompare(String(a.post.created_at || ''));
-            if (ca !== 0) return ca;
-            return String(b.post.id || '').localeCompare(String(a.post.id || ''));
-          });
+          hybrid.sort(compareScoredPosts);
 
-          let filtered = hybrid;
+          const merged = interleaveRecentPosts(hybrid, recentPosts);
+
+          let filtered = merged;
           if (numericCursor !== null && cursorCreatedAt) {
-            filtered = hybrid.filter((h) => {
+            filtered = merged.filter((h) => {
               const s = h.score;
               const ca = String(h.post.created_at || '');
               const id = String(h.post.id || '');
@@ -1830,7 +1925,7 @@ posts.post('/posts/commit', requireAuth, async (c) => {
     await enrichPostsWithAttachments([fullPost], c.env.DB);
     await enrichPostsWithReactions([fullPost], c.env.DB, c.get('user')?.id);
 
-    embedPost(c.env.DB, c.env, fullPost.id, fullPost.text).catch((e) => console.error('Background embed failed:', e));
+    runInBackground(c, () => embedPost(c.env.DB, c.env, fullPost.id, fullPost.text), 'Background embed failed');
 
     // Screen every image the post carries, not just the first: reconcile the
     // scan rows with the current key list, then submit what the throttle allows.
@@ -2572,8 +2667,10 @@ posts.get('/posts/:id/replies', async (c) => {
       const existingIds = new Set((existingRows.results || []).map((r) => r.post_id));
       for (const p of toEmbed) {
         if (!existingIds.has(p.id as string)) {
-          embedPost(c.env.DB, c.env, p.id as string, p.text as string).catch((e) =>
-            console.error('Background embed failed:', e),
+          runInBackground(
+            c,
+            () => embedPost(c.env.DB, c.env, p.id as string, p.text as string),
+            'Background embed failed',
           );
         }
       }
@@ -2684,8 +2781,10 @@ posts.get('/posts/:id/thread', async (c) => {
       const existingIds2 = new Set((existingRows2.results || []).map((r) => r.post_id));
       for (const p of toEmbed2) {
         if (!existingIds2.has(p.id as string)) {
-          embedPost(c.env.DB, c.env, p.id as string, p.text as string).catch((e) =>
-            console.error('Background embed failed:', e),
+          runInBackground(
+            c,
+            () => embedPost(c.env.DB, c.env, p.id as string, p.text as string),
+            'Background embed failed',
           );
         }
       }

@@ -101,10 +101,20 @@ export async function scanUploadSync(db: D1Database, input: SyncScanInput): Prom
  * Run work after the response is sent (ClamAV submission). Best-effort: the
  * upload has already succeeded when this is called.
  */
-export function runInBackground(c: unknown, task: () => Promise<void>): void {
-  const execCtx = (c as { executionCtx?: { waitUntil(promise: Promise<unknown>): void } }).executionCtx;
-  const promise = task().catch((e) => console.error('background file scan failed:', e));
-  if (execCtx?.waitUntil) {
-    execCtx.waitUntil(promise);
+export function runInBackground(
+  c: unknown,
+  task: () => Promise<void>,
+  failureLabel = 'background file scan failed',
+): void {
+  let execCtx: { waitUntil(promise: Promise<unknown>): void } | undefined;
+  try {
+    execCtx = (c as { executionCtx?: { waitUntil(promise: Promise<unknown>): void } }).executionCtx;
+  } catch {
+    // Hono throws when the app is invoked without an ExecutionContext (unit
+    // tests calling app.request directly). There is no post-response lifetime
+    // to attach to, so skip the work rather than leaving it unmanaged.
+    return;
   }
+  if (!execCtx?.waitUntil) return;
+  execCtx.waitUntil(task().catch((e) => console.error(`${failureLabel}:`, e)));
 }
