@@ -507,7 +507,7 @@ function diversifyPosts(
 // user has not built an interest profile yet.
 const RECENT_CANDIDATE_WINDOW_HOURS = 72;
 const TRENDING_CANDIDATE_WINDOW_DAYS = 14;
-const SEEN_POST_WINDOW_DAYS = 14;
+const FRESH_RECOMMENDATION_COOLDOWN_DAYS = 14;
 
 function compareScoredPosts(
   a: { post: Record<string, unknown>; score: number },
@@ -538,12 +538,21 @@ posts.get('/posts/recommended', async (c) => {
   try {
     const limit = clampLimit(c.req.query('limit'), 20, 50);
     const cursor = c.req.query('cursor');
-    const [cursorScore, cursorCreatedAt, cursorId] = cursor ? cursor.split(',') : [];
+    const cursorParts = cursor ? cursor.split(',') : [];
+    const isArchiveCursor = cursorParts[0] === 'archive';
+    const [cursorScore, cursorCreatedAt, cursorId] = isArchiveCursor ? [] : cursorParts;
     const numericCursor = cursorScore ? Number.parseFloat(cursorScore) : null;
+    const cursorAsOf = Number(cursorParts[3]);
+    const asOfMs = Number.isFinite(cursorAsOf) && cursorAsOf > 0 ? cursorAsOf : Date.now();
+    const asOfUnixSeconds = Math.floor(asOfMs / 1000);
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
 
     const db = c.env.DB;
     const currentUserId = c.get('user')?.id || null;
+    if (isArchiveCursor) {
+      return c.json(await loadRecommendedArchivePage(db, currentUserId, limit, cursorCreatedAt, cursorId, asOfMs));
+    }
+
     let interestVector: number[] | null = null;
     if (currentUserId) {
       interestVector = (await loadOrComputeInterestVector(db, currentUserId))?.vector ?? null;
@@ -593,9 +602,10 @@ posts.get('/posts/recommended', async (c) => {
       ? 'AND p.user_id != ? AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
       : '';
     const visibilityParams: string[] = currentUserId ? [currentUserId, currentUserId] : [];
-    const recentCutoff = new Date(Date.now() - RECENT_CANDIDATE_WINDOW_HOURS * 3600_000).toISOString();
-    const trendingCutoff = new Date(Date.now() - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
-    const engagementFormula = `MAX(COALESCE(p.engagement_hotness, 0), p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + COALESCE(p.bookmark_count, 0) * 2.0 + 1.0) / EXP(1.2 * LN(MAX(0.0, (unixepoch('now') - unixepoch(p.created_at)) / 3600.0) + 2.0))`;
+    const recentCutoff = new Date(asOfMs - RECENT_CANDIDATE_WINDOW_HOURS * 3600_000).toISOString();
+    const trendingCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
+    const freshCooldownCutoff = new Date(asOfMs - FRESH_RECOMMENDATION_COOLDOWN_DAYS * 86400_000).toISOString();
+    const engagementFormula = `MAX(COALESCE(p.engagement_hotness, 0), p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + COALESCE(p.bookmark_count, 0) * 2.0 + 1.0) / EXP(1.2 * LN(MAX(0.0, (? - unixepoch(p.created_at)) / 3600.0) + 2.0))`;
 
     const [recentResult, trendingResult, followingResult] = await Promise.all([
       db
@@ -614,7 +624,7 @@ posts.get('/posts/recommended', async (c) => {
              ${visibilityFilter} AND p.created_at >= ?
            ORDER BY eng_score DESC, p.created_at DESC LIMIT ?`,
         )
-        .bind(...visibilityParams, trendingCutoff, limit * 4)
+        .bind(asOfUnixSeconds, ...visibilityParams, trendingCutoff, limit * 4)
         .all<Record<string, unknown>>(),
       currentUserId
         ? db
@@ -643,7 +653,9 @@ posts.get('/posts/recommended', async (c) => {
         ...recentPosts.map((post) => String(post.id)),
       ]),
     ];
-    if (candidateIds.length === 0) return c.json({ posts: [], next_cursor: null });
+    if (candidateIds.length === 0) {
+      return c.json(await loadRecommendedArchivePage(db, currentUserId, limit, undefined, undefined, asOfMs));
+    }
 
     // Candidate sources can contribute hundreds of IDs. Bind the set as JSON
     // so D1's 100-parameter ceiling does not turn a populated feed into a 500.
@@ -651,10 +663,11 @@ posts.get('/posts/recommended', async (c) => {
     const candidateQuery = `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score
       FROM posts p LEFT JOIN users u ON p.user_id = u.id
       WHERE p.id IN (SELECT value FROM json_each(?))
-        AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${visibilityFilter}`;
+        AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${visibilityFilter}
+        AND p.created_at >= ?`;
     const candidateResult = await db
       .prepare(candidateQuery)
-      .bind(serializedCandidateIds, ...visibilityParams)
+      .bind(asOfUnixSeconds, serializedCandidateIds, ...visibilityParams, trendingCutoff)
       .all<Record<string, unknown>>();
     const candidatePosts = candidateResult.results || [];
     const validCandidateIds = new Set(candidatePosts.map((post) => String(post.id)));
@@ -665,31 +678,21 @@ posts.get('/posts/recommended', async (c) => {
     const recentRanks = rankCandidateIds(recentPosts.map((post) => String(post.id)));
 
     const freshPostIds = new Set<string>();
-    const recentlySeenPostIds = new Set<string>();
     if (currentUserId && candidateIds.length > 0) {
-      const seenCutoff = new Date(Date.now() - SEEN_POST_WINDOW_DAYS * 86400_000).toISOString();
-      const [freshRows, seenRows] = await Promise.all([
-        db
-          .prepare('SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (SELECT value FROM json_each(?))')
-          .bind(currentUserId, serializedCandidateIds)
-          .all<{ post_id: string }>(),
-        db
-          .prepare(
-            `SELECT post_id FROM user_post_impressions
-             WHERE user_id = ? AND last_seen_at >= ? AND post_id IN (SELECT value FROM json_each(?))`,
-          )
-          .bind(currentUserId, seenCutoff, serializedCandidateIds)
-          .all<{ post_id: string }>(),
-      ]);
+      const freshRows = await db
+        .prepare(
+          'SELECT post_id FROM freshs WHERE user_id = ? AND created_at >= ? AND post_id IN (SELECT value FROM json_each(?))',
+        )
+        .bind(currentUserId, freshCooldownCutoff, serializedCandidateIds)
+        .all<{ post_id: string }>();
       for (const row of freshRows.results || []) freshPostIds.add(row.post_id);
-      for (const row of seenRows.results || []) recentlySeenPostIds.add(row.post_id);
     }
 
     const engagementValues = candidatePosts.map((post) => Math.max(0, Number(post.eng_score) || 0));
     const maxEngagement = Math.max(...engagementValues, 1);
     const maxLogEngagement = Math.log1p(maxEngagement);
     const scoredPosts = candidatePosts
-      .filter((post) => !freshPostIds.has(String(post.id)) && !recentlySeenPostIds.has(String(post.id)))
+      .filter((post) => !freshPostIds.has(String(post.id)))
       .map((post) => {
         const id = String(post.id);
         const sourceScore =
@@ -699,7 +702,7 @@ posts.get('/posts/recommended', async (c) => {
           0.12 * candidateRankScore(id, recentRanks);
         const engagement = Math.max(0, Number(post.eng_score) || 0);
         const popularity = maxLogEngagement > 0 ? Math.log1p(engagement) / maxLogEngagement : 0;
-        const ageHours = Math.max(0, (Date.now() - new Date(String(post.created_at)).getTime()) / 3600000);
+        const ageHours = Math.max(0, (asOfMs - new Date(String(post.created_at)).getTime()) / 3600000);
         const freshness = Math.exp(-ageHours / 168);
         const contentQuality = computeQualityScore(
           String(post.text || ''),
@@ -726,6 +729,10 @@ posts.get('/posts/recommended', async (c) => {
       });
     }
 
+    if (filteredPosts.length === 0) {
+      return c.json(await loadRecommendedArchivePage(db, currentUserId, limit, undefined, undefined, asOfMs));
+    }
+
     filteredPosts.sort(compareScoredPosts);
     const pagePosts = diversifyPosts(filteredPosts, limit, 2).map(({ post, score }) => {
       post.score = score;
@@ -733,7 +740,7 @@ posts.get('/posts/recommended', async (c) => {
     });
     const enrichedPosts = await enrichRecommendedPosts(pagePosts, db, currentUserId);
     const lastPost = enrichedPosts.at(-1) as Record<string, unknown> | undefined;
-    const nextCursor = lastPost ? `${lastPost.score},${lastPost.created_at},${lastPost.id}` : null;
+    const nextCursor = lastPost ? `${lastPost.score},${lastPost.created_at},${lastPost.id},${asOfMs}` : null;
 
     return c.json({ posts: enrichedPosts, next_cursor: nextCursor });
   } catch (error: unknown) {
@@ -741,6 +748,47 @@ posts.get('/posts/recommended', async (c) => {
     return c.json({ error: 'Internal server error' }, 500);
   }
 });
+
+async function loadRecommendedArchivePage(
+  db: D1Database,
+  currentUserId: string | null,
+  limit: number,
+  cursorCreatedAt?: string,
+  cursorId?: string,
+  asOfMs = Date.now(),
+): Promise<{ posts: Record<string, unknown>[]; next_cursor: string | null }> {
+  const archiveCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
+  const freshCooldownCutoff = new Date(asOfMs - FRESH_RECOMMENDATION_COOLDOWN_DAYS * 86400_000).toISOString();
+  const hasCursor = Boolean(cursorCreatedAt && cursorId);
+  const cursorFilter = hasCursor ? '(p.created_at < ? OR (p.created_at = ? AND p.id < ?))' : 'p.created_at < ?';
+  const params: Array<string | number> = hasCursor ? [cursorCreatedAt!, cursorCreatedAt!, cursorId!] : [archiveCutoff];
+  const visibilityFilter = currentUserId
+    ? 'AND p.user_id != ? AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
+    : '';
+  if (currentUserId) params.push(currentUserId, currentUserId);
+  const freshFilter = currentUserId
+    ? 'AND NOT EXISTS (SELECT 1 FROM freshs f WHERE f.user_id = ? AND f.post_id = p.id AND f.created_at >= ?)'
+    : '';
+  if (currentUserId) params.push(currentUserId, freshCooldownCutoff);
+  params.push(limit + 1);
+
+  const result = await db
+    .prepare(
+      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
+       WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
+         AND ${cursorFilter} ${visibilityFilter} ${freshFilter}
+       ORDER BY p.created_at DESC, p.id DESC LIMIT ?`,
+    )
+    .bind(...params)
+    .all<Record<string, unknown>>();
+  const rows = result.results || [];
+  const hasMore = rows.length > limit;
+  const posts = await enrichRecommendedPosts(rows.slice(0, limit), db, currentUserId);
+  const lastPost = posts.at(-1);
+  const nextCursor = hasMore && lastPost ? `archive,${lastPost.created_at},${lastPost.id},${asOfMs}` : null;
+
+  return { posts, next_cursor: nextCursor };
+}
 
 async function enrichFeedPosts(posts: PostRow[], db: D1Database, currentUserId?: string | null): Promise<void> {
   if (posts.length === 0) return;
@@ -1850,7 +1898,9 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
     return c.json({ freshed: false, fresh_count: result?.fresh_count ?? 0 });
   } else {
     // Add fresh
-    await c.env.DB.prepare('INSERT INTO freshs (post_id, user_id) VALUES (?, ?)').bind(postId, userId).run();
+    await c.env.DB.prepare('INSERT INTO freshs (post_id, user_id, created_at) VALUES (?, ?, ?)')
+      .bind(postId, userId, new Date().toISOString())
+      .run();
 
     const result = await c.env.DB.prepare(
       'UPDATE posts SET fresh_count = fresh_count + 1, engagement_hotness = engagement_hotness + 2.0 WHERE id = ? RETURNING fresh_count',
@@ -2222,7 +2272,11 @@ posts.post('/posts/fresh/batch', requireAuth, async (c) => {
       if (toFresh.length > 0) {
         // Batch insert freshs
         const stmts = toFresh.map((id) =>
-          c.env.DB.prepare('INSERT INTO freshs (post_id, user_id) VALUES (?, ?)').bind(id, userId),
+          c.env.DB.prepare('INSERT INTO freshs (post_id, user_id, created_at) VALUES (?, ?, ?)').bind(
+            id,
+            userId,
+            new Date().toISOString(),
+          ),
         );
         await c.env.DB.batch(stmts);
 
