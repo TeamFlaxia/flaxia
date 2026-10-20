@@ -60,27 +60,64 @@ async function loadOrComputeInterestVector(
   }
 
   const dim = 1024;
-  const freshRows = await db
-    .prepare(
-      `SELECT f.post_id FROM freshs f JOIN posts p ON p.id = f.post_id
-       WHERE f.user_id = ? ORDER BY p.created_at DESC LIMIT 50`,
-    )
-    .bind(userId)
-    .all<{ post_id: string }>();
-  const freshIds = (freshRows.results || []).map((r) => r.post_id);
-
-  const gamePlayRows = await db
-    .prepare(
-      `SELECT post_id, dwell_ms FROM user_game_plays
-       WHERE user_id = ? AND dwell_ms > 5000
-       ORDER BY created_at DESC LIMIT 50`,
-    )
-    .bind(userId)
-    .all<{ post_id: string; dwell_ms: number }>();
+  const [freshRows, bookmarkRows, replyRows, shareRows, gamePlayRows] = await Promise.all([
+    db
+      .prepare(
+        `SELECT f.post_id FROM freshs f JOIN posts p ON p.id = f.post_id
+         WHERE f.user_id = ? ORDER BY p.created_at DESC LIMIT 40`,
+      )
+      .bind(userId)
+      .all<{ post_id: string }>(),
+    db
+      .prepare(
+        `SELECT b.post_id FROM bookmarks b JOIN posts p ON p.id = b.post_id
+         WHERE b.user_id = ? ORDER BY b.created_at DESC LIMIT 30`,
+      )
+      .bind(userId)
+      .all<{ post_id: string }>(),
+    db
+      .prepare(
+        `SELECT parent_id AS post_id FROM posts
+         WHERE user_id = ? AND parent_id IS NOT NULL
+         ORDER BY created_at DESC LIMIT 30`,
+      )
+      .bind(userId)
+      .all<{ post_id: string }>(),
+    db
+      .prepare(
+        `SELECT post_id FROM shares
+         WHERE user_id = ? ORDER BY created_at DESC LIMIT 30`,
+      )
+      .bind(userId)
+      .all<{ post_id: string }>(),
+    db
+      .prepare(
+        `SELECT post_id, dwell_ms FROM user_game_plays
+         WHERE user_id = ? AND dwell_ms > 5000
+         ORDER BY created_at DESC LIMIT 50`,
+      )
+      .bind(userId)
+      .all<{ post_id: string; dwell_ms: number }>(),
+  ]);
   const gamePlays = gamePlayRows.results || [];
 
-  const allSourceIds = [...freshIds, ...gamePlays.map((r) => r.post_id)];
-  const dwellMap = new Map(gamePlays.map((r) => [r.post_id, r.dwell_ms]));
+  // Strong actions shape the profile; repeated independent actions on one
+  // post increase its weight without letting one item dominate the vector.
+  const sourceWeights = new Map<string, number>();
+  const addSources = (rows: Array<{ post_id: string }>, weight: number) => {
+    for (const row of rows) {
+      sourceWeights.set(row.post_id, Math.min(2.5, (sourceWeights.get(row.post_id) || 0) + weight));
+    }
+  };
+  addSources(freshRows.results || [], 1.0);
+  addSources(bookmarkRows.results || [], 1.2);
+  addSources(replyRows.results || [], 1.4);
+  addSources(shareRows.results || [], 1.3);
+  for (const play of gamePlays) {
+    const dwellWeight = Math.min(play.dwell_ms / 30000, 1.0);
+    sourceWeights.set(play.post_id, Math.min(2.5, (sourceWeights.get(play.post_id) || 0) + dwellWeight));
+  }
+  const allSourceIds = [...sourceWeights.keys()].slice(0, 120);
 
   let vector: number[] | null = null;
   let sourceCount = 0;
@@ -97,9 +134,7 @@ async function loadOrComputeInterestVector(
       try {
         const v = JSON.parse(row.embedding);
         if (!Array.isArray(v)) continue;
-        const dwellW = dwellMap.get(row.post_id);
-        // Fresh = weight 1.0, game play with dwell = weight min(dwell_ms / 30000, 1.0)
-        const w = dwellW ? Math.min(dwellW / 30000, 1.0) : 1.0;
+        const w = sourceWeights.get(row.post_id) || 1.0;
         weightedEmbeds.push({ vec: v, weight: w });
       } catch {
         /* skip malformed */
