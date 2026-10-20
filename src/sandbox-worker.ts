@@ -298,9 +298,10 @@ async function serveGameStorageRuntime(c: Context<{ Bindings: Bindings }>): Prom
 
 app.get('/api/game-storage-runtime.js', (c) => serveGameStorageRuntime(c));
 
-// Trusted compatibility broker for game localStorage. This endpoint is kept
-// outside the worker's CSP sandbox so it can read the sandbox origin's legacy
-// storage; untrusted game documents continue to receive SANDBOX_CSP.
+// Trusted compatibility broker for legacy game localStorage. New saves live
+// on the Flaxia origin; this endpoint remains outside the worker's CSP sandbox
+// so existing sandbox-origin saves can be migrated. Untrusted game documents
+// continue to receive SANDBOX_CSP.
 app.get('/api/game-storage', (c) => {
   const html = `<!doctype html><meta charset="utf-8"><script type="module">
     import {
