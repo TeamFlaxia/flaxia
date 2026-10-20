@@ -1000,41 +1000,43 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           leftNavInstances.add(leftNav);
 
-          // Create Notifications Page
+          // Create Notifications Page. Always rebuild from the freshly fetched
+          // data (only the scroll position is restored) so notifications that
+          // arrived while a thread/Arcade was open are not lost.
+          let notificationsScrollY = 0;
           if (cachedContentComponent?.view === 'notifications') {
-            notificationsPage = cachedContentComponent.component as NotificationsPage;
-            const scrollY = cachedContentComponent.scrollY;
+            notificationsScrollY = cachedContentComponent.scrollY;
+            (cachedContentComponent.component as NotificationsPage).destroy();
             cachedContentComponent = null;
-
-            requestAnimationFrame(() => {
-              window.scrollTo(0, scrollY);
-            });
-          } else {
-            const { createNotificationsPage } = await import('./components/NotificationsPage.js');
-            notificationsPage = createNotificationsPage({
-              notifications: notificationsData.notifications,
-              unreadCount: notificationsData.unread_count,
-              onMarkAllRead: async () => {
-                await fetch('/api/notifications/read-all', {
-                  method: 'POST',
-                  credentials: 'include',
-                });
-                unreadNotificationCount = 0;
-                // キャッシュをクリアして次回のfetchで最新データを取得
-                invalidateNotificationsCache();
-                await clearNativeBadge();
-                leftNavInstances.forEach((ln) => {
-                  if (typeof ln.setUnreadCount === 'function') {
-                    ln.setUnreadCount(0);
-                  }
-                });
-              },
-              onNavigateToPost: (postId) => {
-                pushSpaHistory(`/thread/${postId}`, { postId });
-                navigateTo('thread', postId);
-              },
-            });
           }
+          const { createNotificationsPage } = await import('./components/NotificationsPage.js');
+          notificationsPage = createNotificationsPage({
+            notifications: notificationsData.notifications,
+            unreadCount: notificationsData.unread_count,
+            onMarkAllRead: async () => {
+              await fetch('/api/notifications/read-all', {
+                method: 'POST',
+                credentials: 'include',
+              });
+              unreadNotificationCount = 0;
+              // キャッシュをクリアして次回のfetchで最新データを取得
+              invalidateNotificationsCache();
+              await clearNativeBadge();
+              leftNavInstances.forEach((ln) => {
+                if (typeof ln.setUnreadCount === 'function') {
+                  ln.setUnreadCount(0);
+                }
+              });
+            },
+            onNavigateToPost: (postId) => {
+              pushSpaHistory(`/thread/${postId}`, { postId });
+              navigateTo('thread', postId);
+            },
+          });
+
+          requestAnimationFrame(() => {
+            window.scrollTo(0, notificationsScrollY);
+          });
 
           // Create Right Panel
           const rightPanel = await lazyCreateRightPanel({

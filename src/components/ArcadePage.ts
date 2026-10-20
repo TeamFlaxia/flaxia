@@ -6,6 +6,7 @@ import { impressionTracker } from '../lib/impression-tracker.js';
 import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { getReplyStyle } from '../lib/settings.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { buildTree } from '../lib/thread.js';
 import { showToast } from '../lib/toast.js';
 import { createWvfsGameUrl } from '../lib/wvfs-game-url.js';
@@ -1442,7 +1443,7 @@ export class ArcadePage {
   }
 
   private navigateToGame(postId: string): void {
-    window.history.pushState({}, '', `/arcade/${postId}`);
+    pushSpaHistory(`/arcade/${postId}`, { postId });
     window.dispatchEvent(new PopStateEvent('popstate'));
   }
 

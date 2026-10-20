@@ -525,6 +525,13 @@ export class PostCard {
   // Switch the executed game to a specific archived version (or back to the
   // latest by passing null) and (re)load the sandbox iframe.
   private playVersion(versionId: string | null): void {
+    // "Play latest" has no version to pin, so it follows the normal ZIP →
+    // Arcade path instead of executing inline. Specific versions keep running
+    // inline because an Arcade URL has no version parameter.
+    if (versionId === null && isZipGame(this.props.post.payload_key)) {
+      this.openInArcade();
+      return;
+    }
     this.currentVersionId = versionId;
     this.mode = PostCardMode.EXECUTING;
     if (this.postStageElement) {

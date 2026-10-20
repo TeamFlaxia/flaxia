@@ -6,6 +6,7 @@
 import type { BottomNav, BottomNavProps } from '../components/BottomNav.js';
 import { lazyCreateBottomNav } from './lazy-nav.js';
 import type { RouteView } from './router.js';
+import { pushSpaHistory } from './spa-history.ts';
 
 export interface BottomNavDeps {
   navigate: (view: RouteView, postId?: string, username?: string) => void;
@@ -23,7 +24,7 @@ function handleBottomNavNavigate(deps: BottomNavDeps, item: string): void {
     window.history.pushState({}, '', '/explore');
     deps.navigate('explore');
   } else if (item === 'arcade') {
-    window.history.pushState({}, '', '/arcade');
+    pushSpaHistory('/arcade');
     deps.navigate('arcade');
   } else if (item === 'notifications') {
     window.history.pushState({}, '', '/notifications');
