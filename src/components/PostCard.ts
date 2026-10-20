@@ -7,6 +7,7 @@ import { createModalOverlay } from '../lib/modal-overlay.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { useSandboxBridge } from '../lib/sandbox-bridge.js';
 import { getShowNsfw } from '../lib/settings.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { showToast } from '../lib/toast.js';
 import {
   type PostAttachment,
@@ -21,7 +22,7 @@ import { createPollElement } from './PollWidget.js';
 import { createPostActions } from './PostActions.js';
 import { createPostHeader } from './PostHeader.js';
 import { createMenuButton, createPostMenuDropdown, setupMenuCloseHandler } from './PostMenu.js';
-import { createPostStage, updatePostStage } from './PostStage.js';
+import { createPostStage, isZipGame, updatePostStage } from './PostStage.js';
 import { createPostText } from './PostText.js';
 import { createQuotedPostCard } from './QuotedPostCard.js';
 import { createReplyComposer, ReplyComposer } from './ReplyComposer.js';
@@ -477,6 +478,13 @@ export class PostCard {
   }
 
   private async handleModeChange(newMode: PostCardMode): Promise<void> {
+    // Runnable ZIP/HTML5 posts open in the full-screen Arcade player instead
+    // of executing inline in the timeline.
+    if (newMode === PostCardMode.EXECUTING && isZipGame(this.props.post.payload_key)) {
+      this.openInArcade();
+      return;
+    }
+
     this.mode = newMode;
     // The sandbox iframe only appears once the post starts executing, so begin
     // (re)binding the bridge when we switch into EXECUTING mode.
@@ -785,12 +793,17 @@ export class PostCard {
     );
   }
 
+  private openInArcade(): void {
+    const postId = this.props.post.id;
+    pushSpaHistory(`/arcade/${postId}`, { postId });
+    window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId } }));
+  }
+
   private navigateToThread(postId: string): void {
     if (this.props.disableNavigation) return;
     const threadUrl = `/thread/${postId}`;
-    window.history.pushState({ postId }, '', threadUrl);
+    pushSpaHistory(threadUrl, { postId });
     window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'thread', postId } }));
-    this.element.dispatchEvent(new CustomEvent('navigateToThread', { detail: { postId } }));
   }
 
   public handleReplyTogglePublic(): void {
@@ -842,21 +855,7 @@ export class PostCard {
       return;
     }
 
-    // Navigate to thread page using SPA navigation
-    window.history.pushState({ postId: this.props.post.id }, '', threadUrl);
-
-    // Use SPA navigation event
-    window.dispatchEvent(
-      new CustomEvent('spaNavigate', {
-        detail: { view: 'thread', postId: this.props.post.id },
-      }),
-    );
-
-    // Also emit custom event for navigation (backup)
-    const customEvent = new CustomEvent('navigateToThread', {
-      detail: { postId: this.props.post.id },
-    });
-    this.element.dispatchEvent(customEvent);
+    this.navigateToThread(this.props.post.id);
   }
 
   private updateActions(): void {

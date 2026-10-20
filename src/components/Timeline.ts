@@ -6,6 +6,7 @@ import { injectAds } from '../lib/inject-ads.js';
 import { createLoadingSpinner, createSkeletonCards } from '../lib/loading-ui.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { Ad, isAd, Post, PostCardMode, TimelineItem, TimelineProps, TimelineState } from '../types/post.js';
 import { createAdCard } from './AdCard.js';
 import { createPostCard } from './PostCard.js';
@@ -185,7 +186,7 @@ export class Timeline {
     arcadeBtn.className = 'timeline-promo-arcade-btn';
     arcadeBtn.textContent = t('timeline.promo_arcade_btn');
     arcadeBtn.addEventListener('click', () => {
-      window.history.pushState({}, '', '/arcade');
+      pushSpaHistory('/arcade');
       window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade' } }));
     });
 

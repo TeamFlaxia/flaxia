@@ -3,6 +3,7 @@ import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { updateMetaTags } from '../lib/seo-meta.js';
 import { getReplyStyle } from '../lib/settings.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { buildTree } from '../lib/thread.js';
 import { Post } from '../types/post.js';
 import { createLeftNav } from './LeftNav.js';
@@ -109,30 +110,30 @@ export class ThreadPage {
       currentUser: this.props.currentUser || undefined,
       onNavigate: async (item) => {
         if (item === 'home') {
-          window.history.pushState({}, '', '/home');
+          pushSpaHistory('/home');
           window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'timeline' } }));
         } else if (item === 'explore') {
-          window.history.pushState({}, '', '/explore');
+          pushSpaHistory('/explore');
           window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore' } }));
         } else if (item === 'arcade') {
-          window.history.pushState({}, '', '/arcade');
+          pushSpaHistory('/arcade');
           window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade' } }));
         } else if (item === 'notifications') {
           if (this.props.currentUser) {
-            window.history.pushState({}, '', '/notifications');
+            pushSpaHistory('/notifications');
             window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'notifications' } }));
           }
         } else if (item === 'bookmarks') {
           if (this.props.currentUser) {
-            window.history.pushState({}, '', '/bookmarks');
+            pushSpaHistory('/bookmarks');
             window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'bookmarks' } }));
           }
         } else if (item === 'settings') {
-          window.history.pushState({}, '', '/settings');
+          pushSpaHistory('/settings');
           window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'settings' } }));
         } else if (item === 'profile') {
           if (this.props.currentUser) {
-            window.history.pushState({}, '', `/profile/${this.props.currentUser.username}`);
+            pushSpaHistory(`/profile/${this.props.currentUser.username}`);
             window.dispatchEvent(
               new CustomEvent('spaNavigate', {
                 detail: { view: 'profile', username: this.props.currentUser.username },
@@ -142,11 +143,11 @@ export class ThreadPage {
         }
       },
       onSignIn: () => {
-        window.history.pushState({}, '', '/login');
+        pushSpaHistory('/login');
         window.dispatchEvent(new PopStateEvent('popstate'));
       },
       onSignUp: () => {
-        window.history.pushState({}, '', '/register');
+        pushSpaHistory('/register');
         window.dispatchEvent(new PopStateEvent('popstate'));
       },
     });
@@ -611,11 +612,11 @@ export class ThreadPage {
       showSignInPrompt(
         'reply',
         () => {
-          window.history.pushState({}, '', '/login');
+          pushSpaHistory('/login');
           window.dispatchEvent(new PopStateEvent('popstate'));
         },
         () => {
-          window.history.pushState({}, '', '/register');
+          pushSpaHistory('/register');
           window.dispatchEvent(new PopStateEvent('popstate'));
         },
       );

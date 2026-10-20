@@ -6,6 +6,7 @@ import { nativeApiHref } from '../lib/native-api.js';
 import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 import { isZipGame } from './PostStage.js';
@@ -242,7 +243,7 @@ export class BookmarksPage {
         card.style.boxShadow = 'none';
       });
       card.addEventListener('click', () => {
-        window.history.pushState({ postId: post.id }, '', `/arcade/${post.id}`);
+        pushSpaHistory(`/arcade/${post.id}`, { postId: post.id });
         window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: post.id } }));
       });
 
