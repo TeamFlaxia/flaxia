@@ -133,7 +133,7 @@ describe('recommended feed D1 bind-limit regressions', () => {
     [true, 20],
     [true, 50],
   ] as const) {
-    it(`paginates recent and older recommendations without suppressing seen posts (authenticated=${authenticated})`, async () => {
+    it(`paginates recent and older recommendations without suppressing seen or freshed posts (authenticated=${authenticated})`, async () => {
       const { sqlite, request } = fixture(authenticated);
       try {
         const insert = sqlite.prepare(
@@ -159,7 +159,7 @@ describe('recommended feed D1 bind-limit regressions', () => {
         const firstResponse = await request(`/posts/recommended?limit=${limit}`, undefined, 'GET');
         assert.equal(firstResponse.status, 200, await firstResponse.clone().text());
         const body = (await firstResponse.json()) as {
-          posts: Array<{ id: string; user_id: string }>;
+          posts: Array<{ id: string; user_id: string; score?: number }>;
           next_cursor: string | null;
         };
         assert.equal(body.posts.length, limit);
@@ -177,7 +177,7 @@ describe('recommended feed D1 bind-limit regressions', () => {
           );
           assert.equal(response.status, 200, await response.clone().text());
           const nextPage = (await response.json()) as {
-            posts: Array<{ id: string; user_id: string }>;
+            posts: Array<{ id: string; user_id: string; score?: number }>;
             next_cursor: string | null;
           };
           posts.push(...nextPage.posts);
@@ -190,10 +190,13 @@ describe('recommended feed D1 bind-limit regressions', () => {
           JSON.stringify(pagination),
         );
         if (authenticated) {
-          assert.ok(posts.every((post) => post.id !== 'recent-0'));
+          assert.ok(posts.some((post) => post.id === 'recent-0'));
           assert.ok(posts.some((post) => post.id === 'recent-3'));
           assert.ok(posts.some((post) => post.id === 'recent-1'));
           assert.ok(posts.every((post) => post.user_id !== 'author-2'));
+          const scores = new Map(posts.map((post) => [post.id, post.score]));
+          assert.ok((scores.get('recent-0') ?? 1) < (scores.get('recent-4') ?? 0));
+          assert.ok((scores.get('recent-1') ?? 1) < (scores.get('recent-4') ?? 0));
         }
       } finally {
         sqlite.close();

@@ -80,7 +80,7 @@ describe('GET /api/posts/recommended — freshness', () => {
     assert.ok(ids.includes(newPostId), `expected the unembedded post in For You, got ${JSON.stringify(ids)}`);
   });
 
-  it('does not recommend posts the reader already freshed', async () => {
+  it('can recommend posts the reader already freshed', async () => {
     const reader = await seedUserAndLogin('rec-repeat');
     const author = await seedUserAndLogin('rec-source');
 
@@ -97,6 +97,6 @@ describe('GET /api/posts/recommended — freshness', () => {
     assert.equal(freshed.status, 200);
 
     const ids = await recommendedIds(reader.cookie, 20);
-    assert.ok(!ids.includes(postIds[0]!), 'a freshed post must not be recommended again');
+    assert.ok(ids.includes(postIds[0]!), 'a freshed post can appear again in recommendations');
   });
 });

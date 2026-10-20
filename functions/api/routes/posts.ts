@@ -507,7 +507,6 @@ function diversifyPosts(
 // user has not built an interest profile yet.
 const RECENT_CANDIDATE_WINDOW_HOURS = 72;
 const TRENDING_CANDIDATE_WINDOW_DAYS = 14;
-const FRESH_RECOMMENDATION_COOLDOWN_DAYS = 14;
 
 function compareScoredPosts(
   a: { post: Record<string, unknown>; score: number },
@@ -527,6 +526,19 @@ function rankCandidateIds(ids: string[]): Map<string, number> {
 function candidateRankScore(id: string, ranks: Map<string, number>): number {
   const rank = ranks.get(id);
   return rank === undefined ? 0 : 1 / (1 + rank / 20);
+}
+
+function decayingRecommendationPenalty(
+  activityAt: string | null | undefined,
+  asOfMs: number,
+  maxPenalty: number,
+  halfLifeDays: number,
+): number {
+  if (!activityAt) return 0;
+  const activityMs = Date.parse(activityAt);
+  if (!Number.isFinite(activityMs)) return 0;
+  const ageMs = Math.max(0, asOfMs - activityMs);
+  return maxPenalty * 2 ** (-ageMs / (halfLifeDays * 86400_000));
 }
 
 const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
@@ -604,7 +616,6 @@ posts.get('/posts/recommended', async (c) => {
     const visibilityParams: string[] = currentUserId ? [currentUserId, currentUserId] : [];
     const recentCutoff = new Date(asOfMs - RECENT_CANDIDATE_WINDOW_HOURS * 3600_000).toISOString();
     const trendingCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
-    const freshCooldownCutoff = new Date(asOfMs - FRESH_RECOMMENDATION_COOLDOWN_DAYS * 86400_000).toISOString();
     const engagementFormula = `MAX(COALESCE(p.engagement_hotness, 0), p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + COALESCE(p.bookmark_count, 0) * 2.0 + 1.0) / EXP(1.2 * LN(MAX(0.0, (? - unixepoch(p.created_at)) / 3600.0) + 2.0))`;
 
     const [recentResult, trendingResult, followingResult] = await Promise.all([
@@ -677,43 +688,59 @@ posts.get('/posts/recommended', async (c) => {
     const trendingRanks = rankCandidateIds(trendingPosts.map((post) => String(post.id)));
     const recentRanks = rankCandidateIds(recentPosts.map((post) => String(post.id)));
 
-    const freshPostIds = new Set<string>();
-    if (currentUserId && candidateIds.length > 0) {
-      const freshRows = await db
-        .prepare(
-          'SELECT post_id FROM freshs WHERE user_id = ? AND created_at >= ? AND post_id IN (SELECT value FROM json_each(?))',
-        )
-        .bind(currentUserId, freshCooldownCutoff, serializedCandidateIds)
-        .all<{ post_id: string }>();
-      for (const row of freshRows.results || []) freshPostIds.add(row.post_id);
+    const freshAtByPost = new Map<string, string>();
+    const lastSeenAtByPost = new Map<string, string>();
+    if (currentUserId) {
+      const [freshRows, impressionRows] = await Promise.all([
+        db
+          .prepare(
+            'SELECT post_id, created_at FROM freshs WHERE user_id = ? AND post_id IN (SELECT value FROM json_each(?))',
+          )
+          .bind(currentUserId, serializedCandidateIds)
+          .all<{ post_id: string; created_at: string | null }>(),
+        db
+          .prepare(
+            'SELECT post_id, last_seen_at FROM user_post_impressions WHERE user_id = ? AND post_id IN (SELECT value FROM json_each(?))',
+          )
+          .bind(currentUserId, serializedCandidateIds)
+          .all<{ post_id: string; last_seen_at: string }>(),
+      ]);
+      for (const row of freshRows.results || []) {
+        if (row.created_at) freshAtByPost.set(row.post_id, row.created_at);
+      }
+      for (const row of impressionRows.results || []) lastSeenAtByPost.set(row.post_id, row.last_seen_at);
     }
 
     const engagementValues = candidatePosts.map((post) => Math.max(0, Number(post.eng_score) || 0));
     const maxEngagement = Math.max(...engagementValues, 1);
     const maxLogEngagement = Math.log1p(maxEngagement);
-    const scoredPosts = candidatePosts
-      .filter((post) => !freshPostIds.has(String(post.id)))
-      .map((post) => {
-        const id = String(post.id);
-        const sourceScore =
-          0.35 * candidateRankScore(id, vectorRanks) +
-          0.35 * candidateRankScore(id, followingRanks) +
-          0.18 * candidateRankScore(id, trendingRanks) +
-          0.12 * candidateRankScore(id, recentRanks);
-        const engagement = Math.max(0, Number(post.eng_score) || 0);
-        const popularity = maxLogEngagement > 0 ? Math.log1p(engagement) / maxLogEngagement : 0;
-        const ageHours = Math.max(0, (asOfMs - new Date(String(post.created_at)).getTime()) / 3600000);
-        const freshness = Math.exp(-ageHours / 168);
-        const contentQuality = computeQualityScore(
-          String(post.text || ''),
-          !!(post.payload_key || post.swf_key || post.gif_key || post.thumbnail_key),
-          0,
-        );
-        const qualityFactor = 0.9 + 0.1 * Math.min(1, Math.max(0, contentQuality));
-        const score = (0.65 * sourceScore + 0.18 * popularity + 0.17 * freshness) * qualityFactor;
-        delete post.eng_score;
-        return { post, score };
-      });
+    const scoredPosts = candidatePosts.map((post) => {
+      const id = String(post.id);
+      const sourceScore =
+        0.35 * candidateRankScore(id, vectorRanks) +
+        0.35 * candidateRankScore(id, followingRanks) +
+        0.18 * candidateRankScore(id, trendingRanks) +
+        0.12 * candidateRankScore(id, recentRanks);
+      const engagement = Math.max(0, Number(post.eng_score) || 0);
+      const popularity = maxLogEngagement > 0 ? Math.log1p(engagement) / maxLogEngagement : 0;
+      const ageHours = Math.max(0, (asOfMs - new Date(String(post.created_at)).getTime()) / 3600000);
+      const freshness = Math.exp(-ageHours / 168);
+      const contentQuality = computeQualityScore(
+        String(post.text || ''),
+        !!(post.payload_key || post.swf_key || post.gif_key || post.thumbnail_key),
+        0,
+      );
+      const qualityFactor = 0.9 + 0.1 * Math.min(1, Math.max(0, contentQuality));
+      const baseScore = (0.65 * sourceScore + 0.18 * popularity + 0.17 * freshness) * qualityFactor;
+      const historyPenalty = Math.min(
+        0.55,
+        decayingRecommendationPenalty(freshAtByPost.get(id), asOfMs, 0.25, 7) +
+          decayingRecommendationPenalty(lastSeenAtByPost.get(id), asOfMs, 0.3, 3),
+      );
+      const score = baseScore * (1 - historyPenalty);
+      delete post.eng_score;
+      return { post, score };
+    });
 
     let filteredPosts = scoredPosts;
     const validCursor = numericCursor !== null && Number.isFinite(numericCursor) && cursorCreatedAt && cursorId;
@@ -758,7 +785,6 @@ async function loadRecommendedArchivePage(
   asOfMs = Date.now(),
 ): Promise<{ posts: Record<string, unknown>[]; next_cursor: string | null }> {
   const archiveCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
-  const freshCooldownCutoff = new Date(asOfMs - FRESH_RECOMMENDATION_COOLDOWN_DAYS * 86400_000).toISOString();
   const hasCursor = Boolean(cursorCreatedAt && cursorId);
   const cursorFilter = hasCursor ? '(p.created_at < ? OR (p.created_at = ? AND p.id < ?))' : 'p.created_at < ?';
   const params: Array<string | number> = hasCursor ? [cursorCreatedAt!, cursorCreatedAt!, cursorId!] : [archiveCutoff];
@@ -766,17 +792,13 @@ async function loadRecommendedArchivePage(
     ? 'AND p.user_id != ? AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
     : '';
   if (currentUserId) params.push(currentUserId, currentUserId);
-  const freshFilter = currentUserId
-    ? 'AND NOT EXISTS (SELECT 1 FROM freshs f WHERE f.user_id = ? AND f.post_id = p.id AND f.created_at >= ?)'
-    : '';
-  if (currentUserId) params.push(currentUserId, freshCooldownCutoff);
   params.push(limit + 1);
 
   const result = await db
     .prepare(
       `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
        WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
-         AND ${cursorFilter} ${visibilityFilter} ${freshFilter}
+         AND ${cursorFilter} ${visibilityFilter}
        ORDER BY p.created_at DESC, p.id DESC LIMIT ?`,
     )
     .bind(...params)
