@@ -645,13 +645,16 @@ posts.get('/posts/recommended', async (c) => {
     ];
     if (candidateIds.length === 0) return c.json({ posts: [], next_cursor: null });
 
+    // Candidate sources can contribute hundreds of IDs. Bind the set as JSON
+    // so D1's 100-parameter ceiling does not turn a populated feed into a 500.
+    const serializedCandidateIds = JSON.stringify(candidateIds);
     const candidateQuery = `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score
       FROM posts p LEFT JOIN users u ON p.user_id = u.id
-      WHERE p.id IN (${candidateIds.map(() => '?').join(',')})
+      WHERE p.id IN (SELECT value FROM json_each(?))
         AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${visibilityFilter}`;
     const candidateResult = await db
       .prepare(candidateQuery)
-      .bind(...candidateIds, ...visibilityParams)
+      .bind(serializedCandidateIds, ...visibilityParams)
       .all<Record<string, unknown>>();
     const candidatePosts = candidateResult.results || [];
     const validCandidateIds = new Set(candidatePosts.map((post) => String(post.id)));
@@ -664,19 +667,18 @@ posts.get('/posts/recommended', async (c) => {
     const freshPostIds = new Set<string>();
     const recentlySeenPostIds = new Set<string>();
     if (currentUserId && candidateIds.length > 0) {
-      const placeholders = candidateIds.map(() => '?').join(',');
       const seenCutoff = new Date(Date.now() - SEEN_POST_WINDOW_DAYS * 86400_000).toISOString();
       const [freshRows, seenRows] = await Promise.all([
         db
-          .prepare(`SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${placeholders})`)
-          .bind(currentUserId, ...candidateIds)
+          .prepare('SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (SELECT value FROM json_each(?))')
+          .bind(currentUserId, serializedCandidateIds)
           .all<{ post_id: string }>(),
         db
           .prepare(
             `SELECT post_id FROM user_post_impressions
-             WHERE user_id = ? AND last_seen_at >= ? AND post_id IN (${placeholders})`,
+             WHERE user_id = ? AND last_seen_at >= ? AND post_id IN (SELECT value FROM json_each(?))`,
           )
-          .bind(currentUserId, seenCutoff, ...candidateIds)
+          .bind(currentUserId, seenCutoff, serializedCandidateIds)
           .all<{ post_id: string }>(),
       ]);
       for (const row of freshRows.results || []) freshPostIds.add(row.post_id);

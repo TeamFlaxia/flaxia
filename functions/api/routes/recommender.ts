@@ -124,10 +124,8 @@ async function loadOrComputeInterestVector(
 
   if (allSourceIds.length > 0) {
     const embedRows = await db
-      .prepare(
-        `SELECT post_id, embedding FROM post_embeddings WHERE post_id IN (${allSourceIds.map(() => '?').join(',')})`,
-      )
-      .bind(...allSourceIds)
+      .prepare('SELECT post_id, embedding FROM post_embeddings WHERE post_id IN (SELECT value FROM json_each(?))')
+      .bind(JSON.stringify(allSourceIds))
       .all<{ post_id: string; embedding: string }>();
     const weightedEmbeds: Array<{ vec: number[]; weight: number }> = [];
     for (const row of embedRows.results || []) {
