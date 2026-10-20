@@ -2,6 +2,7 @@ import { attachPlusBadge } from '../lib/avatar.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post, PostCardMode } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
@@ -590,7 +591,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
           row.style.background = 'transparent';
         });
         row.onclick = () => {
-          window.history.pushState({ postId: post.id }, '', `/arcade/${post.id}`);
+          pushSpaHistory(`/arcade/${post.id}`, { postId: post.id });
           window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: post.id } }));
         };
 
@@ -725,7 +726,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
           card.style.boxShadow = 'none';
         };
         card.onclick = () => {
-          window.history.pushState({ postId: post.id }, '', `/arcade/${post.id}`);
+          pushSpaHistory(`/arcade/${post.id}`, { postId: post.id });
           window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: post.id } }));
         };
 

@@ -31,6 +31,7 @@ import { hidePageLoader, showPageLoader, showPageLoaderFailure } from './lib/pag
 import { initPerformanceMonitoring } from './lib/performance.js';
 import { createPushSocket } from './lib/push-socket.js';
 import { parseCurrentRoute, type RouteInfo, type RouteView } from './lib/router.js';
+import { goBackInSpaOr, pushSpaHistory } from './lib/spa-history.js';
 import { initTheme } from './lib/theme.js';
 import { showToast } from './lib/toast.js';
 import { viewToBottomNavId } from './lib/view-nav.js';
@@ -400,13 +401,12 @@ document.addEventListener('DOMContentLoaded', async () => {
           } else if (currentView === 'search' && searchPage) {
             cachedContentComponent = { view: 'search', component: searchPage, scrollY: window.scrollY };
             searchPage = null;
-          } else if (currentView === 'arcade' && arcadePage) {
-            arcadePage.suspend();
-            cachedContentComponent = { view: 'arcade', component: arcadePage, scrollY: window.scrollY };
-            arcadePage = null;
           } else if (currentView === 'bookmarks' && bookmarksPage) {
             cachedContentComponent = { view: 'bookmarks', component: bookmarksPage, scrollY: window.scrollY };
             bookmarksPage = null;
+          } else if (currentView === 'notifications' && notificationsPage) {
+            cachedContentComponent = { view: 'notifications', component: notificationsPage, scrollY: window.scrollY };
+            notificationsPage = null;
           }
         }
 
@@ -812,29 +812,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
-          if (cachedContentComponent?.view === 'arcade') {
-            console.log('Restoring cached arcade page');
-            arcadePage = cachedContentComponent.component as ArcadePageHandle;
-            arcadePage.resume();
-            const scrollY = cachedContentComponent.scrollY;
-            cachedContentComponent = null;
-
-            requestAnimationFrame(() => {
-              window.scrollTo(0, scrollY);
-            });
-          } else {
-            // Create fresh arcade page
-            const { createArcadePage } = await import('./components/ArcadePage.js');
-            arcadePage = createArcadePage({
-              sandboxOrigin,
-              currentUser,
-              initialGameId: currentPostId || undefined,
-              onBack: () => {
-                window.history.pushState({}, '', '/home');
+          const { createArcadePage } = await import('./components/ArcadePage.js');
+          arcadePage = createArcadePage({
+            sandboxOrigin,
+            currentUser,
+            initialGameId: currentPostId || undefined,
+            onBack: () => {
+              goBackInSpaOr(() => {
+                window.history.replaceState({}, '', '/home');
                 navigateTo('timeline');
-              },
-            });
-          }
+              });
+            },
+          });
 
           // Create Right Panel
           const rightPanel = await lazyCreateRightPanel({
@@ -1011,7 +1000,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           leftNavInstances.add(leftNav);
 
-          // Create Notifications Page
+          // Create Notifications Page. Always rebuild from the freshly fetched
+          // data (only the scroll position is restored) so notifications that
+          // arrived while a thread/Arcade was open are not lost.
+          let notificationsScrollY = 0;
+          if (cachedContentComponent?.view === 'notifications') {
+            notificationsScrollY = cachedContentComponent.scrollY;
+            (cachedContentComponent.component as NotificationsPage).destroy();
+            cachedContentComponent = null;
+          }
           const { createNotificationsPage } = await import('./components/NotificationsPage.js');
           notificationsPage = createNotificationsPage({
             notifications: notificationsData.notifications,
@@ -1032,9 +1029,13 @@ document.addEventListener('DOMContentLoaded', async () => {
               });
             },
             onNavigateToPost: (postId) => {
-              window.history.pushState({}, '', `/thread/${postId}`);
+              pushSpaHistory(`/thread/${postId}`, { postId });
               navigateTo('thread', postId);
             },
+          });
+
+          requestAnimationFrame(() => {
+            window.scrollTo(0, notificationsScrollY);
           });
 
           // Create Right Panel
@@ -1169,12 +1170,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             unreadCount: unreadNotificationCount,
             onBack: () => {
               console.log('Back button clicked, returning to previous view');
-              if (cachedContentComponent) {
-                window.history.back();
-              } else {
-                window.history.pushState({}, '', '/home');
+              goBackInSpaOr(() => {
+                window.history.replaceState({}, '', '/home');
                 navigateTo('timeline');
-              }
+              });
             },
           });
 
@@ -1235,11 +1234,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
 
             // Listen for navigation events from timeline
-            timeline.getElement().addEventListener('navigateToThread', (e: Event) => {
-              const postId = (e as CustomEvent<{ postId: string }>).detail.postId;
-              window.history.pushState({ postId }, '', `/thread/${postId}`);
-              navigateTo('thread', postId);
-            });
+            // PostCard emits spaNavigate directly; no duplicate listener here.
 
             // Listen for openLeftNav events from timeline (mobile swipe)
             timeline.getElement().addEventListener('openLeftNav', () => {
