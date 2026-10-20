@@ -558,7 +558,7 @@ export class Timeline {
         this.state.cursor = data.next_cursor || postsArray[postsArray.length - 1].created_at;
       }
 
-      this.state.hasMore = postsArray.length === 20;
+      this.state.hasMore = this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === 20;
       this.renderPostList();
 
       // Dispatch ready event for scroll restoration
@@ -619,7 +619,7 @@ export class Timeline {
         this.state.cursor = data.next_cursor || postsArray[postsArray.length - 1].created_at;
       }
 
-      this.state.hasMore = postsArray.length === 20;
+      this.state.hasMore = this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === 20;
       this.appendPosts(postsWithAds);
     } catch (error) {
       console.error('Failed to load more posts:', error);
