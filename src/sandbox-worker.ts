@@ -325,7 +325,7 @@ app.get('/api/game-storage', (c) => {
             var snapshot=loadGameStorageSnapshot(localStorage,namespace);
             send(event.origin,{type:'FLAXIA_STORAGE_SNAPSHOT',requestId:message.requestId,entries:Object.entries(snapshot)});
           }else if(message.type==='FLAXIA_STORAGE_SET'&&typeof message.key==='string'&&typeof message.value==='string'){
-            if(message.key.length>512||message.value.length>100000)return;
+            if(message.key.length>512)return;
             setGameStorageValue(localStorage,namespace,message.key,message.value);
           }else if(message.type==='FLAXIA_STORAGE_REMOVE'&&typeof message.key==='string'){
             if(message.key.length>512)return;

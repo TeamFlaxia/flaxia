@@ -124,7 +124,7 @@ export function connectGameStorage(iframe: HTMLIFrameElement, sandboxOrigin: str
     if (operation === 'clear') {
       broker.contentWindow.postMessage({ type: 'FLAXIA_STORAGE_CLEAR', namespace }, brokerOrigin);
     } else if (operation === 'set' && typeof data.key === 'string' && typeof data.value === 'string') {
-      if (data.key.length > 512 || data.value.length > 100_000) return;
+      if (data.key.length > 512) return;
       broker.contentWindow.postMessage(
         { type: 'FLAXIA_STORAGE_SET', namespace, key: data.key, value: data.value },
         brokerOrigin,
