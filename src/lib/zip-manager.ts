@@ -61,24 +61,9 @@ export async function executeUniversalZip(
   }
 }
 
-// Helper function to detect best mode based on environment
+// Browser ZIP playback always stays on the isolated sandbox origin.
 export function getOptimalZipMode(): ZipExecutionMode {
-  // WVFS mode: preferred (no Service Worker dependency)
-  if (
-    typeof globalThis !== 'undefined' &&
-    (globalThis as { WebSocketPair?: unknown }).WebSocketPair &&
-    (globalThis as { D1Database?: unknown }).D1Database
-  ) {
-    return 'wvfs';
-  }
-
-  // Check if browser supports required features for WVFS
-  if (typeof (navigator as Navigator | undefined)?.storage?.getDirectory === 'function') {
-    return 'wvfs';
-  }
-
-  // Fallback to legacy mode
-  return 'legacy';
+  return 'wvfs';
 }
 
 // Auto-detect and execute with optimal mode

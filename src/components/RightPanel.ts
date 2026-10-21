@@ -1,5 +1,6 @@
 import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 
 export interface RightPanelProps {
   onSearch?: (query: string) => void;
@@ -271,7 +272,7 @@ export class RightPanel {
         justify-content: center;
         font-weight: 600;
         color: var(--text-primary);
-        background-image: ${user.avatar_key ? `url('/api/images/${user.avatar_key}')` : 'none'};
+        background-image: ${user.avatar_key ? `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')` : 'none'};
         background-size: cover;
         background-position: center;
       `;

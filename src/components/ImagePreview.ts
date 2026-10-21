@@ -1,6 +1,7 @@
 import { safeRemoveFromBody } from '../lib/dom-utils.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { GifPreviewProps } from '../types/post.js';
 
 export function createImagePreview(props: GifPreviewProps): HTMLElement {
@@ -33,7 +34,9 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     return container;
   }
 
-  const baseImageUrl = props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`;
+  const baseImageUrl = nativeApiHref(
+    props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`,
+  );
   const imageUrl = props.isThumbnail ? baseImageUrl : baseImageUrl + '?_=' + Date.now();
 
   const img = document.createElement('img');
@@ -613,7 +616,7 @@ function createImageOverlay(imageUrl: string, postId: string, gallery?: string[]
     currentIndex = (next + gallery.length) % gallery.length;
     resetZoom();
     clearImage();
-    fullImage.src = `/api/images/${gallery[currentIndex]}`;
+    fullImage.src = nativeApiHref(`/api/images/${gallery[currentIndex]}`);
     if (fullImage.complete && fullImage.naturalWidth > 0) {
       initImage();
     }

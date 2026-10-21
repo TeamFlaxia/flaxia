@@ -261,6 +261,49 @@ app.post('/api/test/subscription', requireTestEnvironment, async (c) => {
   return c.json({ id, userId: user.id });
 });
 
+// POST /api/test/seed-srp-v1-user - simulate an account created before KDF v2.
+// Public registration rejects sha256-v1; this test-only helper seeds the legacy
+// verifier format so the login-and-upgrade path remains covered.
+app.post('/api/test/seed-srp-v1-user', requireTestEnvironment, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    email?: string;
+    username?: string;
+    display_name?: string;
+    srp_salt?: string;
+    srp_verifier?: string;
+  };
+  if (!body.email || !body.username || !body.srp_salt || !body.srp_verifier) {
+    return c.json({ error: 'email, username, srp_salt and srp_verifier are required' }, 400);
+  }
+
+  const id = crypto.randomUUID();
+  const email = body.email.trim().toLowerCase();
+  await c.env.DB.prepare(
+    `INSERT INTO users (id, email, password_hash, username, display_name, bio, srp_salt, srp_verifier, srp_group, srp_kdf)
+     VALUES (?, ?, '', ?, ?, '', ?, ?, '2048', 'sha256-v1')`,
+  )
+    .bind(id, email, body.username, body.display_name ?? body.username, body.srp_salt, body.srp_verifier)
+    .run();
+  return c.json({ id }, 201);
+});
+
+// POST /api/test/user-role - set a test account's role (reviewer semantics).
+// Gated like /api/test/reset: only reachable from the test dev server. Roles
+// are DB-controlled in production; registration must never grant one.
+app.post('/api/test/user-role', requireTestEnvironment, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { username?: string; role?: string };
+  if (!body.username || (body.role !== 'reviewer' && body.role !== 'user')) {
+    return c.json({ error: 'username and role (reviewer|user) are required' }, 400);
+  }
+
+  const db = c.env.DB;
+  const user = await db.prepare('SELECT id FROM users WHERE username = ?').bind(body.username).first<{ id: string }>();
+  if (!user) return c.json({ error: 'User not found' }, 404);
+
+  await db.prepare('UPDATE users SET role = ? WHERE id = ?').bind(body.role, user.id).run();
+  return c.json({ ok: true });
+});
+
 // POST /api/test/seed-legacy-user - create an account that predates SRP.
 //
 // Registration is SRP-only, but the deprecated plaintext POST /api/auth/login
@@ -278,7 +321,8 @@ app.post('/api/test/seed-legacy-user', requireTestEnvironment, async (c) => {
   }
 
   const db = c.env.DB;
-  const existing = await db.prepare('SELECT id FROM users WHERE email = ?').bind(body.email).first<{ id: string }>();
+  const email = body.email.trim().toLowerCase();
+  const existing = await db.prepare('SELECT id FROM users WHERE lower(email) = ?').bind(email).first<{ id: string }>();
   if (existing) return c.json({ error: 'Email already registered' }, 409);
 
   const userId = crypto.randomUUID();
@@ -288,7 +332,7 @@ app.post('/api/test/seed-legacy-user', requireTestEnvironment, async (c) => {
       `INSERT INTO users (id, email, password_hash, username, display_name, bio)
        VALUES (?, ?, ?, ?, ?, '')`,
     )
-    .bind(userId, body.email, passwordHash, body.username, body.display_name ?? body.username)
+    .bind(userId, email, passwordHash, body.username, body.display_name ?? body.username)
     .run();
 
   return c.json({ id: userId }, 201);

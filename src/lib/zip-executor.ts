@@ -1,6 +1,7 @@
 import type JSZipType from 'jszip';
 import { validateFileType } from './file-extensions.ts';
 import { t } from './i18n.ts';
+import { ZIP_MAX_FILE_COUNT } from './zip-constants.ts';
 
 export interface ZipExecutorHandle {
   destroy: () => void;
@@ -167,7 +168,7 @@ function createSandboxIframe(
 
   const iframe = document.createElement('iframe');
   iframe.src = blobUrl;
-  iframe.sandbox = 'allow-scripts allow-pointer-lock allow-fullscreen';
+  iframe.sandbox = 'allow-scripts allow-pointer-lock allow-forms allow-popups';
   iframe.setAttribute('allow', 'fullscreen');
   iframe.setAttribute('referrerpolicy', 'no-referrer');
   iframe.style.cssText = `
@@ -270,8 +271,8 @@ export async function rewriteIndexHtmlLegacy(zipData: ArrayBuffer, blobUrlMap: M
 function validateZip(zip: JSZipType): void {
   const files = Object.entries(zip.files);
 
-  if (files.length > 255) {
-    throw new Error('Too many files (max 255)');
+  if (files.length > ZIP_MAX_FILE_COUNT) {
+    throw new Error(`Too many files (max ${ZIP_MAX_FILE_COUNT})`);
   }
 
   let totalSize = 0;
