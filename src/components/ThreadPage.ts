@@ -1,7 +1,9 @@
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { updateMetaTags } from '../lib/seo-meta.js';
 import { getReplyStyle } from '../lib/settings.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { buildTree } from '../lib/thread.js';
 import { Post } from '../types/post.js';
 import { createLeftNav } from './LeftNav.js';
@@ -31,7 +33,6 @@ export class ThreadPage {
   constructor(props: ThreadPageProps) {
     this.props = props;
     this.element = this.createElement();
-    this.setupSwipeDetection();
     this.setupPostUpdatedListener();
     this.loadThread();
   }
@@ -86,7 +87,7 @@ export class ThreadPage {
     const container = document.createElement('div');
     container.className = 'thread-page';
     container.style.cssText = `
-      background: #ffffff;
+      background: var(--bg-primary);
       min-height: 100vh;
       width: 100%;
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -108,37 +109,31 @@ export class ThreadPage {
       unreadCount: this.props.unreadCount ?? 0,
       currentUser: this.props.currentUser || undefined,
       onNavigate: async (item) => {
-        console.log('Navigate to:', item);
         if (item === 'home') {
-          window.history.pushState({}, '', '/home');
+          pushSpaHistory('/home');
           window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'timeline' } }));
         } else if (item === 'explore') {
-          window.history.pushState({}, '', '/explore');
+          pushSpaHistory('/explore');
           window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore' } }));
         } else if (item === 'arcade') {
-          window.history.pushState({}, '', '/arcade');
+          pushSpaHistory('/arcade');
           window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade' } }));
-        } else if (item === 'groups') {
-          if (this.props.currentUser) {
-            window.history.pushState({}, '', '/groups');
-            window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'groups' } }));
-          }
         } else if (item === 'notifications') {
           if (this.props.currentUser) {
-            window.history.pushState({}, '', '/notifications');
+            pushSpaHistory('/notifications');
             window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'notifications' } }));
           }
         } else if (item === 'bookmarks') {
           if (this.props.currentUser) {
-            window.history.pushState({}, '', '/bookmarks');
+            pushSpaHistory('/bookmarks');
             window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'bookmarks' } }));
           }
         } else if (item === 'settings') {
-          window.history.pushState({}, '', '/settings');
+          pushSpaHistory('/settings');
           window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'settings' } }));
         } else if (item === 'profile') {
           if (this.props.currentUser) {
-            window.history.pushState({}, '', `/profile/${this.props.currentUser.username}`);
+            pushSpaHistory(`/profile/${this.props.currentUser.username}`);
             window.dispatchEvent(
               new CustomEvent('spaNavigate', {
                 detail: { view: 'profile', username: this.props.currentUser.username },
@@ -148,18 +143,18 @@ export class ThreadPage {
         }
       },
       onSignIn: () => {
-        window.history.pushState({}, '', '/login');
+        pushSpaHistory('/login');
         window.dispatchEvent(new PopStateEvent('popstate'));
       },
       onSignUp: () => {
-        window.history.pushState({}, '', '/register');
+        pushSpaHistory('/register');
         window.dispatchEvent(new PopStateEvent('popstate'));
       },
     });
     this.leftNav.getElement().style.cssText = `
       flex-shrink: 0;
       padding: 1rem;
-      border-right: 1px solid #e2e8f0;
+      border-right: 1px solid var(--border);
     `;
 
     // Create main content area
@@ -177,8 +172,8 @@ export class ThreadPage {
       position: sticky;
       top: 0;
       z-index: 10;
-      background: #ffffff;
-      border-bottom: 1px solid #e2e8f0;
+      background: var(--bg-primary);
+      border-bottom: 1px solid var(--border);
       margin-bottom: 1rem;
     `;
 
@@ -209,7 +204,7 @@ export class ThreadPage {
     const title = document.createElement('h1');
     title.textContent = t('thread.title');
     title.style.cssText = `
-      color: #0f172a;
+      color: var(--text-primary);
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       font-size: 1.25rem;
       margin: 0;
@@ -234,7 +229,7 @@ export class ThreadPage {
     loading.className = 'thread-loading';
     loading.textContent = t('thread.loading');
     loading.style.cssText = `
-      color: #64748b;
+      color: var(--text-muted);
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       text-align: center;
       padding: 4rem 2rem;
@@ -258,11 +253,6 @@ export class ThreadPage {
     return container;
   }
 
-  private setupSwipeDetection(): void {
-    // Mobile left nav gestures are disabled. Navigation is opened only by the explicit menu button.
-    return;
-  }
-
   private addResponsiveStyles(container: HTMLElement): void {
     const style = document.createElement('style');
     style.textContent = `
@@ -273,9 +263,6 @@ export class ThreadPage {
       }
       
       @media (max-width: 768px) {
-        .left-nav-open-button {
-          top: 30%;
-        }
         .thread-page .main-container {
           flex-direction: column;
           max-width: 100%;
@@ -286,13 +273,13 @@ export class ThreadPage {
           left: 0;
           width: 280px;
           height: 100vh;
-          border-right: 1px solid #e2e8f0;
+          border-right: 1px solid var(--border);
           border-top: none;
           padding: 1rem;
           z-index: 1100;
           transform: translateX(-100%);
           transition: transform 0.3s ease;
-          background: #ffffff;
+          background: var(--bg-primary);
           overflow-y: auto;
           -webkit-overflow-scrolling: touch;
         }
@@ -431,7 +418,7 @@ export class ThreadPage {
       repliesHeader.id = 'thread-replies-header';
       repliesHeader.textContent = t('thread.replies_header', { count: formatCount(data.replies.length) });
       repliesHeader.style.cssText = `
-        color: #64748b;
+        color: var(--text-muted);
         font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         font-size: 1rem;
         margin: 0 0 1rem 0;
@@ -484,7 +471,7 @@ export class ThreadPage {
         const noReplies = document.createElement('p');
         noReplies.textContent = t('thread.no_replies');
         noReplies.style.cssText = `
-          color: #64748b;
+          color: var(--text-muted);
           font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           text-align: center;
           padding: 2rem;
@@ -538,7 +525,7 @@ export class ThreadPage {
       if (!repliesHeader) {
         repliesHeader = document.createElement('h2');
         repliesHeader.style.cssText = `
-          color: #64748b;
+          color: var(--text-muted);
           font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           font-size: 1rem;
           margin: 0 0 1rem 0;
@@ -625,11 +612,11 @@ export class ThreadPage {
       showSignInPrompt(
         'reply',
         () => {
-          window.history.pushState({}, '', '/login');
+          pushSpaHistory('/login');
           window.dispatchEvent(new PopStateEvent('popstate'));
         },
         () => {
-          window.history.pushState({}, '', '/register');
+          pushSpaHistory('/register');
           window.dispatchEvent(new PopStateEvent('popstate'));
         },
       );
@@ -700,14 +687,19 @@ export class ThreadPage {
     this.element.remove();
   }
 
-  private updateMetaTags(post: Post): void {
+  private async updateMetaTags(post: Post): Promise<void> {
     const name = post.display_name || post.username;
-    const ogImage =
+    const imageKey =
       post.gif_key && !post.gif_key.startsWith('audio/')
-        ? `${window.location.origin}/api/images/${post.gif_key}`
+        ? post.gif_key
         : post.thumbnail_key
-          ? `${window.location.origin}/api/images/${post.thumbnail_key}`
-          : undefined;
+          ? post.thumbnail_key
+          : null;
+
+    let ogImage: string | undefined;
+    if (imageKey) {
+      ogImage = nativeApiHref(`/api/images/${imageKey}`);
+    }
 
     updateMetaTags({
       title: `Flaxia - ${name}`,

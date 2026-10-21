@@ -1,7 +1,34 @@
 import { clearMeCache } from '../lib/auth-cache';
+import { createSrpProof, storeSrpSalt } from '../lib/auth-srp.js';
+import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
+import {
+  CROWD_CONSENT_CHANGE_EVENT,
+  canRunFlaxiaNode,
+  denyCrowdConsent,
+  getCrowdConsentState,
+  getCrowdNodeController,
+  grantCrowdConsent,
+  initCrowdNode,
+  resolveCrowdConsentState,
+  startCrowdNode,
+  stopCrowdNode,
+} from '../lib/crowd-node.js';
 import { getLocale, setLocale, t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
+import { passwordLengthError } from '../lib/password-policy.js';
 import { getReplyStyle, getShowNsfw, ReplyStyle, setReplyStyle, setShowNsfw } from '../lib/settings.js';
+import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
+import { getTheme, setTheme, Theme } from '../lib/theme.js';
+import { prepareVaultRewrap } from '../lib/vault/client.js';
+import { createAddStampModal } from './AddStampModal.js';
+import { createVaultSection } from './VaultSection.js';
+
+function b64(b: Uint8Array): string {
+  let binary = '';
+  for (const x of b) binary += String.fromCharCode(x);
+  return btoa(binary);
+}
 
 interface SettingsPageProps {
   currentUser?: {
@@ -9,6 +36,7 @@ interface SettingsPageProps {
     username: string;
     display_name?: string;
     avatar_key?: string;
+    badge_type?: string | null;
     language?: string;
     email?: string;
   };
@@ -101,18 +129,24 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
       margin-bottom: 1.5rem;
     `;
 
-    const avatarUrl = currentUser.avatar_key ? `/api/images/${currentUser.avatar_key}` : '/api/images/default-avatar';
+    const avatarUrl = nativeApiHref(
+      currentUser.avatar_key ? `/api/images/${currentUser.avatar_key}` : '/api/images/default-avatar',
+    );
     const displayName = currentUser.display_name || currentUser.username;
 
+    const avatarWrap = document.createElement('div');
+    avatarWrap.style.cssText = 'position: relative; width: 60px; height: 60px; flex-shrink: 0;';
     const avatarEl = document.createElement('img');
     avatarEl.src = avatarUrl;
     avatarEl.alt = '';
     avatarEl.style.cssText =
-      'width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border);';
+      'width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border); display: block;';
     avatarEl.onerror = () => {
-      avatarEl.src = '/api/images/default-avatar';
+      avatarEl.src = nativeApiHref('/api/images/default-avatar');
     };
-    userChip.appendChild(avatarEl);
+    avatarWrap.appendChild(avatarEl);
+    attachPlusBadge(avatarWrap, currentUser.badge_type);
+    userChip.appendChild(avatarWrap);
 
     const infoDiv = document.createElement('div');
     infoDiv.style.cssText = 'flex: 1; min-width: 0;';
@@ -201,10 +235,21 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
         t('settings.delete_account_confirm', { username: currentUser.username }),
       );
       if (!confirmed) return;
+      const password = window.prompt(
+        t('settings.current_password') || 'Enter your current password to confirm deletion',
+      );
+      if (!password) return;
       try {
+        const current_srp = await createSrpProof(password);
+        if (!current_srp) {
+          alert(t('settings.password_proof_failed') || 'Could not verify your password');
+          return;
+        }
         const response = await fetch('/api/users/me', {
           method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
+          body: JSON.stringify({ current_srp }),
         });
 
         if (response.ok) {
@@ -224,155 +269,6 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     accountSection.appendChild(logoutButton);
     accountSection.appendChild(deleteButton);
     container.appendChild(accountSection);
-  }
-
-  // Blocked Users Section
-  if (currentUser) {
-    const blockSection = document.createElement('div');
-    blockSection.className = 'settings-section';
-    blockSection.style.cssText = `
-      margin-bottom: 2rem;
-      padding: 1.5rem;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--bg-primary);
-    `;
-
-    const blockTitle = document.createElement('h2');
-    blockTitle.textContent = t('settings.blocked_users');
-    blockTitle.style.cssText = `
-      font-size: 1.125rem;
-      font-weight: 600;
-      margin-bottom: 1rem;
-      color: var(--text-primary);
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 0.5rem;
-    `;
-    blockSection.appendChild(blockTitle);
-
-    const blockList = document.createElement('div');
-    blockList.style.cssText = 'display: flex; flex-direction: column; gap: 0.75rem;';
-    blockSection.appendChild(blockList);
-
-    const blockMessage = document.createElement('div');
-    blockMessage.style.cssText = `
-      margin-top: 0.5rem;
-      font-size: 0.875rem;
-      min-height: 1.25rem;
-    `;
-    blockSection.appendChild(blockMessage);
-
-    (async () => {
-      try {
-        const res = await fetch('/api/users/me/blocked', { credentials: 'include' });
-        if (!res.ok) {
-          blockMessage.textContent = t('settings.blocked_load_failed');
-          blockMessage.style.color = 'var(--danger)';
-          return;
-        }
-        const data = (await res.json()) as {
-          users: Array<{ id: string; username: string; display_name?: string; avatar_key?: string }>;
-        };
-        if (data.users.length === 0) {
-          blockList.textContent = t('settings.blocked_empty');
-          blockList.style.color = 'var(--text-muted)';
-          blockList.style.fontSize = '0.875rem';
-          return;
-        }
-        data.users.forEach((u) => {
-          const row = document.createElement('div');
-          row.style.cssText = `
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            padding: 0.5rem;
-            border: 1px solid var(--border);
-            border-radius: 6px;
-          `;
-
-          const avatarUrl = u.avatar_key ? `/api/images/${u.avatar_key}` : '/api/images/default-avatar';
-          const img = document.createElement('img');
-          img.src = avatarUrl;
-          img.alt = '';
-          img.style.cssText = 'width: 40px; height: 40px; border-radius: 50%; object-fit: cover;';
-          img.onerror = () => {
-            img.src = '/api/images/default-avatar';
-          };
-          row.appendChild(img);
-
-          const info = document.createElement('div');
-          info.style.cssText = 'flex: 1; min-width: 0;';
-          const name = document.createElement('div');
-          name.style.cssText =
-            'font-weight: 600; color: var(--text-primary); font-size: 0.9375rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
-          name.textContent = u.display_name || u.username;
-          const uname = document.createElement('div');
-          uname.style.cssText =
-            'color: var(--text-muted); font-size: 0.8125rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
-          uname.textContent = `@${u.username}`;
-          info.appendChild(name);
-          info.appendChild(uname);
-          row.appendChild(info);
-
-          const unblockBtn = document.createElement('button');
-          unblockBtn.textContent = t('settings.blocked_unblock');
-          unblockBtn.style.cssText = `
-            padding: 0.5rem 1rem;
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            background: none;
-            color: var(--text-primary);
-            cursor: pointer;
-            font-size: 0.8125rem;
-            white-space: nowrap;
-            transition: background 0.2s;
-          `;
-          unblockBtn.addEventListener('mouseenter', () => {
-            unblockBtn.style.background = 'var(--bg-secondary)';
-          });
-          unblockBtn.addEventListener('mouseleave', () => {
-            unblockBtn.style.background = 'none';
-          });
-          unblockBtn.addEventListener('click', async () => {
-            const confirmed = await createConfirmDialog(
-              t('settings.blocked_unblock_confirm', { username: `@${u.username}` }),
-            );
-            if (!confirmed) return;
-            unblockBtn.disabled = true;
-            unblockBtn.style.opacity = '0.5';
-            try {
-              const unr = await fetch(`/api/users/${u.username}/block`, {
-                method: 'DELETE',
-                credentials: 'include',
-              });
-              if (unr.ok) {
-                row.style.transition = 'opacity 0.3s, transform 0.3s';
-                row.style.opacity = '0';
-                row.style.transform = 'translateX(-100%)';
-                setTimeout(() => row.remove(), 300);
-                blockMessage.textContent = t('settings.blocked_unblocked');
-                blockMessage.style.color = 'var(--success, #10b981)';
-              } else {
-                throw new Error('Failed to unblock');
-              }
-            } catch {
-              blockMessage.textContent = t('settings.blocked_unblock_failed');
-              blockMessage.style.color = 'var(--danger)';
-              unblockBtn.disabled = false;
-              unblockBtn.style.opacity = '1';
-            }
-          });
-          row.appendChild(unblockBtn);
-
-          blockList.appendChild(row);
-        });
-      } catch {
-        blockMessage.textContent = t('settings.blocked_load_failed');
-        blockMessage.style.color = 'var(--danger)';
-      }
-    })();
-
-    container.appendChild(blockSection);
   }
 
   // Display Section
@@ -504,6 +400,83 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     displayMessage.style.color = 'var(--success, #10b981)';
   });
 
+  // Theme selector
+  const themeTitle = document.createElement('div');
+  themeTitle.style.cssText = `
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.9375rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+  `;
+  themeTitle.textContent = t('settings.theme');
+
+  const currentTheme = getTheme();
+  const themeRadioGroup = document.createElement('div');
+  themeRadioGroup.style.cssText = `
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  `;
+
+  const themes: { value: Theme; labelKey: string; descKey: string }[] = [
+    { value: 'light', labelKey: 'settings.theme_light', descKey: 'settings.theme_light_desc' },
+    { value: 'dark', labelKey: 'settings.theme_dark', descKey: 'settings.theme_dark_desc' },
+    { value: 'system', labelKey: 'settings.theme_system', descKey: 'settings.theme_system_desc' },
+  ];
+
+  themes.forEach((st) => {
+    const label = document.createElement('label');
+    label.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      cursor: pointer;
+      transition: border-color 0.2s;
+      ${currentTheme === st.value ? 'border-color: var(--accent); background: var(--bg-secondary);' : ''}
+    `;
+
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'theme';
+    radio.value = st.value;
+    radio.checked = currentTheme === st.value;
+    radio.style.cssText = 'accent-color: var(--accent);';
+
+    const textDiv = document.createElement('div');
+    textDiv.style.cssText = 'display: flex; flex-direction: column;';
+
+    const nameSpan = document.createElement('span');
+    nameSpan.style.cssText = 'font-weight: 600; color: var(--text-primary); font-size: 0.9375rem;';
+    nameSpan.textContent = t(st.labelKey);
+
+    const descSpan = document.createElement('span');
+    descSpan.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem;';
+    descSpan.textContent = t(st.descKey);
+
+    textDiv.appendChild(nameSpan);
+    textDiv.appendChild(descSpan);
+    label.appendChild(radio);
+    label.appendChild(textDiv);
+    themeRadioGroup.appendChild(label);
+
+    radio.addEventListener('change', () => {
+      setTheme(st.value);
+      themeRadioGroup.querySelectorAll('label').forEach((l) => {
+        l.style.borderColor = 'var(--border)';
+        l.style.background = 'none';
+      });
+      label.style.borderColor = 'var(--accent)';
+      label.style.background = 'var(--bg-secondary)';
+      displayMessage.textContent = t('settings.display_saved');
+      displayMessage.style.color = 'var(--success, #10b981)';
+    });
+  });
+
   const displayMessage = document.createElement('div');
   displayMessage.style.cssText = `
     margin-top: 0.5rem;
@@ -514,9 +487,145 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   displaySection.appendChild(displayTitle);
   displaySection.appendChild(radioGroup);
   displaySection.appendChild(nsfwLabel);
+  displaySection.appendChild(themeTitle);
+  displaySection.appendChild(themeRadioGroup);
   displaySection.appendChild(displayMessage);
 
   container.appendChild(displaySection);
+
+  // Crowd Section (opt in/out of donating browser compute)
+  const crowdSection = document.createElement('div');
+  crowdSection.className = 'settings-section';
+  crowdSection.style.cssText = `
+    margin-bottom: 2rem;
+    padding: 1.5rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-primary);
+  `;
+
+  const crowdTitle = document.createElement('h2');
+  crowdTitle.textContent = t('settings.crowd');
+  crowdTitle.style.cssText = `
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.5rem;
+  `;
+
+  const nodeAvailable = canRunFlaxiaNode();
+
+  const crowdLabel = document.createElement('label');
+  crowdLabel.style.cssText = `
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: ${nodeAvailable ? 'pointer' : 'not-allowed'};
+    transition: border-color 0.2s;
+    margin-bottom: 0.5rem;
+    opacity: ${nodeAvailable ? '1' : '0.6'};
+  `;
+
+  const crowdCheckbox = document.createElement('input');
+  crowdCheckbox.type = 'checkbox';
+  crowdCheckbox.checked = getCrowdConsentState() === 'granted';
+  crowdCheckbox.disabled = !nodeAvailable;
+  crowdCheckbox.style.cssText = 'accent-color: var(--accent); width: 18px; height: 18px; cursor: pointer;';
+
+  const crowdTextDiv = document.createElement('div');
+  crowdTextDiv.style.cssText = 'display: flex; flex-direction: column;';
+
+  const crowdNameSpan = document.createElement('span');
+  crowdNameSpan.style.cssText = 'font-weight: 600; color: var(--text-primary); font-size: 0.9375rem;';
+  crowdNameSpan.textContent = t('settings.crowd');
+
+  const crowdDescSpan = document.createElement('span');
+  crowdDescSpan.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem;';
+  crowdDescSpan.textContent = t('settings.crowd_desc');
+
+  crowdTextDiv.appendChild(crowdNameSpan);
+  crowdTextDiv.appendChild(crowdDescSpan);
+  crowdLabel.appendChild(crowdCheckbox);
+  crowdLabel.appendChild(crowdTextDiv);
+
+  const crowdStatus = document.createElement('div');
+  crowdStatus.style.cssText = 'font-size: 0.8125rem; color: var(--text-muted);';
+
+  const crowdMessage = document.createElement('div');
+  crowdMessage.style.cssText = `
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    min-height: 1.25rem;
+  `;
+
+  const updateCrowdStatus = () => {
+    if (!nodeAvailable) {
+      crowdStatus.textContent = t('settings.crowd_unavailable');
+      return;
+    }
+    const state = getCrowdConsentState();
+    crowdStatus.textContent =
+      state === 'granted'
+        ? t('settings.crowd_running')
+        : state === 'denied'
+          ? t('settings.crowd_denied')
+          : t('settings.crowd_unset');
+    crowdStatus.style.color = state === 'granted' ? 'var(--success, #10b981)' : 'var(--text-muted)';
+  };
+  updateCrowdStatus();
+
+  crowdCheckbox.addEventListener('change', async () => {
+    if (!nodeAvailable) return;
+    // The node controller is created during deferred app init; make sure it
+    // exists before mutating state so a fast navigation never loses the toggle.
+    if (!getCrowdNodeController()) {
+      try {
+        await initCrowdNode();
+      } catch {
+        // fall through to the availability check below
+      }
+    }
+    if (!getCrowdNodeController()) {
+      crowdMessage.textContent = t('settings.crowd_unavailable');
+      crowdMessage.style.color = 'var(--danger, #ef4444)';
+      crowdCheckbox.checked = false;
+      return;
+    }
+    if (crowdCheckbox.checked) {
+      grantCrowdConsent();
+      startCrowdNode();
+    } else {
+      denyCrowdConsent();
+      stopCrowdNode();
+    }
+    updateCrowdStatus();
+    crowdMessage.textContent = t('settings.crowd_saved');
+    crowdMessage.style.color = 'var(--success, #10b981)';
+  });
+
+  // Stay in sync if consent is changed elsewhere (e.g. the consent modal).
+  const onCrowdConsentChange = () => {
+    crowdCheckbox.checked = getCrowdConsentState() === 'granted';
+    updateCrowdStatus();
+  };
+  window.addEventListener(CROWD_CONSENT_CHANGE_EVENT, onCrowdConsentChange);
+
+  // The node bundle is loaded during deferred app init, which may run after this
+  // screen renders (e.g. a direct /settings reload). Load its persisted consent
+  // state through the public API so the toggle is correct on first paint.
+  void resolveCrowdConsentState().then(onCrowdConsentChange);
+
+  crowdSection.appendChild(crowdTitle);
+  crowdSection.appendChild(crowdLabel);
+  crowdSection.appendChild(crowdStatus);
+  crowdSection.appendChild(crowdMessage);
+
+  container.appendChild(crowdSection);
 
   // Language Section
   const languageSection = document.createElement('div');
@@ -883,12 +992,21 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     emailSaveButton.style.opacity = '0.6';
 
     try {
+      // Re-authenticate with an SRP proof: the server verifies knowledge of
+      // the current password without ever receiving it.
+      const proof = await createSrpProof(currentPassword);
+      if (!proof) {
+        emailMessage.textContent = t('settings.current_password_incorrect');
+        emailMessage.style.color = 'var(--danger)';
+        return;
+      }
+
       const response = await fetch('/api/users/me/email', {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ current_password: currentPassword, new_email: newEmail }),
+        body: JSON.stringify({ current_srp: proof, new_email: newEmail }),
       });
 
       if (response.ok) {
@@ -927,7 +1045,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
       return;
     }
 
-    if (newPassword.length < 8 || newPassword.length > 128) {
+    if (passwordLengthError(newPassword)) {
       passwordMessage.textContent = t('settings.password_length');
       passwordMessage.style.color = 'var(--danger)';
       return;
@@ -938,15 +1056,52 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     passwordSaveButton.style.opacity = '0.6';
 
     try {
+      // Derive a fresh SRP verifier from the new password so the account
+      // continues to authenticate via SRP after the change. Neither the
+      // current nor the new password is sent to the server: the current one is
+      // proven with an SRP handshake, the new one only as its verifier.
+      const salt = generateSalt();
+      const verifier = await computeVerifier(newPassword, salt, DEFAULT_SRP_KDF);
+
+      const currentSrp = await createSrpProof(currentPassword);
+      if (!currentSrp) {
+        passwordMessage.textContent = t('settings.current_password_incorrect');
+        passwordMessage.style.color = 'var(--danger)';
+        return;
+      }
+
+      // Carry the vault across: VK is wrapped under a KEK derived from the OLD
+      // password, so it must be re-wrapped inside this very request. Refusing
+      // to proceed beats storing an envelope the new password cannot open.
+      const vaultRewrap = await prepareVaultRewrap(currentPassword, newPassword);
+      if (vaultRewrap.status === 'unlock_failed') {
+        passwordMessage.textContent = t('settings.current_password_incorrect');
+        passwordMessage.style.color = 'var(--danger)';
+        return;
+      }
+      if (vaultRewrap.status === 'error') {
+        passwordMessage.textContent = t('settings.password_save_failed');
+        passwordMessage.style.color = 'var(--danger)';
+        return;
+      }
+
       const response = await fetch('/api/users/me/password', {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+        body: JSON.stringify({
+          srp_salt: b64(salt),
+          srp_verifier: b64(verifier),
+          srp_group: '2048',
+          srp_kdf: DEFAULT_SRP_KDF,
+          current_srp: currentSrp,
+          ...(vaultRewrap.status === 'ok' ? { vault_kek: vaultRewrap.fields } : {}),
+        }),
       });
 
       if (response.ok) {
+        storeSrpSalt(salt);
         passwordMessage.textContent = t('settings.password_saved');
         passwordMessage.style.color = 'var(--success, #10b981)';
         currentPasswordInput2.value = '';
@@ -954,7 +1109,13 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
         confirmPasswordInput.value = '';
       } else {
         const errorData = (await response.json()) as { error?: string };
-        passwordMessage.textContent = errorData.error || t('settings.password_save_failed');
+        const message =
+          errorData.error === 'vault_rewrap_required'
+            ? t('settings.vault_rewrap_required')
+            : errorData.error === 'vault_key_version_conflict'
+              ? t('settings.vault_changed')
+              : errorData.error || t('settings.password_save_failed');
+        passwordMessage.textContent = message;
         passwordMessage.style.color = 'var(--danger)';
       }
     } catch (_error: unknown) {
@@ -985,9 +1146,459 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   container.appendChild(emailSection);
   container.appendChild(passwordSection);
 
+  // ─── Personal Vault Section ──────────────────────────────────────────────
+  // Own component: it has three states of its own (setup / locked / unlocked)
+  // and timers to clean up, which would drown the settings page otherwise.
+  const vaultSection = createVaultSection();
+  container.appendChild(vaultSection.getElement());
+
+  // Shared billing state: populated by `loadBilling`, read by the stamp counter.
+  let currentPlan: {
+    plan: string | null;
+    status: string | null;
+    expiresAt: string | null;
+    cancelAtPeriodEnd: boolean;
+  } = { plan: null, status: null, expiresAt: null, cancelAtPeriodEnd: false };
+  let refreshStamps: () => void = () => {};
+
+  // ─── Custom Emoji Section ────────────────────────────────────────────────
+  if (currentUser) {
+    const emojiSection = document.createElement('div');
+    emojiSection.className = 'settings-section';
+    emojiSection.style.cssText = `
+      margin-bottom: 2rem;
+      padding: 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg-primary);
+    `;
+
+    const emojiTitle = document.createElement('h2');
+    emojiTitle.textContent = t('settings.custom_emoji') || 'Custom Emoji';
+    emojiTitle.style.cssText = `
+      font-size: 1.125rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--text-primary);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.5rem;
+    `;
+
+    const emojiDesc = document.createElement('p');
+    emojiDesc.textContent =
+      t('settings.custom_emoji_desc') ||
+      'Create custom emoji like :working_me: to use in reactions and messages. Only you can use your custom emoji, but others can see them.';
+    emojiDesc.style.cssText = 'color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;';
+
+    const emojiCountRow = document.createElement('div');
+    emojiCountRow.style.cssText = 'display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem;';
+    const emojiCountLabel = document.createElement('span');
+    emojiCountLabel.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);';
+    const emojiCountValue = document.createElement('span');
+    emojiCountValue.style.cssText = 'font-weight: 600; color: var(--text-primary);';
+    emojiCountLabel.textContent = t('settings.custom_emoji_count') || 'Emoji used:';
+    emojiCountValue.textContent = '...';
+    emojiCountRow.appendChild(emojiCountLabel);
+    emojiCountRow.appendChild(emojiCountValue);
+
+    // Stamps list
+    const stampsGrid = document.createElement('div');
+    stampsGrid.style.cssText =
+      'display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 0.75rem; width: 100%;';
+
+    function loadStamps() {
+      fetch('/api/stamps', { credentials: 'include' })
+        .then((r) => r.json() as Promise<{ stamps: Array<{ id: string; name: string; url: string }> }>)
+        .then((data) => {
+          stampsGrid.innerHTML = '';
+          const unlimited = !!currentPlan.plan && ['active', 'trialing'].includes(currentPlan.status || '');
+          emojiCountValue.textContent = unlimited ? `${data.stamps.length} / ∞` : `${data.stamps.length} / 5`;
+          for (const stamp of data.stamps) {
+            const card = document.createElement('div');
+            card.style.cssText = `
+              border: 1px solid var(--border);
+              border-radius: 6px;
+              padding: 0.5rem;
+              text-align: center;
+              background: var(--bg-secondary);
+              overflow: hidden;
+              min-width: 0;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+              position: relative;
+            `;
+            const img = document.createElement('img');
+            img.src = stamp.url;
+            img.alt = stamp.name;
+            img.style.cssText =
+              'width: 48px; height: 48px; object-fit: contain; margin-bottom: 0.25rem; flex-shrink: 0;';
+            const label = document.createElement('div');
+            label.style.cssText =
+              'font-size: 0.75rem; color: var(--text-muted); font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%;';
+            label.textContent = stamp.name;
+            label.title = stamp.name;
+            const delBtn = document.createElement('button');
+            delBtn.textContent = '✕';
+            delBtn.style.cssText = `
+              position: absolute;
+              top: 2px;
+              right: 2px;
+              background: var(--danger, #ef4444);
+              color: white;
+              border: none;
+              border-radius: 50%;
+              width: 16px;
+              height: 16px;
+              font-size: 9px;
+              cursor: pointer;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              line-height: 1;
+              padding: 0;
+              flex-shrink: 0;
+            `;
+            delBtn.addEventListener('click', async () => {
+              if (!confirm(t('settings.custom_emoji_delete_confirm', { name: stamp.name }) || `Delete ${stamp.name}?`))
+                return;
+              const res = await fetch(`/api/stamps/${stamp.id}`, { method: 'DELETE', credentials: 'include' });
+              if (res.ok) loadStamps();
+            });
+            card.appendChild(delBtn);
+            card.appendChild(img);
+            card.appendChild(label);
+            stampsGrid.appendChild(card);
+          }
+
+          // Add "add" card
+          const addCard = document.createElement('div');
+          addCard.style.cssText = `
+            border: 2px dashed var(--border);
+            border-radius: 6px;
+            padding: 0.5rem;
+            text-align: center;
+            background: var(--bg-secondary);
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            gap: 0.25rem;
+            min-height: 80px;
+            transition: border-color 0.2s, background 0.2s;
+          `;
+          const addIcon = document.createElement('div');
+          addIcon.textContent = '+';
+          addIcon.style.cssText = 'font-size: 1.5rem; line-height: 1; color: var(--text-muted);';
+          const addLabel = document.createElement('div');
+          addLabel.style.cssText = 'font-size: 0.75rem; color: var(--text-muted);';
+          addLabel.textContent = t('settings.add_stamp_tap_to_add') || 'Tap to add';
+          addCard.appendChild(addIcon);
+          addCard.appendChild(addLabel);
+
+          addCard.addEventListener('mouseenter', () => {
+            addCard.style.borderColor = 'var(--accent)';
+            addCard.style.background = 'var(--bg-hover, rgba(0,0,0,0.02))';
+          });
+          addCard.addEventListener('mouseleave', () => {
+            addCard.style.borderColor = 'var(--border)';
+            addCard.style.background = 'var(--bg-secondary)';
+          });
+          addCard.addEventListener('click', () => {
+            createAddStampModal({ onUploaded: loadStamps });
+          });
+
+          stampsGrid.appendChild(addCard);
+        })
+        .catch(() => {
+          stampsGrid.innerHTML = `<div style="grid-column:1/-1;text-align:center;color:var(--text-muted);padding:1rem;">${t('settings.custom_emoji_load_failed') || 'Failed to load stamps'}</div>`;
+        });
+    }
+
+    emojiSection.appendChild(emojiTitle);
+    emojiSection.appendChild(emojiDesc);
+    emojiSection.appendChild(emojiCountRow);
+    emojiSection.appendChild(stampsGrid);
+    container.appendChild(emojiSection);
+
+    refreshStamps = loadStamps;
+    loadStamps();
+  }
+
+  // Billing Section (Flaxia+ only). Play-distributed builds must use Play Billing
+  // for digital subscriptions; keep the current Stripe flow web-only until that
+  // integration and its purchase verification are implemented.
+  const isCapacitorApp =
+    typeof window !== 'undefined' &&
+    typeof window.Capacitor?.isNativePlatform === 'function' &&
+    window.Capacitor.isNativePlatform();
+  if (currentUser && !isCapacitorApp) {
+    const billingSection = document.createElement('div');
+    billingSection.className = 'settings-section';
+    billingSection.style.cssText = `
+      margin-bottom: 2rem;
+      padding: 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg-primary);
+    `;
+
+    const billingTitle = document.createElement('h2');
+    billingTitle.textContent = t('settings.billing') || 'Billing & Plans';
+    billingTitle.style.cssText = `
+      font-size: 1.125rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--text-primary);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0.5rem;
+    `;
+    billingSection.appendChild(billingTitle);
+
+    // Current plan display
+    const planInfo = document.createElement('div');
+    planInfo.style.cssText = `
+      padding: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 1rem;
+      background: var(--bg-secondary);
+    `;
+    const planLabel = document.createElement('div');
+    planLabel.style.cssText = 'font-size: 0.875rem; color: var(--text-muted); margin-bottom: 0.5rem;';
+    planLabel.textContent = t('settings.current_plan') || 'Current Plan';
+    const planName = document.createElement('div');
+    planName.style.cssText = 'font-weight: 600; font-size: 1.125rem; color: var(--text-primary);';
+    planName.textContent = t('settings.loading') || 'Loading...';
+    const planMeta = document.createElement('div');
+    planMeta.style.cssText = 'font-size: 0.8125rem; color: var(--text-secondary); margin-top: 0.35rem;';
+    planInfo.appendChild(planLabel);
+    planInfo.appendChild(planName);
+    planInfo.appendChild(planMeta);
+    billingSection.appendChild(planInfo);
+
+    // Flaxia+ plan card
+    const plusCard = document.createElement('div');
+    plusCard.style.cssText = `
+      border: 2px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    `;
+    const plusName = document.createElement('div');
+    plusName.style.cssText = 'font-weight: 700; font-size: 1rem; color: #8b5cf6; margin-bottom: 0.25rem;';
+    plusName.textContent = 'Flaxia+';
+    const plusPrice = document.createElement('div');
+    plusPrice.style.cssText = 'margin-bottom: 0.75rem;';
+    const plusPriceNum = document.createElement('span');
+    plusPriceNum.style.cssText = 'font-size: 1.5rem; font-weight: 700; color: var(--text-primary);';
+    plusPriceNum.textContent = '¥300';
+    const plusPricePeriod = document.createElement('span');
+    plusPricePeriod.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);';
+    plusPricePeriod.textContent = '/mo';
+    plusPrice.appendChild(plusPriceNum);
+    plusPrice.appendChild(plusPricePeriod);
+
+    const plusFeatures = document.createElement('ul');
+    plusFeatures.style.cssText = 'list-style: none; padding: 0; margin: 0 0 0.5rem;';
+    const plusFeatureLabels = [
+      t('settings.plan_plus_f1') || 'Unlimited custom stamps',
+      t('settings.plan_plus_f2') || 'GIF & MP4 stamps/icons/intro',
+      t('settings.plan_plus_f3') || 'Flaxia+ avatar checkmark badge',
+    ];
+    plusFeatureLabels.forEach((feature) => {
+      const li = document.createElement('li');
+      li.style.cssText = 'font-size: 0.8125rem; color: var(--text-secondary); padding: 0.25rem 0;';
+      li.textContent = `✓ ${feature}`;
+      plusFeatures.appendChild(li);
+    });
+
+    const actionBtn = document.createElement('button');
+    actionBtn.style.cssText = `
+      width: 100%;
+      padding: 0.5rem;
+      border: none;
+      border-radius: 6px;
+      background: #8b5cf6;
+      color: white;
+      font-weight: 600;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    `;
+    actionBtn.addEventListener('mouseenter', () => {
+      if (!actionBtn.disabled) actionBtn.style.opacity = '0.85';
+    });
+    actionBtn.addEventListener('mouseleave', () => {
+      if (!actionBtn.disabled) actionBtn.style.opacity = '1';
+    });
+
+    plusCard.appendChild(plusName);
+    plusCard.appendChild(plusPrice);
+    plusCard.appendChild(plusFeatures);
+    plusCard.appendChild(actionBtn);
+    billingSection.appendChild(plusCard);
+
+    // Billing history
+    const historySection = document.createElement('div');
+    const historyTitle = document.createElement('div');
+    historyTitle.style.cssText =
+      'font-weight: 600; font-size: 0.9375rem; color: var(--text-primary); margin: 0.5rem 0;';
+    historyTitle.textContent = t('settings.billing_history') || 'Billing History';
+    const historyList = document.createElement('div');
+    historyList.style.cssText = 'display: flex; flex-direction: column; gap: 0.5rem;';
+    historyList.textContent = t('settings.loading') || 'Loading...';
+    historySection.appendChild(historyTitle);
+    historySection.appendChild(historyList);
+    billingSection.appendChild(historySection);
+
+    container.appendChild(billingSection);
+
+    const planNames: Record<string, string> = {
+      flaxia_plus: 'Flaxia+ (¥300/mo)',
+      flaxia_plus_plus: 'Flaxia++ (¥500/mo)',
+      flaxia_sharp: 'Flaxia# (¥1000/mo)',
+    };
+
+    const formatDate = (iso: string | null): string => {
+      if (!iso) return '';
+      try {
+        return new Date(iso).toLocaleDateString(getLocale());
+      } catch {
+        return iso;
+      }
+    };
+
+    const statusLabel = (status: string | null): string => {
+      switch (status) {
+        case 'active':
+          return t('settings.status_active') || 'Active';
+        case 'trialing':
+          return t('settings.status_trialing') || 'Trial';
+        case 'past_due':
+          return t('settings.status_past_due') || 'Past due';
+        case 'canceled':
+          return t('settings.status_canceled') || 'Canceled';
+        default:
+          return status || '';
+      }
+    };
+
+    actionBtn.addEventListener('click', async () => {
+      actionBtn.disabled = true;
+      const originalLabel = actionBtn.textContent || t('settings.subscribe') || 'Subscribe';
+      actionBtn.textContent = t('settings.redirecting') || 'Redirecting...';
+      try {
+        const hasSubscription =
+          !!currentPlan.plan && ['active', 'trialing', 'past_due'].includes(currentPlan.status || '');
+        const endpoint = hasSubscription ? '/api/billing/portal' : '/api/billing/checkout';
+        const init: RequestInit = { method: 'POST', headers: { 'Content-Type': 'application/json' } };
+        if (!hasSubscription) {
+          init.body = JSON.stringify({ planId: 'flaxia_plus' });
+        }
+        const res = await fetch(endpoint, init);
+        const data = (await res.json()) as { url?: string; error?: string };
+        if (data.url) {
+          window.location.href = data.url;
+          return;
+        }
+        alert(data.error || t('settings.billing_error') || 'Failed to start billing');
+      } catch {
+        alert(t('settings.network_error') || 'Network error');
+      }
+      actionBtn.disabled = false;
+      actionBtn.textContent = originalLabel;
+    });
+
+    const renderPlan = () => {
+      const hasSubscription =
+        !!currentPlan.plan && ['active', 'trialing', 'past_due'].includes(currentPlan.status || '');
+      planName.textContent = currentPlan.plan
+        ? planNames[currentPlan.plan] || currentPlan.plan
+        : t('settings.free_plan') || 'Flaxia Free';
+
+      if (!hasSubscription) {
+        planMeta.textContent = '';
+        actionBtn.textContent = t('settings.subscribe') || 'Subscribe';
+        actionBtn.style.background = '#8b5cf6';
+        return;
+      }
+
+      const date = formatDate(currentPlan.expiresAt);
+      if (currentPlan.status === 'past_due') {
+        planMeta.textContent = t('settings.past_due_notice') || 'Payment past due.';
+      } else if (currentPlan.cancelAtPeriodEnd) {
+        planMeta.textContent = date
+          ? t('settings.cancels_on', { date }) || `Cancels on ${date}`
+          : t('settings.status_canceled') || 'Canceled';
+      } else {
+        const label = statusLabel(currentPlan.status);
+        planMeta.textContent = date ? `${label} · ${t('settings.renews_on', { date }) || `Renews on ${date}`}` : label;
+      }
+      actionBtn.textContent = t('settings.manage_subscription') || 'Manage / Cancel';
+      actionBtn.style.background = 'var(--accent)';
+    };
+
+    const renderHistory = (transactions: Array<Record<string, unknown>>) => {
+      historyList.textContent = '';
+      if (transactions.length === 0) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'font-size: 0.8125rem; color: var(--text-muted);';
+        empty.textContent = t('settings.no_billing_history') || 'No payments yet';
+        historyList.appendChild(empty);
+        return;
+      }
+      const txStatus = (status: unknown): string => {
+        const key = `settings.status_${String(status)}`;
+        const translated = t(key);
+        return translated !== key ? translated : String(status);
+      };
+      transactions.slice(0, 10).forEach((tx) => {
+        const row = document.createElement('div');
+        row.style.cssText =
+          'display: flex; justify-content: space-between; gap: 0.5rem; font-size: 0.8125rem; color: var(--text-secondary); border-bottom: 1px solid var(--border); padding-bottom: 0.35rem;';
+        const left = document.createElement('div');
+        const datePart = formatDate((tx.createdAt as string) || null);
+        const namePart = (tx.planName as string) || (tx.type as string) || '';
+        left.textContent = [datePart, namePart].filter(Boolean).join(' · ');
+        const right = document.createElement('div');
+        const amount = Number(tx.amount ?? 0);
+        right.textContent = `${amount.toLocaleString()} ${String(tx.currency || 'jpy').toUpperCase()} · ${txStatus(tx.status)}`;
+        row.appendChild(left);
+        row.appendChild(right);
+        historyList.appendChild(row);
+      });
+    };
+
+    const loadBilling = async () => {
+      try {
+        const [planRes, txRes] = await Promise.all([fetch('/api/billing/plan'), fetch('/api/billing/transactions')]);
+        if (planRes.ok) {
+          currentPlan = (await planRes.json()) as typeof currentPlan;
+        }
+        if (txRes.ok) {
+          const data = (await txRes.json()) as { transactions?: Array<Record<string, unknown>> };
+          renderHistory(data.transactions || []);
+        } else {
+          renderHistory([]);
+        }
+      } catch {
+        renderHistory([]);
+      }
+      renderPlan();
+      refreshStamps();
+    };
+
+    void loadBilling();
+  }
+
   return {
     getElement: () => container,
     destroy: () => {
+      window.removeEventListener(CROWD_CONSENT_CHANGE_EVENT, onCrowdConsentChange);
+      vaultSection.destroy();
       container.remove();
     },
   };

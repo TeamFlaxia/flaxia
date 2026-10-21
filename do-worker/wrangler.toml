@@ -7,10 +7,6 @@ compatibility_flags = ["nodejs_compat"]
 name = "NOTIFICATION_STREAM"
 class_name = "NotificationStream"
 
-[[durable_objects.bindings]]
-name = "CALL_STREAM"
-class_name = "CallStream"
-
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["NotificationStream"]
@@ -26,4 +22,8 @@ deleted_classes = ["ChatStream"]
 [[migrations]]
 tag = "v4"
 new_sqlite_classes = ["CallStream"]
+
+[[migrations]]
+tag = "v5"
+deleted_classes = ["CallStream"]
 

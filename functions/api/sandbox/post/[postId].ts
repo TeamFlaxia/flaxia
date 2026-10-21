@@ -1,7 +1,10 @@
 import { Hono } from 'hono';
+import { isKeyBlocked } from '../../../lib/scan/db';
 
 interface Env {
   BUCKET: R2Bucket;
+  DB: D1Database;
+  CACHE?: KVNamespace;
 }
 
 type Bindings = Env;
@@ -9,7 +12,6 @@ type Bindings = Env;
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.get('/:postId', async (c) => {
-  console.log('Sandbox POST function called for:', c.req.url);
   const postId = c.req.param('postId');
 
   console.log('Extracted postId:', postId);
@@ -33,6 +35,10 @@ app.get('/:postId', async (c) => {
     console.log('R2 result for POST:', object ? 'found' : 'not found');
 
     if (!object) {
+      return c.json({ error: 'ZIP not found' }, 404);
+    }
+
+    if (await isKeyBlocked(c.env.CACHE, zipKey, c.env.DB)) {
       return c.json({ error: 'ZIP not found' }, 404);
     }
 

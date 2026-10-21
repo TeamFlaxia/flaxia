@@ -1,8 +1,24 @@
 import { CAPTURE_BRIDGE_IIFE } from './capture-bridge.generated.ts';
 import { getMimeType, validateFileType } from './file-extensions.ts';
+import { createWvfsCookieCompatScript } from './wvfs-cookie-compat.ts';
+import { createWvfsImageCorsCompatScript } from './wvfs-image-cors.ts';
+import {
+  ZIP_MAX_FILE_COUNT,
+  ZIP_MAX_PATH_DEPTH,
+  ZIP_MAX_PATH_LENGTH,
+  ZIP_MAX_TOTAL_SIZE,
+  ZIP_TTL,
+} from './zip-constants.ts';
 
-const WVFS_TTL = 5 * 60 * 1000;
+const WVFS_TTL = ZIP_TTL;
 const WVFS_R2_PREFIX = 'wvfs/';
+
+// Compute the R2 base prefix for a post (or a specific game version of it).
+// Versions are isolated under wvfs/<postId>/<versionId>/ so multiple releases
+// of the same game can coexist without clobbering each other's extracted files.
+function wvfsBase(postId: string, versionId?: string | null): string {
+  return versionId ? `${WVFS_R2_PREFIX}${postId}/${versionId}` : `${WVFS_R2_PREFIX}${postId}`;
+}
 
 // Maximum files to persist to R2 in a single invocation. Keeps the number of
 // subrequests under the Workers Free plan limit (50 per invocation):
@@ -121,25 +137,31 @@ function validateZipCentralDirectory(cdData: Uint8Array, cdEntries: number): voi
     const commentLen = readUint16(view, offset + 32);
 
     entryCount++;
-    if (entryCount > 255) {
-      throw new Error('Too many files (max 255)');
+    if (entryCount > ZIP_MAX_FILE_COUNT) {
+      throw new Error(`Too many files (max ${ZIP_MAX_FILE_COUNT})`);
     }
 
     const fileNameBytes = cdData.slice(offset + 46, offset + 46 + fileNameLen);
     const fileName = new TextDecoder().decode(fileNameBytes);
 
     if (!fileName.endsWith('/')) {
-      if (fileName.length > 255) {
+      if (fileName.length > ZIP_MAX_PATH_LENGTH) {
         throw new Error(`Path too long: ${fileName}`);
       }
 
       const depth = (fileName.match(/\//g) || []).length;
-      if (depth > 10) {
+      if (depth > ZIP_MAX_PATH_DEPTH) {
         throw new Error(`Directory too deep: ${fileName}`);
       }
 
       if (fileName.includes('../')) {
         throw new Error(`Path traversal detected: ${fileName}`);
+      }
+
+      // #94: backslashes are separators on Windows extractors. A name like
+      // `..\evil.html` passes the slash check above but escapes elsewhere.
+      if (fileName.includes('\\')) {
+        throw new Error(`Backslash in entry name: ${fileName}`);
       }
 
       if (fileName.startsWith('/')) {
@@ -173,7 +195,7 @@ function validateZipCentralDirectory(cdData: Uint8Array, cdEntries: number): voi
       }
 
       totalSize += uncompressedSize;
-      if (totalSize > 100 * 1024 * 1024) {
+      if (totalSize > ZIP_MAX_TOTAL_SIZE) {
         throw new Error('Extracted size too large (max 100MB)');
       }
     }
@@ -228,8 +250,15 @@ async function extractFileFromR2(bucket: R2Bucket, zipKey: string, entry: ZipInd
     }
 
     if (entry.compressionMethod === 8) {
+      // A decompression bomb must not exhaust the isolate: reject a declared
+      // size above the archive budget and pass an output buffer as well, so
+      // fflate cannot allocate past the cap even if the declared size lies.
+      if (entry.uncompressedSize > ZIP_MAX_TOTAL_SIZE) {
+        console.warn(`ZIP entry exceeds size limit: ${entry.fileName} (${entry.uncompressedSize} bytes)`);
+        return null;
+      }
       const fflate = await import('fflate');
-      return fflate.inflateSync(compressedData);
+      return fflate.inflateSync(compressedData, { out: new Uint8Array(Math.max(entry.uncompressedSize, 1)) });
     }
 
     console.warn(`Unsupported compression method: ${entry.compressionMethod} for ${entry.fileName}`);
@@ -254,17 +283,22 @@ function normalizePath(path: string): string {
       }
       normalized.pop();
     } else {
+      // #91: dotfiles (e.g. .wvfs-manifest) are never game content. Refusing
+      // them at normalization closes the anonymous manifest listing.
+      if (segment.startsWith('.')) {
+        throw new Error(`Dotfiles are not servable: ${segment}`);
+      }
       if (segment.includes('\0') || /[<>:"|?*]/.test(segment)) {
         throw new Error(`Invalid path segment: ${segment}`);
       }
-      if (segment.length > 255) {
+      if (segment.length > ZIP_MAX_PATH_LENGTH) {
         throw new Error(`Path segment too long: ${segment}`);
       }
       normalized.push(segment);
     }
   }
 
-  if (normalized.length > 10) {
+  if (normalized.length > ZIP_MAX_PATH_DEPTH) {
     throw new Error(`Path too deep: ${normalized.join('/')}`);
   }
 
@@ -374,10 +408,11 @@ export async function ensureFileInWvfs(
   zipKey: string,
   postId: string,
   filePath: string,
+  versionId?: string | null,
 ): Promise<boolean> {
   cleanupExpiredEntries();
 
-  const entry = wvfsStorage.get(postId);
+  const entry = wvfsStorage.get(wvfsBase(postId, versionId));
 
   // Already fully extracted — just check if file exists
   if (entry && !entry.index) {
@@ -434,6 +469,15 @@ export async function ensureFileInWvfs(
   if (!cdObj) return false;
   const cdData = new Uint8Array(await cdObj.arrayBuffer());
 
+  // #80: the serve path must enforce the same archive policy as the upload
+  // and background-extract paths. Reject banned entries before indexing.
+  try {
+    validateZipCentralDirectory(cdData, eocd.cdEntries);
+  } catch (error) {
+    console.error(`ensureFileInWvfs: ZIP policy violation for post ${postId}:`, error);
+    return false;
+  }
+
   const index = parseCentralDirectory(cdData);
   const normalizedPath = normalizePath(filePath);
   let indexEntry = findFileInIndex(index, normalizedPath);
@@ -461,7 +505,7 @@ export async function ensureFileInWvfs(
   const fileMap = new Map<string, Uint8Array>();
   fileMap.set(resolvedIndexPath, fileData);
 
-  wvfsStorage.set(postId, {
+  wvfsStorage.set(wvfsBase(postId, versionId), {
     data: fileMap,
     createdAt: Date.now(),
     index,
@@ -493,6 +537,14 @@ export async function extractFileFromZip(
   const cdObj = await bucket.get(zipKey, { range: { offset: eocd.cdOffset, length: eocd.cdSize } });
   if (!cdObj) return null;
   const cdData = new Uint8Array(await cdObj.arrayBuffer());
+
+  // #80: same archive policy as every other ZIP entry point.
+  try {
+    validateZipCentralDirectory(cdData, eocd.cdEntries);
+  } catch (error) {
+    console.error(`extractFileFromZip: ZIP policy violation for ${zipKey}:`, error);
+    return null;
+  }
 
   const index = parseCentralDirectory(cdData);
   const normalizedPath = normalizePath(filePath);
@@ -551,10 +603,14 @@ export async function extractZipToWvfs(zipData: ArrayBuffer, postId: string): Pr
   }
 }
 
-export async function serveFileFromWvfs(postId: string, filePath: string): Promise<Response | null> {
+export async function serveFileFromWvfs(
+  postId: string,
+  filePath: string,
+  versionId?: string | null,
+): Promise<Response | null> {
   cleanupExpiredEntries();
 
-  const entry = wvfsStorage.get(postId);
+  const entry = wvfsStorage.get(wvfsBase(postId, versionId));
   if (!entry) {
     console.log(`WVFS: No file map found for postId: ${postId}`);
     return null;
@@ -593,7 +649,7 @@ export async function serveFileFromWvfs(postId: string, filePath: string): Promi
     const ext = resolvedPath.split('.').pop()?.toLowerCase();
 
     if (ext === 'html') {
-      const cacheKey = `${postId}:${resolvedPath}`;
+      const cacheKey = `${wvfsBase(postId, versionId)}:${resolvedPath}`;
       let cached = htmlCache.get(cacheKey);
       if (!cached) {
         const htmlContent = new TextDecoder().decode(fileData);
@@ -679,25 +735,37 @@ function rewriteLocalAbsolutePaths(htmlContent: string): string {
 }
 
 export function injectBaseTag(htmlContent: string, postId: string, subPath: string = ''): string {
-  const baseUrl = `/api/wvfs-zip/${postId}/${subPath}`;
+  // #92: postId/subPath land inside an HTML attribute. Identifiers are
+  // server-minted, but a hostile value must never break out of the quote or
+  // smuggle String.replace $-patterns into the replacement string.
+  const safeId = /^[A-Za-z0-9_-]{1,128}$/.test(postId) ? postId : 'invalid';
+  const safeSub = /^[A-Za-z0-9_.\/\-]{0,256}$/.test(subPath) ? subPath.replace(/\$+/g, '') : '';
+  const baseUrl = `/api/wvfs-zip/${safeId}/${safeSub}`;
+  // ZIP games run with an opaque origin, so storage/cookie getters throw and
+  // no-CORS images taint canvases. Seed compatibility shims before game scripts;
+  // storage writes still relay to the trusted sandbox-origin broker.
+  const storageCompatScript = `<script>(function(){var prefix='FLAXIA_STORAGE_V1:';var initial={};try{if(window.name.indexOf(prefix)===0)initial=JSON.parse(window.name.slice(prefix.length))||{}}catch{}try{window.name=''}catch{}function makeStorage(seed,persistent){var values=new Map(Object.entries(seed));function relay(operation,key,value){if(!persistent)return;try{window.parent.postMessage({type:'FLAXIA_GAME_STORAGE_WRITE',operation:operation,key:key,value:value},'*')}catch{}}return{get length(){return values.size},key:function(index){return Array.from(values.keys())[index]??null},getItem:function(key){key=String(key);return values.has(key)?values.get(key):null},setItem:function(key,value){key=String(key);value=String(value);values.set(key,value);relay('set',key,value)},removeItem:function(key){key=String(key);values.delete(key);relay('remove',key)},clear:function(){values.clear();relay('clear')}}}try{Object.defineProperty(window,'localStorage',{configurable:true,value:makeStorage(initial,true)})}catch{}try{Object.defineProperty(window,'sessionStorage',{configurable:true,value:makeStorage({},false)})}catch{}})();</script>`;
+  const imageCorsCompatScript = `<script>${createWvfsImageCorsCompatScript(baseUrl)}</script>`;
+  const cookieCompatScript = `<script>${createWvfsCookieCompatScript()}</script>`;
   const captureScript = `<script>${CAPTURE_BRIDGE_IIFE}</script>`;
+  const injectedScripts = `${storageCompatScript}\n  ${cookieCompatScript}\n  ${imageCorsCompatScript}\n  ${captureScript}`;
 
   htmlContent = rewriteLocalAbsolutePaths(htmlContent);
 
-  if (htmlContent.includes('<head>')) {
-    return htmlContent.replace(/<head>/i, `<head>\n  <base href="${baseUrl}">\n  ${captureScript}`);
+  if (/<head\b[^>]*>/i.test(htmlContent)) {
+    return htmlContent.replace(/(<head\b[^>]*>)/i, `$1\n  <base href="${baseUrl}">\n  ${injectedScripts}`);
   } else if (htmlContent.includes('<meta charset')) {
-    return htmlContent.replace(/(<meta charset[^>]*>)/i, `$1\n  <base href="${baseUrl}">\n  ${captureScript}`);
+    return htmlContent.replace(/(<meta charset[^>]*>)/i, `$1\n  <base href="${baseUrl}">\n  ${injectedScripts}`);
   } else {
-    return `<base href="${baseUrl}">\n${captureScript}\n${htmlContent}`;
+    return `<base href="${baseUrl}">\n${injectedScripts}\n${htmlContent}`;
   }
 }
 
-export async function cleanupWvfsZip(postId: string): Promise<void> {
+export async function cleanupWvfsZip(postId: string, versionId?: string | null): Promise<void> {
   cleanupExpiredEntries();
   try {
-    wvfsStorage.delete(postId);
-    const prefix = `${postId}:`;
+    wvfsStorage.delete(wvfsBase(postId, versionId));
+    const prefix = `${wvfsBase(postId, versionId)}:`;
     for (const key of htmlCache.keys()) {
       if (key.startsWith(prefix)) {
         htmlCache.delete(key);
@@ -717,6 +785,7 @@ export async function extractZipToR2(
   bucket: R2Bucket,
   zipKey: string,
   postId: string,
+  versionId?: string | null,
   maxFiles: number = DEFAULT_EXTRACT_BUDGET,
 ): Promise<number> {
   try {
@@ -741,8 +810,8 @@ export async function extractZipToR2(
     validateZipCentralDirectory(cdData, eocd.cdEntries);
 
     const index = parseCentralDirectory(cdData);
-    const manifestKey = `${WVFS_R2_PREFIX}${postId}/.wvfs-manifest`;
-    const existing = new Set(await readWvfsManifest(bucket, postId));
+    const manifestKey = `${wvfsBase(postId, versionId)}/.wvfs-manifest`;
+    const existing = new Set(await readWvfsManifest(bucket, postId, versionId));
 
     // Deterministic order: extract the earliest files first (index.html + core assets).
     const entries = [...index.entries()].sort((a, b) => a[1].localHeaderOffset - b[1].localHeaderOffset);
@@ -757,7 +826,7 @@ export async function extractZipToR2(
       const fileData = await extractFileFromR2(bucket, zipKey, entry);
       if (!fileData) continue;
 
-      const r2Key = `${WVFS_R2_PREFIX}${postId}/${fileName}`;
+      const r2Key = `${wvfsBase(postId, versionId)}/${fileName}`;
       const contentType = getMimeType(fileName);
       puts.push(
         bucket
@@ -786,9 +855,9 @@ export async function extractZipToR2(
   }
 }
 
-// Read the list of files already persisted under wvfs/{postId}.
-async function readWvfsManifest(bucket: R2Bucket, postId: string): Promise<string[]> {
-  const manifestObj = await bucket.get(`${WVFS_R2_PREFIX}${postId}/.wvfs-manifest`);
+// Read the list of files already persisted under wvfs/{postId} (or a version).
+async function readWvfsManifest(bucket: R2Bucket, postId: string, versionId?: string | null): Promise<string[]> {
+  const manifestObj = await bucket.get(`${wvfsBase(postId, versionId)}/.wvfs-manifest`);
   if (!manifestObj) return [];
   try {
     const manifest = JSON.parse(await manifestObj.text()) as { files?: string[] };
@@ -824,9 +893,14 @@ export async function copyHtmlToWvfs(bucket: R2Bucket, htmlKey: string, postId: 
 // Persist a single file from the in-memory WVFS cache to R2 (persist-on-access).
 // Used after serving a lazily-extracted file so subsequent requests hit the fast
 // R2 path without re-extraction. Only a handful of subrequests are needed.
-export async function persistFileToWvfsR2(bucket: R2Bucket, postId: string, filePath: string): Promise<void> {
+export async function persistFileToWvfsR2(
+  bucket: R2Bucket,
+  postId: string,
+  filePath: string,
+  versionId?: string | null,
+): Promise<void> {
   try {
-    const entry = wvfsStorage.get(postId);
+    const entry = wvfsStorage.get(wvfsBase(postId, versionId));
     if (!entry) return;
 
     const normalizedPath = normalizePath(filePath);
@@ -849,14 +923,14 @@ export async function persistFileToWvfsR2(bucket: R2Bucket, postId: string, file
 
     if (!fileData) return;
 
-    const r2Key = `${WVFS_R2_PREFIX}${postId}/${resolvedPath}`;
+    const r2Key = `${wvfsBase(postId, versionId)}/${resolvedPath}`;
     const contentType = getMimeType(resolvedPath);
     await bucket.put(r2Key, fileData, { httpMetadata: { contentType } });
 
-    const existing = await readWvfsManifest(bucket, postId);
+    const existing = await readWvfsManifest(bucket, postId, versionId);
     if (!existing.includes(resolvedPath)) {
       existing.push(resolvedPath);
-      await bucket.put(`${WVFS_R2_PREFIX}${postId}/.wvfs-manifest`, JSON.stringify({ files: existing }), {
+      await bucket.put(`${wvfsBase(postId, versionId)}/.wvfs-manifest`, JSON.stringify({ files: existing }), {
         httpMetadata: { contentType: 'application/json' },
       });
     }
@@ -867,10 +941,15 @@ export async function persistFileToWvfsR2(bucket: R2Bucket, postId: string, file
 
 // Serve a file from the pre-extracted R2 cache.
 // Returns null if the file is not yet extracted (caller should fall back to on-the-fly).
-export async function serveFileFromR2(bucket: R2Bucket, postId: string, filePath: string): Promise<Response | null> {
+export async function serveFileFromR2(
+  bucket: R2Bucket,
+  postId: string,
+  filePath: string,
+  versionId?: string | null,
+): Promise<Response | null> {
   try {
     const normalizedPath = normalizePath(filePath);
-    const baseKey = `${WVFS_R2_PREFIX}${postId}/`;
+    const baseKey = `${wvfsBase(postId, versionId)}/`;
 
     const r2Key = baseKey + normalizedPath;
     let obj = await bucket.get(r2Key);
@@ -918,7 +997,7 @@ export async function serveFileFromR2(bucket: R2Bucket, postId: string, filePath
     const ext = resolvedPath.split('.').pop()?.toLowerCase();
 
     if (ext === 'html') {
-      const cacheKey = `${postId}:${resolvedPath}`;
+      const cacheKey = `${wvfsBase(postId, versionId)}:${resolvedPath}`;
       let cached = htmlCache.get(cacheKey);
       if (cached) {
         return new Response(new Uint8Array(cached), {

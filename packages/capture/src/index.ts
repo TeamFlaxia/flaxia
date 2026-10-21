@@ -1,7 +1,7 @@
 /**
  * Capture bridge for Flaxia sandbox games.
  *
- * This script is injected into served game HTML (WVFS ZIP / HTML5 / DOS player)
+ * This script is injected into served game HTML (WVFS ZIP / HTML5 player)
  * and runs inside the sandbox origin. Because games run in cross-origin iframes
  * without `allow-same-origin`, the parent cannot read the game canvas directly;
  * this bridge captures frames in the sandbox and ships them to the parent via
@@ -127,7 +127,7 @@ interface CanvasPlacement {
   height: number;
 }
 
-const GAME_CANVAS_SELECTORS = ['#dos-container canvas', '#flash-player canvas', 'canvas'];
+const GAME_CANVAS_SELECTORS = ['#flash-player canvas', 'canvas'];
 
 // Canvases are cached between taint probes: a canvas rarely flips between
 // tainted/clean mid-session, and re-reading every sample would be expensive.
@@ -391,7 +391,7 @@ function run(): void {
       readySent = true;
       startSampling();
     } else if (canvasChecker === null) {
-      // Games (especially DOS) may create their canvas after boot; poll for it.
+      // Games may create their canvas after boot; poll for it.
       canvasChecker = window.setInterval(checkCanvas, 500);
       window.setTimeout(() => {
         if (canvasChecker !== null) {

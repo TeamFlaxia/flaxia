@@ -52,7 +52,7 @@ app.get('/', async (c) => {
         {
           rel: 'self',
           type: 'application/activity+json',
-          href: `${c.env.BASE_URL}/actors/${username}`,
+          href: `${c.env.BASE_URL}/api/actors/${username}`,
         },
       ],
     };

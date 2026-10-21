@@ -1,5 +1,12 @@
-import { t } from './i18n.js';
 import { executeWvfsZip } from './wvfs-zip-client.js';
+import { ZIP_FETCH_TIMEOUT, ZIP_READY_TIMEOUT, ZIP_SW_CONTROLLER_TIMEOUT } from './zip-constants.js';
+import {
+  createZipLoadingIndicator,
+  createZipSandboxIframe,
+  fadeOutLoading,
+  showLoadingTimeoutMessage,
+  waitForZipIframeLoad,
+} from './zip-ui-utils.js';
 
 export interface SwZipExecutorHandle {
   destroy: () => void;
@@ -8,9 +15,7 @@ export interface SwZipExecutorHandle {
 
 const SW_SCOPE = '/sw-zip/';
 const SW_URL = '/sw-zip/sw.js';
-const FS_READY_TIMEOUT = 10000;
-const ZIP_FETCH_TIMEOUT = 15000;
-const LOADING_TIMEOUT = 30000;
+const PREFIX = 'sw-zip';
 
 let activeHandle: SwZipExecutorHandle | null = null;
 
@@ -32,7 +37,7 @@ function waitForController(): Promise<void> {
 
     const timeout = setTimeout(() => {
       reject(new Error('Service Worker controller timeout'));
-    }, 10000);
+    }, ZIP_SW_CONTROLLER_TIMEOUT);
 
     const handler = () => {
       clearTimeout(timeout);
@@ -57,7 +62,7 @@ function waitForZipReady(postId: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error('ZIP readiness timeout'));
-    }, FS_READY_TIMEOUT);
+    }, ZIP_READY_TIMEOUT);
 
     const watchdog = setTimeout(() => {
       reject(new Error('ZIP extraction watchdog timeout'));
@@ -82,12 +87,12 @@ function waitForZipReady(postId: string): Promise<void> {
   });
 }
 
-async function fetchZip(postId: string, fallbackUrl?: string): Promise<ArrayBuffer> {
+async function fetchZip(postId: string, fallbackUrl?: string, versionId?: string): Promise<ArrayBuffer> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ZIP_FETCH_TIMEOUT);
 
   try {
-    const zipUrl = fallbackUrl || `/api/zip/${postId}`;
+    const zipUrl = fallbackUrl || `/api/zip/${postId}${versionId ? `?v=${versionId}` : ''}`;
     const res = await fetch(zipUrl, { signal: controller.signal });
 
     if (!res.ok) {
@@ -101,168 +106,13 @@ async function fetchZip(postId: string, fallbackUrl?: string): Promise<ArrayBuff
   }
 }
 
-function createLoadingIndicator(): HTMLElement {
-  ensureSpinKeyframe();
-
-  const loading = document.createElement('div');
-  loading.className = 'sw-zip-loading';
-  loading.style.cssText = `
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    background: var(--bg-primary, #ffffff);
-    z-index: 10;
-    transition: opacity 0.3s ease;
-    border-radius: 8px;
-  `;
-
-  const spinner = document.createElement('div');
-  spinner.style.cssText = `
-    width: 32px;
-    height: 32px;
-    border: 3px solid var(--border, #e2e8f0);
-    border-top-color: var(--accent, #22c55e);
-    border-radius: 50%;
-    animation: sw-zip-spin 0.8s linear infinite;
-    margin-bottom: 12px;
-  `;
-
-  const text = document.createElement('div');
-  text.style.cssText = `
-    color: var(--text-muted, #64748b);
-    font-size: 0.875rem;
-    font-weight: 500;
-  `;
-  text.textContent = t('post_stage.loading_zip').replace(/<[^>]+>/g, '');
-
-  loading.appendChild(spinner);
-  loading.appendChild(text);
-  return loading;
-}
-
-function ensureSpinKeyframe(): void {
-  if (!document.querySelector('#sw-zip-spin-style')) {
-    const style = document.createElement('style');
-    style.id = 'sw-zip-spin-style';
-    style.textContent = `@keyframes sw-zip-spin { to { transform: rotate(360deg); } }`;
-    document.head.appendChild(style);
-  }
-}
-
-function createSandboxIframe(
-  postId: string,
-  containerEl: HTMLElement,
-  hideFullscreen: boolean,
-): { iframe: HTMLIFrameElement; cleanup: () => void } {
-  const iframeContainer = document.createElement('div');
-  iframeContainer.style.cssText = `
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    flex-direction: column;
-  `;
-
-  const iframe = document.createElement('iframe');
-  iframe.src = `/sw-zip/${postId}/index.html`;
-  iframe.sandbox = 'allow-scripts allow-pointer-lock allow-fullscreen';
-  iframe.setAttribute('allow', 'fullscreen');
-  iframe.setAttribute('referrerpolicy', 'no-referrer');
-  iframe.style.cssText = `
-    flex: 1;
-    width: 100%;
-    height: 100%;
-    border: none;
-    opacity: 0;
-    transition: opacity 0.3s ease;
-  `;
-
-  const fullscreenBtn = document.createElement('button');
-  fullscreenBtn.textContent = t('fullscreen.button');
-  fullscreenBtn.className = 'sw-zip-fullscreen-btn';
-  fullscreenBtn.style.cssText = `
-    margin-top: 8px;
-    padding: 4px 8px;
-    font-size: 12px;
-    border: 1px solid #ccc;
-    background: #f0f0f0;
-    cursor: pointer;
-    border-radius: 4px;
-    align-self: center;
-  `;
-  fullscreenBtn.onclick = (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    try {
-      if (document.fullscreenElement) {
-        document.exitFullscreen().catch(() => {});
-      } else if (iframeContainer.requestFullscreen) {
-        iframeContainer.requestFullscreen().catch(() => {
-          if (iframe.requestFullscreen) {
-            iframe.requestFullscreen().catch(() => {});
-          }
-        });
-      } else if (iframe.requestFullscreen) {
-        iframe.requestFullscreen().catch(() => {});
-      }
-    } catch {
-      // ignore
-    }
-  };
-
-  containerEl.appendChild(iframeContainer);
-  iframeContainer.appendChild(iframe);
-  if (!hideFullscreen) {
-    iframeContainer.appendChild(fullscreenBtn);
-  }
-
-  const cleanup = () => {
-    if (iframe.parentNode) {
-      iframe.parentNode.removeChild(iframe);
-    }
-  };
-
-  return { iframe, cleanup };
-}
-
-function waitForIframeLoad(iframe: HTMLIFrameElement, loadingEl: HTMLElement | null): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (iframe.contentWindow?.location?.href && iframe.contentWindow.location.href !== 'about:blank') {
-      resolve(true);
-      return;
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      iframe.removeEventListener('load', onLoad);
-      resolve(false);
-    }, LOADING_TIMEOUT);
-
-    (iframe as HTMLIFrameElement & { _swZipTimeout?: number })._swZipTimeout = timeoutId;
-
-    function onLoad() {
-      clearTimeout(timeoutId);
-      resolve(true);
-    }
-
-    iframe.addEventListener('load', onLoad, { once: true });
-  });
-}
-
 export async function executeSwZip(
   postId: string,
   containerEl: HTMLElement,
   fallbackUrl?: string,
   hideFullscreen: boolean = false,
   showLoading: boolean = true,
+  versionId?: string,
 ): Promise<SwZipExecutorHandle> {
   if (activeHandle) {
     activeHandle.destroy();
@@ -275,7 +125,7 @@ export async function executeSwZip(
 
     let loadingEl: HTMLElement | null = null;
     if (showLoading) {
-      loadingEl = createLoadingIndicator();
+      loadingEl = createZipLoadingIndicator(PREFIX);
       containerEl.appendChild(loadingEl);
     }
 
@@ -283,7 +133,7 @@ export async function executeSwZip(
     await navigator.serviceWorker.ready;
     await waitForController();
 
-    const zipData = await fetchZip(postId, fallbackUrl);
+    const zipData = await fetchZip(postId, fallbackUrl, versionId);
 
     const controller = navigator.serviceWorker.controller;
     if (!controller) {
@@ -294,29 +144,25 @@ export async function executeSwZip(
 
     await waitForZipReady(postId);
 
-    const { iframe, cleanup } = createSandboxIframe(postId, containerEl, hideFullscreen);
+    const { iframe, cleanup } = createZipSandboxIframe(containerEl, `/sw-zip/${postId}/index.html`, {
+      hideFullscreen,
+      prefix: PREFIX,
+    });
 
-    const loaded = await waitForIframeLoad(iframe, loadingEl);
+    const loaded = await waitForZipIframeLoad(iframe, loadingEl);
 
     if (loaded) {
       iframe.style.opacity = '1';
-      if (loadingEl?.parentNode) {
-        loadingEl.style.opacity = '0';
-        setTimeout(() => {
-          if (loadingEl?.parentNode) loadingEl.remove();
-        }, 300);
-      }
+      fadeOutLoading(loadingEl);
     } else {
-      if (loadingEl?.parentNode) {
-        loadingEl.innerHTML = `<div style="color: var(--text-muted, #64748b); text-align: center; padding: 20px; font-size: 0.875rem;">読み込みに時間がかかっています…</div>`;
-      }
+      showLoadingTimeoutMessage(loadingEl);
       iframe.style.opacity = '1';
     }
 
     const handle: SwZipExecutorHandle = {
       postId,
       destroy: () => {
-        clearTimeout((iframe as HTMLIFrameElement & { _swZipTimeout?: number })._swZipTimeout);
+        clearTimeout((iframe as HTMLIFrameElement & { _zipLoadTimeout?: number })._zipLoadTimeout);
         cleanup();
         try {
           navigator.serviceWorker.controller?.postMessage({ type: 'CLEANUP_ZIP', postId });

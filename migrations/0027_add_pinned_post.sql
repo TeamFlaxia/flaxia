@@ -1,0 +1,1 @@
+ALTER TABLE users ADD COLUMN pinned_post_id TEXT REFERENCES posts(id) ON DELETE SET NULL;

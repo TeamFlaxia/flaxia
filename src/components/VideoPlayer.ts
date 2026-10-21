@@ -1,8 +1,10 @@
 import { t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 
 export interface VideoPlayerProps {
   gifKey: string;
   postId: string;
+  src?: string;
 }
 
 function formatTime(seconds: number): string {
@@ -35,7 +37,7 @@ const ICONS = {
 const SPEEDS = [0.5, 1, 1.5, 2] as const;
 
 export function createVideoPlayer(props: VideoPlayerProps): HTMLElement {
-  if (!props.gifKey) {
+  if (!props.gifKey && !props.src) {
     const fallback = document.createElement('div');
     fallback.className = 'video-player-error';
     fallback.textContent = t('video_player.no_video');
@@ -50,8 +52,13 @@ export function createVideoPlayer(props: VideoPlayerProps): HTMLElement {
   video.className = 'video-player-element';
   video.preload = 'metadata';
   video.playsInline = true;
+  video.oncontextmenu = (e) => e.preventDefault();
 
-  const videoUrl = `/api/video/${props.gifKey}`;
+  // Disable native download controls
+  video.setAttribute('controlsList', 'nodownload');
+  video.disablePictureInPicture = true;
+
+  const videoUrl = nativeApiHref(props.src || `/api/video/${props.gifKey}`);
 
   const errorEl = document.createElement('div');
   errorEl.className = 'video-player-error';
@@ -259,7 +266,7 @@ export function createVideoPlayer(props: VideoPlayerProps): HTMLElement {
       controls.style.display = '';
       overlay.style.display = '';
       loadingEl.style.display = '';
-      video.src = videoUrl;
+      video.src = videoUrl + '?_=' + Date.now();
       video.load();
     });
   };

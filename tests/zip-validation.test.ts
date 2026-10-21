@@ -1,6 +1,7 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
 import JSZip from 'jszip';
+import { ZIP_MAX_FILE_COUNT } from '../src/lib/zip-constants.ts';
 import { validateZipLegacy } from '../src/lib/zip-executor.ts';
 
 async function createZip(files: Record<string, string | Uint8Array>): Promise<ArrayBuffer> {
@@ -41,18 +42,18 @@ describe('validateZipLegacy', () => {
     await assert.doesNotReject(() => validateZipLegacy(zipData));
   });
 
-  it('rejects zip with too many files (> 255)', async () => {
+  it(`rejects zip with too many files (> ${ZIP_MAX_FILE_COUNT})`, async () => {
     const files: Record<string, string> = { 'index.html': '<html></html>' };
-    for (let i = 0; i < 256; i++) {
+    for (let i = 0; i < ZIP_MAX_FILE_COUNT; i++) {
       files[`file${i}.txt`] = 'content';
     }
     const zipData = await createZip(files);
     await assert.rejects(() => validateZipLegacy(zipData), /Too many files/);
   });
 
-  it('accepts zip with exactly 255 files', async () => {
+  it(`accepts zip with exactly ${ZIP_MAX_FILE_COUNT} files`, async () => {
     const files: Record<string, string> = { 'index.html': '<html></html>' };
-    for (let i = 0; i < 254; i++) {
+    for (let i = 0; i < ZIP_MAX_FILE_COUNT - 1; i++) {
       files[`file${i}.txt`] = 'content';
     }
     const zipData = await createZip(files);
@@ -127,14 +128,12 @@ describe('validateZipLegacy', () => {
     await assert.rejects(() => validateZipLegacy(zipData), /File type not allowed/);
   });
 
-  it('accepts zip with DOS executable files', async () => {
+  it('rejects zip with .exe files', async () => {
     const zipData = await createZip({
       'index.html': '<html></html>',
       'game.exe': new Uint8Array([0x4d, 0x5a, 0x90]),
-      'setup.bat': '@echo off',
-      'config.conf': 'setting=1',
     });
-    await assert.doesNotReject(() => validateZipLegacy(zipData));
+    await assert.rejects(() => validateZipLegacy(zipData), /File type not allowed/);
   });
 
   it('accepts zip with directories alongside valid files', async () => {

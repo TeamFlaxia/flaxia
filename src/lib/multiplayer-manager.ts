@@ -8,18 +8,23 @@ type WsMessage =
   | { type: 'signal'; targetUserId: string; signal: { type: string; payload: unknown } }
   | { type: 'peer_data'; data: unknown };
 
+import type { ParentMessage } from './bridge.ts';
+import { isParentMessage } from './bridge.ts';
+import { isNativeApp, nativeApiHref } from './native-api.ts';
+
 interface MultiplayerConfig {
   gameId: string;
   roomId: string;
   userId: string;
   wsUrl: string;
   iframe: HTMLIFrameElement;
-  sandboxOrigin: string;
   onDisconnect?: () => void;
 }
 
 const STUN_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
 const WS_OPEN = 1;
+// #123: P2P/relay payload ceiling before anything reaches the game iframe.
+const MAX_PEER_DATA_BYTES = 8_000;
 
 export class MultiplayerManager {
   private ws: WebSocket | null = null;
@@ -38,7 +43,10 @@ export class MultiplayerManager {
   connect(): void {
     if (this.connected) return;
 
-    const wsUrl = new URL(this.config.wsUrl, globalThis.location.origin);
+    const wsUrl = new URL(
+      isNativeApp() ? nativeApiHref(this.config.wsUrl) : this.config.wsUrl,
+      globalThis.location.origin,
+    );
     wsUrl.searchParams.set('gameId', this.config.gameId);
     wsUrl.searchParams.set('roomId', this.config.roomId);
 
@@ -71,6 +79,21 @@ export class MultiplayerManager {
 
   disconnect(): void {
     this.closeP2P();
+    // #121: tell D1 we left. The DO forgets the socket on close, but the
+    // participants row would otherwise stay forever (ghost seat that still
+    // counts toward capacity). Best-effort + keepalive so navigation-time
+    // disconnects still land.
+    try {
+      if (this.config.roomId) {
+        void fetch(`/api/multiplayer/rooms/${this.config.roomId}/leave`, {
+          method: 'POST',
+          credentials: 'include',
+          keepalive: true,
+        }).catch(() => {});
+      }
+    } catch {
+      // ignore — socket close below is the primary signal
+    }
     if (this.ws) {
       try {
         this.ws.close(1000, 'Game disconnected');
@@ -166,7 +189,10 @@ export class MultiplayerManager {
     }
 
     if (msgType === 'peer_data') {
-      this.sendPeerDataToGame(data.data);
+      // #123: only members' data reaches the game iframe, bounded in size.
+      if (typeof data.userId === 'string' && this.peerIds.includes(data.userId)) {
+        this.sendPeerDataToGame(data.data);
+      }
       return;
     }
 
@@ -215,6 +241,8 @@ export class MultiplayerManager {
       this.onP2PDisconnected();
     };
     this.dataChannel.onmessage = (event) => {
+      // #123: bound P2P payloads before they reach the game iframe.
+      if (typeof event.data === 'string' && event.data.length > MAX_PEER_DATA_BYTES) return;
       try {
         const parsed = JSON.parse(event.data);
         this.sendPeerDataToGame(parsed);
@@ -236,6 +264,10 @@ export class MultiplayerManager {
   }
 
   private async handleSignal(data: { userId: string; signal: { type: string; payload: unknown } }): Promise<void> {
+    // #123: only room members may drive negotiation. Joining the room is the
+    // consent; strangers' offers/answers/candidates are never applied, so a
+    // non-member cannot force a P2P session (and the ICE exchange it leaks).
+    if (!data.userId || !this.peerIds.includes(data.userId)) return;
     if (!this.pc) {
       this.createPeerConnection();
     }
@@ -367,29 +399,30 @@ export class MultiplayerManager {
         break;
     }
 
-    if (parentMsg) {
-      try {
-        this.config.iframe.contentWindow?.postMessage(parentMsg, this.config.sandboxOrigin);
-      } catch {
-        // ignore
-      }
-    }
+    if (parentMsg && isParentMessage(parentMsg)) this.postToGame(parentMsg);
   }
 
   private sendP2PStateToGame(state: 'connected' | 'disconnected' | 'failed'): void {
-    try {
-      this.config.iframe.contentWindow?.postMessage(
-        { type: 'MULTIPLAYER_P2P_STATE', state },
-        this.config.sandboxOrigin,
-      );
-    } catch {
-      // ignore
-    }
+    this.postToGame({ type: 'MULTIPLAYER_P2P_STATE', state });
   }
 
   private sendPeerDataToGame(data: unknown): void {
+    // Final gate: no peer payload larger than the ceiling reaches the game.
     try {
-      this.config.iframe.contentWindow?.postMessage({ type: 'MULTIPLAYER_PEER_DATA', data }, this.config.sandboxOrigin);
+      if (JSON.stringify(data).length > MAX_PEER_DATA_BYTES) return;
+    } catch {
+      return;
+    }
+    this.postToGame({ type: 'MULTIPLAYER_PEER_DATA', data });
+  }
+
+  private postToGame(message: ParentMessage): void {
+    if (!isParentMessage(message)) return;
+    try {
+      // The game's sandboxed browsing context has an opaque origin, so there
+      // is no exact targetOrigin to use. The typed payload is sent only to the
+      // known iframe WindowProxy, and incoming replies verify that same source.
+      this.config.iframe.contentWindow?.postMessage(message, '*');
     } catch {
       // ignore
     }

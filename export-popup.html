@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flaxia — Export</title>
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#ffffff">
+  <script>
+    (function () {
+      var theme;
+      var meta;
+      try {
+        theme = localStorage.getItem('flaxia_theme');
+        if (theme === 'system' || theme === null) {
+          theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        if (theme === 'dark' || theme === 'light') {
+          document.documentElement.dataset.theme = theme;
+          meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.content = theme === 'dark' ? '#0f172a' : '#ffffff';
+        }
+      } catch (_e) {}
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg-primary: #ffffff;
+      --border: #e2e8f0;
+      --text-primary: #0f172a;
+      --text-muted: #64748b;
+      --accent: #22c55e;
+      --accent-dark: #16a34a;
+      --danger: #ef4444;
+      --track: #f1f5f9;
+    }
+    :root[data-theme='dark'] {
+      color-scheme: dark;
+      --bg-primary: #0f172a;
+      --border: #334155;
+      --text-primary: #f1f5f9;
+      --text-muted: #94a3b8;
+      --accent: #22c55e;
+      --accent-dark: #16a34a;
+      --danger: #ef4444;
+      --track: #1f2937;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans', monospace, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.5;
+    }
+    .ep-wrap {
+      padding: 20px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 100vh;
+      min-height: 100dvh;
+    }
+    .ep-title { font-size: 0.95rem; font-weight: 700; }
+    .ep-file {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ep-status { font-size: 0.85rem; color: var(--text-muted); min-height: 1.3em; }
+    .ep-track {
+      height: 8px;
+      background: var(--track);
+      border-radius: 9999px;
+      overflow: hidden;
+    }
+    .ep-bar {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      border-radius: 9999px;
+      transition: width 0.15s ease;
+    }
+    .ep-actions { display: flex; justify-content: flex-end; margin-top: auto; }
+    .ep-cancel {
+      padding: 7px 16px;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 9999px;
+      color: var(--text-primary);
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .ep-cancel:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+    .ep-cancel:disabled { opacity: 0.4; cursor: default; }
+    .ep-note { font-size: 0.7rem; color: var(--text-muted); }
+  </style>
+</head>
+<body>
+  <div class="ep-wrap">
+    <div class="ep-title" id="ep-title"></div>
+    <div class="ep-file" id="ep-file"></div>
+    <div class="ep-status" id="ep-status"></div>
+    <div class="ep-track"><div class="ep-bar" id="ep-bar"></div></div>
+    <div class="ep-actions">
+      <button class="ep-cancel" id="ep-cancel" type="button" disabled></button>
+    </div>
+    <div class="ep-note" id="ep-note"></div>
+  </div>
+  <script type="module" src="/src/export-popup.ts"></script>
+</body>
+</html>

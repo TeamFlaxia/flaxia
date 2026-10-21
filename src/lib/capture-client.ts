@@ -45,7 +45,10 @@ export class ArcadeCaptureClient {
 
   constructor(options: ArcadeCaptureClientOptions) {
     this.iframe = options.iframe;
-    this.targetOrigin = options.targetOrigin;
+    // Sandboxed ZIP frames have an opaque origin ("null"), so a specific
+    // target origin causes postMessage to throw. The exact contentWindow is
+    // still checked on every response in handleMessage.
+    this.targetOrigin = options.iframe.sandbox.contains('allow-same-origin') ? options.targetOrigin : '*';
     this.onReady = options.onReady;
     this.onError = options.onError;
     this.onPostScore = options.onPostScore;
@@ -137,7 +140,9 @@ export class ArcadeCaptureClient {
     ctx.font = 'bold 36px sans-serif';
     ctx.fillText(this.clipText(ctx, meta.title, width - 80, 36), 40, (headerH + pad) / 2);
 
-    // Photo
+    // Photo (bilinear/bicubic resampling so upscaling stays smooth)
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(img, pad, headerH + pad, photoWidth, photoHeight);
 
     // Footer
@@ -210,7 +215,7 @@ export class ArcadeCaptureClient {
   }
 
   private handleMessage(event: MessageEvent): void {
-    // Source check is the reliable guard for opaque-origin (DOS) iframes.
+    // Source check is the reliable guard for opaque-origin iframes.
     if (event.source !== this.iframe.contentWindow) return;
 
     const data = event.data;

@@ -13,12 +13,49 @@ export type ReportCategory =
 
 export type NotificationType = 'fresh' | 'reported' | 'warned' | 'hidden';
 
+export interface QuotedPost {
+  id: string;
+  user_id: string;
+  username: string;
+  display_name?: string | null;
+  avatar_key?: string | null;
+  badge_type?: string | null;
+  text: string;
+  hashtags: string;
+  mentions?: string;
+  gif_key?: string | null;
+  payload_key?: string | null;
+  swf_key?: string | null;
+  thumbnail_key?: string | null;
+  attachments?: PostAttachment[];
+  parent_id?: string | null;
+  root_id?: string | null;
+  created_at: string;
+}
+
+export type MediaAttachmentKind = 'image' | 'audio' | 'video' | 'document';
+
+/** One media file attached to a post (multi-media attachments, max 4; 32 for Flaxia+). */
+export interface PostAttachment {
+  r2_key: string;
+  kind: MediaAttachmentKind;
+  position: number;
+}
+
+export interface ReactionSummary {
+  emoji: string;
+  count: number;
+  reacted: boolean;
+  stamp_url?: string;
+}
+
 export interface Post {
   id: string;
   user_id: string;
   username: string;
   display_name?: string;
   avatar_key?: string;
+  badge_type?: string | null;
   text: string;
   hashtags: string;
   mentions?: string;
@@ -26,6 +63,7 @@ export interface Post {
   payload_key?: string; // Stores ZIP files for HTML execution
   swf_key?: string; // Stores SWF files for Flash execution
   thumbnail_key?: string; // Stores thumbnail image for ZIP/SWF posts
+  attachments?: PostAttachment[]; // Multiple image/audio/video attachments
   fresh_count: number;
   bookmark_count: number;
   reply_count: number;
@@ -38,8 +76,11 @@ export interface Post {
   created_at: string;
   edited_at?: string;
   author_language?: string;
+  quoted_post_id?: string;
+  quoted_post?: QuotedPost | null;
   is_freshed?: boolean; // Whether current user has freshed this post
   is_bookmarked?: boolean; // Whether current user has bookmarked this post
+  reactions?: ReactionSummary[]; // Emoji reactions summary for this post
   poll?: {
     id: string;
     question: string;
@@ -59,7 +100,13 @@ export interface PostCardProps {
   post: Post;
   sandboxOrigin: string;
   initialMode?: PostCardMode;
-  currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null;
+  currentUser?: {
+    username: string;
+    id: string;
+    display_name?: string;
+    avatar_key?: string;
+    badge_type?: string | null;
+  } | null;
   onDelete?: (postId: string) => void;
   disableReply?: boolean;
   disableReplyComposer?: boolean;
@@ -68,12 +115,16 @@ export interface PostCardProps {
   enablePostRefs?: boolean;
   disableNavigation?: boolean;
   stripLeadingPostRef?: boolean;
+  showPinOption?: boolean;
+  pinned?: boolean;
+  onTogglePin?: (postId: string) => void;
 }
 
 export interface PostHeaderProps {
   username: string;
   display_name?: string;
   avatar_key?: string;
+  badge_type?: string | null;
   createdAt: string;
   editedAt?: string;
 }
@@ -82,12 +133,14 @@ export interface PostTextProps {
   text: string;
   mentions?: string;
   enablePostRefs?: boolean;
+  authorId?: string;
 }
 
 export interface PostStageProps {
   post: Post;
   mode: PostCardMode;
   sandboxOrigin: string;
+  versionId?: string;
   onModeChange: (mode: PostCardMode) => void;
 }
 
@@ -95,11 +148,19 @@ export interface GifPreviewProps {
   gifKey?: string;
   postId: string;
   isThumbnail?: boolean;
+  src?: string;
+  // Force the preview into a 16:9 box, center-cropping the image to fill it.
+  ratio?: '16:9';
+  /** All image attachment keys of the post, for lightbox prev/next navigation. */
+  gallery?: string[];
+  /** Index of this image inside `gallery`. */
+  galleryIndex?: number;
 }
 
 export interface SandboxFrameProps {
   postId: string;
   sandboxOrigin: string;
+  versionId?: string;
 }
 
 export interface PostActionsProps {
@@ -110,16 +171,25 @@ export interface PostActionsProps {
   impressions: number;
   isFreshed: boolean;
   isBookmarked: boolean;
+  reactions: ReactionSummary[];
   depth: number;
   onFreshToggle: () => void;
   onBookmarkToggle: () => void;
   onReplyToggle: () => void;
   onShare?: () => void;
+  onQuote?: () => void;
+  onReactionToggle: (emoji: string) => void;
 }
 
 export interface TimelineProps {
   sandboxOrigin: string;
-  currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null;
+  currentUser?: {
+    username: string;
+    id: string;
+    display_name?: string;
+    avatar_key?: string;
+    badge_type?: string | null;
+  } | null;
 }
 
 export interface TimelineState {

@@ -1,26 +1,15 @@
 # ローカルテスト用アカウント
 
-## Account 1
-- **Email:** test1@example.com
-- **Password:** testpass123
-- **Username:** testuser1
-- **Display Name:** Test User 1
+共有の固定パスワードは置いていません（#139）。テスト用アカウントは各自のローカル環境で作ってください。
 
-## Account 2
-- **Email:** test2@example.com
-- **Password:** testpass456
-- **Username:** testuser2
-- **Display Name:** Test User 2
+## 作り方（ローカルのみ）
 
----
+1. 開発サーバーを起動します（`npm run dev`、http://localhost:8787）。
+2. ブラウザで開き、通常の登録フローでアカウントを作成します。
+3. パスワードは各自で決めた強いものを使い、使い回さないでください。
 
-## How to use
+## 注意
 
-Dev server: http://localhost:8787
-
-### Login via API
-```sh
-curl -X POST http://localhost:8787/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"test1@example.com","password":"testpass123"}'
-```
+- ここに書いた認証情報で本番・共有環境にログインしないでください。
+- `example.com` のような予約ドメイン以外をテストに使わないでください。
+- 自動テストは各自でアカウントを発行します（`tests/helpers/setup.ts`）。固定アカウントへの依存はありません。

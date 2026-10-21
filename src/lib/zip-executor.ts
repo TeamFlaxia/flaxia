@@ -1,6 +1,7 @@
 import type JSZipType from 'jszip';
 import { validateFileType } from './file-extensions.ts';
 import { t } from './i18n.ts';
+import { ZIP_MAX_FILE_COUNT } from './zip-constants.ts';
 
 export interface ZipExecutorHandle {
   destroy: () => void;
@@ -29,6 +30,7 @@ export async function executeZip(
   postId: string,
   containerEl: HTMLElement,
   url?: string, // if provided, fetch from this URL instead of /api/zip/${postId}
+  versionId?: string,
 ): Promise<ZipExecutorHandle> {
   if (activeHandle) {
     activeHandle.destroy();
@@ -42,7 +44,7 @@ export async function executeZip(
     const loadingEl = createZipLoadingIndicator();
     containerEl.appendChild(loadingEl);
 
-    const zipUrl = url || `/api/zip/${postId}`;
+    const zipUrl = url || `/api/zip/${postId}${versionId ? `?v=${versionId}` : ''}`;
     const response = await fetch(zipUrl);
     if (!response.ok) {
       throw new Error(`Failed to fetch ZIP: ${response.status}`);
@@ -166,7 +168,7 @@ function createSandboxIframe(
 
   const iframe = document.createElement('iframe');
   iframe.src = blobUrl;
-  iframe.sandbox = 'allow-scripts allow-pointer-lock allow-fullscreen';
+  iframe.sandbox = 'allow-scripts allow-pointer-lock allow-forms allow-popups';
   iframe.setAttribute('allow', 'fullscreen');
   iframe.setAttribute('referrerpolicy', 'no-referrer');
   iframe.style.cssText = `
@@ -185,8 +187,8 @@ function createSandboxIframe(
     margin-top: 8px;
     padding: 4px 8px;
     font-size: 12px;
-    border: 1px solid #ccc;
-    background: #f0f0f0;
+    border: 1px solid var(--border);
+    background: var(--bg-tertiary);
     cursor: pointer;
     border-radius: 4px;
     align-self: center;
@@ -234,11 +236,6 @@ function createSandboxIframe(
 
 function waitForLegacyLoad(iframe: HTMLIFrameElement, loadingEl: HTMLElement): Promise<boolean> {
   return new Promise((resolve) => {
-    if (iframe.contentWindow?.location?.href && iframe.contentWindow.location.href !== 'about:blank') {
-      resolve(true);
-      return;
-    }
-
     const timeoutId = window.setTimeout(() => {
       iframe.removeEventListener('load', onLoad);
       resolve(false);
@@ -274,8 +271,8 @@ export async function rewriteIndexHtmlLegacy(zipData: ArrayBuffer, blobUrlMap: M
 function validateZip(zip: JSZipType): void {
   const files = Object.entries(zip.files);
 
-  if (files.length > 255) {
-    throw new Error('Too many files (max 255)');
+  if (files.length > ZIP_MAX_FILE_COUNT) {
+    throw new Error(`Too many files (max ${ZIP_MAX_FILE_COUNT})`);
   }
 
   let totalSize = 0;

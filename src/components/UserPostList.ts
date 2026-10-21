@@ -15,6 +15,10 @@ export function createUserPostList(props: {
   username: string;
   sandboxOrigin: string;
   currentUser: CurrentUser | null;
+  source?: 'posts' | 'freshs' | 'bookmarks';
+  showPinOption?: boolean;
+  pinnedPostId?: string | null;
+  onTogglePin?: (postId: string) => void;
 }): { getElement: () => HTMLElement; addPost: (post: Post) => void; destroy: () => void } {
   // State
   let posts: Post[] = [];
@@ -43,6 +47,24 @@ export function createUserPostList(props: {
 
   container.appendChild(loadMoreContainer);
 
+  // Build a PostCard, threading pin options through
+  const buildCard = (post: Post) =>
+    createPostCard({
+      post,
+      sandboxOrigin: props.sandboxOrigin,
+      currentUser: props.currentUser,
+      depth: post.depth,
+      enablePostRefs: true,
+      showPinOption: props.showPinOption,
+      pinned: props.showPinOption ? post.id === (props.pinnedPostId ?? '') : undefined,
+      onTogglePin: props.onTogglePin,
+      onDelete: (postId) => {
+        posts = posts.filter((p) => p.id !== postId);
+        postCards.delete(postId);
+        renderPosts();
+      },
+    });
+
   // Render posts
   const renderPosts = () => {
     postList.innerHTML = '';
@@ -55,18 +77,7 @@ export function createUserPostList(props: {
     }
 
     posts.forEach((post) => {
-      const postCard = createPostCard({
-        post,
-        sandboxOrigin: props.sandboxOrigin,
-        currentUser: props.currentUser,
-        depth: post.depth,
-        enablePostRefs: true,
-        onDelete: (postId) => {
-          posts = posts.filter((p) => p.id !== postId);
-          postCards.delete(postId);
-          renderPosts();
-        },
-      });
+      const postCard = buildCard(post);
 
       postCards.set(post.id, postCard);
       postList.appendChild(postCard.getElement());
@@ -80,6 +91,49 @@ export function createUserPostList(props: {
   };
 
   // Load initial posts
+  const source = props.source ?? 'posts';
+  const limit = 20;
+
+  const fetchPosts = async (activeCursor?: string) => {
+    const params = new URLSearchParams();
+    params.set('limit', String(limit));
+    if (activeCursor) params.set('cursor', activeCursor);
+
+    let url: string;
+    if (source === 'posts') {
+      params.set('username', props.username);
+      url = `/api/posts?${params.toString()}`;
+    } else if (source === 'freshs') {
+      url = `/api/freshs?${params.toString()}`;
+    } else {
+      url = `/api/bookmarks?${params.toString()}`;
+    }
+
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) {
+      throw new Error('Failed to fetch posts');
+    }
+
+    const data = (await response.json()) as { posts: Post[]; nextCursor?: string | null };
+    const fetched = data.posts ?? [];
+
+    let next: string | undefined;
+    let more: boolean;
+    if (data.nextCursor !== undefined) {
+      next = data.nextCursor || undefined;
+      more = !!next;
+    } else if (fetched.length > 0) {
+      next = fetched[fetched.length - 1].created_at;
+      more = fetched.length === limit;
+    } else {
+      next = undefined;
+      more = false;
+    }
+
+    return { fetched, next, more };
+  };
+
+  // Load initial posts
   const loadInitialPosts = async () => {
     if (loading) return;
 
@@ -87,26 +141,10 @@ export function createUserPostList(props: {
     updateLoadingSpinner();
 
     try {
-      const params = new URLSearchParams();
-      params.set('username', props.username);
-      params.set('limit', '20');
-
-      const response = await fetch(`/api/posts?${params.toString()}`, {
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch posts');
-      }
-
-      const data = (await response.json()) as { posts: Post[] };
-      posts = data.posts;
-
-      if (data.posts.length > 0) {
-        cursor = data.posts[data.posts.length - 1].created_at;
-      }
-
-      hasMore = data.posts.length === 20;
+      const { fetched, next, more } = await fetchPosts();
+      posts = fetched;
+      cursor = next;
+      hasMore = more;
       renderPosts();
     } catch (error) {
       console.error('Failed to load posts:', error);
@@ -124,27 +162,10 @@ export function createUserPostList(props: {
     updateLoadingSpinner();
 
     try {
-      const params = new URLSearchParams();
-      params.set('username', props.username);
-      params.set('limit', '20');
-      params.set('cursor', cursor);
-
-      const response = await fetch(`/api/posts?${params.toString()}`, {
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch more posts');
-      }
-
-      const data = (await response.json()) as { posts: Post[] };
-      posts = [...posts, ...data.posts];
-
-      if (data.posts.length > 0) {
-        cursor = data.posts[data.posts.length - 1].created_at;
-      }
-
-      hasMore = data.posts.length === 20;
+      const { fetched, next, more } = await fetchPosts(cursor);
+      posts = [...posts, ...fetched];
+      cursor = next;
+      hasMore = more;
       renderPosts();
     } catch (error) {
       console.error('Failed to load more posts:', error);
@@ -173,36 +194,14 @@ export function createUserPostList(props: {
     addPost: (post) => {
       posts = [post, ...posts];
       postList.innerHTML = '';
-      const card = createPostCard({
-        post,
-        sandboxOrigin: props.sandboxOrigin,
-        currentUser: props.currentUser,
-        depth: post.depth,
-        enablePostRefs: true,
-        onDelete: (postId) => {
-          posts = posts.filter((p) => p.id !== postId);
-          postCards.delete(postId);
-          renderPosts();
-        },
-      });
+      const card = buildCard(post);
       postCards.set(post.id, card);
       postList.appendChild(card.getElement());
       // Re-append existing cards
       for (let i = 1; i < posts.length; i++) {
         let card = postCards.get(posts[i].id);
         if (!card) {
-          card = createPostCard({
-            post: posts[i],
-            sandboxOrigin: props.sandboxOrigin,
-            currentUser: props.currentUser,
-            depth: posts[i].depth,
-            enablePostRefs: true,
-            onDelete: (postId) => {
-              posts = posts.filter((p) => p.id !== postId);
-              postCards.delete(postId);
-              renderPosts();
-            },
-          });
+          card = buildCard(posts[i]);
           postCards.set(posts[i].id, card);
         }
         postList.appendChild(card.getElement());

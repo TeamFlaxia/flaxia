@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js';
+import { attachIcons } from '../lib/icons.js';
 import { registerModal } from '../lib/modal-state.js';
 import {
   canUseWebShare,
@@ -24,9 +25,10 @@ export interface ShareModalProps {
   url?: string;
   media?: ShareMedia;
   onClose: () => void;
+  onQuote?: () => void;
 }
 
-export function createShareModal({ post, url: customUrl, media, onClose }: ShareModalProps): HTMLElement {
+export function createShareModal({ post, url: customUrl, media, onClose, onQuote }: ShareModalProps): HTMLElement {
   const unregister = registerModal();
   const overlay = document.createElement('div');
   overlay.className = 'share-modal-overlay';
@@ -97,11 +99,37 @@ export function createShareModal({ post, url: customUrl, media, onClose }: Share
         line-height: 1;
         border-radius: 4px;
         transition: background 0.2s;
-      ">✕</button>
+      "><span class="action-icon" data-icon="close"></span></button>
     </div>
     <div class="share-modal-content" style="
       padding: 1.25rem;
     ">
+      ${
+        onQuote
+          ? `
+        <button class="share-button share-button--quote" style="
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.75rem;
+          padding: 0.875rem 1rem;
+          background: var(--bg-secondary);
+          border: 1px solid var(--border);
+          border-radius: 0.5rem;
+          color: var(--text-primary);
+          font-size: 0.9375rem;
+          font-weight: 500;
+          cursor: pointer;
+          margin-bottom: 1rem;
+          transition: background 0.2s;
+        ">
+          <span class="action-icon" data-icon="quote"></span>
+          <span>${t('share.quote')}</span>
+        </button>
+      `
+          : ''
+      }
       ${
         media
           ? `
@@ -150,7 +178,7 @@ export function createShareModal({ post, url: customUrl, media, onClose }: Share
           margin-bottom: 1rem;
           transition: opacity 0.2s;
         ">
-          <span style="font-size: 1.25rem;">📤</span>
+          <span class="action-icon" data-icon="send"></span>
           <span>${t('share.native')}</span>
         </button>
       `
@@ -173,7 +201,7 @@ export function createShareModal({ post, url: customUrl, media, onClose }: Share
         margin-bottom: 1rem;
         transition: background 0.2s;
       ">
-        <span style="font-size: 1.25rem;">📋</span>
+        <span class="action-icon" data-icon="copy"></span>
         <span>${t('share.copy_link')}</span>
       </button>
       <div class="share-toast" style="
@@ -240,12 +268,15 @@ export function createShareModal({ post, url: customUrl, media, onClose }: Share
     </div>
   `;
 
+  attachIcons(modal);
+
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
 
   const closeButton = modal.querySelector('.share-modal-close') as HTMLButtonElement;
   const nativeShareButton = modal.querySelector('.share-button--native') as HTMLButtonElement;
   const clipboardButton = modal.querySelector('.share-button--clipboard') as HTMLButtonElement;
+  const quoteButton = modal.querySelector('.share-button--quote') as HTMLButtonElement;
   const toast = modal.querySelector('.share-toast') as HTMLElement;
 
   const showToast = (message: string) => {
@@ -263,6 +294,14 @@ export function createShareModal({ post, url: customUrl, media, onClose }: Share
   };
 
   closeButton.addEventListener('click', close);
+
+  if (quoteButton && onQuote) {
+    quoteButton.addEventListener('click', () => {
+      unregister();
+      overlay.remove();
+      onQuote();
+    });
+  }
 
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) {

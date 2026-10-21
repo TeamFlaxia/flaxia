@@ -1,14 +1,20 @@
 import { nanoid } from 'nanoid';
+// Extension kept explicit: this module is also imported by Node-run tests
+// (tests/security-guards.test.ts reaches it through routes/tests.ts), and Node
+// ESM does not resolve extensionless relative specifiers.
+import { isCreatableSrpKdf, serverStep1, serverStep2 } from './srp.ts';
 
 export interface User {
   id: string;
   email: string;
   username: string;
   display_name: string;
+  role?: string | null;
   bio: string;
   avatar_key?: string;
   language?: string;
   ng_words?: string;
+  badge_type?: string | null;
   created_at: string;
 }
 
@@ -16,6 +22,7 @@ export interface Session {
   id: string;
   user_id: string;
   expires_at: string;
+  srp_upgrade_allowed?: number;
 }
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
@@ -66,7 +73,15 @@ export async function verifyPassword(password: string, stored: string): Promise<
   )) as ArrayBuffer;
 
   const hashBytes = new Uint8Array(hash as ArrayBuffer);
-  return hashBytes.every((b, i) => b === originalHash[i]);
+  // Constant-time comparison to avoid leaking the hash via timing. The length
+  // is fixed by the algorithm (SHA-256 → 32 bytes), so an early length check
+  // does not leak secret-dependent information.
+  if (hashBytes.length !== originalHash.length) return false;
+  let diff = 0;
+  for (let i = 0; i < hashBytes.length; i++) {
+    diff |= hashBytes[i] ^ originalHash[i];
+  }
+  return diff === 0;
 }
 
 // Generate session token
@@ -75,15 +90,19 @@ function generateSessionToken(): string {
 }
 
 // Create session
-export async function createSession(env: Env, userId: string): Promise<Session> {
+export async function createSession(
+  env: Env,
+  userId: string,
+  options: { srpUpgradeAllowed?: boolean } = {},
+): Promise<Session> {
   const sessionId = generateSessionToken();
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
 
   const result = await env.DB.prepare(`
-    INSERT INTO sessions (id, user_id, expires_at)
-    VALUES (?, ?, ?)
+    INSERT INTO sessions (id, user_id, expires_at, srp_upgrade_allowed)
+    VALUES (?, ?, ?, ?)
   `)
-    .bind(sessionId, userId, expiresAt)
+    .bind(sessionId, userId, expiresAt, options.srpUpgradeAllowed ? 1 : 0)
     .run();
 
   if (!result.success) {
@@ -94,6 +113,7 @@ export async function createSession(env: Env, userId: string): Promise<Session> 
     id: sessionId,
     user_id: userId,
     expires_at: expiresAt,
+    srp_upgrade_allowed: options.srpUpgradeAllowed ? 1 : 0,
   };
 }
 
@@ -103,7 +123,7 @@ export async function getSession(env: Env, token: string): Promise<{ user: User;
 
   // Get session from database
   const session = (await env.DB.prepare(`
-    SELECT * FROM sessions WHERE id = ? AND expires_at > datetime('now')
+    SELECT * FROM sessions WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   `)
     .bind(token)
     .first()) as Session | undefined;
@@ -112,7 +132,7 @@ export async function getSession(env: Env, token: string): Promise<{ user: User;
 
   // Get user from database
   const user = (await env.DB.prepare(`
-    SELECT id, email, username, display_name, bio, avatar_key, created_at
+    SELECT id, email, username, display_name, bio, avatar_key, badge_type, created_at, role
     FROM users WHERE id = ?
   `)
     .bind(session.user_id)
@@ -123,7 +143,8 @@ export async function getSession(env: Env, token: string): Promise<{ user: User;
   return { user, session };
 }
 
-// Get user with session using single JOIN query for /api/me optimization
+// Resolve the live session and user together. Session validity must come from
+// D1 so logout and other session revocations take effect immediately.
 export async function getMeWithSession(env: Env, token: string): Promise<{ user: User } | null> {
   if (!token) return null;
 
@@ -131,7 +152,7 @@ export async function getMeWithSession(env: Env, token: string): Promise<{ user:
   const result = (await env.DB.prepare(`
     SELECT 
       u.id, u.email, u.username, u.display_name, 
-      u.bio, u.avatar_key, u.language, u.ng_words, u.created_at
+      u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.created_at, u.role, u.role
     FROM sessions s
     JOIN users u ON s.user_id = u.id
     WHERE s.id = ?
@@ -140,7 +161,8 @@ export async function getMeWithSession(env: Env, token: string): Promise<{ user:
     .bind(token)
     .first()) as User | undefined;
 
-  return result ? { user: result } : null;
+  if (!result) return null;
+  return { user: result };
 }
 
 // Extend session (sliding window)
@@ -153,7 +175,7 @@ export async function extendSession(env: Env, token: string): Promise<boolean> {
   const result = await env.DB.prepare(`
     UPDATE sessions 
     SET expires_at = ? 
-    WHERE id = ? AND expires_at > datetime('now')
+    WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
   `)
     .bind(newExpiresAt, token)
     .run();
@@ -170,20 +192,33 @@ export async function deleteSession(env: Env, token: string): Promise<boolean> {
   return result.success;
 }
 
-// Register user
+export interface SrpRegistration {
+  salt: string; // base64 (16 bytes)
+  verifier: string; // base64 (256 bytes)
+  group: string; // '2048'
+  kdf: string; // 'sha256-v1' | 'pbkdf2-600k-v2' — how the client derived x
+}
+
+// Register a new account. SRP-only: the server never receives the password, so
+// there is no legacy plaintext branch to fall back to. Password policy
+// (8-128 chars) is enforced client-side because there is nothing to check
+// server-side once only a verifier is sent.
 export async function registerUser(
   env: Env,
   userData: {
     email: string;
-    password: string;
     username: string;
     display_name: string;
+    srp: SrpRegistration;
   },
 ): Promise<User> {
-  const { email, password, username, display_name } = userData;
+  const { username, display_name, srp } = userData;
+  // Emails are case-insensitive identifiers: normalize at the write boundary
+  // so `DevTest@flaxia.app` and `devtest@flaxia.app` cannot coexist.
+  const email = userData.email.trim().toLowerCase();
 
-  // Check if email already exists
-  const existingEmail = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+  // Check if email already exists (case-insensitively, including legacy rows).
+  const existingEmail = await env.DB.prepare('SELECT id FROM users WHERE lower(email) = ?').bind(email).first();
   if (existingEmail) {
     throw new Error('Email already registered');
   }
@@ -199,15 +234,21 @@ export async function registerUser(
   // Generate user ID
   const userId = nanoid();
 
-  // Hash password
-  const passwordHash = await hashPassword(password);
+  if (srp.group !== '2048') throw new Error('Unsupported SRP group');
+  // #89: new accounts must use the 600k-iteration KDF. v1 stays verifiable
+  // at login (pre-existing accounts), but must never back a new verifier.
+  if (!isCreatableSrpKdf(srp.kdf)) throw new Error('Unsupported SRP KDF');
+  // Basic length sanity checks (16-byte salt, 256-byte verifier).
+  if (base64ToUint8Array(srp.salt).length !== 16) throw new Error('Invalid SRP salt');
+  if (base64ToUint8Array(srp.verifier).length !== 256) throw new Error('Invalid SRP verifier');
 
-  // Create user
-  const result = await env.DB.prepare(`
-    INSERT INTO users (id, email, password_hash, username, display_name, bio)
-    VALUES (?, ?, ?, ?, ?, '')
-  `)
-    .bind(userId, email, passwordHash, username, display_name)
+  // SRP-only accounts have no legacy hash; store empty string so the NOT NULL
+  // column is satisfied and legacy login correctly fails.
+  const result = await env.DB.prepare(
+    `INSERT INTO users (id, email, password_hash, username, display_name, bio, srp_salt, srp_verifier, srp_group, srp_kdf)
+     VALUES (?, ?, '', ?, ?, '', ?, ?, ?, ?)`,
+  )
+    .bind(userId, email, username, display_name, srp.salt, srp.verifier, srp.group, srp.kdf)
     .run();
 
   if (!result.success) {
@@ -216,7 +257,7 @@ export async function registerUser(
 
   // Return user without password hash
   const user = (await env.DB.prepare(`
-    SELECT id, email, username, display_name, bio, avatar_key, created_at
+    SELECT id, email, username, display_name, bio, avatar_key, badge_type, created_at
     FROM users WHERE id = ?
   `)
     .bind(userId)
@@ -225,18 +266,193 @@ export async function registerUser(
   return user;
 }
 
+// Begin an SRP login: returns the server ephemeral B, the user's salt, and the
+// KDF id the stored verifier was derived with (the client needs it to compute x).
+// Returns null if the user has no SRP verifier (client should fall back to legacy).
+export async function startSrpLogin(
+  env: Env,
+  email: string,
+): Promise<{ challengeId: string; salt: string; B: string; kdf: string } | null> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const user = (await env.DB.prepare('SELECT id, srp_salt, srp_verifier, srp_kdf FROM users WHERE lower(email) = ?')
+    .bind(normalizedEmail)
+    .first()) as { id: string; srp_salt: string | null; srp_verifier: string | null; srp_kdf: string | null } | null;
+
+  if (!user || !user.srp_verifier || !user.srp_salt) return null;
+
+  const salt = base64ToUint8Array(user.srp_salt);
+  const v = base64ToUint8Array(user.srp_verifier);
+  const { B, b } = await serverStep1(salt, v);
+  const challengeId = nanoid(32);
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+  const insert = await env.DB.prepare(
+    'INSERT INTO srp_handshakes (id, user_id, b_scalar, b_pub, expires_at) VALUES (?, ?, ?, ?, ?)',
+  )
+    .bind(challengeId, user.id, b.toString(), uint8ArrayToBase64(B), expiresAt)
+    .run();
+  if (!insert.success) throw new Error('Failed to store SRP handshake');
+
+  // #90: handshakes hold server secrets and expired rows were never reaped.
+  // Opportunistically delete them here (best-effort, never blocks login).
+  // Also cap live handshakes per user so abandoned challenges cannot pile up.
+  try {
+    await env.DB.prepare("DELETE FROM srp_handshakes WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')").run();
+    await env.DB.prepare(
+      `DELETE FROM srp_handshakes WHERE user_id = ? AND id NOT IN (
+         SELECT id FROM srp_handshakes WHERE user_id = ? ORDER BY expires_at DESC LIMIT 5
+       )`,
+    )
+      .bind(user.id, user.id)
+      .run();
+  } catch {
+    // ignore cleanup failures
+  }
+
+  return {
+    challengeId,
+    salt: user.srp_salt,
+    B: uint8ArrayToBase64(B),
+    // Rows written before migration 0090 have no label; they are all v1.
+    kdf: user.srp_kdf ?? 'sha256-v1',
+  };
+}
+
+// Finish an SRP login: validates M1 and returns the session on success.
+export async function verifySrpLogin(
+  env: Env,
+  email: string,
+  challengeId: string,
+  A: string,
+  M1: string,
+): Promise<{ user: User; session: Session; M2: string } | null> {
+  const hs = (await env.DB.prepare(
+    "SELECT * FROM srp_handshakes WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+  )
+    .bind(challengeId)
+    .first()) as { user_id: string; b_scalar: string; b_pub: string } | null;
+  if (!hs) return null;
+
+  const consumed = await env.DB.prepare(
+    "DELETE FROM srp_handshakes WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+  )
+    .bind(challengeId)
+    .run();
+  if (!consumed.success || (consumed.meta?.changes ?? 0) === 0) return null;
+
+  const user = (await env.DB.prepare(`
+    SELECT id, email, srp_salt, srp_verifier, username, display_name, bio, avatar_key, badge_type, created_at
+    FROM users WHERE id = ?
+  `)
+    .bind(hs.user_id)
+    .first()) as {
+    id: string;
+    email: string;
+    srp_salt: string | null;
+    srp_verifier: string | null;
+    username: string;
+    display_name: string;
+    bio: string;
+    avatar_key: string | null;
+    created_at: string;
+  } | null;
+  if (!user || !user.srp_verifier || !user.srp_salt) return null;
+
+  const v = base64ToUint8Array(user.srp_verifier);
+  const B = base64ToUint8Array(hs.b_pub);
+  const A_bytes = base64ToUint8Array(A);
+  const M1_bytes = base64ToUint8Array(M1);
+
+  const result = await serverStep2(A_bytes, B, BigInt(hs.b_scalar), v, M1_bytes);
+  if (!result) return null;
+
+  const session = await createSession(env, user.id);
+  const safeUser: User = {
+    id: user.id,
+    email: user.email,
+    username: user.username,
+    display_name: user.display_name,
+    bio: user.bio,
+    avatar_key: user.avatar_key ?? undefined,
+    created_at: user.created_at,
+  };
+  return { user: safeUser, session, M2: uint8ArrayToBase64(result.M2) };
+}
+
+// Store (or replace) the SRP verifier for an already-authenticated user.
+// Used to upgrade a legacy account to SRP and to migrate v1 verifiers to v2 —
+// both happen at a moment where the browser holds the plaintext password.
+// The server never derives x itself; it only records what the client computed.
+export async function upgradeSrp(env: Env, userId: string, srp: SrpRegistration): Promise<void> {
+  if (srp.group !== '2048') throw new Error('Unsupported SRP group');
+  // #89: upgrades and v1→v2 migrations must also land on v2, never mint v1.
+  if (!isCreatableSrpKdf(srp.kdf)) throw new Error('Unsupported SRP KDF');
+  if (base64ToUint8Array(srp.salt).length !== 16) throw new Error('Invalid SRP salt');
+  if (base64ToUint8Array(srp.verifier).length !== 256) throw new Error('Invalid SRP verifier');
+  const result = await env.DB.prepare(
+    `UPDATE users SET password_hash = '', srp_salt = ?, srp_verifier = ?, srp_group = ?, srp_kdf = ?
+     WHERE id = ?`,
+  )
+    .bind(srp.salt, srp.verifier, srp.group, srp.kdf, userId)
+    .run();
+  if (!result.success) throw new Error('Failed to upgrade SRP');
+}
+
+// Verify an SRP proof of the CURRENT password without creating a session. Used by
+// the password-change flow so SRP-only accounts (no legacy password hash) still
+// have to prove knowledge of the current password before it can be changed.
+export async function verifySrpPassword(
+  env: Env,
+  userId: string,
+  challengeId: string,
+  A: string,
+  M1: string,
+): Promise<boolean> {
+  const hs = (await env.DB.prepare(
+    "SELECT * FROM srp_handshakes WHERE id = ? AND user_id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+  )
+    .bind(challengeId, userId)
+    .first()) as { user_id: string; b_scalar: string; b_pub: string } | null;
+  if (!hs) return false;
+
+  // Consume the challenge before doing the expensive proof. D1 serializes
+  // writes, so exactly one concurrent verifier can delete this row.
+  const consumed = await env.DB.prepare(
+    "DELETE FROM srp_handshakes WHERE id = ? AND user_id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+  )
+    .bind(challengeId, userId)
+    .run();
+  if (!consumed.success || (consumed.meta?.changes ?? 0) === 0) return false;
+
+  const user = (await env.DB.prepare('SELECT srp_salt, srp_verifier FROM users WHERE id = ?').bind(userId).first()) as {
+    srp_salt: string | null;
+    srp_verifier: string | null;
+  } | null;
+  if (!user || !user.srp_verifier || !user.srp_salt) return false;
+
+  const v = base64ToUint8Array(user.srp_verifier);
+  const B = base64ToUint8Array(hs.b_pub);
+  const A_bytes = base64ToUint8Array(A);
+  const M1_bytes = base64ToUint8Array(M1);
+
+  return !!(await serverStep2(A_bytes, B, BigInt(hs.b_scalar), v, M1_bytes));
+}
+
 // Login user
 export async function loginUser(env: Env, email: string, password: string): Promise<{ user: User; session: Session }> {
+  const normalizedEmail = email.trim().toLowerCase();
   // Get user with password hash
   const userWithPassword = (await env.DB.prepare(`
-    SELECT id, email, password_hash, username, display_name, bio, avatar_key, created_at
-    FROM users WHERE email = ?
+    SELECT id, email, password_hash, srp_salt, srp_verifier, username, display_name, bio, avatar_key, badge_type, created_at
+    FROM users WHERE lower(email) = ?
   `)
-    .bind(email)
+    .bind(normalizedEmail)
     .first()) as {
     id: string;
     email: string;
     password_hash: string;
+    srp_salt: string | null;
+    srp_verifier: string | null;
     username: string;
     display_name: string;
     bio: string;
@@ -248,6 +464,12 @@ export async function loginUser(env: Env, email: string, password: string): Prom
     throw new Error('Invalid credentials');
   }
 
+  // The legacy plaintext endpoint is only for accounts that have never been
+  // migrated to SRP. Once a verifier exists, the old hash must not stay usable.
+  if (userWithPassword.srp_verifier || userWithPassword.srp_salt) {
+    throw new Error('Invalid credentials');
+  }
+
   // Verify password
   const isValid = await verifyPassword(password, userWithPassword.password_hash);
   if (!isValid) {
@@ -255,7 +477,7 @@ export async function loginUser(env: Env, email: string, password: string): Prom
   }
 
   // Create session
-  const session = await createSession(env, userWithPassword.id);
+  const session = await createSession(env, userWithPassword.id, { srpUpgradeAllowed: true });
 
   // Return user without password hash
   const user: User = {

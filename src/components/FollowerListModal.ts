@@ -1,5 +1,7 @@
+import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { showSignInPrompt } from './SignInPrompt.js';
 
 interface UserListItem {
@@ -7,6 +9,7 @@ interface UserListItem {
   username: string;
   display_name: string;
   avatar_key?: string;
+  badge_type?: string | null;
   followers_count: number;
   following_count: number;
   is_following?: boolean;
@@ -337,11 +340,12 @@ export function createFollowerListModal({
     `;
 
     if (user.avatar_key) {
-      avatar.style.backgroundImage = `url(/api/images/${user.avatar_key})`;
+      avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${user.avatar_key}`)})`;
       avatar.textContent = '';
     } else {
       avatar.textContent = user.username.charAt(0).toUpperCase();
     }
+    attachPlusBadge(avatar, user.badge_type);
 
     // User info
     const userInfo = document.createElement('div');

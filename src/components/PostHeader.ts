@@ -1,4 +1,6 @@
+import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { PostHeaderProps } from '../types/post.js';
 
 export function createPostHeader(props: PostHeaderProps & { editedAt?: string }): HTMLElement {
@@ -20,7 +22,12 @@ export function createPostHeader(props: PostHeaderProps & { editedAt?: string })
   avatar.style.flexShrink = '0';
 
   // 優先的に初期文字を表示（アバター画像は後で非同期読み込み）
-  avatar.textContent = props.username.charAt(0).toUpperCase();
+  const initial = document.createElement('span');
+  initial.className = 'avatar-initial';
+  initial.textContent = props.username.charAt(0).toUpperCase();
+  avatar.appendChild(initial);
+
+  attachPlusBadge(avatar, props.badge_type);
 
   // アバター画像は遅延読み込み（テキスト表示を優先）
   if (props.avatar_key) {
@@ -106,16 +113,17 @@ function loadAvatarImage(avatar: HTMLElement, avatarKey: string): void {
   const img = new Image();
   img.onload = () => {
     // 画像読み込み完了後に背景画像を設定
-    avatar.style.backgroundImage = `url(/api/images/${avatarKey})`;
+    avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${avatarKey}`)})`;
     avatar.style.backgroundSize = 'cover';
     avatar.style.backgroundPosition = 'center';
-    avatar.textContent = '';
+    // Clear only the initial letter — keep the badge element.
+    avatar.querySelector(':scope > .avatar-initial')?.remove();
   };
   img.onerror = () => {
     // 読み込み失敗時は初期文字のまま
     console.warn(`Failed to load avatar: ${avatarKey}`);
   };
-  img.src = `/api/images/${avatarKey}`;
+  img.src = nativeApiHref(`/api/images/${avatarKey}`);
 }
 
 function formatTimestamp(isoString: string): string {

@@ -1,4 +1,6 @@
+import { registerWithSrp } from '../lib/auth-srp.js';
 import { t } from '../lib/i18n.js';
+import { passwordLengthError } from '../lib/password-policy.js';
 
 interface RegisterProps {
   onSuccess: () => void;
@@ -192,7 +194,7 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
       passwordError.textContent = t('register.error_password_required');
       passwordError.style.display = 'block';
       isValid = false;
-    } else if (password.length < 8 || password.length > 128) {
+    } else if (passwordLengthError(password)) {
       passwordError.textContent = t('register.error_password_length');
       passwordError.style.display = 'block';
       isValid = false;
@@ -237,32 +239,12 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
     submitButton.textContent = t('register.submitting');
 
     try {
-      const response = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email,
-          password,
-          username,
-          display_name: displayName,
-        }),
-      });
+      const result = await registerWithSrp(email, username, displayName, password);
 
-      if (response.ok) {
-        const data = (await response.json()) as { user?: Record<string, unknown>; sessionId?: string };
-        if (data.sessionId) {
-          try {
-            localStorage.setItem('flaxia_session', data.sessionId);
-          } catch {
-            /* ignore */
-          }
-        }
+      if (result.ok) {
         onSuccess();
       } else {
-        const data = (await response.json()) as { error?: string };
-        const msg = data.error || t('register.error_general');
+        const msg = result.error || t('register.error_general');
         if (msg.toLowerCase().includes('email')) {
           emailError.textContent = msg;
           emailError.style.display = 'block';

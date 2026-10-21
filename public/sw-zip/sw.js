@@ -32,24 +32,14 @@ const EXT_CONFIG = {
   '.glsl': 'text/plain',
   '.wgsl': 'text/plain',
   '.rsp': 'text/plain',
-  '.exe': 'application/x-msdos-program',
-  '.com': 'application/x-msdos-program',
-  '.bat': 'text/plain',
-  '.conf': 'text/plain',
   '.cf': 'text/plain',
-  '.img': 'application/octet-stream',
-  '.iso': 'application/x-iso9660',
-  '.dosz': 'application/octet-stream',
   '.zip': 'application/zip',
-  '.jsdos': 'application/zip',
-  '.ovl': 'application/octet-stream',
-  '.db': 'application/x-sqlite3',
 };
 
 const ALLOWED_EXTENSIONS = new Set(Object.keys(EXT_CONFIG).map((k) => k.replace('.', '')));
 
 const MAX_TOTAL_SIZE = 100 * 1024 * 1024;
-const MAX_FILE_COUNT = 1000;
+const MAX_FILE_COUNT = 1024;
 const WVFS_TTL = 5 * 60 * 1000;
 
 const zipStores = new Map();

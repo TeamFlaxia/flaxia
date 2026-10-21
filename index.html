@@ -19,22 +19,63 @@
   <!-- Noto Sans Font -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all';this.onload=null">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <meta name="google-adsense-account" content="ca-pub-8703789531673358">
   
-  <!-- Critical CSS inline -->
+  <meta name="theme-color" content="#ffffff">
+  
+  <!-- Theme boot: apply theme before first paint to avoid FOUC -->
+  <script>
+    (function () {
+      var theme;
+      var meta;
+      try {
+        theme = localStorage.getItem('flaxia_theme');
+        if (theme === 'system' || theme === null) {
+          theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        if (theme === 'dark' || theme === 'light') {
+          document.documentElement.dataset.theme = theme;
+          meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.content = theme === 'dark' ? '#0f172a' : '#ffffff';
+        }
+      } catch (_e) {}
+    })();
+  </script>
+  
+  <!-- Critical CSS inline (variables, reset, layout, nav, post basics) -->
   <style>
     :root {
-      --bg-primary:    #ffffff;
-      --bg-secondary:  #f0fdf4;
-      --bg-input:      #f1f5f9;
-      --border:        #e2e8f0;
-      --text-primary:  #0f172a;
-      --text-muted:    #64748b;
-      --accent:        #22c55e;
-      --accent-dark:   #16a34a;
-      --danger:        #ef4444;
+      color-scheme: light;
+      --bg-primary: #ffffff;
+      --bg-secondary: #f0fdf4;
+      --bg-input: #f1f5f9;
+      --bg-tertiary: #f0f0f0;
+      --bg-hover: rgba(0, 0, 0, 0.04);
+      --border: #e2e8f0;
+      --text-primary: #0f172a;
+      --text-muted: #64748b;
+      --accent: #22c55e;
+      --accent-dark: #16a34a;
+      --danger: #ef4444;
+      --link: #3b82f6;
+    }
+    :root[data-theme='dark'] {
+      color-scheme: dark;
+      --bg-primary: #0f172a;
+      --bg-secondary: #1e293b;
+      --bg-input: #1e293b;
+      --bg-tertiary: #1f2937;
+      --bg-hover: rgba(255, 255, 255, 0.06);
+      --border: #334155;
+      --text-primary: #f1f5f9;
+      --text-muted: #94a3b8;
+      --accent: #22c55e;
+      --accent-dark: #16a34a;
+      --danger: #ef4444;
+      --link: #60a5fa;
+      --bottom-nav-h: 0px;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -101,7 +142,6 @@
       0% { transform: rotate(0deg); }
       100% { transform: rotate(360deg); }
     }
-
     .main-container {
       display: flex;
       width: 100%;
@@ -110,7 +150,7 @@
     }
     .left-nav {
       width: 240px; flex-shrink: 0; padding: 1rem;
-      border-right: 1px solid var(--border); background: white;
+      border-right: 1px solid var(--border); background: var(--bg-primary);
       position: sticky; top: 0; height: 100vh; overflow-y: auto;
     }
     .main-content {
@@ -121,14 +161,6 @@
       width: 350px; flex-shrink: 0; padding: 1rem;
       position: sticky; top: 0; height: 100vh; overflow-y: auto;
     }
-    .left-nav-open-button {
-      position: fixed; left: 0; top: 50%; transform: translateY(-50%);
-      width: 24px; height: 88px; font-size: 1.35rem; font-weight: bold;
-      color: #fff; background: rgba(34,197,94,0.25);
-      border: none; border-radius: 0 14px 14px 0; z-index: 1080;
-      cursor: pointer; transition: background .2s, transform .2s; display: none;
-    }
-    .left-nav-open-button:hover { background: rgba(34,197,94,0.45); }
     .nav-logo { margin-bottom: 2rem; }
     .nav-items {
       display: flex; flex-direction: column; gap: .25rem; margin-bottom: 2rem;
@@ -138,7 +170,8 @@
       background: transparent; border: none; border-radius: 9999px;
       color: var(--text-primary); cursor: pointer;
       font-family: 'Noto Sans', monospace; font-size: 1rem; font-weight: 400;
-      transition: all .2s; text-align: left; width: 100%;
+      transition: background-color 0.2s ease, color 0.2s ease;
+      text-align: left; width: 100%;
     }
     .nav-item:hover { background: var(--bg-secondary); }
     .nav-item--active { color: var(--accent); font-weight: 600; }
@@ -188,13 +221,11 @@
         opacity: 0; visibility: hidden; transition: opacity .3s, visibility .3s;
       }
       .left-nav-overlay--visible { opacity: 1; visibility: visible; }
-      .left-nav-open-button { display: block; }
       .main-content { padding-bottom: 1rem; }
       .main-container { flex-direction: column; }
     }
   </style>
   
-  <link rel="stylesheet" href="/src/styles/main.css">
   <script>
     (function() {
       const urlParams = new URLSearchParams(window.location.search);
@@ -232,17 +263,14 @@
     })();
   </script>
 
-  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8703789531673358"
-     crossorigin="anonymous"></script>
   <!-- Google tag (gtag.js) -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-JZWZ08QFCW"></script>
   <script>
     window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
-        gtag('js', new Date());
-        
-        gtag('config', 'G-JZWZ08QFCW');
-    </script>
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-JZWZ08QFCW');
+  </script>
 </head>
 <body>
   <!-- Initial loading indicator -->

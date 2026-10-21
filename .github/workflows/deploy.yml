@@ -1,9 +1,14 @@
 name: Deploy
 
+# CI (.github/workflows/ci.yml) が main で成功したときだけデプロイする。
+# push を直接トリガーにすると CI の成否と無関係にデプロイが走ってしまうため、
+# CI の完了 (workflow_run: completed) を受けて、成功時のみ実行する。
+# 手動実行 (workflow_dispatch) は従来どおり常に実行できる。
 on:
-  push:
-    branches:
-      - main
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -15,32 +20,50 @@ env:
 
 jobs:
   deploy-pages:
+    # workflow_run はトリガー元の成否に関係なく発火するため、ここで判定する。
+    # event == 'push' は fork の PR (head_branch が main と同名) を除外するため。
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # workflow_run の github.sha は default branch の最新コミットを指すため、
+      # CI が検証したコミットを明示的にチェックアウトする。
+      - uses: actions/checkout@v7
         with:
-          node-version: '22'
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build
         env:
           SANDBOX_ORIGIN: https://sandbox.flaxia.app
-      - name: Deploy to Cloudflare Pages
-        run: npx wrangler pages deploy dist
+      - name: Apply production D1 migrations
+        run: npx wrangler d1 migrations apply flaxia --remote
         env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Deploy to Cloudflare Pages
+        run: npx wrangler pages deploy dist --branch "$DEPLOY_BRANCH"
+        env:
+          DEPLOY_BRANCH: ${{ github.event.workflow_run.head_branch || github.ref_name }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
   deploy-sandbox:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
         with:
-          node-version: '22'
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci --ignore-scripts
       - name: Deploy Sandbox Worker
@@ -50,12 +73,17 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
   deploy-queue:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
         with:
-          node-version: '22'
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci --ignore-scripts
       - name: Deploy Queue Worker
@@ -65,12 +93,17 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
   deploy-do:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
         with:
-          node-version: '22'
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci --ignore-scripts
       - name: Deploy DO Worker (NotificationStream)

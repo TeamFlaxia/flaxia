@@ -1,6 +1,6 @@
 import { buildGameDescription, buildGameTitle } from '../../src/lib/game-seo';
 import { isCrawler } from '../../src/lib/is-crawler';
-import { escapeHtml, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
+import { escapeHtml, renderAvatarBadge, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import {
   renderBreadcrumbJsonLd,
@@ -24,6 +24,7 @@ interface PostRow {
   username: string;
   display_name: string | null;
   avatar_key: string | null;
+  badge_type: string | null;
   text: string;
   payload_key: string | null;
   swf_key: string | null;
@@ -52,6 +53,7 @@ function toPost(row: RawPost): PostRow {
     username: String(row.username),
     display_name: row.display_name ? String(row.display_name) : null,
     avatar_key: row.avatar_key ? String(row.avatar_key) : null,
+    badge_type: row.badge_type ? String(row.badge_type) : null,
     text: String(row.text),
     payload_key: row.payload_key ? String(row.payload_key) : null,
     swf_key: row.swf_key ? String(row.swf_key) : null,
@@ -76,7 +78,6 @@ function toRelatedGame(row: RawPost): RelatedGame {
 
 function detectGameType(post: PostRow): string {
   if (post.swf_key) return 'flash';
-  if (post.payload_key?.startsWith('dos/')) return 'dos';
   if (post.payload_key) return 'zip';
   return 'html5';
 }
@@ -125,7 +126,7 @@ export async function onRequest(context: {
 
   try {
     const mainRow = (await env.DB.prepare(`
-      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key,
+      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type,
         p.text, p.payload_key, p.swf_key, p.thumbnail_key, p.gif_key,
         p.game_description,
         p.fresh_count, COALESCE(p.reply_count, 0) as reply_count,
@@ -158,7 +159,7 @@ export async function onRequest(context: {
     const post = toPost(mainRow);
     const title = buildGameTitle(post.text);
     const gameType = detectGameType(post);
-    const typeLabels: Record<string, string> = { flash: 'Flash', dos: 'DOS', zip: 'ZIP', html5: 'HTML5' };
+    const typeLabels: Record<string, string> = { flash: 'Flash', zip: 'ZIP', html5: 'HTML5' };
     const typeLabel = typeLabels[gameType] || 'Game';
     const authorName = post.display_name || post.username;
 
@@ -195,12 +196,7 @@ export async function onRequest(context: {
         .all<RawPost>();
       sameAuthorGames = (authorRows.results || []).map(toRelatedGame);
 
-      const typeCondition =
-        gameType === 'dos'
-          ? "p.payload_key LIKE 'dos/%'"
-          : gameType === 'flash'
-            ? 'p.swf_key IS NOT NULL'
-            : "p.payload_key IS NOT NULL AND p.payload_key NOT LIKE 'dos/%'";
+      const typeCondition = gameType === 'flash' ? 'p.swf_key IS NOT NULL' : 'p.payload_key IS NOT NULL';
 
       const typeRows = await env.DB.prepare(`
         SELECT p.id, p.username, u.display_name, p.text
@@ -268,8 +264,8 @@ export async function onRequest(context: {
         ${header}
         <main>
           <div class="ssr-game-embed">
-            <iframe src="${escapeHtml(baseUrl)}/api/ogp-player/${gameId}"
-              sandbox="allow-scripts allow-pointer-lock allow-fullscreen allow-same-origin"
+            <iframe src="${escapeHtml(baseUrl)}/api/ogp-player/${escapeHtml(encodeURIComponent(gameId))}"
+              sandbox="allow-scripts allow-pointer-lock allow-fullscreen"
               allow="fullscreen"
               referrerpolicy="no-referrer"
               title="${escapeHtml(title)}"></iframe>
@@ -277,7 +273,7 @@ export async function onRequest(context: {
           <h1 style="font-size:20px;font-weight:700;margin:0 0 12px 0;color:#1a1a1a">${escapeHtml(title)}</h1>
           <div class="ssr-game-meta">
             <a href="${escapeHtml(profileUrl)}">
-              <img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(authorName)}" class="ssr-game-author-img">
+              <span class="ssr-avatar-wrap"><img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(authorName)}" class="ssr-game-author-img">${renderAvatarBadge(post.badge_type)}</span>
             </a>
             <div>
               <a href="${escapeHtml(profileUrl)}" class="ssr-game-author-name">${escapeHtml(authorName)}</a>

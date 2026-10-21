@@ -1,4 +1,4 @@
-export type GameType = 'html5' | 'zip' | 'dos';
+export type GameType = 'html5' | 'zip';
 
 export interface Game {
   id: string;
@@ -10,7 +10,6 @@ export interface Game {
   type: GameType;
   swfKey?: string;
   payloadKey?: string;
-  dosKey?: string;
   thumbnailKey?: string;
   freshCount: number;
   replyCount: number;

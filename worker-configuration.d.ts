@@ -8,10 +8,11 @@ interface __BaseEnv_Env {
   SANDBOX_ORIGIN: 'https://flaxia.app';
   BASE_URL: 'https://flaxia.app';
   ADMIN_USERNAMES: string;
+  STRIPE_SECRET_KEY: string;
+  STRIPE_WEBHOOK_SECRET: string;
 }
 declare namespace Cloudflare {
 interface Env extends __BaseEnv_Env {
-  CALL_STREAM?: DurableObjectNamespace;
   NOTIFICATION_STREAM?: DurableObjectNamespace;
   MULTIPLAYER_ROOM?: DurableObjectNamespace;
   MATCHMAKER?: DurableObjectNamespace;

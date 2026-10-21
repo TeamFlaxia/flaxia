@@ -1,0 +1,477 @@
+// Vault cryptography primitives.
+//
+// Everything here runs in the browser: the server only ever stores the byte
+// strings these functions produce (see docs/e2ee.md for the threat model and
+// the full key hierarchy). Nothing in this module may be moved server-side,
+// and no secret it derives may be sent to an endpoint.
+//
+//   password ──PBKDF2(600k, salt)────────► KEK ─┐
+//   recovery phrase ──PBKDF2(600k, recovery_salt)──► REK ─┤─wrap─► VK
+//   device key (non-extractable CryptoKey) ────────────────┘
+//                                                          │
+//                                                          └─wrap─► item_key[i]
+//                                                                      │
+//                                                                      └─AES-GCM─► payload[i]
+
+import { validateMnemonic } from '@scure/bip39';
+import { wordlist } from '@scure/bip39/wordlists/english.js';
+
+const subtle = (globalThis.crypto as Crypto).subtle;
+
+export const VAULT_FORMAT_VERSION = 1;
+export const VAULT_KEY_BYTES = 32;
+export const VAULT_SALT_BYTES = 16;
+export const VAULT_IV_BYTES = 12;
+export const VAULT_KDF_ITERATIONS = 600_000;
+/**
+ * The accepted KDF window, shared by client and server. The floor stops a
+ * downgraded envelope from becoming cheap to brute-force; the ceiling stops a
+ * hostile or corrupted row from pinning a client inside PBKDF2 — JSON can even
+ * carry `1e999`, which parses to `Infinity`, and the integer check rejects
+ * that too.
+ */
+export const VAULT_KDF_MIN_ITERATIONS = 100_000;
+export const VAULT_KDF_MAX_ITERATIONS = 10_000_000;
+
+export interface VaultKdfParams {
+  readonly alg: 'PBKDF2-SHA256';
+  readonly iterations: number;
+}
+
+export const DEFAULT_VAULT_KDF_PARAMS: VaultKdfParams = {
+  alg: 'PBKDF2-SHA256',
+  iterations: VAULT_KDF_ITERATIONS,
+};
+
+// Every wrap operation binds the ciphertext to its role via AES-GCM AAD, so a
+// value lifted out of one column cannot be pasted into another.
+/**
+ * A pairing id is base64url with 16–40 characters. Shared by both sides —
+ * the client that renders one into a QR and the server that accepts one as a
+ * device row id (enable = self-registration, pairing = QR flow).
+ */
+export const PAIRING_ID_PATTERN = /^[A-Za-z0-9_-]{16,40}$/;
+
+export const CONTEXT_VK_PASSWORD = 'flaxia.vault.vk.v1';
+export const CONTEXT_VK_RECOVERY = 'flaxia.vault.vk.recovery.v1';
+export const CONTEXT_VK_DEVICE = 'flaxia.vault.vk.device.v1';
+export const CONTEXT_ITEM_KEY = 'flaxia.vault.itemkey.v1';
+export const CONTEXT_PAYLOAD = 'flaxia.vault.payload.v1';
+
+export function encodeB64(bytes: Uint8Array): string {
+  let binary = '';
+  for (const x of bytes) binary += String.fromCharCode(x);
+  return btoa(binary);
+}
+
+export function decodeB64(value: string): Uint8Array {
+  const binary = atob(value);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+// Canonical wire form of a wrapped value: `base64(iv).base64(ciphertext)`.
+export function encodeWrapped(iv: Uint8Array, ciphertext: Uint8Array): string {
+  return `${encodeB64(iv)}.${encodeB64(ciphertext)}`;
+}
+
+export function decodeWrapped(value: unknown): { iv: Uint8Array; ciphertext: Uint8Array } | null {
+  if (typeof value !== 'string') return null;
+  const parts = value.split('.');
+  if (parts.length !== 2) return null;
+  let iv: Uint8Array;
+  let ciphertext: Uint8Array;
+  try {
+    iv = decodeB64(parts[0]);
+    ciphertext = decodeB64(parts[1]);
+  } catch {
+    return null;
+  }
+  // GCM tag is 16 bytes, so a ciphertext shorter than that cannot be valid.
+  if (iv.length !== VAULT_IV_BYTES || ciphertext.length < 16) return null;
+  return { iv, ciphertext };
+}
+
+function itemContext(base: string, itemId: string): string {
+  return `${base}:${itemId}`;
+}
+
+export function generateVaultKey(): Uint8Array {
+  return crypto.getRandomValues(new Uint8Array(VAULT_KEY_BYTES));
+}
+
+export function generateVaultSalt(): Uint8Array {
+  return crypto.getRandomValues(new Uint8Array(VAULT_SALT_BYTES));
+}
+
+// Raw KDF output. Exported so tests can pin it with known-answer vectors: the
+// KEK is exactly these 32 bytes imported as AES-GCM, so the vector covers the
+// production path rather than a test-only duplicate.
+export async function deriveVaultKeBits(
+  secret: string,
+  salt: Uint8Array,
+  params: VaultKdfParams = DEFAULT_VAULT_KDF_PARAMS,
+): Promise<Uint8Array> {
+  // Deliberately NO floor here: this primitive must stay usable by tests with
+  // published low-count vectors (c = 1/2/4096). Envelope-level APIs and the
+  // server apply the real window (isValidVaultKdfParams); what must never
+  // happen is WebCrypto being handed a fractional, non-finite, or absurd run —
+  // WebIDL would silently coerce those (1e15 → 3 269 632 iterations).
+  const iterations: unknown = params?.iterations;
+  if (
+    typeof iterations !== 'number' ||
+    !Number.isInteger(iterations) ||
+    iterations < 1 ||
+    iterations > VAULT_KDF_MAX_ITERATIONS
+  ) {
+    throw new Error('vault KDF iterations must be an integer in 1..10000000');
+  }
+  const material = await subtle.importKey('raw', new TextEncoder().encode(secret), 'PBKDF2', false, ['deriveBits']);
+  const bits = await subtle.deriveBits(
+    { name: 'PBKDF2', salt: salt as BufferSource, iterations: params.iterations, hash: 'SHA-256' },
+    material,
+    256,
+  );
+  return new Uint8Array(bits);
+}
+
+export async function deriveVaultKe(
+  secret: string,
+  salt: Uint8Array,
+  params: VaultKdfParams = DEFAULT_VAULT_KDF_PARAMS,
+): Promise<CryptoKey> {
+  const bits = await deriveVaultKeBits(secret, salt, params);
+  return subtle.importKey('raw', bits as BufferSource, 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+
+async function vaultKeyAsAesKey(vk: Uint8Array): Promise<CryptoKey> {
+  if (vk.length !== VAULT_KEY_BYTES) throw new Error('vault key must be 32 bytes');
+  return subtle.importKey('raw', vk as BufferSource, 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+
+async function encryptWith(key: CryptoKey, plaintext: Uint8Array, context: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(VAULT_IV_BYTES)) as Uint8Array<ArrayBuffer>;
+  const ciphertext = await subtle.encrypt(
+    { name: 'AES-GCM', iv: iv as BufferSource, additionalData: new TextEncoder().encode(context) },
+    key,
+    plaintext as BufferSource,
+  );
+  return encodeWrapped(iv, new Uint8Array(ciphertext));
+}
+
+async function decryptWith(key: CryptoKey, encoded: string, context: string): Promise<Uint8Array> {
+  const parsed = decodeWrapped(encoded);
+  if (!parsed) throw new Error('malformed wrapped value');
+  try {
+    const plaintext = await subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: parsed.iv as BufferSource,
+        additionalData: new TextEncoder().encode(context),
+      },
+      key,
+      parsed.ciphertext as BufferSource,
+    );
+    return new Uint8Array(plaintext);
+  } catch {
+    // Wrong key, wrong context, or tampered bytes — indistinguishable on purpose.
+    throw new Error('unable to decrypt vault value');
+  }
+}
+
+// Wrap raw bytes under a password/phrase-derived key.
+export async function wrapSecret(kek: CryptoKey, plaintext: Uint8Array, context: string): Promise<string> {
+  return encryptWith(kek, plaintext, context);
+}
+
+export async function unwrapSecret(kek: CryptoKey, encoded: string, context: string): Promise<Uint8Array> {
+  return decryptWith(kek, encoded, context);
+}
+
+// ─── Recovery phrase ─────────────────────────────────────────────────────────
+// BIP-39 requires NFKD before key derivation, and whitespace must be canonical
+// or the same typed phrase yields a different REK on another platform.
+// Checksum validation happens alongside `@scure/bip39` (see docs/e2ee.md).
+
+export function normalizeRecoveryPhrase(phrase: string): string {
+  return phrase.normalize('NFKD').trim().split(/\s+/u).filter(Boolean).join(' ');
+}
+
+export function recoveryPhraseWordCount(phrase: string): number {
+  return normalizeRecoveryPhrase(phrase).split(' ').filter(Boolean).length;
+}
+
+/** 12/15/18/21/24 words with a valid BIP-39 checksum. */
+export function isValidRecoveryPhrase(phrase: string): boolean {
+  const normalized = normalizeRecoveryPhrase(phrase);
+  const count = normalized.split(' ').filter(Boolean).length;
+  if (!(count === 12 || count === 15 || count === 18 || count === 21 || count === 24)) return false;
+  // A one-word typo that keeps the word count must not silently replace the
+  // recovery blob with an unrecoverable envelope.
+  return validateMnemonic(normalized, wordlist);
+}
+
+// ─── Vault envelope ──────────────────────────────────────────────────────────
+
+export interface VaultEnvelope {
+  /** base64, 16 bytes — salts the password path. */
+  salt: string;
+  /** base64, 16 bytes — salts the recovery path, independently of the password. */
+  recovery_salt: string;
+  kdf_params: VaultKdfParams;
+  /** VK wrapped under the password-derived KEK. */
+  wrapped_vk: string;
+  /** VK wrapped under the recovery-phrase-derived REK. */
+  recovery_blob: string;
+  vk_version: number;
+}
+
+/**
+ * A structurally broken envelope can never open, whatever the user types — it
+ * is not a wrong-password case. Tagging these lets callers tell "retry the
+ * password" (GCM failure) apart from "this row is unreadable" (shape failure)
+ * without relying on a class (`instanceof` across module instances is fragile;
+ * the name check works in both the browser bundle and the Workers runtime).
+ * The messages are deliberately secret-independent: they describe byte
+ * layouts only, so surfacing the `malformed` class leaks nothing about keys.
+ */
+function envelopeError(message: string): Error {
+  const error = new Error(message);
+  error.name = 'VaultEnvelopeError';
+  return error;
+}
+
+export function isEnvelopeShapeError(value: unknown): value is Error {
+  return value instanceof Error && value.name === 'VaultEnvelopeError';
+}
+
+// Shape checks run BEFORE any PBKDF2 derivation: a hostile row must fail in
+// microseconds, not after a 600k-iteration run (or an unbounded one — the KDF
+// window is part of this check for exactly that reason).
+function assertPasswordEnvelopeShape(envelope: { salt?: unknown; kdf_params?: unknown; wrapped_vk?: unknown }): void {
+  if (!isValidB64(envelope.salt, VAULT_SALT_BYTES)) throw envelopeError('malformed vault envelope: salt');
+  if (!isValidVaultKdfParams(envelope.kdf_params)) {
+    throw envelopeError('malformed vault envelope: unsupported KDF parameters');
+  }
+  if (!isValidWrappedKey(envelope.wrapped_vk)) throw envelopeError('malformed vault envelope: wrapped_vk');
+}
+
+function assertRecoveryEnvelopeShape(envelope: {
+  recovery_salt?: unknown;
+  kdf_params?: unknown;
+  recovery_blob?: unknown;
+}): void {
+  if (!isValidB64(envelope.recovery_salt, VAULT_SALT_BYTES)) {
+    throw envelopeError('malformed vault envelope: recovery_salt');
+  }
+  if (!isValidVaultKdfParams(envelope.kdf_params)) {
+    throw envelopeError('malformed vault envelope: unsupported KDF parameters');
+  }
+  if (!isValidWrappedKey(envelope.recovery_blob)) throw envelopeError('malformed vault envelope: recovery_blob');
+}
+
+/** VK is 32 bytes by construction; anything else means the row was tampered with. */
+function assertVaultKeyBytes(vk: Uint8Array): Uint8Array {
+  if (vk.length !== VAULT_KEY_BYTES) throw envelopeError('malformed vault envelope: vault key is not 32 bytes');
+  return vk;
+}
+
+function assertKdfParams(params: VaultKdfParams): void {
+  if (!isValidVaultKdfParams(params)) throw envelopeError('malformed vault envelope: unsupported KDF parameters');
+}
+
+/** Create the stored envelope. VK is returned in memory only — never persisted raw. */
+export async function createVaultEnvelope(
+  password: string,
+  recoveryPhrase: string,
+  params: VaultKdfParams = DEFAULT_VAULT_KDF_PARAMS,
+): Promise<{ envelope: VaultEnvelope; vk: Uint8Array }> {
+  assertKdfParams(params);
+  const phrase = normalizeRecoveryPhrase(recoveryPhrase);
+  if (!isValidRecoveryPhrase(phrase)) throw new Error('recovery phrase must be 12, 15, 18, 21, or 24 words');
+
+  const vk = generateVaultKey();
+  const salt = generateVaultSalt();
+  const recoverySalt = generateVaultSalt();
+
+  const kek = await deriveVaultKe(password, salt, params);
+  const rek = await deriveVaultKe(phrase, recoverySalt, params);
+
+  return {
+    envelope: {
+      salt: encodeB64(salt),
+      recovery_salt: encodeB64(recoverySalt),
+      kdf_params: params,
+      wrapped_vk: await wrapSecret(kek, vk, CONTEXT_VK_PASSWORD),
+      recovery_blob: await wrapSecret(rek, vk, CONTEXT_VK_RECOVERY),
+      vk_version: 1,
+    },
+    vk,
+  };
+}
+
+export async function unlockVaultWithPassword(
+  password: string,
+  envelope: Pick<VaultEnvelope, 'salt' | 'kdf_params' | 'wrapped_vk'>,
+): Promise<Uint8Array> {
+  assertPasswordEnvelopeShape(envelope);
+  const kek = await deriveVaultKe(password, decodeB64(envelope.salt), envelope.kdf_params);
+  return assertVaultKeyBytes(await unwrapSecret(kek, envelope.wrapped_vk, CONTEXT_VK_PASSWORD));
+}
+
+export async function unlockVaultWithRecovery(
+  recoveryPhrase: string,
+  envelope: Pick<VaultEnvelope, 'recovery_salt' | 'kdf_params' | 'recovery_blob'>,
+): Promise<Uint8Array> {
+  assertRecoveryEnvelopeShape(envelope);
+  const rek = await deriveVaultKe(
+    normalizeRecoveryPhrase(recoveryPhrase),
+    decodeB64(envelope.recovery_salt),
+    envelope.kdf_params,
+  );
+  return assertVaultKeyBytes(await unwrapSecret(rek, envelope.recovery_blob, CONTEXT_VK_RECOVERY));
+}
+
+/** Password change: re-wrap VK under the new KEK. Items and devices are untouched. */
+export async function rewrapVaultKeyForPassword(
+  vk: Uint8Array,
+  newPassword: string,
+  salt: Uint8Array,
+  params: VaultKdfParams = DEFAULT_VAULT_KDF_PARAMS,
+): Promise<string> {
+  // Validated BEFORE deriving: a bad params/salt value here would otherwise
+  // only surface as an unopenable envelope after the password change lands.
+  assertKdfParams(params);
+  if (!(salt instanceof Uint8Array) || salt.length !== VAULT_SALT_BYTES) {
+    throw envelopeError('malformed vault envelope: salt');
+  }
+  assertVaultKeyBytes(vk);
+  const kek = await deriveVaultKe(newPassword, salt, params);
+  return wrapSecret(kek, vk, CONTEXT_VK_PASSWORD);
+}
+
+/** Recovery phrase change: re-wrap VK under the new REK. */
+export async function rewrapVaultKeyForRecovery(
+  vk: Uint8Array,
+  newPhrase: string,
+  recoverySalt: Uint8Array,
+  params: VaultKdfParams = DEFAULT_VAULT_KDF_PARAMS,
+): Promise<string> {
+  const phrase = normalizeRecoveryPhrase(newPhrase);
+  if (!isValidRecoveryPhrase(phrase)) throw new Error('recovery phrase must be 12, 15, 18, 21, or 24 words');
+  assertKdfParams(params);
+  if (!(recoverySalt instanceof Uint8Array) || recoverySalt.length !== VAULT_SALT_BYTES) {
+    throw envelopeError('malformed vault envelope: recovery_salt');
+  }
+  assertVaultKeyBytes(vk);
+  const rek = await deriveVaultKe(phrase, recoverySalt, params);
+  return wrapSecret(rek, vk, CONTEXT_VK_RECOVERY);
+}
+
+// ─── Devices ─────────────────────────────────────────────────────────────────
+// The device key is a non-extractable AES-GCM key: page script can ask it to
+// unwrap VK but can never read it out of IndexedDB.
+
+export function createDeviceKey(): Promise<CryptoKey> {
+  const raw = crypto.getRandomValues(new Uint8Array(VAULT_KEY_BYTES)) as Uint8Array<ArrayBuffer>;
+  return subtle.importKey('raw', raw as BufferSource, 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+
+export function wrapVaultKeyForDevice(vk: Uint8Array, deviceKey: CryptoKey): Promise<string> {
+  return encryptWith(deviceKey, vk, CONTEXT_VK_DEVICE);
+}
+
+export function unwrapVaultKeyWithDevice(encoded: string, deviceKey: CryptoKey): Promise<Uint8Array> {
+  return decryptWith(deviceKey, encoded, CONTEXT_VK_DEVICE);
+}
+
+// ─── Items ───────────────────────────────────────────────────────────────────
+
+export interface VaultItemCiphertext {
+  /** Client-generated id; it is also the AAD, so a payload cannot be moved to another row. */
+  item_id: string;
+  item_key_wrapped: string;
+  payload: string;
+}
+
+export async function encryptVaultItem(
+  vk: Uint8Array,
+  itemId: string,
+  plaintext: Uint8Array,
+): Promise<VaultItemCiphertext> {
+  const vkKey = await vaultKeyAsAesKey(vk);
+  const itemKey = generateVaultKey();
+  const itemKeyAes = await vaultKeyAsAesKey(itemKey);
+  return {
+    item_id: itemId,
+    item_key_wrapped: await encryptWith(vkKey, itemKey, itemContext(CONTEXT_ITEM_KEY, itemId)),
+    payload: await encryptWith(itemKeyAes, plaintext, itemContext(CONTEXT_PAYLOAD, itemId)),
+  };
+}
+
+export async function decryptVaultItem(
+  vk: Uint8Array,
+  itemId: string,
+  itemKeyWrapped: string,
+  payload: string,
+): Promise<Uint8Array> {
+  const vkKey = await vaultKeyAsAesKey(vk);
+  const itemKey = await unwrapSecret(vkKey, itemKeyWrapped, itemContext(CONTEXT_ITEM_KEY, itemId));
+  const itemKeyAes = await vaultKeyAsAesKey(itemKey);
+  return decryptWith(itemKeyAes, payload, itemContext(CONTEXT_PAYLOAD, itemId));
+}
+
+/**
+ * Device revocation: VK is replaced, so every item key is re-wrapped under the
+ * new VK. Payloads are never rewritten — they are already bound to their own
+ * item key, which did not change.
+ */
+export async function rewrapItemKeyForVaultKey(
+  oldVk: Uint8Array,
+  newVk: Uint8Array,
+  itemId: string,
+  itemKeyWrapped: string,
+): Promise<string> {
+  const oldKey = await vaultKeyAsAesKey(oldVk);
+  const newKey = await vaultKeyAsAesKey(newVk);
+  const itemKey = await unwrapSecret(oldKey, itemKeyWrapped, itemContext(CONTEXT_ITEM_KEY, itemId));
+  return encryptWith(newKey, itemKey, itemContext(CONTEXT_ITEM_KEY, itemId));
+}
+
+// ─── Server-side validation ──────────────────────────────────────────────────
+// The API handlers use these so an endpoint can shape-check opaque values
+// without ever being able to interpret them.
+
+export function isValidVaultKdfParams(value: unknown): value is VaultKdfParams {
+  if (typeof value !== 'object' || value === null) return false;
+  const params = value as { alg?: unknown; iterations?: unknown };
+  if (params.alg !== 'PBKDF2-SHA256') return false;
+  const iterations: unknown = params.iterations;
+  // Integer + window. `Number.isInteger(1e15)` is true, so the ceiling is what
+  // rejects absurd-but-integral counts; `JSON.parse('1e999')` yields Infinity,
+  // which the integer check rejects before any PBKDF2 run is ever started.
+  if (typeof iterations !== 'number' || !Number.isInteger(iterations)) return false;
+  return iterations >= VAULT_KDF_MIN_ITERATIONS && iterations <= VAULT_KDF_MAX_ITERATIONS;
+}
+
+export function isValidB64(value: unknown, bytes?: number): boolean {
+  if (typeof value !== 'string' || value.length === 0) return false;
+  try {
+    const decoded = decodeB64(value);
+    return bytes === undefined ? decoded.length > 0 : decoded.length === bytes;
+  } catch {
+    return false;
+  }
+}
+
+export function isValidWrappedKey(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  return decodeWrapped(value) !== null;
+}
+
+const ITEM_ID_PATTERN = /^[A-Za-z0-9_-]{10,40}$/;
+
+export function isValidVaultItemId(value: unknown): value is string {
+  return typeof value === 'string' && ITEM_ID_PATTERN.test(value);
+}

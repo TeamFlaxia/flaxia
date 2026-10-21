@@ -1,51 +1,99 @@
-import type { Post } from '../types/post.js';
+import type { Post, QuotedPost } from '../types/post.js';
 
 export interface PostComposerProps {
   onPostCreated?: (post: Post) => void;
-  currentUser?: { username: string; display_name?: string; avatar_key?: string } | null;
+  currentUser?: {
+    username: string;
+    display_name?: string;
+    avatar_key?: string;
+    badge_type?: string | null;
+    id?: string;
+  } | null;
   onDraftSaved?: () => void;
+  quotedPost?: QuotedPost | null;
 }
 
-import { getMimeType } from '../lib/file-extensions.js';
+import { attachPlusBadge } from '../lib/avatar.js';
+import { maxMediaAttachmentsForUser } from '../lib/entitlements.js';
+import { attachmentMimeType, GAME_FILE_EXTENSIONS, getMimeType } from '../lib/file-extensions.js';
+import { AttachPreviewHandle, checkImageSizeLimit, detectAttachKind, renderFilePreview } from '../lib/file-preview.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { attachIcons, icon } from '../lib/icons.js';
 import { registerModal } from '../lib/modal-state.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { showToast } from '../lib/toast.js';
+import {
+  deleteVaultItem,
+  deleteVaultItems,
+  listVaultItems,
+  newVaultItemId,
+  saveVaultItem,
+} from '../lib/vault/items.js';
+import { getVaultKey, isVaultUnlocked, subscribeVault, tryDeviceUnlock } from '../lib/vault/session.js';
+import { createAudioPlayer } from './AudioPlayer.js';
+import { createImagePreview } from './ImagePreview.js';
+import { openMediaEditor } from './MediaEditorModal.js';
+import { openStampPicker } from './StampPicker.js';
+import { createVideoPlayer } from './VideoPlayer.js';
 
-async function detectZipType(file: File): Promise<'html5' | 'dos' | null> {
-  try {
-    const buffer = await file.arrayBuffer();
-    const view = new DataView(buffer);
-    let eocdOffset = buffer.byteLength - 22;
-    while (eocdOffset >= 0) {
-      if (view.getUint32(eocdOffset, true) === 0x06054b50) break;
-      eocdOffset--;
-    }
-    if (eocdOffset < 0) return null;
-    const cdOffset = view.getUint32(eocdOffset + 16, true);
-    const numEntries = view.getUint16(eocdOffset + 10, true);
-    let hasIndexHtml = false;
-    let hasExe = false;
-    let offset = cdOffset;
-    for (let i = 0; i < numEntries; i++) {
-      if (view.getUint32(offset, true) !== 0x02014b50) break;
-      const nameLen = view.getUint16(offset + 28, true);
-      const extraLen = view.getUint16(offset + 30, true);
-      const commentLen = view.getUint16(offset + 32, true);
-      let name = '';
-      for (let j = 0; j < nameLen; j++) name += String.fromCharCode(view.getUint8(offset + 46 + j));
-      const lower = name.toLowerCase();
-      const fileName = lower.split('/').pop() || '';
-      if (fileName === 'index.html' || fileName === 'index.htm') hasIndexHtml = true;
-      if (fileName.endsWith('.exe') || fileName.endsWith('.bat') || fileName.endsWith('.com')) hasExe = true;
-      offset += 46 + nameLen + extraLen + commentLen;
-    }
-    if (hasIndexHtml) return 'html5';
-    if (hasExe) return 'dos';
+// Multi-media attachment size limits (mirrors functions/lib/attachments.ts).
+// The count limit is plan-dependent — see src/lib/entitlements.ts.
+const MAX_MEDIA_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_MEDIA_TOTAL_BYTES = 50 * 1024 * 1024;
+const AUTOSAVE_ITEM_ID = 'post_autosave_main';
+
+interface ComposerDraft {
+  id: string;
+  text: string;
+  savedAt: number;
+}
+
+interface ComposerAutosave {
+  text: string;
+  savedAt: number;
+  poll?: { question: string; options: string[]; duration: string };
+}
+
+type DraftStorageMode = 'loading' | 'local' | 'vault' | 'locked';
+
+function parseComposerDrafts(value: unknown): ComposerDraft[] {
+  if (!Array.isArray(value)) return [];
+  const values: unknown[] = value;
+  return values.filter((draft): draft is ComposerDraft => {
+    if (typeof draft !== 'object' || draft === null) return false;
+    const candidate = draft as Record<string, unknown>;
+    return (
+      typeof candidate.id === 'string' &&
+      typeof candidate.text === 'string' &&
+      typeof candidate.savedAt === 'number' &&
+      Number.isFinite(candidate.savedAt)
+    );
+  });
+}
+
+function parseAutosave(value: unknown): ComposerAutosave | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const draft = value as Partial<ComposerAutosave>;
+  if (typeof draft.text !== 'string' || typeof draft.savedAt !== 'number' || !Number.isFinite(draft.savedAt))
     return null;
-  } catch {
+  if (
+    draft.poll &&
+    (typeof draft.poll.question !== 'string' ||
+      !Array.isArray(draft.poll.options) ||
+      !draft.poll.options.every((option) => typeof option === 'string') ||
+      typeof draft.poll.duration !== 'string')
+  )
     return null;
-  }
+  return draft as ComposerAutosave;
+}
+
+function fileExtension(file: File): string {
+  return file.name.toLowerCase().split('.').pop() || '';
+}
+
+function isGameFile(file: File): boolean {
+  return GAME_FILE_EXTENSIONS.has(fileExtension(file));
 }
 
 export class PostComposer {
@@ -57,8 +105,10 @@ export class PostComposer {
   private submitButton!: HTMLButtonElement;
   private charCount!: HTMLSpanElement;
   private selectedFile: File | null = null;
+  private selectedMedia: File[] = [];
+  private mediaHandles: AttachPreviewHandle[] = [];
   private selectedThumbnail: File | null = null;
-  private zipType: 'html5' | 'dos' | null = null;
+  private previewHandle: AttachPreviewHandle | null = null;
   private isSubmitting = false;
   private dragCounter = 0;
   private errorDisplay!: HTMLElement;
@@ -75,15 +125,23 @@ export class PostComposer {
   private static readonly SAVE_COOLDOWN = 1000;
   private draftTimeout: ReturnType<typeof setTimeout> | null = null;
   private saveCooldown = false;
-  private savedDrafts: Array<{ id: string; text: string; savedAt: number }> = [];
+  private savedDrafts: ComposerDraft[] = [];
   private loadedDraftId: string | null = null;
   private draftsDropdown!: HTMLElement;
   private boundCloseDrafts!: (e: MouseEvent) => void;
+  private maxMediaAttachments: number;
+  private draftStorageMode: DraftStorageMode = 'loading';
+  private draftStorageReady: Promise<void> = Promise.resolve();
+  private unsubscribeVault: (() => void) | null = null;
+  private vaultNotice!: HTMLElement;
 
   constructor(props: PostComposerProps) {
     this.props = props;
+    this.maxMediaAttachments = maxMediaAttachmentsForUser(props.currentUser);
     this.element = this.createElement();
     this.setupEventListeners();
+    this.unsubscribeVault = subscribeVault(() => this.handleVaultSessionChange());
+    this.draftStorageReady = this.initializeDraftStorage();
   }
 
   private createElement(): HTMLElement {
@@ -102,23 +160,30 @@ export class PostComposer {
         </div>
         <div class="composer-file-dropzone" style="display: none;">
           <div class="dropzone-content">
-            <span class="dropzone-icon">📎</span>
+            <span class="dropzone-icon" data-icon="attach"></span>
             <span class="dropzone-text">${t('composer.file_hint')}</span>
           </div>
         </div>
+        <div class="composer-quoted-post" style="display: none;"></div>
         <div class="composer-divider"></div>
         <div class="composer-footer">
           <div class="composer-actions">
-            <input type="file" class="composer-file-input" accept=".js,.wasm,.html,.gif,.png,.jpg,.jpeg,.mp3,.wav,.ogg,.m4a,.webm,.mp4,.mov,.zip,.swf,.jsdos" />
-            <button class="composer-file-button" type="button">
-              📎
-            </button>
-            <button class="composer-poll-button" type="button" title="${t('poll.toggle_button')}">
-              📊
+            <input type="file" class="composer-file-input" />
+            <div class="composer-attach-group">
+              <button class="composer-file-button composer-attach-menu-toggle" type="button" title="${t('composer.attach_button')}" aria-label="${t('composer.attach_button')}" aria-expanded="false">＋</button>
+              <div class="composer-attach-menu" style="display:none;">
+                <button class="composer-file-button composer-file-button--image" type="button"><span class="action-icon" data-icon="image-video"></span>${t('composer.attach_image_video')}</button>
+                <button class="composer-file-button composer-file-button--audio" type="button"><span class="action-icon" data-icon="audio"></span>${t('composer.attach_audio')}</button>
+                <button class="composer-file-button composer-file-button--game" type="button"><span class="action-icon" data-icon="game"></span>${t('composer.attach_game')}</button>
+                <button class="composer-file-button composer-poll-button" type="button"><span class="action-icon" data-icon="poll"></span>${t('poll.toggle_button')}</button>
+                <button class="composer-file-button composer-file-button--document" type="button"><span class="action-icon" data-icon="document"></span>${t('composer.attach_document')}</button>
+              </div>
+            </div>
+            <button class="composer-emoji-button" type="button" title="${t('composer.emoji_button')}">
+              <span class="action-icon" data-icon="emoji"></span>
             </button>
             <span class="composer-char-count">${t('composer.char_count', { current: 0, max: 200 })}</span>
-            <button class="composer-save-draft" type="button" title="${t('composer.save_draft')}">💾</button>
-            <button class="composer-list-drafts" type="button" title="${t('composer.list_drafts')}">📝</button>
+            <button class="composer-list-drafts" type="button" title="${t('composer.list_drafts')}"><span class="action-icon" data-icon="drafts"></span></button>
           </div>
           <button class="composer-submit" type="button" disabled>
             ${t('composer.post_button')}
@@ -144,8 +209,15 @@ export class PostComposer {
         <div class="composer-file-preview" style="display: none;">
           <div class="file-info">
             <span class="file-name"></span>
-            <button class="file-remove" type="button">✕</button>
+            <button class="file-edit" type="button" title="${t('editor.edit_button')}" style="display: none;">
+              <span class="action-icon" data-icon="edit"></span>
+            </button>
+            <button class="file-remove" type="button"><span class="action-icon" data-icon="close"></span></button>
           </div>
+        </div>
+        <div class="composer-media-list" style="display: none;">
+          <div class="media-list-items"></div>
+          <div class="media-list-meta"></div>
         </div>
         <div class="composer-thumbnail-section" style="display: none;">
           <div class="thumbnail-header">
@@ -160,11 +232,13 @@ export class PostComposer {
           </div>
           <div class="thumbnail-preview" style="display: none;">
             <img class="thumbnail-image" />
-            <button class="thumbnail-remove" type="button">✕</button>
+            <button class="thumbnail-remove" type="button"><span class="action-icon" data-icon="close"></span></button>
           </div>
         </div>
       </div>
     `;
+
+    attachIcons(container);
 
     // Cache element references
     this.textarea = container.querySelector('.composer-textarea')!;
@@ -179,6 +253,11 @@ export class PostComposer {
     this.errorDisplay.style.display = 'none';
     const body = container.querySelector('.composer-body');
     if (body) {
+      this.vaultNotice = document.createElement('div');
+      this.vaultNotice.style.cssText =
+        'display:none;margin:0.5rem 0;padding:0.5rem 0.75rem;border-radius:6px;background:var(--bg-secondary);color:var(--text-muted);font-size:0.8rem;';
+      this.vaultNotice.textContent = t('composer.vault_unlock_required');
+      body.insertBefore(this.vaultNotice, body.querySelector('.composer-file-preview'));
       body.insertBefore(this.errorDisplay, body.querySelector('.composer-file-preview'));
     }
 
@@ -226,9 +305,6 @@ export class PostComposer {
       composerHeader.appendChild(this.mentionDropdown);
     }
 
-    // Restore draft if available
-    this.loadDraft();
-
     // Set avatar
     const avatar = container.querySelector('.composer-avatar') as HTMLElement;
     if (this.props.currentUser) {
@@ -244,16 +320,131 @@ export class PostComposer {
       avatar.style.flexShrink = '0';
 
       if (this.props.currentUser.avatar_key) {
-        avatar.style.backgroundImage = `url(/api/images/${this.props.currentUser.avatar_key})`;
+        avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${this.props.currentUser.avatar_key}`)})`;
         avatar.style.backgroundSize = 'cover';
         avatar.style.backgroundPosition = 'center';
         avatar.textContent = '';
       } else {
         avatar.textContent = this.props.currentUser.username.charAt(0).toUpperCase();
       }
+      attachPlusBadge(avatar, this.props.currentUser.badge_type);
     }
 
+    this.renderQuotedPost(container);
+
     return container;
+  }
+
+  private renderQuotedPost(container: HTMLElement): void {
+    const section = container.querySelector('.composer-quoted-post') as HTMLElement;
+    const quoted = this.props.quotedPost;
+    if (!section || !quoted) return;
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'quoted-post-remove';
+    removeBtn.appendChild(icon('close'));
+    removeBtn.addEventListener('click', () => {
+      this.props = { ...this.props, quotedPost: null };
+      section.style.display = 'none';
+      this.updateSubmitButton();
+    });
+
+    const body = document.createElement('div');
+    body.className = 'quoted-post-body';
+    body.addEventListener('click', () => {
+      window.location.hash = `/thread/${quoted.id}`;
+    });
+
+    const nameRow = document.createElement('div');
+    nameRow.className = 'quoted-post-author';
+    const avatar = document.createElement('span');
+    avatar.className = 'quoted-post-avatar';
+    avatar.textContent = (quoted.display_name || quoted.username || '?').charAt(0).toUpperCase();
+    const name = document.createElement('span');
+    name.className = 'quoted-post-name';
+    name.textContent = quoted.display_name || quoted.username || '';
+    nameRow.appendChild(avatar);
+    nameRow.appendChild(name);
+
+    const text = document.createElement('div');
+    text.className = 'quoted-post-text';
+    text.textContent = quoted.text || '';
+
+    body.appendChild(nameRow);
+    body.appendChild(text);
+
+    const attachment = this.createQuotedAttachment(quoted);
+    if (attachment) body.appendChild(attachment);
+
+    section.appendChild(removeBtn);
+    section.appendChild(body);
+    section.style.display = 'block';
+  }
+
+  private createQuotedAttachment(quoted: QuotedPost): HTMLElement | null {
+    if (!quoted.gif_key && !quoted.payload_key && !quoted.swf_key && !quoted.thumbnail_key) {
+      return null;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'quoted-post-attachment';
+    wrap.style.cssText = `
+      margin-top: 0.5rem;
+      border-radius: 0.5rem;
+      overflow: hidden;
+      position: relative;
+    `;
+
+    const gifKey = quoted.gif_key || '';
+    if (gifKey.startsWith('video/')) {
+      wrap.appendChild(createVideoPlayer({ gifKey, postId: quoted.id }));
+      return wrap;
+    }
+    if (gifKey.startsWith('audio/')) {
+      wrap.appendChild(createAudioPlayer({ gifKey: gifKey, postId: quoted.id }));
+      return wrap;
+    }
+    if (gifKey) {
+      wrap.appendChild(createImagePreview({ gifKey, postId: quoted.id, ratio: '16:9' }));
+      return wrap;
+    }
+
+    if (quoted.thumbnail_key) {
+      wrap.appendChild(
+        createImagePreview({
+          gifKey: quoted.thumbnail_key,
+          postId: quoted.id,
+          isThumbnail: true,
+          ratio: '16:9',
+        }),
+      );
+      return wrap;
+    }
+
+    const isExecutable =
+      (!!quoted.payload_key && quoted.payload_key.startsWith('zip/')) ||
+      (!!quoted.payload_key && quoted.payload_key.startsWith('html/')) ||
+      (!!quoted.swf_key && quoted.swf_key.startsWith('swf/'));
+
+    if (isExecutable) {
+      const pill = document.createElement('div');
+      pill.style.cssText = `
+        padding: 0.75rem;
+        border-radius: 0.5rem;
+        background: var(--bg-secondary);
+        color: var(--text-muted);
+        font-size: 0.85rem;
+        font-weight: 600;
+        text-align: center;
+      `;
+      if (quoted.swf_key?.startsWith('swf/')) pill.textContent = t('post_stage.click_play_flash');
+      else pill.textContent = t('post_stage.click_to_run');
+      wrap.appendChild(pill);
+      return wrap;
+    }
+
+    return null;
   }
 
   private setupEventListeners(): void {
@@ -285,17 +476,50 @@ export class PostComposer {
       }
     });
 
-    // File button click
-    const fileButton = this.element.querySelector('.composer-file-button')!;
-    fileButton.addEventListener('click', () => {
-      this.fileInput.click();
+    // File button clicks - image/video, audio, document, game
+    const fileButtons = this.element.querySelectorAll('.composer-file-button[class*="composer-file-button--"]')!;
+    const accepts: Record<string, string> = {
+      image: 'image/*,video/*',
+      audio: 'audio/*',
+      document: '*/*',
+      game: '.zip,.html,.htm,.swf,.rsp,.js,.wasm',
+    };
+    const attachToggle = this.element.querySelector('.composer-attach-menu-toggle') as HTMLButtonElement;
+    const attachMenu = this.element.querySelector('.composer-attach-menu') as HTMLElement;
+    attachToggle.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const open = attachMenu.style.display !== 'block';
+      attachMenu.style.display = open ? 'block' : 'none';
+      attachToggle.setAttribute('aria-expanded', String(open));
+    });
+    this.element.querySelector('.composer-poll-button')?.addEventListener('click', () => {
+      attachMenu.style.display = 'none';
+      attachToggle.setAttribute('aria-expanded', 'false');
+      this.togglePollSection();
+    });
+    fileButtons.forEach((btn) => {
+      const btnEl = btn as HTMLElement;
+      btnEl.addEventListener('click', () => {
+        // Read the slot from the modifier class so a new attach button only
+        // needs an `accepts` entry, not a branch here.
+        const slot = /composer-file-button--([a-z]+)/.exec(btnEl.className)?.[1] ?? 'image';
+        const accept = accepts[slot] ?? accepts.image;
+        this.fileInput.accept = accept;
+        attachMenu.style.display = 'none';
+        attachToggle.setAttribute('aria-expanded', 'false');
+        // Media picks are multi-select; games remain a single file
+        this.fileInput.multiple = slot !== 'game';
+        this.fileInput.click();
+      });
     });
 
     // File selection - from both click and drop
     this.fileInput.addEventListener('change', (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (file) {
-        this.handleFileSelection(file);
+      const input = e.target as HTMLInputElement;
+      const files = Array.from(input.files || []);
+      input.value = '';
+      if (files.length > 0) {
+        void this.handleFiles(files);
       }
     });
 
@@ -303,6 +527,12 @@ export class PostComposer {
     const fileRemove = this.element.querySelector('.file-remove')!;
     fileRemove.addEventListener('click', () => {
       this.clearFileSelection();
+    });
+
+    // Media editor
+    const fileEdit = this.element.querySelector('.file-edit')!;
+    fileEdit.addEventListener('click', () => {
+      void this.handleEditFile();
     });
 
     // Thumbnail button click
@@ -330,17 +560,11 @@ export class PostComposer {
       this.handleSubmit();
     });
 
-    // Poll button toggle
-    const pollButton = this.element.querySelector('.composer-poll-button')!;
-    pollButton.addEventListener('click', () => {
-      this.togglePollSection();
-    });
-
-    // Save draft button
-    const saveDraftBtn = this.element.querySelector('.composer-save-draft')!;
-    saveDraftBtn.addEventListener('click', (e) => {
+    // Emoji picker button
+    const emojiButton = this.element.querySelector('.composer-emoji-button')! as HTMLElement;
+    emojiButton.addEventListener('click', (e) => {
       e.stopPropagation();
-      this.saveExplicitDraft();
+      this.openEmojiPicker(emojiButton);
     });
 
     // List drafts button
@@ -361,7 +585,6 @@ export class PostComposer {
       if (
         this.draftsDropdown.style.display === 'block' &&
         !this.draftsDropdown.contains(target) &&
-        !saveDraftBtn.contains(target) &&
         !listDraftsBtn.contains(target)
       ) {
         this.closeDraftsDropdown();
@@ -503,7 +726,7 @@ export class PostComposer {
       `;
       avatarSpan.textContent = user.username.charAt(0).toUpperCase();
       if (user.avatar_key) {
-        avatarSpan.style.backgroundImage = `url(/api/images/${user.avatar_key})`;
+        avatarSpan.style.backgroundImage = `url(${nativeApiHref(`/api/images/${user.avatar_key}`)})`;
         avatarSpan.style.backgroundSize = 'cover';
         avatarSpan.style.backgroundPosition = 'center';
         avatarSpan.textContent = '';
@@ -668,7 +891,7 @@ export class PostComposer {
         e.preventDefault();
         const file = item.getAsFile();
         if (file) {
-          this.handleFileSelection(file);
+          void this.handleFiles([file]);
         }
         break;
       }
@@ -676,36 +899,8 @@ export class PostComposer {
   }
 
   private validateFile(file: File): { valid: boolean; error?: string } {
-    const maxSize = 25 * 1024 * 1024;
-    if (file.size > maxSize) {
-      return { valid: false, error: t('composer.error_file_too_large') };
-    }
-
-    // Check file extension
-    const ext = file.name.toLowerCase().split('.').pop();
-    const allowedExts = [
-      'gif',
-      'jpg',
-      'jpeg',
-      'png',
-      'swf',
-      'js',
-      'wasm',
-      'zip',
-      'rsp',
-      'jsdos',
-      'mp3',
-      'wav',
-      'ogg',
-      'm4a',
-      'webm',
-      'mp4',
-      'mov',
-    ];
-
-    if (!ext || !allowedExts.includes(ext)) {
-      return { valid: false, error: t('composer.error_unsupported_type') };
-    }
+    // Size is enforced at submit time (and by the server on upload) so users
+    // can attach an oversized file and compress it in the editor first.
 
     return { valid: true };
   }
@@ -733,9 +928,7 @@ export class PostComposer {
 
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
-      // Only process the first file
-      const file = files[0];
-      this.handleFileSelection(file);
+      void this.handleFiles(Array.from(files));
     }
   }
 
@@ -744,8 +937,164 @@ export class PostComposer {
     this.errorDisplay.style.display = 'none';
   }
 
-  private handleFileSelection(file: File): void {
+  /**
+   * Entry point for every file pick (input, drop, paste).
+   * A single game file uses the legacy one-file flow; everything else is
+   * treated as a multi-media attachment (image / audio / video / document).
+   */
+  private async handleFiles(files: File[]): Promise<void> {
+    if (files.length === 0) return;
     this.clearError();
+
+    const games = files.filter(isGameFile);
+    const media = files.filter((f) => !isGameFile(f));
+
+    if (games.length > 0) {
+      if (files.length > 1 || media.length > 0 || this.selectedMedia.length > 0) {
+        showToast(t('composer.error_media_game_mix'), true);
+        return;
+      }
+      await this.handleFileSelection(games[0]);
+      return;
+    }
+
+    if (this.selectedFile) {
+      showToast(t('composer.error_media_game_mix'), true);
+      return;
+    }
+
+    for (const file of media) {
+      const kind = detectAttachKind(file);
+      if (kind !== 'image' && kind !== 'audio' && kind !== 'video' && kind !== 'document') {
+        showToast(t('composer.error_unsupported_type'), true);
+        continue;
+      }
+      if (this.selectedMedia.length >= this.maxMediaAttachments) {
+        showToast(t('composer.error_too_many_media', { max: this.maxMediaAttachments }), true);
+        break;
+      }
+
+      // Reject oversized images before the browser decodes/previews them
+      const dimError = await checkImageSizeLimit(file);
+      if (dimError) {
+        showToast(dimError, true);
+        continue;
+      }
+
+      const total = this.selectedMedia.reduce((sum, f) => sum + f.size, 0) + file.size;
+      if (total > MAX_MEDIA_TOTAL_BYTES) {
+        showToast(t('composer.error_total_too_large', { max: 50 }), true);
+        break;
+      }
+
+      // Non-blocking notice: posting requires ≤25MB — compress in the editor
+      if (file.size > MAX_MEDIA_FILE_BYTES) {
+        showToast(t('composer.attach_over_size'), false);
+      }
+
+      this.selectedMedia.push(file);
+    }
+
+    this.renderMediaList();
+    this.updateSubmitButton();
+  }
+
+  private clearMediaSelection(): void {
+    this.selectedMedia = [];
+    this.renderMediaList();
+    this.updateSubmitButton();
+  }
+
+  private renderMediaList(): void {
+    const container = this.element.querySelector('.composer-media-list') as HTMLElement | null;
+    if (!container) return;
+    const itemsEl = container.querySelector('.media-list-items') as HTMLElement;
+    const metaEl = container.querySelector('.media-list-meta') as HTMLElement;
+
+    for (const handle of this.mediaHandles) handle.destroy();
+    this.mediaHandles = [];
+    itemsEl.innerHTML = '';
+
+    if (this.selectedMedia.length === 0) {
+      container.style.display = 'none';
+      metaEl.textContent = '';
+      return;
+    }
+    container.style.display = 'block';
+
+    this.selectedMedia.forEach((file, index) => {
+      const item = document.createElement('div');
+      item.className = 'composer-media-item';
+
+      const body = document.createElement('div');
+      body.className = 'composer-media-item-body';
+      this.mediaHandles.push(renderFilePreview(file, body));
+      item.appendChild(body);
+
+      const nameEl = document.createElement('div');
+      nameEl.className = 'media-item-name';
+      nameEl.textContent = `${file.name} (${this.formatFileSize(file.size)})`;
+      item.appendChild(nameEl);
+
+      const actions = document.createElement('div');
+      actions.className = 'media-item-actions';
+
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'media-item-edit';
+      editBtn.title = t('editor.edit_button');
+      editBtn.innerHTML = '<span class="action-icon" data-icon="edit"></span>';
+      editBtn.addEventListener('click', () => void this.handleEditMedia(index));
+      // Same rule as the single-file preview: only image/audio/video can be
+      // opened in the editor (openMediaEditor no-ops for every other kind, so
+      // a PDF would show a button that does nothing).
+      const editKind = detectAttachKind(file);
+      editBtn.style.display = editKind === 'image' || editKind === 'audio' || editKind === 'video' ? '' : 'none';
+      actions.appendChild(editBtn);
+
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'media-item-remove';
+      removeBtn.title = t('composer.remove_media');
+      removeBtn.innerHTML = '<span class="action-icon" data-icon="close"></span>';
+      removeBtn.addEventListener('click', () => {
+        this.selectedMedia.splice(index, 1);
+        this.renderMediaList();
+        this.updateSubmitButton();
+      });
+      actions.appendChild(removeBtn);
+
+      item.appendChild(actions);
+      attachIcons(item);
+      itemsEl.appendChild(item);
+    });
+
+    const totalBytes = this.selectedMedia.reduce((sum, f) => sum + f.size, 0);
+    metaEl.textContent = t('composer.media_meta', {
+      count: this.selectedMedia.length,
+      max: this.maxMediaAttachments,
+      size: this.formatFileSize(totalBytes),
+    });
+  }
+
+  private async handleEditMedia(index: number): Promise<void> {
+    const file = this.selectedMedia[index];
+    if (!file) return;
+    const edited = await openMediaEditor(file);
+    if (edited) {
+      this.selectedMedia[index] = edited;
+      this.renderMediaList();
+      this.updateSubmitButton();
+    }
+  }
+
+  private async handleFileSelection(file: File): Promise<void> {
+    this.clearError();
+
+    if (this.selectedMedia.length > 0) {
+      showToast(t('composer.error_media_game_mix'), true);
+      return;
+    }
 
     const validation = this.validateFile(file);
     if (!validation.valid) {
@@ -753,7 +1102,6 @@ export class PostComposer {
       showToast(validation.error!, true);
       return;
     }
-
     // Check if file is an accepted format (MIME type validation)
     const allowedTypes = [
       'image/gif',
@@ -774,6 +1122,7 @@ export class PostComposer {
       'text/javascript',
       'application/wasm',
       'text/plain',
+      'text/html',
     ];
 
     // Also check file extension for SWF files (browsers may not report correct MIME type)
@@ -784,8 +1133,9 @@ export class PostComposer {
       file.name.toLowerCase().endsWith('.js') ||
       file.name.toLowerCase().endsWith('.wasm') ||
       file.name.toLowerCase().endsWith('.zip') ||
+      file.name.toLowerCase().endsWith('.html') ||
+      file.name.toLowerCase().endsWith('.htm') ||
       file.name.toLowerCase().endsWith('.rsp') ||
-      file.name.toLowerCase().endsWith('.jsdos') ||
       file.name.toLowerCase().endsWith('.mp4') ||
       file.name.toLowerCase().endsWith('.webm') ||
       file.name.toLowerCase().endsWith('.mov');
@@ -796,32 +1146,30 @@ export class PostComposer {
       return;
     }
 
+    // Reject oversized images before the browser decodes/previews them, so a
+    // huge image can't crash the tab in the composer or after posting.
+    const dimError = await checkImageSizeLimit(file);
+    if (dimError) {
+      this.clearFileSelection();
+      showToast(dimError, true);
+      return;
+    }
+
+    // Non-blocking notice: the file can be attached now, but posting requires
+    // it to be ≤25MB — the editor can compress it.
+    if (file.size > 25 * 1024 * 1024) {
+      showToast(t('composer.attach_over_size'), false);
+    }
+
     this.selectedFile = file;
     this.showFilePreview(file);
 
-    // Detect ZIP type for DOS vs HTML5
-    const isZip = file.name.toLowerCase().endsWith('.zip');
-    const isJsdos = file.name.toLowerCase().endsWith('.jsdos');
-    if (isZip) {
-      this.zipType = null;
-      detectZipType(file).then((type) => {
-        this.zipType = type;
-        if (type === 'dos') {
-          const fileInfo = this.element.querySelector('.file-name') as HTMLElement;
-          if (fileInfo) fileInfo.textContent = file.name + ' (DOS)';
-        }
-      });
-    } else if (isJsdos) {
-      this.zipType = 'dos';
-      const fileInfo = this.element.querySelector('.file-name') as HTMLElement;
-      if (fileInfo) fileInfo.textContent = file.name + ' (DOS)';
-    } else {
-      this.zipType = null;
-    }
-
-    // Show thumbnail section for ZIP, JSDOS, or SWF files
-    const isSwf = file.name.toLowerCase().endsWith('.swf');
-    if (isZip || isJsdos || isSwf) {
+    // Show thumbnail section for ZIP, HTML, or SWF files
+    const name = file.name.toLowerCase();
+    const isZip = name.endsWith('.zip');
+    const isHtml = name.endsWith('.html') || name.endsWith('.htm');
+    const isSwf = name.endsWith('.swf');
+    if (isZip || isHtml || isSwf) {
       this.showThumbnailSection();
     } else {
       this.hideThumbnailSection();
@@ -832,7 +1180,6 @@ export class PostComposer {
 
   private clearFileSelection(): void {
     this.selectedFile = null;
-    this.zipType = null;
     this.fileInput.value = '';
     this.hideFilePreview();
     this.hideThumbnailSection();
@@ -918,6 +1265,23 @@ export class PostComposer {
     this.scheduleDraftSave();
   }
 
+  private openEmojiPicker(anchor: HTMLElement): void {
+    openStampPicker(anchor, {
+      onSelect: (emoji: string, stampId?: string) => {
+        const textarea = this.textarea;
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        const value = textarea.value;
+        const insertText = emoji;
+        textarea.value = value.slice(0, start) + insertText + value.slice(end);
+        textarea.selectionStart = textarea.selectionEnd = start + insertText.length;
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.focus();
+      },
+      currentUser: this.props.currentUser?.id ? { id: this.props.currentUser.id } : null,
+    });
+  }
+
   private addPollOption(): void {
     if (this.pollOptionsArr.length >= 10) return;
     this.pollOptionsArr.push('');
@@ -976,13 +1340,33 @@ export class PostComposer {
     const preview = this.element.querySelector('.composer-file-preview')! as HTMLElement;
     const fileName = preview.querySelector('.file-name')!;
 
+    this.previewHandle?.destroy();
     fileName.textContent = `${file.name} (${this.formatFileSize(file.size)})`;
     preview.style.display = 'block';
+
+    const editBtn = preview.querySelector('.file-edit') as HTMLButtonElement | null;
+    if (editBtn) {
+      const kind = detectAttachKind(file);
+      editBtn.style.display = kind === 'image' || kind === 'audio' || kind === 'video' ? '' : 'none';
+    }
+
+    this.previewHandle = renderFilePreview(file, preview);
   }
 
   private hideFilePreview(): void {
     const preview = this.element.querySelector('.composer-file-preview')! as HTMLElement;
+    this.previewHandle?.destroy();
+    this.previewHandle = null;
     preview.style.display = 'none';
+  }
+
+  private async handleEditFile(): Promise<void> {
+    if (!this.selectedFile) return;
+    const edited = await openMediaEditor(this.selectedFile);
+    if (edited) {
+      this.selectedFile = edited;
+      this.showFilePreview(edited);
+    }
   }
 
   private formatFileSize(bytes: number): string {
@@ -992,79 +1376,234 @@ export class PostComposer {
   }
 
   private updateSubmitButton(): void {
-    const hasContent = this.textarea.value.trim().length > 0;
+    const hasContent = this.textarea.value.trim().length > 0 || this.props.quotedPost != null;
     this.submitButton.disabled = !hasContent || this.isSubmitting;
     this.submitButton.textContent = this.isSubmitting ? t('composer.posting') : t('composer.post_button');
   }
 
   private scheduleDraftSave(): void {
     if (this.draftTimeout) clearTimeout(this.draftTimeout);
-    this.draftTimeout = setTimeout(() => this.saveDraft(), 500);
+    this.draftTimeout = setTimeout(() => void this.saveDraft(), 500);
   }
 
-  private saveDraft(): void {
-    try {
-      const draft: Record<string, any> = {
-        text: this.textarea.value,
-        savedAt: Date.now(),
-      };
-      if (this.pollActive) {
-        const select = this.element.querySelector('.poll-duration-select') as unknown as HTMLSelectElement;
-        draft.poll = {
-          question: this.pollQuestion,
-          options: [...this.pollOptionsArr],
-          duration: select?.value || '86400000',
-        };
+  private setVaultNotice(show: boolean, failed = false): void {
+    this.vaultNotice.style.display = show ? 'block' : 'none';
+    this.vaultNotice.textContent = failed ? t('composer.vault_save_failed') : t('composer.vault_unlock_required');
+  }
+
+  private handleVaultSessionChange(): void {
+    if (!getVaultKey()) {
+      if (this.draftStorageMode === 'vault') {
+        this.draftStorageMode = 'locked';
+        this.savedDrafts = [];
+        this.setVaultNotice(true);
+        this.renderDraftsDropdown();
+        this.props.onDraftSaved?.();
       }
-      localStorage.setItem(PostComposer.AUTOSAVE_KEY, JSON.stringify(draft));
-      this.props.onDraftSaved?.();
-    } catch {}
+      return;
+    }
+    if (this.draftStorageMode === 'locked' || this.draftStorageMode === 'local') {
+      this.draftStorageMode = 'loading';
+      this.draftStorageReady = this.initializeDraftStorage();
+    }
   }
 
-  private loadDraft(): void {
+  private readLocalSavedDrafts(): ComposerDraft[] {
+    try {
+      const raw = localStorage.getItem(PostComposer.SAVED_DRAFTS_KEY);
+      const parsed: unknown = raw ? JSON.parse(raw) : null;
+      return parseComposerDrafts(parsed);
+    } catch {
+      return [];
+    }
+  }
+
+  private readLocalAutosave(): ComposerAutosave | null {
     try {
       const raw = localStorage.getItem(PostComposer.AUTOSAVE_KEY);
-      if (!raw) return;
-      const draft = JSON.parse(raw);
-      if (!draft.text) return;
-
-      this.textarea.value = draft.text;
-      this.charCount.textContent = t('composer.char_count', { current: draft.text.length, max: 200 });
-      this.updateSubmitButton();
-
-      if (draft.poll) {
-        this.pollActive = true;
-        this.pollQuestion = draft.poll.question || '';
-        this.pollOptionsArr = draft.poll.options?.length ? [...draft.poll.options] : ['', ''];
-        const section = this.element.querySelector('.composer-poll-section') as HTMLElement;
-        if (section) section.style.display = 'block';
-        const questionInput = this.element.querySelector('.poll-question-input') as HTMLInputElement;
-        if (questionInput) questionInput.value = this.pollQuestion;
-        const select = this.element.querySelector('.poll-duration-select') as unknown as HTMLSelectElement;
-        if (select && draft.poll.duration) select.value = draft.poll.duration;
-        this.renderPollOptions();
-      }
-    } catch {}
+      const parsed: unknown = raw ? JSON.parse(raw) : null;
+      return parseAutosave(parsed);
+    } catch {
+      return null;
+    }
   }
 
-  private clearAutoDraft(): void {
-    localStorage.removeItem(PostComposer.AUTOSAVE_KEY);
+  private restoreAutosave(draft: ComposerAutosave | null): void {
+    if (!draft?.text || this.textarea.value || this.props.quotedPost) return;
+    this.textarea.value = draft.text;
+    this.charCount.textContent = t('composer.char_count', { current: draft.text.length, max: 200 });
+    this.updateSubmitButton();
+    if (draft.poll) {
+      this.pollActive = true;
+      this.pollQuestion = draft.poll.question;
+      this.pollOptionsArr = [...draft.poll.options];
+      const section = this.element.querySelector('.composer-poll-section') as HTMLElement | null;
+      if (section) section.style.display = 'block';
+      const questionInput = this.element.querySelector('.poll-question-input') as HTMLInputElement | null;
+      if (questionInput) questionInput.value = this.pollQuestion;
+      const select = this.element.querySelector('.poll-duration-select') as HTMLSelectElement | null;
+      if (select && draft.poll.duration) select.value = draft.poll.duration;
+      this.renderPollOptions();
+    }
+  }
+
+  private async initializeDraftStorage(): Promise<void> {
+    if (!this.props.currentUser) {
+      this.draftStorageMode = 'local';
+      this.savedDrafts = this.readLocalSavedDrafts();
+      this.restoreAutosave(this.readLocalAutosave());
+      this.setVaultNotice(false);
+      this.renderDraftsDropdown();
+      this.props.onDraftSaved?.();
+      return;
+    }
+
+    const keys = await fetch('/api/vault/keys', { credentials: 'include' })
+      .then(async (res) => (res.ok ? ((await res.json()) as { enabled?: boolean }) : null))
+      .catch(() => null);
+    // If vault status cannot be checked, never fall back to writing plaintext.
+    if (!keys) {
+      this.draftStorageMode = 'locked';
+      this.savedDrafts = [];
+      this.setVaultNotice(true, true);
+      this.renderDraftsDropdown();
+      this.props.onDraftSaved?.();
+      return;
+    }
+    if (!keys.enabled) {
+      this.draftStorageMode = 'local';
+      this.savedDrafts = this.readLocalSavedDrafts();
+      this.restoreAutosave(this.readLocalAutosave());
+      this.setVaultNotice(false);
+      this.renderDraftsDropdown();
+      this.props.onDraftSaved?.();
+      return;
+    }
+
+    if (!isVaultUnlocked()) await tryDeviceUnlock();
+    if (!isVaultUnlocked()) {
+      this.draftStorageMode = 'locked';
+      this.savedDrafts = [];
+      this.setVaultNotice(true);
+      this.renderDraftsDropdown();
+      this.props.onDraftSaved?.();
+      return;
+    }
+
+    try {
+      const [remoteDrafts, remoteAutosaves] = await Promise.all([
+        listVaultItems<ComposerDraft>('post_draft'),
+        listVaultItems<ComposerAutosave>('post_autosave'),
+      ]);
+      this.draftStorageMode = 'vault';
+      this.savedDrafts = parseComposerDrafts(remoteDrafts.map(({ value }) => value)).slice(0, 20);
+      const remoteAutosave = parseAutosave(remoteAutosaves.find(({ id }) => id === AUTOSAVE_ITEM_ID)?.value);
+      const autosave = await this.migrateLegacyDrafts(remoteAutosave);
+      this.restoreAutosave(autosave);
+      this.setVaultNotice(false);
+      this.renderDraftsDropdown();
+      this.props.onDraftSaved?.();
+    } catch {
+      this.draftStorageMode = 'locked';
+      this.savedDrafts = [];
+      this.setVaultNotice(true, true);
+      this.renderDraftsDropdown();
+      this.props.onDraftSaved?.();
+    }
+  }
+
+  /** Move old plaintext drafts into encrypted rows before removing local copies. */
+  private async migrateLegacyDrafts(remoteAutosave: ComposerAutosave | null): Promise<ComposerAutosave | null> {
+    const legacyDrafts = this.readLocalSavedDrafts();
+    const legacyAutosave = this.readLocalAutosave();
+    try {
+      const knownText = new Set(this.savedDrafts.map((draft) => draft.text));
+      for (const draft of legacyDrafts) {
+        if (!draft.text || knownText.has(draft.text)) continue;
+        const migrated = { ...draft, id: newVaultItemId() };
+        await saveVaultItem(migrated.id, 'post_draft', migrated);
+        this.savedDrafts.unshift(migrated);
+        knownText.add(migrated.text);
+      }
+      this.savedDrafts = this.savedDrafts.slice(0, 20);
+      let autosave = remoteAutosave;
+      if (!autosave && legacyAutosave) {
+        autosave = legacyAutosave;
+        await saveVaultItem(AUTOSAVE_ITEM_ID, 'post_autosave', autosave);
+      }
+      try {
+        localStorage.removeItem(PostComposer.AUTOSAVE_KEY);
+        localStorage.removeItem(PostComposer.SAVED_DRAFTS_KEY);
+      } catch {
+        // Storage can be unavailable in private mode; the vault copy is still usable.
+      }
+      return autosave;
+    } catch {
+      // Keep the legacy copies until every migrated row has been accepted.
+      throw new Error('Unable to migrate local drafts into the vault');
+    }
+  }
+
+  private async saveDraft(): Promise<void> {
+    await this.draftStorageReady;
+    const draft: ComposerAutosave = {
+      text: this.textarea.value,
+      savedAt: Date.now(),
+    };
+    if (this.pollActive) {
+      const select = this.element.querySelector('.poll-duration-select') as HTMLSelectElement | null;
+      draft.poll = {
+        question: this.pollQuestion,
+        options: [...this.pollOptionsArr],
+        duration: select?.value || '86400000',
+      };
+    }
+    if (this.draftStorageMode === 'local') {
+      try {
+        localStorage.setItem(PostComposer.AUTOSAVE_KEY, JSON.stringify(draft));
+        this.props.onDraftSaved?.();
+      } catch {}
+      return;
+    }
+    if (this.draftStorageMode !== 'vault' || !getVaultKey()) {
+      this.setVaultNotice(true);
+      return;
+    }
+    try {
+      if (draft.text || draft.poll?.question || draft.poll?.options.some(Boolean)) {
+        await saveVaultItem(AUTOSAVE_ITEM_ID, 'post_autosave', draft);
+      } else {
+        await deleteVaultItem(AUTOSAVE_ITEM_ID);
+      }
+      this.setVaultNotice(false);
+    } catch {
+      this.setVaultNotice(true, true);
+    }
+  }
+
+  private async clearAutoDraft(): Promise<void> {
     if (this.draftTimeout) {
       clearTimeout(this.draftTimeout);
       this.draftTimeout = null;
     }
+    await this.draftStorageReady;
+    if (this.draftStorageMode === 'local') {
+      localStorage.removeItem(PostComposer.AUTOSAVE_KEY);
+      return;
+    }
+    if (this.draftStorageMode === 'vault') await deleteVaultItem(AUTOSAVE_ITEM_ID).catch(() => undefined);
   }
 
   private loadSavedDrafts(): void {
-    try {
-      const raw = localStorage.getItem(PostComposer.SAVED_DRAFTS_KEY);
-      this.savedDrafts = raw ? JSON.parse(raw) : [];
-    } catch {
-      this.savedDrafts = [];
-    }
+    if (this.draftStorageMode === 'local') this.savedDrafts = this.readLocalSavedDrafts();
   }
 
-  private saveExplicitDraft(): void {
+  private async saveExplicitDraft(): Promise<void> {
+    await this.draftStorageReady;
+    if (this.draftStorageMode !== 'local' && this.draftStorageMode !== 'vault') {
+      this.setVaultNotice(true);
+      return;
+    }
     const text = this.textarea.value.trim();
     if (!text) {
       showToast(t('composer.draft_empty'), true);
@@ -1081,12 +1620,10 @@ export class PostComposer {
     if (this.loadedDraftId) {
       const existing = this.savedDrafts.find((d) => d.id === this.loadedDraftId);
       if (existing) {
-        existing.text = text;
-        existing.savedAt = Date.now();
-        try {
-          localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
-          this.props.onDraftSaved?.();
-        } catch {}
+        const updated = { ...existing, text, savedAt: Date.now() };
+        if (!(await this.persistDraft(updated))) return;
+        this.savedDrafts = this.savedDrafts.map((draft) => (draft.id === updated.id ? updated : draft));
+        this.props.onDraftSaved?.();
         showToast(t('composer.draft_updated'));
         this.loadedDraftId = null;
         this.renderDraftsDropdown();
@@ -1096,40 +1633,78 @@ export class PostComposer {
 
     const duplicate = this.savedDrafts.find((d) => d.text === text);
     if (duplicate) {
-      duplicate.savedAt = Date.now();
-      try {
-        localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
-        this.props.onDraftSaved?.();
-      } catch {}
+      const updated = { ...duplicate, savedAt: Date.now() };
+      if (!(await this.persistDraft(updated))) return;
+      this.savedDrafts = this.savedDrafts.map((draft) => (draft.id === updated.id ? updated : draft));
+      this.props.onDraftSaved?.();
       showToast(t('composer.draft_saved'));
       this.renderDraftsDropdown();
       return;
     }
 
-    const draft = {
-      id: Date.now().toString(36),
+    const draft: ComposerDraft = {
+      id: newVaultItemId(),
       text,
       savedAt: Date.now(),
     };
+    if (!(await this.persistDraft(draft))) return;
     this.savedDrafts.unshift(draft);
-    if (this.savedDrafts.length > 20) this.savedDrafts.length = 20;
-    try {
-      localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
-      this.props.onDraftSaved?.();
-    } catch {}
+    const discarded = this.savedDrafts.splice(20);
+    if (this.draftStorageMode === 'vault') {
+      await Promise.all(discarded.map((item) => deleteVaultItem(item.id).catch(() => undefined)));
+    }
+    if (this.draftStorageMode === 'local') {
+      try {
+        localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
+      } catch {}
+    }
+    this.props.onDraftSaved?.();
     showToast(t('composer.draft_saved'));
     this.loadedDraftId = null;
     this.renderDraftsDropdown();
   }
 
-  private deleteExplicitDraft(id: string): void {
+  private async persistDraft(draft: ComposerDraft): Promise<boolean> {
+    try {
+      if (this.draftStorageMode === 'vault') await saveVaultItem(draft.id, 'post_draft', draft);
+      else if (this.draftStorageMode === 'local') {
+        const next = this.savedDrafts.map((existing) => (existing.id === draft.id ? draft : existing));
+        if (!next.some((existing) => existing.id === draft.id)) next.unshift(draft);
+        localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(next.slice(0, 20)));
+      } else return false;
+      this.setVaultNotice(false);
+      return true;
+    } catch {
+      this.setVaultNotice(true, true);
+      showToast(t('composer.vault_save_failed'), true);
+      return false;
+    }
+  }
+
+  private async deleteExplicitDraft(id: string): Promise<void> {
+    await this.draftStorageReady;
     this.loadSavedDrafts();
+    if (this.draftStorageMode !== 'local' && this.draftStorageMode !== 'vault') {
+      this.setVaultNotice(true);
+      return;
+    }
+    if (this.draftStorageMode === 'vault') {
+      try {
+        await deleteVaultItem(id);
+      } catch {
+        this.setVaultNotice(true, true);
+        showToast(t('composer.vault_save_failed'), true);
+        return;
+      }
+    }
     this.savedDrafts = this.savedDrafts.filter((d) => d.id !== id);
     if (this.loadedDraftId === id) this.loadedDraftId = null;
-    try {
-      localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
-      this.props.onDraftSaved?.();
-    } catch {}
+    if (this.draftStorageMode === 'local') {
+      try {
+        localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
+      } catch {}
+    }
+    this.props.onDraftSaved?.();
     showToast(t('composer.draft_deleted'));
     this.renderDraftsDropdown();
   }
@@ -1200,7 +1775,7 @@ export class PostComposer {
 
     deleteBtn.addEventListener('click', () => {
       destroy();
-      this.deleteAllDrafts();
+      void this.deleteAllDrafts();
     });
 
     overlay.addEventListener('click', (e) => {
@@ -1208,14 +1783,27 @@ export class PostComposer {
     });
   }
 
-  private deleteAllDrafts(): void {
+  private async deleteAllDrafts(): Promise<void> {
+    await this.draftStorageReady;
     if (this.savedDrafts.length === 0) return;
     this.loadSavedDrafts();
+    if (this.draftStorageMode === 'vault') {
+      try {
+        await deleteVaultItems('post_draft');
+      } catch {
+        this.setVaultNotice(true, true);
+        showToast(t('composer.vault_save_failed'), true);
+        return;
+      }
+    }
     this.savedDrafts = [];
     this.loadedDraftId = null;
-    try {
-      localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
-    } catch {}
+    if (this.draftStorageMode === 'local') {
+      try {
+        localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
+      } catch {}
+    }
+    this.props.onDraftSaved?.();
     showToast(t('composer.draft_all_deleted'));
     this.renderDraftsDropdown();
   }
@@ -1235,10 +1823,6 @@ export class PostComposer {
   private renderDraftsDropdown(): void {
     this.loadSavedDrafts();
     this.draftsDropdown.innerHTML = '';
-    if (this.savedDrafts.length === 0) {
-      this.draftsDropdown.innerHTML = `<div style="padding: 1rem; color: var(--text-muted); font-size: 0.85rem; text-align: center;">${t('composer.no_drafts')}</div>`;
-      return;
-    }
 
     const header = document.createElement('div');
     header.style.cssText = `
@@ -1252,6 +1836,33 @@ export class PostComposer {
       font-weight: 600;
     `;
     header.innerHTML = `<span>${t('composer.list_drafts')} (${formatCount(this.savedDrafts.length)})</span>`;
+
+    const headerActions = document.createElement('div');
+    headerActions.style.cssText = 'display: flex; align-items: center; gap: 0.25rem;';
+
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.textContent = t('composer.save_draft');
+    saveBtn.style.cssText = `
+      background: none;
+      border: none;
+      color: var(--accent);
+      cursor: pointer;
+      font-size: 0.75rem;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+    `;
+    saveBtn.addEventListener('mouseenter', () => {
+      saveBtn.style.background = 'var(--bg-hover)';
+    });
+    saveBtn.addEventListener('mouseleave', () => {
+      saveBtn.style.background = '';
+    });
+    saveBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.saveExplicitDraft();
+    });
+    headerActions.appendChild(saveBtn);
 
     if (this.savedDrafts.length > 1) {
       const deleteAllBtn = document.createElement('button');
@@ -1276,10 +1887,20 @@ export class PostComposer {
         e.stopPropagation();
         this.showDeleteAllConfirmation();
       });
-      header.appendChild(deleteAllBtn);
+      headerActions.appendChild(deleteAllBtn);
     }
 
+    header.appendChild(headerActions);
+
     this.draftsDropdown.appendChild(header);
+
+    if (this.savedDrafts.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding: 1rem; color: var(--text-muted); font-size: 0.85rem; text-align: center;';
+      empty.textContent = t('composer.no_drafts');
+      this.draftsDropdown.appendChild(empty);
+      return;
+    }
 
     const list = document.createElement('div');
     list.style.cssText = 'display: flex; flex-direction: column;';
@@ -1355,7 +1976,7 @@ export class PostComposer {
       });
       delBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        this.deleteExplicitDraft(draft.id);
+        void this.deleteExplicitDraft(draft.id);
       });
 
       actionRow.appendChild(time);
@@ -1395,6 +2016,28 @@ export class PostComposer {
     const text = this.textarea.value.trim();
     if (!text) return;
 
+    // Enforce the upload caps at post time (attachments themselves are
+    // unrestricted so oversized media can be compressed in the editor first).
+    if (this.selectedFile && this.selectedFile.size > MAX_MEDIA_FILE_BYTES) {
+      showToast(t('composer.error_file_too_large'), true);
+      return;
+    }
+    if (this.selectedMedia.length > this.maxMediaAttachments) {
+      showToast(t('composer.error_too_many_media', { max: this.maxMediaAttachments }), true);
+      return;
+    }
+    const mediaTotal = this.selectedMedia.reduce((sum, f) => sum + f.size, 0);
+    for (const file of this.selectedMedia) {
+      if (file.size > MAX_MEDIA_FILE_BYTES) {
+        showToast(t('composer.error_file_too_large'), true);
+        return;
+      }
+    }
+    if (mediaTotal > MAX_MEDIA_TOTAL_BYTES) {
+      showToast(t('composer.error_total_too_large', { max: 50 }), true);
+      return;
+    }
+
     this.isSubmitting = true;
     this.updateSubmitButton();
 
@@ -1403,9 +2046,24 @@ export class PostComposer {
       let gifKey: string | undefined;
       let zipKey: string | undefined;
       let swfKey: string | undefined;
+      let attachments: Array<{ key: string; kind: string }> | undefined;
 
-      // Step 1: Prepare post if file is selected
-      if (this.selectedFile) {
+      // Step 1: Prepare post — multi-media attachments or a single game file
+      if (this.selectedMedia.length > 0) {
+        const prepared = await this.preparePostAttachments(this.selectedMedia);
+        if (!prepared) {
+          throw new Error('Failed to prepare post');
+        }
+        postId = prepared.postId;
+
+        const uploadResults = await Promise.all(
+          prepared.uploads.map((upload, i) => this.uploadFileDirect(this.selectedMedia[i], upload.uploadUrl)),
+        );
+        if (uploadResults.some((ok) => !ok)) {
+          throw new Error('Failed to upload files');
+        }
+        attachments = prepared.uploads.map((upload) => ({ key: upload.key, kind: upload.kind }));
+      } else if (this.selectedFile) {
         const prepareResult = await this.preparePost(this.selectedFile);
         if (!prepareResult) {
           throw new Error('Failed to prepare post');
@@ -1441,7 +2099,7 @@ export class PostComposer {
       let commitResult: { post: Post } | null;
       const poll = this.getPollData();
       if (this.selectedThumbnail) {
-        // Use multipart form data for thumbnail upload
+        // Use multipart form data for thumbnail upload (game posts only)
         const formData = new FormData();
         formData.append('text', text);
         if (postId) formData.append('postId', postId);
@@ -1450,6 +2108,7 @@ export class PostComposer {
         if (swfKey) formData.append('swfKey', swfKey);
         formData.append('thumbnail', this.selectedThumbnail);
         if (poll) formData.append('poll', JSON.stringify(poll));
+        if (this.props.quotedPost?.id) formData.append('quotedPostId', this.props.quotedPost.id);
 
         const response = await fetch('/api/posts/commit', {
           method: 'POST',
@@ -1472,7 +2131,7 @@ export class PostComposer {
         commitResult = await response.json();
       } else {
         // Use existing commit flow for posts without thumbnails
-        commitResult = await this.commitPost(postId, gifKey, zipKey, swfKey, text, poll);
+        commitResult = await this.commitPost(postId, gifKey, zipKey, swfKey, text, poll, attachments);
 
         if (!commitResult) {
           throw new Error('Failed to commit post');
@@ -1480,11 +2139,12 @@ export class PostComposer {
       }
 
       // Clear form and draft
-      this.clearAutoDraft();
+      await this.clearAutoDraft();
       this.loadedDraftId = null;
       this.textarea.value = '';
       this.charCount.textContent = t('composer.char_count', { current: 0, max: 200 });
       this.clearFileSelection();
+      this.clearMediaSelection();
       if (this.pollActive) this.togglePollSection();
 
       // Notify parent
@@ -1497,13 +2157,6 @@ export class PostComposer {
       const errorMessage = err?.message || t('composer.error_create_failed');
       showToast(`${errorMessage}${err?.details ? ` (${err.details})` : ''}`, true);
     } finally {
-      console.log('[PostComposer] finally: resetting submit state', {
-        isSubmittingBefore: this.isSubmitting,
-        textareaExists: !!this.textarea,
-        textareaValue: this.textarea?.value,
-        textareaInDOM: this.textarea ? document.contains(this.textarea) : false,
-        submitButtonInDOM: this.submitButton ? document.contains(this.submitButton) : false,
-      });
       this.isSubmitting = false;
       try {
         this.updateSubmitButton();
@@ -1534,7 +2187,6 @@ export class PostComposer {
         body: JSON.stringify({
           filename: file.name,
           contentType: file.type || getMimeType(file.name),
-          payloadType: this.zipType === 'dos' ? 'dos' : undefined,
         }),
       });
 
@@ -1583,43 +2235,69 @@ export class PostComposer {
     }
   }
 
+  /** Step 1 for multi-media posts: reserve upload slots for the plan's file cap. */
+  private async preparePostAttachments(
+    files: File[],
+  ): Promise<{ postId: string; uploads: Array<{ key: string; uploadUrl: string; kind: string }> } | null> {
+    try {
+      const response = await fetch('/api/posts/prepare', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+        body: JSON.stringify({
+          files: files.map((file) => ({
+            filename: file.name,
+            // Some browsers report an empty File.type for PDFs, so fall back to
+            // the attachment MIME map before the generic zip-oriented one.
+            contentType: file.type || attachmentMimeType(file.name) || 'application/octet-stream',
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        let errMsg = 'Failed to prepare post';
+        try {
+          const errBody = (await response.json()) as Record<string, unknown>;
+          if (errBody?.error) errMsg += `: ${errBody.error}`;
+        } catch {}
+        throw new Error(errMsg);
+      }
+
+      const result = (await response.json()) as {
+        postId: string;
+        uploads: Array<{ key: string; uploadUrl: string; kind: string }>;
+      };
+      if (!result.postId || !Array.isArray(result.uploads)) {
+        throw new Error('Invalid prepare response');
+      }
+      return result;
+    } catch (error) {
+      console.error('Prepare attachments failed:', error);
+      throw error;
+    }
+  }
+
   private async uploadFileDirect(file: File, uploadUrl: string): Promise<boolean> {
     try {
-      console.log('Uploading file to:', uploadUrl, 'Type:', file.type, 'Size:', file.size);
-
       const response = await fetch(uploadUrl, {
         method: 'PUT',
         body: file,
         headers: {
-          'Content-Type': file.type,
+          'Content-Type': file.type || attachmentMimeType(file.name) || 'application/octet-stream',
         },
         credentials: 'include',
       });
 
-      console.log('Upload response status:', response.status, response.statusText);
-
       if (!response.ok) {
-        const responseText = await response.text();
-        console.error('Upload failed response:', responseText);
-
-        // Try to parse as JSON, fallback to text if it fails
-        let error: Record<string, unknown>;
-        try {
-          error = JSON.parse(responseText) as Record<string, unknown>;
-        } catch {
-          error = { error: responseText };
-        }
-
-        console.error('Upload failed parsed error:', error);
+        console.error('Upload failed:', response.status);
         return false;
       }
 
-      const responseText = await response.text();
-      console.log('Upload success response:', responseText);
-
       return true;
-    } catch (error) {
-      console.error('File upload failed:', error);
+    } catch {
+      console.error('File upload failed');
       return false;
     }
   }
@@ -1631,6 +2309,7 @@ export class PostComposer {
     swfKey: string | undefined,
     text: string,
     poll?: { question: string; options: string[]; multipleChoice: boolean; endsAt?: string } | null,
+    attachments?: Array<{ key: string; kind: string }>,
   ): Promise<{ post: Post } | null> {
     try {
       // Extract hashtags from text - support Japanese and other Unicode characters
@@ -1653,9 +2332,11 @@ export class PostComposer {
           gifKey: gifKey,
           zipKey: zipKey,
           swfKey: swfKey,
+          attachments,
           text,
           hashtags,
           poll: poll || undefined,
+          quotedPostId: this.props.quotedPost?.id,
         }),
       });
 
@@ -1694,23 +2375,15 @@ export class PostComposer {
   }
 
   public deleteDraft(id: string): void {
-    this.loadSavedDrafts();
-    this.savedDrafts = this.savedDrafts.filter((d) => d.id !== id);
-    if (this.loadedDraftId === id) this.loadedDraftId = null;
-    try {
-      localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
-    } catch {}
-    this.renderDraftsDropdown();
+    void this.deleteExplicitDraft(id);
+  }
+
+  public saveDraftPublic(): void {
+    this.saveExplicitDraft();
   }
 
   public deleteAllDraftsPublic(): void {
-    this.loadSavedDrafts();
-    this.savedDrafts = [];
-    this.loadedDraftId = null;
-    try {
-      localStorage.setItem(PostComposer.SAVED_DRAFTS_KEY, JSON.stringify(this.savedDrafts));
-      this.props.onDraftSaved?.();
-    } catch {}
+    void this.deleteAllDrafts();
   }
 
   public getElement(): HTMLElement {
@@ -1721,7 +2394,14 @@ export class PostComposer {
     this.textarea.focus();
   }
 
-  public updateCurrentUser(currentUser: { username: string; display_name?: string; avatar_key?: string } | null): void {
+  public updateCurrentUser(
+    currentUser: {
+      username: string;
+      display_name?: string;
+      avatar_key?: string;
+      badge_type?: string | null;
+    } | null,
+  ): void {
     this.props.currentUser = currentUser;
     this.updateAvatar();
   }
@@ -1743,18 +2423,22 @@ export class PostComposer {
       avatar.style.flexShrink = '0';
 
       if (this.props.currentUser.avatar_key) {
-        avatar.style.backgroundImage = `url(/api/images/${this.props.currentUser.avatar_key})`;
+        avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${this.props.currentUser.avatar_key}`)})`;
         avatar.style.backgroundSize = 'cover';
         avatar.style.backgroundPosition = 'center';
         avatar.textContent = '';
       } else {
         avatar.textContent = this.props.currentUser.username.charAt(0).toUpperCase();
       }
+      attachPlusBadge(avatar, this.props.currentUser.badge_type);
     }
   }
 
   public destroy(): void {
-    this.saveDraft();
+    if (this.draftTimeout) clearTimeout(this.draftTimeout);
+    void this.saveDraft();
+    this.unsubscribeVault?.();
+    this.unsubscribeVault = null;
     document.removeEventListener('click', this.boundCloseDrafts);
     this.element.remove();
   }

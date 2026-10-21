@@ -1,6 +1,6 @@
 import { buildGameTitle } from '../../src/lib/game-seo';
 import { isCrawler } from '../../src/lib/is-crawler';
-import { escapeHtml, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
+import { escapeHtml, renderAvatarBadge, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import { renderBreadcrumbJsonLd, renderSsrFooter, renderSsrHeader, renderSsrLayoutCss } from '../lib/ssr-layout';
 
@@ -16,6 +16,7 @@ interface GameRow {
   username: string;
   display_name: string | null;
   avatar_key: string | null;
+  badge_type: string | null;
   text: string;
   payload_key: string | null;
   swf_key: string | null;
@@ -32,6 +33,7 @@ function toGame(row: RawGame): GameRow {
     username: String(row.username),
     display_name: row.display_name ? String(row.display_name) : null,
     avatar_key: row.avatar_key ? String(row.avatar_key) : null,
+    badge_type: row.badge_type ? String(row.badge_type) : null,
     text: String(row.text),
     payload_key: row.payload_key ? String(row.payload_key) : null,
     swf_key: row.swf_key ? String(row.swf_key) : null,
@@ -45,7 +47,6 @@ function toGame(row: RawGame): GameRow {
 
 function detectGameType(game: GameRow): string {
   if (game.swf_key) return 'flash';
-  if (game.payload_key?.startsWith('dos/')) return 'dos';
   if (game.payload_key) return 'zip';
   return 'html5';
 }
@@ -68,7 +69,6 @@ function renderGameCard(game: GameRow, baseUrl: string): string {
 
   const typeLabels: Record<string, string> = {
     flash: 'Flash',
-    dos: 'DOS',
     zip: 'ZIP',
     html5: 'HTML5',
   };
@@ -82,7 +82,7 @@ function renderGameCard(game: GameRow, baseUrl: string): string {
       <div class="ssr-game-info">
         <div class="ssr-game-title">${escapeHtml(title)}</div>
         <div class="ssr-game-author">
-          <img src="${escapeHtml(avatarSrc)}" alt="" class="ssr-mini-avatar" width="18" height="18">
+          <span class="ssr-avatar-wrap ssr-avatar-wrap--mini"><img src="${escapeHtml(avatarSrc)}" alt="" class="ssr-mini-avatar" width="18" height="18">${renderAvatarBadge(game.badge_type)}</span>
           <span>${escapeHtml(game.display_name || game.username)}</span>
         </div>
         <div class="ssr-game-stats">
@@ -113,7 +113,7 @@ export async function onRequest(context: {
     let games: GameRow[] = [];
     if (env.DB) {
       const { results } = await env.DB.prepare(`
-        SELECT p.id, p.username, u.display_name, u.avatar_key,
+        SELECT p.id, p.username, u.display_name, u.avatar_key, u.badge_type,
           p.text, p.payload_key, p.swf_key, p.thumbnail_key, p.gif_key,
           p.fresh_count, COALESCE(p.reply_count, 0) as reply_count, p.created_at
         FROM posts p
@@ -139,7 +139,7 @@ export async function onRequest(context: {
         '@type': 'CollectionPage',
         name: 'Flaxia Arcade',
         description:
-          'ゲームやアプリをそのまま投稿できるSNS、Flaxiaのアーケード。DOS、ZIP、HTML5ゲームをブラウザで遊べます。',
+          'ゲームやアプリをそのまま投稿できるSNS、Flaxiaのアーケード。ZIP、HTML5ゲームをブラウザで遊べます。',
         url: canonicalUrl,
         mainEntity: {
           '@type': 'ItemList',
@@ -273,7 +273,7 @@ export async function onRequest(context: {
       renderHtmlShell(content, {
         title: 'Flaxia Arcade - ゲームを遊べるSNS',
         description:
-          'Flaxia Arcadeで、コミュニティが投稿したDOS、ZIP、HTML5ゲームをブラウザで直接遊ぼう。スワイプしてどんどん新しいゲームを発見。',
+          'Flaxia Arcadeで、コミュニティが投稿したZIP、HTML5ゲームをブラウザで直接遊ぼう。スワイプしてどんどん新しいゲームを発見。',
         canonicalUrl,
         image: defaultImage,
         jsonLd,

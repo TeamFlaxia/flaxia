@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Format edited files with the project formatter (Biome).
+  "formatter": true,
+  // Keep generated output out of the file watcher.
+  "watcher": {
+    "ignore": ["dist/**", ".wrangler/**", "node_modules/**", "worker-configuration.d.ts"]
+  },
+  // OpenCode V1 の permission 形式（V2 の permissions 配列は V1 では拒否される）。
+  "permission": {
+    // Never let an agent read real secrets from local dev vars.
+    "read": {
+      "*.dev.vars": "deny",
+      "**/*.dev.vars": "deny",
+      "**/.dev.vars": "deny"
+    },
+    // Pushing is a deliberate, human decision.
+    "bash": {
+      "git push *": "ask"
+    }
+  }
+}

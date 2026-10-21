@@ -18,8 +18,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -29,8 +29,8 @@ jobs:
   typecheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -40,8 +40,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -49,10 +49,17 @@ jobs:
       - run: npm run build
       - name: Start dev server and run tests
         run: |
+          set -o pipefail
+          # The pages dev server binds Durable Objects hosted by these two
+          # workers; start them first so the bindings connect.
+          npm run dev:do &
+          DO_PID=$!
+          npm run dev:multiplayer &
+          MP_PID=$!
           npm run dev:test &
           SERVER_PID=$!
           SERVER_READY=false
-          for i in $(seq 1 30); do
+          for i in $(seq 1 60); do
             if curl -s http://localhost:8788 > /dev/null 2>&1; then
               echo "Server ready after ${i}s"
               SERVER_READY=true
@@ -61,14 +68,15 @@ jobs:
             sleep 1
           done
           if [ "$SERVER_READY" = false ]; then
-            echo "Server failed to start within 30s"
-            kill $SERVER_PID 2>/dev/null || true
+            echo "Server failed to start within 60s"
+            kill $SERVER_PID $MP_PID $DO_PID 2>/dev/null || true
             exit 1
           fi
           mkdir -p coverage
+          EXIT_CODE=0
           npm test -- --experimental-test-coverage 2>&1 | tee coverage/test-output.log || EXIT_CODE=$?
-          kill $SERVER_PID 2>/dev/null || true
-          exit ${EXIT_CODE:-0}
+          kill $SERVER_PID $MP_PID $DO_PID 2>/dev/null || true
+          exit "$EXIT_CODE"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -78,8 +86,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: npm

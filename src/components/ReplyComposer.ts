@@ -1,5 +1,9 @@
+import { attachPlusBadge } from '../lib/avatar.js';
+import { AttachPreviewHandle, checkImageSizeLimit, renderFilePreview } from '../lib/file-preview.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { attachIcons } from '../lib/icons.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { showToast } from '../lib/toast.js';
 import { Post } from '../types/post.js';
 import { showSignInPrompt } from './SignInPrompt.js';
@@ -10,7 +14,13 @@ export interface ReplyComposerProps {
   onReplyCreated: (newReply: Post) => void;
   onCancel: () => void;
   prefillText?: string;
-  currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null;
+  currentUser?: {
+    username: string;
+    id: string;
+    display_name?: string;
+    avatar_key?: string;
+    badge_type?: string | null;
+  } | null;
 }
 
 export class ReplyComposer {
@@ -23,6 +33,7 @@ export class ReplyComposer {
   private charCount!: HTMLSpanElement;
   private selectedFile: File | null = null;
   private isSubmitting = false;
+  private previewHandle: AttachPreviewHandle | null = null;
   private mentionDropdown!: HTMLElement;
   private mentionTimeout: ReturnType<typeof setTimeout> | null = null;
   private mentionQuery: string = '';
@@ -39,11 +50,11 @@ export class ReplyComposer {
     const container = document.createElement('div');
     container.className = 'reply-composer';
     container.style.cssText = `
-      border: 1px solid #e2e8f0;
+      border: 1px solid var(--border);
       border-radius: 0;
       padding: 1rem;
       margin-top: 0.75rem;
-      background: #ffffff;
+      background: var(--bg-primary);
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     `;
 
@@ -59,7 +70,7 @@ export class ReplyComposer {
         </div>
         <div class="reply-composer-file-dropzone" style="display: none;">
           <div class="dropzone-content">
-            <span class="dropzone-icon">📎</span>
+            <span class="dropzone-icon" data-icon="attach"></span>
             <span class="dropzone-text">${t('reply_composer.file_hint')}</span>
           </div>
         </div>
@@ -67,16 +78,26 @@ export class ReplyComposer {
         <div class="reply-composer-footer">
           <div class="reply-composer-actions">
             <input type="file" class="reply-composer-file-input" accept=".gif,.png,.jpg,.jpeg,.mp3,.wav,.ogg,.m4a,.webm" />
-            <button class="reply-composer-file-button" type="button" style="
+            <div class="reply-composer-attach-group">
+              <button class="reply-composer-file-button reply-composer-file-button--image" type="button" title="${t('composer.attach_image_video')}" style="
               background: none;
               border: none;
               color: #94a3b8;
               cursor: pointer;
               padding: 0.25rem;
-              font-size: 1rem;
             ">
-              📎
-            </button>
+                <span class="action-icon" data-icon="image-video"></span>
+              </button>
+              <button class="reply-composer-file-button reply-composer-file-button--audio" type="button" title="${t('composer.attach_audio')}" style="
+              background: none;
+              border: none;
+              color: #94a3b8;
+              cursor: pointer;
+              padding: 0.25rem;
+            ">
+                <span class="action-icon" data-icon="audio"></span>
+              </button>
+            </div>
             <span class="reply-composer-char-count" style="color: #94a3b8; font-size: 0.75rem;">0/200</span>
           </div>
           <div class="reply-composer-buttons">
@@ -112,14 +133,15 @@ export class ReplyComposer {
               border: none;
               color: #64748b;
               cursor: pointer;
-              font-size: 0.875rem;
               padding: 0.25rem;
               border-radius: 0.25rem;
-            ">✕</button>
+            "><span class="action-icon" data-icon="close"></span></button>
           </div>
         </div>
       </div>
     `;
+
+    attachIcons(container);
 
     // Cache element references
     this.textarea = container.querySelector('.reply-composer-textarea')!;
@@ -202,10 +224,16 @@ export class ReplyComposer {
       }
     });
 
-    // File button click
-    const fileButton = this.element.querySelector('.reply-composer-file-button')!;
-    fileButton.addEventListener('click', () => {
-      this.fileInput.click();
+    // File button clicks - image/video and audio
+    const fileButtons = this.element.querySelectorAll('.reply-composer-file-button')!;
+    fileButtons.forEach((btn) => {
+      const btnEl = btn as HTMLElement;
+      btnEl.addEventListener('click', () => {
+        this.fileInput.accept = btnEl.classList.contains('reply-composer-file-button--audio')
+          ? '.mp3,.wav,.ogg,.m4a'
+          : '.gif,.png,.jpg,.jpeg,.webm';
+        this.fileInput.click();
+      });
     });
 
     // File selection
@@ -240,14 +268,6 @@ export class ReplyComposer {
     // Add missing event listeners
     this.textarea.addEventListener('paste', (e) => {
       this.handlePaste(e);
-    });
-
-    this.element.addEventListener('dragover', (e) => {
-      console.log('Dragover event:', e);
-    });
-
-    this.element.addEventListener('drop', (e) => {
-      console.log('Drop event:', e);
     });
 
     // Set user avatar
@@ -327,7 +347,7 @@ export class ReplyComposer {
       avatarSpan.style.cssText = `width: 24px; height: 24px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; color: white; font-size: 0.7rem; font-weight: bold; flex-shrink: 0;`;
       avatarSpan.textContent = user.username.charAt(0).toUpperCase();
       if (user.avatar_key) {
-        avatarSpan.style.backgroundImage = `url(/api/images/${user.avatar_key})`;
+        avatarSpan.style.backgroundImage = `url(${nativeApiHref(`/api/images/${user.avatar_key}`)})`;
         avatarSpan.style.backgroundSize = 'cover';
         avatarSpan.style.backgroundPosition = 'center';
         avatarSpan.textContent = '';
@@ -471,7 +491,7 @@ export class ReplyComposer {
     }
   }
 
-  private handleFileSelection(file: File): void {
+  private async handleFileSelection(file: File): Promise<void> {
     // Check file size (25MB limit)
     if (file.size > 25 * 1024 * 1024) {
       showToast(t('reply_composer.error_file_size'), true);
@@ -504,6 +524,14 @@ export class ReplyComposer {
       return;
     }
 
+    // Reject oversized images before the browser decodes/previews them.
+    const dimError = await checkImageSizeLimit(file);
+    if (dimError) {
+      showToast(dimError, true);
+      this.clearFileSelection();
+      return;
+    }
+
     this.selectedFile = file;
     this.showFilePreview(file);
     this.updateSubmitButton();
@@ -520,12 +548,16 @@ export class ReplyComposer {
     const preview = this.element.querySelector('.reply-composer-file-preview')! as HTMLElement;
     const fileName = preview.querySelector('.file-name')!;
 
+    this.previewHandle?.destroy();
     fileName.textContent = `${file.name} (${this.formatFileSize(file.size)})`;
     preview.style.display = 'block';
+    this.previewHandle = renderFilePreview(file, preview);
   }
 
   private hideFilePreview(): void {
     const preview = this.element.querySelector('.reply-composer-file-preview')! as HTMLElement;
+    this.previewHandle?.destroy();
+    this.previewHandle = null;
     preview.style.display = 'none';
   }
 
@@ -541,13 +573,13 @@ export class ReplyComposer {
     this.submitButton.textContent = this.isSubmitting ? t('reply_composer.replying') : t('reply_composer.reply');
 
     if (this.submitButton.disabled) {
-      this.submitButton.style.background = '#e2e8f0';
-      this.submitButton.style.borderColor = '#e2e8f0';
-      this.submitButton.style.color = '#64748b';
+      this.submitButton.style.background = 'var(--border)';
+      this.submitButton.style.borderColor = 'var(--border)';
+      this.submitButton.style.color = 'var(--text-muted)';
       this.submitButton.style.cursor = 'not-allowed';
     } else {
-      this.submitButton.style.background = '#22c55e';
-      this.submitButton.style.borderColor = '#22c55e';
+      this.submitButton.style.background = 'var(--accent)';
+      this.submitButton.style.borderColor = 'var(--accent)';
       this.submitButton.style.color = '#000';
       this.submitButton.style.cursor = 'pointer';
     }
@@ -559,21 +591,25 @@ export class ReplyComposer {
     const user = this.props.currentUser;
     if (!user) return;
 
-    avatarEl.textContent = user.username.charAt(0).toUpperCase();
+    avatarEl.querySelector(':scope > .avatar-initial')?.remove();
+    const initial = document.createElement('span');
+    initial.className = 'avatar-initial';
+    initial.textContent = user.username.charAt(0).toUpperCase();
+    avatarEl.appendChild(initial);
 
     if (user.avatar_key) {
       const loadAvatar = () => {
         const img = new Image();
         img.onload = () => {
-          avatarEl.style.backgroundImage = `url(/api/images/${user.avatar_key})`;
+          avatarEl.style.backgroundImage = `url(${nativeApiHref(`/api/images/${user.avatar_key}`)})`;
           avatarEl.style.backgroundSize = 'cover';
           avatarEl.style.backgroundPosition = 'center';
-          avatarEl.textContent = '';
+          avatarEl.querySelector(':scope > .avatar-initial')?.remove();
         };
         img.onerror = () => {
           console.warn(`Failed to load avatar: ${user.avatar_key}`);
         };
-        img.src = `/api/images/${user.avatar_key}`;
+        img.src = nativeApiHref(`/api/images/${user.avatar_key}`);
       };
       if ('requestIdleCallback' in window) {
         window.requestIdleCallback?.(loadAvatar, { timeout: 1000 });
@@ -592,6 +628,7 @@ export class ReplyComposer {
       );
     });
     avatarEl.style.cursor = 'pointer';
+    attachPlusBadge(avatarEl, user.badge_type);
   }
 
   private async handleSubmit(): Promise<void> {
@@ -693,8 +730,6 @@ export class ReplyComposer {
 
   private async uploadFileDirect(file: File, uploadUrl: string): Promise<boolean> {
     try {
-      console.log('Uploading file to:', uploadUrl, 'Type:', file.type, 'Size:', file.size);
-
       const response = await fetch(uploadUrl, {
         method: 'PUT',
         body: file,
@@ -704,30 +739,14 @@ export class ReplyComposer {
         credentials: 'include',
       });
 
-      console.log('Upload response status:', response.status, response.statusText);
-
       if (!response.ok) {
-        const responseText = await response.text();
-        console.error('Upload failed response:', responseText);
-
-        // Try to parse as JSON, fallback to text if it fails
-        let error: Record<string, unknown>;
-        try {
-          error = JSON.parse(responseText);
-        } catch {
-          error = { error: responseText };
-        }
-
-        console.error('Upload failed parsed error:', error);
+        console.error('Upload failed:', response.status);
         return false;
       }
 
-      const responseText = await response.text();
-      console.log('Upload success response:', responseText);
-
       return true;
-    } catch (error) {
-      console.error('File upload failed:', error);
+    } catch {
+      console.error('File upload failed');
       return false;
     }
   }

@@ -1,15 +1,19 @@
 import { ArcadeCaptureClient } from '../lib/capture-client.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { attachIcons, type IconName, icon } from '../lib/icons.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { registerModal } from '../lib/modal-state.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { getReplyStyle } from '../lib/settings.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { buildTree } from '../lib/thread.js';
 import { showToast } from '../lib/toast.js';
+import { createWvfsGameUrl } from '../lib/wvfs-game-url.js';
 import { executeWvfsZip } from '../lib/wvfs-zip-client.js';
 import type { ArcadePageProps, Game, GameType } from '../types/game.js';
 import type { Post } from '../types/post.js';
-import { executeDos } from './DosPlayer.js';
+import { GameUploadModal } from './GameUploadModal.js';
 import { createPostCard } from './PostCard.js';
 import { createReplyComposer, ReplyComposer } from './ReplyComposer.js';
 import { createReplyNode } from './ReplyNode.js';
@@ -67,6 +71,10 @@ export class ArcadePage {
   private initialGameId: string | undefined;
   private tutorialEl: HTMLElement | null = null;
   private isFullscreen: boolean = false;
+
+  // Set when the browser refused real fullscreen but we still applied the
+  // same immersive overlay so the game remains playable (e.g. iOS Safari).
+  private fakeFullscreenActive: boolean = false;
   private loadingEl: HTMLElement | null = null;
   private preloadedIds = new Set<string>();
 
@@ -141,7 +149,7 @@ export class ArcadePage {
     }
 
     // Preconnect to emulator CDNs and sandbox
-    const preconnects = ['https://unpkg.com', 'https://v8.js-dos.com', 'https://sandbox.flaxia.app'];
+    const preconnects = ['https://unpkg.com', 'https://sandbox.flaxia.app'];
     for (const href of preconnects) {
       const link = document.createElement('link');
       link.rel = 'preconnect';
@@ -157,8 +165,6 @@ export class ArcadePage {
       flex: 1;
       display: flex;
       flex-direction: column;
-      height: 100vh;
-      height: 100dvh;
       overflow: hidden;
       background: var(--bg-primary);
       position: relative;
@@ -178,12 +184,12 @@ export class ArcadePage {
     if (this.props.onBack) {
       const backBtn = document.createElement('button');
       backBtn.className = 'arcade-back-btn';
-      backBtn.textContent = '←';
-      backBtn.title = t('common.back');
+      backBtn.textContent = t('arcade.back');
+      backBtn.title = t('arcade.back');
       backBtn.style.cssText = `
         background: none;
         border: none;
-        font-size: 1.2rem;
+        font-size: 0.85rem;
         cursor: pointer;
         color: var(--text-primary);
         padding: 0.15rem 0.35rem;
@@ -205,30 +211,53 @@ export class ArcadePage {
     titleGroup.style.cssText = 'display: flex; flex-direction: column;';
 
     const title = document.createElement('h1');
-    title.textContent = t('arcade.title');
     title.style.cssText = `
       margin: 0;
       font-size: 1rem;
       font-weight: 600;
       color: var(--text-primary);
       white-space: nowrap;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
     `;
-
-    const subtitle = document.createElement('span');
-    subtitle.textContent = t('arcade.subtitle');
-    subtitle.style.cssText = `
-      font-size: 0.75rem;
-      white-space: nowrap;
-      color: var(--text-muted);
-    `;
+    const titleIcon = icon('arcade', { width: '18', height: '18' });
+    const titleText = document.createElement('span');
+    titleText.textContent = t('arcade.title');
+    title.appendChild(titleIcon);
+    title.appendChild(titleText);
 
     titleGroup.appendChild(title);
-    titleGroup.appendChild(subtitle);
     header.appendChild(titleGroup);
 
-    // Spacer to push tutorial button to the right
+    // Spacer to push upload/tutorial buttons to the right
     const headerSpacer = document.createElement('div');
     headerSpacer.style.cssText = 'flex: 1;';
+
+    // Upload game button
+    const uploadBtn = document.createElement('button');
+    uploadBtn.textContent = t('arcade.upload_btn');
+    uploadBtn.title = t('arcade.upload_title');
+    uploadBtn.style.cssText = `
+      background: none;
+      border: none;
+      font-size: 1.2rem;
+      cursor: pointer;
+      color: var(--text-muted);
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      line-height: 1;
+      transition: color 0.2s, background 0.2s;
+    `;
+    uploadBtn.addEventListener('mouseenter', () => {
+      uploadBtn.style.color = 'var(--text-primary)';
+      uploadBtn.style.background = 'var(--bg-hover, rgba(255,255,255,0.1))';
+    });
+    uploadBtn.addEventListener('mouseleave', () => {
+      uploadBtn.style.color = 'var(--text-muted)';
+      uploadBtn.style.background = 'none';
+    });
+    uploadBtn.addEventListener('click', () => this.handleUploadClick());
 
     // Tutorial button
     const tutorialBtn = document.createElement('button');
@@ -256,6 +285,7 @@ export class ArcadePage {
     tutorialBtn.addEventListener('click', () => this.showTutorial());
 
     header.appendChild(headerSpacer);
+    header.appendChild(uploadBtn);
     header.appendChild(tutorialBtn);
 
     // Game container (vertical scroll area)
@@ -373,11 +403,17 @@ export class ArcadePage {
       color: var(--text-muted);
       display: none;
     `;
-    emptyState.innerHTML = `
-      <div style="font-size: 4rem; margin-bottom: 1rem;">🎮</div>
-      <div style="font-size: 1.25rem; margin-bottom: 0.5rem;">${t('arcade.no_games_title')}</div>
-      <div style="font-size: 0.875rem;">${t('arcade.no_games_subtitle')}</div>
-    `;
+    const emptyIcon = icon('game', { width: '64', height: '64' });
+    emptyIcon.style.cssText = 'margin-bottom: 1rem; opacity: 0.6;';
+    const emptyTitle = document.createElement('div');
+    emptyTitle.style.cssText = 'font-size: 1.25rem; margin-bottom: 0.5rem;';
+    emptyTitle.textContent = t('arcade.no_games_title');
+    const emptySub = document.createElement('div');
+    emptySub.style.cssText = 'font-size: 0.875rem;';
+    emptySub.textContent = t('arcade.no_games_subtitle');
+    emptyState.appendChild(emptyIcon);
+    emptyState.appendChild(emptyTitle);
+    emptyState.appendChild(emptySub);
     gameContainer.appendChild(emptyState);
 
     container.appendChild(header);
@@ -733,7 +769,7 @@ export class ArcadePage {
       bottom: 0;
       display: flex;
       flex-direction: column;
-      background: #fff;
+      background: var(--bg-primary);
       transform: translateY(100%);
       opacity: 0;
       transition: transform 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.4s ease;
@@ -822,7 +858,7 @@ export class ArcadePage {
 
     // Fresh button
     const freshBtn = this.createActionButton(
-      '🍃',
+      'fresh',
       formatCount(game.freshCount || 0),
       () => this.handleFresh(),
       game.isFreshed || false,
@@ -831,20 +867,22 @@ export class ArcadePage {
     freshBtn.dataset.tutorial = 'fresh';
 
     // Fullscreen button
-    const fullscreenBtn = this.createActionButton('⛶', t('arcade.fullscreen'), () => this.handleFullscreen());
+    const fullscreenBtn = this.createActionButton('maximize', t('arcade.fullscreen'), () => this.handleFullscreen());
     fullscreenBtn.dataset.tutorial = 'fullscreen';
 
     // Share button
-    const shareBtn = this.createActionButton('🔗', '', () => this.handleShare());
+    const shareBtn = this.createActionButton('share', '', () => this.handleShare());
     shareBtn.dataset.tutorial = 'share';
 
     // Comments button
-    const commentsBtn = this.createActionButton('💬', formatCount(game.replyCount || 0), () => this.handleComments());
+    const commentsBtn = this.createActionButton('reply', formatCount(game.replyCount || 0), () =>
+      this.handleComments(),
+    );
     commentsBtn.dataset.tutorial = 'comments';
 
     // Bookmark (flag to save) button
     const bookmarkBtn = this.createActionButton(
-      '🔖',
+      'bookmark',
       formatCount(game.bookmarkCount || 0),
       () => this.handleBookmark(),
       game.isBookmarked || false,
@@ -852,16 +890,8 @@ export class ArcadePage {
     bookmarkBtn.title = t('arcade.bookmark');
 
     // Report (flag) button
-    const reportBtn = this.createActionButton('🚩', '', () => this.handleReport());
+    const reportBtn = this.createActionButton('flag', '', () => this.handleReport());
     reportBtn.title = t('arcade.report');
-
-    // Screenshot button (hidden for now)
-    // const screenshotBtn = this.createActionButton('📸', '', () => void this.handleCaptureScreenshot());
-    // screenshotBtn.title = t('arcade.capture_screenshot');
-
-    // Clip button (hidden for now)
-    // const clipBtn = this.createActionButton('🎬', '', () => void this.handleCaptureClip());
-    // clipBtn.title = t('arcade.capture_clip');
 
     container.appendChild(freshBtn);
     container.appendChild(fullscreenBtn);
@@ -869,52 +899,8 @@ export class ArcadePage {
     container.appendChild(commentsBtn);
     container.appendChild(bookmarkBtn);
     container.appendChild(reportBtn);
-    // container.appendChild(screenshotBtn);
-    // container.appendChild(clipBtn);
 
     return container;
-  }
-
-  private async handleCaptureScreenshot(): Promise<void> {
-    const game = this.games[this.currentIndex];
-    const client = this.captureClient;
-    if (!game || !client || this.captureBusy) return;
-
-    this.captureBusy = true;
-    try {
-      showToast(t('arcade.capture_processing'));
-      const blob = await client.requestFrame();
-      const card = await client.composeScoreCard(blob, {
-        title: game.title,
-        username: game.username,
-        footer: t('arcade.capture_screenshot'),
-      });
-      this.openCaptureShareModal(card, `flaxia-${game.id}-capture.png`, 'image/png');
-    } catch (error) {
-      console.warn('Screenshot capture failed:', error);
-      showToast(t('arcade.capture_screenshot_failed'), true);
-    } finally {
-      this.captureBusy = false;
-    }
-  }
-
-  private async handleCaptureClip(): Promise<void> {
-    const game = this.games[this.currentIndex];
-    const client = this.captureClient;
-    if (!game || !client || this.captureBusy) return;
-
-    this.captureBusy = true;
-    try {
-      showToast(t('arcade.capture_processing'));
-      const frames = await client.requestGif();
-      const gif = client.encodeGif(frames);
-      this.openCaptureShareModal(gif, `flaxia-${game.id}-clip.gif`, 'image/gif');
-    } catch (error) {
-      console.warn('Clip capture failed:', error);
-      showToast(t('arcade.capture_clip_failed'), true);
-    } finally {
-      this.captureBusy = false;
-    }
   }
 
   private handlePostScore(score: number, label: string): void {
@@ -1071,9 +1057,9 @@ export class ArcadePage {
     headerTitle.style.cssText = 'font-weight: 600; font-size: 0.95rem; color: var(--text-primary);';
     headerTitle.textContent = `${t('thread_view.title')} (${formatCount(game.replyCount || 0)})`;
     const closeBtn = document.createElement('button');
-    closeBtn.textContent = '✕';
     closeBtn.style.cssText =
-      'background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1.1rem; padding: 0.25rem;';
+      'background: none; border: none; color: var(--text-muted); cursor: pointer; display: inline-flex; align-items: center; padding: 0.25rem;';
+    closeBtn.appendChild(icon('close', { width: '18', height: '18' }));
     closeBtn.addEventListener('click', () => this.closeCommentPanel());
     header.appendChild(headerTitle);
     header.appendChild(closeBtn);
@@ -1159,7 +1145,7 @@ export class ArcadePage {
       repliesHeader.className = 'replies-header';
       repliesHeader.textContent = `${t('thread.replies_header', { count: formatCount(data.replies.length) })}`;
       repliesHeader.style.cssText = `
-        color: #64748b;
+        color: var(--text-muted);
         font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         font-size: 0.9rem;
         margin: 0 1rem 0.5rem 1rem;
@@ -1435,6 +1421,32 @@ export class ArcadePage {
     this.showReportModal(game);
   }
 
+  private handleUploadClick(): void {
+    if (!this.props.currentUser) {
+      showSignInPrompt(
+        'upload',
+        () => {
+          window.history.pushState({}, '', '/login');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        },
+        () => {
+          window.history.pushState({}, '', '/register');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        },
+      );
+      return;
+    }
+
+    new GameUploadModal({
+      onUploaded: (postId) => this.navigateToGame(postId),
+    });
+  }
+
+  private navigateToGame(postId: string): void {
+    pushSpaHistory(`/arcade/${postId}`, { postId });
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }
+
   private showReportModal(game: Game): void {
     const overlay = document.createElement('div');
     const unregister = registerModal();
@@ -1485,9 +1497,10 @@ export class ArcadePage {
           background: none;
           border: none;
           color: var(--text-muted);
-          font-size: 20px;
           cursor: pointer;
-        ">✕</button>
+          display: inline-flex;
+          align-items: center;
+        "><span data-icon="close" style="display: inline-flex;"></span></button>
       </div>
       <p style="margin: 0 0 16px 0; color: var(--text-muted); font-size: 14px;">${t('post.report_question')}</p>
       <div class="categories" style="margin-bottom: 24px;">
@@ -1557,6 +1570,7 @@ export class ArcadePage {
     `;
 
     overlay.appendChild(dialog);
+    attachIcons(dialog);
     document.body.appendChild(overlay);
 
     const submitBtn = dialog.querySelector('.submit-btn') as HTMLButtonElement;
@@ -1689,7 +1703,7 @@ export class ArcadePage {
   }
 
   private createActionButton(
-    icon: string,
+    iconName: IconName,
     label: string,
     onClick: () => void,
     isActive: boolean = false,
@@ -1718,13 +1732,13 @@ export class ArcadePage {
     `;
 
     const iconSpan = document.createElement('span');
-    iconSpan.textContent = icon;
     iconSpan.style.cssText = `
       display: flex;
       align-items: center;
       justify-content: center;
       line-height: 1;
     `;
+    iconSpan.appendChild(icon(iconName, { width: '22', height: '22' }));
 
     const labelSpan = document.createElement('span');
     labelSpan.textContent = label;
@@ -1762,8 +1776,6 @@ export class ArcadePage {
     switch (type) {
       case 'zip':
         return t('arcade.loading_zip');
-      case 'dos':
-        return t('arcade.loading_dos');
       case 'html5':
         return t('arcade.loading_html5');
     }
@@ -1825,13 +1837,10 @@ export class ArcadePage {
         // Use WVFS for ZIP execution
         const handle = await executeWvfsZip(game.postId, container, undefined, true, false);
         this.currentGameHandle = handle;
-      } else if (game.type === 'dos' && game.payloadKey) {
-        const handle = await executeDos(game.postId, container, `/api/zip/${game.postId}`, true);
-        this.currentGameHandle = handle;
       } else if (game.type === 'html5') {
         // HTML5 games would use iframe
         const iframe = document.createElement('iframe');
-        iframe.src = `/api/games/html5/${game.id}`;
+        iframe.src = nativeApiHref(`/api/games/html5/${game.id}`);
         iframe.style.cssText = `
           width: 100%;
           height: 100%;
@@ -1853,14 +1862,14 @@ export class ArcadePage {
       const wrapper = document.createElement('div');
       wrapper.style.cssText = 'color: white; text-align: center; padding: 2rem;';
 
-      const icon = document.createElement('div');
-      icon.style.cssText = 'font-size: 3rem; margin-bottom: 1rem;';
-      icon.textContent = '⚠️';
+      const warnIconWrap = document.createElement('div');
+      warnIconWrap.style.cssText = 'margin-bottom: 1rem; color: var(--text-muted);';
+      warnIconWrap.appendChild(icon('warning', { width: '48', height: '48' }));
 
       const message = document.createElement('div');
       message.textContent = t('arcade.load_failed');
 
-      wrapper.appendChild(icon);
+      wrapper.appendChild(warnIconWrap);
       wrapper.appendChild(message);
       container.appendChild(wrapper);
     }
@@ -1873,10 +1882,8 @@ export class ArcadePage {
     const iframe = container.querySelector<HTMLIFrameElement>('iframe');
     if (!iframe) return;
 
-    // DOS iframes run with a sandbox without allow-same-origin, so their
-    // origin is opaque ('null'); only '*' can be used as the target origin.
     const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
-    const targetOrigin = game.type === 'dos' ? '*' : sandboxOrigin;
+    const targetOrigin = sandboxOrigin;
 
     const client = new ArcadeCaptureClient({
       iframe,
@@ -1894,7 +1901,7 @@ export class ArcadePage {
     });
     this.captureClient = client;
 
-    // executeWvfsZip/executeDos wait for the iframe's load event, so by the
+    // executeWvfsZip waits for the iframe's load event, so by the
     // time we get here the frame is usually already loaded. contentDocument is
     // always null for the cross-origin sandbox, so a `load`-only init would
     // never fire. Send immediately, and keep a load listener as a fallback
@@ -2008,16 +2015,9 @@ export class ArcadePage {
     this.preloadedIds.add(game.postId);
 
     try {
-      if (game.type === 'dos') {
-        const url = `/api/zip/${game.postId}`;
-        this.prefetchLink(url);
-        const resp = await fetch(url, { credentials: 'include' });
-        if (resp.ok) {
-          await resp.blob();
-        }
-      } else if (game.type === 'zip') {
+      if (game.type === 'zip') {
         const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
-        this.prefetchLink(`${sandboxOrigin}/api/wvfs-zip/${game.postId}`);
+        this.prefetchLink(createWvfsGameUrl(sandboxOrigin, game.postId));
       }
     } catch {
       // Prefetch failed — game will load normally on demand
@@ -2176,18 +2176,92 @@ export class ArcadePage {
     const viewport = this.gameContainer.querySelector('.arcade-viewport') as HTMLElement;
     if (!viewport) return;
 
-    if (document.fullscreenElement) {
-      document
-        .exitFullscreen()
-        .then(() => this.focusGameIframe(viewport))
-        .catch(() => {});
-    } else if (viewport.requestFullscreen) {
-      viewport
-        .requestFullscreen()
-        .then(() => this.focusGameIframe(viewport))
-        .catch(() => {
-          // Fullscreen not supported (e.g. iOS Safari)
-        });
+    // Real or fake fullscreen is active -> exit back to the normal arcade UI.
+    if (document.fullscreenElement || this.isFullscreen) {
+      if (document.fullscreenElement) {
+        document
+          .exitFullscreen()
+          .then(() => this.focusGameIframe(viewport))
+          .catch(() => {});
+      } else {
+        this.fakeFullscreenActive = false;
+        this.isFullscreen = false;
+        this.applyFullscreenStyle(false);
+        this.focusGameIframe(viewport);
+      }
+      return;
+    }
+
+    const requestFullscreen =
+      viewport.requestFullscreen?.bind(viewport) ??
+      (viewport as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> }).webkitRequestFullscreen?.bind(
+        viewport,
+      );
+
+    if (!requestFullscreen) {
+      this.enterFakeFullscreen(viewport);
+      return;
+    }
+
+    requestFullscreen()
+      .then(() => this.focusGameIframe(viewport))
+      .catch(() => this.enterFakeFullscreen(viewport));
+  }
+
+  private enterFakeFullscreen(viewport: HTMLElement): void {
+    this.fakeFullscreenActive = true;
+    this.isFullscreen = true;
+    this.applyFullscreenStyle(true);
+    this.focusGameIframe(viewport);
+
+    const game = this.games[this.currentIndex];
+    if (game) {
+      this.pushEvent({
+        postId: game.postId,
+        eventType: 'fullscreen',
+        dwellMs: Math.round(performance.now() - this.gameEntryTime),
+        didSkip: 0,
+        isFullscreen: 1,
+        gameType: game.type,
+      });
+    }
+  }
+
+  private applyFullscreenStyle(fullscreen: boolean): void {
+    // Hide the surrounding layout (left nav / right panel) like real fullscreen would.
+    const mainContainer = this.element.closest('.main-container') as HTMLElement | null;
+    if (mainContainer) {
+      const leftNav = mainContainer.querySelector(':scope > .left-nav') as HTMLElement | null;
+      if (leftNav) leftNav.style.display = fullscreen ? 'none' : '';
+      const rightPanel = mainContainer.querySelector(':scope > .right-panel') as HTMLElement | null;
+      if (rightPanel) rightPanel.style.display = fullscreen ? 'none' : '';
+    }
+
+    const header = this.element.querySelector('.arcade-header') as HTMLElement | null;
+    if (header) header.style.display = fullscreen ? 'none' : '';
+
+    const navUp = this.element.querySelector('.arcade-nav-up') as HTMLElement | null;
+    if (navUp) navUp.style.display = fullscreen ? 'none' : '';
+
+    const navDown = this.element.querySelector('.arcade-nav-down') as HTMLElement | null;
+    if (navDown) navDown.style.display = fullscreen ? 'none' : '';
+
+    const viewport = this.gameContainer.querySelector('.arcade-viewport') as HTMLElement | null;
+    const infoOverlay = viewport?.querySelector('.arcade-game-info') as HTMLElement | null;
+    if (infoOverlay) infoOverlay.style.display = fullscreen ? 'none' : '';
+
+    // Hide floating action buttons except the fullscreen button so the
+    // player can always toggle back out of the immersive overlay.
+    if (this.floatingActions) {
+      const buttons = this.floatingActions.children;
+      for (let i = 0; i < buttons.length; i++) {
+        const btn = buttons[i] as HTMLElement;
+        if (btn.dataset.tutorial === 'fullscreen') {
+          btn.style.display = '';
+        } else {
+          btn.style.display = fullscreen ? 'none' : '';
+        }
+      }
     }
   }
 
@@ -2197,6 +2271,9 @@ export class ArcadePage {
       (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement
     );
     if (isFullscreen === this.isFullscreen) return;
+    // While the fake overlay is active, ignore unrelated fullscreen changes
+    // so we don't accidentally leave the immersive state.
+    if (this.fakeFullscreenActive) return;
     this.isFullscreen = isFullscreen;
 
     if (isFullscreen) {
@@ -2216,25 +2293,8 @@ export class ArcadePage {
     const viewport = this.gameContainer.querySelector('.arcade-viewport') as HTMLElement;
     if (!viewport) return;
 
+    this.applyFullscreenStyle(isFullscreen);
     this.focusGameIframe(viewport);
-
-    const infoOverlay = viewport.querySelector('.arcade-game-info') as HTMLElement;
-    if (infoOverlay) {
-      infoOverlay.style.display = isFullscreen ? 'none' : '';
-    }
-
-    // Hide floating actions except fullscreen button
-    if (this.floatingActions) {
-      const buttons = this.floatingActions.children;
-      for (let i = 0; i < buttons.length; i++) {
-        const btn = buttons[i] as HTMLElement;
-        if (btn.dataset.tutorial === 'fullscreen') {
-          btn.style.display = '';
-        } else {
-          btn.style.display = isFullscreen ? 'none' : '';
-        }
-      }
-    }
   }
 
   public getElement(): HTMLElement {
@@ -2346,20 +2406,21 @@ export class ArcadePage {
       `;
 
       const closeBtn = document.createElement('button');
-      closeBtn.textContent = '✕';
       closeBtn.style.cssText = `
         position: absolute;
         top: 0.75rem;
         right: 0.75rem;
         background: none;
         border: none;
-        font-size: 1.1rem;
         cursor: pointer;
         color: var(--text-muted, #888);
         padding: 0.25rem;
         line-height: 1;
         border-radius: 4px;
+        display: inline-flex;
+        align-items: center;
       `;
+      closeBtn.appendChild(icon('close', { width: '18', height: '18' }));
       closeBtn.addEventListener('click', closeTutorial);
       c.appendChild(closeBtn);
 
@@ -2414,16 +2475,16 @@ export class ArcadePage {
         ctx.fillStyle = '#fff';
         ctx.font = 'bold 14px sans-serif';
         ctx.textAlign = 'left';
-        ctx.fillText(`🍃 ${score}`, 10, 22);
+        ctx.fillText(`${score}`, 10, 22);
 
         ctx.textAlign = 'right';
-        ctx.fillText(`⏱ ${timeLeft}s`, w - 10, 22);
+        ctx.fillText(`${timeLeft}s`, w - 10, 22);
 
         if (gameOver) {
           ctx.textAlign = 'center';
           ctx.fillStyle = '#22c55e';
           ctx.font = 'bold 20px sans-serif';
-          ctx.fillText(`✨ Score: ${score}!`, w / 2, h / 2 - 10);
+          ctx.fillText(`Score: ${score}!`, w / 2, h / 2 - 10);
           ctx.fillStyle = '#aaa';
           ctx.font = '13px sans-serif';
           ctx.fillText(t('arcade.tutorial_demo_play_again'), w / 2, h / 2 + 20);

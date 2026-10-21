@@ -1,12 +1,15 @@
+import { attachPlusBadge } from '../lib/avatar.js';
 import { createFabButton } from '../lib/fab-button.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { createSkeletonCards } from '../lib/loading-ui.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { updateMetaTags } from '../lib/seo-meta.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
@@ -43,6 +46,7 @@ export class ExplorePage {
     username: string;
     display_name?: string;
     avatar_key?: string;
+    badge_type?: string | null;
     bio?: string;
   }> = [];
   private cursor?: string;
@@ -261,7 +265,7 @@ export class ExplorePage {
             );
           } else {
             const data = (await res.json()) as {
-              users: { username: string; display_name: string; avatar_key: string }[];
+              users: { username: string; display_name: string; avatar_key: string; badge_type?: string | null }[];
             };
             this.renderSuggestions(
               suggestDropdown,
@@ -270,6 +274,7 @@ export class ExplorePage {
                 label: u.username,
                 display: u.display_name,
                 avatar: u.avatar_key,
+                badge: u.badge_type ?? null,
               })),
             );
           }
@@ -362,7 +367,14 @@ export class ExplorePage {
 
   private renderSuggestions(
     dropdown: HTMLElement,
-    items: { type: 'tag' | 'user'; label: string; count?: number; display?: string; avatar?: string }[],
+    items: {
+      type: 'tag' | 'user';
+      label: string;
+      count?: number;
+      display?: string;
+      avatar?: string;
+      badge?: string | null;
+    }[],
   ): void {
     dropdown.innerHTML = '';
 
@@ -416,6 +428,7 @@ export class ExplorePage {
           font-weight: bold; font-size: 0.7rem; flex-shrink: 0;
         `;
         avatar.textContent = (it.display || it.label)[0].toUpperCase();
+        attachPlusBadge(avatar, it.badge);
 
         const info = document.createElement('div');
         info.style.cssText = 'display: flex; flex-direction: column;';
@@ -592,7 +605,14 @@ export class ExplorePage {
     const res = await fetch('/api/users/suggestions');
     if (res.ok) {
       const data = (await res.json()) as {
-        users: Array<{ id: string; username: string; display_name?: string; avatar_key?: string; bio?: string }>;
+        users: Array<{
+          id: string;
+          username: string;
+          display_name?: string;
+          avatar_key?: string;
+          badge_type?: string | null;
+          bio?: string;
+        }>;
       };
       this.userSuggestions = data.users || [];
       this.hasMore = false;
@@ -837,7 +857,7 @@ export class ExplorePage {
         row.style.background = 'transparent';
       });
       row.onclick = () => {
-        window.history.pushState({ postId: game.postId }, '', `/arcade/${game.postId}`);
+        pushSpaHistory(`/arcade/${game.postId}`, { postId: game.postId });
         window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: game.postId } }));
       };
 
@@ -854,8 +874,11 @@ export class ExplorePage {
 
       if (game.thumbnailKey) {
         const img = document.createElement('img');
-        img.src = `/api/thumbnail/${game.postId}`;
+        img.src = nativeApiHref(`/api/thumbnail/${game.postId}`);
         img.alt = '';
+        img.loading = 'lazy';
+        img.width = 180;
+        img.height = 101;
         img.style.cssText = 'width: 100%; height: 100%; object-fit: cover;';
         thumb.appendChild(img);
       } else {
@@ -937,7 +960,7 @@ export class ExplorePage {
       const avatar = document.createElement('div');
       avatar.style.cssText = `
         width: 40px; height: 40px; border-radius: 50%;
-        background: ${user.avatar_key ? `url('/api/images/${user.avatar_key}')` : 'var(--accent)'};
+        background: ${user.avatar_key ? `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')` : 'var(--accent)'};
         background-size: cover;
         background-position: center;
         color: var(--bg-primary);
@@ -951,6 +974,7 @@ export class ExplorePage {
       if (!user.avatar_key) {
         avatar.textContent = user.display_name?.[0]?.toUpperCase() || user.username[0].toUpperCase();
       }
+      attachPlusBadge(avatar, user.badge_type);
 
       const userInfo = document.createElement('div');
       const usernameEl = document.createElement('div');

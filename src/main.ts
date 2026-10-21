@@ -1,28 +1,70 @@
+import './styles/main.css';
 import type { ArcadePageHandle } from './components/ArcadePage.js';
-import { BookmarksPage } from './components/BookmarksPage.js';
-import { ConversationView } from './components/ConversationView.js';
-import { ExplorePage } from './components/ExplorePage.js';
-import type { GroupChatView } from './components/GroupChatView.js';
-import type { GroupsPage } from './components/GroupsPage.js';
-import { createLeftNav, LeftNav, updateLeftNavUser } from './components/LeftNav.js';
-import { MessagesPage } from './components/MessagesPage.js';
-import { NotificationsPage } from './components/NotificationsPage.js';
-import { createRightPanel } from './components/RightPanel.js';
-import { ThreadPage } from './components/ThreadPage.js';
-import { Timeline } from './components/Timeline.js';
+import type { BookmarksPage } from './components/BookmarksPage.js';
+import { showCrowdConsentModal } from './components/CrowdConsentModal.js';
+import type { ExplorePage } from './components/ExplorePage.js';
+import type { LeftNav } from './components/LeftNav.js';
+import type { NotificationsPage } from './components/NotificationsPage.js';
+import type { ThreadPage } from './components/ThreadPage.js';
+import type { Timeline } from './components/Timeline.js';
 import { getMe } from './lib/auth-cache.js';
-import { initI18n } from './lib/i18n.js';
+import { resolveAuthRedirect } from './lib/auth-guard.js';
+import type { BottomNavDeps } from './lib/bottom-nav-setup.js';
+import { ensureBottomNav, getBottomNav } from './lib/bottom-nav-setup.js';
+import { initContentProtection } from './lib/content-protection.js';
+import { canRunFlaxiaNode, initCrowdNode, notifyCrowdConsentChanged } from './lib/crowd-node.js';
+import { initI18n, t } from './lib/i18n.js';
+import { lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from './lib/lazy-nav.js';
+import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
+import type { LeftNavHandlers } from './lib/left-nav-handlers.js';
+import { createLeftNavHandlers } from './lib/left-nav-handlers.js';
+import { isCapacitorNativePlatform, nativeApiUrl } from './lib/native-api.js';
+import {
+  clearNativeBadge,
+  initNativeNotify,
+  initNativePushRegistration,
+  notifyViaTauri,
+  setNativeBadge,
+} from './lib/native-notify.js';
+import { fetchNotifications, invalidateNotificationsCache } from './lib/notifications-api.js';
+import { hidePageLoader, showPageLoader, showPageLoaderFailure } from './lib/page-loader.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
+import { createPushSocket } from './lib/push-socket.js';
+import { parseCurrentRoute, type RouteInfo, type RouteView } from './lib/router.js';
+import { goBackInSpaOr, pushSpaHistory } from './lib/spa-history.js';
+import { initTheme } from './lib/theme.js';
+import { showToast } from './lib/toast.js';
+import { viewToBottomNavId } from './lib/view-nav.js';
+import { initializeWebPush } from './lib/web-push.js';
 
 interface PageComponent {
   getElement(): HTMLElement;
   destroy(): void;
 }
 
-console.log('Flaxia initialized');
-
 // Initialize performance monitoring
 initPerformanceMonitoring();
+
+// Keep API fetches on the first-party production origin for native Capacitor.
+// Direct media and iframe URLs use nativeApiHref at construction sites.
+const originalFetch = window.fetch.bind(window);
+window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const rewrittenInput = nativeApiUrl(input);
+  if (isCapacitorNativePlatform()) {
+    const requestUrl = new URL(input instanceof Request ? input.url : input.toString(), window.location.href);
+    const apiRequest = requestUrl.pathname.startsWith('/api/');
+    if (!apiRequest) return originalFetch(rewrittenInput, init);
+    const request = input instanceof Request ? new Request(rewrittenInput, input) : new Request(rewrittenInput, init);
+    return originalFetch(new Request(request, { credentials: 'include' }));
+  }
+  return originalFetch(rewrittenInput, init);
+}) as typeof window.fetch;
+
+// Initialize content protection (right-click, drag, keyboard shortcuts)
+initContentProtection();
+
+// Initialize theme (keeps system theme in sync during SPA navigation)
+initTheme();
 
 // Start i18n loading early (parallelizes the network fetch with script parsing/css loading)
 initI18n();
@@ -31,8 +73,6 @@ initI18n();
 document.addEventListener('DOMContentLoaded', async () => {
   const app = document.getElementById('app');
   if (app) {
-    console.log('App mounted');
-
     history.scrollRestoration = 'manual';
 
     await initI18n();
@@ -50,14 +90,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'bookmarks'
       | 'terms'
       | 'privacy'
+      | 'child-safety'
       | 'about'
       | 'docs'
       | 'admin'
       | 'settings'
       | 'arcade'
-      | 'messages'
-      | 'groups'
-      | 'call' = 'timeline';
+      | 'billing-success'
+      | 'billing-canceled' = 'timeline';
     let currentPostId: string | null = null;
     let _currentUsername: string | null = null;
     let currentTag: string | null = null;
@@ -76,11 +116,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     let arcadePage: ArcadePageHandle | null = null;
     let searchPage: PageComponent | null = null;
     let bookmarksPage: BookmarksPage | null = null;
-    let messagesPage: MessagesPage | null = null;
-    let conversationView: ConversationView | null = null;
-    let groupsPage: GroupsPage | null = null;
-    let groupChatView: GroupChatView | null = null;
-    let callUI: { element: HTMLElement; destroy: () => void } | null = null;
     let cachedContentComponent: { view: string; component: unknown; scrollY: number } | null = null;
     let adminLayout:
       | (PageComponent & { updateMainContent: (el: HTMLElement) => void; setAccessDenied: () => void })
@@ -90,299 +125,68 @@ document.addEventListener('DOMContentLoaded', async () => {
     let adminUsersTab: PageComponent | null = null;
     let adminAdsTab: PageComponent | null = null;
     const leftNavInstances: Set<LeftNav> = new Set();
-    let currentUser: { username: string; id: string; display_name?: string; avatar_key?: string } | null = null;
+
+    /** Deps for the mobile bottom bar (see src/lib/bottom-nav-setup.ts). */
+    const bottomNavDeps = (): BottomNavDeps => ({
+      navigate: navigateTo,
+      getCurrentUser: () => currentUser,
+    });
+    let currentUser: {
+      username: string;
+      id: string;
+      email?: string;
+      display_name?: string;
+      avatar_key?: string;
+      badge_type?: string | null;
+    } | null = null;
     let unreadNotificationCount = 0;
-    let unreadDmCount = 0;
-    let previousUnreadCount = 0;
 
-    let tauriNotify: ((title: string, body: string) => Promise<void>) | null = null;
-    let tauriBadge: ((count: number) => Promise<void>) | null = null;
-    let tauriSetNotificationCount: ((count: number) => Promise<void>) | null = null;
-    let capacitorNotify: ((title: string, body: string) => Promise<void>) | null = null;
-    let capacitorBadge: ((count: number) => Promise<void>) | null = null;
-
-    const initTauriNotifications = async () => {
-      try {
-        const { isPermissionGranted, requestPermission, sendNotification } = await import(
-          '@tauri-apps/plugin-notification'
-        );
-
-        try {
-          const granted = await isPermissionGranted();
-          if (!granted) {
-            await requestPermission();
-          }
-        } catch {
-          // permission API not supported on this platform — proceed anyway
-        }
-
-        tauriNotify = async (title: string, body: string) => {
-          try {
-            await sendNotification({ title, body: body || title });
-          } catch (err) {
-            console.error('[notif] sendNotification failed:', err);
-          }
-        };
-      } catch {
-        console.log('[notif] Tauri notification plugin not available — OS notifications disabled');
-      }
-    };
-
-    /** Dock/taskbar badge + tray icon badge — independent of the notification plugin. */
-    const initTauriBadge = async () => {
-      const isTauriEnv = typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__);
-
-      if (!isTauriEnv) {
-        console.log('[badge] Not in Tauri environment — skipping badge init');
-        return;
-      }
-
-      // Dock/taskbar badge count (macOS, Windows, some Linux DEs)
-      try {
-        const { getCurrentWindow } = await import('@tauri-apps/api/window');
-        tauriBadge = async (count: number) => {
-          try {
-            await getCurrentWindow().setBadgeCount(count);
-          } catch (err) {
-            console.log('[badge] setBadgeCount failed:', err);
-          }
-        };
-      } catch {
-        console.log('[badge] @tauri-apps/api/window not available');
-      }
-
-      // Desktop tray icon: invoke Rust set_notification_count
-      if (!/Android/i.test(navigator.userAgent)) {
-        try {
-          const { invoke } = await import('@tauri-apps/api/core');
-          tauriSetNotificationCount = async (count: number) => {
-            try {
-              await invoke('set_notification_count', { count });
-            } catch (err) {
-              console.log('[badge] invoke error:', err);
-            }
-          };
-        } catch {
-          console.log('[badge] @tauri-apps/api/core not available');
-        }
-      }
-    };
+    // Native notification platforms (see src/lib/native-notify.ts)
 
     /// WebSocket 経由のプッシュ通知を受け取り OS 通知を表示する
-    let pushWs: WebSocket | null = null;
-    let _pushWsReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    /// (接続管理・backoff は src/lib/push-socket.ts)
+    const isCapacitorNative = isCapacitorNativePlatform();
 
-    const isCapacitorNative =
-      typeof window !== 'undefined' &&
-      typeof window.Capacitor !== 'undefined' &&
-      typeof window.Capacitor.isNativePlatform === 'function' &&
-      window.Capacitor.isNativePlatform();
-
-    const connectPushWebSocket = () => {
-      if (pushWs) return;
-
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const sessionToken = localStorage.getItem('flaxia_session');
-      const url = `${protocol}//${window.location.host}/api/ws/notifications${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`;
-
-      console.log('[push] connecting to', url);
-      try {
-        const ws = new WebSocket(url);
-        ws.onopen = () => {
+    const pushSocket = createPushSocket(
+      () => {
+        // The bundled Android app shares the flaxia.app site; use the API
+        // host for its cross-origin WebSocket, and same-origin in browsers.
+        const host = isCapacitorNative ? 'flaxia.app' : window.location.host;
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${protocol}//${host}/api/ws/notifications`;
+      },
+      {
+        onOpen: () => {
           console.log('[push] connected');
           refreshNotificationBadges();
-        };
-        ws.onmessage = (ev) => {
-          try {
-            const data = JSON.parse(ev.data);
-            console.log('[push] received:', data);
-            if (data.type === 'notification') {
+        },
+        onMessage: (raw) => {
+          const data = raw as {
+            type?: string;
+            unread_count?: number;
+            push?: { title: string; body: string };
+            title?: string;
+            body?: string;
+          };
+          if (data.type === 'notification') {
+            if (typeof data.unread_count === 'number') {
               unreadNotificationCount = data.unread_count;
               updateBadgeUI();
-              if (data.push && typeof tauriNotify === 'function') {
-                tauriNotify(data.push.title, data.push.body);
-              }
-              if (data.push && typeof capacitorNotify === 'function') {
-                capacitorNotify(data.push.title, data.push.body);
-              }
-              // Handle incoming call notification
-              if (data.push?.type === 'call' && data.push?.postId) {
-                showIncomingCall(data.push.postId);
-              }
-            } else if (data.title) {
-              if (typeof tauriNotify === 'function') {
-                tauriNotify(data.title, data.body || 'New notification');
-              }
-              if (typeof capacitorNotify === 'function') {
-                capacitorNotify(data.title, data.body || 'New notification');
-              }
-              refreshNotificationBadges();
             }
-          } catch (e) {
-            console.error('[push] parse error:', e);
+            if (data.push) {
+              notifyViaTauri(data.push.title, data.push.body);
+            }
+            // OS 通知の表示は Push (FCM / Web Push) が担当する。
+            // Tauri には Push サービスが無いため WebSocket 経由でのみ表示する。
+          } else if (data.title) {
+            notifyViaTauri(data.title, data.body || 'New notification');
+            refreshNotificationBadges();
           }
-        };
-        ws.onclose = (ev) => {
-          console.log(`[push] disconnected (code=${ev.code} reason=${ev.reason}), reconnecting in 10s`);
-          pushWs = null;
-          _pushWsReconnectTimer = setTimeout(() => {
-            _pushWsReconnectTimer = null;
-            connectPushWebSocket();
-          }, 10000);
-        };
-        ws.onerror = (ev) => {
-          console.error('[push] error:', ev);
-        };
-        pushWs = ws;
-      } catch (e) {
-        console.error('[push] connection error:', e);
-        pushWs = null;
-        _pushWsReconnectTimer = setTimeout(() => {
-          _pushWsReconnectTimer = null;
-          connectPushWebSocket();
-        }, 10000);
-      }
-    };
-
-    const initCapacitorNotifications = async () => {
-      try {
-        const isNative =
-          typeof window !== 'undefined' &&
-          typeof window.Capacitor !== 'undefined' &&
-          typeof window.Capacitor.isNativePlatform === 'function' &&
-          window.Capacitor.isNativePlatform();
-        if (!isNative) return;
-
-        const { LocalNotifications } = await import('@capacitor/local-notifications');
-        const { Badge } = await import('@capawesome/capacitor-badge');
-
-        await LocalNotifications.requestPermissions();
-
-        try {
-          await LocalNotifications.createChannel({
-            id: 'flaxia_notifications',
-            name: 'Flaxia Notifications',
-            importance: 5,
-            sound: 'default',
-            visibility: 1,
-          });
-        } catch {
-          // channel may already exist
-        }
-
-        let notifId = 0;
-        capacitorNotify = async (title: string, body: string) => {
-          try {
-            notifId = (notifId + 1) % 2147483647;
-            await LocalNotifications.schedule({
-              notifications: [{ title, body, id: notifId }],
-            });
-          } catch (err) {
-            console.error('[notif] Capacitor sendNotification failed:', err);
-          }
-        };
-
-        capacitorBadge = async (count: number) => {
-          try {
-            await Badge.set({ count });
-          } catch {
-            // badge not supported
-          }
-        };
-      } catch {
-        // Not running in Capacitor
-      }
-    };
-
-    const initCapacitorPushRegistration = async () => {
-      if (!isCapacitorNative) return;
-      try {
-        const { PushNotifications } = await import('@capacitor/push-notifications');
-        await PushNotifications.requestPermissions();
-        await PushNotifications.register();
-
-        await PushNotifications.addListener('registration', (token) => {
-          fetch('/api/push/register', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ type: 'fcm', endpoint: token.value }),
-          }).catch((err) => console.error('[push] FCM register failed:', err));
-        });
-
-        await PushNotifications.addListener('registrationError', (err) => {
-          console.error('[push] FCM registration error:', err);
-        });
-
-        await PushNotifications.addListener('pushNotificationReceived', (notification) => {
-          if (notification.title && typeof capacitorNotify === 'function') {
-            capacitorNotify(notification.title, notification.body || '');
-          }
-        });
-
-        await PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
-          const clickUrl = action.notification?.data?.click_url;
-          if (clickUrl) {
-            window.location.href = clickUrl;
-          }
-        });
-      } catch {
-        console.log('[push] @capacitor/push-notifications not available');
-      }
-    };
-
-    /** Register Web Push in browser (Service Worker), or skip in Tauri/Capacitor. */
-    /** Convert VAPID base64 key to Uint8Array for PushManager.subscribe(). */
-    function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
-      const padding = '='.repeat((4 - (base64.length % 4)) % 4);
-      const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/');
-      const raw = atob(b64);
-      return Uint8Array.from(raw, (c) => c.charCodeAt(0));
-    }
-
-    /** Register for Web Push via Service Worker (browser only). */
-    const registerPushToken = async () => {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-        return; // not supported (Tauri or old browser)
-      }
-
-      try {
-        const reg = await navigator.serviceWorker.register('/sw.js');
-        await navigator.serviceWorker.ready;
-
-        // Get VAPID public key from server
-        const keyRes = await fetch('/api/push/vapid-key');
-        if (!keyRes.ok) return;
-        const { publicKey } = (await keyRes.json()) as { publicKey: string };
-
-        // Subscribe
-        const sub = await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(publicKey),
-        });
-
-        await fetch('/api/push/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify(sub.toJSON()),
-        });
-        console.log('Web Push subscription registered');
-      } catch (err) {
-        console.log('Web Push registration not available:', err);
-      }
-    };
-
-    const initializeWebPush = async () => {
-      if (typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__)) {
-        return; // Tauri desktop/mobile — no Service Worker push needed
-      }
-      if (isCapacitorNative) {
-        return; // Capacitor mobile — no Service Worker push needed
-      }
-      await registerPushToken();
-    };
-
+        },
+      },
+    );
+    // WebSocket 経由のプッシュ通知を受け取り OS 通知を表示する
+    // (接続管理・backoff は src/lib/push-socket.ts)
     // Capacitor ライフサイクル: アプリ復帰時に WebSocket 再接続
     if (isCapacitorNative) {
       try {
@@ -390,7 +194,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         await App.addListener('appStateChange', ({ isActive }) => {
           if (isActive) {
             // フォアグラウンド復帰時、WebSocket を再接続 & 未読カウント即時取得
-            if (!pushWs) connectPushWebSocket();
+            // (connect は接続中なら何もしない)
+            pushSocket.connect();
             refreshNotificationBadges();
           }
         });
@@ -399,77 +204,26 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
 
+    // Offline / online をトーストで統一表示する
+    window.addEventListener('offline', () => showToast(t('common.offline'), true));
+    window.addEventListener('online', () => showToast(t('common.online')));
+
     const updateBadgeUI = () => {
       leftNavInstances.forEach((leftNav) => {
         if (typeof leftNav.setUnreadCount === 'function') {
           leftNav.setUnreadCount(unreadNotificationCount);
         }
       });
-      updateLeftNavOpenBadge(unreadNotificationCount);
 
-      if (capacitorBadge) {
-        capacitorBadge(unreadNotificationCount);
-      } else if (tauriBadge) {
-        tauriBadge(unreadNotificationCount);
-      }
-
-      if (tauriSetNotificationCount) {
-        tauriSetNotificationCount(unreadNotificationCount).catch((err) => {
-          console.log('[badge] set_notification_count failed:', err);
-        });
-      }
+      setNativeBadge(unreadNotificationCount);
     };
 
     const refreshNotificationBadges = async () => {
       console.log('[poll] refreshNotificationBadges called');
       const data = await fetchNotifications();
-      await fetchDmUnreadCount();
-      await fetchGroupUnreadCount();
+      unreadNotificationCount = data.unread_count || 0;
       console.log('[poll] unread count:', unreadNotificationCount);
       updateBadgeUI();
-
-      // Show notification when new unread notifications arrive (legacy polling path)
-      const isRealTauriAndroid =
-        typeof window !== 'undefined' &&
-        (window.__TAURI__ || window.__TAURI_INTERNALS__) &&
-        /Android/i.test(navigator.userAgent);
-      if (
-        tauriNotify &&
-        !isRealTauriAndroid &&
-        !isCapacitorNative &&
-        unreadNotificationCount > previousUnreadCount &&
-        data?.notifications?.length
-      ) {
-        const latest = data.notifications[0];
-        let body = '';
-        if (latest.actor) {
-          const u = latest.actor.username;
-          const d = latest.actor.display_name;
-          body = d && d !== u ? `@${u} (${d})` : `@${u}: `;
-        }
-        body += latest.post_text_preview || 'New notification';
-        tauriNotify('Flaxia', body).catch((err) => {
-          console.error('[notif] tauriNotify failed:', err);
-        });
-      } else if (
-        capacitorNotify &&
-        isCapacitorNative &&
-        unreadNotificationCount > previousUnreadCount &&
-        data?.notifications?.length
-      ) {
-        const latest = data.notifications[0];
-        let body = '';
-        if (latest.actor) {
-          const u = latest.actor.username;
-          const d = latest.actor.display_name;
-          body = d && d !== u ? `@${u} (${d})` : `@${u}: `;
-        }
-        body += latest.post_text_preview || 'New notification';
-        capacitorNotify('Flaxia', body).catch((err) => {
-          console.error('[notif] capacitorNotify failed:', err);
-        });
-      }
-      previousUnreadCount = unreadNotificationCount;
     };
 
     // Expose for Rust desktop background polling (lib.rs background thread, Tauri desktop only)
@@ -482,38 +236,39 @@ document.addEventListener('DOMContentLoaded', async () => {
       window.__tauriDesktopPoll = refreshNotificationBadges;
     }
 
-    const startNotificationPolling = () => {
-      // 初回一度だけ HTTP 取得（以降は WebSocket でリアルタイム更新）
-      refreshNotificationBadges();
-    };
-
-    const stopNotificationPolling = () => {
-      // polling は廃止。WebSocket 切断時は再接続時に onopen で再取得する
-    };
-
     // Check current user session
     const checkAuth = async () => {
       try {
         const data = await getMe();
         if (data) {
-          const userData = data.user as { id: string; username: string; display_name?: string; avatar_key?: string };
+          const userData = data.user as {
+            id: string;
+            username: string;
+            display_name?: string;
+            avatar_key?: string;
+            badge_type?: string | null;
+          };
           currentUser = {
             id: userData.id,
             username: userData.username,
             display_name: userData.display_name,
             avatar_key: userData.avatar_key,
+            badge_type: userData.badge_type,
           };
 
           // Update all existing LeftNav instances with new user data
           leftNavInstances.forEach((leftNav) => {
-            updateLeftNavUser(leftNav, currentUser);
+            lazyUpdateLeftNavUser(leftNav, currentUser);
           });
 
+          // Create/update the mobile bottom nav with the signed-in user
+          (await ensureBottomNav(bottomNavDeps())).updateUser(currentUser);
+
           // 初回の未読通知数を取得（以降は WebSocket でリアルタイム更新）
-          startNotificationPolling();
+          refreshNotificationBadges();
 
           // WebSocket でリアルタイム通知受信（全プラットフォーム）
-          connectPushWebSocket();
+          pushSocket.connect();
 
           return true;
         }
@@ -527,13 +282,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Update all existing LeftNav instances to remove user area
       leftNavInstances.forEach((leftNav) => {
-        updateLeftNavUser(leftNav, null);
+        lazyUpdateLeftNavUser(leftNav, null);
       });
+
+      // Create/update the mobile bottom nav for the guest state
+      (await ensureBottomNav(bottomNavDeps())).updateUser(null);
 
       // If user was logged in and now is not, they were logged out
       if (wasLoggedIn) {
         console.log('User session expired - redirecting to login');
-        stopNotificationPolling();
         window.history.replaceState({}, '', '/login');
         navigateTo('login');
         return false;
@@ -542,577 +299,30 @@ document.addEventListener('DOMContentLoaded', async () => {
       return false;
     };
 
-    // Fetch notifications
-    interface NotificationData {
-      notifications: Array<{
-        id: string;
-        type:
-          | 'reported'
-          | 'fresh'
-          | 'warned'
-          | 'hidden'
-          | 'ap_follow'
-          | 'ap_like'
-          | 'ap_announce'
-          | 'reply'
-          | 'mention'
-          | 'poll_ended';
-        post_id: string;
-        post_text_preview: string;
-        actor?: {
-          username: string;
-          display_name: string;
-          avatar_key: string | null;
-        };
-        read: boolean;
-        created_at: string;
-      }>;
-      unread_count: number;
-    }
+    // Fetch notifications (see src/lib/notifications-api.ts)
 
-    let cachedNotifications: NotificationData | null = null;
-    let lastNotificationFetch = 0;
-    const NOTIFICATION_FETCH_TTL = 10000; // 10秒以内の連続fetchはキャッシュ
-
-    let unreadGroupCount = 0;
-
-    const fetchDmUnreadCount = async (): Promise<void> => {
-      try {
-        const res = await fetch('/api/dm/unread-count', { credentials: 'include' });
-        if (res.ok) {
-          const data = (await res.json()) as { unread_count: number };
-          unreadDmCount = data.unread_count || 0;
-          leftNavInstances.forEach((ln) => {
-            if (typeof ln.setUnreadDmCount === 'function') {
-              ln.setUnreadDmCount(unreadDmCount);
-            }
-          });
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    const fetchGroupUnreadCount = async (): Promise<void> => {
-      try {
-        const res = await fetch('/api/groups/unread-count', { credentials: 'include' });
-        if (res.ok) {
-          const data = (await res.json()) as { unread_count: number };
-          unreadGroupCount = data.unread_count || 0;
-          leftNavInstances.forEach((ln) => {
-            if (typeof ln.setUnreadGroupCount === 'function') {
-              ln.setUnreadGroupCount(unreadGroupCount);
-            }
-          });
-        }
-      } catch {
-        // ignore
-      }
-    };
-
-    const fetchNotifications = async (): Promise<NotificationData> => {
-      const now = Date.now();
-      if (cachedNotifications && now - lastNotificationFetch < NOTIFICATION_FETCH_TTL) {
-        return cachedNotifications;
-      }
-      try {
-        const response = await fetch('/api/notifications', { credentials: 'include' });
-        if (response.ok) {
-          const data = (await response.json()) as NotificationData;
-          unreadNotificationCount = data.unread_count || 0;
-          cachedNotifications = data;
-          lastNotificationFetch = now;
-          return data;
-        }
-      } catch (error) {
-        console.log('Failed to fetch notifications:', error);
-      }
-      return { notifications: [], unread_count: 0 };
-    };
-
-    // Mobile left nav overlay management
-    let leftNavOverlay: HTMLElement | null = null;
-    let leftNavOpenButton: HTMLButtonElement | null = null;
-
-    const createLeftNavOverlay = (): HTMLElement => {
-      const overlay = document.createElement('div');
-      overlay.className = 'left-nav-overlay';
-      overlay.addEventListener('click', () => {
-        closeLeftNav();
-      });
-      document.body.appendChild(overlay);
-      return overlay;
-    };
-
-    const createLeftNavOpenButton = (leftNavElement: HTMLElement): HTMLButtonElement => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'left-nav-open-button';
-      button.setAttribute('aria-label', 'Open navigation');
-      button.innerHTML = '→<span class="left-nav-open-badge"></span>';
-      button.addEventListener('click', () => {
-        openLeftNav(leftNavElement);
-      });
-      document.body.appendChild(button);
-      return button;
-    };
-
-    const updateLeftNavOpenBadge = (count: number): void => {
-      if (!leftNavOpenButton) return;
-      const badge = leftNavOpenButton.querySelector('.left-nav-open-badge') as HTMLElement;
-      if (!badge) return;
-      if (count > 0) {
-        badge.textContent = count >= 99 ? '99+' : String(count);
-        badge.style.display = '';
-      } else {
-        badge.style.display = 'none';
-      }
-    };
-
-    let leftNavWasOpen = false;
-
-    const openLeftNav = (leftNavElement: HTMLElement): void => {
-      if (window.innerWidth > 768) return;
-
-      leftNavWasOpen = true;
-      leftNavElement.classList.add('left-nav--open');
-
-      if (!leftNavOverlay) {
-        leftNavOverlay = createLeftNavOverlay();
-      }
-      leftNavOverlay.classList.add('left-nav-overlay--visible');
-
-      // Prevent body scroll
-      document.body.style.overflow = 'hidden';
-    };
-
-    const closeLeftNav = (): void => {
-      if (!leftNavWasOpen) return;
-      leftNavWasOpen = false;
-
-      const leftNavElement = document.querySelector('.left-nav') as HTMLElement;
-      if (leftNavElement) {
-        leftNavElement.classList.remove('left-nav--open');
-      }
-
-      if (leftNavOverlay) {
-        leftNavOverlay.classList.remove('left-nav-overlay--visible');
-      }
-
-      // Restore body scroll
-      document.body.style.overflow = '';
-    };
-
-    let currentResizeHandler: (() => void) | null = null;
-    let currentKeydownHandler: ((e: KeyboardEvent) => void) | null = null;
-    let currentModalChangeHandler: ((e: Event) => void) | null = null;
-
-    const setupMobileLeftNav = (leftNavElement: HTMLElement): void => {
-      // Clean up existing button and event listeners
-      if (leftNavOpenButton) {
-        leftNavOpenButton.remove();
-        leftNavOpenButton = null;
-      }
-      if (currentResizeHandler) {
-        window.removeEventListener('resize', currentResizeHandler);
-        currentResizeHandler = null;
-      }
-      if (currentKeydownHandler) {
-        document.removeEventListener('keydown', currentKeydownHandler);
-        currentKeydownHandler = null;
-      }
-      if (currentModalChangeHandler) {
-        window.removeEventListener('modalchange', currentModalChangeHandler);
-        currentModalChangeHandler = null;
-      }
-
-      // Always create the button (CSS shows/hides via media query)
-      leftNavOpenButton = createLeftNavOpenButton(leftNavElement);
-
-      // Sync button visibility with current notification count
-      updateLeftNavOpenBadge(unreadNotificationCount);
-
-      // Listen for openLeftNav events from timeline
-      document.addEventListener('openLeftNav', () => {
-        openLeftNav(leftNavElement);
-      });
-
-      // Handle escape key to close
-      currentKeydownHandler = (e: KeyboardEvent) => {
-        if (e.key === 'Escape' && window.innerWidth <= 768) {
-          closeLeftNav();
-        }
-      };
-      document.addEventListener('keydown', currentKeydownHandler);
-
-      // Handle window resize
-      currentResizeHandler = () => {
-        if (window.innerWidth > 768) {
-          closeLeftNav();
-        }
-      };
-      window.addEventListener('resize', currentResizeHandler);
-
-      // Close mobile nav when modal opens
-      currentModalChangeHandler = (e: Event) => {
-        if (window.innerWidth > 768) return;
-        const { open } = (e as CustomEvent<{ open: boolean }>).detail;
-        closeLeftNav();
-        if (leftNavOpenButton) {
-          leftNavOpenButton.style.display = open ? 'none' : '';
-        }
-      };
-      window.addEventListener('modalchange', currentModalChangeHandler);
-    };
+    // Mobile left nav overlay management (see src/lib/left-nav-drawer.ts)
 
     // Auth guard - redirect to login if not authenticated (only for protected routes)
+    // Route decisions live in src/lib/auth-guard.ts; checkAuth owns the session.
     const requireAuth = async () => {
       const isAuthenticated = await checkAuth();
-
-      // Check if current route is public (accessible to guests)
-      const path = window.location.pathname;
-      const cleanPath = path.replace(/\/$/, '');
-      const _urlParams = new URLSearchParams(window.location.search);
-
-      // Public routes that don't require authentication:
-      // - / (home/timeline)
-      // - /home (landing page)
-      // - /explore (with or without tag parameter)
-      // - /arcade (game arcade)
-      // - /users/:username (profile pages)
-      // - /profile/:username (profile pages - alias for /users/)
-      // - /thread/:id (thread pages)
-      // - /terms, /privacy, /about (legal pages)
-      // - /docs, /docs/:slug (docs blog)
-      // - /login, /register (auth pages)
-      const isPublicRoute =
-        cleanPath === '' ||
-        cleanPath === '/' ||
-        cleanPath === '/home' ||
-        cleanPath === '/explore' ||
-        cleanPath === '/search' ||
-        cleanPath === '/arcade' ||
-        cleanPath === '/login' ||
-        cleanPath === '/register' ||
-        cleanPath === '/terms' ||
-        cleanPath === '/privacy' ||
-        cleanPath === '/about' ||
-        cleanPath === '/docs' ||
-        cleanPath.startsWith('/docs/') ||
-        cleanPath.startsWith('/users/') ||
-        cleanPath.startsWith('/profile/') ||
-        cleanPath.startsWith('/arcade/') ||
-        cleanPath.startsWith('/thread/');
-
-      // Allow public routes for everyone
-      if (isPublicRoute) {
-        return true;
-      }
-
-      // For /messages, redirect to arcade if not authenticated
-      if (cleanPath === '/messages' || cleanPath.startsWith('/messages/')) {
-        if (!isAuthenticated) {
-          window.history.replaceState({}, '', '/arcade');
-          navigateTo('arcade');
-          return false;
-        }
-        return true;
-      }
-
-      // For /groups, redirect to arcade if not authenticated
-      if (cleanPath === '/groups' || cleanPath.startsWith('/groups/')) {
-        if (!isAuthenticated) {
-          window.history.replaceState({}, '', '/arcade');
-          navigateTo('arcade');
-          return false;
-        }
-        return true;
-      }
-
-      // For /notifications, redirect to arcade if not authenticated
-      if (cleanPath === '/notifications') {
-        if (!isAuthenticated) {
-          window.history.replaceState({}, '', '/arcade');
-          navigateTo('arcade');
-          return false;
-        }
-        return true;
-      }
-
-      // For all other protected routes, redirect to login if not authenticated
-      if (!isAuthenticated) {
-        // Use replaceState so the browser back button doesn't return to the
-        // protected route (which would just redirect again, causing an infinite loop)
-        window.history.replaceState({}, '', '/login');
-        navigateTo('login');
-        return false;
-      }
-
-      return true;
+      const redirect = resolveAuthRedirect(window.location.pathname, isAuthenticated);
+      if (!redirect) return true;
+      // Use replaceState so the browser back button doesn't return to the
+      // protected route (which would just redirect again, causing an infinite loop)
+      window.history.replaceState({}, '', redirect.path);
+      navigateTo(redirect.view);
+      return false;
     };
 
-    // Parse current URL
-    const parseCurrentRoute = () => {
-      const path = window.location.pathname;
-      console.log('Current path:', path, 'Full URL:', window.location.href);
+    // URL routing (see src/lib/router.ts)
 
-      // Remove trailing slash and ensure consistent format
-      const cleanPath = path.replace(/\/$/, '');
-      console.log('Clean path:', cleanPath);
-
-      // Auth routes
-      if (cleanPath === '/login') {
-        console.log('Login route detected');
-        return { view: 'login' as const, postId: null, username: null, tag: null };
-      }
-
-      if (cleanPath === '/register') {
-        console.log('Register route detected');
-        return { view: 'register' as const, postId: null, username: null, tag: null };
-      }
-
-      // Legal pages (public)
-      if (cleanPath === '/terms') {
-        console.log('Terms route detected');
-        return { view: 'terms' as const, postId: null, username: null, tag: null };
-      }
-
-      if (cleanPath === '/privacy') {
-        console.log('Privacy route detected');
-        return { view: 'privacy' as const, postId: null, username: null, tag: null };
-      }
-
-      if (cleanPath === '/about') {
-        console.log('About route detected');
-        return { view: 'about' as const, postId: null, username: null, tag: null };
-      }
-
-      // Docs route (blog) - public, no auth required
-      const docsMatch = cleanPath.match(/^\/docs\/([^/]+)$/);
-      if (docsMatch) {
-        console.log('Docs article route detected, slug:', docsMatch[1]);
-        return { view: 'docs' as const, postId: decodeURIComponent(docsMatch[1]), username: null, tag: null };
-      }
-
-      if (cleanPath === '/docs') {
-        console.log('Docs route detected');
-        return { view: 'docs' as const, postId: null, username: null, tag: null };
-      }
-
-      // Explore route - public, no auth required
-      const exploreMatch = cleanPath.match(/^\/explore$/);
-      if (exploreMatch) {
-        const urlParams = new URLSearchParams(window.location.search);
-        const tag = urlParams.get('tag');
-        console.log('Explore route detected, tag:', tag);
-        return { view: 'explore' as const, postId: null, username: null, tag };
-      }
-
-      // Search route - public, no auth required
-      if (cleanPath === '/search') {
-        const urlParams = new URLSearchParams(window.location.search);
-        const q = urlParams.get('q') || '';
-        const type = urlParams.get('type') || 'posts';
-        console.log('Search route detected, query:', q, 'type:', type);
-        return {
-          view: 'search' as const,
-          postId: null,
-          username: null,
-          tag: null,
-          searchQuery: q,
-          searchType: type as 'posts' | 'users' | 'arcade',
-        };
-      }
-
-      // Arcade game route - public, no auth required
-      const arcadeGameMatch = cleanPath.match(/^\/arcade\/([^/]+)$/);
-      if (arcadeGameMatch) {
-        console.log('Arcade game route detected, gameId:', arcadeGameMatch[1]);
-        return { view: 'arcade' as const, postId: arcadeGameMatch[1], username: null, tag: null };
-      }
-
-      // Arcade route - public, no auth required
-      if (cleanPath === '/arcade') {
-        console.log('Arcade route detected');
-        return { view: 'arcade' as const, postId: null, username: null, tag: null };
-      }
-
-      // Thread route (check before profile) - public, no auth required
-      const threadMatch = cleanPath.match(/^\/thread\/([^/]+)$/);
-      if (threadMatch) {
-        console.log('Thread route detected, postId:', threadMatch[1]);
-        return { view: 'thread' as const, postId: threadMatch[1], username: null, tag: null };
-      }
-
-      // Profile routes - matches both /users/:username and /profile/:username
-      const usersProfileMatch = cleanPath.match(/^\/users\/([^/]+)$/);
-      const profileMatch = cleanPath.match(/^\/profile\/([^/]+)$/);
-      console.log('Profile match test:', { usersProfileMatch, profileMatch }, 'cleanPath:', cleanPath);
-
-      if (usersProfileMatch && usersProfileMatch[1]) {
-        console.log('Users profile route detected, username:', usersProfileMatch[1]);
-        return { view: 'profile' as const, postId: null, username: usersProfileMatch[1], tag: null };
-      }
-
-      if (profileMatch && profileMatch[1]) {
-        console.log('Profile route detected, username:', profileMatch[1]);
-        return { view: 'profile' as const, postId: null, username: profileMatch[1], tag: null };
-      }
-
-      // Notifications route - requires auth
-      if (cleanPath === '/notifications') {
-        console.log('Notifications route detected');
-        return { view: 'notifications' as const, postId: null, username: null, tag: null };
-      }
-
-      // Messages routes - require auth
-      const messagesConvMatch = cleanPath.match(/^\/messages\/([^/]+)$/);
-      if (messagesConvMatch) {
-        console.log('Messages conversation route detected, id:', messagesConvMatch[1]);
-        return { view: 'messages' as const, postId: messagesConvMatch[1], username: null, tag: null };
-      }
-
-      if (cleanPath === '/messages') {
-        console.log('Messages route detected');
-        return { view: 'messages' as const, postId: null, username: null, tag: null };
-      }
-
-      // Groups routes - require auth
-      const groupsConvMatch = cleanPath.match(/^\/groups\/([^/]+)$/);
-      if (groupsConvMatch) {
-        console.log('Groups chat route detected, id:', groupsConvMatch[1]);
-        return { view: 'groups' as const, postId: groupsConvMatch[1], username: null, tag: null };
-      }
-
-      if (cleanPath === '/groups') {
-        console.log('Groups route detected');
-        return { view: 'groups' as const, postId: null, username: null, tag: null };
-      }
-
-      // Call route - requires auth
-      const callMatch = cleanPath.match(/^\/call\/([^/]+)$/);
-      if (callMatch) {
-        console.log('Call route detected, id:', callMatch[1]);
-        return { view: 'call' as const, postId: callMatch[1], username: null, tag: null };
-      }
-
-      // Bookmarks route - requires auth
-      if (cleanPath === '/bookmarks') {
-        console.log('Bookmarks route detected');
-        return { view: 'bookmarks' as const, postId: null, username: null, tag: null };
-      }
-
-      // Settings route - requires auth
-      if (cleanPath === '/settings') {
-        console.log('Settings route detected');
-        return { view: 'settings' as const, postId: null, username: null, tag: null };
-      }
-
-      // Sandbox route - public, no auth required
-      const sandboxMatch = cleanPath.match(/^\/sandbox\/post\/([^/]+)$/);
-      if (sandboxMatch) {
-        console.log('Sandbox route detected, postId:', sandboxMatch[1]);
-        // For sandbox, don't initialize the app - let the sandbox page handle itself
-        console.log('Sandbox page detected, skipping app initialization');
-        return null;
-      }
-
-      // Admin route - requires auth
-      const adminMatch = cleanPath.match(/^\/admin(\/alerts|\/hidden|\/users|\/counter)?$/);
-      if (adminMatch) {
-        console.log('Admin route detected');
-        const tab = adminMatch[1]
-          ? (adminMatch[1].replace('/', '') as 'alerts' | 'hidden' | 'users' | 'counter')
-          : 'alerts';
-        return { view: 'admin' as const, postId: null, username: null, tag: null, adminTab: tab };
-      }
-
-      // Home route - public, no auth required
-      if (cleanPath === '/home') {
-        console.log('Home route detected');
-        return { view: 'timeline' as const, postId: null, username: null, tag: null };
-      }
-
-      // Default timeline (only for root path) - public, no auth required
-      if (cleanPath === '' || cleanPath === '/') {
-        console.log('Timeline route detected');
-        return { view: 'timeline' as const, postId: null, username: null, tag: null };
-      }
-
-      // If no route matched, default to timeline
-      console.log('Unknown route, defaulting to timeline');
-      return { view: 'timeline' as const, postId: null, username: null, tag: null };
-    };
-
-    // Page loading overlay
-    let pageLoader: HTMLDivElement | null = null;
-    let pageLoaderTimer: ReturnType<typeof setTimeout> | null = null;
-
-    function showPageLoader() {
-      if (!pageLoader) {
-        pageLoader = document.createElement('div');
-        pageLoader.className = 'page-loader';
-        pageLoader.id = 'page-loader';
-        pageLoader.innerHTML =
-          '<div class="page-loader-content"><div class="page-loader-spinner"></div><div>Loading...</div></div>';
-        document.body.appendChild(pageLoader);
-      } else {
-        const content = pageLoader.querySelector('.page-loader-content')!;
-        content.innerHTML = '<div class="page-loader-spinner"></div><div>Loading...</div>';
-        content.className = 'page-loader-content';
-      }
-      pageLoader!.classList.add('active');
-
-      if (pageLoaderTimer) clearTimeout(pageLoaderTimer);
-      pageLoaderTimer = setTimeout(() => {
-        if (!pageLoader || !pageLoader.classList.contains('active')) return;
-        const content = pageLoader.querySelector('.page-loader-content')!;
-        content.innerHTML =
-          '<div style="font-size:2rem;margin-bottom:1rem;">⚠</div><div>Failed to load page</div><button class="page-loader-reload-btn" style="margin-top:1rem;padding:0.6rem 1.5rem;border:1px solid var(--border);border-radius:8px;background:var(--accent);color:#000;font-family:inherit;font-size:0.9rem;font-weight:600;cursor:pointer;transition:background .2s">Reload</button>';
-        content.className = 'page-loader-content';
-        const btn = content.querySelector('.page-loader-reload-btn') as HTMLButtonElement;
-        btn.onclick = () => {
-          window.location.reload();
-        };
-        btn.onmouseenter = () => {
-          btn.style.background = 'var(--accent-dark)';
-        };
-        btn.onmouseleave = () => {
-          btn.style.background = 'var(--accent)';
-        };
-      }, 15000);
-    }
-
-    function hidePageLoader() {
-      if (pageLoader) pageLoader.classList.remove('active');
-      if (pageLoaderTimer) {
-        clearTimeout(pageLoaderTimer);
-        pageLoaderTimer = null;
-      }
-    }
+    // Page loading overlay (see src/lib/page-loader.ts)
 
     // Navigate to view
     const navigateTo = async (
-      view:
-        | 'timeline'
-        | 'thread'
-        | 'login'
-        | 'register'
-        | 'profile'
-        | 'explore'
-        | 'search'
-        | 'notifications'
-        | 'bookmarks'
-        | 'terms'
-        | 'privacy'
-        | 'about'
-        | 'docs'
-        | 'admin'
-        | 'settings'
-        | 'arcade'
-        | 'messages'
-        | 'groups'
-        | 'call',
+      view: RouteView,
       postId?: string,
       username?: string,
       tag?: string,
@@ -1124,6 +334,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Close mobile nav if open
       closeLeftNav();
+
+      // Sync active item on the mobile bottom nav
+      const syncedNav = getBottomNav();
+      if (syncedNav) {
+        const navId = viewToBottomNavId(view);
+        if (navId) syncedNav.setActiveItem(navId);
+      }
 
       // For auth routes, proceed directly
       if (view === 'login' || view === 'register') {
@@ -1162,22 +379,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           bookmarksPage.destroy();
           bookmarksPage = null;
         }
-        if (messagesPage) {
-          messagesPage.destroy();
-          messagesPage = null;
-        }
-        if (conversationView) {
-          conversationView.destroy();
-          conversationView = null;
-        }
-        if (groupsPage) {
-          groupsPage.destroy();
-          groupsPage = null;
-        }
-        if (groupChatView) {
-          groupChatView.destroy();
-          groupChatView = null;
-        }
       } else {
         // Auth guard for protected routes
         const isAuthenticated = await requireAuth();
@@ -1185,11 +386,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           return; // Auth guard will redirect to login
         }
 
-        // Cache current view when navigating to thread, arcade, or messages conversation (for back navigation with preserved content)
-        if (
-          (view === 'thread' || view === 'arcade' || view === 'messages' || view === 'groups') &&
-          currentView !== view
-        ) {
+        // Cache current view when navigating to thread or arcade (for back navigation with preserved content)
+        if ((view === 'thread' || view === 'arcade') && currentView !== view) {
           console.log(`Caching current view for back navigation to ${view}:`, currentView);
           if (currentView === 'timeline' && timeline) {
             cachedContentComponent = { view: 'timeline', component: timeline, scrollY: window.scrollY };
@@ -1203,19 +401,12 @@ document.addEventListener('DOMContentLoaded', async () => {
           } else if (currentView === 'search' && searchPage) {
             cachedContentComponent = { view: 'search', component: searchPage, scrollY: window.scrollY };
             searchPage = null;
-          } else if (currentView === 'arcade' && arcadePage) {
-            arcadePage.suspend();
-            cachedContentComponent = { view: 'arcade', component: arcadePage, scrollY: window.scrollY };
-            arcadePage = null;
           } else if (currentView === 'bookmarks' && bookmarksPage) {
             cachedContentComponent = { view: 'bookmarks', component: bookmarksPage, scrollY: window.scrollY };
             bookmarksPage = null;
-          } else if (currentView === 'messages' && messagesPage) {
-            cachedContentComponent = { view: 'messages', component: messagesPage, scrollY: window.scrollY };
-            messagesPage = null;
-          } else if (currentView === 'groups' && groupsPage) {
-            cachedContentComponent = { view: 'groups', component: groupsPage, scrollY: window.scrollY };
-            groupsPage = null;
+          } else if (currentView === 'notifications' && notificationsPage) {
+            cachedContentComponent = { view: 'notifications', component: notificationsPage, scrollY: window.scrollY };
+            notificationsPage = null;
           }
         }
 
@@ -1269,25 +460,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           searchPage.destroy();
           searchPage = null;
         }
-        if (messagesPage) {
-          messagesPage.destroy();
-          messagesPage = null;
-        }
-        if (conversationView) {
-          conversationView.destroy();
-          conversationView = null;
-        }
-        if (groupsPage) {
-          groupsPage.destroy();
-          groupsPage = null;
-        }
-        if (groupChatView) {
-          groupChatView.destroy();
-          groupChatView = null;
-        }
       }
-
-      // Clear app content
       showPageLoader();
       app.innerHTML = '';
 
@@ -1295,14 +468,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       try {
         // Handle auth pages (full screen, no nav)
         if (view === 'login') {
-          if (leftNavOpenButton) {
-            leftNavOpenButton.remove();
-            leftNavOpenButton = null;
-          }
-          if (leftNavOverlay) {
-            leftNavOverlay.remove();
-            leftNavOverlay = null;
-          }
+          removeLeftNavOverlay();
           currentView = 'login';
           currentPostId = null;
           _currentUsername = null;
@@ -1321,14 +487,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         if (view === 'register') {
-          if (leftNavOpenButton) {
-            leftNavOpenButton.remove();
-            leftNavOpenButton = null;
-          }
-          if (leftNavOverlay) {
-            leftNavOverlay.remove();
-            leftNavOverlay = null;
-          }
+          removeLeftNavOverlay();
           currentView = 'register';
           currentPostId = null;
           _currentUsername = null;
@@ -1347,15 +506,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         // Handle legal pages (public, no auth required, no layout)
-        if (view === 'terms' || view === 'privacy' || view === 'about') {
-          if (leftNavOpenButton) {
-            leftNavOpenButton.remove();
-            leftNavOpenButton = null;
-          }
-          if (leftNavOverlay) {
-            leftNavOverlay.remove();
-            leftNavOverlay = null;
-          }
+        if (view === 'terms' || view === 'privacy' || view === 'child-safety' || view === 'about') {
+          removeLeftNavOverlay();
           currentView = view;
           currentPostId = null;
           _currentUsername = null;
@@ -1372,14 +524,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Handle docs blog (public, no auth required, no layout)
         if (view === 'docs') {
-          if (leftNavOpenButton) {
-            leftNavOpenButton.remove();
-            leftNavOpenButton = null;
-          }
-          if (leftNavOverlay) {
-            leftNavOverlay.remove();
-            leftNavOverlay = null;
-          }
+          removeLeftNavOverlay();
           currentView = view;
           currentPostId = postId || null;
           _currentUsername = null;
@@ -1390,6 +535,23 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
 
           app.appendChild(docsPage.getElement());
+          hidePageLoader();
+          return;
+        }
+
+        // Handle billing success/canceled pages
+        if (view === 'billing-success' || view === 'billing-canceled') {
+          removeLeftNavOverlay();
+          currentView = view;
+          currentPostId = null;
+          _currentUsername = null;
+
+          const { createBillingResultPage } = await import('./components/BillingResultPage.js');
+          const billingPage = createBillingResultPage({
+            success: view === 'billing-success',
+          });
+
+          app.appendChild(billingPage.getElement());
           hidePageLoader();
           return;
         }
@@ -1509,51 +671,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.className = 'main-container';
 
           // Create Left Nav
-          const leftNav = createLeftNav({
+          const leftNav = await lazyCreateLeftNav({
             activeItem: 'explore',
             unreadCount: unreadNotificationCount,
             currentUser: currentUser || undefined,
-            onNavigate: async (item) => {
-              console.log('Navigate to:', item);
-              if (item === 'home') {
-                window.history.pushState({}, '', '/home');
-                navigateTo('timeline');
-              } else if (item === 'explore') {
-                window.history.pushState({}, '', '/explore');
-                navigateTo('explore');
-              } else if (item === 'arcade') {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-              } else if (item === 'notifications') {
-                window.history.pushState({}, '', '/notifications');
-                navigateTo('notifications');
-              } else if (item === 'bookmarks') {
-                window.history.pushState({}, '', '/bookmarks');
-                navigateTo('bookmarks');
-              } else if (item === 'messages') {
-                window.history.pushState({}, '', '/messages');
-                navigateTo('messages');
-              } else if (item === 'settings') {
-                window.history.pushState({}, '', '/settings');
-                navigateTo('settings');
-              } else if (item === 'profile') {
-                if (!currentUser) {
-                  window.history.pushState({}, '', '/arcade');
-                  navigateTo('arcade');
-                  return;
-                }
-                window.history.pushState({}, '', `/profile/${currentUser.username}`);
-                navigateTo('profile', undefined, currentUser.username);
-              }
-            },
-            onSignIn: () => {
-              window.history.pushState({}, '', '/login');
-              navigateTo('login');
-            },
-            onSignUp: () => {
-              window.history.pushState({}, '', '/register');
-              navigateTo('register');
-            },
+            ...leftNavHandlers(),
           });
 
           leftNavInstances.add(leftNav);
@@ -1581,7 +703,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
 
           // Create Right Panel
-          const rightPanel = createRightPanel({
+          const rightPanel = await lazyCreateRightPanel({
             onSearch: (query) => {
               console.log('Search:', query);
               // Handle search here
@@ -1616,50 +738,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           const mainContainer = document.createElement('div');
           mainContainer.className = 'main-container';
 
-          const leftNav = createLeftNav({
+          const leftNav = await lazyCreateLeftNav({
             activeItem: 'explore',
             unreadCount: unreadNotificationCount,
             currentUser: currentUser || undefined,
-            onNavigate: async (item) => {
-              if (item === 'home') {
-                window.history.pushState({}, '', '/home');
-                navigateTo('timeline');
-              } else if (item === 'explore') {
-                window.history.pushState({}, '', '/explore');
-                navigateTo('explore');
-              } else if (item === 'arcade') {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-              } else if (item === 'notifications') {
-                window.history.pushState({}, '', '/notifications');
-                navigateTo('notifications');
-              } else if (item === 'bookmarks') {
-                window.history.pushState({}, '', '/bookmarks');
-                navigateTo('bookmarks');
-              } else if (item === 'messages') {
-                window.history.pushState({}, '', '/messages');
-                navigateTo('messages');
-              } else if (item === 'settings') {
-                window.history.pushState({}, '', '/settings');
-                navigateTo('settings');
-              } else if (item === 'profile') {
-                if (!currentUser) {
-                  window.history.pushState({}, '', '/arcade');
-                  navigateTo('arcade');
-                  return;
-                }
-                window.history.pushState({}, '', `/profile/${currentUser.username}`);
-                navigateTo('profile', undefined, currentUser.username);
-              }
-            },
-            onSignIn: () => {
-              window.history.pushState({}, '', '/login');
-              navigateTo('login');
-            },
-            onSignUp: () => {
-              window.history.pushState({}, '', '/register');
-              navigateTo('register');
-            },
+            ...leftNavHandlers(),
           });
 
           leftNavInstances.add(leftNav);
@@ -1685,7 +768,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
           }
 
-          const rightPanel = createRightPanel({
+          const rightPanel = await lazyCreateRightPanel({
             onSearch: (query) => {
               console.log('Search:', query);
             },
@@ -1718,83 +801,32 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.className = 'main-container';
 
           // Create Left Nav
-          const leftNav = createLeftNav({
+          const leftNav = await lazyCreateLeftNav({
             activeItem: 'arcade',
             unreadCount: unreadNotificationCount,
             currentUser: currentUser || undefined,
-            onNavigate: async (item) => {
-              console.log('Navigate to:', item);
-              if (item === 'home') {
-                window.history.pushState({}, '', '/home');
-                navigateTo('timeline');
-              } else if (item === 'explore') {
-                window.history.pushState({}, '', '/explore');
-                navigateTo('explore');
-              } else if (item === 'arcade') {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-              } else if (item === 'notifications') {
-                window.history.pushState({}, '', '/notifications');
-                navigateTo('notifications');
-              } else if (item === 'bookmarks') {
-                window.history.pushState({}, '', '/bookmarks');
-                navigateTo('bookmarks');
-              } else if (item === 'messages') {
-                window.history.pushState({}, '', '/messages');
-                navigateTo('messages');
-              } else if (item === 'settings') {
-                window.history.pushState({}, '', '/settings');
-                navigateTo('settings');
-              } else if (item === 'profile') {
-                if (!currentUser) {
-                  window.history.pushState({}, '', '/arcade');
-                  navigateTo('arcade');
-                  return;
-                }
-                window.history.pushState({}, '', `/profile/${currentUser.username}`);
-                navigateTo('profile', undefined, currentUser.username);
-              }
-            },
-            onSignIn: () => {
-              window.history.pushState({}, '', '/login');
-              navigateTo('login');
-            },
-            onSignUp: () => {
-              window.history.pushState({}, '', '/register');
-              navigateTo('register');
-            },
+            ...leftNavHandlers(),
           });
 
           leftNavInstances.add(leftNav);
 
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
-          if (cachedContentComponent?.view === 'arcade') {
-            console.log('Restoring cached arcade page');
-            arcadePage = cachedContentComponent.component as ArcadePageHandle;
-            arcadePage.resume();
-            const scrollY = cachedContentComponent.scrollY;
-            cachedContentComponent = null;
-
-            requestAnimationFrame(() => {
-              window.scrollTo(0, scrollY);
-            });
-          } else {
-            // Create fresh arcade page
-            const { createArcadePage } = await import('./components/ArcadePage.js');
-            arcadePage = createArcadePage({
-              sandboxOrigin,
-              currentUser,
-              initialGameId: currentPostId || undefined,
-              onBack: () => {
-                console.log('Arcade back button clicked');
-                window.history.back();
-              },
-            });
-          }
+          const { createArcadePage } = await import('./components/ArcadePage.js');
+          arcadePage = createArcadePage({
+            sandboxOrigin,
+            currentUser,
+            initialGameId: currentPostId || undefined,
+            onBack: () => {
+              goBackInSpaOr(() => {
+                window.history.replaceState({}, '', '/home');
+                navigateTo('timeline');
+              });
+            },
+          });
 
           // Create Right Panel
-          const rightPanel = createRightPanel({
+          const rightPanel = await lazyCreateRightPanel({
             onSearch: (query) => {
               console.log('Search:', query);
               // Handle search here
@@ -1831,51 +863,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.className = 'main-container';
 
           // Create Left Nav
-          const leftNav = createLeftNav({
+          const leftNav = await lazyCreateLeftNav({
             activeItem: 'profile',
             unreadCount: unreadNotificationCount,
             currentUser: currentUser || undefined,
-            onNavigate: async (item) => {
-              console.log('Navigate to:', item);
-              if (item === 'home') {
-                window.history.pushState({}, '', '/home');
-                navigateTo('timeline');
-              } else if (item === 'explore') {
-                window.history.pushState({}, '', '/explore');
-                navigateTo('explore');
-              } else if (item === 'arcade') {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-              } else if (item === 'notifications') {
-                window.history.pushState({}, '', '/notifications');
-                navigateTo('notifications');
-              } else if (item === 'bookmarks') {
-                window.history.pushState({}, '', '/bookmarks');
-                navigateTo('bookmarks');
-              } else if (item === 'messages') {
-                window.history.pushState({}, '', '/messages');
-                navigateTo('messages');
-              } else if (item === 'settings') {
-                window.history.pushState({}, '', '/settings');
-                navigateTo('settings');
-              } else if (item === 'profile') {
-                if (!currentUser) {
-                  window.history.pushState({}, '', '/arcade');
-                  navigateTo('arcade');
-                  return;
-                }
-                window.history.pushState({}, '', `/profile/${currentUser.username}`);
-                navigateTo('profile', undefined, currentUser.username);
-              }
-            },
-            onSignIn: () => {
-              window.history.pushState({}, '', '/login');
-              navigateTo('login');
-            },
-            onSignUp: () => {
-              window.history.pushState({}, '', '/register');
-              navigateTo('register');
-            },
+            ...leftNavHandlers(),
           });
 
           leftNavInstances.add(leftNav);
@@ -1898,11 +890,12 @@ document.addEventListener('DOMContentLoaded', async () => {
               username,
               currentUser,
               sandboxOrigin,
+              onOpenSettings: () => navigateTo('settings'),
             });
           }
 
           // Create Right Panel
-          const rightPanel = createRightPanel({
+          const rightPanel = await lazyCreateRightPanel({
             onSearch: (query) => {
               console.log('Search:', query);
               // Handle search here
@@ -1943,50 +936,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           const mainContainer = document.createElement('div');
           mainContainer.className = 'main-container';
 
-          const leftNav = createLeftNav({
+          const leftNav = await lazyCreateLeftNav({
             activeItem: 'bookmarks',
             unreadCount: unreadNotificationCount,
             currentUser: currentUser || undefined,
-            onNavigate: async (item) => {
-              if (item === 'home') {
-                window.history.pushState({}, '', '/home');
-                navigateTo('timeline');
-              } else if (item === 'explore') {
-                window.history.pushState({}, '', '/explore');
-                navigateTo('explore');
-              } else if (item === 'arcade') {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-              } else if (item === 'notifications') {
-                window.history.pushState({}, '', '/notifications');
-                navigateTo('notifications');
-              } else if (item === 'bookmarks') {
-                window.history.pushState({}, '', '/bookmarks');
-                navigateTo('bookmarks');
-              } else if (item === 'messages') {
-                window.history.pushState({}, '', '/messages');
-                navigateTo('messages');
-              } else if (item === 'settings') {
-                window.history.pushState({}, '', '/settings');
-                navigateTo('settings');
-              } else if (item === 'profile') {
-                if (!currentUser) {
-                  window.history.pushState({}, '', '/arcade');
-                  navigateTo('arcade');
-                  return;
-                }
-                window.history.pushState({}, '', `/profile/${currentUser.username}`);
-                navigateTo('profile', undefined, currentUser.username);
-              }
-            },
-            onSignIn: () => {
-              window.history.pushState({}, '', '/login');
-              navigateTo('login');
-            },
-            onSignUp: () => {
-              window.history.pushState({}, '', '/register');
-              navigateTo('register');
-            },
+            ...leftNavHandlers(),
           });
           leftNavInstances.add(leftNav);
 
@@ -2007,7 +961,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             window.scrollTo(0, 0);
           }
 
-          const rightPanel = createRightPanel({
+          const rightPanel = await lazyCreateRightPanel({
             onSearch: (query) => {},
             onFollowUser: (userId) => {},
           });
@@ -2030,62 +984,31 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           // Fetch notifications data for the page content
           const [notificationsData] = await Promise.all([fetchNotifications()]);
+          unreadNotificationCount = notificationsData.unread_count || 0;
 
           // Create main container for 3-column layout
           const mainContainer = document.createElement('div');
           mainContainer.className = 'main-container';
 
           // Create Left Nav with unread count
-          const leftNav = createLeftNav({
+          const leftNav = await lazyCreateLeftNav({
             activeItem: 'notifications',
             unreadCount: unreadNotificationCount,
             currentUser: currentUser || undefined,
-            onNavigate: async (item) => {
-              console.log('Navigate to:', item);
-              if (item === 'home') {
-                window.history.pushState({}, '', '/home');
-                navigateTo('timeline');
-              } else if (item === 'explore') {
-                window.history.pushState({}, '', '/explore');
-                navigateTo('explore');
-              } else if (item === 'arcade') {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-              } else if (item === 'notifications') {
-                window.history.pushState({}, '', '/notifications');
-                navigateTo('notifications');
-              } else if (item === 'bookmarks') {
-                window.history.pushState({}, '', '/bookmarks');
-                navigateTo('bookmarks');
-              } else if (item === 'messages') {
-                window.history.pushState({}, '', '/messages');
-                navigateTo('messages');
-              } else if (item === 'settings') {
-                window.history.pushState({}, '', '/settings');
-                navigateTo('settings');
-              } else if (item === 'profile') {
-                if (!currentUser) {
-                  window.history.pushState({}, '', '/arcade');
-                  navigateTo('arcade');
-                  return;
-                }
-                window.history.pushState({}, '', `/profile/${currentUser.username}`);
-                navigateTo('profile', undefined, currentUser.username);
-              }
-            },
-            onSignIn: () => {
-              window.history.pushState({}, '', '/login');
-              navigateTo('login');
-            },
-            onSignUp: () => {
-              window.history.pushState({}, '', '/register');
-              navigateTo('register');
-            },
+            ...leftNavHandlers(),
           });
 
           leftNavInstances.add(leftNav);
 
-          // Create Notifications Page
+          // Create Notifications Page. Always rebuild from the freshly fetched
+          // data (only the scroll position is restored) so notifications that
+          // arrived while a thread/Arcade was open are not lost.
+          let notificationsScrollY = 0;
+          if (cachedContentComponent?.view === 'notifications') {
+            notificationsScrollY = cachedContentComponent.scrollY;
+            (cachedContentComponent.component as NotificationsPage).destroy();
+            cachedContentComponent = null;
+          }
           const { createNotificationsPage } = await import('./components/NotificationsPage.js');
           notificationsPage = createNotificationsPage({
             notifications: notificationsData.notifications,
@@ -2097,29 +1020,26 @@ document.addEventListener('DOMContentLoaded', async () => {
               });
               unreadNotificationCount = 0;
               // キャッシュをクリアして次回のfetchで最新データを取得
-              cachedNotifications = null;
-              lastNotificationFetch = 0;
+              invalidateNotificationsCache();
+              await clearNativeBadge();
               leftNavInstances.forEach((ln) => {
                 if (typeof ln.setUnreadCount === 'function') {
                   ln.setUnreadCount(0);
                 }
               });
-              updateLeftNavOpenBadge(0);
-              if (capacitorBadge) {
-                await capacitorBadge(0);
-              }
-              if (tauriBadge) {
-                await tauriBadge(0);
-              }
             },
             onNavigateToPost: (postId) => {
-              window.history.pushState({}, '', `/thread/${postId}`);
+              pushSpaHistory(`/thread/${postId}`, { postId });
               navigateTo('thread', postId);
             },
           });
 
+          requestAnimationFrame(() => {
+            window.scrollTo(0, notificationsScrollY);
+          });
+
           // Create Right Panel
-          const rightPanel = createRightPanel({
+          const rightPanel = await lazyCreateRightPanel({
             onSearch: (query) => {
               console.log('Search:', query);
             },
@@ -2142,229 +1062,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           return;
         }
 
-        // Handle messages page (within 3-column layout)
-        if (view === 'messages') {
-          currentView = 'messages';
-          currentPostId = postId || null;
-          _currentUsername = null;
-          currentTag = null;
-
-          if (!currentUser) {
-            window.history.pushState({}, '', '/explore');
-            navigateTo('explore');
-            return;
-          }
-
-          // Create main container for 3-column layout
-          const mainContainer = document.createElement('div');
-          mainContainer.className = 'main-container';
-
-          const leftNav = createLeftNav({
-            activeItem: 'messages',
-            unreadCount: unreadNotificationCount,
-            unreadDmCount,
-            unreadGroupCount,
-            currentUser: currentUser || undefined,
-            onNavigate: async (item) => {
-              if (item === 'home') {
-                window.history.pushState({}, '', '/home');
-                navigateTo('timeline');
-              } else if (item === 'explore') {
-                window.history.pushState({}, '', '/explore');
-                navigateTo('explore');
-              } else if (item === 'arcade') {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-              } else if (item === 'messages') {
-                window.history.pushState({}, '', '/messages');
-                navigateTo('messages');
-              } else if (item === 'notifications') {
-                window.history.pushState({}, '', '/notifications');
-                navigateTo('notifications');
-              } else if (item === 'bookmarks') {
-                window.history.pushState({}, '', '/bookmarks');
-                navigateTo('bookmarks');
-              } else if (item === 'settings') {
-                window.history.pushState({}, '', '/settings');
-                navigateTo('settings');
-              } else if (item === 'profile') {
-                if (!currentUser) {
-                  window.history.pushState({}, '', '/arcade');
-                  navigateTo('arcade');
-                  return;
-                }
-                window.history.pushState({}, '', `/profile/${currentUser.username}`);
-                navigateTo('profile', undefined, currentUser.username);
-              }
-            },
-            onSignIn: () => {
-              window.history.pushState({}, '', '/login');
-              navigateTo('login');
-            },
-            onSignUp: () => {
-              window.history.pushState({}, '', '/register');
-              navigateTo('register');
-            },
-          });
-
-          leftNavInstances.add(leftNav);
-
-          if (postId) {
-            // Conversation thread view
-            if (cachedContentComponent?.view === 'messages' && messagesPage) {
-              messagesPage = null;
-            }
-
-            const { createConversationView } = await import('./components/ConversationView.js');
-            conversationView = createConversationView({
-              conversationId: postId,
-              currentUser,
-              onBack: () => {
-                window.history.pushState({}, '', '/messages');
-                navigateTo('messages');
-              },
-            });
-
-            mainContainer.appendChild(leftNav.getElement());
-            mainContainer.appendChild(conversationView.getElement());
-          } else {
-            // Combined messages + groups list view
-            if (cachedContentComponent?.view === 'messages') {
-              messagesPage = cachedContentComponent.component as MessagesPage;
-              cachedContentComponent = null;
-              messagesPage.refresh();
-            } else {
-              const { createMessagesPage } = await import('./components/MessagesPage.js');
-              messagesPage = createMessagesPage({
-                currentUser,
-                onNavigateToConversation: (convId) => {
-                  window.history.pushState({}, '', `/messages/${convId}`);
-                  navigateTo('messages', convId);
-                },
-                onNavigateToGroup: (groupId) => {
-                  window.history.pushState({}, '', `/groups/${groupId}`);
-                  navigateTo('groups', groupId);
-                },
-              });
-            }
-
-            // Create Right Panel
-            const rightPanel = createRightPanel({
-              onSearch: (query) => {},
-              onFollowUser: (userId) => {},
-            });
-
-            mainContainer.appendChild(leftNav.getElement());
-            mainContainer.appendChild(messagesPage.getElement());
-            mainContainer.appendChild(rightPanel.getElement());
-          }
-
-          app.appendChild(mainContainer);
-          hidePageLoader();
-
-          setupMobileLeftNav(leftNav.getElement());
-
-          return;
-        }
-
-        // Handle groups page - only for specific group chat view
-        if (view === 'groups') {
-          if (!postId) {
-            // No group ID: redirect to combined messages page
-            window.history.pushState({}, '', '/messages');
-            navigateTo('messages');
-            return;
-          }
-
-          currentView = 'groups';
-          currentPostId = postId || null;
-          _currentUsername = null;
-          currentTag = null;
-
-          if (!currentUser) {
-            window.history.pushState({}, '', '/explore');
-            navigateTo('explore');
-            return;
-          }
-
-          const mainContainer = document.createElement('div');
-          mainContainer.className = 'main-container';
-
-          const leftNav = createLeftNav({
-            activeItem: 'messages',
-            unreadCount: unreadNotificationCount,
-            unreadDmCount,
-            unreadGroupCount,
-            currentUser: currentUser || undefined,
-            onNavigate: async (item) => {
-              if (item === 'home') {
-                window.history.pushState({}, '', '/home');
-                navigateTo('timeline');
-              } else if (item === 'explore') {
-                window.history.pushState({}, '', '/explore');
-                navigateTo('explore');
-              } else if (item === 'arcade') {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-              } else if (item === 'notifications') {
-                window.history.pushState({}, '', '/notifications');
-                navigateTo('notifications');
-              } else if (item === 'bookmarks') {
-                window.history.pushState({}, '', '/bookmarks');
-                navigateTo('bookmarks');
-              } else if (item === 'messages') {
-                window.history.pushState({}, '', '/messages');
-                navigateTo('messages');
-              } else if (item === 'settings') {
-                window.history.pushState({}, '', '/settings');
-                navigateTo('settings');
-              } else if (item === 'profile') {
-                if (!currentUser) {
-                  window.history.pushState({}, '', '/arcade');
-                  navigateTo('arcade');
-                  return;
-                }
-                window.history.pushState({}, '', `/profile/${currentUser.username}`);
-                navigateTo('profile', undefined, currentUser.username);
-              }
-            },
-            onSignIn: () => {
-              window.history.pushState({}, '', '/login');
-              navigateTo('login');
-            },
-            onSignUp: () => {
-              window.history.pushState({}, '', '/register');
-              navigateTo('register');
-            },
-          });
-
-          leftNavInstances.add(leftNav);
-
-          if (cachedContentComponent?.view === 'groups' && groupsPage) {
-            groupsPage = null;
-          }
-
-          const { createGroupChatView } = await import('./components/GroupChatView.js');
-          groupChatView = createGroupChatView({
-            groupId: postId,
-            currentUser,
-            onBack: () => {
-              window.history.pushState({}, '', '/messages');
-              navigateTo('messages');
-            },
-          });
-
-          mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(groupChatView.getElement());
-
-          app.appendChild(mainContainer);
-          hidePageLoader();
-
-          setupMobileLeftNav(leftNav.getElement());
-
-          return;
-        }
-
         // Handle settings page (within 3-column layout)
         if (view === 'settings') {
           currentView = 'settings';
@@ -2377,51 +1074,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.className = 'main-container';
 
           // Create Left Nav
-          const leftNav = createLeftNav({
+          const leftNav = await lazyCreateLeftNav({
             activeItem: 'settings',
             unreadCount: unreadNotificationCount,
             currentUser: currentUser || undefined,
-            onNavigate: async (item) => {
-              console.log('Navigate to:', item);
-              if (item === 'home') {
-                window.history.pushState({}, '', '/home');
-                navigateTo('timeline');
-              } else if (item === 'explore') {
-                window.history.pushState({}, '', '/explore');
-                navigateTo('explore');
-              } else if (item === 'arcade') {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-              } else if (item === 'notifications') {
-                window.history.pushState({}, '', '/notifications');
-                navigateTo('notifications');
-              } else if (item === 'bookmarks') {
-                window.history.pushState({}, '', '/bookmarks');
-                navigateTo('bookmarks');
-              } else if (item === 'messages') {
-                window.history.pushState({}, '', '/messages');
-                navigateTo('messages');
-              } else if (item === 'settings') {
-                window.history.pushState({}, '', '/settings');
-                navigateTo('settings');
-              } else if (item === 'profile') {
-                if (!currentUser) {
-                  window.history.pushState({}, '', '/arcade');
-                  navigateTo('arcade');
-                  return;
-                }
-                window.history.pushState({}, '', `/profile/${currentUser.username}`);
-                navigateTo('profile', undefined, currentUser.username);
-              }
-            },
-            onSignIn: () => {
-              window.history.pushState({}, '', '/login');
-              navigateTo('login');
-            },
-            onSignUp: () => {
-              window.history.pushState({}, '', '/register');
-              navigateTo('register');
-            },
+            ...leftNavHandlers(),
           });
 
           leftNavInstances.add(leftNav);
@@ -2471,7 +1128,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           loadUserData();
 
           // Create Right Panel
-          const rightPanel = createRightPanel({
+          const rightPanel = await lazyCreateRightPanel({
             onSearch: (query) => {
               console.log('Search:', query);
             },
@@ -2498,82 +1155,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const mainContainer = document.createElement('div');
         mainContainer.className = 'main-container';
 
-        if (view === 'call' && postId) {
-          // Call view - render timeline with call overlay
-          currentView = 'timeline';
-          currentPostId = null;
-
-          const leftNav = createLeftNav({
-            activeItem: 'home',
-            unreadCount: unreadNotificationCount,
-            unreadDmCount,
-            unreadGroupCount,
-            currentUser: currentUser || undefined,
-            onNavigate: async (item) => {
-              if (item === 'home') {
-                window.history.pushState({}, '', '/home');
-                navigateTo('timeline');
-              } else if (item === 'explore') {
-                window.history.pushState({}, '', '/explore');
-                navigateTo('explore');
-              } else if (item === 'arcade') {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-              } else if (item === 'messages') {
-                window.history.pushState({}, '', '/messages');
-                navigateTo('messages');
-              } else if (item === 'notifications') {
-                window.history.pushState({}, '', '/notifications');
-                navigateTo('notifications');
-              } else if (item === 'bookmarks') {
-                window.history.pushState({}, '', '/bookmarks');
-                navigateTo('bookmarks');
-              } else if (item === 'settings') {
-                window.history.pushState({}, '', '/settings');
-                navigateTo('settings');
-              } else if (item === 'profile') {
-                if (!currentUser) {
-                  window.history.pushState({}, '', '/arcade');
-                  navigateTo('arcade');
-                  return;
-                }
-                window.history.pushState({}, '', `/profile/${currentUser.username}`);
-                navigateTo('profile', undefined, currentUser.username);
-              }
-            },
-            onSignIn: () => {
-              window.history.pushState({}, '', '/login');
-              navigateTo('login');
-            },
-            onSignUp: () => {
-              window.history.pushState({}, '', '/register');
-              navigateTo('register');
-            },
-          });
-
-          leftNavInstances.add(leftNav);
-
-          const { createTimeline } = await import('./components/Timeline.js');
-          timeline = createTimeline({
-            sandboxOrigin: import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app',
-            currentUser,
-          });
-
-          const rightPanel = createRightPanel({
-            onSearch: () => {},
-            onFollowUser: () => {},
-          });
-
-          mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(timeline.getElement());
-          mainContainer.appendChild(rightPanel.getElement());
-          app.appendChild(mainContainer);
-          hidePageLoader();
-          setupMobileLeftNav(leftNav.getElement());
-
-          return;
-        }
-
         if (view === 'thread' && postId) {
           // Thread page view
           console.log('Creating thread page for postId:', postId);
@@ -2589,12 +1170,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             unreadCount: unreadNotificationCount,
             onBack: () => {
               console.log('Back button clicked, returning to previous view');
-              if (cachedContentComponent) {
-                window.history.back();
-              } else {
-                window.history.pushState({}, '', '/home');
+              goBackInSpaOr(() => {
+                window.history.replaceState({}, '', '/home');
                 navigateTo('timeline');
-              }
+              });
             },
           });
 
@@ -2611,7 +1190,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
 
           // Create Right Panel
-          const threadRightPanel = createRightPanel({
+          const threadRightPanel = await lazyCreateRightPanel({
             onSearch: (query) => {
               console.log('Search:', query);
             },
@@ -2626,52 +1205,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           currentPostId = null;
 
           // Create Left Nav
-          const leftNav = createLeftNav({
+          const leftNav = await lazyCreateLeftNav({
             activeItem: 'home',
             unreadCount: unreadNotificationCount,
-            unreadDmCount,
             currentUser: currentUser || undefined,
-            onNavigate: async (item) => {
-              console.log('Navigate to:', item);
-              if (item === 'home') {
-                window.history.pushState({}, '', '/home');
-                navigateTo('timeline');
-              } else if (item === 'explore') {
-                window.history.pushState({}, '', '/explore');
-                navigateTo('explore');
-              } else if (item === 'arcade') {
-                window.history.pushState({}, '', '/arcade');
-                navigateTo('arcade');
-              } else if (item === 'notifications') {
-                window.history.pushState({}, '', '/notifications');
-                navigateTo('notifications');
-              } else if (item === 'bookmarks') {
-                window.history.pushState({}, '', '/bookmarks');
-                navigateTo('bookmarks');
-              } else if (item === 'messages') {
-                window.history.pushState({}, '', '/messages');
-                navigateTo('messages');
-              } else if (item === 'settings') {
-                window.history.pushState({}, '', '/settings');
-                navigateTo('settings');
-              } else if (item === 'profile') {
-                if (!currentUser) {
-                  window.history.pushState({}, '', '/arcade');
-                  navigateTo('arcade');
-                  return;
-                }
-                window.history.pushState({}, '', `/profile/${currentUser.username}`);
-                navigateTo('profile', undefined, currentUser.username);
-              }
-            },
-            onSignIn: () => {
-              window.history.pushState({}, '', '/login');
-              navigateTo('login');
-            },
-            onSignUp: () => {
-              window.history.pushState({}, '', '/register');
-              navigateTo('register');
-            },
+            ...leftNavHandlers(),
           });
 
           leftNavInstances.add(leftNav);
@@ -2696,11 +1234,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
 
             // Listen for navigation events from timeline
-            timeline.getElement().addEventListener('navigateToThread', (e: Event) => {
-              const postId = (e as CustomEvent<{ postId: string }>).detail.postId;
-              window.history.pushState({ postId }, '', `/thread/${postId}`);
-              navigateTo('thread', postId);
-            });
+            // PostCard emits spaNavigate directly; no duplicate listener here.
 
             // Listen for openLeftNav events from timeline (mobile swipe)
             timeline.getElement().addEventListener('openLeftNav', () => {
@@ -2728,7 +1262,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           setupMobileLeftNav(leftNav.getElement());
 
           // Create Right Panel
-          const rightPanel = createRightPanel({
+          const rightPanel = await lazyCreateRightPanel({
             onSearch: (query) => {
               console.log('Search:', query);
               // Handle search here
@@ -2749,72 +1283,49 @@ document.addEventListener('DOMContentLoaded', async () => {
         hidePageLoader();
       } catch (e) {
         console.error('Navigation error:', e);
-        if (pageLoader) {
-          const c = pageLoader.querySelector('.page-loader-content')!;
-          c.innerHTML =
-            '<div style="font-size:2rem;margin-bottom:1rem;">⚠</div><div>Failed to load page</div><button class="page-loader-reload-btn" style="margin-top:1rem;padding:0.6rem 1.5rem;border:1px solid var(--border);border-radius:8px;background:var(--accent);color:#000;font-family:inherit;font-size:0.9rem;font-weight:600;cursor:pointer">Reload</button>';
-          c.className = 'page-loader-content';
-          const btn = c.querySelector('.page-loader-reload-btn') as HTMLButtonElement;
-          btn.onclick = () => {
-            window.location.reload();
-          };
-        }
+        showPageLoaderFailure();
       }
     };
 
+    // Shared LeftNav callbacks (see src/lib/left-nav-handlers.ts)
+    const leftNavHandlers = (): LeftNavHandlers =>
+      createLeftNavHandlers({
+        navigate: navigateTo,
+        getCurrentUsername: () => currentUser?.username ?? null,
+      });
+
     async function safeNavigate(
-      view: string,
+      view: RouteView,
       postId?: string,
       username?: string,
       tag?: string,
-      adminTab?: string,
+      adminTab?: RouteInfo['adminTab'],
       searchQuery?: string,
-      searchType?: string,
+      searchType?: RouteInfo['searchType'],
     ) {
       try {
-        await navigateTo(
-          view as
-            | 'timeline'
-            | 'thread'
-            | 'login'
-            | 'register'
-            | 'profile'
-            | 'explore'
-            | 'search'
-            | 'notifications'
-            | 'bookmarks'
-            | 'terms'
-            | 'privacy'
-            | 'about'
-            | 'docs'
-            | 'admin'
-            | 'settings'
-            | 'arcade'
-            | 'messages'
-            | 'groups',
-          postId,
-          username,
-          tag,
-          adminTab as 'alerts' | 'hidden' | 'users' | 'counter',
-          searchQuery,
-          searchType as 'posts' | 'users' | 'arcade',
-        );
+        await navigateTo(view, postId, username, tag, adminTab, searchQuery, searchType);
       } catch (e) {
         console.error('Navigation failed:', e);
         // Show error on the loading overlay if it's visible, otherwise reload
-        if (pageLoader && pageLoader.classList.contains('active')) {
-          const c = pageLoader.querySelector('.page-loader-content')!;
-          c.innerHTML =
-            '<div style="font-size:2rem;margin-bottom:1rem;">⚠</div><div>Failed to load page</div><button class="page-loader-reload-btn" style="margin-top:1rem;padding:0.6rem 1.5rem;border:1px solid var(--border);border-radius:8px;background:var(--accent);color:#000;font-family:inherit;font-size:0.9rem;font-weight:600;cursor:pointer">Reload</button>';
-          c.className = 'page-loader-content';
-          const btn = c.querySelector('.page-loader-reload-btn') as HTMLButtonElement;
-          btn.onclick = () => {
-            window.location.reload();
-          };
-        } else {
-          window.location.reload();
-        }
+        showPageLoaderFailure();
       }
+    }
+
+    // Handle browser back/forward. Native Android back first traverses SPA
+    // history; the OS exits only when Capacitor has no in-app history to pop.
+    if (isCapacitorNative) {
+      void import('@capacitor/app')
+        .then(({ App }) =>
+          App.addListener('backButton', ({ canGoBack }) => {
+            if (canGoBack || window.history.length > 1) {
+              window.history.back();
+            } else {
+              void App.exitApp();
+            }
+          }),
+        )
+        .catch((error: unknown) => console.warn('Native back handling unavailable:', error));
     }
 
     // Handle browser back/forward
@@ -2837,13 +1348,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.addEventListener('spaNavigate', async (e: Event) => {
       const detail = (
         e as CustomEvent<{
-          view: string;
+          view: RouteView;
           postId?: string;
           username?: string;
           tag?: string;
-          adminTab?: string;
+          adminTab?: RouteInfo['adminTab'];
           searchQuery?: string;
-          searchType?: string;
+          searchType?: RouteInfo['searchType'];
         }>
       ).detail;
       await safeNavigate(
@@ -2856,90 +1367,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         detail.searchType,
       );
     });
-
-    // ─── Call feature event handlers ───────────────────────────────────────────────
-
-    let currentCallId: string | null = null;
-
-    const showIncomingCall = async (callId: string) => {
-      // Skip if already showing a call for this room
-      if (currentCallId === callId) return;
-      // Destroy any existing call UI first
-      if (callUI) {
-        callUI.destroy();
-        callUI = null;
-      }
-      currentCallId = callId;
-
-      try {
-        const { createCallUI } = await import('./components/CallUI.js');
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${wsProtocol}//${window.location.host}/api/ws/call?roomId=${callId}&token=`;
-
-        const ui = createCallUI({
-          roomId: callId,
-          wsUrl,
-          currentUser: currentUser || { id: '', username: '' },
-          onEnded: () => {
-            if (callUI) {
-              callUI.destroy();
-              callUI = null;
-            }
-            currentCallId = null;
-          },
-        });
-        callUI = ui;
-        document.body.appendChild(ui.element);
-      } catch (e) {
-        console.error('Failed to show incoming call:', e);
-      }
-    };
-
-    window.addEventListener('startGroupCall', ((e: CustomEvent) => {
-      const { groupId } = e.detail;
-      if (!groupId) return;
-      (async () => {
-        // Destroy any existing call UI first
-        if (callUI) {
-          callUI.destroy();
-          callUI = null;
-        }
-        currentCallId = null;
-
-        try {
-          const res = await fetch('/api/calls/start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ groupId, type: 'audio' }),
-          });
-          const data: any = await res.json();
-          if (data.error) {
-            console.error('Failed to start group call:', data.error);
-            return;
-          }
-          const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-          const wsUrl = `${wsProtocol}//${window.location.host}/api/ws/call?roomId=${data.roomId}&token=`;
-          const { createCallUI } = await import('./components/CallUI.js');
-          const ui = createCallUI({
-            roomId: data.roomId,
-            wsUrl,
-            currentUser: currentUser || { id: '', username: '' },
-            onEnded: () => {
-              if (callUI) {
-                callUI.destroy();
-                callUI = null;
-              }
-              currentCallId = null;
-            },
-          });
-          callUI = ui;
-          currentCallId = data.roomId;
-          document.body.appendChild(ui.element);
-        } catch (e) {
-          console.error('Failed to start group call:', e);
-        }
-      })();
-    }) as EventListener);
 
     // Initial navigation
     console.log('DOM Content Loaded, starting initial routing...');
@@ -2968,27 +1395,35 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
 
     // Register Service Worker for Web Push (browser) — non-blocking
-    initializeWebPush().catch(() => {});
+    initializeWebPush(isCapacitorNative).catch(() => {});
 
     deferInit(async () => {
       // Defer platform-specific notification init (not critical for first paint)
-      initTauriNotifications().catch(() => {});
-      initTauriBadge().catch(() => {});
-      initCapacitorNotifications().catch(() => {});
-      initCapacitorPushRegistration().catch(() => {});
+      initNativeNotify().catch(() => {});
+      // Only register for FCM after notification access has already been granted.
+      initNativePushRegistration().catch(() => {});
 
-      // @ts-expect-error - dynamic import of local path
-      const { initFlaxiaNode } = await import('/api/crowd/v0.3.0-1/index.js');
-      initFlaxiaNode({
-        orchestratorUrl: 'https://crowd.flaxia.app',
-        siteId: 'flaxia',
-        consent: {
-          brandName: 'Flaxia',
-          position: 'bottom-right',
-        },
-        capabilities: ['ai-inference', 'vector-embed', 'nudenet'],
-        maxCpuLoad: 0.15,
-      });
+      if (!canRunFlaxiaNode()) return;
+
+      // Flaxia owns the consent UI. `initCrowdNode` asks us back only while the
+      // decision is unset; the node bundle owns persistence and lifecycle.
+      try {
+        await initCrowdNode((controls) => {
+          showCrowdConsentModal({
+            onAccept: () => {
+              controls.accept();
+              notifyCrowdConsentChanged();
+            },
+            onReject: () => {
+              controls.reject();
+              notifyCrowdConsentChanged();
+            },
+          });
+        });
+      } catch (e) {
+        // A missing/unreachable node bundle must never break app init.
+        console.error('Failed to initialize Crowd node:', e);
+      }
     });
   }
 });

@@ -11,6 +11,7 @@ import {
   type UserRow,
 } from '../../src/lib/render-html';
 import { fetchActorPublicKey, verifyDigest, verifyHttpSignature } from '../lib/activitypub/signature';
+import { checkRateLimit, getClientIp } from '../lib/rate-limit';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import { renderBreadcrumbJsonLd, renderSsrFooter, renderSsrHeader, renderSsrLayoutCss } from '../lib/ssr-layout';
 
@@ -18,14 +19,18 @@ type Bindings = {
   DB: D1Database;
   BASE_URL: string;
   AP_DELIVERY_QUEUE: Queue;
+  CACHE: KVNamespace;
 };
+
+/** Shared inbox body cap with the API inbox endpoints (small JSON docs). */
+const MAX_INBOX_BODY_BYTES = 256 * 1024;
 
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use('/*', cors());
 
 const POST_SELECT = `
-  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key,
+  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type,
     p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key,
     p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
     COALESCE(p.reply_count, 0) as reply_count,
@@ -43,6 +48,7 @@ type RawUser = {
   display_name: string;
   bio: string;
   avatar_key: string | null;
+  badge_type?: string | null;
   created_at: string;
 };
 
@@ -55,6 +61,7 @@ function toPost(row: RawPost): PostRow {
     username: String(row.username),
     display_name: row.display_name ? String(row.display_name) : null,
     avatar_key: row.avatar_key ? String(row.avatar_key) : null,
+    badge_type: row.badge_type ? String(row.badge_type) : null,
     text: String(row.text),
     hashtags: String(row.hashtags),
     gif_key: row.gif_key ? String(row.gif_key) : null,
@@ -75,7 +82,9 @@ function toPost(row: RawPost): PostRow {
 }
 
 // GET /users/:username
-app.get('/', async (c) => {
+// Matches the full Pages path (`/users/:username`); `onRequest` forwards the
+// original request, so an exact `'/'` route never matched and crawlers got 404.
+app.get('*', async (c) => {
   try {
     const url = new URL(c.req.url);
     const username = url.pathname.split('/users/')[1]?.split('/')[0] ?? '';
@@ -104,7 +113,7 @@ app.get('/', async (c) => {
     }
 
     const user = (await c.env.DB.prepare(`
-      SELECT id, username, display_name, bio, avatar_key, created_at
+      SELECT id, username, display_name, bio, avatar_key, badge_type, created_at
       FROM users
       WHERE username = ? COLLATE NOCASE
     `)
@@ -224,7 +233,22 @@ app.post('/inbox', async (c) => {
       return c.json({ error: 'User not found' }, 404);
     }
 
+    const allowed = await checkRateLimit(c.env.CACHE, `ap:inbox:${getClientIp(c.req.raw)}`, {
+      maxRequests: 60,
+      windowSeconds: 60,
+    });
+    if (!allowed) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
+
+    const declared = Number(c.req.header('content-length') || 0);
+    if (Number.isFinite(declared) && declared > MAX_INBOX_BODY_BYTES) {
+      return c.json({ error: 'Inbox body too large' }, 413);
+    }
     const body = await c.req.text();
+    if (body.length > MAX_INBOX_BODY_BYTES) {
+      return c.json({ error: 'Inbox body too large' }, 413);
+    }
     let activity: Record<string, unknown>;
     try {
       activity = JSON.parse(body) as Record<string, unknown>;
@@ -235,6 +259,25 @@ app.post('/inbox', async (c) => {
     const actorId = activity.actor;
     if (!actorId || typeof actorId !== 'string') {
       return c.json({ error: 'Invalid actor' }, 400);
+    }
+
+    // #116: same keyId/actor origin binding as the API inboxes (H-5).
+    // Without it a key from one origin could vouch for another's actor.
+    const signatureHeader = c.req.header('Signature');
+    if (signatureHeader) {
+      const keyIdMatch = signatureHeader.match(/keyId="([^"]+)"/);
+      if (keyIdMatch) {
+        try {
+          const keyIdOrigin = new URL(keyIdMatch[1]).origin;
+          const actorOrigin = new URL(actorId).origin;
+          if (keyIdOrigin !== actorOrigin) {
+            console.error(`keyId origin ${keyIdOrigin} does not match actor origin ${actorOrigin}`);
+            return c.json({ error: 'Invalid HTTP Signature: keyId/actor origin mismatch' }, 401);
+          }
+        } catch {
+          return c.json({ error: 'Invalid keyId or actor URL' }, 400);
+        }
+      }
     }
 
     // Try to get local user's keys for signed fetch (authorized fetch support)
@@ -250,7 +293,7 @@ app.post('/inbox', async (c) => {
         .first()) as { private_key_pem: string } | null;
       if (keyRecord?.private_key_pem) {
         signKeyPem = keyRecord.private_key_pem;
-        signKeyId = `${c.env.BASE_URL}/actors/${username}#main-key`;
+        signKeyId = `${c.env.BASE_URL}/api/actors/${username}#main-key`;
       }
     } catch {
       // Proceed without signing

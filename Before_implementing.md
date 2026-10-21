@@ -397,7 +397,7 @@ Flaxia プロジェクトには既に以下の設定ファイルが用意され�
 | ファイル | 役割 |
 |---------|------|
 | `.opencode/` | opencode の設定ディレクトリ（パーミッションルール、スキルなど） |
-| `AGENT.MD` | プロジェクトの技術スタック・アーキテクチャ・コーディング規約を定義 |
+| `AGENTS.md` | プロジェクトの技術スタック・アーキテクチャ・コーディング規約を定義 |
 | `CLAUDE.MD` | Claude Code 用のプロジェクトガイド（互換性あり） |
 
 ### 便利な使い方のコツ
@@ -582,8 +582,7 @@ npm run build
 
 1. Vite が TypeScript をバンドルして `dist/` に出力
 2. 手動チャンク分割（`katex`, `jszip`, `markdown-it`, `vendor`）
-3. `js-dos` のファイルを `dist/js-dos/` にコピー
-4. `@flaxia/node` のアセットを `dist/assets/` にコピー
+3. `@flaxia/node` のアセットを `dist/assets/` にコピー
 
 ### デプロイ
 
@@ -609,8 +608,9 @@ npm run tauri:build:windows  # Windows
 
 # Capacitor（モバイルアプリ）
 npm run cap:sync             # Capacitor 同期
-npm run cap:build:android    # Android APK
-npm run cap:build:ios        # iOS
+npm run cap:build:android          # Android debug APK
+ANDROID_KEYSTORE_FILE=... ANDROID_KEYSTORE_PASSWORD=... ANDROID_KEY_ALIAS=... ANDROID_KEY_PASSWORD=... npm run cap:build:android:release  # Play AAB
+npm run cap:build:ios              # iOS
 ```
 
 ---
@@ -1125,10 +1125,6 @@ PostComposer と似ているが、親投稿への返信として機能。
 
 Ruffle (WebAssembly Flash エミュレーター) で SWF ファイルを実行。
 
-#### `src/components/DosPlayer.ts` — DOS プレイヤー
-
-js-dos (DOSBox の WebAssembly ポート) で DOS ゲームを実行。
-
 #### `src/components/AudioPlayer.ts` / `AudioVisualizer.ts` — オーディオ
 
 R2 に保存された音声ファイルを再生 + ビジュアライザー表示。
@@ -1478,7 +1474,7 @@ git push origin v1.2.3
 | `create-release` | GitHub Release | ドラフトリリースを自動作成 |
 | `tauri-linux` | `.deb`, `.rpm`, `.AppImage` | Linux 用デスクトップアプリをビルド |
 | `tauri-windows` | `.msi` | Windows 用デスクトップアプリをビルド |
-| `android` | `.apk` | Android アプリをビルド |
+| `android` | `.aab` | Google Play 用 Android App Bundle をビルド |
 | `deploy-cloudflare` | — | Pages + Sandbox + Queue + DO をデプロイ |
 
 各ジョブのビルド成果物は自動的に GitHub Release にアップロードされます。
@@ -1493,8 +1489,8 @@ git push origin v1.2.3
 |--------|------|--------|
 | `CLOUDFLARE_API_TOKEN` | Cloudflare API トークン（権限: Pages, Workers, D1, R2, KV） | Cloudflare Dashboard → My Profile → API Tokens |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare アカウント ID | Cloudflare Dashboard の右側 |
-| `GOOGLE_SERVICES_JSON` | Firebase サービスアカウント JSON（base64） | Firebase Console |
-| `ANDROID_KEYSTORE` | Android 署名キーストア（base64） | `keytool` で生成 |
+| `GOOGLE_SERVICES_JSON` | Firebase アプリ設定 JSON（base64、Android プロジェクトで Firebase を使う場合） | Firebase Console |
+| `ANDROID_KEYSTORE` | Android 署名キーストア（base64）。Play App Signing を使い、アップロード鍵として登録 | `keytool` で生成 |
 | `ANDROID_KEYSTORE_PASSWORD` | キーストアのパスワード | 自身で設定 |
 | `ANDROID_KEY_ALIAS` | キーエイリアス | `keytool` で指定 |
 | `ANDROID_KEY_PASSWORD` | キーのパスワード | 自身で設定 |
@@ -1833,7 +1829,7 @@ private async handleFresh() {
 | ActivityPub 連携 | `docs/activitypub.md` |
 | デプロイ手順 | `docs/deployment.md` |
 | サンドボックス解説 | `docs/sandbox.md` |
-| AI エージェント用ガイド | `AGENT.MD` |
+| AI エージェント用ガイド | `AGENTS.md` |
 | ローカルテストアカウント | `local-test-accounts.md` |
 | セキュリティ監査レポート | `vulnerability-report.md` |
 | 未訳機能の TODO | `TODO.md` |

@@ -26,8 +26,11 @@ let vapidKeys: { publicKey: string; privateKey: string } | null = null;
  */
 function ensureVapid(vapidPublicKey?: string, vapidPrivateKey?: string, subject?: string) {
   if (vapidKeys) return;
-  const pub = vapidPublicKey || VAPID_PUBLIC_KEY;
-  const priv = vapidPrivateKey || VAPID_PRIVATE_KEY;
+  // The globals only exist when the secrets are configured; a bare read
+  // throws ReferenceError otherwise (500 on /api/push/vapid-key), so probe
+  // with typeof first and fall through to generated dev keys.
+  const pub = vapidPublicKey || (typeof VAPID_PUBLIC_KEY !== 'undefined' ? VAPID_PUBLIC_KEY : undefined);
+  const priv = vapidPrivateKey || (typeof VAPID_PRIVATE_KEY !== 'undefined' ? VAPID_PRIVATE_KEY : undefined);
   if (pub && priv) {
     vapidKeys = { publicKey: pub, privateKey: priv };
   } else {
@@ -59,8 +62,7 @@ export async function sendPushToSubscription(
     });
 
     if (!res.ok) {
-      const body = await res.text();
-      console.error('Web Push send failed', res.status, body);
+      console.error('Web Push send failed', res.status);
       // 410 Gone = subscription expired, should be removed
       if (res.status === 410) {
         return false; // signal that subscription should be deleted
@@ -69,8 +71,8 @@ export async function sendPushToSubscription(
     }
 
     return true;
-  } catch (err) {
-    console.error('Web Push send error', err);
+  } catch {
+    console.error('Web Push send error');
     return false;
   }
 }
@@ -145,18 +147,12 @@ export function getPushPayload(
       return { title: 'Flaxia', body: `${name} liked your post${preview}`, url, type: 'notification' };
     case 'ap_announce':
       return { title: 'Flaxia', body: `${name} boosted your post${preview}`, url, type: 'notification' };
+    case 'quote':
+      return { title: 'Flaxia', body: `${name} quoted your post${preview}`, url, type: 'notification' };
     case 'poll_ended':
       return { title: 'Flaxia', body: `Your poll has ended${preview}`, url, type: 'notification' };
     case 'bookmark':
       return { title: 'Flaxia', body: `${name} bookmarked your post${preview}`, url, type: 'notification' };
-    case 'call':
-      return {
-        title: postPreview || 'Incoming call',
-        body: `${name} is calling you`,
-        url: `/call/${postId || ''}`,
-        type: 'call',
-        postId,
-      };
     default:
       return { title: 'Flaxia', body: `New notification${preview}`, url: '/notifications', type: 'notification' };
   }

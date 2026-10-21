@@ -50,7 +50,7 @@ npm run dev
 - [docs/architecture.md](./docs/architecture.md) — アーキテクチャ概要
 - [docs/database.md](./docs/database.md) — データベース設計
 - [docs/api.md](./docs/api.md) — API 仕様
-- [AGENT.MD](./AGENT.MD) — プロジェクト構成とコーディング規約
+- [AGENTS.md](./AGENTS.md) — プロジェクト構成とコーディング規約
 
 ## 作業フロー
 
@@ -67,7 +67,7 @@ npm run dev
 
 ## コーディング規約
 
-[Before_implementing.md](./Before_implementing.md) の「コード規約・命名規則」と [AGENT.MD](./AGENT.MD) の内容に従ってください。主な規約:
+[Before_implementing.md](./Before_implementing.md) の「コード規約・命名規則」と [AGENTS.md](./AGENTS.md) の内容に従ってください。主な規約:
 
 - TypeScript strict モード — `any` の使用は可能な限り避ける
 - すべての import パスは `.js` 拡張子で終わる（例: `'./components/Timeline.js'`）

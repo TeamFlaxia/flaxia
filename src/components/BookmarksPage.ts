@@ -2,11 +2,14 @@ import { createFabButton } from '../lib/fab-button.js';
 import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { createSkeletonCards } from '../lib/loading-ui.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
+import { isZipGame } from './PostStage.js';
 
 export interface BookmarksPageProps {
   sandboxOrigin: string;
@@ -25,6 +28,7 @@ export class BookmarksPage {
   private fabButton: HTMLElement | null = null;
   private postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
   private postUpdatedHandler?: (e: Event) => void;
+  private arcadeSection: HTMLElement | null = null;
 
   constructor(props: BookmarksPageProps) {
     this.props = props;
@@ -47,6 +51,12 @@ export class BookmarksPage {
         onBack: () => window.history.back(),
       }),
     );
+
+    const arcadeSection = document.createElement('div');
+    arcadeSection.className = 'bookmarks-arcade';
+    arcadeSection.style.display = 'none';
+    container.appendChild(arcadeSection);
+    this.arcadeSection = arcadeSection;
 
     const postsContainer = document.createElement('div');
     postsContainer.className = 'bookmarks-posts';
@@ -137,6 +147,171 @@ export class BookmarksPage {
     }
 
     postsContainer.appendChild(fragment);
+    this.updateArcadeSection();
+  }
+
+  private isGamePost(post: Post): boolean {
+    return isZipGame(post.payload_key) || (!!post.swf_key && post.swf_key.startsWith('swf/'));
+  }
+
+  private updateArcadeSection(): void {
+    const section = this.arcadeSection;
+    if (!section) return;
+
+    const gamePosts = this.posts.filter((p) => this.isGamePost(p));
+    if (gamePosts.length === 0) {
+      section.style.display = 'none';
+      section.innerHTML = '';
+      return;
+    }
+
+    section.style.display = '';
+    section.innerHTML = '';
+
+    const title = document.createElement('div');
+    title.textContent = t('explore.filter_arcade');
+    title.style.cssText = `
+      font-weight: 600;
+      font-size: 1rem;
+      color: var(--text-primary);
+      margin-bottom: 0.75rem;
+      padding: 0 0.25rem;
+    `;
+    section.appendChild(title);
+
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position: relative;';
+
+    const scrollContainer = document.createElement('div');
+    scrollContainer.style.cssText = `
+      display: flex;
+      overflow-x: auto;
+      gap: 0.75rem;
+      padding: 0.25rem 0 0.75rem;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+      scroll-snap-type: x mandatory;
+      -webkit-overflow-scrolling: touch;
+    `;
+    scrollContainer.addEventListener('wheel', (e) => {
+      if (Math.abs(e.deltaX) < Math.abs(e.deltaY)) {
+        e.preventDefault();
+        scrollContainer.scrollLeft += e.deltaY;
+      }
+    });
+
+    const fadeHint = document.createElement('div');
+    fadeHint.style.cssText = `
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 48px;
+      background: linear-gradient(to right, transparent, var(--bg-primary));
+      pointer-events: none;
+      opacity: 1;
+      transition: opacity 0.3s;
+      z-index: 1;
+    `;
+    wrapper.appendChild(fadeHint);
+
+    const updateFade = () => {
+      const atEnd = scrollContainer.scrollLeft >= scrollContainer.scrollWidth - scrollContainer.clientWidth - 4;
+      fadeHint.style.opacity = atEnd ? '0' : '1';
+    };
+    scrollContainer.addEventListener('scroll', updateFade);
+
+    for (const post of gamePosts) {
+      const card = document.createElement('div');
+      card.style.cssText = `
+        width: 150px;
+        flex-shrink: 0;
+        cursor: pointer;
+        border-radius: 0.75rem;
+        overflow: hidden;
+        transition: transform 0.2s, box-shadow 0.2s;
+        scroll-snap-align: start;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+      `;
+      card.addEventListener('mouseenter', () => {
+        card.style.transform = 'translateY(-3px)';
+        card.style.boxShadow = '0 6px 16px rgba(0,0,0,0.15)';
+      });
+      card.addEventListener('mouseleave', () => {
+        card.style.transform = 'none';
+        card.style.boxShadow = 'none';
+      });
+      card.addEventListener('click', () => {
+        pushSpaHistory(`/arcade/${post.id}`, { postId: post.id });
+        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: post.id } }));
+      });
+
+      const thumb = document.createElement('div');
+      thumb.style.cssText = `
+        width: 100%;
+        aspect-ratio: 9 / 12;
+        overflow: hidden;
+        position: relative;
+        background: var(--bg-input);
+      `;
+      if (post.thumbnail_key) {
+        const img = document.createElement('img');
+        img.src = nativeApiHref(`/api/images/${post.thumbnail_key}?_=${Date.now()}`);
+        img.loading = 'lazy';
+        img.width = 150;
+        img.height = 200;
+        img.style.cssText = 'width: 100%; height: 100%; object-fit: cover; display: block;';
+        thumb.appendChild(img);
+      } else {
+        const icon = document.createElement('span');
+        icon.textContent = '🎮';
+        icon.style.cssText =
+          'position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 2rem;';
+        thumb.appendChild(icon);
+      }
+
+      const badge = document.createElement('span');
+      badge.style.cssText = `
+        position: absolute; top: 4px; right: 4px;
+        padding: 0.1rem 0.35rem; border-radius: 4px;
+        background: var(--accent); color: white;
+        font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
+        line-height: 1.2;
+      `;
+      badge.textContent = 'GAME';
+      thumb.appendChild(badge);
+
+      const info = document.createElement('div');
+      info.style.cssText = 'padding: 0.4rem 0.35rem 0.35rem;';
+
+      const cardTitle = document.createElement('div');
+      cardTitle.textContent = post.text?.slice(0, 60) || '(no text)';
+      cardTitle.style.cssText = `
+        font-weight: 600; color: var(--text-primary);
+        font-size: 0.8rem; line-height: 1.3;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      `;
+
+      const meta = document.createElement('div');
+      meta.textContent = `@${post.username}`;
+      meta.style.cssText = `
+        font-size: 0.7rem; color: var(--text-muted);
+        margin-top: 0.15rem;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      `;
+
+      info.appendChild(cardTitle);
+      info.appendChild(meta);
+      card.appendChild(thumb);
+      card.appendChild(info);
+      scrollContainer.appendChild(card);
+    }
+
+    wrapper.appendChild(scrollContainer);
+    section.appendChild(wrapper);
+
+    requestAnimationFrame(updateFade);
   }
 
   private showEmpty(): void {

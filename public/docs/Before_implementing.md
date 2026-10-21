@@ -397,7 +397,7 @@ Flaxia プロジェクトには既に以下の設定ファイルが用意され�
 | ファイル | 役割 |
 |---------|------|
 | `.opencode/` | opencode の設定ディレクトリ（パーミッションルール、スキルなど） |
-| `AGENT.MD` | プロジェクトの技術スタック・アーキテクチャ・コーディング規約を定義 |
+| `AGENTS.md` | プロジェクトの技術スタック・アーキテクチャ・コーディング規約を定義 |
 | `CLAUDE.MD` | Claude Code 用のプロジェクトガイド（互換性あり） |
 
 ### 便利な使い方のコツ
@@ -582,8 +582,7 @@ npm run build
 
 1. Vite が TypeScript をバンドルして `dist/` に出力
 2. 手動チャンク分割（`katex`, `jszip`, `markdown-it`, `vendor`）
-3. `js-dos` のファイルを `dist/js-dos/` にコピー
-4. `@flaxia/node` のアセットを `dist/assets/` にコピー
+3. `@flaxia/node` のアセットを `dist/assets/` にコピー
 
 ### デプロイ
 
@@ -1124,10 +1123,6 @@ PostComposer と似ているが、親投稿への返信として機能。
 #### `src/components/FlashPlayer.ts` — Flash プレイヤー
 
 Ruffle (WebAssembly Flash エミュレーター) で SWF ファイルを実行。
-
-#### `src/components/DosPlayer.ts` — DOS プレイヤー
-
-js-dos (DOSBox の WebAssembly ポート) で DOS ゲームを実行。
 
 #### `src/components/AudioPlayer.ts` / `AudioVisualizer.ts` — オーディオ
 
@@ -1833,7 +1828,7 @@ private async handleFresh() {
 | ActivityPub 連携 | `docs/activitypub.md` |
 | デプロイ手順 | `docs/deployment.md` |
 | サンドボックス解説 | `docs/sandbox.md` |
-| AI エージェント用ガイド | `AGENT.MD` |
+| AI エージェント用ガイド | `AGENTS.md` |
 | ローカルテストアカウント | `local-test-accounts.md` |
 | セキュリティ監査レポート | `vulnerability-report.md` |
 | 未訳機能の TODO | `TODO.md` |

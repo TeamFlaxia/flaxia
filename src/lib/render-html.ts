@@ -13,6 +13,7 @@ export interface PostRow {
   username: string;
   display_name: string | null;
   avatar_key: string | null;
+  badge_type?: string | null;
   text: string;
   hashtags: string;
   gif_key: string | null;
@@ -38,6 +39,7 @@ export interface UserRow {
   display_name: string;
   bio: string;
   avatar_key: string | null;
+  badge_type?: string | null;
   created_at: string;
 }
 
@@ -57,7 +59,18 @@ export function assetUrl(baseUrl: string, key: string): string {
 }
 
 export function renderJsonLd(data: Record<string, unknown>): string {
-  return `<script type="application/ld+json">${JSON.stringify(data)}</script>`;
+  // JSON.stringify does not escape `<`, so a value containing `</script>`
+  // closes the script element and turns the rest of the JSON into markup
+  // (stored XSS in every SSR page that embeds user data). Escaping the HTML
+  // metacharacters — and U+2028/U+2029, which are valid JSON but invalid in
+  // JavaScript string literals — keeps the payload inert inside the element.
+  const json = JSON.stringify(data)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+  return `<script type="application/ld+json">${json}</script>`;
 }
 
 export function renderBlogPostingJsonLd(
@@ -128,6 +141,7 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(title)}</title>
   <meta name="description" content="${escapeHtml(description)}">
+  <meta name="theme-color" content="#ffffff">
 
   <meta property="og:title" content="${escapeHtml(title)}">
   <meta property="og:description" content="${escapeHtml(description)}">
@@ -147,25 +161,62 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
   ${additionalHead ? `\n  ${additionalHead}` : ''}
   ${spaHeadTags || '<script type="module" src="/src/main.ts"></script>'}
 
+  <script>
+    (function () {
+      var theme;
+      var meta;
+      try {
+        theme = localStorage.getItem('flaxia_theme');
+        if (theme === 'system' || theme === null) {
+          theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        if (theme === 'dark' || theme === 'light') {
+          document.documentElement.dataset.theme = theme;
+          meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.content = theme === 'dark' ? '#0f172a' : '#ffffff';
+        }
+      } catch (_e) {}
+    })();
+  </script>
+
   <link rel="preconnect" href="https://flaxia.app">
   <link rel="dns-prefetch" href="/api">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all';this.onload=null">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <meta name="google-adsense-account" content="ca-pub-8703789531673358">
 
   <style>
     :root {
+      color-scheme: light;
       --bg-primary:    #ffffff;
       --bg-secondary:  #f0fdf4;
       --bg-input:      #f1f5f9;
+      --bg-tertiary:   #f0f0f0;
+      --bg-hover:      rgba(0, 0, 0, 0.04);
       --border:        #e2e8f0;
       --text-primary:  #0f172a;
       --text-muted:    #64748b;
       --accent:        #22c55e;
       --accent-dark:   #16a34a;
       --danger:        #ef4444;
+      --link:          #3b82f6;
+    }
+    :root[data-theme='dark'] {
+      color-scheme: dark;
+      --bg-primary:    #0f172a;
+      --bg-secondary:  #1e293b;
+      --bg-input:      #1e293b;
+      --bg-tertiary:   #1f2937;
+      --bg-hover:      rgba(255, 255, 255, 0.06);
+      --border:        #334155;
+      --text-primary:  #f1f5f9;
+      --text-muted:    #94a3b8;
+      --accent:        #22c55e;
+      --accent-dark:   #16a34a;
+      --danger:        #ef4444;
+      --link:          #60a5fa;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -189,7 +240,7 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
     }
     .left-nav {
       width: 240px; flex-shrink: 0; padding: 1rem;
-      border-right: 1px solid var(--border); background: white;
+      border-right: 1px solid var(--border); background: var(--bg-primary);
       position: sticky; top: 0; height: 100vh; overflow-y: auto;
     }
     .main-content {
@@ -221,7 +272,7 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
     }
     .ssr-logo:hover { text-decoration: underline; }
     .ssr-post {
-      background: white;
+      background: var(--bg-primary);
       border-radius: 12px;
       padding: 16px;
       margin-bottom: 12px;
@@ -246,6 +297,34 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       border-radius: 50%;
       object-fit: cover;
       background: #e9ecef;
+    }
+    .ssr-avatar-wrap {
+      position: relative;
+      display: inline-block;
+      line-height: 0;
+      --avatar-plus-ratio: 0.4;
+    }
+    .ssr-avatar-badge {
+      position: absolute;
+      right: calc(var(--avatar-plus-ratio, 0.4) * -12.5%);
+      bottom: calc(var(--avatar-plus-ratio, 0.4) * -12.5%);
+      width: calc(var(--avatar-plus-ratio, 0.4) * 100%);
+      height: calc(var(--avatar-plus-ratio, 0.4) * 100%);
+      border-radius: 50%;
+      background: radial-gradient(
+        circle closest-side,
+        #22c55e 0 75%,
+        var(--bg-primary, #ffffff) 75% 100%
+      );
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .ssr-avatar-badge svg {
+      width: 56.25%;
+      height: 56.25%;
+      display: block;
     }
     .ssr-display-name {
       font-weight: 600;
@@ -293,7 +372,7 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
     .ssr-profile-header {
       text-align: center;
       padding: 32px 16px;
-      background: white;
+      background: var(--bg-primary);
       border-radius: 12px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.08);
       margin-bottom: 16px;
@@ -403,13 +482,6 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
     </div>
   </div>
   <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8703789531673358" crossorigin="anonymous"></script>
-  <script async src="https://www.googletagmanager.com/gtag/js?id=G-JZWZ08QFCW"></script>
-  <script>
-    window.dataLayer = window.dataLayer || [];
-    function gtag(){dataLayer.push(arguments);}
-    gtag('js', new Date());
-    gtag('config', 'G-JZWZ08QFCW');
-  </script>
 </body>
 </html>`;
 
@@ -471,6 +543,11 @@ function renderPostMedia(
   return parts.join('\n    ');
 }
 
+export function renderAvatarBadge(badgeType?: string | null): string {
+  if (badgeType !== 'flaxia_plus') return '';
+  return `<span class="ssr-avatar-badge" title="Flaxia+" aria-label="Flaxia+"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg></span>`;
+}
+
 export function renderPostArticle(post: PostRow, baseUrl: string, isReply = false): string {
   const postUrl = `${baseUrl}/thread/${post.id}`;
   const profileUrl = `${baseUrl}/users/${post.username}`;
@@ -481,7 +558,7 @@ export function renderPostArticle(post: PostRow, baseUrl: string, isReply = fals
   return `<article class="ssr-post${replyClass}">
     <div class="ssr-post-header">
       <a href="${escapeHtml(profileUrl)}">
-        <img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(post.display_name || post.username)}" class="ssr-avatar" width="40" height="40">
+        <span class="ssr-avatar-wrap"><img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(post.display_name || post.username)}" class="ssr-avatar" width="40" height="40">${renderAvatarBadge(post.badge_type)}</span>
       </a>
       <div>
         <a href="${escapeHtml(profileUrl)}" class="ssr-display-name">${escapeHtml(post.display_name || post.username)}</a>
@@ -515,7 +592,7 @@ export function renderProfileHeader(user: UserRow, baseUrl: string, postCount: n
   const avatarSrc = user.avatar_key ? assetUrl(baseUrl, user.avatar_key) : `${baseUrl}/default-avatar.png`;
 
   return `<header class="ssr-profile-header">
-    <img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(user.display_name)}" class="ssr-avatar-large" width="72" height="72">
+    <span class="ssr-avatar-wrap ssr-avatar-wrap--large"><img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(user.display_name)}" class="ssr-avatar-large" width="72" height="72">${renderAvatarBadge(user.badge_type)}</span>
     <h1>${escapeHtml(user.display_name)}</h1>
     <div class="ssr-username">@${escapeHtml(user.username)}</div>
     ${user.bio ? `<p class="ssr-bio">${escapeHtml(user.bio)}</p>` : ''}

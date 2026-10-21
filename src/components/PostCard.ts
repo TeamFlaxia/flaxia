@@ -1,18 +1,40 @@
-import { formatCount } from '../lib/format.js';
-import { getLocale, t } from '../lib/i18n.js';
+import { maxMediaAttachmentsForUser } from '../lib/entitlements.js';
+import { attachmentMimeType } from '../lib/file-extensions.js';
+import { t } from '../lib/i18n.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { loadLinkPreview } from '../lib/link-preview.js';
-import { registerModal } from '../lib/modal-state.js';
+import { createModalOverlay } from '../lib/modal-overlay.js';
+import { openPostModal } from '../lib/post-modal.js';
 import { useSandboxBridge } from '../lib/sandbox-bridge.js';
 import { getShowNsfw } from '../lib/settings.js';
-import { PostCardMode, PostCardProps } from '../types/post.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
+import { showToast } from '../lib/toast.js';
+import {
+  type PostAttachment,
+  PostCardMode,
+  type PostCardProps,
+  type QuotedPost,
+  type ReactionSummary,
+} from '../types/post.js';
+import { openCounterNoticeModal } from './CounterNoticeModal.js';
+import { openGameUpdateModal } from './GameUpdateModal.js';
+import { createPollElement } from './PollWidget.js';
 import { createPostActions } from './PostActions.js';
 import { createPostHeader } from './PostHeader.js';
-import { createPostStage, updatePostStage } from './PostStage.js';
+import { createMenuButton, createPostMenuDropdown, setupMenuCloseHandler } from './PostMenu.js';
+import { createPostStage, isZipGame, updatePostStage } from './PostStage.js';
 import { createPostText } from './PostText.js';
+import { createQuotedPostCard } from './QuotedPostCard.js';
 import { createReplyComposer, ReplyComposer } from './ReplyComposer.js';
+import { openReportModal } from './ReportModal.js';
 import { createShareModal } from './ShareModal.js';
 import { showSignInPrompt } from './SignInPrompt.js';
+import { openVersionHistoryModal } from './VersionHistoryModal.js';
+
+// How many 100ms attempts to make before giving up on attaching the sandbox
+// bridge. The iframe is created synchronously once a post starts executing, so
+// a small cap is enough to catch it without piling up dead timers.
+const MAX_SANDBOX_BRIDGE_RETRIES = 20;
 
 export class PostCard {
   private element: HTMLElement;
@@ -24,16 +46,18 @@ export class PostCard {
   private bookmarkCount: number;
   private replyCount: number;
   private impressions: number;
+  private reactions: ReactionSummary[];
   private impressionTracked: boolean = false;
   private postStageElement?: HTMLElement;
   private sandboxBridge?: ReturnType<typeof useSandboxBridge>;
+  private sandboxBridgeTimer?: ReturnType<typeof setTimeout>;
+  private sandboxBridgeRetries: number = 0;
   private replyComposer?: ReplyComposer;
   private isReplyComposerOpen: boolean = false;
   private menuDropdown?: HTMLElement;
+  private onPinChanged?: (e: Event) => void;
   private freshLoading: boolean = false;
   private bookmarkLoading: boolean = false;
-  private translatedText: string | null = null;
-  private showingOriginal: boolean = true;
   private originalText: string;
   private isEditing: boolean = false;
   private editContainer: HTMLElement | null = null;
@@ -41,6 +65,10 @@ export class PostCard {
   private editAttachmentFile: File | null = null;
   private editNewAttachmentKey: string | null = null;
   private editRemoveAttachment: boolean = false;
+  private editAttachmentList: PostAttachment[] = [];
+  private editNewMediaFiles: File[] = [];
+  private currentVersionId: string | null = null;
+  private impressionObserver?: IntersectionObserver;
 
   constructor(props: PostCardProps) {
     this.originalText = props.post.text;
@@ -53,8 +81,17 @@ export class PostCard {
     this.bookmarkCount = props.post.bookmark_count;
     this.replyCount = props.post.reply_count || 0;
     this.impressions = props.post.impressions || 0;
+    this.reactions = props.post.reactions || [];
     this.element = this.createElement();
     this.setupEventListeners();
+
+    if (this.props.showPinOption) {
+      this.onPinChanged = (e: Event) => {
+        const detail = (e as CustomEvent<{ pinnedId: string | null }>).detail;
+        this.props.pinned = detail?.pinnedId === this.props.post.id;
+      };
+      window.addEventListener('profilePinChanged', this.onPinChanged);
+    }
   }
 
   private createElement(): HTMLElement {
@@ -103,6 +140,7 @@ export class PostCard {
       username: this.props.post.username,
       display_name: this.props.post.display_name,
       avatar_key: this.props.post.avatar_key,
+      badge_type: this.props.post.badge_type,
       createdAt: this.props.post.created_at,
       editedAt: this.props.post.edited_at,
     });
@@ -110,7 +148,7 @@ export class PostCard {
 
     // ... menu button
     const isOwnPost = this.props.currentUser?.username === this.props.post.username;
-    const menuButton = this.createMenuButton(isOwnPost);
+    const menuButton = createMenuButton(() => this.toggleMenu(isOwnPost));
     menuButton.style.marginLeft = 'auto';
     headerContainer.appendChild(menuButton);
 
@@ -137,118 +175,6 @@ export class PostCard {
     textElement.textContent = displayText;
     this.postTextContainer.appendChild(textElement);
 
-    // Translate button
-    const currentLocale = getLocale();
-    const detectedLang = (text: string): string => {
-      const cjkRegex = /[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]/g;
-      const cjkCount = (text.match(cjkRegex) || []).length;
-      const totalChars = text.replace(/\s/g, '').length;
-      if (totalChars === 0) return 'en';
-      return cjkCount / totalChars > 0.2 ? 'ja' : 'en';
-    };
-    const postLang = detectedLang(this.props.post.text);
-    if (postLang !== currentLocale) {
-      const translateBar = document.createElement('div');
-      translateBar.style.cssText = 'margin-top: 0.5rem;';
-
-      const translateBtn = document.createElement('button');
-      translateBtn.className = 'translate-btn';
-      translateBtn.textContent = `Translate to ${currentLocale.toUpperCase()}`;
-      translateBtn.style.cssText = `
-        font-size: 0.8rem;
-        color: var(--accent);
-        background: none;
-        border: 1px solid var(--accent);
-        border-radius: 4px;
-        padding: 2px 8px;
-        cursor: pointer;
-      `;
-      translateBtn.addEventListener('click', async () => {
-        translateBtn.disabled = true;
-        translateBtn.textContent = 'Translating...';
-        const targetLocale = getLocale();
-        if (targetLocale === postLang) {
-          translateBtn.remove();
-          return;
-        }
-        console.log('[Translate] Source text:', this.props.post.text);
-        try {
-          const res = await fetch(`/api/posts/${this.props.post.id}/translate?target=${targetLocale}`, {
-            method: 'POST',
-          });
-          if (!res.ok) {
-            translateBtn.remove();
-            return;
-          }
-
-          const poll = async (): Promise<void> => {
-            const pollRes = await fetch(`/api/posts/${this.props.post.id}/translate?target=${targetLocale}`);
-            if (!pollRes.ok) {
-              translateBtn.remove();
-              return;
-            }
-            const data = (await pollRes.json()) as { status: string; translated_text?: string };
-            if (data.status === 'done' && data.translated_text) {
-              console.log('[Translate] Returned text:', data.translated_text);
-              this.translatedText = data.translated_text;
-              this.showingOriginal = false;
-              const currentTextEl = this.postTextContainer?.querySelector('.post-text');
-              if (currentTextEl) {
-                currentTextEl.textContent = data.translated_text;
-              }
-              translateBar.innerHTML = '';
-              const showOriginal = document.createElement('button');
-              showOriginal.textContent = 'Show original';
-              showOriginal.style.cssText = `
-                font-size: 0.8rem;
-                color: var(--accent);
-                background: none;
-                border: none;
-                padding: 2px 0;
-                cursor: pointer;
-                text-decoration: underline;
-              `;
-              showOriginal.addEventListener('click', () => {
-                const currentTextEl = this.postTextContainer?.querySelector('.post-text');
-                if (!currentTextEl) return;
-                if (this.showingOriginal) {
-                  currentTextEl.textContent = this.translatedText!;
-                  showOriginal.textContent = 'Show original';
-                } else {
-                  currentTextEl.textContent = this.originalText;
-                  showOriginal.textContent = 'Show translation';
-                }
-                this.showingOriginal = !this.showingOriginal;
-              });
-              translateBar.appendChild(showOriginal);
-            } else if (data.status === 'processing') {
-              setTimeout(poll, 2000);
-            } else {
-              translateBtn.remove();
-            }
-          };
-          setTimeout(poll, 2000);
-        } catch {
-          translateBtn.remove();
-        }
-      });
-
-      translateBar.appendChild(translateBtn);
-      this.postTextContainer.appendChild(translateBar);
-
-      // Listen for locale changes
-      const onLocaleChange = (e: Event) => {
-        const detail = (e as CustomEvent).detail;
-        if (detail.locale !== postLang) {
-          translateBtn.textContent = `Translate to ${detail.locale.toUpperCase()}`;
-          translateBar.style.display = '';
-        } else {
-          translateBar.style.display = 'none';
-        }
-      };
-      window.addEventListener('localechange', onLocaleChange);
-    }
-
     container.appendChild(this.postTextContainer);
 
     if ('requestIdleCallback' in window) {
@@ -259,6 +185,7 @@ export class PostCard {
               text: displayText,
               mentions: this.props.post.mentions,
               enablePostRefs: this.props.enablePostRefs,
+              authorId: this.props.post.user_id,
             });
             textElement.replaceWith(richText);
           } catch (error) {
@@ -274,6 +201,7 @@ export class PostCard {
             text: displayText,
             mentions: this.props.post.mentions,
             enablePostRefs: this.props.enablePostRefs,
+            authorId: this.props.post.user_id,
           });
           textElement.replaceWith(richText);
         } catch (error) {
@@ -291,28 +219,42 @@ export class PostCard {
 
     // Poll section
     if (this.props.post.poll) {
-      const pollEl = this.createPollElement({ ...this.props.post.poll, expired: false });
+      const pollEl = createPollElement({ ...this.props.post.poll, expired: false });
       container.appendChild(pollEl);
     }
 
-    // Link Preview section (under text/poll/tags, above PostStage/Actions)
-    const previewContainer = document.createElement('div');
-    previewContainer.className = 'post-link-preview-container';
-    previewContainer.style.cssText = 'overflow: hidden;';
-    container.appendChild(previewContainer);
-    loadLinkPreview(this.props.post.text, previewContainer);
+    // Only signed-in viewers can request link previews. Guest posts remain readable.
+    if (this.props.currentUser) {
+      const previewContainer = document.createElement('div');
+      previewContainer.className = 'post-link-preview-container';
+      previewContainer.style.cssText = 'overflow: hidden;';
+      container.appendChild(previewContainer);
+      loadLinkPreview(this.props.post.text, previewContainer, true);
+    }
+
+    // Quoted post card
+    if (this.props.post.quoted_post_id) {
+      const quotedCard = createQuotedPostCard({
+        quoted: this.props.post.quoted_post ?? null,
+        disableNavigation: this.props.disableNavigation,
+        onNavigateToThread: (postId) => this.navigateToThread(postId),
+      });
+      if (quotedCard) container.appendChild(quotedCard);
+    }
 
     // Post stage (16:9 container for GIF/iframe/thumbnail) - only show if has attachments
     if (
       this.props.post.gif_key ||
       this.props.post.payload_key ||
       this.props.post.swf_key ||
-      this.props.post.thumbnail_key
+      this.props.post.thumbnail_key ||
+      (this.props.post.attachments && this.props.post.attachments.length > 0)
     ) {
       this.postStageElement = createPostStage({
         post: this.props.post,
         mode: this.mode,
         sandboxOrigin: this.props.sandboxOrigin,
+        versionId: this.currentVersionId ?? undefined,
         onModeChange: (newMode) => this.handleModeChange(newMode),
       });
       container.appendChild(this.postStageElement);
@@ -328,11 +270,14 @@ export class PostCard {
         impressions: this.impressions,
         isFreshed: this.isFreshed,
         isBookmarked: this.isBookmarked,
+        reactions: this.reactions,
         depth: this.props.depth ?? this.props.post.depth,
         onFreshToggle: () => this.handleFreshToggle(),
         onBookmarkToggle: () => this.handleBookmarkToggle(),
         onReplyToggle: () => this.handleReplyToggle(),
         onShare: () => this.handleShare(),
+        onQuote: () => this.handleQuote(),
+        onReactionToggle: (emoji) => this.handleReactionToggle(emoji),
       });
       container.appendChild(actions);
     }
@@ -363,9 +308,7 @@ export class PostCard {
         left: 0;
         right: 0;
         bottom: 0;
-        background: rgba(0,0,0,0.25);
-        backdrop-filter: blur(6px);
-        -webkit-backdrop-filter: blur(6px);
+        background: rgba(0,0,0,0.45);
         display: flex;
         flex-direction: column;
         align-items: center;
@@ -432,8 +375,6 @@ export class PostCard {
     // Add click handler for post navigation (but not for buttons/inputs or during text selection)
     if (!this.props.disableNavigation) {
       this.element.addEventListener('click', (e) => {
-        console.log('PostCard clicked, target:', e.target);
-
         // Don't navigate if clicking on buttons, inputs, links, or poll options
         const target = e.target as HTMLElement;
         const closestButton = target.closest('button');
@@ -441,22 +382,13 @@ export class PostCard {
         const closestTextarea = target.closest('textarea');
         const closestLink = target.closest('a');
         const closestPollOption = target.closest('.poll-option');
-        const closestMediaPlayer = target.closest('.video-player, .audio-player, .image-preview');
+        const closestMediaPlayer = target.closest(
+          '.video-player, .audio-player, .image-preview, .media-carousel-dots, .media-carousel-track',
+        );
 
         // Check if text is being selected
         const selection = window.getSelection();
         const isSelectingText = selection && selection.toString().length > 0;
-
-        console.log('Checking if should prevent navigation:', {
-          closestButton,
-          closestInput,
-          closestTextarea,
-          closestLink,
-          closestPollOption,
-          closestMediaPlayer,
-          isSelectingText,
-          selectedText: selection?.toString(),
-        });
 
         if (
           closestButton ||
@@ -467,11 +399,9 @@ export class PostCard {
           closestMediaPlayer ||
           isSelectingText
         ) {
-          console.log('Navigation prevented - clicked on interactive element or text is being selected');
           return;
         }
 
-        console.log('Navigating to thread for post:', this.props.post.id);
         // Navigate to thread page
         this.handlePostClick();
       });
@@ -483,27 +413,45 @@ export class PostCard {
     const iframe = this.element.querySelector('.sandbox-frame') as HTMLIFrameElement;
 
     if (iframe) {
+      if (this.sandboxBridgeTimer) {
+        clearTimeout(this.sandboxBridgeTimer);
+        this.sandboxBridgeTimer = undefined;
+      }
       this.sandboxBridge = useSandboxBridge({
         iframe,
         post: this.props.post,
         onFreshRequest: () => this.handleFreshToggle(),
       });
-    } else {
-      // Iframe might not be ready yet, try again after a delay
-      setTimeout(() => this.setupSandboxBridge(), 100);
+      return;
     }
+
+    // The sandbox iframe only exists while a post is executing, so it can never
+    // appear in PREVIEW mode. Retrying there would run a 100ms timer forever per
+    // card, keeping dead cards (and their closures) alive — so retry only in
+    // EXECUTING mode and only for a bounded number of times.
+    if (this.mode !== PostCardMode.EXECUTING || this.sandboxBridgeRetries >= MAX_SANDBOX_BRIDGE_RETRIES) {
+      return;
+    }
+    this.sandboxBridgeRetries += 1;
+    if (this.sandboxBridgeTimer) {
+      clearTimeout(this.sandboxBridgeTimer);
+    }
+    this.sandboxBridgeTimer = setTimeout(() => {
+      this.sandboxBridgeTimer = undefined;
+      this.setupSandboxBridge();
+    }, 100);
   }
 
   private setupImpressionTracking(): void {
     // Track impressions when post becomes visible in viewport
-    const observer = new IntersectionObserver(
+    this.impressionObserver = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
             // Post is visible, track impression
             this.trackImpression();
             // Only track once per post view
-            observer.unobserve(entry.target);
+            this.impressionObserver?.unobserve(entry.target);
           }
         });
       },
@@ -512,7 +460,7 @@ export class PostCard {
       },
     );
 
-    observer.observe(this.element);
+    this.impressionObserver.observe(this.element);
   }
 
   private trackImpression(): void {
@@ -529,13 +477,69 @@ export class PostCard {
     this.updateActions();
   }
 
-  private handleModeChange(newMode: PostCardMode): void {
+  private async handleModeChange(newMode: PostCardMode): Promise<void> {
+    // Runnable ZIP/HTML5 posts open in the full-screen Arcade player instead
+    // of executing inline in the timeline.
+    if (newMode === PostCardMode.EXECUTING && isZipGame(this.props.post.payload_key)) {
+      this.openInArcade();
+      return;
+    }
+
     this.mode = newMode;
+    // The sandbox iframe only appears once the post starts executing, so begin
+    // (re)binding the bridge when we switch into EXECUTING mode.
+    if (newMode === PostCardMode.EXECUTING && !this.sandboxBridge) {
+      this.sandboxBridgeRetries = 0;
+      this.setupSandboxBridge();
+    }
+    // When entering EXECUTING mode without an explicit version, resolve the
+    // latest versionId so the sandbox always receives ?v=<latest>.
+    if (newMode === PostCardMode.EXECUTING && this.currentVersionId === null) {
+      try {
+        const res = await fetch(`/api/posts/${this.props.post.id}/versions`);
+        if (res.ok) {
+          const data = (await res.json()) as {
+            versions: Array<{ id: string; versionNumber: number }>;
+          };
+          const versions = data.versions;
+          if (versions.length > 0) {
+            versions.sort((a, b) => b.versionNumber - a.versionNumber);
+            this.currentVersionId = versions[0].id;
+          }
+        }
+      } catch {
+        // proceed without version resolution
+      }
+    }
     if (this.postStageElement) {
       updatePostStage(this.postStageElement, {
         post: this.props.post,
         mode: this.mode,
         sandboxOrigin: this.props.sandboxOrigin,
+        versionId: this.currentVersionId ?? undefined,
+        onModeChange: (newMode) => this.handleModeChange(newMode),
+      });
+    }
+  }
+
+  // Switch the executed game to a specific archived version (or back to the
+  // latest by passing null) and (re)load the sandbox iframe.
+  private playVersion(versionId: string | null): void {
+    // "Play latest" has no version to pin, so it follows the normal ZIP →
+    // Arcade path instead of executing inline. Specific versions keep running
+    // inline because an Arcade URL has no version parameter.
+    if (versionId === null && isZipGame(this.props.post.payload_key)) {
+      this.openInArcade();
+      return;
+    }
+    this.currentVersionId = versionId;
+    this.mode = PostCardMode.EXECUTING;
+    if (this.postStageElement) {
+      updatePostStage(this.postStageElement, {
+        post: this.props.post,
+        mode: this.mode,
+        sandboxOrigin: this.props.sandboxOrigin,
+        versionId: this.currentVersionId ?? undefined,
         onModeChange: (newMode) => this.handleModeChange(newMode),
       });
     }
@@ -602,6 +606,73 @@ export class PostCard {
       console.error('Failed to toggle fresh:', error);
     } finally {
       this.freshLoading = false;
+    }
+
+    this.updateActions();
+  }
+
+  private async handleReactionToggle(emoji: string): Promise<void> {
+    if (!this.props.currentUser) {
+      showSignInPrompt(
+        'reaction',
+        () => {
+          window.history.pushState({}, '', '/login');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        },
+        () => {
+          window.history.pushState({}, '', '/register');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        },
+      );
+      return;
+    }
+
+    const previous = this.reactions;
+    const idx = previous.findIndex((r) => r.emoji === emoji);
+    const optimistic = previous.map((r) => ({ ...r }));
+    if (idx >= 0) {
+      const r = optimistic[idx];
+      if (r.reacted) {
+        r.count -= 1;
+        r.reacted = false;
+        if (r.count <= 0) optimistic.splice(idx, 1);
+      } else {
+        r.count += 1;
+        r.reacted = true;
+      }
+    } else {
+      optimistic.push({ emoji, count: 1, reacted: true });
+    }
+    this.reactions = optimistic;
+    this.updateActions();
+
+    try {
+      const response = await fetch(`/api/posts/${this.props.post.id}/reactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ emoji }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to toggle reaction');
+      }
+
+      const result = (await response.json()) as {
+        emoji: string;
+        reacted: boolean;
+        reactions: ReactionSummary[];
+      };
+      this.reactions = result.reactions;
+
+      window.dispatchEvent(
+        new CustomEvent('postUpdated', {
+          detail: { postId: this.props.post.id, reactions: result.reactions },
+        }),
+      );
+    } catch (error) {
+      this.reactions = previous;
+      console.error('Failed to toggle reaction:', error);
     }
 
     this.updateActions();
@@ -729,6 +800,19 @@ export class PostCard {
     );
   }
 
+  private openInArcade(): void {
+    const postId = this.props.post.id;
+    pushSpaHistory(`/arcade/${postId}`, { postId });
+    window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId } }));
+  }
+
+  private navigateToThread(postId: string): void {
+    if (this.props.disableNavigation) return;
+    const threadUrl = `/thread/${postId}`;
+    pushSpaHistory(threadUrl, { postId });
+    window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'thread', postId } }));
+  }
+
   public handleReplyTogglePublic(): void {
     this.handleReplyToggle();
   }
@@ -742,6 +826,30 @@ export class PostCard {
         display_name: this.props.post.display_name,
       },
       onClose: () => {},
+      onQuote: () => this.handleQuote(),
+    });
+  }
+
+  private handleQuote(): void {
+    const p = this.props.post;
+    const quotedPost: QuotedPost = {
+      id: p.id,
+      user_id: p.user_id,
+      username: p.username,
+      display_name: p.display_name,
+      avatar_key: p.avatar_key,
+      text: p.text,
+      hashtags: p.hashtags,
+      gif_key: p.gif_key,
+      payload_key: p.payload_key,
+      swf_key: p.swf_key,
+      thumbnail_key: p.thumbnail_key,
+      created_at: p.created_at,
+    };
+    openPostModal({
+      currentUser: this.props.currentUser,
+      onPostCreated: (post) => this.navigateToThread(post.id),
+      quotedPost,
     });
   }
 
@@ -754,25 +862,7 @@ export class PostCard {
       return;
     }
 
-    // Navigate to thread page using SPA navigation
-    console.log('Pushing state to URL:', threadUrl);
-    window.history.pushState({ postId: this.props.post.id }, '', threadUrl);
-
-    // Use SPA navigation event
-    console.log('Dispatching SPA navigation event');
-    window.dispatchEvent(
-      new CustomEvent('spaNavigate', {
-        detail: { view: 'thread', postId: this.props.post.id },
-      }),
-    );
-
-    // Also emit custom event for navigation (backup)
-    console.log('Emitting navigateToThread event');
-    const customEvent = new CustomEvent('navigateToThread', {
-      detail: { postId: this.props.post.id },
-    });
-    this.element.dispatchEvent(customEvent);
-    console.log('Event dispatched');
+    this.navigateToThread(this.props.post.id);
   }
 
   private updateActions(): void {
@@ -786,11 +876,14 @@ export class PostCard {
         impressions: this.impressions,
         isFreshed: this.isFreshed,
         isBookmarked: this.isBookmarked,
+        reactions: this.reactions,
         depth: this.props.depth ?? this.props.post.depth,
         onFreshToggle: () => this.handleFreshToggle(),
         onBookmarkToggle: () => this.handleBookmarkToggle(),
         onReplyToggle: () => this.handleReplyToggle(),
         onShare: () => this.handleShare(),
+        onQuote: () => this.handleQuote(),
+        onReactionToggle: (emoji) => this.handleReactionToggle(emoji),
       });
       actionsContainer.replaceWith(newActions);
     }
@@ -820,38 +913,11 @@ export class PostCard {
     if (post.is_bookmarked !== undefined) {
       this.isBookmarked = post.is_bookmarked;
     }
+    if (post.reactions !== undefined) {
+      this.reactions = post.reactions;
+    }
     this.props.post = { ...this.props.post, ...post };
     this.updateActions();
-  }
-
-  private createMenuButton(isOwnPost: boolean): HTMLElement {
-    const menuButton = document.createElement('button');
-    menuButton.className = 'post-menu-button';
-    menuButton.textContent = '⋯';
-    menuButton.style.cssText = `
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      font-size: 18px;
-      cursor: pointer;
-      padding: 4px 8px;
-      border-radius: 4px;
-      transition: color 0.2s ease;
-    `;
-
-    menuButton.addEventListener('mouseenter', () => {
-      menuButton.style.color = 'var(--text-primary)';
-    });
-    menuButton.addEventListener('mouseleave', () => {
-      menuButton.style.color = 'var(--text-muted)';
-    });
-
-    menuButton.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.toggleMenu(isOwnPost);
-    });
-
-    return menuButton;
   }
 
   private toggleMenu(isOwnPost: boolean): void {
@@ -861,192 +927,34 @@ export class PostCard {
       return;
     }
 
-    const dropdown = document.createElement('div');
-    dropdown.className = 'post-menu-dropdown';
-    dropdown.style.cssText = `
-      position: absolute;
-      top: 30px;
-      right: 0;
-      background: var(--bg-primary);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-      z-index: 100;
-      min-width: 120px;
-    `;
-
-    if (isOwnPost) {
-      if (this.props.post.hidden === 1) {
-        const counterItem = document.createElement('button');
-        counterItem.style.cssText = `
-          display: block;
-          width: 100%;
-          padding: 10px 16px;
-          background: none;
-          border: none;
-          color: var(--text-primary);
-          text-align: left;
-          cursor: pointer;
-          font-size: 14px;
-          transition: background 0.2s;
-        `;
-        counterItem.textContent = t('post.menu_counter_notice');
-        counterItem.addEventListener('mouseenter', () => {
-          counterItem.style.background = 'var(--bg-secondary)';
-        });
-        counterItem.addEventListener('mouseleave', () => {
-          counterItem.style.background = 'none';
-        });
-        counterItem.addEventListener('click', (e) => {
-          e.stopPropagation();
-          dropdown.remove();
-          this.menuDropdown = undefined;
-          this.showCounterNoticeModal();
-        });
-        dropdown.appendChild(counterItem);
-      }
-
-      const editItem = document.createElement('button');
-      editItem.style.cssText = `
-        display: block;
-        width: 100%;
-        padding: 10px 16px;
-        background: none;
-        border: none;
-        color: var(--text-primary);
-        text-align: left;
-        cursor: pointer;
-        font-size: 14px;
-        transition: background 0.2s;
-      `;
-      editItem.textContent = t('post.menu_edit');
-      editItem.addEventListener('mouseenter', () => {
-        editItem.style.background = 'var(--bg-secondary)';
-      });
-      editItem.addEventListener('mouseleave', () => {
-        editItem.style.background = 'none';
-      });
-      editItem.addEventListener('click', (e) => {
-        e.stopPropagation();
-        dropdown.remove();
-        this.menuDropdown = undefined;
-        this.startEditing();
-      });
-      dropdown.appendChild(editItem);
-
-      const deleteItem = document.createElement('button');
-      deleteItem.style.cssText = `
-        display: block;
-        width: 100%;
-        padding: 10px 16px;
-        background: none;
-        border: none;
-        color: var(--danger, #e74c3c);
-        text-align: left;
-        cursor: pointer;
-        font-size: 14px;
-        transition: background 0.2s;
-      `;
-      deleteItem.textContent = t('post.menu_delete');
-      deleteItem.addEventListener('mouseenter', () => {
-        deleteItem.style.background = 'var(--bg-secondary)';
-      });
-      deleteItem.addEventListener('mouseleave', () => {
-        deleteItem.style.background = 'none';
-      });
-      deleteItem.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.showDeleteConfirmation();
-        dropdown.remove();
-        this.menuDropdown = undefined;
-      });
-      dropdown.appendChild(deleteItem);
-    } else {
-      const blockItem = document.createElement('button');
-      blockItem.style.cssText = `
-        display: block;
-        width: 100%;
-        padding: 10px 16px;
-        background: none;
-        border: none;
-        color: var(--danger, #e74c3c);
-        text-align: left;
-        cursor: pointer;
-        font-size: 14px;
-        transition: background 0.2s;
-      `;
-      blockItem.textContent = t('post.menu_block');
-      blockItem.addEventListener('mouseenter', () => {
-        blockItem.style.background = 'var(--bg-secondary)';
-      });
-      blockItem.addEventListener('mouseleave', () => {
-        blockItem.style.background = 'none';
-      });
-      blockItem.addEventListener('click', (e) => {
-        e.stopPropagation();
-        dropdown.remove();
-        this.menuDropdown = undefined;
-        if (!this.props.currentUser) {
-          showSignInPrompt(
-            'block',
-            () => {
-              window.history.pushState({}, '', '/login');
-              window.dispatchEvent(new PopStateEvent('popstate'));
-            },
-            () => {
-              window.history.pushState({}, '', '/register');
-              window.dispatchEvent(new PopStateEvent('popstate'));
-            },
-          );
-          return;
-        }
-        this.blockUser();
-      });
-      dropdown.appendChild(blockItem);
-
-      const reportItem = document.createElement('button');
-      reportItem.style.cssText = `
-        display: block;
-        width: 100%;
-        padding: 10px 16px;
-        background: none;
-        border: none;
-        color: var(--text-primary);
-        text-align: left;
-        cursor: pointer;
-        font-size: 14px;
-        transition: background 0.2s;
-      `;
-      reportItem.textContent = t('post.menu_report');
-      reportItem.addEventListener('mouseenter', () => {
-        reportItem.style.background = 'var(--bg-secondary)';
-      });
-      reportItem.addEventListener('mouseleave', () => {
-        reportItem.style.background = 'none';
-      });
-      reportItem.addEventListener('click', (e) => {
-        e.stopPropagation();
-        dropdown.remove();
-        this.menuDropdown = undefined;
-        // Check if user is logged in before showing report modal
-        if (!this.props.currentUser) {
-          showSignInPrompt(
-            'report',
-            () => {
-              window.history.pushState({}, '', '/login');
-              window.dispatchEvent(new PopStateEvent('popstate'));
-            },
-            () => {
-              window.history.pushState({}, '', '/register');
-              window.dispatchEvent(new PopStateEvent('popstate'));
-            },
-          );
-          return;
-        }
-        this.showReportModal();
-      });
-      dropdown.appendChild(reportItem);
-    }
+    const dropdown = createPostMenuDropdown({
+      isOwnPost,
+      showPinOption: this.props.showPinOption,
+      pinned: this.props.pinned,
+      payloadKey: this.props.post.payload_key,
+      currentUser: this.props.currentUser,
+      actions: {
+        onVersionHistory: () =>
+          openVersionHistoryModal({
+            postId: this.props.post.id,
+            sandboxOrigin: this.props.sandboxOrigin,
+            currentVersionId: this.currentVersionId,
+            onPlay: (versionId) => this.playVersion(versionId),
+          }),
+        onTogglePin: () => this.props.onTogglePin?.(this.props.post.id),
+        onCounterNotice: () => this.showCounterNoticeModal(),
+        onEdit: () => this.startEditing(),
+        onUpdate: () =>
+          openGameUpdateModal({
+            postId: this.props.post.id,
+            sandboxOrigin: this.props.sandboxOrigin,
+            onUpdated: () => this.playVersion(null),
+          }),
+        onDelete: () => this.showDeleteConfirmation(),
+        onBlock: () => this.blockUser(),
+        onReport: () => this.showReportModal(),
+      },
+    });
 
     const headerContainer = this.element.querySelector('.post-menu-button')?.parentElement;
     if (headerContainer) {
@@ -1055,42 +963,13 @@ export class PostCard {
     }
 
     this.menuDropdown = dropdown;
-
-    const closeMenu = (e: MouseEvent) => {
-      if (!dropdown.contains(e.target as Node)) {
-        dropdown.remove();
-        this.menuDropdown = undefined;
-        document.removeEventListener('click', closeMenu);
-      }
-    };
-    setTimeout(() => document.addEventListener('click', closeMenu), 0);
+    setupMenuCloseHandler(dropdown, () => {
+      this.menuDropdown = undefined;
+    });
   }
 
   private showDeleteConfirmation(): void {
-    const overlay = document.createElement('div');
-    const unregister = registerModal();
-    overlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0,0,0,0.5);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1000;
-    `;
-
-    const dialog = document.createElement('div');
-    dialog.style.cssText = `
-      background: var(--bg-primary);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 24px;
-      max-width: 400px;
-      width: 90%;
-    `;
+    const { overlay, dialog, close } = createModalOverlay('400px');
 
     const title = document.createElement('h3');
     title.style.cssText = 'margin: 0 0 16px 0; font-size: 18px; color: var(--text-primary);';
@@ -1122,25 +1001,13 @@ export class PostCard {
     dialog.appendChild(message);
     dialog.appendChild(buttonRow);
 
-    overlay.appendChild(dialog);
     document.body.appendChild(overlay);
 
-    cancelBtn.addEventListener('click', () => {
-      unregister();
-      overlay.remove();
-    });
+    cancelBtn.addEventListener('click', close);
 
     deleteBtn.addEventListener('click', async () => {
-      unregister();
-      overlay.remove();
+      close();
       await this.deletePost();
-    });
-
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) {
-        unregister();
-        overlay.remove();
-      }
     });
   }
 
@@ -1164,10 +1031,10 @@ export class PostCard {
         this.destroy();
       }, 300);
 
-      this.showToast(t('post.deleted'));
+      showToast(t('post.deleted'));
     } catch (error) {
       console.error('Delete post error:', error);
-      this.showToast(t('post.delete_failed'), true);
+      showToast(t('post.delete_failed'), true);
     }
   }
 
@@ -1184,7 +1051,7 @@ export class PostCard {
         throw new Error(data?.error || 'Failed to block user');
       }
 
-      this.showToast(t('post.blocked', { username }));
+      showToast(t('post.blocked', { username }));
 
       this.element.style.transition = 'opacity 0.3s, transform 0.3s';
       this.element.style.opacity = '0';
@@ -1194,466 +1061,37 @@ export class PostCard {
       }, 300);
     } catch (error) {
       console.error('Block user error:', error);
-      this.showToast(t('post.block_failed'), true);
+      showToast(t('post.block_failed'), true);
     }
   }
 
   private showReportModal(): void {
-    const overlay = document.createElement('div');
-    const unregister = registerModal();
-    overlay.className = 'report-modal-overlay';
-    overlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0,0,0,0.5);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1000;
-    `;
-
-    const dialog = document.createElement('div');
-    dialog.style.cssText = `
-      background: var(--bg-primary);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 24px;
-      max-width: 420px;
-      width: 90%;
-      max-height: 80vh;
-      overflow-y: auto;
-    `;
-
-    const categories = [
-      { value: 'spam', label: t('post.report_category_spam') },
-      { value: 'harassment', label: t('post.report_category_harassment') },
-      { value: 'hate_speech', label: t('post.report_category_hate_speech') },
-      { value: 'inappropriate', label: t('post.report_category_inappropriate') },
-      { value: 'misinformation', label: t('post.report_category_misinformation') },
-      { value: 'privacy', label: t('post.report_category_privacy') },
-      { value: 'copyright', label: t('post.report_category_copyright') },
-      { value: 'malware', label: t('post.report_category_malware') },
-      { value: 'csam', label: t('post.report_category_csam') },
-      { value: 'nsfw_untagged', label: t('post.report_category_nsfw_untagged') },
-      { value: 'other', label: t('post.report_category_other') },
-    ];
-
-    dialog.innerHTML = `
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-        <h3 style="margin: 0; font-size: 18px; color: var(--text-primary);">${t('post.report_title')}</h3>
-        <button class="close-btn" style="
-          background: none;
-          border: none;
-          color: var(--text-muted);
-          font-size: 20px;
-          cursor: pointer;
-        ">✕</button>
-      </div>
-      <p style="margin: 0 0 16px 0; color: var(--text-muted); font-size: 14px;">${t('post.report_question')}</p>
-      <div class="categories" style="margin-bottom: 24px;">
-        ${categories
-          .map(
-            (c) => `
-          <label style="
-            display: flex;
-            align-items: center;
-            padding: 10px 0;
-            cursor: pointer;
-            color: var(--text-primary);
-          ">
-            <input type="radio" name="report-category" value="${c.value}" style="margin-right: 12px;">
-            <span>${c.label}</span>
-          </label>
-        `,
-          )
-          .join('')}
-      </div>
-      <div class="dmca-section" style="display: none; margin-bottom: 24px; padding: 16px; background: var(--bg-secondary); border-radius: 8px;">
-        <h4 style="margin: 0 0 12px 0; font-size: 14px; color: var(--text-primary);">${t('post.report_dmca_title')}</h4>
-        <div style="margin-bottom: 12px;">
-          <label style="display: block; margin-bottom: 4px; font-size: 12px; color: var(--text-muted);">${t('post.report_dmca_work_label')}</label>
-          <input type="text" class="dmca-work" style="
-            width: 100%;
-            padding: 8px;
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            font-size: 14px;
-            box-sizing: border-box;
-          " placeholder="${t('post.report_dmca_work_placeholder')}">
-        </div>
-        <div style="margin-bottom: 12px;">
-          <label style="display: block; margin-bottom: 4px; font-size: 12px; color: var(--text-muted);">${t('post.report_dmca_email_label')}</label>
-          <input type="email" class="dmca-email" style="
-            width: 100%;
-            padding: 8px;
-            border: 1px solid var(--border);
-            border-radius: 4px;
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            font-size: 14px;
-            box-sizing: border-box;
-          " placeholder="${t('post.report_dmca_email_placeholder')}">
-        </div>
-        <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
-          <input type="checkbox" class="dmca-sworn" style="margin-top: 2px;">
-          <span style="font-size: 12px; color: var(--text-muted);">${t('post.report_dmca_swear')}</span>
-        </label>
-      </div>
-      <div style="display: flex; justify-content: flex-end;">
-        <button class="submit-btn" disabled style="
-          padding: 10px 24px;
-          background: var(--accent);
-          border: none;
-          border-radius: 9999px;
-          color: #000;
-          font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-          font-size: 14px;
-          cursor: pointer;
-          opacity: 0.5;
-        ">${t('common.submit')}</button>
-      </div>
-    `;
-
-    overlay.appendChild(dialog);
-    document.body.appendChild(overlay);
-
-    const submitBtn = dialog.querySelector('.submit-btn') as HTMLButtonElement;
-    const closeBtn = dialog.querySelector('.close-btn');
-    const radioInputs = dialog.querySelectorAll('input[name="report-category"]');
-    const dmcaSection = dialog.querySelector('.dmca-section') as HTMLElement;
-    const dmcaWorkInput = dialog.querySelector('.dmca-work') as HTMLInputElement;
-    const dmcaEmailInput = dialog.querySelector('.dmca-email') as HTMLInputElement;
-    const dmcaSwornCheckbox = dialog.querySelector('.dmca-sworn') as HTMLInputElement;
-
-    let selectedCategory: string | null = null;
-
-    radioInputs.forEach((input) => {
-      input.addEventListener('change', (e) => {
-        selectedCategory = (e.target as HTMLInputElement).value;
-        submitBtn.disabled = false;
-        submitBtn.style.opacity = '1';
-
-        // Show/hide DMCA section
-        if (selectedCategory === 'copyright') {
-          dmcaSection.style.display = 'block';
-        } else {
-          dmcaSection.style.display = 'none';
-        }
-      });
-    });
-
-    const checkSubmitEnabled = () => {
-      if (!selectedCategory) {
-        return false;
-      }
-      if (selectedCategory === 'copyright') {
-        const workDescription = dmcaWorkInput.value.trim();
-        const email = dmcaEmailInput.value.trim();
-        const sworn = dmcaSwornCheckbox.checked;
-        return workDescription.length > 0 && email.length > 0 && sworn;
-      }
-      return true;
-    };
-
-    dmcaWorkInput?.addEventListener('input', () => {
-      submitBtn.disabled = !checkSubmitEnabled();
-      submitBtn.style.opacity = checkSubmitEnabled() ? '1' : '0.5';
-    });
-
-    dmcaEmailInput?.addEventListener('input', () => {
-      submitBtn.disabled = !checkSubmitEnabled();
-      submitBtn.style.opacity = checkSubmitEnabled() ? '1' : '0.5';
-    });
-
-    dmcaSwornCheckbox?.addEventListener('change', () => {
-      submitBtn.disabled = !checkSubmitEnabled();
-      submitBtn.style.opacity = checkSubmitEnabled() ? '1' : '0.5';
-    });
-
-    closeBtn?.addEventListener('click', () => {
-      unregister();
-      overlay.remove();
-    });
-
-    submitBtn?.addEventListener('click', async () => {
-      if (!selectedCategory) return;
-
-      let dmcaData: { work_description: string; reporter_email: string; sworn: boolean } | undefined;
-      if (selectedCategory === 'copyright') {
-        dmcaData = {
-          work_description: dmcaWorkInput.value.trim(),
-          reporter_email: dmcaEmailInput.value.trim(),
-          sworn: dmcaSwornCheckbox.checked,
-        };
-      }
-
-      unregister();
-      overlay.remove();
-      await this.submitReport(selectedCategory, dmcaData);
-    });
-
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) {
-        unregister();
-        overlay.remove();
-      }
-    });
-  }
-
-  private async submitReport(
-    category: string,
-    dmcaData?: { work_description: string; reporter_email: string; sworn: boolean },
-  ): Promise<void> {
-    try {
-      const body: {
-        post_id: string;
-        category: string;
-        dmca?: { work_description: string; reporter_email: string; sworn: boolean };
-      } = { post_id: this.props.post.id, category };
-      if (dmcaData) {
-        body.dmca = dmcaData;
-      }
-
-      const response = await fetch('/api/report', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(body),
-      });
-
-      if (response.status === 409) {
-        this.showToast(t('post.report_already'));
-        return;
-      }
-
-      if (!response.ok) {
-        const errorData = (await response.json()) as { error?: string };
-        throw new Error(errorData?.error || 'Failed to submit report');
-      }
-
-      this.showToast(t('post.report_submitted'));
-    } catch (error) {
-      console.error('Report error:', error);
-      console.error('Error details:', {
-        message: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : 'No stack trace',
-        post_id: this.props.post.id,
-        category: category || 'unknown',
-      });
-      this.showToast(t('post.report_failed'), true);
-    }
+    openReportModal(this.props.post.id);
   }
 
   private showCounterNoticeModal(): void {
-    const overlay = document.createElement('div');
-    const unregister = registerModal();
-    overlay.className = 'counter-notice-modal-overlay';
-    overlay.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: rgba(0,0,0,0.5);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1000;
-    `;
-
-    const dialog = document.createElement('div');
-    dialog.style.cssText = `
-      background: var(--bg-primary);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 24px;
-      max-width: 520px;
-      width: 90%;
-      max-height: 80vh;
-      overflow-y: auto;
-    `;
-
-    dialog.innerHTML = `
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-        <h3 style="margin: 0; font-size: 18px; color: var(--text-primary);">${t('post.counter_notice_title')}</h3>
-        <button class="close-btn" style="
-          background: none;
-          border: none;
-          color: var(--text-muted);
-          font-size: 20px;
-          cursor: pointer;
-        ">✕</button>
-      </div>
-      <p style="margin: 0 0 16px 0; color: var(--text-muted); font-size: 14px;">${t('post.counter_notice_explanation')}</p>
-      <div style="margin-bottom: 16px;">
-        <label style="display: block; margin-bottom: 4px; font-size: 12px; color: var(--text-muted);">${t('post.counter_notice_name_label')}</label>
-        <input type="text" class="cn-name" style="
-          width: 100%; padding: 8px; border: 1px solid var(--border);
-          border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);
-          font-size: 14px; box-sizing: border-box;
-        " placeholder="${t('post.counter_notice_name_placeholder')}">
-      </div>
-      <div style="margin-bottom: 16px;">
-        <label style="display: block; margin-bottom: 4px; font-size: 12px; color: var(--text-muted);">${t('post.counter_notice_email_label')}</label>
-        <input type="email" class="cn-email" style="
-          width: 100%; padding: 8px; border: 1px solid var(--border);
-          border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);
-          font-size: 14px; box-sizing: border-box;
-        " placeholder="${t('post.counter_notice_email_placeholder')}">
-      </div>
-      <div style="margin-bottom: 16px;">
-        <label style="display: block; margin-bottom: 4px; font-size: 12px; color: var(--text-muted);">${t('post.counter_notice_address_label')}</label>
-        <input type="text" class="cn-address" style="
-          width: 100%; padding: 8px; border: 1px solid var(--border);
-          border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);
-          font-size: 14px; box-sizing: border-box;
-        " placeholder="${t('post.counter_notice_address_placeholder')}">
-      </div>
-      <div style="margin-bottom: 16px;">
-        <label style="display: block; margin-bottom: 4px; font-size: 12px; color: var(--text-muted);">${t('post.counter_notice_phone_label')}</label>
-        <input type="tel" class="cn-phone" style="
-          width: 100%; padding: 8px; border: 1px solid var(--border);
-          border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);
-          font-size: 14px; box-sizing: border-box;
-        " placeholder="${t('post.counter_notice_phone_placeholder')}">
-      </div>
-      <label style="display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; cursor: pointer;">
-        <input type="checkbox" class="cn-statement" style="margin-top: 2px;">
-        <span style="font-size: 12px; color: var(--text-muted);">${t('post.counter_notice_statement')}</span>
-      </label>
-      <label style="display: flex; align-items: flex-start; gap: 8px; margin-bottom: 16px; cursor: pointer;">
-        <input type="checkbox" class="cn-consent" style="margin-top: 2px;">
-        <span style="font-size: 12px; color: var(--text-muted);">${t('post.counter_notice_consent')}</span>
-      </label>
-      <div style="display: flex; justify-content: flex-end;">
-        <button class="submit-btn" disabled style="
-          padding: 10px 24px; background: var(--accent); border: none;
-          border-radius: 9999px; color: #000;
-          font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-          font-size: 14px; cursor: pointer; opacity: 0.5;
-        ">${t('common.submit')}</button>
-      </div>
-    `;
-
-    overlay.appendChild(dialog);
-    document.body.appendChild(overlay);
-
-    const submitBtn = dialog.querySelector('.submit-btn') as HTMLButtonElement;
-    const closeBtn = dialog.querySelector('.close-btn');
-    const nameInput = dialog.querySelector('.cn-name') as HTMLInputElement;
-    const emailInput = dialog.querySelector('.cn-email') as HTMLInputElement;
-    const addressInput = dialog.querySelector('.cn-address') as HTMLInputElement;
-    const phoneInput = dialog.querySelector('.cn-phone') as HTMLInputElement;
-    const statementCheckbox = dialog.querySelector('.cn-statement') as HTMLInputElement;
-    const consentCheckbox = dialog.querySelector('.cn-consent') as HTMLInputElement;
-
-    const checkEnabled = () => {
-      const valid =
-        nameInput.value.trim().length > 0 &&
-        emailInput.value.trim().length > 0 &&
-        addressInput.value.trim().length > 0 &&
-        phoneInput.value.trim().length > 0 &&
-        statementCheckbox.checked &&
-        consentCheckbox.checked;
-      submitBtn.disabled = !valid;
-      submitBtn.style.opacity = valid ? '1' : '0.5';
-    };
-
-    [nameInput, emailInput, addressInput, phoneInput].forEach((el) => {
-      el.addEventListener('input', checkEnabled);
-    });
-    statementCheckbox.addEventListener('change', checkEnabled);
-    consentCheckbox.addEventListener('change', checkEnabled);
-
-    closeBtn?.addEventListener('click', () => {
-      unregister();
-      overlay.remove();
-    });
-
-    submitBtn?.addEventListener('click', async () => {
-      unregister();
-      overlay.remove();
-      await this.submitCounterNotice({
-        name: nameInput.value.trim(),
-        email: emailInput.value.trim(),
-        address: addressInput.value.trim(),
-        phone: phoneInput.value.trim(),
-        statement: statementCheckbox.checked,
-        consent_jurisdiction: consentCheckbox.checked,
-      });
-    });
-
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) {
-        unregister();
-        overlay.remove();
-      }
-    });
-  }
-
-  private async submitCounterNotice(data: {
-    name: string;
-    email: string;
-    address: string;
-    phone: string;
-    statement: boolean;
-    consent_jurisdiction: boolean;
-  }): Promise<void> {
-    try {
-      const response = await fetch(`/api/posts/${this.props.post.id}/counter-notice`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify(data),
-      });
-
-      if (response.status === 409) {
-        this.showToast(t('post.counter_notice_already'));
-        return;
-      }
-
-      if (!response.ok) {
-        const errorData = (await response.json()) as { error?: string };
-        throw new Error(errorData?.error || 'Failed to submit counter-notice');
-      }
-
-      this.showToast(t('post.counter_notice_submitted'));
-    } catch (error) {
-      console.error('Counter-notice error:', error);
-      this.showToast(t('post.counter_notice_failed'), true);
-    }
-  }
-
-  private showToast(message: string, isError: boolean = false): void {
-    const toast = document.createElement('div');
-    toast.style.cssText = `
-      position: fixed;
-      bottom: 24px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: ${isError ? 'var(--danger, #e74c3c)' : 'var(--accent)'};
-      color: ${isError ? '#fff' : '#000'};
-      padding: 12px 24px;
-      border-radius: 4px;
-      font-size: 14px;
-      z-index: 2000;
-      animation: fadeInUp 0.3s ease;
-    `;
-    toast.textContent = message;
-    document.body.appendChild(toast);
-
-    setTimeout(() => {
-      toast.style.animation = 'fadeOut 0.3s ease';
-      setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    openCounterNoticeModal(this.props.post.id);
   }
 
   public destroy(): void {
+    // Disconnect impression observer
+    if (this.impressionObserver) {
+      this.impressionObserver.disconnect();
+      this.impressionObserver = undefined;
+    }
+
+    // Remove pin change listener
+    if (this.onPinChanged) {
+      window.removeEventListener('profilePinChanged', this.onPinChanged);
+      this.onPinChanged = undefined;
+    }
+
+    // Cancel any pending sandbox bridge retry
+    if (this.sandboxBridgeTimer) {
+      clearTimeout(this.sandboxBridgeTimer);
+      this.sandboxBridgeTimer = undefined;
+    }
+
     // Cleanup sandbox bridge
     if (this.sandboxBridge) {
       this.sandboxBridge.destroy();
@@ -1734,149 +1172,6 @@ export class PostCard {
     return container;
   }
 
-  private createPollElement(poll: {
-    id: string;
-    question: string;
-    userVote: string | null;
-    expired: boolean;
-    multipleChoice: boolean;
-    endsAt?: string | null;
-    options: Array<{ id: string; label: string; votes_count: number }>;
-  }): HTMLElement {
-    const totalVotes = poll.options.reduce(
-      (sum: number, opt: { id: string; label: string; votes_count: number }) => sum + Number(opt.votes_count || 0),
-      0,
-    );
-    const hasVoted = !!poll.userVote;
-    const isExpired = poll.expired;
-    const showResults = hasVoted || isExpired;
-    const canChangeVote = hasVoted && !isExpired;
-
-    const container = document.createElement('div');
-    container.className = 'post-poll';
-    container.style.cssText = `margin: 12px 0; padding: 12px; background: var(--bg-secondary); border-radius: 8px;`;
-
-    const question = document.createElement('div');
-    question.className = 'poll-question';
-    question.style.cssText = `font-weight: 600; margin-bottom: 8px; color: var(--text-primary);`;
-    question.textContent = poll.question;
-    container.appendChild(question);
-
-    if (isExpired) {
-      const endedBadge = document.createElement('div');
-      endedBadge.style.cssText = `font-size: 0.75rem; color: var(--text-muted); margin-bottom: 6px;`;
-      endedBadge.textContent = t('poll.ended');
-      container.appendChild(endedBadge);
-    }
-
-    poll.options.forEach((opt: { id: string; label: string; votes_count: number }) => {
-      const optEl = document.createElement('div');
-      optEl.className = 'poll-option';
-      const pct = totalVotes > 0 ? Math.round((opt.votes_count / totalVotes) * 100) : 0;
-      const isOwnVote = opt.id === poll.userVote;
-      const clickable = !isExpired && !isOwnVote;
-      optEl.style.cssText = `
-        position: relative; padding: 8px 12px; margin-bottom: 6px; border-radius: 6px;
-        cursor: ${clickable ? 'pointer' : 'default'};
-        background: var(--bg-primary); overflow: hidden;
-        transition: opacity 0.2s; border: 1px solid var(--border);
-        ${showResults || opt.votes_count > 0 ? '' : 'opacity: 0.9;'}
-        ${isOwnVote ? 'border-color: var(--accent);' : ''}
-      `;
-
-      const bar = document.createElement('div');
-      bar.className = 'poll-bar';
-      bar.style.cssText = `
-        position: absolute; top: 0; left: 0; height: 100%; 
-        background: var(--accent);
-        width: ${showResults ? pct : 0}%; transition: width 0.5s ease; border-radius: 5px;
-        opacity: 0.25;
-      `;
-      optEl.appendChild(bar);
-
-      const label = document.createElement('span');
-      label.className = 'poll-option-label';
-      label.style.cssText = `position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center;`;
-      const textSpan = document.createElement('span');
-      textSpan.textContent = opt.label;
-      const countSpan = document.createElement('span');
-      countSpan.style.cssText = `font-size: 0.8rem; color: var(--text-muted); margin-left: 8px;`;
-      countSpan.textContent = showResults ? `${pct}%` : '';
-      label.appendChild(textSpan);
-      label.appendChild(countSpan);
-      optEl.appendChild(label);
-
-      if (clickable) {
-        optEl.addEventListener('click', async (e) => {
-          e.stopPropagation();
-          try {
-            const response = await fetch(`/api/polls/${poll.id}/vote`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'include',
-              body: JSON.stringify({ optionId: opt.id }),
-            });
-            if (response.status === 409) {
-              return;
-            }
-            if (!response.ok) {
-              const errBody = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-              if (errBody?.error) console.error(t('poll.vote_error'), errBody.error);
-              return;
-            }
-            const data = (await response.json()) as {
-              options: Array<{ id: string; label: string; votes_count: number }>;
-              userVote: string | null;
-            };
-            const newPoll = { ...poll, options: data.options, userVote: data.userVote };
-            container.replaceWith(this.createPollElement(newPoll));
-          } catch (e) {
-            console.error('Vote failed:', e);
-          }
-        });
-        optEl.addEventListener('mouseenter', () => {
-          optEl.style.borderColor = 'var(--accent)';
-        });
-        optEl.addEventListener('mouseleave', () => {
-          optEl.style.borderColor = 'var(--border)';
-        });
-      }
-      container.appendChild(optEl);
-    });
-
-    const footer = document.createElement('div');
-    footer.style.cssText = `font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;`;
-
-    const voteText =
-      totalVotes === 1
-        ? t('poll.votes', { count: formatCount(totalVotes) })
-        : t('poll.votes_plural', { count: formatCount(totalVotes) });
-    const votedText = hasVoted ? ` · ${t('poll.voted')}` : '';
-    const changeHint = canChangeVote ? ` · ${t('poll.click_to_change')}` : '';
-    let timeText = '';
-    if (poll.endsAt && !isExpired) {
-      const remaining = this.formatRemainingTime(poll.endsAt);
-      timeText = ` · ${t('poll.remaining', { time: remaining })}`;
-    }
-
-    footer.textContent = `${voteText}${votedText}${changeHint}${timeText}`;
-    container.appendChild(footer);
-
-    return container;
-  }
-
-  private formatRemainingTime(endsAt: string): string {
-    const diff = new Date(endsAt).getTime() - Date.now();
-    if (diff <= 0) return t('poll.ended');
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(hours / 24);
-    const minutes = Math.floor((diff % 3600000) / 60000);
-    if (days > 0) return t('poll.remaining_days', { count: days });
-    if (hours > 0) return t('poll.remaining_hours', { count: hours });
-    if (minutes > 0) return t('poll.remaining_minutes', { count: minutes });
-    return t('poll.remaining_less_minute');
-  }
-
   private startEditing(): void {
     if (this.isEditing || !this.postTextContainer) return;
     this.isEditing = true;
@@ -1921,75 +1216,183 @@ export class PostCard {
     `;
 
     const currentAttachmentKey = post.gif_key || post.payload_key || post.swf_key;
-    const attachmentType = post.gif_key ? 'Image/Audio' : post.payload_key ? 'ZIP' : post.swf_key ? 'SWF' : null;
-    const attachmentFileName = currentAttachmentKey
-      ? currentAttachmentKey.split('/').pop() || currentAttachmentKey
-      : null;
+    const hasMultiAttachments = !!post.attachments && post.attachments.length > 0;
 
-    const attachmentLabel = document.createElement('span');
-    attachmentLabel.style.cssText = 'color: var(--text-muted); margin-right: 0.5rem;';
-    attachmentLabel.textContent = attachmentFileName
-      ? `📎 ${attachmentType}: ${attachmentFileName}`
-      : t('post.edit_attachment_none');
-    attachmentSection.appendChild(attachmentLabel);
+    if (hasMultiAttachments) {
+      // Multi-media attachments: list kept/new items with add/remove
+      this.editAttachmentList = [...post.attachments!];
+      this.editNewMediaFiles = [];
+      const maxAttachments = maxMediaAttachmentsForUser(this.props.currentUser);
 
-    const fileInput = document.createElement('input');
-    fileInput.type = 'file';
-    fileInput.style.display = 'none';
-    fileInput.accept = '.gif,.png,.jpg,.jpeg,.swf,.zip,.jsdos,.mp3,.wav,.ogg,.m4a,.webm,.mp4,.mov';
-    attachmentSection.appendChild(fileInput);
+      const listEl = document.createElement('div');
+      listEl.style.cssText = 'display:flex;flex-direction:column;gap:0.35rem;margin-bottom:0.5rem;';
 
-    const changeBtn = document.createElement('button');
-    changeBtn.textContent = t('post.edit_attachment_change');
-    changeBtn.style.cssText = `
-      padding: 4px 10px;
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      background: var(--bg-primary);
-      color: var(--text-primary);
-      cursor: pointer;
-      font-size: 0.8rem;
-      margin-right: 0.25rem;
-    `;
-    changeBtn.addEventListener('click', () => fileInput.click());
+      const countLabel = document.createElement('div');
+      countLabel.style.cssText = 'color: var(--text-muted);';
 
-    const removeBtn = document.createElement('button');
-    removeBtn.textContent = t('post.edit_attachment_remove');
-    removeBtn.style.cssText = `
-      padding: 4px 10px;
-      border: 1px solid var(--danger, #e74c3c);
-      border-radius: 4px;
-      background: transparent;
-      color: var(--danger, #e74c3c);
-      cursor: pointer;
-      font-size: 0.8rem;
-    `;
-    removeBtn.addEventListener('click', () => {
-      this.editRemoveAttachment = true;
-      this.editAttachmentFile = null;
-      this.editNewAttachmentKey = null;
-      attachmentLabel.textContent = t('post.edit_attachment_removed');
-      changeBtn.disabled = true;
-      removeBtn.disabled = true;
-      changeBtn.style.opacity = '0.5';
-      removeBtn.style.opacity = '0.5';
-    });
+      const renderList = () => {
+        listEl.innerHTML = '';
+        const total = this.editAttachmentList.length + this.editNewMediaFiles.length;
+        countLabel.textContent = t('post.edit_attachment_count', { count: total, max: maxAttachments });
 
-    if (currentAttachmentKey) {
-      attachmentSection.appendChild(changeBtn);
-      attachmentSection.appendChild(removeBtn);
+        if (total === 0) {
+          const empty = document.createElement('div');
+          empty.style.cssText = 'color: var(--text-muted);';
+          empty.textContent = t('post.edit_attachment_none');
+          listEl.appendChild(empty);
+        }
+
+        this.editAttachmentList.forEach((att, index) => {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:0.5rem;';
+          const name = document.createElement('span');
+          name.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+          name.textContent = `📎 ${att.r2_key.split('/').pop() || att.r2_key} (${att.kind})`;
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.textContent = '✕';
+          remove.style.cssText =
+            'background:transparent;border:none;color:var(--danger,#e74c3c);cursor:pointer;padding:2px 6px;';
+          remove.addEventListener('click', () => {
+            this.editAttachmentList.splice(index, 1);
+            renderList();
+          });
+          row.appendChild(name);
+          row.appendChild(remove);
+          listEl.appendChild(row);
+        });
+
+        this.editNewMediaFiles.forEach((file, index) => {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:0.5rem;';
+          const name = document.createElement('span');
+          name.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+          name.textContent = `📎 ${file.name} ★`;
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.textContent = '✕';
+          remove.style.cssText =
+            'background:transparent;border:none;color:var(--danger,#e74c3c);cursor:pointer;padding:2px 6px;';
+          remove.addEventListener('click', () => {
+            this.editNewMediaFiles.splice(index, 1);
+            renderList();
+          });
+          row.appendChild(name);
+          row.appendChild(remove);
+          listEl.appendChild(row);
+        });
+      };
+      renderList();
+
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.multiple = true;
+      fileInput.style.display = 'none';
+      fileInput.accept = '.gif,.png,.jpg,.jpeg,.mp3,.wav,.ogg,.m4a,.webm,.mp4,.mov,.pdf';
+
+      const addBtn = document.createElement('button');
+      addBtn.type = 'button';
+      addBtn.textContent = t('post.edit_attachment_change');
+      addBtn.style.cssText = `
+        padding: 4px 10px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        cursor: pointer;
+        font-size: 0.8rem;
+      `;
+      addBtn.addEventListener('click', () => fileInput.click());
+
+      fileInput.addEventListener('change', () => {
+        const files = Array.from(fileInput.files || []);
+        fileInput.value = '';
+        for (const file of files) {
+          const total = this.editAttachmentList.length + this.editNewMediaFiles.length;
+          if (total >= maxAttachments) {
+            showToast(t('composer.error_too_many_media', { max: maxAttachments }), true);
+            break;
+          }
+          this.editNewMediaFiles.push(file);
+        }
+        renderList();
+      });
+
+      attachmentSection.appendChild(countLabel);
+      attachmentSection.appendChild(listEl);
+      attachmentSection.appendChild(fileInput);
+      attachmentSection.appendChild(addBtn);
     } else {
-      attachmentSection.appendChild(changeBtn);
-    }
+      const attachmentType = post.gif_key ? 'Image/Audio' : post.payload_key ? 'ZIP' : post.swf_key ? 'SWF' : null;
+      const attachmentFileName = currentAttachmentKey
+        ? currentAttachmentKey.split('/').pop() || currentAttachmentKey
+        : null;
 
-    fileInput.addEventListener('change', () => {
-      const file = fileInput.files?.[0];
-      if (!file) return;
-      this.editAttachmentFile = file;
-      this.editRemoveAttachment = false;
-      attachmentLabel.textContent = `📎 ${file.name}`;
+      const attachmentLabel = document.createElement('span');
+      attachmentLabel.style.cssText = 'color: var(--text-muted); margin-right: 0.5rem;';
+      attachmentLabel.textContent = attachmentFileName
+        ? `📎 ${attachmentType}: ${attachmentFileName}`
+        : t('post.edit_attachment_none');
+      attachmentSection.appendChild(attachmentLabel);
+
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.style.display = 'none';
+      fileInput.accept = '.gif,.png,.jpg,.jpeg,.swf,.zip,.mp3,.wav,.ogg,.m4a,.webm,.mp4,.mov';
+      attachmentSection.appendChild(fileInput);
+
+      const changeBtn = document.createElement('button');
       changeBtn.textContent = t('post.edit_attachment_change');
-    });
+      changeBtn.style.cssText = `
+        padding: 4px 10px;
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        background: var(--bg-primary);
+        color: var(--text-primary);
+        cursor: pointer;
+        font-size: 0.8rem;
+        margin-right: 0.25rem;
+      `;
+      changeBtn.addEventListener('click', () => fileInput.click());
+
+      const removeBtn = document.createElement('button');
+      removeBtn.textContent = t('post.edit_attachment_remove');
+      removeBtn.style.cssText = `
+        padding: 4px 10px;
+        border: 1px solid var(--danger, #e74c3c);
+        border-radius: 4px;
+        background: transparent;
+        color: var(--danger, #e74c3c);
+        cursor: pointer;
+        font-size: 0.8rem;
+      `;
+      removeBtn.addEventListener('click', () => {
+        this.editRemoveAttachment = true;
+        this.editAttachmentFile = null;
+        this.editNewAttachmentKey = null;
+        attachmentLabel.textContent = t('post.edit_attachment_removed');
+        changeBtn.disabled = true;
+        removeBtn.disabled = true;
+        changeBtn.style.opacity = '0.5';
+        removeBtn.style.opacity = '0.5';
+      });
+
+      if (currentAttachmentKey) {
+        attachmentSection.appendChild(changeBtn);
+        attachmentSection.appendChild(removeBtn);
+      } else {
+        attachmentSection.appendChild(changeBtn);
+      }
+
+      fileInput.addEventListener('change', () => {
+        const file = fileInput.files?.[0];
+        if (!file) return;
+        this.editAttachmentFile = file;
+        this.editRemoveAttachment = false;
+        attachmentLabel.textContent = `📎 ${file.name}`;
+        changeBtn.textContent = t('post.edit_attachment_change');
+      });
+    }
 
     const buttonRow = document.createElement('div');
     buttonRow.style.cssText = `
@@ -2028,7 +1431,10 @@ export class PostCard {
     saveBtn.addEventListener('click', async () => {
       if (saving) return;
       const newText = textarea.value.trim();
-      const hasAttachmentChanges = this.editAttachmentFile || this.editRemoveAttachment;
+      const multiAttachmentsChanged =
+        hasMultiAttachments &&
+        (this.editNewMediaFiles.length > 0 || this.editAttachmentList.length !== (post.attachments?.length ?? 0));
+      const hasAttachmentChanges = !!(this.editAttachmentFile || this.editRemoveAttachment || multiAttachmentsChanged);
       if ((!newText || newText === currentText) && !hasAttachmentChanges) {
         this.cancelEdit();
         return;
@@ -2037,12 +1443,50 @@ export class PostCard {
       saveBtn.disabled = true;
       saveBtn.textContent = '...';
       try {
-        // Upload new attachment if selected
-        let newGifKey: string | undefined;
-        let newPayloadKey: string | undefined;
-        let newSwfKey: string | undefined;
+        const body: Record<string, unknown> = {};
+        if (newText && newText !== currentText) body.text = newText;
 
-        if (this.editAttachmentFile) {
+        if (hasMultiAttachments) {
+          // Multi-media flow: upload new files via prepare-media, then send the
+          // full replacement list ([] removes every attachment)
+          if (multiAttachmentsChanged) {
+            const uploaded: Array<{ key: string; kind: string }> = [];
+            // prepare-media allocates one slot per call, so it has to know
+            // every key this save will end up holding — attachments we keep
+            // plus the ones already prepared in this session.
+            const reservedKeys = this.editAttachmentList.map((a) => a.r2_key);
+            for (const file of this.editNewMediaFiles) {
+              const prepRes = await fetch(`/api/posts/${post.id}/prepare-media`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                  filename: file.name,
+                  contentType: file.type || attachmentMimeType(file.name),
+                  reservedKeys,
+                }),
+              });
+              if (!prepRes.ok) {
+                const err = await prepRes.json().catch(() => ({}));
+                throw new Error((err as { error?: string })?.error || 'Failed to prepare media upload');
+              }
+              const prep = (await prepRes.json()) as { uploadUrl: string; key: string; kind: string };
+
+              const uploadRes = await fetch(prep.uploadUrl, {
+                method: 'PUT',
+                body: file,
+                headers: { 'Content-Type': file.type || attachmentMimeType(file.name) || 'application/octet-stream' },
+                credentials: 'include',
+              });
+              if (!uploadRes.ok) throw new Error('Failed to upload media');
+
+              uploaded.push({ key: prep.key, kind: prep.kind });
+              reservedKeys.push(prep.key);
+            }
+            body.attachments = [...this.editAttachmentList.map((a) => ({ key: a.r2_key, kind: a.kind })), ...uploaded];
+          }
+        } else if (this.editAttachmentFile) {
+          // Legacy single-file flow (image/audio/zip/swf on the post itself)
           const file = this.editAttachmentFile;
           const prepareRes = await fetch(`/api/posts/${post.id}/prepare-attachment`, {
             method: 'POST',
@@ -2066,19 +1510,12 @@ export class PostCard {
           if (!uploadRes.ok) throw new Error('Failed to upload attachment');
 
           this.editNewAttachmentKey = prepareData.key;
-          if (prepareData.keyType === 'gif') newGifKey = prepareData.key;
-          else if (prepareData.keyType === 'payload') newPayloadKey = prepareData.key;
-          else if (prepareData.keyType === 'swf') newSwfKey = prepareData.key;
-        }
-
-        const body: Record<string, unknown> = {};
-        if (newText && newText !== currentText) body.text = newText;
-        if (this.editNewAttachmentKey) {
-          if (newGifKey) body.gif_key = newGifKey;
-          else if (newPayloadKey) body.payload_key = newPayloadKey;
-          else if (newSwfKey) body.swf_key = newSwfKey;
-        }
-        if (this.editRemoveAttachment) {
+          if (this.editNewAttachmentKey) {
+            if (prepareData.keyType === 'gif') body.gif_key = this.editNewAttachmentKey;
+            else if (prepareData.keyType === 'payload') body.payload_key = this.editNewAttachmentKey;
+            else if (prepareData.keyType === 'swf') body.swf_key = this.editNewAttachmentKey;
+          }
+        } else if (this.editRemoveAttachment) {
           if (post.gif_key) body.gif_key = null;
           if (post.payload_key) body.payload_key = null;
           if (post.swf_key) body.swf_key = null;
@@ -2095,7 +1532,14 @@ export class PostCard {
           throw new Error((err as { error?: string })?.error || 'Edit failed');
         }
         const data = (await res.json()) as {
-          post: { text: string; edited_at: string; gif_key?: string; payload_key?: string; swf_key?: string };
+          post: {
+            text: string;
+            edited_at: string;
+            gif_key?: string;
+            payload_key?: string;
+            swf_key?: string;
+            attachments?: PostAttachment[];
+          };
         };
         this.originalText = data.post.text;
         this.props.post.text = data.post.text;
@@ -2103,10 +1547,12 @@ export class PostCard {
         if (data.post.gif_key !== undefined) this.props.post.gif_key = data.post.gif_key;
         if (data.post.payload_key !== undefined) this.props.post.payload_key = data.post.payload_key;
         if (data.post.swf_key !== undefined) this.props.post.swf_key = data.post.swf_key;
+        if (data.post.attachments !== undefined) this.props.post.attachments = data.post.attachments;
         this.cancelEdit();
-        this.showToast(t('post.edit_saved'));
+        this.refreshStage();
+        showToast(t('post.edit_saved'));
       } catch (_err) {
-        this.showToast(t('post.edit_failed'), true);
+        showToast(t('post.edit_failed'), true);
       } finally {
         saving = false;
         saveBtn.disabled = false;
@@ -2114,6 +1560,8 @@ export class PostCard {
         this.editAttachmentFile = null;
         this.editNewAttachmentKey = null;
         this.editRemoveAttachment = false;
+        this.editAttachmentList = [];
+        this.editNewMediaFiles = [];
       }
     });
 
@@ -2135,12 +1583,50 @@ export class PostCard {
     textarea.setSelectionRange(textarea.value.length, textarea.value.length);
   }
 
+  /** Rebuild the media stage after an edit changes attachments/keys. */
+  private refreshStage(): void {
+    const post = this.props.post;
+    const hasMedia = !!(
+      post.gif_key ||
+      post.payload_key ||
+      post.swf_key ||
+      post.thumbnail_key ||
+      (post.attachments && post.attachments.length > 0)
+    );
+    const oldStage = this.postStageElement;
+
+    if (!hasMedia) {
+      oldStage?.remove();
+      this.postStageElement = undefined;
+      return;
+    }
+
+    const newStage = createPostStage({
+      post,
+      mode: this.mode,
+      sandboxOrigin: this.props.sandboxOrigin,
+      versionId: this.currentVersionId ?? undefined,
+      onModeChange: (newMode) => this.handleModeChange(newMode),
+    });
+
+    if (oldStage && oldStage.parentNode) {
+      oldStage.replaceWith(newStage);
+    } else {
+      const anchor = this.element.querySelector('.post-actions') || this.element.lastElementChild;
+      if (anchor) this.element.insertBefore(newStage, anchor);
+      else this.element.appendChild(newStage);
+    }
+    this.postStageElement = newStage;
+  }
+
   private cancelEdit(): void {
     if (!this.isEditing || !this.editContainer || !this.postTextContainer) return;
     this.isEditing = false;
     this.editAttachmentFile = null;
     this.editNewAttachmentKey = null;
     this.editRemoveAttachment = false;
+    this.editAttachmentList = [];
+    this.editNewMediaFiles = [];
 
     const textElement = document.createElement('div');
     textElement.className = 'post-text';

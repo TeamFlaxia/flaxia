@@ -1,0 +1,839 @@
+import assert from 'node:assert';
+import { beforeEach, describe, it } from 'node:test';
+import {
+  buildAttachmentKey,
+  kindFromUpload,
+  MAX_ATTACHMENTS,
+  MAX_ATTACHMENTS_PLUS,
+  parseAttachmentKey,
+  sequenceAttachments,
+  validateAttachmentInputs,
+} from '../functions/lib/attachments.ts';
+import { BASE_URL, resetDb, seedUserAndLogin } from './helpers/setup.ts';
+
+// 1x1 transparent PNG — enough for detectMimeType to see the magic bytes.
+const PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+// Minimal single-page PDF. The header is what detectMimeType keys on.
+const PDF = Buffer.from(
+  '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n' +
+    '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n',
+  'latin1',
+);
+
+// A file that is NOT a PDF but declares itself as one. The server must trust
+// the magic bytes, not the extension or the declared Content-Type.
+const FAKE_PDF = Buffer.from('<html><script>alert(1)</script></html>', 'utf8');
+
+async function prepareFiles(
+  cookie: string,
+  files: Array<{ filename: string; contentType?: string }>,
+): Promise<{ status: number; data: Record<string, unknown> }> {
+  const res = await fetch(`${BASE_URL}/api/posts/prepare`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ files }),
+  });
+  return { status: res.status, data: (await res.json()) as Record<string, unknown> };
+}
+
+async function prepareMulti(cookie: string, filenames: string[]) {
+  const res = await fetch(`${BASE_URL}/api/posts/prepare`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ files: filenames.map((filename) => ({ filename, contentType: 'image/png' })) }),
+  });
+  return { status: res.status, data: (await res.json()) as Record<string, unknown> };
+}
+
+/** PUT a raw body to an upload URL with an explicit declared Content-Type. */
+async function putBytes(url: string, cookie: string, body: Buffer, contentType: string): Promise<number> {
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType, Cookie: cookie },
+    body,
+  });
+  return res.status;
+}
+
+async function uploadTo(url: string, cookie: string): Promise<number> {
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'image/png', Cookie: cookie },
+    body: PNG,
+  });
+  return res.status;
+}
+
+async function seedSubscription(username: string, data: { planId?: string; status?: string } = {}): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/test/subscription`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, ...data }),
+  });
+  assert.ok(res.ok, `seed subscription failed: ${res.status}`);
+}
+
+function filenames(count: number): string[] {
+  return Array.from({ length: count }, (_, i) => `pic${i}.png`);
+}
+
+/** Prepare + upload a post with `count` image attachments and commit it. */
+async function createMediaPost(cookie: string, count = 2): Promise<{ postId: string; keys: string[] }> {
+  const { status, data } = await prepareMulti(
+    cookie,
+    Array.from({ length: count }, (_, i) => `pic${i}.png`),
+  );
+  assert.equal(status, 200);
+  const postId = data.postId as string;
+  const uploads = data.uploads as Array<{ key: string; uploadUrl: string }>;
+  assert.equal(uploads.length, count);
+  for (const upload of uploads) {
+    assert.equal(await uploadTo(upload.uploadUrl, cookie), 200);
+  }
+  const commitRes = await fetch(`${BASE_URL}/api/posts/commit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({
+      postId,
+      text: 'multi media post',
+      attachments: uploads.map((u) => ({ key: u.key, kind: 'image' })),
+    }),
+  });
+  assert.ok(commitRes.status === 200 || commitRes.status === 201, `commit failed: ${commitRes.status}`);
+  return { postId, keys: uploads.map((u) => u.key) };
+}
+
+describe('attachment helpers (unit)', () => {
+  it('builds and parses keys for every kind', () => {
+    assert.equal(buildAttachmentKey('p1', 2, 'a.png'), 'gif/p1/2.png');
+    assert.equal(buildAttachmentKey('p1', 2, 'PHOTO.JPEG'), 'gif/p1/2.jpg');
+    assert.equal(buildAttachmentKey('p1', 1, 'a.mp3'), 'audio/p1/1.mp3');
+    assert.equal(buildAttachmentKey('p1', 3, 'a.mp4'), 'video/p1/3.mp4');
+    assert.equal(buildAttachmentKey('p1', 1, 'a.pdf'), 'docs/p1/1.pdf');
+    assert.equal(buildAttachmentKey('p1', MAX_ATTACHMENTS_PLUS, 'a.png'), 'gif/p1/32.png');
+    assert.equal(buildAttachmentKey('p1', MAX_ATTACHMENTS_PLUS + 1, 'a.png'), null, 'position out of range');
+    assert.equal(buildAttachmentKey('p1', 1, 'a.zip'), null, 'games are not attachments');
+    for (const extension of ['swf', 'html', 'htm', 'js', 'wasm', 'rsp']) {
+      assert.equal(buildAttachmentKey('p1', 1, `game.${extension}`), null, `${extension} uses the sandbox flow`);
+    }
+
+    const parsed = parseAttachmentKey('video/p1/4.webm');
+    assert.deepEqual(parsed, { postId: 'p1', position: 4, kind: 'video', ext: '.webm' });
+    assert.equal(parseAttachmentKey('gif/p1/5.png')?.position, 5, 'plus-tier slots stay parseable');
+    assert.equal(parseAttachmentKey('gif/p1/33.png'), null, 'position must be 1-32');
+    assert.equal(parseAttachmentKey('payload/p1.png'), null, 'legacy keys are not attachments');
+  });
+
+  it('round-trips the document kind through the key', () => {
+    assert.deepEqual(parseAttachmentKey('docs/p1/2.pdf'), {
+      postId: 'p1',
+      position: 2,
+      kind: 'document',
+      ext: '.pdf',
+    });
+    // The upper-case extension is normalised by kindFromUpload, so a .PDF
+    // upload still lands in the docs bucket.
+    assert.equal(buildAttachmentKey('p1', 1, 'REPORT.PDF'), 'docs/p1/1.pdf');
+    assert.equal(kindFromUpload('REPORT.PDF'), 'document');
+  });
+
+  it('rejects a document key that claims another kind', () => {
+    assert.equal(
+      validateAttachmentInputs([{ key: 'docs/p1/1.pdf', kind: 'image' }]),
+      'Attachment kind mismatch for docs/p1/1.pdf',
+    );
+    assert.equal(validateAttachmentInputs([{ key: 'docs/p1/1.pdf', kind: 'document' }]), null);
+  });
+
+  it('derives the .webm key prefix from the content type', () => {
+    assert.equal(buildAttachmentKey('p1', 1, 'clip.webm', 'audio/webm'), 'audio/p1/1.webm');
+    assert.equal(buildAttachmentKey('p1', 1, 'clip.webm', 'video/webm'), 'video/p1/1.webm');
+    assert.equal(buildAttachmentKey('p1', 1, 'clip.webm'), 'video/p1/1.webm');
+  });
+
+  it('validates client-supplied lists', () => {
+    assert.equal(validateAttachmentInputs('nope'), 'attachments must be an array');
+    assert.equal(validateAttachmentInputs([]), 'attachments must not be empty');
+    assert.equal(
+      validateAttachmentInputs(Array.from({ length: MAX_ATTACHMENTS + 1 }, (_, i) => ({ key: `gif/p/${i + 1}.png` }))),
+      `Maximum ${MAX_ATTACHMENTS} attachments allowed`,
+    );
+    assert.equal(
+      validateAttachmentInputs(
+        Array.from({ length: MAX_ATTACHMENTS_PLUS }, (_, i) => ({ key: `gif/p/${i + 1}.png` })),
+        MAX_ATTACHMENTS_PLUS,
+      ),
+      null,
+      'the plan-aware ceiling admits plus-tier lists',
+    );
+    assert.equal(
+      validateAttachmentInputs(
+        Array.from({ length: MAX_ATTACHMENTS_PLUS + 1 }, (_, i) => ({ key: `gif/p/${i + 1}.png` })),
+        MAX_ATTACHMENTS_PLUS,
+      ),
+      `Maximum ${MAX_ATTACHMENTS_PLUS} attachments allowed`,
+    );
+    assert.equal(
+      validateAttachmentInputs([{ key: 'gif/p/1.png', kind: 'video' }]),
+      'Attachment kind mismatch for gif/p/1.png',
+    );
+    assert.equal(validateAttachmentInputs([{ key: 'evil.png' }]), 'Invalid attachment key: evil.png');
+    assert.equal(validateAttachmentInputs([{ key: 'gif/p/1.png' }, { key: 'gif/p/2.png' }]), null);
+    assert.equal(
+      validateAttachmentInputs([{ key: 'gif/p/1.png' }, { key: 'gif/p/1.mp3' }]),
+      'Duplicate attachment position',
+    );
+  });
+
+  it('re-sequences positions following list order', () => {
+    const records = sequenceAttachments([{ key: 'gif/p/3.png' }, { key: 'audio/p/1.mp3' }]);
+    assert.deepEqual(
+      records.map((r) => ({ position: r.position, kind: r.kind })),
+      [
+        { position: 1, kind: 'image' },
+        { position: 2, kind: 'audio' },
+      ],
+    );
+  });
+});
+
+describe('POST /api/posts/prepare — files[]', () => {
+  beforeEach(resetDb);
+
+  it('reserves upload slots for up to 4 media files → 200', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { status, data } = await prepareMulti(cookie, ['a.png', 'b.png', 'c.png', 'd.png']);
+    assert.equal(status, 200);
+    const uploads = data.uploads as Array<{ key: string; kind: string }>;
+    assert.equal(uploads.length, 4);
+    assert.deepEqual(
+      uploads.map((u) => u.kind),
+      ['image', 'image', 'image', 'image'],
+    );
+    const postId = data.postId as string;
+    assert.deepEqual(
+      uploads.map((u) => parseAttachmentKey(u.key)?.position),
+      [1, 2, 3, 4],
+    );
+    assert.ok(uploads.every((u) => u.key.startsWith(`gif/${postId}/`)));
+  });
+
+  it('rejects more than 4 files → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { status } = await prepareMulti(cookie, ['a.png', 'b.png', 'c.png', 'd.png', 'e.png']);
+    assert.equal(status, 400);
+  });
+
+  it('rejects game files in the files list → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const res = await fetch(`${BASE_URL}/api/posts/prepare`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ files: [{ filename: 'game.zip' }] }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it('rejects unauthenticated prepare → 401', async () => {
+    const res = await fetch(`${BASE_URL}/api/posts/prepare`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: [{ filename: 'a.png' }] }),
+    });
+    assert.equal(res.status, 401);
+  });
+});
+
+describe('POST /api/posts/commit — attachments', () => {
+  beforeEach(resetDb);
+
+  it('commits a post with attachments and enriches on read → 201', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId, keys } = await createMediaPost(cookie, 3);
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}`);
+    assert.equal(res.status, 200);
+    const post = (await res.json()) as { attachments?: Array<{ r2_key: string; kind: string; position: number }> };
+    assert.equal(post.attachments?.length, 3);
+    assert.deepEqual(
+      post.attachments!.map((a) => a.position),
+      [1, 2, 3],
+    );
+    assert.deepEqual(
+      post.attachments!.map((a) => a.r2_key),
+      keys,
+    );
+    assert.ok(post.attachments!.every((a) => a.kind === 'image'));
+  });
+
+  it('rejects attachments combined with legacy game keys → 422', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { data } = await prepareMulti(cookie, ['a.png']);
+    const uploads = data.uploads as Array<{ key: string }>;
+    const res = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        postId: data.postId,
+        text: 'mixing',
+        gifKey: 'gif/whatever/1.png',
+        attachments: [{ key: uploads[0].key, kind: 'image' }],
+      }),
+    });
+    assert.equal(res.status, 422);
+  });
+
+  it('rejects committing attachments onto another user’s pending post → 403', async () => {
+    const { cookie: alice } = await seedUserAndLogin('1');
+    const { cookie: bob } = await seedUserAndLogin('2');
+    const { data } = await prepareMulti(alice, ['a.png']);
+    const uploads = data.uploads as Array<{ key: string }>;
+
+    const res = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: bob },
+      body: JSON.stringify({
+        postId: data.postId,
+        text: 'hijack',
+        attachments: [{ key: uploads[0].key, kind: 'image' }],
+      }),
+    });
+    assert.equal(res.status, 403);
+  });
+
+  it('rejects a kind that does not match the key prefix → 422', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { data } = await prepareMulti(cookie, ['a.png']);
+    const uploads = data.uploads as Array<{ key: string }>;
+    const res = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        postId: data.postId,
+        text: 'wrong kind',
+        attachments: [{ key: uploads[0].key, kind: 'audio' }],
+      }),
+    });
+    assert.equal(res.status, 422);
+  });
+});
+
+describe('PUT /api/posts/:id — attachment edits', () => {
+  beforeEach(resetDb);
+
+  async function legacyImagePost(cookie: string): Promise<{ postId: string; gifKey: string }> {
+    const prep = await fetch(`${BASE_URL}/api/posts/prepare`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ filename: 'legacy.png' }),
+    });
+    const prepData = (await prep.json()) as { postId: string; gifUploadUrl: string; gifKey: string };
+    assert.equal(await uploadTo(prepData.gifUploadUrl, cookie), 200);
+    const commit = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ postId: prepData.postId, text: 'legacy post', gifKey: prepData.gifKey }),
+    });
+    assert.ok(commit.status === 200 || commit.status === 201, `commit failed: ${commit.status}`);
+    return { postId: prepData.postId, gifKey: prepData.gifKey };
+  }
+
+  it('replaces the full attachment list, then clears it', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId, keys } = await createMediaPost(cookie, 3);
+
+    // Shrink to a single attachment
+    let res = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ attachments: [{ key: keys[0], kind: 'image' }] }),
+    });
+    assert.equal(res.status, 200);
+    let updated = (await res.json()) as { post: { attachments?: unknown[] } };
+    assert.equal(updated.post.attachments?.length, 1);
+
+    // Clear every attachment
+    res = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ attachments: [] }),
+    });
+    assert.equal(res.status, 200);
+    updated = (await res.json()) as { post: { attachments?: unknown[] } };
+    assert.equal(updated.post.attachments?.length, 0);
+
+    const get = await fetch(`${BASE_URL}/api/posts/${postId}`);
+    const post = (await get.json()) as { attachments?: unknown[] };
+    assert.equal(post.attachments?.length ?? 0, 0);
+  });
+
+  it('rejects a non-array attachments value instead of clearing → 422', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId } = await createMediaPost(cookie, 2);
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ attachments: {} }),
+    });
+    assert.equal(res.status, 422);
+
+    const get = await fetch(`${BASE_URL}/api/posts/${postId}`);
+    const post = (await get.json()) as { attachments?: unknown[] };
+    assert.equal(post.attachments?.length, 2, 'a malformed list must not wipe attachments');
+  });
+
+  it('rejects attachments on a post that still has legacy keys → 422', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId } = await legacyImagePost(cookie);
+    const prepRes = await fetch(`${BASE_URL}/api/posts/${postId}/prepare-media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ filename: 'extra.png', contentType: 'image/png' }),
+    });
+    assert.equal(prepRes.status, 200);
+    const prep = (await prepRes.json()) as { key: string };
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ attachments: [{ key: prep.key, kind: 'image' }] }),
+    });
+    assert.equal(res.status, 422);
+  });
+});
+
+describe('POST /api/posts/:id/prepare-media', () => {
+  beforeEach(resetDb);
+
+  it('reserves the next slot on an owned published post → 200', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId, keys } = await createMediaPost(cookie, 1);
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}/prepare-media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ filename: 'second.png', contentType: 'image/png' }),
+    });
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as { key: string; kind: string; position: number };
+    assert.equal(data.kind, 'image');
+    assert.equal(data.position, 2);
+    assert.notEqual(data.key, keys[0]);
+    assert.equal(parseAttachmentKey(data.key)?.postId, postId);
+  });
+
+  it('rejects a foreign user’s post → 403', async () => {
+    const { cookie: alice } = await seedUserAndLogin('1');
+    const { cookie: bob } = await seedUserAndLogin('2');
+    const { postId } = await createMediaPost(alice, 1);
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}/prepare-media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: bob },
+      body: JSON.stringify({ filename: 'x.png', contentType: 'image/png' }),
+    });
+    assert.equal(res.status, 403);
+  });
+
+  it('rejects game files → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId } = await createMediaPost(cookie, 1);
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}/prepare-media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ filename: 'game.zip', contentType: 'application/zip' }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it('hands out distinct slots for several files prepared in one session → 200', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId, keys } = await createMediaPost(cookie, 1);
+
+    const reserved = [keys[0]];
+    const prepared: Array<{ key: string; position: number; uploadUrl: string }> = [];
+    for (const name of ['b.png', 'c.png']) {
+      const res = await fetch(`${BASE_URL}/api/posts/${postId}/prepare-media`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ filename: name, contentType: 'image/png', reservedKeys: reserved }),
+      });
+      assert.equal(res.status, 200);
+      const data = (await res.json()) as { key: string; position: number; uploadUrl: string };
+      prepared.push(data);
+      reserved.push(data.key);
+    }
+    assert.deepEqual(
+      prepared.map((p) => p.position),
+      [2, 3],
+      'each prepared file must get its own slot',
+    );
+
+    for (const p of prepared) {
+      assert.equal(await uploadTo(p.uploadUrl, cookie), 200);
+    }
+
+    // Without per-call reservations every slot came back as 2 and this PUT
+    // failed with "Duplicate attachment position".
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        attachments: [{ key: keys[0], kind: 'image' }, ...prepared.map((p) => ({ key: p.key, kind: 'image' }))],
+      }),
+    });
+    const text = await res.text();
+    assert.equal(res.status, 200, `edit failed: ${text}`);
+    const updated = JSON.parse(text) as { post: { attachments?: unknown[] } };
+    assert.equal(updated.post.attachments?.length, 3);
+  });
+
+  it('allocates from the slot embedded in the key after a removal → 200', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId, keys } = await createMediaPost(cookie, 2);
+
+    // Drop the first attachment: the survivor keeps key .../2.png but is
+    // re-sequenced to position 1.
+    const put = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ attachments: [{ key: keys[1], kind: 'image' }] }),
+    });
+    assert.equal(put.status, 200);
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}/prepare-media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ filename: 'third.png', contentType: 'image/png' }),
+    });
+    assert.equal(res.status, 200, 'the freed slot must be reusable');
+    const data = (await res.json()) as { key: string; position: number };
+    assert.equal(data.position, 1, 'slot 1 was freed by the removal');
+    assert.notEqual(data.key, keys[1]);
+    assert.equal(parseAttachmentKey(data.key)?.postId, postId);
+  });
+});
+
+describe('PUT /api/upload/:key — attachment ownership', () => {
+  beforeEach(resetDb);
+
+  it('rejects uploading to another user’s attachment key → 403', async () => {
+    const { cookie: alice } = await seedUserAndLogin('1');
+    const { cookie: bob } = await seedUserAndLogin('2');
+    const { data } = await prepareMulti(alice, ['a.png']);
+    const uploads = data.uploads as Array<{ uploadUrl: string }>;
+
+    assert.equal(await uploadTo(uploads[0].uploadUrl, bob), 403);
+    assert.equal(await uploadTo(uploads[0].uploadUrl, alice), 200);
+  });
+});
+
+describe('PDF attachments (kind = document)', () => {
+  beforeEach(resetDb);
+
+  it('uploads and serves text, CSV, and JSON files with browser-declared MIME types', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const files = [
+      { filename: 'notes.txt', contentType: 'text/plain', bytes: Buffer.from('plain text attachment\n') },
+      { filename: 'table.csv', contentType: 'text/csv', bytes: Buffer.from('name,count\nalpha,2\n') },
+      { filename: 'data.json', contentType: 'application/json', bytes: Buffer.from('{"ok":true}\n') },
+    ];
+
+    for (const file of files) {
+      const { status, data } = await prepareFiles(cookie, [{ filename: file.filename, contentType: file.contentType }]);
+      assert.equal(status, 200, `prepare failed for ${file.filename}`);
+      const uploads = data.uploads as Array<{ key: string; uploadUrl: string; kind: string }>;
+      assert.equal(uploads[0].kind, 'document');
+      assert.equal(await putBytes(uploads[0].uploadUrl, cookie, file.bytes, file.contentType), 200);
+
+      const download = await fetch(`${BASE_URL}/api/documents/${uploads[0].key}`);
+      assert.equal(download.status, 200, `download failed for ${file.filename}`);
+      assert.equal(download.headers.get('content-type'), 'application/octet-stream');
+      assert.match(download.headers.get('content-disposition') || '', /attachment/);
+      assert.deepEqual(Buffer.from(await download.arrayBuffer()), file.bytes);
+    }
+  });
+
+  it('prepares, uploads, commits and serves a PDF → 201', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+
+    const { status, data } = await prepareFiles(cookie, [{ filename: 'notes.pdf', contentType: 'application/pdf' }]);
+    assert.equal(status, 200);
+    const postId = data.postId as string;
+    const uploads = data.uploads as Array<{ key: string; uploadUrl: string; kind: string }>;
+    assert.equal(uploads.length, 1);
+    assert.equal(uploads[0].kind, 'document');
+    assert.equal(uploads[0].key, `docs/${postId}/1.pdf`);
+    assert.equal(uploads[0].uploadUrl, `${BASE_URL}/api/upload/docs/${postId}/1.pdf`);
+
+    assert.equal(await putBytes(uploads[0].uploadUrl, cookie, PDF, 'application/pdf'), 200);
+
+    const commitRes = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        postId,
+        text: 'a document',
+        attachments: [{ key: uploads[0].key, kind: 'document' }],
+      }),
+    });
+    const commitText = await commitRes.text();
+    assert.ok(commitRes.status === 200 || commitRes.status === 201, `commit failed: ${commitText}`);
+    const created = JSON.parse(commitText) as { post: { attachments: Array<{ r2_key: string; kind: string }> } };
+    assert.deepEqual(created.post.attachments, [{ r2_key: `docs/${postId}/1.pdf`, kind: 'document', position: 1 }]);
+
+    // The proxy serves it with a PDF type so the browser's built-in viewer
+    // takes over in the new tab; framing stays denied.
+    const docRes = await fetch(`${BASE_URL}/api/documents/docs/${postId}/1.pdf`);
+    assert.equal(docRes.status, 200);
+    assert.equal(docRes.headers.get('content-type'), 'application/pdf');
+    assert.equal(docRes.headers.get('x-frame-options'), 'DENY');
+    assert.equal(docRes.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(Buffer.from(await docRes.arrayBuffer()).toString('latin1'), PDF.toString('latin1'));
+  });
+
+  it('honours Range requests so the viewer can page through a large PDF', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { data } = await prepareFiles(cookie, [{ filename: 'a.pdf', contentType: 'application/pdf' }]);
+    const uploads = data.uploads as Array<{ key: string; uploadUrl: string }>;
+    assert.equal(await putBytes(uploads[0].uploadUrl, cookie, PDF, 'application/pdf'), 200);
+
+    const res = await fetch(`${BASE_URL}/api/documents/${uploads[0].key}`, {
+      headers: { Range: 'bytes=0-4' },
+    });
+    assert.equal(res.status, 206);
+    assert.equal(res.headers.get('content-range'), `bytes 0-4/${PDF.length}`);
+    assert.equal(await res.text(), '%PDF-');
+  });
+
+  it('rejects an HTML payload renamed to .pdf → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { data } = await prepareFiles(cookie, [{ filename: 'evil.pdf', contentType: 'application/pdf' }]);
+    const uploads = data.uploads as Array<{ uploadUrl: string }>;
+
+    // Magic bytes win over both the extension and the declared Content-Type.
+    assert.equal(await putBytes(uploads[0].uploadUrl, cookie, FAKE_PDF, 'application/pdf'), 400);
+  });
+
+  it('rejects a real PDF uploaded into an image slot → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { data } = await prepareFiles(cookie, [{ filename: 'a.png', contentType: 'image/png' }]);
+    const uploads = data.uploads as Array<{ uploadUrl: string }>;
+
+    assert.equal(await putBytes(uploads[0].uploadUrl, cookie, PDF, 'image/png'), 400);
+  });
+
+  it('rejects a PDF uploaded to a legacy (non-attachment) key → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId } = await createMediaPost(cookie, 1);
+
+    // payload/ keys are the legacy single-file column path: nothing parses
+    // them as an attachment, so only the upload-time MIME gate stops a PDF
+    // landing in a slot no renderer serves as a document.
+    const res = await fetch(`${BASE_URL}/api/upload/payload/${postId}.pdf`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/pdf', Cookie: cookie },
+      body: PDF,
+    });
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error?: string };
+    assert.match(body.error ?? '', /document attachments/);
+  });
+
+  it('does not serve a non-document key through /api/documents → 404', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    // A real image attachment, requested on the document route: the response
+    // must not be re-labelled as application/pdf.
+    const { postId, keys } = await createMediaPost(cookie, 1);
+    void postId;
+
+    const res = await fetch(`${BASE_URL}/api/documents/${keys[0]}`);
+    assert.equal(res.status, 404);
+    assert.notEqual(res.headers.get('content-type'), 'application/pdf');
+  });
+
+  it('rejects a PDF for a user who does not own the post → 403', async () => {
+    const { cookie: alice } = await seedUserAndLogin('1');
+    const { cookie: bob } = await seedUserAndLogin('2');
+    const { data } = await prepareFiles(alice, [{ filename: 'a.pdf', contentType: 'application/pdf' }]);
+    const uploads = data.uploads as Array<{ uploadUrl: string }>;
+
+    assert.equal(await putBytes(uploads[0].uploadUrl, bob, PDF, 'application/pdf'), 403);
+  });
+
+  it('adds a PDF to a published post via prepare-media → 200', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId } = await createMediaPost(cookie, 1);
+
+    const prepRes = await fetch(`${BASE_URL}/api/posts/${postId}/prepare-media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ filename: 'appendix.pdf', contentType: 'application/pdf' }),
+    });
+    assert.equal(prepRes.status, 200);
+    const prep = (await prepRes.json()) as { key: string; kind: string; uploadUrl: string };
+    assert.equal(prep.kind, 'document');
+    assert.equal(prep.key, `docs/${postId}/2.pdf`);
+
+    assert.equal(await putBytes(prep.uploadUrl, cookie, PDF, 'application/pdf'), 200);
+
+    const put = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        attachments: [
+          { key: `gif/${postId}/1.png`, kind: 'image' },
+          { key: prep.key, kind: 'document' },
+        ],
+      }),
+    });
+    assert.equal(put.status, 200);
+    const updated = (await put.json()) as { post: { attachments: Array<{ kind: string }> } };
+    assert.deepEqual(
+      updated.post.attachments.map((a) => a.kind),
+      ['image', 'document'],
+    );
+  });
+});
+
+describe('quoted posts carry attachments', () => {
+  beforeEach(resetDb);
+
+  it('enriches quoted_post with the quoted post’s attachments', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const { postId, keys } = await createMediaPost(cookie, 2);
+
+    const res = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ text: 'quoting media', quotedPostId: postId }),
+    });
+    const text = await res.text();
+    assert.ok(res.status === 200 || res.status === 201, `commit failed: ${text}`);
+    const created = JSON.parse(text) as {
+      post: { id: string; quoted_post?: { attachments?: Array<{ r2_key: string }> } | null };
+    };
+    const post = created.post;
+
+    assert.ok(post.quoted_post, 'quoted_post must be present');
+    assert.deepEqual(
+      post.quoted_post!.attachments?.map((a) => a.r2_key),
+      keys,
+    );
+
+    const get = await fetch(`${BASE_URL}/api/posts/${post.id}`);
+    const fetched = (await get.json()) as { quoted_post?: { attachments?: unknown[] } | null };
+    assert.equal(fetched.quoted_post?.attachments?.length, 2);
+  });
+});
+
+describe('attachment limit — Flaxia+ entitlement', () => {
+  beforeEach(resetDb);
+
+  it('free plan accepts 4 files and rejects 5 → 400', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    assert.equal((await prepareMulti(cookie, filenames(MAX_ATTACHMENTS))).status, 200);
+    assert.equal((await prepareMulti(cookie, filenames(MAX_ATTACHMENTS + 1))).status, 400);
+  });
+
+  it('active Flaxia+ accepts 32 files and rejects 33 → 400', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedSubscription(username, { planId: 'flaxia_plus', status: 'active' });
+
+    const ok = await prepareMulti(cookie, filenames(MAX_ATTACHMENTS_PLUS));
+    assert.equal(ok.status, 200);
+    assert.equal((ok.data.uploads as unknown[]).length, MAX_ATTACHMENTS_PLUS);
+    assert.equal((await prepareMulti(cookie, filenames(MAX_ATTACHMENTS_PLUS + 1))).status, 400);
+  });
+
+  it('past_due Flaxia+ keeps the free limit', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedSubscription(username, { planId: 'flaxia_plus', status: 'past_due' });
+    assert.equal((await prepareMulti(cookie, filenames(MAX_ATTACHMENTS))).status, 200);
+    assert.equal((await prepareMulti(cookie, filenames(MAX_ATTACHMENTS + 1))).status, 400);
+  });
+
+  it('Flaxia+ can commit 32 attachments', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedSubscription(username, { planId: 'flaxia_plus', status: 'active' });
+
+    const { postId, keys } = await createMediaPost(cookie, MAX_ATTACHMENTS_PLUS);
+    assert.equal(keys.length, MAX_ATTACHMENTS_PLUS);
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}`);
+    const post = (await res.json()) as { attachments?: unknown[] };
+    assert.equal(post.attachments?.length, MAX_ATTACHMENTS_PLUS);
+  });
+
+  it('Flaxia+ edit accepts a 32-attachment list → 200', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedSubscription(username, { planId: 'flaxia_plus', status: 'active' });
+    const { postId, keys } = await createMediaPost(cookie, MAX_ATTACHMENTS_PLUS);
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ attachments: keys.map((key) => ({ key, kind: 'image' })) }),
+    });
+    assert.equal(res.status, 200);
+    const updated = (await res.json()) as { post: { attachments?: unknown[] } };
+    assert.equal(updated.post.attachments?.length, MAX_ATTACHMENTS_PLUS);
+  });
+
+  it('Flaxia+ can reserve a 5th slot via prepare-media', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedSubscription(username, { planId: 'flaxia_plus', status: 'active' });
+    const { postId, keys } = await createMediaPost(cookie, MAX_ATTACHMENTS);
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}/prepare-media`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ filename: 'fifth.png', contentType: 'image/png', reservedKeys: keys }),
+    });
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as { position: number };
+    assert.equal(data.position, 5);
+  });
+
+  it('a lapsed Flaxia+ can keep or shrink an over-limit list, but not grow', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedSubscription(username, { planId: 'flaxia_plus', status: 'active' });
+    const { postId, keys } = await createMediaPost(cookie, 8);
+
+    // Downgrade (past_due is visible but inactive): now over the free cap.
+    await seedSubscription(username, { planId: 'flaxia_plus', status: 'past_due' });
+
+    // Keeping all 8 must still succeed, or text edits would lock the post.
+    let res = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({
+        text: 'edited after lapse',
+        attachments: keys.map((key) => ({ key, kind: 'image' })),
+      }),
+    });
+    assert.equal(res.status, 200);
+
+    // Shrinking is allowed…
+    res = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ attachments: keys.slice(0, 2).map((key) => ({ key, kind: 'image' })) }),
+    });
+    assert.equal(res.status, 200);
+
+    // …but growing back past the free cap is not.
+    res = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ attachments: keys.map((key) => ({ key, kind: 'image' })) }),
+    });
+    assert.equal(res.status, 422);
+  });
+});

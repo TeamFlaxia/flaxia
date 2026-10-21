@@ -1,0 +1,11 @@
+-- Enforce case-insensitive username uniqueness at the database level (#144).
+--
+-- Registration pre-checks with COLLATE NOCASE, but the table constraint is a
+-- binary UNIQUE, so 'Alice' and 'alice' could both be inserted (race or
+-- direct write) and then collide on every NOCASE lookup. The expression
+-- index below makes the database reject the second variant outright.
+--
+-- NOTE: if an existing database already holds case-colliding usernames this
+-- statement fails loudly at migrate time; resolve the older duplicate row
+-- before re-running (do not silently rename accounts).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_nocase ON users(lower(username));

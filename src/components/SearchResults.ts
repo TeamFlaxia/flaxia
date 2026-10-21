@@ -1,5 +1,7 @@
+import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post } from '../types/post.js';
 
 export interface SearchResultsProps {
@@ -93,7 +95,13 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
     usersSection.appendChild(usersTitle);
 
     props.users.forEach((user) => {
-      const u = user as { display_name?: string; username: string; [key: string]: unknown };
+      const u = user as {
+        display_name?: string;
+        username: string;
+        avatar_key?: string | null;
+        badge_type?: string | null;
+        [key: string]: unknown;
+      };
       const userItem = document.createElement('div');
       userItem.className = 'search-result-user';
       userItem.style.cssText = `
@@ -136,6 +144,7 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
         font-size: 0.875rem;
       `;
       avatar.textContent = u.display_name?.[0]?.toUpperCase() || u.username[0].toUpperCase();
+      attachPlusBadge(avatar, u.badge_type);
 
       const userInfo = document.createElement('div');
 
@@ -188,7 +197,7 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
       // Navigate to thread on click
       postItem.onclick = () => {
         // Use SPA navigation instead of full page reload
-        window.history.pushState({ postId: post.id }, '', `/thread/${post.id}`);
+        pushSpaHistory(`/thread/${post.id}`, { postId: post.id });
         // Dispatch custom event to trigger SPA navigation
         window.dispatchEvent(
           new CustomEvent('spaNavigate', {
@@ -231,7 +240,7 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
         const badge = document.createElement('span');
         badge.style.cssText =
           'margin-left: 0.5rem; padding: 0.1rem 0.4rem; background: var(--accent); color: white; border-radius: 4px; font-size: 0.7rem; vertical-align: middle;';
-        badge.textContent = post.payload_key?.startsWith('dos/') ? t('search.media_dos') : t('search.media_game');
+        badge.textContent = t('search.media_game');
         postHeader.appendChild(badge);
       }
 

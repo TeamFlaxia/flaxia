@@ -107,8 +107,23 @@ self.addEventListener('push', (event) => {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
+function safeNavigateUrl(raw) {
+  // #105: notification payloads must never drive openWindow/location to a
+  // javascript: URL or an off-origin page. Same-origin https or app-relative
+  // paths only; everything else falls back to the home route.
+  try {
+    if (typeof raw !== 'string' || raw.length === 0 || raw.length > 2048) return '/';
+    const parsed = new URL(raw, self.location.origin);
+    if (parsed.origin !== self.location.origin) return '/';
+    if (!['http:', 'https:'].includes(parsed.protocol)) return '/';
+    return parsed.pathname + parsed.search + parsed.hash || '/';
+  } catch {
+    return '/';
+  }
+}
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const url = event.notification.data?.url || '/';
+  const url = safeNavigateUrl(event.notification.data?.url);
   event.waitUntil(clients.openWindow(url));
 });

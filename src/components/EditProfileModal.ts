@@ -1,11 +1,20 @@
 import { updateMeCache } from '../lib/auth-cache';
+import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { showToast } from '../lib/toast.js';
 
 interface EditProfileModalProps {
-  currentUser: { username: string; display_name?: string; bio?: string; avatar_key?: string };
+  currentUser: {
+    username: string;
+    display_name?: string;
+    bio?: string;
+    avatar_key?: string;
+    badge_type?: string | null;
+    header_key?: string | null;
+  };
   onSave: () => void;
 }
 
@@ -71,10 +80,109 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
 
   const bannerArea = document.createElement('div');
   bannerArea.style.cssText = `
-    height: 120px;
+    position: relative;
+    height: 140px;
     background: var(--bg-secondary);
+    background-size: cover;
+    background-position: center;
     border-bottom: 1px solid var(--border-color);
+    cursor: ${currentUser.header_key ? 'default' : 'pointer'};
+    overflow: hidden;
   `;
+
+  if (currentUser.header_key) {
+    bannerArea.style.backgroundImage = `url(${nativeApiHref(`/api/images/${currentUser.header_key}`)})`;
+  }
+
+  const bannerOverlay = document.createElement('div');
+  bannerOverlay.style.cssText = `
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    background: rgba(0, 0, 0, 0.35);
+    color: #fff;
+    font-size: 0.9rem;
+    opacity: 0;
+    transition: opacity 0.2s;
+    cursor: pointer;
+  `;
+  bannerOverlay.innerHTML = `<span>${currentUser.header_key ? t('edit_profile.header_change') : t('edit_profile.header_add')}</span>`;
+  bannerArea.appendChild(bannerOverlay);
+
+  const bannerRemoveBtn = document.createElement('button');
+  bannerRemoveBtn.textContent = '✕';
+  bannerRemoveBtn.style.cssText = `
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    border: none;
+    border-radius: 50%;
+    width: 1.75rem;
+    height: 1.75rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+    display: ${currentUser.header_key ? 'block' : 'none'};
+    line-height: 1;
+  `;
+  bannerArea.appendChild(bannerRemoveBtn);
+
+  bannerArea.addEventListener('mouseenter', () => {
+    bannerOverlay.style.opacity = '1';
+  });
+  bannerArea.addEventListener('mouseleave', () => {
+    bannerOverlay.style.opacity = '0';
+  });
+
+  bannerArea.addEventListener('click', (e) => {
+    if (e.target === bannerRemoveBtn) return;
+    headerFileInput.click();
+  });
+  bannerRemoveBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    selectedHeaderFile = null;
+    removeHeader = true;
+    bannerArea.style.backgroundImage = '';
+    bannerRemoveBtn.style.display = 'none';
+    bannerOverlay.innerHTML = `<span>${t('edit_profile.header_add')}</span>`;
+    bannerArea.style.cursor = 'pointer';
+    hasHeaderChange = true;
+    validateForm();
+  });
+
+  const headerFileInput = document.createElement('input');
+  headerFileInput.type = 'file';
+  headerFileInput.accept = 'image/jpeg,image/png,image/gif,image/webp,.jpg,.jpeg,.png,.gif,.webp';
+  headerFileInput.style.cssText = 'position: absolute; left: -9999px; opacity: 0; width: 0; height: 0;';
+
+  headerFileInput.addEventListener('change', (e) => {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+
+    if (!file.type.match(/^image\/(jpeg|jpg|png|gif|webp)$/)) {
+      showToast(t('edit_profile.header_type_error'), true);
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      showToast(t('edit_profile.header_size_error'), true);
+      return;
+    }
+
+    selectedHeaderFile = file;
+    removeHeader = false;
+    const previewUrl = URL.createObjectURL(file);
+    bannerArea.style.backgroundImage = `url(${previewUrl})`;
+    bannerRemoveBtn.style.display = 'block';
+    bannerOverlay.innerHTML = `<span>${t('edit_profile.header_change')}</span>`;
+    bannerArea.style.cursor = 'default';
+    hasHeaderChange = true;
+    validateForm();
+  });
 
   const avatarSection = document.createElement('div');
   avatarSection.style.cssText = `
@@ -104,18 +212,19 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
     font-size: 2rem;
     color: white;
     cursor: pointer;
-    overflow: hidden;
+    overflow: visible;
     border: 4px solid var(--bg-primary);
   `;
   // Display existing avatar if available
   if (currentUser.avatar_key) {
-    avatar.style.backgroundImage = `url(/api/images/${currentUser.avatar_key})`;
+    avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${currentUser.avatar_key}`)})`;
     avatar.style.backgroundSize = 'cover';
     avatar.style.backgroundPosition = 'center';
     avatar.textContent = '';
   } else {
     avatar.textContent = currentUser.username.charAt(0).toUpperCase();
   }
+  attachPlusBadge(avatar, currentUser.badge_type);
 
   const avatarOverlay = document.createElement('div');
   avatarOverlay.className = 'avatar-overlay';
@@ -267,6 +376,9 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   let avatarPreviewUrl: string | null = null;
   let hasChanges = false;
   let hasAvatarChange = false;
+  let selectedHeaderFile: File | null = null;
+  let removeHeader = false;
+  let hasHeaderChange = false;
 
   const updateCharCounter = () => {
     const length = bioTextarea.value.length;
@@ -307,7 +419,10 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
     const originalDisplayName = currentUser.display_name || '';
     const originalBio = currentUser.bio || '';
     const hasFieldChanges =
-      displayNameInput.value.trim() !== originalDisplayName || bioTextarea.value !== originalBio || hasAvatarChange;
+      displayNameInput.value.trim() !== originalDisplayName ||
+      bioTextarea.value !== originalBio ||
+      hasAvatarChange ||
+      hasHeaderChange;
 
     hasChanges = hasFieldChanges;
 
@@ -350,7 +465,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
       return;
     }
 
-    if (file.size > 1024 * 1024) {
+    if (file.size > 5 * 1024 * 1024) {
       showToast(t('edit_profile.avatar_size_error'), true);
       return;
     }
@@ -395,6 +510,12 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
 
       if (selectedFile) {
         formData.append('avatar', selectedFile);
+      }
+
+      if (selectedHeaderFile) {
+        formData.append('header', selectedHeaderFile);
+      } else if (removeHeader) {
+        formData.append('remove_header', '1');
       }
 
       const response = await fetch('/api/users/me', {

@@ -1,10 +1,11 @@
 import { t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { executeZipAuto } from '../lib/zip-manager.js';
 import { PostCardMode, PostStageProps } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
-import { executeDos } from './DosPlayer.js';
 import { executeFlash } from './FlashPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
+import { createMediaCarousel } from './MediaCarousel.js';
 import { createVideoPlayer } from './VideoPlayer.js';
 
 // Create SWF execution button (similar to ZIP but for Flash)
@@ -159,7 +160,7 @@ function createThumbnailWithOverlay(props: {
   const container = document.createElement('div');
   container.className = 'thumbnail-overlay-container';
 
-  // The parent .post-stage--flash/--zip/--dos already establishes the aspect ratio
+  // The parent .post-stage--flash/--zip already establishes the aspect ratio
   // via padding-bottom, so we use absolute positioning to fill it instead of
   // adding another padding-bottom (which would double the height).
   container.style.cssText = `
@@ -188,7 +189,11 @@ function createThumbnailWithOverlay(props: {
 
   // Thumbnail image
   const image = document.createElement('img');
-  image.src = `/api/thumbnail/${props.postId}`;
+  image.src = nativeApiHref(`/api/thumbnail/${props.postId}`);
+  // Timeline mounts dozens of stages: decode lazily so off-screen
+  // thumbnails don't contend with first paint.
+  image.loading = 'lazy';
+  image.decoding = 'async';
   image.style.cssText = `
     width: 100%;
     height: 100%;
@@ -196,9 +201,7 @@ function createThumbnailWithOverlay(props: {
     display: block;
     opacity: 0;
     transition: opacity 0.3s ease;
-    image-rendering: -webkit-optimize-contrast;
     image-rendering: auto;
-    image-rendering: smooth;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     backface-visibility: hidden;
@@ -279,13 +282,33 @@ function createThumbnailWithOverlay(props: {
   return container;
 }
 
+// A post is a runnable ZIP/HTML5 game when its payload key lives under one of
+// the known game prefixes (payload/, zip/, html/, versions/). The latter is set
+// once a game has been published as a new version via the rolling-update flow.
+export function isZipGame(payloadKey?: string | null): boolean {
+  if (!payloadKey) return false;
+  return (
+    payloadKey.endsWith('.zip') ||
+    payloadKey.endsWith('.html') ||
+    payloadKey.startsWith('zip/') ||
+    payloadKey.startsWith('html/') ||
+    payloadKey.startsWith('payload/') ||
+    payloadKey.startsWith('versions/')
+  );
+}
+
 export function createPostStage(props: PostStageProps): HTMLElement {
   const container = document.createElement('div');
   container.className = 'post-stage';
 
   // Click handler to toggle between preview and execution modes
-  // Only for post types that have execution modes (ZIP/SWF/DOS)
+  // Only for post types that have execution modes (ZIP/SWF)
   container.addEventListener('click', (e) => {
+    // Media-only posts have no execution mode — never toggle away from them
+    if (props.post.attachments?.length) {
+      return;
+    }
+
     // Don't toggle mode if clicking on execution button (ZIP or SWF)
     if ((e.target as HTMLElement).closest('.zip-execution-button')) {
       return;
@@ -294,6 +317,12 @@ export function createPostStage(props: PostStageProps): HTMLElement {
     // Don't toggle mode for media players (image, audio, video)
     if ((e.target as HTMLElement).closest('.video-player, .audio-player, .image-preview')) {
       return;
+    }
+
+    // ZIP games launch in Arcade from the mode-change handler; keep the click
+    // from bubbling to PostCard's thread navigation as well.
+    if (isZipGame(props.post.payload_key)) {
+      e.stopPropagation();
     }
 
     const newMode = props.mode === PostCardMode.PREVIEW ? PostCardMode.EXECUTING : PostCardMode.PREVIEW;
@@ -312,39 +341,31 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
   // Clear existing content
   container.innerHTML = '';
 
+  const attachments = props.post.attachments || [];
+
   // Only show content if there are attachments or a thumbnail
-  if (!props.post.gif_key && !props.post.payload_key && !props.post.swf_key && !props.post.thumbnail_key) {
+  if (
+    attachments.length === 0 &&
+    !props.post.gif_key &&
+    !props.post.payload_key &&
+    !props.post.swf_key &&
+    !props.post.thumbnail_key
+  ) {
     return;
   }
 
   if (props.mode === PostCardMode.PREVIEW) {
     let mediaElement: HTMLElement = null!;
 
-    // Check if it's a DOS ZIP file (payload_key starting with 'dos/')
-    if (props.post.payload_key && props.post.payload_key.startsWith('dos/')) {
-      // ... (existing DOS logic)
-      if (props.post.thumbnail_key) {
-        mediaElement = createThumbnailWithOverlay({
-          postId: props.post.id,
-          thumbnailKey: props.post.thumbnail_key,
-          overlayLabel: t('post_stage.play_dos'),
-          aspectRatio: '75',
-          onClick: () => props.onModeChange(PostCardMode.EXECUTING),
-        });
-        container.classList.add('post-stage--dos');
-      } else {
-        mediaElement = createSwfExecutionButton({
-          postId: props.post.id,
-          label: t('post_stage.click_play_dos'),
-          icon: '💾',
-          onClick: () => props.onModeChange(PostCardMode.EXECUTING),
-        });
-        container.classList.add('post-stage--dos');
-      }
-    } else if (
-      props.post.payload_key &&
-      (props.post.payload_key.startsWith('zip/') || props.post.payload_key.startsWith('html/'))
-    ) {
+    if (attachments.length > 0) {
+      // Multi-media attachments render as a horizontal scroll carousel
+      container.classList.add('post-stage--carousel');
+      mediaElement = createMediaCarousel({ postId: props.post.id, attachments });
+      container.appendChild(mediaElement);
+      return;
+    }
+
+    if (isZipGame(props.post.payload_key)) {
       container.classList.add('post-stage--zip'); // Add zip class for 16:9
       if (props.post.thumbnail_key) {
         // Show thumbnail with overlay button
@@ -418,42 +439,35 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
     container.appendChild(mediaElement);
 
     // Add click hint only for executable content (not images or audio)
-    if (
-      !props.post.payload_key?.startsWith('zip/') &&
-      !props.post.payload_key?.startsWith('html/') &&
-      !props.post.payload_key?.startsWith('dos/') &&
-      !props.post.swf_key?.startsWith('swf/') &&
-      !props.post.gif_key
-    ) {
+    if (!isZipGame(props.post.payload_key) && !props.post.swf_key?.startsWith('swf/') && !props.post.gif_key) {
       const hint = document.createElement('div');
       hint.className = 'stage-hint';
       hint.textContent = t('post_stage.click_to_run');
       container.appendChild(hint);
     }
   } else {
-    // For DOS ZIP files, use the DOS player
-    if (props.post.payload_key && props.post.payload_key.startsWith('dos/')) {
-      executeDos(props.post.id, container).catch((error: Error) => {
-        console.error('Failed to execute DOS:', error);
-        container.innerHTML =
-          '<div style="padding: 20px; text-align: center; color: #666;">' + t('post_stage.dos_load_error') + '</div>';
-      });
-    } else if (
-      props.post.payload_key &&
-      (props.post.payload_key.startsWith('zip/') || props.post.payload_key.startsWith('html/'))
-    ) {
+    if (attachments.length > 0) {
+      // Attachments have no execution mode — keep showing the carousel even if
+      // the stage somehow ended up in EXECUTING mode.
+      container.classList.add('post-stage--carousel');
+      container.appendChild(createMediaCarousel({ postId: props.post.id, attachments }));
+    } else if (isZipGame(props.post.payload_key)) {
       // The executeZipAuto function will handle creating the iframe and cleanup
-      executeZipAuto(props.post.id, container).catch((error: Error) => {
+      executeZipAuto(props.post.id, container, undefined, props.versionId).catch((error: Error) => {
         console.error('Failed to execute ZIP:', error);
         container.innerHTML =
-          '<div style="padding: 20px; text-align: center; color: #666;">' + t('post_stage.zip_load_error') + '</div>';
+          '<div style="padding: 20px; text-align: center; color: var(--text-muted);">' +
+          t('post_stage.zip_load_error') +
+          '</div>';
       });
     } else if (props.post.swf_key && props.post.swf_key.startsWith('swf/')) {
       // Execute Flash/SWF content using Ruffle
       executeFlash(props.post.id, container).catch((error) => {
         console.error('Failed to execute SWF:', error);
         container.innerHTML =
-          '<div style="padding: 20px; text-align: center; color: #666;">' + t('post_stage.flash_load_error') + '</div>';
+          '<div style="padding: 20px; text-align: center; color: var(--text-muted);">' +
+          t('post_stage.flash_load_error') +
+          '</div>';
       });
     } else {
       // For non-ZIP files, use the old sandbox frame
@@ -461,6 +475,7 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
       const sandboxFrame = createSandboxFrame({
         postId: props.post.id,
         sandboxOrigin: props.sandboxOrigin,
+        versionId: props.versionId,
       });
       container.appendChild(sandboxFrame);
     }

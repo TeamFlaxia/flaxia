@@ -9,11 +9,6 @@ class_name = "NotificationStream"
 script_name = "notif-stream"
 
 [[durable_objects.bindings]]
-name = "CALL_STREAM"
-class_name = "CallStream"
-script_name = "notif-stream"
-
-[[durable_objects.bindings]]
 name = "MULTIPLAYER_ROOM"
 class_name = "MultiplayerRoom"
 script_name = "multiplayer-worker"
@@ -29,13 +24,36 @@ database_name = "flaxia"
 database_id = "7c99f35f-69a0-4644-96a1-34c716a3e82d"
 
 [vars]
-SANDBOX_ORIGIN = "https://flaxia.app"
+SANDBOX_ORIGIN = "https://sandbox.flaxia.app"
 BASE_URL = "https://flaxia.app"
+ENVIRONMENT = "production"
 CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
-ADMIN_USERNAMES = "remydrescarlet"
+# Keep file-source scanning disabled until the Crowd worker/node release is deployed.
+CROWD_SCAN_FILE_SOURCES = "0"
+# Add external node page origins here when they are approved for signed scan-file reads.
+CROWD_NODE_ORIGINS = ""
+# Full HTTPS URLs of the browser-node WASM images used by the file scan
+# pipeline. The container workload rejects bare filenames and local/private
+# hosts, so these must be publicly reachable. While empty, uploads are stored
+# but recorded as `skipped / scan_image_unconfigured` instead of being scanned.
+# FILE_SCAN_CLAMAV_IMAGE = "https://<host>/<path>/clamav.wasm"
+# FILE_SCAN_VIDEO_PHASH_IMAGE = "https://<host>/<path>/flaxia-video-phash.wasm"
+# #134: admin rights live on users.role now. This allowlist is only a
+# bootstrap fallback — leave it empty once the admin role is assigned
+# (wrangler d1 execute DB --remote --command "UPDATE users SET role='admin' WHERE username='<name>'").
+# Never commit a real username here: the value is public in the repo.
+ADMIN_USERNAMES = ""
+STRIPE_PRICE_FLXIA_PLUS = "price_1UI3sxGMn6YcUp3x8rC58pdt"  # Stripe Price ID は公開識別子なので vars で管理（secret ではない）
+
 
 # To set CROWD_API_KEY secret:
 #   npx wrangler secret put CROWD_API_KEY
+# Callbacks on POST /api/crowd/webhook are signed with CROWD_API_KEY by
+# default; set CROWD_WEBHOOK_SECRET only to rotate the signing key separately:
+#   npx wrangler pages secret put CROWD_WEBHOOK_SECRET --project-name flaxia
+# Ops kill-switch for a Crowd outage: screening/embedding submissions are
+# skipped (embeds queue for later) without a redeploy. Uncomment to shed load:
+# CROWD_SCREENING_DISABLED = "1"
 
 [[r2_buckets]]
 binding = "BUCKET"
@@ -51,7 +69,14 @@ binding = "AP_DELIVERY_QUEUE"
 
 # Flaxia Crowd 分散コンピューティング
 # CROWD_API_KEY は本番環境では secret 推奨:
-#   npx wrangler secret put CROWD_API_KEY
+#   npx wrangler secret put CROWD_API_KEY  -- エンタープライズ or 適切なAPIキー
+#   npx wrangler pages secret put CROWD_API_KEY --project-name flaxia
+# ※ 未設定の間は NSFW 画像スクリーニング・embeddings の submit がスキップされる
+#    (submitDetectNsfw / embedPost が apiKey なしで早期 return)。
+#    CROWD_ORCHESTRATOR_URL は上記 [vars] の https://crowd.flaxia.app を使用。
+# スクリーニング進行状況は post_nsfw_scans テーブル (migration 0063) に記録。
+# 既存画像投稿の再スキャンは admin 専用 API:
+#   curl -X POST https://flaxia.app/api/admin/backfill-nsfw?limit=50  (要 admin セッション)
 
 # FCM (Firebase Cloud Messaging) — Capacitor モバイルアプリ向けプッシュ通知
 # Firebase Console → プロジェクトの設定 → サービスアカウント → 新しい秘密鍵を生成
@@ -65,6 +90,17 @@ binding = "AP_DELIVERY_QUEUE"
 #   npx wrangler secret put VAPID_PUBLIC_KEY
 #   npx wrangler secret put VAPID_PRIVATE_KEY
 # 開発環境では自動生成される（毎回変わるので通知が切れる可能性あり）
+
+# Stripe (billing)
+# Dashboard で商品「Flaxia+」＋月次 Price (JPY 150) と Customer Portal を作成し、
+# Webhook エンドポイント https://flaxia.app/api/billing/webhook を登録する。
+# 本番環境では下記の secret を設定:
+#   npx wrangler secret put STRIPE_SECRET_KEY
+#   npx wrangler secret put STRIPE_WEBHOOK_SECRET
+#   npx wrangler secret put STRIPE_PRICE_FLXIA_PLUS
+# ローカル開発では .dev.vars に同様の値を保存する。
+# STRIPE_PRICE_FLXIA_PLUS 未設定時は checkout が price_data にフォールバックする。
+
 
 [[vectorize]]
 binding = "VECTORIZE"

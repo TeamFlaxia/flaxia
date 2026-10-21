@@ -14,6 +14,7 @@ export function createPostUpdatedHandler(postCards: Map<string, PostCardLike>): 
       if (detail.isBookmarked !== undefined) update.is_bookmarked = detail.isBookmarked;
       if (detail.bookmarkCount !== undefined) update.bookmark_count = detail.bookmarkCount;
       if (detail.replyCount !== undefined) update.reply_count = detail.replyCount;
+      if (detail.reactions !== undefined) update.reactions = detail.reactions;
       card.updatePost(update);
     }
   };

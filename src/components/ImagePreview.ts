@@ -1,6 +1,7 @@
 import { safeRemoveFromBody } from '../lib/dom-utils.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { GifPreviewProps } from '../types/post.js';
 
 export function createImagePreview(props: GifPreviewProps): HTMLElement {
@@ -16,18 +17,115 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     return container;
   }
 
-  const imageUrl = props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`;
+  // If a pre-fetched src is provided (e.g. decrypted blob URL), use it directly
+  if (props.src) {
+    const img = document.createElement('img');
+    img.className = 'image-preview-img';
+    img.alt = t('image_preview.post_preview', { id: props.postId });
+    img.loading = 'lazy';
+    img.draggable = false;
+    img.oncontextmenu = (e) => e.preventDefault();
+    img.src = props.src;
+    img.style.cssText =
+      'width: 100%; height: auto; max-height: 700px; cursor: pointer; display: block; border-radius: 8px;';
+    container.style.cssText =
+      'position: relative; width: 100%; height: auto; display: flex; flex-direction: column; align-items: center; background: var(--bg-input); border-radius: 8px;';
+    container.appendChild(img);
+    return container;
+  }
+
+  const baseImageUrl = nativeApiHref(
+    props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`,
+  );
+  const imageUrl = props.isThumbnail ? baseImageUrl : baseImageUrl + '?_=' + Date.now();
 
   const img = document.createElement('img');
   img.className = 'image-preview-img';
   img.alt = t('image_preview.post_preview', { id: props.postId });
   img.loading = 'lazy';
+  img.draggable = false;
+  img.oncontextmenu = (e) => e.preventDefault();
 
   // Add click handler for overlay display
   img.onclick = (e) => {
     e.stopPropagation();
-    createImageOverlay(imageUrl, props.postId);
+    createImageOverlay(imageUrl, props.postId, props.gallery, props.galleryIndex ?? 0);
   };
+
+  // Forced 16:9 preview: fix the box ratio and center-crop the image into it.
+  if (props.ratio === '16:9') {
+    container.style.cssText = `
+      position: relative;
+      width: 100%;
+      height: auto;
+      aspect-ratio: 16 / 9;
+      overflow: hidden;
+      display: block;
+      background: var(--bg-input);
+      ${props.isThumbnail ? '' : 'border-radius: 8px;'}
+    `;
+
+    img.style.cssText = `
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center;
+      cursor: pointer;
+      display: block;
+      ${props.isThumbnail ? '' : 'border-radius: 8px;'}
+    `;
+
+    if (props.isThumbnail) {
+      img.src = baseImageUrl + '?_=' + Date.now();
+      container.appendChild(img);
+      return container;
+    }
+
+    const placeholder = document.createElement('div');
+    placeholder.className = 'image-preview-loading';
+    placeholder.style.cssText = `
+      position: absolute;
+      inset: 0;
+      background: var(--bg-input);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-family: monospace;
+      font-size: 0.875rem;
+    `;
+    placeholder.textContent = t('common.loading');
+
+    img.onload = () => {
+      placeholder.style.display = 'none';
+    };
+    img.onerror = () => {
+      placeholder.style.display = 'none';
+      const fallback = document.createElement('div');
+      fallback.className = 'image-preview-error';
+      fallback.style.cssText = `
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg-secondary);
+        color: var(--text-muted);
+        font-size: 0.875rem;
+        text-align: center;
+        padding: 2rem;
+        border-radius: 8px;
+      `;
+      fallback.textContent = t('image_preview.load_failed');
+      container.appendChild(fallback);
+    };
+
+    img.src = imageUrl;
+    container.appendChild(placeholder);
+    container.appendChild(img);
+    return container;
+  }
 
   // Lay out the container as relative so the stage wraps the image's height.
   container.style.cssText = `
@@ -81,7 +179,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   if (props.isThumbnail) {
     img.onload = fit;
     if (img.complete) fit();
-    img.src = imageUrl;
+    img.src = baseImageUrl + '?_=' + Date.now();
     container.appendChild(img);
   } else {
     // Show a placeholder with the same styling before load
@@ -134,8 +232,10 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   return container;
 }
 
-// Create image overlay modal with pinch-to-zoom and pan
-function createImageOverlay(imageUrl: string, postId: string): void {
+// Create image overlay modal with pinch-to-zoom and pan.
+// When `gallery` (image attachment keys) has more than one entry, prev/next
+// controls navigate between the post's images.
+function createImageOverlay(imageUrl: string, postId: string, gallery?: string[], galleryIndex = 0): void {
   const overlay = document.createElement('div');
   overlay.style.cssText = `
     position: fixed;
@@ -235,6 +335,9 @@ function createImageOverlay(imageUrl: string, postId: string): void {
   function initImage(): void {
     containerW = imageContainer.clientWidth;
     containerH = imageContainer.clientHeight;
+    if (!fullImage.naturalWidth || !fullImage.naturalHeight || !containerW || !containerH) {
+      return;
+    }
     const imgAspect = fullImage.naturalWidth / fullImage.naturalHeight;
     const cAspect = containerW / containerH;
     if (imgAspect > cAspect) {
@@ -246,13 +349,27 @@ function createImageOverlay(imageUrl: string, postId: string): void {
     }
     fullImage.style.width = `${imgW}px`;
     fullImage.style.height = `${imgH}px`;
+    fullImage.style.visibility = 'visible';
     centerImage();
   }
 
+  // Hide and collapse the currently decoded frame so the previous image does
+  // not linger while the next one is being fetched/decoded.
+  function clearImage(): void {
+    imgW = 0;
+    imgH = 0;
+    fullImage.style.visibility = 'hidden';
+    fullImage.style.width = '0px';
+    fullImage.style.height = '0px';
+  }
+
   fullImage.onload = initImage;
+  fullImage.onerror = clearImage;
   fullImage.src = imageUrl;
   if (fullImage.complete && fullImage.naturalWidth > 0) {
     initImage();
+  } else {
+    clearImage();
   }
 
   // Touch event state
@@ -447,11 +564,13 @@ function createImageOverlay(imageUrl: string, postId: string): void {
   closeButton.onmouseout = () => (closeButton.style.background = 'rgba(255, 255, 255, 0.2)');
 
   const unregister = registerModal();
+  let navKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   const closeOverlay = () => {
     unregister();
     document.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseup', onMouseUp);
     document.removeEventListener('keydown', handleEsc);
+    if (navKeyHandler) document.removeEventListener('keydown', navKeyHandler);
     safeRemoveFromBody(overlay);
   };
 
@@ -473,12 +592,115 @@ function createImageOverlay(imageUrl: string, postId: string): void {
   };
   document.addEventListener('keydown', handleEsc);
 
+  // Gallery navigation (multiple image attachments)
+  const hasGallery = !!gallery && gallery.length > 1;
+  let currentIndex = hasGallery ? Math.min(Math.max(galleryIndex, 0), (gallery?.length || 1) - 1) : 0;
+
+  const navButtons: HTMLElement[] = [];
+  const counter = document.createElement('div');
+
+  const updateCounter = () => {
+    counter.textContent = `${currentIndex + 1} / ${gallery?.length || 1}`;
+  };
+
+  const resetZoom = () => {
+    scale = 1;
+    translateX = 0;
+    translateY = 0;
+    zoomWrapper.style.cursor = 'default';
+    applyTransform();
+  };
+
+  const showIndex = (next: number) => {
+    if (!hasGallery || !gallery) return;
+    currentIndex = (next + gallery.length) % gallery.length;
+    resetZoom();
+    clearImage();
+    fullImage.src = nativeApiHref(`/api/images/${gallery[currentIndex]}`);
+    if (fullImage.complete && fullImage.naturalWidth > 0) {
+      initImage();
+    }
+    updateCounter();
+  };
+
+  if (hasGallery) {
+    const makeNav = (label: string, dir: -1 | 1) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = label;
+      btn.style.cssText = `
+        position: fixed;
+        top: 50%;
+        transform: translateY(-50%);
+        ${dir === -1 ? 'left: 12px;' : 'right: 12px;'}
+        background: rgba(255, 255, 255, 0.15);
+        border: none;
+        color: white;
+        font-size: 28px;
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1001;
+        transition: background 0.2s ease;
+      `;
+      btn.onmouseover = () => (btn.style.background = 'rgba(255, 255, 255, 0.3)');
+      btn.onmouseout = () => (btn.style.background = 'rgba(255, 255, 255, 0.15)');
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        showIndex(currentIndex + dir);
+      };
+      navButtons.push(btn);
+      return btn;
+    };
+    makeNav('‹', -1);
+    makeNav('›', 1);
+
+    counter.style.cssText = `
+      position: fixed;
+      bottom: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.6);
+      color: white;
+      font-size: 13px;
+      padding: 4px 12px;
+      border-radius: 12px;
+      z-index: 1001;
+      pointer-events: none;
+    `;
+    updateCounter();
+
+    const handleNavKeys = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft') {
+        e.stopPropagation();
+        showIndex(currentIndex - 1);
+      } else if (e.key === 'ArrowRight') {
+        e.stopPropagation();
+        showIndex(currentIndex + 1);
+      }
+    };
+    document.addEventListener('keydown', handleNavKeys);
+    navKeyHandler = handleNavKeys;
+  }
+
   // Assemble
   zoomWrapper.appendChild(fullImage);
   imageContainer.appendChild(zoomWrapper);
   overlay.appendChild(imageContainer);
   overlay.appendChild(closeButton);
+  for (const btn of navButtons) overlay.appendChild(btn);
+  if (hasGallery) overlay.appendChild(counter);
   document.body.appendChild(overlay);
+
+  // The image may have finished loading before the overlay was in the DOM
+  // (container size was 0), so size it now that layout is available.
+  if (fullImage.complete && fullImage.naturalWidth > 0) {
+    initImage();
+  }
 }
 
 // Legacy export for backward compatibility

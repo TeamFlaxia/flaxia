@@ -20,8 +20,7 @@ function chunkIds(ids: string[], size: number): string[][] {
 
 /**
  * Deletes a user account along with all related data: posts (and their reply
- * trees), DMs, group chats, calls, notifications, follows, profiles, and the
- * associated files stored in R2.
+ * trees), notifications, follows, profiles, and the associated files stored in R2.
  *
  * The deletes run in a single D1 batch so they succeed atomically, and child
  * rows are removed before their FK parents to avoid constraint violations.
@@ -47,14 +46,10 @@ export async function deleteAccount(env: Env, userId: string): Promise<void> {
 
   const postIds = (treeRows.results || []).map((r: PostRowWithKeys) => r.id);
 
-  // Collect R2 keys for deferred deletion after the DB transaction commits
+  // Collect R2 keys for deferred deletion after the DB transaction commits.
+  // Posts (and their attachments) are intentionally kept so public content
+  // survives account deletion; only the avatar is removed.
   const fileKeys = new Set<string>();
-  for (const row of treeRows.results || []) {
-    if (row.gif_key) fileKeys.add(row.gif_key);
-    if (row.payload_key) fileKeys.add(row.payload_key);
-    if (row.swf_key) fileKeys.add(row.swf_key);
-    if (row.thumbnail_key) fileKeys.add(row.thumbnail_key);
-  }
 
   const userRow = await db.prepare('SELECT avatar_key FROM users WHERE id = ?').bind(userId).first<{
     avatar_key: string | null;
@@ -65,19 +60,6 @@ export async function deleteAccount(env: Env, userId: string): Promise<void> {
   const statements: D1PreparedStatement[] = [];
 
   // --- Row-level data that directly references the user ---
-  statements.push(db.prepare('DELETE FROM dm_conversations WHERE user_a_id = ? OR user_b_id = ?').bind(userId, userId));
-  statements.push(db.prepare('DELETE FROM dm_messages WHERE sender_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM group_members WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM group_read_states WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM group_messages WHERE sender_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM group_conversations WHERE created_by = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM call_participants WHERE user_id = ?').bind(userId));
-  statements.push(
-    db
-      .prepare('DELETE FROM call_participants WHERE call_id IN (SELECT id FROM calls WHERE initiator_id = ?)')
-      .bind(userId),
-  );
-  statements.push(db.prepare('DELETE FROM calls WHERE initiator_id = ?').bind(userId));
   statements.push(db.prepare('DELETE FROM ap_following WHERE local_user_id = ?').bind(userId));
   statements.push(db.prepare('DELETE FROM follows WHERE follower_id = ? OR followee_id = ?').bind(userId, userId));
 
@@ -93,14 +75,27 @@ export async function deleteAccount(env: Env, userId: string): Promise<void> {
 
   // --- Sessions, devices, push subscriptions ---
   statements.push(db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM device_tokens WHERE user_id = ?').bind(userId));
+  // device_tokens was removed in migration 0035 (Web Push replaced FCM).
   statements.push(db.prepare('DELETE FROM push_subscriptions WHERE user_id = ?').bind(userId));
+
+  // --- Personal vault: wrapped key material and ciphertext only (docs/e2ee.md) ---
+  statements.push(db.prepare('DELETE FROM vault_items WHERE user_id = ?').bind(userId));
+  statements.push(db.prepare('DELETE FROM device_keys WHERE user_id = ?').bind(userId));
+  statements.push(db.prepare('DELETE FROM vault_keys WHERE user_id = ?').bind(userId));
 
   // --- User preference / recommender state ---
   statements.push(db.prepare('DELETE FROM user_profiles WHERE user_id = ?').bind(userId));
   statements.push(db.prepare('DELETE FROM bandit_state WHERE user_id = ?').bind(userId));
   statements.push(db.prepare('DELETE FROM user_game_plays WHERE user_id = ?').bind(userId));
   statements.push(db.prepare('DELETE FROM arcade_events WHERE user_id = ?').bind(userId));
+
+  // Messaging and calls were removed by migration 0089; no related rows remain
+  // to clean up when deleting a user.
+
+  // --- Billing + custom stamps: bare FKs to users (#131) ---
+  statements.push(db.prepare('DELETE FROM transactions WHERE user_id = ?').bind(userId));
+  statements.push(db.prepare('DELETE FROM subscriptions WHERE user_id = ?').bind(userId));
+  statements.push(db.prepare('DELETE FROM custom_stamps WHERE user_id = ?').bind(userId));
 
   // --- Multiplayer ---
   statements.push(db.prepare('DELETE FROM multiplayer_room_participants WHERE user_id = ?').bind(userId));
@@ -114,18 +109,14 @@ export async function deleteAccount(env: Env, userId: string): Promise<void> {
   for (const ids of chunkIds(postIds, 400)) {
     const ph = placeholders(ids.length);
     statements.push(db.prepare(`DELETE FROM post_embeddings WHERE post_id IN (${ph})`).bind(...ids));
-    statements.push(db.prepare(`DELETE FROM post_translations WHERE post_id IN (${ph})`).bind(...ids));
     statements.push(db.prepare(`DELETE FROM admin_alerts WHERE post_id IN (${ph})`).bind(...ids));
     statements.push(db.prepare(`DELETE FROM arcade_events WHERE post_id IN (${ph})`).bind(...ids));
     statements.push(db.prepare(`DELETE FROM reports WHERE post_id IN (${ph})`).bind(...ids));
     statements.push(db.prepare(`DELETE FROM notifications WHERE post_id IN (${ph})`).bind(...ids));
   }
 
-  // --- The user's posts (and reply tree) ---
-  for (const chunk of chunkIds(postIds, 400)) {
-    const ph = placeholders(chunk.length);
-    statements.push(db.prepare(`DELETE FROM posts WHERE id IN (${ph})`).bind(...chunk));
-  }
+  // --- The user's posts are intentionally PRESERVED (public content survives
+  // account deletion). Only the user row and personal data are removed. ---
 
   // --- The user row itself (last: everything above references it) ---
   statements.push(db.prepare('DELETE FROM users WHERE id = ?').bind(userId));
