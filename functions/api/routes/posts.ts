@@ -572,6 +572,10 @@ posts.get('/posts/recommended', async (c) => {
     const cursorAsOf = Number(cursorParts[3]);
     const asOfMs = Number.isFinite(cursorAsOf) && cursorAsOf > 0 ? cursorAsOf : Date.now();
     const asOfUnixSeconds = Math.floor(asOfMs / 1000);
+    // Every page of a For You session must see the same snapshot. Without the
+    // upper bound, posts created and embeddings produced between pages shift
+    // the candidate ranks, and the score cursor starts repeating rows.
+    const asOfIso = new Date(asOfMs).toISOString();
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
 
     const db = c.env.DB;
@@ -608,7 +612,12 @@ posts.get('/posts/recommended', async (c) => {
 
       if (vectorMatches.length === 0) {
         const embeddingRows = await db
-          .prepare('SELECT post_id, embedding FROM post_embeddings ORDER BY created_at DESC LIMIT 500')
+          .prepare(
+            `SELECT post_id, embedding FROM post_embeddings
+             WHERE created_at IS NULL OR unixepoch(created_at) <= ?
+             ORDER BY created_at DESC LIMIT 500`,
+          )
+          .bind(asOfUnixSeconds)
           .all<{ post_id: string; embedding: string }>();
         for (const row of embeddingRows.results || []) {
           try {
@@ -622,6 +631,21 @@ posts.get('/posts/recommended', async (c) => {
         }
         vectorMatches.sort((a, b) => b.score - a.score);
         vectorMatches = vectorMatches.slice(0, 100);
+      }
+
+      // Vectorize cannot filter by embedding time. Drop matches embedded after
+      // the feed snapshot so page two sees the same vector ranks as page one.
+      if (vectorMatches.length > 0) {
+        const embedded = await db
+          .prepare(
+            `SELECT post_id FROM post_embeddings
+             WHERE post_id IN (SELECT value FROM json_each(?))
+               AND (created_at IS NULL OR unixepoch(created_at) <= ?)`,
+          )
+          .bind(JSON.stringify(vectorMatches.map((match) => match.id)), asOfUnixSeconds)
+          .all<{ post_id: string }>();
+        const allowed = new Set((embedded.results || []).map((row) => row.post_id));
+        vectorMatches = vectorMatches.filter((match) => allowed.has(match.id));
       }
     }
 
@@ -638,31 +662,31 @@ posts.get('/posts/recommended', async (c) => {
         .prepare(
           `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
            WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-             ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ?
+             ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
            ORDER BY p.created_at DESC LIMIT ?`,
         )
-        .bind(...visibilityParams, recentCutoff, limit * 4)
+        .bind(...visibilityParams, recentCutoff, asOfIso, limit * 4)
         .all<Record<string, unknown>>(),
       db
         .prepare(
           `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
            WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-             ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ?
+             ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
            ORDER BY eng_score DESC, p.created_at DESC LIMIT ?`,
         )
-        .bind(asOfUnixSeconds, ...visibilityParams, trendingCutoff, limit * 4)
+        .bind(asOfUnixSeconds, ...visibilityParams, trendingCutoff, asOfIso, limit * 4)
         .all<Record<string, unknown>>(),
       currentUserId
         ? db
             .prepare(
               `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
                WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
-                 AND p.created_at >= ?
+                 AND p.created_at >= ? AND p.created_at <= ?
                  AND EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.followee_id = p.user_id)
                  ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
                ORDER BY p.created_at DESC LIMIT ?`,
             )
-            .bind(trendingCutoff, currentUserId, ...visibilityParams, limit * 4)
+            .bind(trendingCutoff, asOfIso, currentUserId, ...visibilityParams, limit * 4)
             .all<Record<string, unknown>>()
         : Promise.resolve(null),
     ]);
@@ -690,10 +714,10 @@ posts.get('/posts/recommended', async (c) => {
       FROM posts p LEFT JOIN users u ON p.user_id = u.id
       WHERE p.id IN (SELECT value FROM json_each(?))
         AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER} ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
-        AND p.created_at >= ?`;
+        AND p.created_at >= ? AND p.created_at <= ?`;
     const candidateResult = await db
       .prepare(candidateQuery)
-      .bind(asOfUnixSeconds, serializedCandidateIds, ...visibilityParams, trendingCutoff)
+      .bind(asOfUnixSeconds, serializedCandidateIds, ...visibilityParams, trendingCutoff, asOfIso)
       .all<Record<string, unknown>>();
     const candidatePosts = candidateResult.results || [];
     const validCandidateIds = new Set(candidatePosts.map((post) => String(post.id)));
@@ -709,15 +733,19 @@ posts.get('/posts/recommended', async (c) => {
       const [freshRows, impressionRows] = await Promise.all([
         db
           .prepare(
-            'SELECT post_id, created_at FROM freshs WHERE user_id = ? AND post_id IN (SELECT value FROM json_each(?))',
+            `SELECT post_id, created_at FROM freshs
+             WHERE user_id = ? AND post_id IN (SELECT value FROM json_each(?))
+               AND (created_at IS NULL OR created_at <= ?)`,
           )
-          .bind(currentUserId, serializedCandidateIds)
+          .bind(currentUserId, serializedCandidateIds, asOfIso)
           .all<{ post_id: string; created_at: string | null }>(),
         db
           .prepare(
-            'SELECT post_id, last_seen_at FROM user_post_impressions WHERE user_id = ? AND post_id IN (SELECT value FROM json_each(?))',
+            `SELECT post_id, last_seen_at FROM user_post_impressions
+             WHERE user_id = ? AND post_id IN (SELECT value FROM json_each(?))
+               AND last_seen_at <= ?`,
           )
-          .bind(currentUserId, serializedCandidateIds)
+          .bind(currentUserId, serializedCandidateIds, asOfIso)
           .all<{ post_id: string; last_seen_at: string }>(),
       ]);
       for (const row of freshRows.results || []) {
@@ -800,6 +828,7 @@ async function loadRecommendedArchivePage(
   asOfMs = Date.now(),
 ): Promise<{ posts: Record<string, unknown>[]; next_cursor: string | null }> {
   const archiveCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
+  const asOfIso = new Date(asOfMs).toISOString();
   const hasCursor = Boolean(cursorCreatedAt && cursorId);
   const cursorFilter = hasCursor ? '(p.created_at < ? OR (p.created_at = ? AND p.id < ?))' : 'p.created_at < ?';
   const params: Array<string | number> = hasCursor ? [cursorCreatedAt!, cursorCreatedAt!, cursorId!] : [archiveCutoff];
@@ -807,13 +836,14 @@ async function loadRecommendedArchivePage(
     ? 'AND p.user_id != ? AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
     : '';
   if (currentUserId) params.push(currentUserId, currentUserId);
-  params.push(limit + 1);
+  params.push(asOfIso, limit + 1);
 
   const result = await db
     .prepare(
       `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
        WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
          AND ${cursorFilter} ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+         AND p.created_at <= ?
        ORDER BY p.created_at DESC, p.id DESC LIMIT ?`,
     )
     .bind(...params)
