@@ -12,7 +12,8 @@ const config: CapacitorConfig = {
     // SameSite=Strict session cookie all use https://flaxia.app. No local
     // virtual server or custom hostname is involved.
     ...(process.env.CAPACITOR_PLATFORM === 'android' ? { url: 'https://flaxia.app' } : {}),
-    allowNavigation: ['flaxia.app', '*.flaxia.app', 'sandbox.flaxia.app'],
+    // Keep external origins, including the untrusted sandbox, out of the
+    // privileged top-level WebView. Capacitor permits the configured app origin.
   },
   plugins: {
     LocalNotifications: {
