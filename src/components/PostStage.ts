@@ -319,6 +319,12 @@ export function createPostStage(props: PostStageProps): HTMLElement {
       return;
     }
 
+    // ZIP games launch in Arcade from the mode-change handler; keep the click
+    // from bubbling to PostCard's thread navigation as well.
+    if (isZipGame(props.post.payload_key)) {
+      e.stopPropagation();
+    }
+
     const newMode = props.mode === PostCardMode.PREVIEW ? PostCardMode.EXECUTING : PostCardMode.PREVIEW;
     props.onModeChange(newMode);
   });

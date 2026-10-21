@@ -96,8 +96,12 @@ export async function getRequestUserId(env: BillingEnv, request: Request): Promi
 
 /** Read the user's current subscription, if any. */
 export async function getUserPlan(env: BillingDbEnv, userId: string): Promise<UserPlan> {
-  const reviewer = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(userId).first<{ email: string }>();
-  if (reviewer?.email.toLowerCase() === 'devtest@flaxia.app') {
+  // Review access is a DB-controlled role, not an email string: anyone could
+  // register a case variant of a public reviewer address before this check.
+  const account = await env.DB.prepare('SELECT role FROM users WHERE id = ?')
+    .bind(userId)
+    .first<{ role: string | null }>();
+  if (account?.role === 'reviewer') {
     return {
       planId: 'flaxia_plus',
       planName: PLAN_NAMES.flaxia_plus,

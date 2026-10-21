@@ -9,6 +9,7 @@ import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { updateMetaTags } from '../lib/seo-meta.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
@@ -856,7 +857,7 @@ export class ExplorePage {
         row.style.background = 'transparent';
       });
       row.onclick = () => {
-        window.history.pushState({ postId: game.postId }, '', `/arcade/${game.postId}`);
+        pushSpaHistory(`/arcade/${game.postId}`, { postId: game.postId });
         window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: game.postId } }));
       };
 

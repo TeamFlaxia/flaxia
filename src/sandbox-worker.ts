@@ -298,9 +298,10 @@ async function serveGameStorageRuntime(c: Context<{ Bindings: Bindings }>): Prom
 
 app.get('/api/game-storage-runtime.js', (c) => serveGameStorageRuntime(c));
 
-// Trusted compatibility broker for game localStorage. This endpoint is kept
-// outside the worker's CSP sandbox so it can read the sandbox origin's legacy
-// storage; untrusted game documents continue to receive SANDBOX_CSP.
+// Trusted compatibility broker for legacy game localStorage. New saves live
+// on the Flaxia origin; this endpoint remains outside the worker's CSP sandbox
+// so existing sandbox-origin saves can be migrated. Untrusted game documents
+// continue to receive SANDBOX_CSP.
 app.get('/api/game-storage', (c) => {
   const html = `<!doctype html><meta charset="utf-8"><script type="module">
     import {
@@ -325,10 +326,8 @@ app.get('/api/game-storage', (c) => {
             var snapshot=loadGameStorageSnapshot(localStorage,namespace);
             send(event.origin,{type:'FLAXIA_STORAGE_SNAPSHOT',requestId:message.requestId,entries:Object.entries(snapshot)});
           }else if(message.type==='FLAXIA_STORAGE_SET'&&typeof message.key==='string'&&typeof message.value==='string'){
-            if(message.key.length>512||message.value.length>100000)return;
             setGameStorageValue(localStorage,namespace,message.key,message.value);
           }else if(message.type==='FLAXIA_STORAGE_REMOVE'&&typeof message.key==='string'){
-            if(message.key.length>512)return;
             removeGameStorageValue(localStorage,namespace,message.key);
           }else if(message.type==='FLAXIA_STORAGE_CLEAR'){
             clearGameStorage(localStorage,namespace);

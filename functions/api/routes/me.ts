@@ -19,13 +19,18 @@ me.get('/me', requireAuth, async (c) => {
       await extendSession(c.env, token);
     }
 
-    // Keep this dedicated free review entitlement independent from Stripe
-    // subscription webhooks and visible to authenticated clients.
-    const isReviewerAccount = user.email.toLowerCase() === 'devtest@flaxia.app';
+    // Keep this dedicated review entitlement independent from Stripe
+    // subscription webhooks. It is keyed by a DB-controlled role, never by
+    // the user-supplied email address (which is not verified).
+    const isReviewerAccount = user.role === 'reviewer';
     const userForResponse =
       isReviewerAccount && user.badge_type !== 'flaxia_plus' ? { ...user, badge_type: 'flaxia_plus' } : user;
     if (isReviewerAccount && user.badge_type !== 'flaxia_plus') {
-      await c.env.DB.prepare("UPDATE users SET badge_type = 'flaxia_plus' WHERE id = ? AND badge_type != 'flaxia_plus'")
+      // COALESCE: badge_type is NULL for accounts that never had a
+      // subscription, and `NULL != 'flaxia_plus'` evaluates to NULL (no row).
+      await c.env.DB.prepare(
+        "UPDATE users SET badge_type = 'flaxia_plus' WHERE id = ? AND COALESCE(badge_type, '') != 'flaxia_plus'",
+      )
         .bind(user.id)
         .run();
     }

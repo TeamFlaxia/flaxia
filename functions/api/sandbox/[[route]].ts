@@ -31,7 +31,7 @@ console.log('fflate loaded:', typeof fflate !== 'undefined')
 
 // --- セキュリティ設定 & リソース制限 ---
 const MAX_TOTAL_SIZE = 100 * 1024 * 1024; // 100MB
-const MAX_FILE_COUNT = 1000;
+const MAX_FILE_COUNT = 1024;
 // Extension config from shared file-extensions.ts
 const EXT_CONFIG = ${extConfigJson};
 const ALLOWED_EXTENSIONS = new Set(Object.keys(EXT_CONFIG).map(k => k.replace('.', '')));

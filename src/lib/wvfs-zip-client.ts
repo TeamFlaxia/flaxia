@@ -57,7 +57,7 @@ export async function executeWvfsZip(
       prefix: PREFIX,
       storageSnapshot,
     });
-    const disconnectStorage = connectGameStorage(iframe, sandboxOrigin, postId);
+    const disconnectStorage = connectGameStorage(iframe, postId);
 
     const loaded = await waitForZipIframeLoad(iframe, loadingEl);
 
