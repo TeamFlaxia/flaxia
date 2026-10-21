@@ -132,6 +132,9 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
       method: 'POST',
       headers: headers,
       body: body,
+      // The signature is bound to this inbox. Following a remote redirect
+      // would forward signed requests to an unchecked destination.
+      redirect: 'error',
       signal: controller.signal,
     });
 
