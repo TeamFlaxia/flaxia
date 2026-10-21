@@ -123,3 +123,63 @@ for (const type of ['Like', 'Announce', 'Follow']) {
     }
   });
 }
+
+test('delivery cannot follow an inbox redirect to an unchecked destination', async () => {
+  const keyPair = await crypto.subtle.generateKey(
+    { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+    true,
+    ['sign', 'verify'],
+  );
+  const exported = new Uint8Array(await crypto.subtle.exportKey('pkcs8', keyPair.privateKey));
+  const pem = `-----BEGIN PRIVATE KEY-----\n${Buffer.from(exported).toString('base64')}\n-----END PRIVATE KEY-----`;
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  let retried = false;
+  globalThis.fetch = async (_input, init) => {
+    requests++;
+    assert.equal(init?.redirect, 'error');
+    throw new TypeError('Redirect refused');
+  };
+  try {
+    const env = {
+      BASE_URL: 'https://flaxia.app',
+      DB: {
+        prepare() {
+          return {
+            bind() {
+              return this;
+            },
+            async first() {
+              return { private_key_pem: pem };
+            },
+          };
+        },
+      },
+    } as unknown as Parameters<typeof worker.queue>[1];
+    const batch = {
+      messages: [
+        {
+          id: 'redirect',
+          attempts: 1,
+          body: {
+            type: 'delivery',
+            inboxUrl: 'https://remote.example/inbox',
+            senderUsername: 'local',
+            activity: { type: 'Like' },
+          },
+          ack() {
+            assert.fail('failed delivery must reach retry/DLQ');
+          },
+          retry() {
+            retried = true;
+          },
+        },
+      ],
+    } as unknown as Parameters<typeof worker.queue>[0];
+    await worker.queue(batch, env);
+    assert.equal(requests, 1);
+    assert.ok(retried);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
