@@ -11,8 +11,8 @@ import {
   setSessionCookie,
   startSrpLogin,
   upgradeSrp,
-  verifySrpLogin,
   verifyPassword,
+  verifySrpLogin,
   verifySrpPassword,
 } from '../../lib/auth';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
