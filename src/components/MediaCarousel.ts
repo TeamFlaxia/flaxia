@@ -43,6 +43,9 @@ export function createMediaCarousel(props: MediaCarouselProps): HTMLElement {
   track.className = 'media-carousel-track';
 
   const imageKeys = props.attachments.filter((a) => a.kind === 'image').map((a) => a.r2_key);
+  // One image is shown whole (letterboxed); a carousel fills every slide so
+  // the track keeps a single height while the user swipes.
+  const imageFit = props.attachments.length === 1 ? 'contain' : 'cover';
   let imageIndex = 0;
 
   for (const att of props.attachments) {
@@ -57,6 +60,8 @@ export function createMediaCarousel(props: MediaCarouselProps): HTMLElement {
           postId: props.postId,
           gallery: imageKeys,
           galleryIndex,
+          ratio: '16:9',
+          fit: imageFit,
         }),
       );
     } else if (att.kind === 'video') {
