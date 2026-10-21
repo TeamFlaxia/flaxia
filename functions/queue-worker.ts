@@ -45,6 +45,13 @@ export default {
     } catch (error) {
       console.error('Pending reap failed:', (error as Error).message);
     }
+    try {
+      const { recomputeStaleTrustScores } = await import('./lib/trust');
+      const refreshed = await recomputeStaleTrustScores(env.DB);
+      if (refreshed > 0) console.log(`Recomputed trust scores for ${refreshed} users`);
+    } catch (error) {
+      console.error('Trust score recompute failed:', (error as Error).message);
+    }
   },
 
   async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {

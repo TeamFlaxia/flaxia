@@ -21,6 +21,25 @@ import {
 } from './recommender';
 
 const games = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+interface ArcadeCandidateRow {
+  postId: string;
+  user_id: string;
+  text: string;
+  swf_key: string | null;
+  payload_key: string | null;
+  thumbnail_key: string | null;
+  fresh_count: number;
+  reply_count: number;
+  bookmark_count: number;
+  impressions: number;
+  created_at: string;
+  username: string;
+  display_name: string | null;
+  avatar_key: string | null;
+  badge_type: string | null;
+}
+
 games.get('/games', async (c) => {
   try {
     const shuffle = c.req.query('shuffle') === 'true';
@@ -37,8 +56,9 @@ games.get('/games', async (c) => {
     // cannot inflate the KV keyspace.
     const cacheKey = `games:${shuffle ? 'shuffle' : trending ? 'trending' : 'recent'}:${limit}:first`;
 
-    // Only first-page, non-shuffle requests can use this cache.
-    if (!shuffle && !cursor) {
+    // Only first-page, non-shuffle requests can use this cache. A pinned
+    // initialId must bypass it so the requested game is never dropped.
+    if (!shuffle && !cursor && !c.req.query('initialId')) {
       let cachedData: string | null | undefined;
       try {
         cachedData = await c.env.CACHE?.get(cacheKey);
@@ -263,24 +283,28 @@ games.get('/games', async (c) => {
         ORDER BY p.created_at DESC
         LIMIT 200
       `;
-      const candidates = await c.env.DB.prepare(candidateQuery).all<{
-        postId: string;
-        user_id: string;
-        text: string;
-        swf_key: string | null;
-        payload_key: string | null;
-        thumbnail_key: string | null;
-        fresh_count: number;
-        reply_count: number;
-        bookmark_count: number;
-        impressions: number;
-        created_at: string;
-        username: string;
-        display_name: string | null;
-        avatar_key: string | null;
-        badge_type: string | null;
-      }>();
+      const candidates = await c.env.DB.prepare(candidateQuery).all<ArcadeCandidateRow>();
       const candidateRows = candidates.results || [];
+
+      // The Arcade can be opened directly for any ZIP post (timeline, thread,
+      // share link). Make sure that game is a candidate even when it falls
+      // outside the window above or is a reply.
+      if (initialId && !candidateRows.some((row) => row.postId === initialId)) {
+        const initialRow = await c.env.DB.prepare(`
+          SELECT p.id as postId, p.user_id, p.text, p.swf_key, p.payload_key,
+                 p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count,
+                 COALESCE(p.bookmark_count, 0) as bookmark_count,
+                 p.impressions, p.created_at,
+                 u.username, u.display_name, u.avatar_key, u.badge_type
+          FROM posts p
+          JOIN users u ON p.user_id = u.id
+          WHERE p.id = ? AND p.payload_key IS NOT NULL AND p.swf_key IS NULL
+            AND p.status = 'published' AND p.hidden = 0
+        `)
+          .bind(initialId)
+          .first<ArcadeCandidateRow>();
+        if (initialRow) candidateRows.push(initialRow);
+      }
 
       // Get embeddings for candidates (plus precomputed bandit projections)
       const candEmbeds = new Map<string, { vec: number[]; banditVec: number[] | null; banditCfg: string | null }>();

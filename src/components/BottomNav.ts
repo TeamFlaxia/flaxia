@@ -1,6 +1,7 @@
 import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
 import { type IconName, icon } from '../lib/icons.js';
+import { nativeApiHref } from '../lib/native-api.js';
 
 export interface BottomNavProps {
   activeItem?: string;
@@ -104,7 +105,7 @@ export class BottomNav {
       // avatar_key is server-minted (`avatar/<sha256>`), but never trust a
       // stored value inside a style context: validate the shape first.
       if (/^avatar\/[0-9a-f]{64}$/.test(user.avatar_key)) {
-        avatar.style.backgroundImage = `url(/api/images/${user.avatar_key})`;
+        avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${user.avatar_key}`)})`;
       }
       btn.appendChild(avatar);
     } else {

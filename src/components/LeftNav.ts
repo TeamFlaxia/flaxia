@@ -3,6 +3,7 @@ import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { type IconName, icon } from '../lib/icons.js';
 import { isModalOpen } from '../lib/modal-state';
+import { nativeApiHref } from '../lib/native-api.js';
 
 export interface LeftNavProps {
   activeItem?: string;
@@ -169,7 +170,7 @@ export class LeftNav {
       const avatar = document.createElement('div');
       avatar.className = 'nav-user-avatar';
       if (this.props.currentUser.avatar_key) {
-        avatar.style.backgroundImage = `url(/api/images/${this.props.currentUser.avatar_key})`;
+        avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${this.props.currentUser.avatar_key}`)})`;
       } else {
         avatar.textContent = (this.props.currentUser.display_name || this.props.currentUser.username)
           .charAt(0)
@@ -791,7 +792,7 @@ export function updateLeftNavUser(
     const avatar = document.createElement('div');
     avatar.className = 'nav-user-avatar';
     if (currentUser.avatar_key) {
-      avatar.style.backgroundImage = `url(/api/images/${currentUser.avatar_key})`;
+      avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${currentUser.avatar_key}`)})`;
     } else {
       avatar.textContent = (currentUser.display_name || currentUser.username).charAt(0).toUpperCase();
       avatar.style.background = 'var(--accent)';
