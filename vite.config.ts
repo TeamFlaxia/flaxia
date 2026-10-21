@@ -21,13 +21,14 @@ export default defineConfig({
       external: (id) => id.startsWith('/api/crowd/'),
       input: ENTRY_INPUTS,
       output: {
-        manualChunks: {
-          // 大型ライブラリを個別チャンクに分割
-          katex: ['katex'],
-          jszip: ['jszip'],
-          markdown: ['markdown-it'],
-          // その他のvendorライブラリ
-          vendor: ['dompurify', 'fflate', 'lucide', 'nanoid'],
+        manualChunks(id) {
+          if (!id.includes('/node_modules/')) return;
+          if (id.includes('/katex/')) return 'katex';
+          if (id.includes('/jszip/')) return 'jszip';
+          if (id.includes('/markdown-it/')) return 'markdown';
+          if (['dompurify', 'fflate', 'lucide', 'nanoid'].some((pkg) => id.includes(`/node_modules/${pkg}/`))) {
+            return 'vendor';
+          }
         },
       },
     },
