@@ -18,6 +18,7 @@ import { lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from '
 import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
 import type { LeftNavHandlers } from './lib/left-nav-handlers.js';
 import { createLeftNavHandlers } from './lib/left-nav-handlers.js';
+import { isCapacitorNativePlatform, nativeApiUrl } from './lib/native-api.js';
 import {
   clearNativeBadge,
   initNativeNotify,
@@ -30,6 +31,7 @@ import { hidePageLoader, showPageLoader, showPageLoaderFailure } from './lib/pag
 import { initPerformanceMonitoring } from './lib/performance.js';
 import { createPushSocket } from './lib/push-socket.js';
 import { parseCurrentRoute, type RouteInfo, type RouteView } from './lib/router.js';
+import { goBackInSpaOr, pushSpaHistory } from './lib/spa-history.js';
 import { initTheme } from './lib/theme.js';
 import { showToast } from './lib/toast.js';
 import { viewToBottomNavId } from './lib/view-nav.js';
@@ -42,6 +44,21 @@ interface PageComponent {
 
 // Initialize performance monitoring
 initPerformanceMonitoring();
+
+// Keep API fetches on the first-party production origin for native Capacitor.
+// Direct media and iframe URLs use nativeApiHref at construction sites.
+const originalFetch = window.fetch.bind(window);
+window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const rewrittenInput = nativeApiUrl(input);
+  if (isCapacitorNativePlatform()) {
+    const requestUrl = new URL(input instanceof Request ? input.url : input.toString(), window.location.href);
+    const apiRequest = requestUrl.pathname.startsWith('/api/');
+    if (!apiRequest) return originalFetch(rewrittenInput, init);
+    const request = input instanceof Request ? new Request(rewrittenInput, input) : new Request(rewrittenInput, init);
+    return originalFetch(new Request(request, { credentials: 'include' }));
+  }
+  return originalFetch(rewrittenInput, init);
+}) as typeof window.fetch;
 
 // Initialize content protection (right-click, drag, keyboard shortcuts)
 initContentProtection();
@@ -73,6 +90,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'bookmarks'
       | 'terms'
       | 'privacy'
+      | 'child-safety'
       | 'about'
       | 'docs'
       | 'admin'
@@ -116,6 +134,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentUser: {
       username: string;
       id: string;
+      email?: string;
       display_name?: string;
       avatar_key?: string;
       badge_type?: string | null;
@@ -126,17 +145,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     /// WebSocket 経由のプッシュ通知を受け取り OS 通知を表示する
     /// (接続管理・backoff は src/lib/push-socket.ts)
-    const isCapacitorNative =
-      typeof window !== 'undefined' &&
-      typeof window.Capacitor !== 'undefined' &&
-      typeof window.Capacitor.isNativePlatform === 'function' &&
-      window.Capacitor.isNativePlatform();
+    const isCapacitorNative = isCapacitorNativePlatform();
 
     const pushSocket = createPushSocket(
       () => {
+        // The bundled Android app shares the flaxia.app site; use the API
+        // host for its cross-origin WebSocket, and same-origin in browsers.
+        const host = isCapacitorNative ? 'flaxia.app' : window.location.host;
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const sessionToken = localStorage.getItem('flaxia_session');
-        return `${protocol}//${window.location.host}/api/ws/notifications${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`;
+        return `${protocol}//${host}/api/ws/notifications`;
       },
       {
         onOpen: () => {
@@ -384,13 +401,12 @@ document.addEventListener('DOMContentLoaded', async () => {
           } else if (currentView === 'search' && searchPage) {
             cachedContentComponent = { view: 'search', component: searchPage, scrollY: window.scrollY };
             searchPage = null;
-          } else if (currentView === 'arcade' && arcadePage) {
-            arcadePage.suspend();
-            cachedContentComponent = { view: 'arcade', component: arcadePage, scrollY: window.scrollY };
-            arcadePage = null;
           } else if (currentView === 'bookmarks' && bookmarksPage) {
             cachedContentComponent = { view: 'bookmarks', component: bookmarksPage, scrollY: window.scrollY };
             bookmarksPage = null;
+          } else if (currentView === 'notifications' && notificationsPage) {
+            cachedContentComponent = { view: 'notifications', component: notificationsPage, scrollY: window.scrollY };
+            notificationsPage = null;
           }
         }
 
@@ -490,7 +506,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
 
         // Handle legal pages (public, no auth required, no layout)
-        if (view === 'terms' || view === 'privacy' || view === 'about') {
+        if (view === 'terms' || view === 'privacy' || view === 'child-safety' || view === 'about') {
           removeLeftNavOverlay();
           currentView = view;
           currentPostId = null;
@@ -796,29 +812,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
-          if (cachedContentComponent?.view === 'arcade') {
-            console.log('Restoring cached arcade page');
-            arcadePage = cachedContentComponent.component as ArcadePageHandle;
-            arcadePage.resume();
-            const scrollY = cachedContentComponent.scrollY;
-            cachedContentComponent = null;
-
-            requestAnimationFrame(() => {
-              window.scrollTo(0, scrollY);
-            });
-          } else {
-            // Create fresh arcade page
-            const { createArcadePage } = await import('./components/ArcadePage.js');
-            arcadePage = createArcadePage({
-              sandboxOrigin,
-              currentUser,
-              initialGameId: currentPostId || undefined,
-              onBack: () => {
-                window.history.pushState({}, '', '/home');
+          const { createArcadePage } = await import('./components/ArcadePage.js');
+          arcadePage = createArcadePage({
+            sandboxOrigin,
+            currentUser,
+            initialGameId: currentPostId || undefined,
+            onBack: () => {
+              goBackInSpaOr(() => {
+                window.history.replaceState({}, '', '/home');
                 navigateTo('timeline');
-              },
-            });
-          }
+              });
+            },
+          });
 
           // Create Right Panel
           const rightPanel = await lazyCreateRightPanel({
@@ -995,7 +1000,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           leftNavInstances.add(leftNav);
 
-          // Create Notifications Page
+          // Create Notifications Page. Always rebuild from the freshly fetched
+          // data (only the scroll position is restored) so notifications that
+          // arrived while a thread/Arcade was open are not lost.
+          let notificationsScrollY = 0;
+          if (cachedContentComponent?.view === 'notifications') {
+            notificationsScrollY = cachedContentComponent.scrollY;
+            (cachedContentComponent.component as NotificationsPage).destroy();
+            cachedContentComponent = null;
+          }
           const { createNotificationsPage } = await import('./components/NotificationsPage.js');
           notificationsPage = createNotificationsPage({
             notifications: notificationsData.notifications,
@@ -1016,9 +1029,13 @@ document.addEventListener('DOMContentLoaded', async () => {
               });
             },
             onNavigateToPost: (postId) => {
-              window.history.pushState({}, '', `/thread/${postId}`);
+              pushSpaHistory(`/thread/${postId}`, { postId });
               navigateTo('thread', postId);
             },
+          });
+
+          requestAnimationFrame(() => {
+            window.scrollTo(0, notificationsScrollY);
           });
 
           // Create Right Panel
@@ -1153,12 +1170,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             unreadCount: unreadNotificationCount,
             onBack: () => {
               console.log('Back button clicked, returning to previous view');
-              if (cachedContentComponent) {
-                window.history.back();
-              } else {
-                window.history.pushState({}, '', '/home');
+              goBackInSpaOr(() => {
+                window.history.replaceState({}, '', '/home');
                 navigateTo('timeline');
-              }
+              });
             },
           });
 
@@ -1219,11 +1234,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
 
             // Listen for navigation events from timeline
-            timeline.getElement().addEventListener('navigateToThread', (e: Event) => {
-              const postId = (e as CustomEvent<{ postId: string }>).detail.postId;
-              window.history.pushState({ postId }, '', `/thread/${postId}`);
-              navigateTo('thread', postId);
-            });
+            // PostCard emits spaNavigate directly; no duplicate listener here.
 
             // Listen for openLeftNav events from timeline (mobile swipe)
             timeline.getElement().addEventListener('openLeftNav', () => {
@@ -1301,6 +1312,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
 
+    // Handle browser back/forward. Native Android back first traverses SPA
+    // history; the OS exits only when Capacitor has no in-app history to pop.
+    if (isCapacitorNative) {
+      void import('@capacitor/app')
+        .then(({ App }) =>
+          App.addListener('backButton', ({ canGoBack }) => {
+            if (canGoBack || window.history.length > 1) {
+              window.history.back();
+            } else {
+              void App.exitApp();
+            }
+          }),
+        )
+        .catch((error: unknown) => console.warn('Native back handling unavailable:', error));
+    }
+
     // Handle browser back/forward
     window.addEventListener('popstate', async (e) => {
       const route = parseCurrentRoute();
@@ -1373,6 +1400,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     deferInit(async () => {
       // Defer platform-specific notification init (not critical for first paint)
       initNativeNotify().catch(() => {});
+      // Only register for FCM after notification access has already been granted.
       initNativePushRegistration().catch(() => {});
 
       if (!canRunFlaxiaNode()) return;

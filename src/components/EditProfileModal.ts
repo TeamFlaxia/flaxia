@@ -3,6 +3,7 @@ import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { showToast } from '../lib/toast.js';
 
 interface EditProfileModalProps {
@@ -90,7 +91,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   `;
 
   if (currentUser.header_key) {
-    bannerArea.style.backgroundImage = `url(/api/images/${currentUser.header_key})`;
+    bannerArea.style.backgroundImage = `url(${nativeApiHref(`/api/images/${currentUser.header_key}`)})`;
   }
 
   const bannerOverlay = document.createElement('div');
@@ -216,7 +217,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   `;
   // Display existing avatar if available
   if (currentUser.avatar_key) {
-    avatar.style.backgroundImage = `url(/api/images/${currentUser.avatar_key})`;
+    avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${currentUser.avatar_key}`)})`;
     avatar.style.backgroundSize = 'cover';
     avatar.style.backgroundPosition = 'center';
     avatar.textContent = '';

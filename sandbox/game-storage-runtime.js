@@ -61,6 +61,14 @@ function hasPrefixedKeys(storage, prefix) {
   return false;
 }
 
+/** @param {GameStorageLike} storage @param {string} namespace */
+export function hasGameStorageState(storage, namespace) {
+  const currentBlobKey = 'flaxia:game:' + namespace;
+  if (storage.getItem(currentBlobKey) !== null) return true;
+  if (hasPrefixedKeys(storage, currentBlobKey + ':')) return true;
+  return decodeSnapshot(storage.getItem(namespace)) !== null;
+}
+
 /**
  * Select an existing storage format without copying it. Keeping legacy formats
  * in place avoids duplicating large saves and exhausting the origin's quota.
@@ -99,6 +107,34 @@ function findStorageState(storage, namespace) {
  */
 export function loadGameStorageSnapshot(storage, namespace) {
   return findStorageState(storage, namespace).snapshot;
+}
+
+/**
+ * Replace one game's save with a snapshot, retaining a tombstone for an empty
+ * save so a migrated older save cannot reappear later.
+ * @param {GameStorageLike} storage
+ * @param {string} namespace
+ * @param {Record<string, string>} snapshot
+ */
+export function replaceGameStorageSnapshot(storage, namespace, snapshot) {
+  const state = findStorageState(storage, namespace);
+  if (state.kind === 'blob') {
+    storage.setItem(state.key, JSON.stringify(snapshot));
+    return;
+  }
+
+  const keys = [];
+  for (let i = 0; i < storage.length; i += 1) {
+    const key = storage.key(i);
+    if (key !== null && key.startsWith(state.prefix)) keys.push(key);
+  }
+  for (const key of keys) storage.removeItem(key);
+  for (const [key, value] of Object.entries(snapshot)) {
+    if (typeof value === 'string') storage.setItem(state.prefix + key, value);
+  }
+  if (Object.keys(snapshot).length === 0) {
+    storage.setItem('flaxia:game:' + namespace, '{}');
+  }
 }
 
 /** @param {GameStorageLike} storage @param {string} namespace @param {string} key @param {string} value */
