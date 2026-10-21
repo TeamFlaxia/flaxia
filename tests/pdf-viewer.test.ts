@@ -31,7 +31,7 @@ describe('pdf viewer assets (/pdf/*)', () => {
     assert.match(html, /workerSrc = '\/pdf\/pdf\.worker\.mjs'/);
     // Never hand the browser plugin a document — a sandboxed frame cannot
     // host it (whatwg/html#6946) and pdf.js needs a canvas instead.
-    assert.doesNotMatch(html, /object|embed/);
+    assert.doesNotMatch(html, /<\s*\/?\s*(?:object|embed)\b/i);
     assert.doesNotMatch(html, /allow-same-origin/);
   });
 

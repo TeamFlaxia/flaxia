@@ -132,9 +132,13 @@ The feed mode in `src/components/Timeline.ts` selects the API endpoint:
 | For You | `GET /api/posts/recommended` | Ranked recommendations |
 
 `functions/api/routes/posts.ts` implements both chronological and recommended
-post retrieval. Recommendations combine engagement and quality signals with
-vector similarity when available. The shared interest-vector and LinUCB helpers
-live in `functions/api/routes/recommender.ts` and `functions/lib/linucb.ts`.
+post retrieval. For You combines separate in-network, vector-similarity,
+popular, and recent candidate sources, then applies freshness, engagement,
+author diversity, and recently-seen filters. Authors with a low trust score
+(repeated near-duplicate posts) are excluded from For You. Freshs, bookmarks,
+replies, shares, and game dwell time contribute to the interest vector. The shared
+interest-vector and LinUCB helpers live in `functions/api/routes/recommender.ts`
+and `functions/lib/linucb.ts`.
 
 Arcade recommendations are implemented separately in
 `functions/api/routes/games.ts` (`GET /api/games?recommended=true`) and use

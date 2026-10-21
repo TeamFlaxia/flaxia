@@ -48,6 +48,31 @@ describe('chronological timeline updates', () => {
   });
 });
 
+describe('GET /api/posts/recommended', () => {
+  beforeEach(resetDb);
+
+  it('returns posts with their enrichment fields', async () => {
+    const { cookie } = await seedUserAndLogin('recommended-feed');
+    const postId = crypto.randomUUID();
+    const createResponse = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ postId, text: 'Recommended feed fixture', hashtags: [] }),
+    });
+    assert.equal(createResponse.status, 200);
+
+    const response = await fetch(`${BASE_URL}/api/posts/recommended?limit=20`);
+    assert.equal(response.status, 200);
+    const data = (await response.json()) as { posts: Array<Record<string, unknown>> };
+    const post = data.posts.find((item) => item.id === postId);
+    assert.ok(post, 'expected the published post in the recommendation response');
+    assert.deepEqual(post.attachments, []);
+    assert.deepEqual(post.reactions, []);
+    assert.equal(post.quoted_post_id, null);
+    assert.equal(post.quoted_post, null);
+  });
+});
+
 describe('POST /api/posts', () => {
   beforeEach(resetDb);
 

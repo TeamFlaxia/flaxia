@@ -96,6 +96,23 @@ export async function getRequestUserId(env: BillingEnv, request: Request): Promi
 
 /** Read the user's current subscription, if any. */
 export async function getUserPlan(env: BillingDbEnv, userId: string): Promise<UserPlan> {
+  // Review access is a DB-controlled role, not an email string: anyone could
+  // register a case variant of a public reviewer address before this check.
+  const account = await env.DB.prepare('SELECT role FROM users WHERE id = ?')
+    .bind(userId)
+    .first<{ role: string | null }>();
+  if (account?.role === 'reviewer') {
+    return {
+      planId: 'flaxia_plus',
+      planName: PLAN_NAMES.flaxia_plus,
+      status: 'active',
+      currentPeriodEnd: null,
+      cancelAtPeriodEnd: false,
+      isActive: true,
+      stripeCustomerId: null,
+    };
+  }
+
   const row = await env.DB.prepare(
     `SELECT plan_id, status, current_period_end, cancel_at_period_end, stripe_customer_id
      FROM subscriptions
@@ -297,4 +314,14 @@ export function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+export function withBillingCors(request: Request, response: Response, env: BillingEnv): Response {
+  const origin = request.headers.get('Origin');
+  if (!origin || !isAllowedOrigin(env, request)) return response;
+  const headers = new Headers(response.headers);
+  headers.set('Access-Control-Allow-Origin', origin);
+  headers.set('Access-Control-Allow-Credentials', 'true');
+  headers.append('Vary', 'Origin');
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }

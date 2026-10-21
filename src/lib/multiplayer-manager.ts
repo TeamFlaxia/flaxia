@@ -8,13 +8,16 @@ type WsMessage =
   | { type: 'signal'; targetUserId: string; signal: { type: string; payload: unknown } }
   | { type: 'peer_data'; data: unknown };
 
+import type { ParentMessage } from './bridge.ts';
+import { isParentMessage } from './bridge.ts';
+import { isNativeApp, nativeApiHref } from './native-api.ts';
+
 interface MultiplayerConfig {
   gameId: string;
   roomId: string;
   userId: string;
   wsUrl: string;
   iframe: HTMLIFrameElement;
-  sandboxOrigin: string;
   onDisconnect?: () => void;
 }
 
@@ -40,7 +43,10 @@ export class MultiplayerManager {
   connect(): void {
     if (this.connected) return;
 
-    const wsUrl = new URL(this.config.wsUrl, globalThis.location.origin);
+    const wsUrl = new URL(
+      isNativeApp() ? nativeApiHref(this.config.wsUrl) : this.config.wsUrl,
+      globalThis.location.origin,
+    );
     wsUrl.searchParams.set('gameId', this.config.gameId);
     wsUrl.searchParams.set('roomId', this.config.roomId);
 
@@ -393,24 +399,11 @@ export class MultiplayerManager {
         break;
     }
 
-    if (parentMsg) {
-      try {
-        this.config.iframe.contentWindow?.postMessage(parentMsg, this.config.sandboxOrigin);
-      } catch {
-        // ignore
-      }
-    }
+    if (parentMsg && isParentMessage(parentMsg)) this.postToGame(parentMsg);
   }
 
   private sendP2PStateToGame(state: 'connected' | 'disconnected' | 'failed'): void {
-    try {
-      this.config.iframe.contentWindow?.postMessage(
-        { type: 'MULTIPLAYER_P2P_STATE', state },
-        this.config.sandboxOrigin,
-      );
-    } catch {
-      // ignore
-    }
+    this.postToGame({ type: 'MULTIPLAYER_P2P_STATE', state });
   }
 
   private sendPeerDataToGame(data: unknown): void {
@@ -420,8 +413,16 @@ export class MultiplayerManager {
     } catch {
       return;
     }
+    this.postToGame({ type: 'MULTIPLAYER_PEER_DATA', data });
+  }
+
+  private postToGame(message: ParentMessage): void {
+    if (!isParentMessage(message)) return;
     try {
-      this.config.iframe.contentWindow?.postMessage({ type: 'MULTIPLAYER_PEER_DATA', data }, this.config.sandboxOrigin);
+      // The game's sandboxed browsing context has an opaque origin, so there
+      // is no exact targetOrigin to use. The typed payload is sent only to the
+      // known iframe WindowProxy, and incoming replies verify that same source.
+      this.config.iframe.contentWindow?.postMessage(message, '*');
     } catch {
       // ignore
     }
