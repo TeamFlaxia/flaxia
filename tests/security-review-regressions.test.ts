@@ -261,6 +261,27 @@ describe('recommended feed D1 bind-limit regressions', () => {
 });
 
 describe('legacy media ownership regressions', () => {
+  it('refuses to recreate a media post if cleanup removes its preparation during commit', async () => {
+    const { sqlite, db, request } = fixture();
+    try {
+      const id = crypto.randomUUID();
+      const key = `gif/${id}.png`;
+      sqlite
+        .prepare('INSERT INTO posts (id, user_id, gif_key, status) VALUES (?, ?, ?, ?)')
+        .run(id, 'owner', key, 'pending');
+      const prepare = db.prepare.bind(db);
+      db.prepare = (sql: string) => {
+        if (sql.includes('ON CONFLICT(id) DO UPDATE SET')) sqlite.prepare('DELETE FROM posts WHERE id = ?').run(id);
+        return prepare(sql);
+      };
+      const response = await request('/posts/commit', { postId: id, gifKey: key, text: 'A late commit' });
+      assert.equal(response.status, 409, await response.text());
+      assert.equal(sqlite.prepare('SELECT id FROM posts WHERE id = ?').get(id), undefined);
+    } finally {
+      sqlite.close();
+    }
+  });
+
   for (const [prefix, ext] of [
     ['audio', 'mp3'],
     ['video', 'mp4'],
