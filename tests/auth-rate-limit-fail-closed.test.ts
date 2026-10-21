@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { registerHooks } from 'node:module';
 import { test } from 'node:test';
 import { checkRateLimit, RateLimitUnavailableError } from '../functions/lib/rate-limit.ts';
 
@@ -44,3 +45,41 @@ test('healthy KV still returns true up to its request ceiling', async () => {
   assert.equal(await checkRateLimit(kv, 'auth:test', config), true);
   assert.equal(await checkRateLimit(kv, 'auth:test', config), false);
 });
+
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    try {
+      return nextResolve(specifier, context);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        'code' in error &&
+        error.code === 'ERR_MODULE_NOT_FOUND' &&
+        specifier.startsWith('.')
+      )
+        return nextResolve(`${specifier.replace(/\.js$/, '')}.ts`, context);
+      throw error;
+    }
+  },
+});
+const { default: auth } = await import('../functions/api/routes/auth.ts');
+for (const [environment, address, local] of [
+  ['test', 'http://localhost:8788', true],
+  ['development', 'http://127.0.0.1:8787', true],
+  ['production', 'http://localhost:8788', false],
+  ['test', 'https://flaxia.app', false],
+  ['test', 'http://localhost.attacker.example', false],
+] as const) {
+  test(`auth exemption requires both local address and environment: ${environment} ${address}`, async () => {
+    const response = await auth.request(
+      '/register',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      {
+        ENVIRONMENT: environment,
+        BASE_URL: address,
+      },
+    );
+    assert.equal(response.status, local ? 400 : 503);
+    if (!local) assert.equal(response.headers.get('Retry-After'), '60');
+  });
+}
