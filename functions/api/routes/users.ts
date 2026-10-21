@@ -9,8 +9,8 @@ import { clampLimit } from '../../lib/pagination';
 import { checkRateLimit } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
-import { isSupportedSrpKdf } from '../../lib/srp';
-import { parsePublicHttpUrl, SsrfError } from '../../lib/url-guard';
+import { isCreatableSrpKdf } from '../../lib/srp';
+import { fetchWithSsrfGuard, parsePublicHttpUrl, SsrfError } from '../../lib/url-guard';
 import { detectMimeType, isAllowedImageMime, requireAuth } from '../helpers';
 import type { Bindings, PostRow, SrpProofBody, Variables } from '../types';
 
@@ -23,9 +23,11 @@ const users = new Hono<{ Bindings: Bindings; Variables: Variables }>();
  */
 async function fetchRemoteJson(url: string, accept: string): Promise<{ url: string; response: Response }> {
   const parsed = parsePublicHttpUrl(url);
-  const response = await fetch(parsed.toString(), {
+  // Follow redirects hop-by-hop through the guard so a remote server cannot
+  // bounce this fetch to localhost or a private range.
+  const response = await fetchWithSsrfGuard(parsed.toString(), {
     headers: { Accept: accept },
-    signal: AbortSignal.timeout(10_000),
+    timeoutMs: 10_000,
   });
   return { url: parsed.toString(), response };
 }
@@ -1200,7 +1202,7 @@ users.patch('/users/me/password', requireAuth, async (c) => {
       return c.json({ error: 'New SRP verifier required' }, 400);
     }
     if (srp_group !== '2048') return c.json({ error: 'Unsupported SRP group' }, 400);
-    if (!isSupportedSrpKdf(srp_kdf)) return c.json({ error: 'Unsupported SRP KDF' }, 400);
+    if (!isCreatableSrpKdf(srp_kdf)) return c.json({ error: 'Unsupported SRP KDF' }, 400);
     // Same shape checks as registration: a degenerate verifier would make the
     // account undecryptable / trivially attackable.
     if (!isValidB64(srp_salt, 16)) return c.json({ error: 'Invalid SRP salt' }, 400);
@@ -1285,6 +1287,15 @@ users.patch('/users/me/password', requireAuth, async (c) => {
     if (vaultUpdate) {
       statements.push(c.env.DB.prepare(vaultUpdate.sql).bind(...vaultUpdate.binds));
     }
+    // Revoke other sessions in the same transaction. changes() refers to the
+    // preceding credential/envelope update, so a version conflict cannot log
+    // out devices and a storage failure rolls back the credential change.
+    statements.push(
+      c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ? AND changes() = 1').bind(
+        userId,
+        getSessionToken(c.req.raw) ?? '',
+      ),
+    );
     // batch() is atomic: the vault must never end up pointing at a KEK the new
     // password cannot derive, or vice versa.
     const results = await c.env.DB.batch(statements);
