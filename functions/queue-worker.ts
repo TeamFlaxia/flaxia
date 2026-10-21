@@ -316,7 +316,7 @@ async function handleCreateActivity(
 
   if (object.inReplyTo) {
     const replyTo = object.inReplyTo as string;
-    const postIdMatch = replyTo.match(/\/notes\/([a-zA-Z0-9]+)/);
+    const postIdMatch = replyTo.match(/\/notes\/([a-zA-Z0-9_-]+)$/);
     if (postIdMatch) {
       parentId = postIdMatch[1];
     }
@@ -616,7 +616,7 @@ async function handleLikeActivity(
     return;
   }
 
-  const postIdMatch = objectUrl.match(/\/notes\/([a-zA-Z0-9]+)/);
+  const postIdMatch = objectUrl.match(/\/notes\/([a-zA-Z0-9_-]+)$/);
   if (!postIdMatch) {
     console.log('Like target is not a local post:', objectUrl);
     return;
@@ -670,7 +670,7 @@ async function handleAnnounceActivity(
     return;
   }
 
-  const postIdMatch = objectUrl.match(/\/notes\/([a-zA-Z0-9]+)/);
+  const postIdMatch = objectUrl.match(/\/notes\/([a-zA-Z0-9_-]+)$/);
   if (!postIdMatch) {
     console.log('Announce target is not a local post:', objectUrl);
     return;
@@ -749,8 +749,8 @@ async function handleUndoActivity(
   const objectType = object.type;
   switch (objectType) {
     case 'Like':
-      const objectUrl = (object.id || object) as string;
-      const postIdMatch = objectUrl?.match(/\/notes\/([a-zA-Z0-9]+)/);
+      const objectUrl = typeof object.object === 'string' ? object.object : '';
+      const postIdMatch = objectUrl?.match(/\/notes\/([a-zA-Z0-9_-]+)$/);
       if (postIdMatch) {
         await env.DB.prepare(`
           DELETE FROM likes WHERE post_id = ? AND actor_id = ?
@@ -761,8 +761,8 @@ async function handleUndoActivity(
       }
       break;
     case 'Announce':
-      const announceUrl = (object.id || object) as string;
-      const sharePostIdMatch = announceUrl?.match(/\/notes\/([a-zA-Z0-9]+)/);
+      const announceUrl = typeof object.object === 'string' ? object.object : '';
+      const sharePostIdMatch = announceUrl?.match(/\/notes\/([a-zA-Z0-9_-]+)$/);
       if (sharePostIdMatch) {
         await env.DB.prepare(`
           DELETE FROM shares WHERE post_id = ? AND actor_id = ?
