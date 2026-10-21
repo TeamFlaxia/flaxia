@@ -1,6 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 
-import { fetchWithSsrfGuard, parsePublicHttpUrl } from './lib/url-guard';
+import { parsePublicHttpUrl } from './lib/url-guard';
 
 interface DeliveryMessage {
   type: 'delivery';
@@ -306,7 +306,7 @@ async function handleCreateActivity(
 
   if (object.inReplyTo) {
     const replyTo = object.inReplyTo as string;
-    const postIdMatch = replyTo.match(/\/notes\/([a-zA-Z0-9]+)/);
+    const postIdMatch = replyTo.match(/\/notes\/([a-zA-Z0-9_-]+)$/);
     if (postIdMatch) {
       parentId = postIdMatch[1];
     }
@@ -606,7 +606,7 @@ async function handleLikeActivity(
     return;
   }
 
-  const postIdMatch = objectUrl.match(/\/notes\/([a-zA-Z0-9]+)/);
+  const postIdMatch = objectUrl.match(/\/notes\/([a-zA-Z0-9_-]+)$/);
   if (!postIdMatch) {
     console.log('Like target is not a local post:', objectUrl);
     return;
@@ -638,10 +638,10 @@ async function handleLikeActivity(
 
   const likeId = generateId();
   await env.DB.prepare(`
-    INSERT INTO likes (id, post_id, user_id, actor_id, created_at)
+    INSERT OR IGNORE INTO likes (id, post_id, user_id, actor_id, created_at)
     VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
-    .bind(likeId, postId, 'unknown', actorId)
+    .bind(likeId, postId, null, actorId)
     .run();
 
   console.log('Like recorded:', postId, actorId);
@@ -660,7 +660,7 @@ async function handleAnnounceActivity(
     return;
   }
 
-  const postIdMatch = objectUrl.match(/\/notes\/([a-zA-Z0-9]+)/);
+  const postIdMatch = objectUrl.match(/\/notes\/([a-zA-Z0-9_-]+)$/);
   if (!postIdMatch) {
     console.log('Announce target is not a local post:', objectUrl);
     return;
@@ -692,10 +692,10 @@ async function handleAnnounceActivity(
 
   const shareId = generateId();
   await env.DB.prepare(`
-    INSERT INTO shares (id, post_id, user_id, actor_id, created_at)
+    INSERT OR IGNORE INTO shares (id, post_id, user_id, actor_id, created_at)
     VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
-    .bind(shareId, postId, 'unknown', actorId)
+    .bind(shareId, postId, null, actorId)
     .run();
 
   console.log('Share recorded:', postId, actorId);
@@ -729,11 +729,18 @@ async function handleUndoActivity(
     return;
   }
 
+  // The verified outer actor must own the activity being undone. Otherwise
+  // a signed Undo from A could delete B's follow/like/share records.
+  if (activity.actor !== actorId || (object.actor !== undefined && object.actor !== actorId)) {
+    console.warn('Ignoring Undo referring to a different actor');
+    return;
+  }
+
   const objectType = object.type;
   switch (objectType) {
     case 'Like':
-      const objectUrl = (object.id || object) as string;
-      const postIdMatch = objectUrl?.match(/\/notes\/([a-zA-Z0-9]+)/);
+      const objectUrl = typeof object.object === 'string' ? object.object : '';
+      const postIdMatch = objectUrl?.match(/\/notes\/([a-zA-Z0-9_-]+)$/);
       if (postIdMatch) {
         await env.DB.prepare(`
           DELETE FROM likes WHERE post_id = ? AND actor_id = ?
@@ -744,8 +751,8 @@ async function handleUndoActivity(
       }
       break;
     case 'Announce':
-      const announceUrl = (object.id || object) as string;
-      const sharePostIdMatch = announceUrl?.match(/\/notes\/([a-zA-Z0-9]+)/);
+      const announceUrl = typeof object.object === 'string' ? object.object : '';
+      const sharePostIdMatch = announceUrl?.match(/\/notes\/([a-zA-Z0-9_-]+)$/);
       if (sharePostIdMatch) {
         await env.DB.prepare(`
           DELETE FROM shares WHERE post_id = ? AND actor_id = ?
@@ -766,9 +773,9 @@ async function handleUndoActivity(
         await env.DB.prepare(`
           DELETE FROM ap_followers WHERE local_user_id = ? AND actor_url = ?
         `)
-          .bind(userResult.id, object.actor as string)
+          .bind(userResult.id, actorId)
           .run();
-        console.log('Follow removed:', object.actor);
+        console.log('Follow removed:', actorId);
       }
       break;
     default:
@@ -788,26 +795,14 @@ async function handleUpdateActivity(
     return;
   }
 
-  if (object.type === 'Person') {
-    // Remote user updated their profile - fetch latest info through the
-    // SSRF guard: actorId arrives in a signed-but-remote activity.
-    try {
-      const actorResponse = await fetchWithSsrfGuard(actorId, {
-        headers: { Accept: 'application/activity+json, application/ld+json' },
-        timeoutMs: 10_000,
-      });
-      if (actorResponse.ok) {
-        console.log('Profile update received from:', actorId);
-        // In the future, store remote actor info in a remote_actors table
-      }
-    } catch (e) {
-      console.error('Failed to fetch updated actor:', e);
-    }
-  } else if (object.type === 'Note') {
-    console.log('Note update received:', object.id);
-  } else {
-    console.log('Update activity for unknown type:', object.type);
+  // Profile/note Update persistence is not implemented yet. Do not issue a
+  // network fetch at the whim of a remote actor when there is no consumer for
+  // the fetched data (and therefore no meaningful benefit).
+  if (activity.actor !== actorId || (object.attributedTo && object.attributedTo !== actorId)) {
+    console.warn('Ignoring Update from a mismatched actor');
+    return;
   }
+  console.log('Ignoring unsupported ActivityPub Update:', object.type);
 }
 
 function generateId(): string {
