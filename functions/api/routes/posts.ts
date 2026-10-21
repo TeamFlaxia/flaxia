@@ -568,14 +568,24 @@ posts.get('/posts/recommended', async (c) => {
     const cursor = c.req.query('cursor');
     const cursorParts = cursor ? cursor.split(',') : [];
     const isArchiveCursor = cursorParts[0] === 'archive';
-    const [cursorScore, cursorCreatedAt, cursorId] = isArchiveCursor ? [] : cursorParts;
+    const [cursorScore, cursorCreatedAt, cursorId] = cursorParts;
     const numericCursor = cursorScore ? Number.parseFloat(cursorScore) : null;
     const cursorAsOf = Number(cursorParts[3]);
-    const asOfMs = Number.isFinite(cursorAsOf) && cursorAsOf > 0 ? cursorAsOf : Date.now();
+    const now = Date.now();
+    if (cursorParts[3] && (!Number.isSafeInteger(cursorAsOf) || cursorAsOf <= 0 || cursorAsOf > now)) {
+      return c.json({ error: 'Invalid recommendation cursor' }, 400);
+    }
+    const asOfMs = cursorParts[3] ? cursorAsOf : now;
+    // Carry the IDs already delivered in this bounded candidate pool. Scores,
+    // follows and impression timestamps can still change after asOf; a time
+    // bound alone cannot make a mutable ranking safe for score pagination.
+    const seenIds = new Set(cursorParts[4]?.split(':').filter(Boolean) ?? []);
+    if (seenIds.size > 700 || [...seenIds].some((id) => !/^[A-Za-z0-9_-]{1,36}$/.test(id))) {
+      return c.json({ error: 'Invalid recommendation cursor' }, 400);
+    }
     const asOfUnixSeconds = Math.floor(asOfMs / 1000);
-    // Every page of a For You session must see the same snapshot. Without the
-    // upper bound, posts created and embeddings produced between pages shift
-    // the candidate ranks, and the score cursor starts repeating rows.
+    // Exclude posts and embeddings created after the feed began. The delivered
+    // ID set below also protects against changes to existing candidate ranks.
     const asOfIso = new Date(asOfMs).toISOString();
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
 
@@ -786,9 +796,9 @@ posts.get('/posts/recommended', async (c) => {
       return { post, score };
     });
 
-    let filteredPosts = scoredPosts;
+    let filteredPosts = scoredPosts.filter(({ post }) => !seenIds.has(String(post.id)));
     const validCursor = numericCursor !== null && Number.isFinite(numericCursor) && cursorCreatedAt && cursorId;
-    if (validCursor) {
+    if (validCursor && cursorParts.length < 5) {
       filteredPosts = scoredPosts.filter(({ post, score }) => {
         const createdAt = String(post.created_at || '');
         const id = String(post.id || '');
@@ -811,7 +821,15 @@ posts.get('/posts/recommended', async (c) => {
     });
     const enrichedPosts = await enrichRecommendedPosts(pagePosts, db, currentUserId);
     const lastPost = enrichedPosts.at(-1) as Record<string, unknown> | undefined;
-    const nextCursor = lastPost ? `${lastPost.score},${lastPost.created_at},${lastPost.id},${asOfMs}` : null;
+    for (const post of enrichedPosts) seenIds.add(String(post.id));
+    // At most 700 candidates come from the four sources (100 vector + 3*200).
+    // Bound cursor growth well below Cloudflare's URL ceiling before moving
+    // into the chronological archive, whose cursor does not need an ID set.
+    const nextCursor = !lastPost
+      ? null
+      : seenIds.size >= 700
+        ? `archive,,,${asOfMs}`
+        : `${lastPost.score},${lastPost.created_at},${lastPost.id},${asOfMs},${[...seenIds].join(':')}`;
 
     return c.json({ posts: enrichedPosts, next_cursor: nextCursor });
   } catch (error: unknown) {
