@@ -272,6 +272,14 @@ password: legacy login (auto-upgrade), password change, and vault enable.
 | `tests/security-guards.test.ts` | static guards (escrow, sandboxing, constant-time verify) |
 
 
+### Cancelling a pairing vs revoking an active device (#103)
+
+`DELETE /api/vault/devices/:id` only cancels **pending** QR pairings.
+It rejects an **active** device with HTTP 403 even for authenticated sessions.
+Active device revocation requires the SRP password proof and atomic vault-key
+rotation provided by `POST /api/vault/keys/revoke-device`; never use direct
+row deletion as a shortcut for an active device.
+
 ### QR possession check during approval (#102)
 
 The approver must supply both the ephemeral approver public key
