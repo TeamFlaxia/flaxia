@@ -10,6 +10,7 @@ type WsMessage =
 
 import type { ParentMessage } from './bridge.ts';
 import { isParentMessage } from './bridge.ts';
+import { isNativeApp, nativeApiHref } from './native-api.ts';
 
 interface MultiplayerConfig {
   gameId: string;
@@ -42,7 +43,10 @@ export class MultiplayerManager {
   connect(): void {
     if (this.connected) return;
 
-    const wsUrl = new URL(this.config.wsUrl, globalThis.location.origin);
+    const wsUrl = new URL(
+      isNativeApp() ? nativeApiHref(this.config.wsUrl) : this.config.wsUrl,
+      globalThis.location.origin,
+    );
     wsUrl.searchParams.set('gameId', this.config.gameId);
     wsUrl.searchParams.set('roomId', this.config.roomId);
 

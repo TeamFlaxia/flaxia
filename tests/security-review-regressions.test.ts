@@ -25,15 +25,17 @@ registerHooks({
 });
 const { default: games } = await import('../functions/api/routes/games.ts');
 const { default: posts } = await import('../functions/api/routes/posts.ts');
+const { loadOrComputeInterestVector } = await import('../functions/api/routes/recommender.ts');
 
 // Execute route SQL in SQLite, with D1's 100-bound-parameter limit enforced.
 // No live server or external services are needed for these regressions.
-function fixture() {
+function fixture(authenticated = true) {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec(`
     CREATE TABLE users (
       id TEXT PRIMARY KEY, username TEXT, display_name TEXT, avatar_key TEXT,
-      badge_type TEXT, language TEXT
+      badge_type TEXT, language TEXT, trust_score REAL DEFAULT 1.0,
+      repetition_score REAL DEFAULT 0.0, trust_updated_at TEXT
     );
     INSERT INTO users (id, username, display_name) VALUES ('owner', 'owner', 'Owner');
     CREATE TABLE posts (
@@ -43,7 +45,7 @@ function fixture() {
       engagement_hotness REAL, status TEXT DEFAULT 'published', hidden INTEGER DEFAULT 0,
       game_description TEXT, fresh_count INTEGER DEFAULT 0, bookmark_count INTEGER DEFAULT 0,
       reply_count INTEGER DEFAULT 0, impressions INTEGER DEFAULT 0, parent_id TEXT,
-      root_id TEXT, depth INTEGER DEFAULT 0, edited_at TEXT,
+      root_id TEXT, depth INTEGER DEFAULT 0, edited_at TEXT, actor_id TEXT,
       created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
     CREATE TABLE post_attachments (post_id TEXT, r2_key TEXT, kind TEXT, position INTEGER);
@@ -55,8 +57,17 @@ function fixture() {
     );
     CREATE TABLE user_game_plays (
       id TEXT PRIMARY KEY, user_id TEXT, post_id TEXT, dwell_ms INTEGER,
-      is_fullscreen INTEGER, game_type TEXT, source TEXT
+      is_fullscreen INTEGER, game_type TEXT, source TEXT, created_at TEXT
     );
+    CREATE TABLE user_profiles (user_id TEXT PRIMARY KEY, interest_vec TEXT, source_count INTEGER, updated_at TEXT);
+    CREATE TABLE post_embeddings (post_id TEXT PRIMARY KEY, embedding TEXT, created_at TEXT);
+    CREATE TABLE follows (follower_id TEXT, followee_id TEXT);
+    CREATE TABLE blocks (blocker_id TEXT, blocked_id TEXT);
+    CREATE TABLE freshs (user_id TEXT, post_id TEXT, created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')));
+    CREATE TABLE bookmarks (user_id TEXT, post_id TEXT, created_at TEXT);
+    CREATE TABLE shares (user_id TEXT, post_id TEXT, created_at TEXT);
+    CREATE TABLE user_post_impressions (user_id TEXT, post_id TEXT, last_seen_at TEXT);
+    CREATE TABLE polls (id TEXT, post_id TEXT);
   `);
   const validationQueries: SQLInputValue[][] = [];
   function statement(sql: string, values: SQLInputValue[] = []) {
@@ -70,7 +81,7 @@ function fixture() {
       },
       async all() {
         if (sql.startsWith('SELECT id FROM posts WHERE id IN')) validationQueries.push(values);
-        return { results: sqlite.prepare(sql).all(...values) };
+        return { success: true, results: sqlite.prepare(sql).all(...values) };
       },
       async run() {
         const result = sqlite.prepare(sql).run(...values);
@@ -86,7 +97,9 @@ function fixture() {
   } as unknown as D1Database;
   const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
   app.use('*', async (c, next) => {
-    c.set('user', { id: 'owner', username: 'owner', display_name: 'Owner' } as Variables['user']);
+    if (authenticated) {
+      c.set('user', { id: 'owner', username: 'owner', display_name: 'Owner' } as Variables['user']);
+    }
     await next();
   });
   app.route('/', posts);
@@ -104,12 +117,117 @@ function fixture() {
   async function request(path: string, body: unknown, method = 'POST') {
     return app.request(
       path,
-      { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: method === 'GET' ? undefined : JSON.stringify(body),
+      },
       env,
     );
   }
-  return { sqlite, validationQueries, deletedKeys, request };
+  return { sqlite, db, validationQueries, deletedKeys, request };
 }
+
+describe('recommended feed D1 bind-limit regressions', () => {
+  for (const [authenticated, limit] of [
+    [false, 50],
+    [true, 20],
+    [true, 50],
+  ] as const) {
+    it(`paginates recent and older recommendations without suppressing seen or freshed posts (authenticated=${authenticated})`, async () => {
+      const { sqlite, request } = fixture(authenticated);
+      try {
+        const insert = sqlite.prepare(
+          'INSERT INTO posts (id, user_id, text, engagement_hotness, created_at) VALUES (?, ?, ?, ?, ?)',
+        );
+        const recent = new Date().toISOString();
+        const oldFresh = new Date(Date.now() - 15 * 86400_000).toISOString();
+        const old = new Date(Date.now() - 30 * 86400_000).toISOString();
+        for (let i = 0; i < 120; i++) {
+          insert.run(`recent-${i}`, `author-${i}`, 'A recent recommendation', 1, recent);
+          insert.run(`popular-${i}`, `author-${i}`, 'An older popular recommendation', 100000, old);
+        }
+        sqlite
+          .prepare('INSERT INTO freshs (user_id, post_id, created_at) VALUES (?, ?, ?)')
+          .run('owner', 'recent-0', recent);
+        sqlite
+          .prepare('INSERT INTO freshs (user_id, post_id, created_at) VALUES (?, ?, ?)')
+          .run('owner', 'recent-3', oldFresh);
+        sqlite.exec(`
+          INSERT INTO user_post_impressions VALUES ('owner', 'recent-1', '${recent}');
+          INSERT INTO blocks VALUES ('owner', 'author-2');
+        `);
+        const firstResponse = await request(`/posts/recommended?limit=${limit}`, undefined, 'GET');
+        assert.equal(firstResponse.status, 200, await firstResponse.clone().text());
+        const body = (await firstResponse.json()) as {
+          posts: Array<{ id: string; user_id: string; score?: number }>;
+          next_cursor: string | null;
+        };
+        assert.equal(body.posts.length, limit);
+        assert.equal(new Set(body.posts.map((post) => post.id)).size, limit);
+        assert.ok(body.next_cursor);
+
+        const posts = [...body.posts];
+        let cursor = body.next_cursor;
+        const pagination = [cursor];
+        for (let page = 0; page < 8 && cursor; page++) {
+          const response = await request(
+            `/posts/recommended?limit=${limit}&cursor=${encodeURIComponent(cursor)}`,
+            undefined,
+            'GET',
+          );
+          assert.equal(response.status, 200, await response.clone().text());
+          const nextPage = (await response.json()) as {
+            posts: Array<{ id: string; user_id: string; score?: number }>;
+            next_cursor: string | null;
+          };
+          posts.push(...nextPage.posts);
+          cursor = nextPage.next_cursor;
+          pagination.push(cursor);
+        }
+
+        assert.ok(
+          posts.some((post) => post.id.startsWith('popular-')),
+          JSON.stringify(pagination),
+        );
+        if (authenticated) {
+          assert.ok(posts.some((post) => post.id === 'recent-0'));
+          assert.ok(posts.some((post) => post.id === 'recent-3'));
+          assert.ok(posts.some((post) => post.id === 'recent-1'));
+          assert.ok(posts.every((post) => post.user_id !== 'author-2'));
+          const scores = new Map(posts.map((post) => [post.id, post.score]));
+          assert.ok((scores.get('recent-0') ?? 1) < (scores.get('recent-4') ?? 0));
+          assert.ok((scores.get('recent-1') ?? 1) < (scores.get('recent-4') ?? 0));
+        }
+      } finally {
+        sqlite.close();
+      }
+    });
+  }
+
+  it('computes an interest profile from more than 100 distinct history posts', async () => {
+    const { sqlite, db } = fixture();
+    try {
+      const insertPost = sqlite.prepare('INSERT INTO posts (id, user_id, parent_id) VALUES (?, ?, ?)');
+      const insertEmbedding = sqlite.prepare('INSERT INTO post_embeddings (post_id, embedding) VALUES (?, ?)');
+      const vector = JSON.stringify(Array.from({ length: 1024 }, (_, index) => Number(index === 0)));
+      for (let i = 0; i < 120; i++) {
+        const id = `history-${i}`;
+        insertPost.run(id, 'author', null);
+        insertEmbedding.run(id, vector);
+        if (i < 40) sqlite.prepare('INSERT INTO freshs (user_id, post_id) VALUES (?, ?)').run('owner', id);
+        else if (i < 70) sqlite.prepare('INSERT INTO bookmarks (user_id, post_id) VALUES (?, ?)').run('owner', id);
+        else if (i < 100) insertPost.run(`reply-${i}`, 'owner', id);
+        else sqlite.prepare('INSERT INTO shares (user_id, post_id) VALUES (?, ?)').run('owner', id);
+      }
+      const profile = await loadOrComputeInterestVector(db, 'owner');
+      assert.equal(profile?.sourceCount, 120);
+      assert.equal(profile?.vector[0], 1);
+    } finally {
+      sqlite.close();
+    }
+  });
+});
 
 describe('legacy media ownership regressions', () => {
   for (const [prefix, ext] of [

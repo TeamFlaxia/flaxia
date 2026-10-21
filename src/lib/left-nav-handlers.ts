@@ -4,6 +4,7 @@
 // come from the bootstrap via deps so this module stays decoupled from
 // the app shell.
 import type { RouteView } from './router.js';
+import { pushSpaHistory } from './spa-history.ts';
 
 export interface LeftNavDeps {
   navigate: (view: RouteView, postId?: string, username?: string) => void;
@@ -26,7 +27,7 @@ export function createLeftNavHandlers(deps: LeftNavDeps): LeftNavHandlers {
         window.history.pushState({}, '', '/explore');
         deps.navigate('explore');
       } else if (item === 'arcade') {
-        window.history.pushState({}, '', '/arcade');
+        pushSpaHistory('/arcade');
         deps.navigate('arcade');
       } else if (item === 'notifications') {
         window.history.pushState({}, '', '/notifications');
@@ -40,7 +41,7 @@ export function createLeftNavHandlers(deps: LeftNavDeps): LeftNavHandlers {
       } else if (item === 'profile') {
         const username = deps.getCurrentUsername();
         if (!username) {
-          window.history.pushState({}, '', '/arcade');
+          pushSpaHistory('/arcade');
           deps.navigate('arcade');
           return;
         }

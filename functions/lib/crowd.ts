@@ -620,21 +620,29 @@ export async function embedPost(
   embeddingPosts.add(postId);
   try {
     const config = crowdConfig(env);
-    if (!config.configured || config.screeningDisabled) {
-      await enqueuePendingEmbed(db, postId, text);
+    if (!db) {
+      if (config.configured && !config.screeningDisabled) await submitEmbedTask(config, postId, text);
       return;
     }
 
-    if (db) {
-      await drainPendingEmbeds(db, env).catch((e) => console.error('Pending embed drain failed:', e));
-    }
+    // Persist to the outbox before the network call. The submit happens after
+    // the response (waitUntil); if the isolate is evicted mid-flight, the row
+    // is still queued for the next drain instead of being lost.
+    await enqueuePendingEmbed(db, postId, text);
+    if (!config.configured || config.screeningDisabled) return;
 
-    if (Date.now() - lastEmbedTime < EMBED_RATE_LIMIT_MS) {
-      await enqueuePendingEmbed(db, postId, text);
-      return;
-    }
+    // This drain skips `postId` (the in-flight guard), so backfilled rows are
+    // submitted here and the current post is handled below without the throttle
+    // consuming the same slot twice.
+    await drainPendingEmbeds(db, env).catch((e) => console.error('Pending embed drain failed:', e));
+
+    if (Date.now() - lastEmbedTime < EMBED_RATE_LIMIT_MS) return;
     const ok = await submitEmbedTask(config, postId, text);
-    if (!ok) await enqueuePendingEmbed(db, postId, text, 1, 'submission failed');
+    if (ok) {
+      await db.prepare('DELETE FROM pending_embeddings WHERE post_id = ?').bind(postId).run();
+    } else {
+      await enqueuePendingEmbed(db, postId, text, 1, 'submission failed');
+    }
   } finally {
     embeddingPosts.delete(postId);
   }

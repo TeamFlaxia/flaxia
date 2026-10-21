@@ -270,3 +270,15 @@ password: legacy login (auto-upgrade), password change, and vault enable.
 | `tests/vault.test.ts`, `tests/vault-devices.test.ts` | envelope API + the full two-device handshake over HTTP — hostile values (salts, KDF params, `1e999`, `vk_version`), single-use proof replay, TTL clamp, 10-device cap |
 | `tests/vault-session.test.ts` | unlock outcome classification (wrong/network/malformed/ok), enable round-trip with device self-registration, re-wrap refusal paths |
 | `tests/security-guards.test.ts` | static guards (escrow, sandboxing, constant-time verify) |
+
+
+### QR possession check during approval (#102)
+
+The approver must supply both the ephemeral approver public key
+(`approved_pub`, A) and the scanned joiner QR public key (`peer_pub`, B)
+when calling `POST /api/vault/devices/:id/approve`. The server verifies that
+B matches the original pairing row, including in the conditional update.
+These are **different** X25519 public keys; they must never be compared with
+each other. The joiner uses A to unwrap the handoff. The server does not return
+B in the pending-pairing polling/list APIs to avoid providing it to a party
+holding only a stolen session.

@@ -56,8 +56,8 @@
     "cap:copy": "npx cap copy && node scripts/patch-android-build.mjs",
     "cap:open:android": "npx cap open android",
     "cap:open:ios": "npx cap open ios",
-    "cap:build:android": "npx cap sync && node scripts/patch-android-build.mjs && npx cap copy && cd android && ./gradlew assembleDebug",
-    "cap:build:android:release": "npm run build && npx cap sync && node scripts/patch-android-build.mjs && cd android && ./gradlew bundleRelease",
+    "cap:build:android": "CAPACITOR_PLATFORM=android npx cap sync && node scripts/patch-android-build.mjs && npx cap copy && cd android && ./gradlew assembleDebug",
+    "cap:build:android:release": "npm run build && CAPACITOR_PLATFORM=android npx cap sync && node scripts/patch-android-build.mjs && cd android && ./gradlew bundleRelease",
     "cap:build:ios": "npx cap sync && npx cap copy",
     "prepare": "husky"
   },

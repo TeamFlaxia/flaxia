@@ -8,6 +8,8 @@ const container = document.getElementById('container');
 const loading = document.getElementById('loading');
 const errorEl = document.getElementById('error');
 
+const MAX_FILE_COUNT = 1024;
+
 const ALLOWED_EXTENSIONS = {
   '.html': 'text/html',
   '.css': 'text/css',
@@ -115,8 +117,8 @@ function rewriteHtmlString(htmlContent, blobUrlMap) {
 function validateZip(zip) {
   const files = Object.entries(zip.files);
 
-  if (files.length > 255) {
-    throw new Error('Too many files (max 255)');
+  if (files.length > MAX_FILE_COUNT) {
+    throw new Error(`Too many files (max ${MAX_FILE_COUNT})`);
   }
 
   let totalSize = 0;
