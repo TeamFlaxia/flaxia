@@ -17,6 +17,10 @@ export class Timeline {
   private props: TimelineProps;
   private state: TimelineState;
   private postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
+  private seenPostIds: Set<string> = new Set();
+  private duplicatePageStreak = 0;
+  private loadGeneration = 0;
+  private destroyed = false;
   private composer!: PostComposer;
   private fabButton?: HTMLElement;
   private composerObserver: IntersectionObserver | null = null;
@@ -322,6 +326,8 @@ export class Timeline {
   }
 
   private handleNewPost(post: Post): void {
+    if (this.seenPostIds.has(post.id)) return;
+    this.seenPostIds.add(post.id);
     this.state.posts = [post, ...this.state.posts];
     const postList = this.element.querySelector('.post-list') as HTMLElement;
     if (!postList) return;
@@ -384,10 +390,14 @@ export class Timeline {
   }
 
   private resetAndLoadPosts(): void {
+    this.loadGeneration++;
+    this.state.loading = false;
     this.state.posts = [];
     this.state.ads = [];
     this.state.cursor = undefined;
     this.state.hasMore = true;
+    this.seenPostIds.clear();
+    this.duplicatePageStreak = 0;
     this.postCards.forEach((card) => void card.destroy());
     this.postCards.clear();
     this.renderPostList();
@@ -414,8 +424,12 @@ export class Timeline {
     const pruneTop = -viewportHeight * Timeline.PRUNE_ABOVE_VIEWPORTS;
 
     // Cards are stacked newest-first, so walking from the start removes the
-    // posts the user has already scrolled past.
+    // posts the user has already scrolled past. Keep the first card that is
+    // still on screen as an anchor so removing content above it cannot move
+    // the viewport (browsers do not always scroll-anchor programmatic removals).
     const cardElements = Array.from(postList.querySelectorAll('.post-card')) as HTMLElement[];
+    const anchor = cardElements.find((card) => card.getBoundingClientRect().bottom > 0);
+    const anchorTop = anchor?.getBoundingClientRect().top;
     for (let i = 0; i < cardElements.length; i++) {
       if (cardElements.length - (i + 1) < Timeline.PRUNE_MIN_CARDS) break;
       const cardElement = cardElements[i]!;
@@ -439,14 +453,19 @@ export class Timeline {
         adElement.remove();
       }
     });
+
+    if (anchor && anchorTop !== undefined) {
+      const delta = anchor.getBoundingClientRect().top - anchorTop;
+      if (Math.abs(delta) > 0.5) window.scrollBy(0, delta);
+    }
   }
 
   /**
    * Restores posts that were pruned from the head of the timeline once the
    * user scrolls back up toward it. The post data is still held in
    * state.posts, so no network request is needed; only the cards (and their
-   * DOM) are rebuilt. Scroll anchoring keeps the viewport stable when the
-   * restored content is inserted above the current cards.
+   * DOM) are rebuilt. Inserting above the viewport is compensated manually so
+   * the user's reading position does not jump.
    */
   private restoreHeadPosts(): void {
     const postList = this.element.querySelector('.post-list') as HTMLElement | null;
@@ -496,7 +515,13 @@ export class Timeline {
       }
     }
 
+    const firstCardTop = firstCard.getBoundingClientRect().top;
     postList.insertBefore(fragment, firstCard);
+    // Inserting a chunk above the viewport must not drag the user upward.
+    // Compensate explicitly because restored media reserves its own space
+    // only after layout and scroll anchoring is not guaranteed for this path.
+    const delta = firstCard.getBoundingClientRect().top - firstCardTop;
+    if (Math.abs(delta) > 0.5) window.scrollBy(0, delta);
   }
 
   private setupHeadObserver(): void {
@@ -530,8 +555,9 @@ export class Timeline {
   }
 
   private async loadInitialPosts(): Promise<void> {
-    if (this.state.loading) return;
+    if (this.destroyed || this.state.loading) return;
 
+    const generation = this.loadGeneration;
     this.state.loading = true;
     this.updateLoadMoreButton();
 
@@ -546,17 +572,24 @@ export class Timeline {
       }
 
       const data = (await response.json()) as { posts?: Post[]; next_cursor?: string };
+      if (this.destroyed || generation !== this.loadGeneration) return;
 
       // Ensure posts is an array (handle unexpected API responses)
       const postsArray = Array.isArray(data.posts) ? data.posts : [];
 
+      // The same post can be returned twice if a feed's ranking shifts between
+      // pages. Never render a post twice in one timeline.
+      const uniquePosts = postsArray.filter((post) => {
+        if (this.seenPostIds.has(post.id)) return false;
+        this.seenPostIds.add(post.id);
+        return true;
+      });
+
       // Inject ads into posts
-      const postsWithAds = injectAds(postsArray, this.state.ads, this.state.everyN);
+      const postsWithAds = injectAds(uniquePosts, this.state.ads, this.state.everyN);
       this.state.posts = postsWithAds;
 
-      if (postsArray.length > 0) {
-        this.state.cursor = data.next_cursor || postsArray[postsArray.length - 1].created_at;
-      }
+      this.state.cursor = data.next_cursor || postsArray.at(-1)?.created_at || this.state.cursor;
 
       this.state.hasMore = this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === 20;
       this.renderPostList();
@@ -566,8 +599,10 @@ export class Timeline {
     } catch (error) {
       console.error('Failed to load posts:', error);
     } finally {
-      this.state.loading = false;
-      this.updateLoadMoreButton();
+      if (!this.destroyed && generation === this.loadGeneration) {
+        this.state.loading = false;
+        this.updateLoadMoreButton();
+      }
     }
   }
 
@@ -591,10 +626,12 @@ export class Timeline {
   }
 
   private async loadMorePosts(): Promise<void> {
-    if (this.state.loading || !this.state.hasMore || !this.state.cursor) return;
+    if (this.destroyed || this.state.loading || !this.state.hasMore || !this.state.cursor) return;
 
+    const generation = this.loadGeneration;
     this.state.loading = true;
     this.updateLoadingSpinner();
+    let continueLoading = false;
 
     try {
       const url = this.buildApiUrl(this.state.cursor);
@@ -607,25 +644,47 @@ export class Timeline {
       }
 
       const data = (await response.json()) as { posts?: Post[]; next_cursor?: string };
+      if (this.destroyed || generation !== this.loadGeneration) return;
 
       // Ensure posts is an array (handle unexpected API responses)
       const postsArray = Array.isArray(data.posts) ? data.posts : [];
 
+      // Skip posts already rendered. A ranking shift between pages can put a
+      // seen post above the cursor again; without this guard the feed loops.
+      const newPosts = postsArray.filter((post) => {
+        if (this.seenPostIds.has(post.id)) return false;
+        this.seenPostIds.add(post.id);
+        return true;
+      });
+
       // Inject ads into new posts
-      const postsWithAds = injectAds(postsArray, this.state.ads, this.state.everyN);
+      const postsWithAds = injectAds(newPosts, this.state.ads, this.state.everyN);
       this.state.posts = [...this.state.posts, ...postsWithAds];
 
-      if (postsArray.length > 0) {
-        this.state.cursor = data.next_cursor || postsArray[postsArray.length - 1].created_at;
-      }
+      this.state.cursor = data.next_cursor || postsArray.at(-1)?.created_at || this.state.cursor;
 
       this.state.hasMore = this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === 20;
       this.appendPosts(postsWithAds);
+
+      if (newPosts.length === 0 && this.state.mode === 'foryou' && this.state.hasMore && data.next_cursor) {
+        // The page was entirely duplicates. Keep paginating (bounded) so the
+        // sentinel does not sit idle while the server still has content.
+        this.duplicatePageStreak++;
+        continueLoading = this.duplicatePageStreak <= 3;
+      } else if (newPosts.length > 0) {
+        this.duplicatePageStreak = 0;
+      }
     } catch (error) {
       console.error('Failed to load more posts:', error);
     } finally {
-      this.state.loading = false;
-      this.updateLoadingSpinner();
+      if (!this.destroyed && generation === this.loadGeneration) {
+        this.state.loading = false;
+        this.updateLoadingSpinner();
+        if (continueLoading)
+          setTimeout(() => {
+            if (!this.destroyed && generation === this.loadGeneration) void this.loadMorePosts();
+          }, 0);
+      }
     }
   }
 
@@ -796,6 +855,8 @@ export class Timeline {
   }
 
   public destroy(): void {
+    this.destroyed = true;
+    this.loadGeneration++;
     // Clean up infinite scroll observer
     this.infiniteScroll.disconnect();
 

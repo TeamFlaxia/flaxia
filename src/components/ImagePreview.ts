@@ -23,6 +23,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     img.className = 'image-preview-img';
     img.alt = t('image_preview.post_preview', { id: props.postId });
     img.loading = 'lazy';
+    img.decoding = 'async';
     img.draggable = false;
     img.oncontextmenu = (e) => e.preventDefault();
     img.src = props.src;
@@ -37,12 +38,16 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   const baseImageUrl = nativeApiHref(
     props.isThumbnail ? `/api/thumbnail/${props.postId}` : `/api/images/${props.gifKey}`,
   );
-  const imageUrl = props.isThumbnail ? baseImageUrl : baseImageUrl + '?_=' + Date.now();
+  // Keep the URL stable so the browser and the edge cache can reuse the image
+  // instead of re-downloading it on every card mount. Media edits overwrite
+  // the key, so a short max-age is still applied server-side.
+  const imageUrl = baseImageUrl;
 
   const img = document.createElement('img');
   img.className = 'image-preview-img';
   img.alt = t('image_preview.post_preview', { id: props.postId });
   img.loading = 'lazy';
+  img.decoding = 'async';
   img.draggable = false;
   img.oncontextmenu = (e) => e.preventDefault();
 
@@ -52,7 +57,9 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     createImageOverlay(imageUrl, props.postId, props.gallery, props.galleryIndex ?? 0);
   };
 
-  // Forced 16:9 preview: fix the box ratio and center-crop the image into it.
+  // Forced 16:9 preview: reserve the box before the image loads so late image
+  // loads can never push the timeline down. `contain` keeps the whole image
+  // visible; `cover` fills the slide (used by carousels).
   if (props.ratio === '16:9') {
     container.style.cssText = `
       position: relative;
@@ -68,7 +75,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     img.style.cssText = `
       width: 100%;
       height: 100%;
-      object-fit: cover;
+      object-fit: ${props.fit ?? 'cover'};
       object-position: center;
       cursor: pointer;
       display: block;
@@ -76,7 +83,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     `;
 
     if (props.isThumbnail) {
-      img.src = baseImageUrl + '?_=' + Date.now();
+      img.src = baseImageUrl;
       container.appendChild(img);
       return container;
     }
@@ -179,7 +186,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   if (props.isThumbnail) {
     img.onload = fit;
     if (img.complete) fit();
-    img.src = baseImageUrl + '?_=' + Date.now();
+    img.src = baseImageUrl;
     container.appendChild(img);
   } else {
     // Show a placeholder with the same styling before load

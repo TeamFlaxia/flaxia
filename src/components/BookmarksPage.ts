@@ -257,7 +257,7 @@ export class BookmarksPage {
       `;
       if (post.thumbnail_key) {
         const img = document.createElement('img');
-        img.src = nativeApiHref(`/api/images/${post.thumbnail_key}?_=${Date.now()}`);
+        img.src = nativeApiHref(`/api/images/${post.thumbnail_key}`);
         img.loading = 'lazy';
         img.width = 150;
         img.height = 200;

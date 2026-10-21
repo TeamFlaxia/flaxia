@@ -93,7 +93,7 @@ async function postKeyMediaAllowed(c: MediaContext, key: string): Promise<boolea
  * moderation hide lands quickly; the previous 24h/1y windows could serve a
  * blocked file long after the KV/D1 verdict was written.
  */
-const MEDIA_CACHE_CONTROL = 'public, max-age=300, s-maxage=300';
+const MEDIA_CACHE_CONTROL = 'public, max-age=300, s-maxage=300, stale-while-revalidate=60';
 
 /**
  * Does a detected MIME type belong in an attachment slot of this kind?
