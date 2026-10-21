@@ -426,7 +426,6 @@ async function updateStageContent(container: HTMLElement, props: PostStageProps)
         gifKey: props.post.gif_key,
         postId: props.post.id,
         ratio: '16:9',
-        fit: 'contain',
       });
     } else if (props.post.thumbnail_key) {
       // Post has only thumbnail

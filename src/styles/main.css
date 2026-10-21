@@ -1674,10 +1674,14 @@ h1 {
 .video-player-element {
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  object-fit: cover;
   display: block;
   background: #000;
   pointer-events: none;
+}
+
+.video-player:fullscreen .video-player-element {
+  object-fit: contain;
 }
 
 .video-player-overlay {
