@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { executeZipAuto } from '../lib/zip-manager.js';
 import { PostCardMode, PostStageProps } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
@@ -188,7 +189,7 @@ function createThumbnailWithOverlay(props: {
 
   // Thumbnail image
   const image = document.createElement('img');
-  image.src = `/api/thumbnail/${props.postId}`;
+  image.src = nativeApiHref(`/api/thumbnail/${props.postId}`);
   // Timeline mounts dozens of stages: decode lazily so off-screen
   // thumbnails don't contend with first paint.
   image.loading = 'lazy';
@@ -316,6 +317,12 @@ export function createPostStage(props: PostStageProps): HTMLElement {
     // Don't toggle mode for media players (image, audio, video)
     if ((e.target as HTMLElement).closest('.video-player, .audio-player, .image-preview')) {
       return;
+    }
+
+    // ZIP games launch in Arcade from the mode-change handler; keep the click
+    // from bubbling to PostCard's thread navigation as well.
+    if (isZipGame(props.post.payload_key)) {
+      e.stopPropagation();
     }
 
     const newMode = props.mode === PostCardMode.PREVIEW ? PostCardMode.EXECUTING : PostCardMode.PREVIEW;

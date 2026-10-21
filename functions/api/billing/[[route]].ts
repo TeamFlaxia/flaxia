@@ -14,6 +14,7 @@ import {
   resolveUserIdForSubscription,
   setUserBadgeType,
   upsertSubscription,
+  withBillingCors,
 } from '../../lib/billing';
 
 export async function onRequest(context: {
@@ -25,33 +26,41 @@ export async function onRequest(context: {
   const url = new URL(context.request.url);
   const method = context.request.method;
   const path = url.pathname.replace(/^\/api\/billing\//, '');
-
-  try {
-    if (method === 'POST' && path === 'checkout') {
-      return await handleCheckout(context.request, env);
-    }
-
-    if (method === 'POST' && path === 'webhook') {
-      return await handleWebhook(context.request, env);
-    }
-
-    if (method === 'POST' && path === 'portal') {
-      return await handlePortal(context.request, env);
-    }
-
-    if (method === 'GET' && path === 'plan') {
-      return await handleGetPlan(context.request, env);
-    }
-
-    if (method === 'GET' && path === 'transactions') {
-      return await handleGetTransactions(context.request, env);
-    }
-  } catch (err) {
-    console.error(`Billing ${method} ${path} failed:`, err);
-    return jsonResponse({ error: 'Billing request failed' }, 500);
+  if (context.request.method === 'OPTIONS') {
+    if (!isAllowedOrigin(env, context.request)) return jsonResponse({ error: 'Forbidden' }, 403);
+    return withBillingCors(
+      context.request,
+      new Response(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type,X-Flaxia-Native-App',
+        },
+      }),
+      env,
+    );
   }
 
-  return jsonResponse({ error: 'Not found' }, 404);
+  try {
+    let response: Response;
+    if (method === 'POST' && path === 'checkout') {
+      response = await handleCheckout(context.request, env);
+    } else if (method === 'POST' && path === 'webhook') {
+      response = await handleWebhook(context.request, env);
+    } else if (method === 'POST' && path === 'portal') {
+      response = await handlePortal(context.request, env);
+    } else if (method === 'GET' && path === 'plan') {
+      response = await handleGetPlan(context.request, env);
+    } else if (method === 'GET' && path === 'transactions') {
+      response = await handleGetTransactions(context.request, env);
+    } else {
+      response = jsonResponse({ error: 'Not found' }, 404);
+    }
+    return path === 'webhook' ? response : withBillingCors(context.request, response, env);
+  } catch (err) {
+    console.error(`Billing ${method} ${path} failed:`, err);
+    return withBillingCors(context.request, jsonResponse({ error: 'Billing request failed' }, 500), env);
+  }
 }
 
 // ---------------------------------------------------------------------------

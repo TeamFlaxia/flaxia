@@ -14,6 +14,7 @@ export type RouteView =
   | 'bookmarks'
   | 'terms'
   | 'privacy'
+  | 'child-safety'
   | 'about'
   | 'docs'
   | 'admin'
@@ -59,6 +60,10 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
   if (cleanPath === '/privacy') {
     console.log('Privacy route detected');
     return { view: 'privacy', postId: null, username: null, tag: null };
+  }
+
+  if (cleanPath === '/child-safety') {
+    return { view: 'child-safety', postId: null, username: null, tag: null };
   }
 
   if (cleanPath === '/about') {

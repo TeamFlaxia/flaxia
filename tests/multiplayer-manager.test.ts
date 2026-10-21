@@ -126,7 +126,6 @@ describe('MultiplayerManager', () => {
         userId: 'u1',
         wsUrl: '/api/ws/multiplayer',
         iframe: mockIframe as unknown as HTMLIFrameElement,
-        sandboxOrigin: 'https://sandbox.flaxia.app',
       });
       manager.connect();
       assert.ok(mockWs !== undefined);
@@ -141,7 +140,6 @@ describe('MultiplayerManager', () => {
         userId: 'u1',
         wsUrl: '/api/ws/multiplayer',
         iframe: mockIframe as unknown as HTMLIFrameElement,
-        sandboxOrigin: 'https://sandbox.flaxia.app',
       });
       manager.connect();
       manager.disconnect();
@@ -157,7 +155,6 @@ describe('MultiplayerManager', () => {
         userId: 'u1',
         wsUrl: '/api/ws/multiplayer',
         iframe: mockIframe as unknown as HTMLIFrameElement,
-        sandboxOrigin: 'https://sandbox.flaxia.app',
       });
       manager.connect();
       mockWs.emit('open');
@@ -223,7 +220,6 @@ describe('MultiplayerManager', () => {
         userId: 'u1',
         wsUrl: '/api/ws/multiplayer',
         iframe: mockIframe as unknown as HTMLIFrameElement,
-        sandboxOrigin: 'https://sandbox.flaxia.app',
       });
       manager.connect();
       mockIframe.postedMessages.length = 0;
@@ -312,9 +308,9 @@ describe('MultiplayerManager', () => {
       assert.equal(msg.code, 'ROOM_FULL');
     });
 
-    it('sends correct targetOrigin on relay', () => {
+    it('uses an opaque-origin target for the sandboxed iframe', () => {
       simulateWsMessage({ type: 'game_start' });
-      assert.equal(mockIframe.postedMessages[0].origin, 'https://sandbox.flaxia.app');
+      assert.equal(mockIframe.postedMessages[0].origin, '*');
     });
   });
 
@@ -326,7 +322,6 @@ describe('MultiplayerManager', () => {
         userId: 'u1',
         wsUrl: '/api/ws/multiplayer',
         iframe: mockIframe as unknown as HTMLIFrameElement,
-        sandboxOrigin: 'https://sandbox.flaxia.app',
       });
       manager.connect();
       manager.destroy();
@@ -342,7 +337,6 @@ describe('MultiplayerManager', () => {
         userId: 'u1',
         wsUrl: '/api/ws/multiplayer',
         iframe: mockIframe as unknown as HTMLIFrameElement,
-        sandboxOrigin: 'https://sandbox.flaxia.app',
       });
       manager.connect();
       mockWs.emit('open');
@@ -372,18 +366,28 @@ describe('MultiplayerManager', () => {
         userId: 'u1',
         wsUrl: '/api/ws/multiplayer',
         iframe: mockIframe as unknown as HTMLIFrameElement,
-        sandboxOrigin: 'https://sandbox.flaxia.app',
       });
       manager.connect();
       mockIframe.postedMessages.length = 0;
     });
 
-    it('relays peer_data → MULTIPLAYER_PEER_DATA', () => {
-      mockWs.emit('message', { data: JSON.stringify({ type: 'peer_data', data: { score: 100 } }) });
+    it('relays peer_data from a room member → MULTIPLAYER_PEER_DATA', () => {
+      mockWs.emit('message', { data: JSON.stringify({ type: 'player_joined', player: { userId: 'u2' } }) });
+      mockIframe.postedMessages.length = 0;
+      mockWs.emit('message', {
+        data: JSON.stringify({ type: 'peer_data', userId: 'u2', data: { score: 100 } }),
+      });
       assert.equal(mockIframe.postedMessages.length, 1);
       const msg = mockIframe.postedMessages[0].msg as Record<string, unknown>;
       assert.equal(msg.type, 'MULTIPLAYER_PEER_DATA');
       assert.deepStrictEqual(msg.data, { score: 100 });
+    });
+
+    it('does not relay peer_data from a non-member', () => {
+      mockWs.emit('message', {
+        data: JSON.stringify({ type: 'peer_data', userId: 'stranger', data: { score: 100 } }),
+      });
+      assert.equal(mockIframe.postedMessages.length, 0);
     });
 
     it('does not relay signal messages to iframe', () => {

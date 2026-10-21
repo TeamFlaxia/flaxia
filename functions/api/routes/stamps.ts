@@ -2,12 +2,19 @@ import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { getUserPlan } from '../../lib/billing';
 import { validateImageDimensions } from '../../lib/image-dimensions';
+import { checkRateLimit } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { detectMimeType, isAllowedImageMime, requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
 const stamps = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+// Flaxia+ is marketed as unlimited, but "unlimited" uploads would let one
+// account fill R2 and the scan queue. These are safety ceilings, not plan
+// limits: the free tier keeps its 5, and paid accounts get a generous cap.
+const FREE_STAMP_LIMIT = 5;
+const PLUS_STAMP_LIMIT = 1000;
 
 async function ensureCustomStampsTable(db: D1Database): Promise<void> {
   try {
@@ -62,17 +69,31 @@ stamps.post('/stamps', requireAuth, async (c) => {
     await ensureCustomStampsTable(c.env.DB);
     const userId = c.get('user')?.id || '';
 
+    const allowed = await checkRateLimit(c.env.CACHE, `stamps:upload:${userId}`, {
+      maxRequests: 10,
+      windowSeconds: 60,
+    });
+    if (!allowed) {
+      return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+    }
+
     // Check plan for stamp limit
     const plan = await getUserPlan(c.env, userId);
     const isPlus = plan.isActive;
+    const limit = isPlus ? PLUS_STAMP_LIMIT : FREE_STAMP_LIMIT;
 
-    if (!isPlus) {
-      const countRow = await c.env.DB.prepare('SELECT COUNT(*) AS cnt FROM custom_stamps WHERE user_id = ?')
-        .bind(userId)
-        .first<{ cnt: number }>();
-      if ((countRow?.cnt ?? 0) >= 5) {
-        return c.json({ error: 'Free plan limited to 5 custom stamps' }, 403);
-      }
+    const countRow = await c.env.DB.prepare('SELECT COUNT(*) AS cnt FROM custom_stamps WHERE user_id = ?')
+      .bind(userId)
+      .first<{ cnt: number }>();
+    if ((countRow?.cnt ?? 0) >= limit) {
+      return c.json(
+        {
+          error: isPlus
+            ? `Flaxia+ is limited to ${PLUS_STAMP_LIMIT} custom stamps`
+            : `Free plan limited to ${FREE_STAMP_LIMIT} custom stamps`,
+        },
+        403,
+      );
     }
 
     const formData = await c.req.formData();

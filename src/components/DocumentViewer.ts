@@ -1,5 +1,6 @@
-import { isParentMessage } from '../lib/bridge.js';
+import { isParentMessage, isSandboxMessage } from '../lib/bridge.js';
 import { getLocale, t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 
 export interface DocumentViewerProps {
   /** R2 key of a `document` attachment (docs/{postId}/{position}.pdf). */
@@ -10,7 +11,7 @@ export interface DocumentViewerProps {
 
 /** R2 key → the public PDF proxy URL. */
 export function documentUrl(r2Key: string): string {
-  return `/api/documents/${r2Key}`;
+  return nativeApiHref(`/api/documents/${r2Key}`);
 }
 
 /** How long to wait for the viewer frame to announce itself before giving up. */
@@ -26,9 +27,9 @@ const READY_TIMEOUT_MS = 10_000;
  * plugins browsing context flag on every sandboxed frame with no token to
  * unset it, while browsers render PDFs through that plugin path
  * (whatwg/html#6946), so an embedded plugin document is blocked or blank.
- * pdf.js needs neither plugins nor the main origin — the frame is sandboxed
- * with scripts only, so even a parser bug would land in an opaque origin
- * with no DOM, cookie or storage access here.
+ * pdf.js needs neither plugins nor the main origin — it runs in a trusted
+ * cross-origin shell on sandbox.flaxia.app, with a restrictive viewer CSP and
+ * eval-disabled PDF.js. The document is parsed as bytes, never inserted as HTML.
  *
  * Bytes travel over the typed bridge (`src/lib/bridge.ts`): the frame posts
  * DOCUMENT_READY, this side fetches `/api/documents/*` same-origin and
@@ -98,7 +99,7 @@ export function createDocumentViewer(props: DocumentViewerProps): HTMLElement {
 
   let frame: HTMLIFrameElement | null = null;
   let readyTimer: ReturnType<typeof setTimeout> | null = null;
-  const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN as string;
+  const sandboxOrigin = new URL(import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app').origin;
 
   function onMessage(event: MessageEvent): void {
     if (!frame || event.source !== frame.contentWindow) return;
@@ -132,11 +133,11 @@ export function createDocumentViewer(props: DocumentViewerProps): HTMLElement {
       const res = await fetch(url);
       if (!res.ok) throw new Error(`document fetch failed with ${res.status}`);
       const bytes = await res.arrayBuffer();
-      // Transferred, not copied: the viewer takes ownership of the buffer.
-      // Target the sandbox origin explicitly — a wildcard would hand private
-      // document bytes to whatever origin occupies the frame after a
-      // navigation or failed load.
-      frame?.contentWindow?.postMessage({ type: 'DOCUMENT_DATA', requestId, bytes }, sandboxOrigin, [bytes]);
+      // Validate through the shared bridge, then transfer rather than copy.
+      const message = { type: 'DOCUMENT_DATA' as const, requestId, bytes };
+      if (!isSandboxMessage(message)) throw new Error('Invalid PDF viewer message');
+      // Target the sandbox origin explicitly; a wildcard could disclose PDF bytes after navigation.
+      frame?.contentWindow?.postMessage(message, sandboxOrigin, [bytes]);
     } catch (err) {
       console.error('PDF delivery failed:', err);
       failViewer();
@@ -180,11 +181,10 @@ export function createDocumentViewer(props: DocumentViewerProps): HTMLElement {
     frame.className = 'document-viewer-frame';
     frame.setAttribute('title', t('document_viewer.title'));
     frame.setAttribute('referrerpolicy', 'no-referrer');
-    // Scripts only: the viewer runs in an opaque origin (allow-same-origin is
-    // banned project-wide), and without allow-popups / allow-top-navigation
-    // it cannot escape the frame either.
-    frame.setAttribute('sandbox', 'allow-scripts');
-    frame.src = `${import.meta.env.VITE_SANDBOX_ORIGIN}/pdf/viewer?lang=${getLocale()}`;
+    // This trusted PDF.js shell is cross-origin on sandbox.flaxia.app. The
+    // document bytes are transferred only after source+origin validation; do
+    // not add untrusted PDF markup to the frame as HTML.
+    frame.src = `${sandboxOrigin}/pdf/viewer?lang=${getLocale()}`;
     frameWrap.appendChild(frame);
 
     window.addEventListener('message', onMessage);
