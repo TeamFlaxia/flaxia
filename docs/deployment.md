@@ -151,8 +151,9 @@ wrangler tail --config wrangler.toml.worker
 
 ## ActivityPub delivery dead-letter queue (#141)
 
-Before deploying `flaxia-backend` with `wrangler.toml.worker`, create its dead-letter
-queue in **the same Cloudflare account** (one-time infrastructure prerequisite):
+The deployment workflow ensures the dead-letter queue exists in the same
+Cloudflare account before deploying `flaxia-backend`. For manual deployment,
+create it once before deploying with `wrangler.toml.worker`:
 
 ```bash
 npx wrangler queues create activitypub-delivery-dlq
