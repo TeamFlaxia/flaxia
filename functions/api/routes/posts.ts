@@ -28,11 +28,11 @@ import { validateImageDimensions } from '../../lib/image-dimensions';
 import { sendPushToAll } from '../../lib/notify';
 import { clampLimit } from '../../lib/pagination';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
-import { fetchWithSsrfGuard } from '../../lib/url-guard';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
 import { RECOMMENDATION_MIN_TRUST, refreshUserTrustSafe } from '../../lib/trust';
+import { fetchWithSsrfGuard } from '../../lib/url-guard';
 import {
   addBusinessDays,
   batchGetFreshAndBookmarkStatus,

@@ -1287,6 +1287,15 @@ users.patch('/users/me/password', requireAuth, async (c) => {
     if (vaultUpdate) {
       statements.push(c.env.DB.prepare(vaultUpdate.sql).bind(...vaultUpdate.binds));
     }
+    // Revoke other sessions in the same transaction. changes() refers to the
+    // preceding credential/envelope update, so a version conflict cannot log
+    // out devices and a storage failure rolls back the credential change.
+    statements.push(
+      c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ? AND changes() = 1').bind(
+        userId,
+        getSessionToken(c.req.raw) ?? '',
+      ),
+    );
     // batch() is atomic: the vault must never end up pointing at a KEK the new
     // password cannot derive, or vice versa.
     const results = await c.env.DB.batch(statements);
@@ -1294,19 +1303,6 @@ users.patch('/users/me/password', requireAuth, async (c) => {
       return c.json({ error: 'Failed to update password' }, 500);
     }
     if (results[0].meta.changes === 0) return c.json({ error: 'vault_key_version_conflict' }, 409);
-
-    // Password changed: revoke every other session so a stolen cookie does
-    // not survive the rotation. Best-effort, never blocks the response.
-    try {
-      const currentToken = getSessionToken(c.req.raw);
-      if (currentToken) {
-        await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?').bind(userId, currentToken).run();
-      } else {
-        await c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(userId).run();
-      }
-    } catch {
-      // ignore revocation failures
-    }
 
     return c.json({ ok: true });
   } catch (error: unknown) {
