@@ -1,10 +1,9 @@
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { isAdmin } from '../../../src/lib/admin';
-import { MAX_ATTACHMENTS, MAX_ATTACHMENTS_PLUS } from '../../lib/attachments';
 import type { AttachmentKind } from '../../lib/attachments';
+import { MAX_ATTACHMENTS, MAX_ATTACHMENTS_PLUS, parseAttachmentKey } from '../../lib/attachments';
 import { getUserPlan } from '../../lib/billing';
-import { parseAttachmentKey } from '../../lib/attachments';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';

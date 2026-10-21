@@ -92,6 +92,62 @@ describe('reapStalePendingPosts', () => {
     assert.deepEqual(deleted.sort(), ['docs/stale/29.pdf', 'gif/stale.png']);
   });
 
+  it('retries R2 failures without losing the pending upload inventory', async () => {
+    const db = testDb();
+    const old = new Date(Date.now() - 25 * 3600 * 1000).toISOString();
+    await db
+      .prepare('INSERT INTO posts (id, status, created_at, gif_key) VALUES (?, ?, ?, ?)')
+      .bind('retry', 'pending', old, 'gif/retry.png')
+      .run();
+    let fail = true;
+    const bucket = {
+      async list() {
+        return { objects: [], truncated: false };
+      },
+      async delete() {
+        if (fail) throw new Error('R2 unavailable');
+      },
+    } as unknown as R2Bucket;
+    assert.equal(await reapStalePendingPosts({ DB: db, BUCKET: bucket }), 0);
+    assert.equal(
+      (await db.prepare('SELECT status FROM posts WHERE id = ?').bind('retry').first<{ status: string }>())?.status,
+      'reaping',
+    );
+    fail = false;
+    assert.equal(await reapStalePendingPosts({ DB: db, BUCKET: bucket }), 1);
+  });
+
+  it('does not delete R2 objects when publication wins the cleanup claim', async () => {
+    const db = testDb();
+    const old = new Date(Date.now() - 25 * 3600 * 1000).toISOString();
+    await db
+      .prepare('INSERT INTO posts (id, status, created_at, gif_key) VALUES (?, ?, ?, ?)')
+      .bind('race', 'pending', old, 'gif/race.png')
+      .run();
+    const racingDb = {
+      prepare(sql: string) {
+        const statement = db.prepare(sql);
+        if (!sql.startsWith('SELECT id,')) return statement;
+        return {
+          async all() {
+            const result = await statement.all();
+            await db.prepare("UPDATE posts SET status = 'published' WHERE id = 'race'").run();
+            return result;
+          },
+        };
+      },
+    } as unknown as D1Database;
+    const bucket = {
+      async list() {
+        assert.fail('published post must not be listed for deletion');
+      },
+      async delete() {
+        assert.fail('published files must survive');
+      },
+    } as unknown as R2Bucket;
+    assert.equal(await reapStalePendingPosts({ DB: racingDb, BUCKET: bucket }), 0);
+  });
+
   it('is a no-op without a database', async () => {
     assert.equal(await reapStalePendingPosts({ DB: undefined as unknown as D1Database }), 0);
   });

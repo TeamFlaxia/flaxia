@@ -12,7 +12,7 @@ export async function reapStalePendingPosts(env: { DB: D1Database; BUCKET?: R2Bu
     (
       await env.DB.prepare(
         `SELECT id, gif_key, payload_key, swf_key, thumbnail_key FROM posts
-       WHERE status = 'pending' AND created_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-24 hours') LIMIT 100`,
+       WHERE status IN ('pending', 'reaping') AND created_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-24 hours') LIMIT 100`,
       ).all<{
         id: string;
         gif_key: string | null;
@@ -25,6 +25,14 @@ export async function reapStalePendingPosts(env: { DB: D1Database; BUCKET?: R2Bu
   let reaped = 0;
   for (const row of rows) {
     try {
+      // Claim before touching R2. A commit that wins first must keep its files;
+      // a claimed post cannot be published while cleanup is in progress.
+      const claimed = await env.DB.prepare(
+        "UPDATE posts SET status = 'reaping' WHERE id = ? AND status IN ('pending', 'reaping')",
+      )
+        .bind(row.id)
+        .run();
+      if (!claimed.success || claimed.meta.changes === 0) continue;
       const keys = new Set(
         [row.gif_key, row.payload_key, row.swf_key, row.thumbnail_key].filter(
           (key): key is string => typeof key === 'string' && key.length > 0,
@@ -45,7 +53,7 @@ export async function reapStalePendingPosts(env: { DB: D1Database; BUCKET?: R2Bu
       for (let i = 0; i < allKeys.length; i += 1000) {
         await env.BUCKET.delete(allKeys.slice(i, i + 1000));
       }
-      const deleted = await env.DB.prepare("DELETE FROM posts WHERE id = ? AND status = 'pending'").bind(row.id).run();
+      const deleted = await env.DB.prepare("DELETE FROM posts WHERE id = ? AND status = 'reaping'").bind(row.id).run();
       if (deleted.meta.changes > 0) reaped++;
     } catch (error) {
       // Leave the row for a retry; a failed cleanup must not leak R2 bytes.

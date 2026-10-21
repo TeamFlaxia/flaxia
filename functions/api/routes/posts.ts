@@ -1613,6 +1613,7 @@ posts.post('/posts/commit', requireAuth, async (c) => {
         thumbnail_key = COALESCE(excluded.thumbnail_key, posts.thumbnail_key),
         quoted_post_id = COALESCE(excluded.quoted_post_id, posts.quoted_post_id),
         status = 'published'
+      WHERE posts.status != 'reaping'
     `)
       .bind(
         postId,
@@ -1633,6 +1634,8 @@ posts.post('/posts/commit', requireAuth, async (c) => {
       console.error('Database insert failed:', result);
       return c.json({ error: 'Failed to create post', details: result }, 500);
     }
+
+    if (result.meta.changes === 0) return c.json({ error: 'Post preparation has expired' }, 409);
 
     // Persist multi-media attachments (full replacement for idempotent commits)
     if (attachments.length > 0) {
@@ -2943,7 +2946,7 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       const updateResult = await c.env.DB.prepare(`
         UPDATE posts 
         SET text = ?, hashtags = ?, mentions = ?, status = 'published', created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-        WHERE id = ? AND user_id = ?
+        WHERE id = ? AND user_id = ? AND status = 'pending'
       `)
         .bind(text, JSON.stringify(hashtags), mentionsJson, replyId, c.get('user')?.id || '')
         .run();
@@ -2951,6 +2954,8 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       if (!updateResult.success) {
         return c.json({ error: 'Failed to commit reply' }, 500);
       }
+
+      if (updateResult.meta.changes === 0) return c.json({ error: 'Reply preparation has expired' }, 409);
 
       // Return the updated reply
       reply =
