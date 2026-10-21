@@ -30,9 +30,6 @@ type Bindings = {
   CACHE: KVNamespace;
   SANDBOX_ORIGIN: string;
   BASE_URL: string;
-  RESEND_API_KEY?: string;
-  RESEND_FROM_EMAIL?: string;
-  ENVIRONMENT?: string;
   ADMIN_USERNAMES: string;
   AP_DELIVERY_QUEUE: Queue;
   CROWD_ORCHESTRATOR_URL: string;
@@ -71,7 +68,7 @@ app.use(
       return allowedOrigins.has(origin) || origin === getBaseOrigin(c) ? origin : '';
     },
     allowMethods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization'],
+    allowHeaders: ['Content-Type', 'Authorization', 'X-Flaxia-Native-App'],
     credentials: true,
   }),
 );

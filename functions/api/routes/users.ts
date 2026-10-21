@@ -4,10 +4,9 @@ import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../s
 import { deleteAccount } from '../../lib/account-deletion';
 import { enrichPostsWithAttachments } from '../../lib/attachments';
 import { deleteSession, getMeWithSession, getSessionToken, verifySrpPassword } from '../../lib/auth';
-import { isEmailDeliveryConfigured, issueEmailVerification, normalizeEmail } from '../../lib/email-verification';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { clampLimit } from '../../lib/pagination';
-import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
+import { checkRateLimit } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { isSupportedSrpKdf } from '../../lib/srp';
@@ -1114,18 +1113,18 @@ users.patch('/users/me/email', requireAuth, async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    const { current_srp, new_email: submittedEmail } = (await c.req.json()) as {
-      current_srp?: unknown;
-      new_email?: unknown;
-    };
+    const { current_srp, new_email } = await c.req.json();
 
-    if (typeof submittedEmail !== 'string' || !submittedEmail.trim()) {
+    if (typeof new_email !== 'string') {
       return c.json({ error: 'New email is required' }, 400);
     }
-    if (!isEmailDeliveryConfigured(c.env)) {
-      return c.json({ error: 'Email verification is temporarily unavailable.' }, 503);
+    const normalizedEmail = new_email.trim().toLowerCase();
+    if (normalizedEmail.length === 0) {
+      return c.json({ error: 'New email is required' }, 400);
     }
-    const newEmail = normalizeEmail(submittedEmail);
+    if (normalizedEmail.length > 254) {
+      return c.json({ error: 'Invalid email format' }, 400);
+    }
 
     const proof = current_srp as SrpProofBody | undefined;
     if (!proof?.challenge_id || !proof.A || !proof.M1) {
@@ -1133,52 +1132,44 @@ users.patch('/users/me/email', requireAuth, async (c) => {
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (newEmail.length > 254 || !emailRegex.test(newEmail)) {
+    if (!emailRegex.test(normalizedEmail)) {
       return c.json({ error: 'Invalid email format' }, 400);
     }
 
     const userId = user.id;
+
+    // Email changes are authenticated and prove the password, but the
+    // endpoint still needs its own throttle: a stolen session can otherwise
+    // churn addresses without bound.
+    const allowed = await checkRateLimit(c.env.CACHE, `users:email:${userId}`, {
+      maxRequests: 5,
+      windowSeconds: 60,
+    });
+    if (!allowed) {
+      return c.json({ error: 'Too many requests. Please try again later.' }, 429);
+    }
 
     const isValid = await verifySrpPassword(c.env, userId, proof.challenge_id, proof.A, proof.M1);
     if (!isValid) {
       return c.json({ error: 'Current password is incorrect' }, 401);
     }
 
-    const isLocal = c.env.ENVIRONMENT === 'test' || (c.env.BASE_URL ?? '').startsWith('http://localhost');
-    if (!isLocal) {
-      const ip = getClientIp(c.req.raw);
-      const allowed = await Promise.all([
-        checkRateLimit(c.env.CACHE, `auth:email-change:ip:${ip}`, { maxRequests: 10, windowSeconds: 3600 }),
-        checkRateLimit(c.env.CACHE, `auth:email-change:user:${userId}`, { maxRequests: 3, windowSeconds: 3600 }),
-        checkRateLimit(c.env.CACHE, `auth:email-change:cooldown:${userId}`, { maxRequests: 1, windowSeconds: 60 }),
-      ]);
-      if (allowed.some((value) => !value)) return c.json({ error: 'Too many requests. Please try again later.' }, 429);
-    }
-
-    if (normalizeEmail(user.email) === newEmail) {
-      return c.json({ error: 'This email address is already active.' }, 400);
-    }
-
     const existingEmail = await c.env.DB.prepare('SELECT id FROM users WHERE lower(email) = ? AND id != ?')
-      .bind(newEmail, userId)
+      .bind(normalizedEmail, userId)
       .first();
-    const reservedEmail = await c.env.DB.prepare(
-      `SELECT user_id FROM email_verification_tokens
-       WHERE lower(candidate_email) = ? AND user_id != ? AND purpose = 'email_change'
-         AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
-    )
-      .bind(newEmail, userId)
-      .first();
-    if (existingEmail || reservedEmail) {
+    if (existingEmail) {
       return c.json({ error: 'Email is already taken' }, 409);
     }
 
-    const sent = await issueEmailVerification(c.env, { purpose: 'email_change', userId, email: newEmail });
-    if (!sent) {
-      return c.json({ error: 'Confirmation email could not be sent. Your current email remains active.' }, 503);
+    const result = await c.env.DB.prepare('UPDATE users SET email = ? WHERE id = ?')
+      .bind(normalizedEmail, userId)
+      .run();
+
+    if (!result.success) {
+      return c.json({ error: 'Failed to update email' }, 500);
     }
 
-    return c.json({ ok: true, verification_pending: true });
+    return c.json({ ok: true });
   } catch (error: unknown) {
     console.error('Update email error:', error);
     return c.json({ error: 'Failed to update email' }, 500);

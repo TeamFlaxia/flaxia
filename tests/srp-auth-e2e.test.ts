@@ -8,7 +8,7 @@ import {
   generateSalt,
   verifyServerProof,
 } from '../src/lib/srp.ts';
-import { BASE_URL, resetDb, seedLegacyUser, seedV1SrpUser, verifyEmailAddress } from './helpers/setup.ts';
+import { BASE_URL, resetDb, seedLegacyUser, seedV1SrpUser } from './helpers/setup.ts';
 
 function b64(b: Uint8Array): string {
   return Buffer.from(b).toString('base64');
@@ -20,7 +20,7 @@ function unb64(s: string): Uint8Array {
 async function registerSrp(email: string, username: string, password: string): Promise<Response> {
   const salt = generateSalt();
   const v = await computeVerifier(password, salt, DEFAULT_SRP_KDF);
-  const response = await fetch(`${BASE_URL}/api/auth/register`, {
+  return fetch(`${BASE_URL}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -33,11 +33,6 @@ async function registerSrp(email: string, username: string, password: string): P
       srp_kdf: DEFAULT_SRP_KDF,
     }),
   });
-  if (response.status === 201) {
-    const verified = await verifyEmailAddress(email);
-    if (!verified.ok) throw new Error('Test registration verification failed');
-  }
-  return response;
 }
 
 async function srpLogin(email: string, password: string): Promise<{ status: number; ok: boolean; cookie: string }> {

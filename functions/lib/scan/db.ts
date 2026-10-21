@@ -168,10 +168,8 @@ export async function setScanStatus(
  */
 export async function setScanTask(db: D1Database, r2Key: string, taskId: string, sha256: string): Promise<boolean> {
   const result = await db
-    .prepare(
-      "UPDATE file_scans SET task_id = ?, status = 'submitted' WHERE r2_key = ? AND sha256 = ? AND status = 'pending' AND task_id IS NULL",
-    )
-    .bind(taskId, r2Key, sha256)
+    .prepare('UPDATE file_scans SET task_id = ?, status = ? WHERE r2_key = ? AND sha256 = ?')
+    .bind(taskId, 'submitted', r2Key, sha256)
     .run();
   return (result.meta.changes ?? 0) > 0;
 }

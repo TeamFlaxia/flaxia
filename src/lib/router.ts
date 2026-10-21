@@ -14,14 +14,14 @@ export type RouteView =
   | 'bookmarks'
   | 'terms'
   | 'privacy'
+  | 'child-safety'
   | 'about'
   | 'docs'
   | 'admin'
   | 'settings'
   | 'arcade'
   | 'billing-success'
-  | 'billing-canceled'
-  | 'verify-email';
+  | 'billing-canceled';
 
 export interface RouteInfo {
   view: RouteView;
@@ -51,11 +51,6 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
     return { view: 'register', postId: null, username: null, tag: null };
   }
 
-  if (cleanPath === '/verify-email') {
-    console.log('Email verification route detected');
-    return { view: 'verify-email', postId: null, username: null, tag: null };
-  }
-
   // Legal pages (public)
   if (cleanPath === '/terms') {
     console.log('Terms route detected');
@@ -65,6 +60,10 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
   if (cleanPath === '/privacy') {
     console.log('Privacy route detected');
     return { view: 'privacy', postId: null, username: null, tag: null };
+  }
+
+  if (cleanPath === '/child-safety') {
+    return { view: 'child-safety', postId: null, username: null, tag: null };
   }
 
   if (cleanPath === '/about') {

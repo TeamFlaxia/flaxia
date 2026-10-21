@@ -128,9 +128,6 @@ describe('security guards', () => {
       'auth:srp-start:email',
       'auth:srp-verify:ip',
       'auth:srp-verify:email',
-      'auth:verification-resend:ip',
-      'auth:verification-resend:email',
-      'auth:verification-resend:cooldown',
     ]) {
       assert.ok(src.includes(scope), `missing rate limit for ${scope}`);
     }
@@ -400,10 +397,17 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
 
   it('does not read the games cache for cursor pages', () => {
     const games = readFileSync(join(ROOT, 'functions/api/routes/games.ts'), 'utf8');
-    const cacheGuard = games.indexOf('if (!shuffle && !cursor) {');
     const cacheRead = games.indexOf('cachedData = await c.env.CACHE?.get(cacheKey);');
+    const cacheGuard = games.lastIndexOf('if (!shuffle && !cursor', cacheRead);
     assert.ok(cacheGuard !== -1, 'games cache reads must be limited to first pages');
     assert.ok(cacheRead > cacheGuard, 'cursor pages must not enter the games cache-read path');
+
+    const cacheConditionEnd = games.indexOf('{', cacheGuard);
+    const cacheCondition = games.slice(cacheGuard, cacheConditionEnd);
+    assert.ok(
+      cacheCondition.includes("!c.req.query('initialId')"),
+      'pinned game requests must bypass the cached first page',
+    );
   });
 
   it('drops arcade events for unknown games and keeps media cache short', () => {

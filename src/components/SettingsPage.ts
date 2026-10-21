@@ -15,6 +15,7 @@ import {
   stopCrowdNode,
 } from '../lib/crowd-node.js';
 import { getLocale, setLocale, t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
 import { getReplyStyle, getShowNsfw, ReplyStyle, setReplyStyle, setShowNsfw } from '../lib/settings.js';
 import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
@@ -128,7 +129,9 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
       margin-bottom: 1.5rem;
     `;
 
-    const avatarUrl = currentUser.avatar_key ? `/api/images/${currentUser.avatar_key}` : '/api/images/default-avatar';
+    const avatarUrl = nativeApiHref(
+      currentUser.avatar_key ? `/api/images/${currentUser.avatar_key}` : '/api/images/default-avatar',
+    );
     const displayName = currentUser.display_name || currentUser.username;
 
     const avatarWrap = document.createElement('div');
@@ -139,7 +142,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     avatarEl.style.cssText =
       'width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border); display: block;';
     avatarEl.onerror = () => {
-      avatarEl.src = '/api/images/default-avatar';
+      avatarEl.src = nativeApiHref('/api/images/default-avatar');
     };
     avatarWrap.appendChild(avatarEl);
     attachPlusBadge(avatarWrap, currentUser.badge_type);
@@ -232,10 +235,21 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
         t('settings.delete_account_confirm', { username: currentUser.username }),
       );
       if (!confirmed) return;
+      const password = window.prompt(
+        t('settings.current_password') || 'Enter your current password to confirm deletion',
+      );
+      if (!password) return;
       try {
+        const current_srp = await createSrpProof(password);
+        if (!current_srp) {
+          alert(t('settings.password_proof_failed') || 'Could not verify your password');
+          return;
+        }
         const response = await fetch('/api/users/me', {
           method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
+          body: JSON.stringify({ current_srp }),
         });
 
         if (response.ok) {
@@ -796,12 +810,6 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   `;
 
   emailSection.appendChild(emailTitle);
-  if (currentUser?.email) {
-    const currentEmail = document.createElement('p');
-    currentEmail.className = 'field-hint';
-    currentEmail.textContent = `${t('settings.email_current')}: ${currentUser.email}`;
-    emailSection.appendChild(currentEmail);
-  }
   emailSection.appendChild(currentPasswordLabel);
   emailSection.appendChild(currentPasswordInput);
   emailSection.appendChild(newEmailLabel);
@@ -1002,9 +1010,10 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
       });
 
       if (response.ok) {
-        emailMessage.textContent = t('settings.email_pending');
+        emailMessage.textContent = t('settings.email_saved');
         emailMessage.style.color = 'var(--success, #10b981)';
         currentPasswordInput.value = '';
+        newEmailInput.value = '';
       } else {
         const errorData = (await response.json()) as { error?: string };
         emailMessage.textContent = errorData.error || t('settings.email_save_failed');
@@ -1318,8 +1327,14 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     loadStamps();
   }
 
-  // Billing Section (Flaxia+ only)
-  if (currentUser) {
+  // Billing Section (Flaxia+ only). Play-distributed builds must use Play Billing
+  // for digital subscriptions; keep the current Stripe flow web-only until that
+  // integration and its purchase verification are implemented.
+  const isCapacitorApp =
+    typeof window !== 'undefined' &&
+    typeof window.Capacitor?.isNativePlatform === 'function' &&
+    window.Capacitor.isNativePlatform();
+  if (currentUser && !isCapacitorApp) {
     const billingSection = document.createElement('div');
     billingSection.className = 'settings-section';
     billingSection.style.cssText = `
