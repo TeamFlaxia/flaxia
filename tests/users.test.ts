@@ -422,10 +422,12 @@ describe('PATCH /api/users/me/password — validation', () => {
     assert.equal(res.status, 401);
   });
 
-  it('changes password without sending either password, then both work → 200', async () => {
+  it('changes password and revokes other sessions while preserving this one → 200', async () => {
     const { cookie, email } = await seedUserAndLogin('1');
     const proof = await createSrpProof(cookie, 'password123');
     assert.ok(proof);
+    const otherSession = await loginUser(email, 'password123');
+    assert.equal(otherSession.res.status, 200);
     const verifier = await srpVerifierPayload('brandnewpass1');
     const res = await fetch(`${BASE_URL}/api/users/me/password`, {
       method: 'PATCH',
@@ -433,6 +435,11 @@ describe('PATCH /api/users/me/password — validation', () => {
       body: JSON.stringify({ ...verifier, current_srp: proof }),
     });
     assert.equal(res.status, 200);
+
+    const active = await fetch(`${BASE_URL}/api/me`, { headers: { Cookie: cookie } });
+    assert.equal(active.status, 200, 'current session remains active');
+    const revoked = await fetch(`${BASE_URL}/api/me`, { headers: { Cookie: otherSession.cookie } });
+    assert.equal(revoked.status, 401, 'the other session must be revoked');
 
     const wrong = await loginUser(email, 'password123');
     assert.equal(wrong.res.status, 401, 'old password must stop working');
