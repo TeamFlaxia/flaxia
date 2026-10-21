@@ -1,4 +1,4 @@
-export const MAX_SANDBOX_ZIP_PREVIEW_BYTES = 10 * 1024 * 1024;
+export const MAX_SANDBOX_ZIP_PREVIEW_BYTES = 25 * 1024 * 1024;
 
 const PREVIEW_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
