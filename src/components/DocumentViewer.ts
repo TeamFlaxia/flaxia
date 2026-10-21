@@ -1,5 +1,6 @@
 import { isParentMessage, isSandboxMessage } from '../lib/bridge.js';
 import { getLocale, t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 
 export interface DocumentViewerProps {
   /** R2 key of a `document` attachment (docs/{postId}/{position}.pdf). */
@@ -10,7 +11,7 @@ export interface DocumentViewerProps {
 
 /** R2 key → the public PDF proxy URL. */
 export function documentUrl(r2Key: string): string {
-  return `/api/documents/${r2Key}`;
+  return nativeApiHref(`/api/documents/${r2Key}`);
 }
 
 /** How long to wait for the viewer frame to announce itself before giving up. */

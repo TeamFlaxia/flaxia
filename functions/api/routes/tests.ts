@@ -277,13 +277,31 @@ app.post('/api/test/seed-srp-v1-user', requireTestEnvironment, async (c) => {
   }
 
   const id = crypto.randomUUID();
+  const email = body.email.trim().toLowerCase();
   await c.env.DB.prepare(
     `INSERT INTO users (id, email, password_hash, username, display_name, bio, srp_salt, srp_verifier, srp_group, srp_kdf)
      VALUES (?, ?, '', ?, ?, '', ?, ?, '2048', 'sha256-v1')`,
   )
-    .bind(id, body.email, body.username, body.display_name ?? body.username, body.srp_salt, body.srp_verifier)
+    .bind(id, email, body.username, body.display_name ?? body.username, body.srp_salt, body.srp_verifier)
     .run();
   return c.json({ id }, 201);
+});
+
+// POST /api/test/user-role - set a test account's role (reviewer semantics).
+// Gated like /api/test/reset: only reachable from the test dev server. Roles
+// are DB-controlled in production; registration must never grant one.
+app.post('/api/test/user-role', requireTestEnvironment, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { username?: string; role?: string };
+  if (!body.username || (body.role !== 'reviewer' && body.role !== 'user')) {
+    return c.json({ error: 'username and role (reviewer|user) are required' }, 400);
+  }
+
+  const db = c.env.DB;
+  const user = await db.prepare('SELECT id FROM users WHERE username = ?').bind(body.username).first<{ id: string }>();
+  if (!user) return c.json({ error: 'User not found' }, 404);
+
+  await db.prepare('UPDATE users SET role = ? WHERE id = ?').bind(body.role, user.id).run();
+  return c.json({ ok: true });
 });
 
 // POST /api/test/seed-legacy-user - create an account that predates SRP.
@@ -303,7 +321,8 @@ app.post('/api/test/seed-legacy-user', requireTestEnvironment, async (c) => {
   }
 
   const db = c.env.DB;
-  const existing = await db.prepare('SELECT id FROM users WHERE email = ?').bind(body.email).first<{ id: string }>();
+  const email = body.email.trim().toLowerCase();
+  const existing = await db.prepare('SELECT id FROM users WHERE lower(email) = ?').bind(email).first<{ id: string }>();
   if (existing) return c.json({ error: 'Email already registered' }, 409);
 
   const userId = crypto.randomUUID();
@@ -313,7 +332,7 @@ app.post('/api/test/seed-legacy-user', requireTestEnvironment, async (c) => {
       `INSERT INTO users (id, email, password_hash, username, display_name, bio)
        VALUES (?, ?, ?, ?, ?, '')`,
     )
-    .bind(userId, body.email, passwordHash, body.username, body.display_name ?? body.username)
+    .bind(userId, email, passwordHash, body.username, body.display_name ?? body.username)
     .run();
 
   return c.json({ id: userId }, 201);

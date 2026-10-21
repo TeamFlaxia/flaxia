@@ -3,6 +3,7 @@ import { AttachPreviewHandle, checkImageSizeLimit, renderFilePreview } from '../
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { attachIcons } from '../lib/icons.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { showToast } from '../lib/toast.js';
 import { Post } from '../types/post.js';
 import { showSignInPrompt } from './SignInPrompt.js';
@@ -346,7 +347,7 @@ export class ReplyComposer {
       avatarSpan.style.cssText = `width: 24px; height: 24px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; color: white; font-size: 0.7rem; font-weight: bold; flex-shrink: 0;`;
       avatarSpan.textContent = user.username.charAt(0).toUpperCase();
       if (user.avatar_key) {
-        avatarSpan.style.backgroundImage = `url(/api/images/${user.avatar_key})`;
+        avatarSpan.style.backgroundImage = `url(${nativeApiHref(`/api/images/${user.avatar_key}`)})`;
         avatarSpan.style.backgroundSize = 'cover';
         avatarSpan.style.backgroundPosition = 'center';
         avatarSpan.textContent = '';
@@ -600,7 +601,7 @@ export class ReplyComposer {
       const loadAvatar = () => {
         const img = new Image();
         img.onload = () => {
-          avatarEl.style.backgroundImage = `url(/api/images/${user.avatar_key})`;
+          avatarEl.style.backgroundImage = `url(${nativeApiHref(`/api/images/${user.avatar_key}`)})`;
           avatarEl.style.backgroundSize = 'cover';
           avatarEl.style.backgroundPosition = 'center';
           avatarEl.querySelector(':scope > .avatar-initial')?.remove();
@@ -608,7 +609,7 @@ export class ReplyComposer {
         img.onerror = () => {
           console.warn(`Failed to load avatar: ${user.avatar_key}`);
         };
-        img.src = `/api/images/${user.avatar_key}`;
+        img.src = nativeApiHref(`/api/images/${user.avatar_key}`);
       };
       if ('requestIdleCallback' in window) {
         window.requestIdleCallback?.(loadAvatar, { timeout: 1000 });

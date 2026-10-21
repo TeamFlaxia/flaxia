@@ -1,6 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 
-import { parsePublicHttpUrl } from './lib/url-guard';
+import { fetchWithSsrfGuard, parsePublicHttpUrl } from './lib/url-guard';
 
 interface DeliveryMessage {
   type: 'delivery';
@@ -44,6 +44,13 @@ export default {
       if (reaped > 0) console.log(`Reaped ${reaped} stale pending posts`);
     } catch (error) {
       console.error('Pending reap failed:', (error as Error).message);
+    }
+    try {
+      const { recomputeStaleTrustScores } = await import('./lib/trust');
+      const refreshed = await recomputeStaleTrustScores(env.DB);
+      if (refreshed > 0) console.log(`Recomputed trust scores for ${refreshed} users`);
+    } catch (error) {
+      console.error('Trust score recompute failed:', (error as Error).message);
     }
   },
 
@@ -792,10 +799,12 @@ async function handleUpdateActivity(
   }
 
   if (object.type === 'Person') {
-    // Remote user updated their profile - fetch latest info
+    // Remote user updated their profile - fetch latest info through the
+    // SSRF guard: actorId arrives in a signed-but-remote activity.
     try {
-      const actorResponse = await fetch(actorId, {
+      const actorResponse = await fetchWithSsrfGuard(actorId, {
         headers: { Accept: 'application/activity+json, application/ld+json' },
+        timeoutMs: 10_000,
       });
       if (actorResponse.ok) {
         console.log('Profile update received from:', actorId);

@@ -15,7 +15,9 @@ export function executeSandboxZipPreview(
   zipData: ArrayBuffer,
 ): Promise<SandboxZipPreviewHandle> {
   if (zipData.byteLength > MAX_SANDBOX_ZIP_PREVIEW_BYTES) {
-    return Promise.reject(new Error('ZIP file exceeds the 10MB preview limit'));
+    return Promise.reject(
+      new Error(`ZIP file exceeds the ${MAX_SANDBOX_ZIP_PREVIEW_BYTES / 1024 / 1024}MB preview limit`),
+    );
   }
 
   containerEl.innerHTML = '';

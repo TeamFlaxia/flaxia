@@ -30,7 +30,11 @@ async function createPost(cookie: string, text = 'test post'): Promise<string> {
 describe('GET /api/billing/plan', () => {
   beforeEach(resetDb);
 
-  it('grants permanent Flaxia+ to the exact Play reviewer account without a Stripe row', async () => {
+  it('does not grant Flaxia+ by email alone, even for the reviewer address', async () => {
+    // Regression: this test previously asserted that registering
+    // `devtest@flaxia.app` granted Flaxia+ immediately. Registration does not
+    // verify email ownership, so anyone could claim a case variant of that
+    // public address and inherit the entitlement.
     const password = 'password123';
     const register = await fetch(`${BASE_URL}/api/auth/register`, {
       method: 'POST',
@@ -47,7 +51,42 @@ describe('GET /api/billing/plan', () => {
 
     const me = await fetch(`${BASE_URL}/api/me`, { headers: { Cookie: cookie } });
     assert.equal(me.status, 200);
-    const meBody = (await me.json()) as { user: { badge_type: string } };
+    const meBody = (await me.json()) as { user: { badge_type: string | null } };
+    assert.equal(meBody.user.badge_type, null);
+
+    const planResponse = await fetch(`${BASE_URL}/api/billing/plan`, { headers: { Cookie: cookie } });
+    assert.equal(planResponse.status, 200);
+    const plan = (await planResponse.json()) as { plan: string | null; status: string | null };
+    assert.equal(plan.plan, null);
+    assert.equal(plan.status, null);
+  });
+
+  it('grants permanent Flaxia+ to an account explicitly promoted to reviewer', async () => {
+    const password = 'password123';
+    const register = await fetch(`${BASE_URL}/api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'reviewer@flaxia.app',
+        username: 'reviewdevtest',
+        display_name: 'Play Reviewer',
+        ...(await srpVerifierPayload(password)),
+      }),
+    });
+    assert.equal(register.status, 201);
+    const { cookie } = await srpLogin('reviewer@flaxia.app', password);
+
+    // The role is the entitlement; the email above is irrelevant.
+    const promote = await fetch(`${BASE_URL}/api/test/user-role`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'reviewdevtest', role: 'reviewer' }),
+    });
+    assert.ok(promote.ok, `promote failed: ${promote.status}`);
+
+    const me = await fetch(`${BASE_URL}/api/me`, { headers: { Cookie: cookie } });
+    assert.equal(me.status, 200);
+    const meBody = (await me.json()) as { user: { badge_type: string | null } };
     assert.equal(meBody.user.badge_type, 'flaxia_plus');
 
     const planResponse = await fetch(`${BASE_URL}/api/billing/plan`, { headers: { Cookie: cookie } });
@@ -57,6 +96,7 @@ describe('GET /api/billing/plan', () => {
     assert.equal(plan.status, 'active');
     assert.equal(plan.expiresAt, null);
 
+    // A canceled Stripe row must not downgrade the explicit reviewer role.
     const row = await fetch(`${BASE_URL}/api/test/subscription`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -69,7 +109,7 @@ describe('GET /api/billing/plan', () => {
     assert.equal(stillPlusBody.status, 'active');
 
     const persistedMe = await fetch(`${BASE_URL}/api/me`, { headers: { Cookie: cookie } });
-    const persistedMeBody = (await persistedMe.json()) as { user: { badge_type: string } };
+    const persistedMeBody = (await persistedMe.json()) as { user: { badge_type: string | null } };
     assert.equal(persistedMeBody.user.badge_type, 'flaxia_plus');
   });
 

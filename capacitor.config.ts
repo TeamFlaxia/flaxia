@@ -1,17 +1,19 @@
-import { CapacitorConfig } from '@capacitor/cli';
+import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'app.flaxia.app',
   appName: 'Flaxia',
-  // Bundle the built SPA in the native binary instead of loading the entire app
-  // from a remote URL.
+  // Keep a built SPA available for platforms/configurations without a remote URL.
   webDir: 'dist',
   server: {
     androidScheme: 'https',
     iosScheme: 'capacitor',
-    hostname: 'localhost',
-    // Do not allow remote websites to navigate inside the privileged WebView.
-    // External links are handed to the system browser instead.
+    // Android loads the production site directly so the document, API, and
+    // SameSite=Strict session cookie all use https://flaxia.app. No local
+    // virtual server or custom hostname is involved.
+    ...(process.env.CAPACITOR_PLATFORM === 'android' ? { url: 'https://flaxia.app' } : {}),
+    // Keep external origins, including the untrusted sandbox, out of the
+    // privileged top-level WebView. The configured app origin remains local.
   },
   plugins: {
     LocalNotifications: {

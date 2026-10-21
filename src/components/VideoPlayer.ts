@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 
 export interface VideoPlayerProps {
   gifKey: string;
@@ -57,7 +58,7 @@ export function createVideoPlayer(props: VideoPlayerProps): HTMLElement {
   video.setAttribute('controlsList', 'nodownload');
   video.disablePictureInPicture = true;
 
-  const videoUrl = props.src || `/api/video/${props.gifKey}`;
+  const videoUrl = nativeApiHref(props.src || `/api/video/${props.gifKey}`);
 
   const errorEl = document.createElement('div');
   errorEl.className = 'video-player-error';

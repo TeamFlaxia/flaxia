@@ -20,6 +20,9 @@ Flaxia uses Cloudflare D1 (SQLite-compatible) with migrations in `migrations/`.
 | srp_verifier | TEXT | SRP verifier `v` (the server never computes `x`) |
 | srp_group | TEXT | SRP group (`2048`) |
 | srp_kdf | TEXT | `sha256-v1` or `pbkdf2-600k-v2` (migration 0090) |
+| trust_score | REAL | 0.1–1.0; authors below 0.6 are excluded from For You |
+| repetition_score | REAL | Share of recent posts in near-duplicate clusters |
+| trust_updated_at | TEXT | Last trust recalculation |
 | created_at | TEXT | ISO 8601 |
 
 ### `sessions`

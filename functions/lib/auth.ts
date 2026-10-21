@@ -212,10 +212,13 @@ export async function registerUser(
     srp: SrpRegistration;
   },
 ): Promise<User> {
-  const { email, username, display_name, srp } = userData;
+  const { username, display_name, srp } = userData;
+  // Emails are case-insensitive identifiers: normalize at the write boundary
+  // so `DevTest@flaxia.app` and `devtest@flaxia.app` cannot coexist.
+  const email = userData.email.trim().toLowerCase();
 
-  // Check if email already exists
-  const existingEmail = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+  // Check if email already exists (case-insensitively, including legacy rows).
+  const existingEmail = await env.DB.prepare('SELECT id FROM users WHERE lower(email) = ?').bind(email).first();
   if (existingEmail) {
     throw new Error('Email already registered');
   }
@@ -270,8 +273,9 @@ export async function startSrpLogin(
   env: Env,
   email: string,
 ): Promise<{ challengeId: string; salt: string; B: string; kdf: string } | null> {
-  const user = (await env.DB.prepare('SELECT id, srp_salt, srp_verifier, srp_kdf FROM users WHERE email = ?')
-    .bind(email)
+  const normalizedEmail = email.trim().toLowerCase();
+  const user = (await env.DB.prepare('SELECT id, srp_salt, srp_verifier, srp_kdf FROM users WHERE lower(email) = ?')
+    .bind(normalizedEmail)
     .first()) as { id: string; srp_salt: string | null; srp_verifier: string | null; srp_kdf: string | null } | null;
 
   if (!user || !user.srp_verifier || !user.srp_salt) return null;
@@ -379,7 +383,12 @@ export async function verifySrpLogin(
 // Used to upgrade a legacy account to SRP and to migrate v1 verifiers to v2 —
 // both happen at a moment where the browser holds the plaintext password.
 // The server never derives x itself; it only records what the client computed.
-export async function upgradeSrp(env: Env, userId: string, srp: SrpRegistration): Promise<void> {
+export async function upgradeSrp(
+  env: Env,
+  userId: string,
+  srp: SrpRegistration,
+  options: { onlyIfLegacy?: boolean } = {},
+): Promise<void> {
   if (srp.group !== '2048') throw new Error('Unsupported SRP group');
   // #89: upgrades and v1→v2 migrations must also land on v2, never mint v1.
   if (!isCreatableSrpKdf(srp.kdf)) throw new Error('Unsupported SRP KDF');
@@ -387,11 +396,11 @@ export async function upgradeSrp(env: Env, userId: string, srp: SrpRegistration)
   if (base64ToUint8Array(srp.verifier).length !== 256) throw new Error('Invalid SRP verifier');
   const result = await env.DB.prepare(
     `UPDATE users SET password_hash = '', srp_salt = ?, srp_verifier = ?, srp_group = ?, srp_kdf = ?
-     WHERE id = ?`,
+     WHERE id = ? ${options.onlyIfLegacy ? 'AND srp_salt IS NULL AND srp_verifier IS NULL' : ''}`,
   )
     .bind(srp.salt, srp.verifier, srp.group, srp.kdf, userId)
     .run();
-  if (!result.success) throw new Error('Failed to upgrade SRP');
+  if (!result.success || result.meta.changes !== 1) throw new Error('Failed to upgrade SRP');
 }
 
 // Verify an SRP proof of the CURRENT password without creating a session. Used by
@@ -436,12 +445,13 @@ export async function verifySrpPassword(
 
 // Login user
 export async function loginUser(env: Env, email: string, password: string): Promise<{ user: User; session: Session }> {
+  const normalizedEmail = email.trim().toLowerCase();
   // Get user with password hash
   const userWithPassword = (await env.DB.prepare(`
     SELECT id, email, password_hash, srp_salt, srp_verifier, username, display_name, bio, avatar_key, badge_type, created_at
-    FROM users WHERE email = ?
+    FROM users WHERE lower(email) = ?
   `)
-    .bind(email)
+    .bind(normalizedEmail)
     .first()) as {
     id: string;
     email: string;
