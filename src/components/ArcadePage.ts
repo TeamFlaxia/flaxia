@@ -1,3 +1,4 @@
+import { findAvailableArcadeGame, isArcadeGameAvailable } from '../lib/arcade-availability.js';
 import { ArcadeCaptureClient } from '../lib/capture-client.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
@@ -48,6 +49,10 @@ export class ArcadePage {
   private shuffleToken: string | null = null;
   private shuffleOffset: number = 0;
   private isLoadingMore: boolean = false;
+  private moreGamesRequest: Promise<boolean> | null = null;
+  private missingGameIds = new Set<string>();
+  private renderController: AbortController | null = null;
+  private destroyed = false;
   private recommendedOffset: number = 0;
   private gameContainer: HTMLElement;
   private floatingActions: HTMLElement | null = null;
@@ -671,7 +676,8 @@ export class ArcadePage {
           offset?: number;
           cursor?: string;
         };
-        this.games = data.games || [];
+        if (this.destroyed) return;
+        this.games = (data.games || []).filter((game) => !this.missingGameIds.has(game.postId));
         this.hasMore = data.hasMore || false;
         this.shuffleToken = data.token || null;
         this.shuffleOffset = data.token ? data.offset || 0 : 0;
@@ -686,10 +692,8 @@ export class ArcadePage {
               console.warn(`Game ${this.initialGameId} not found, showing first game`);
             }
           }
-          this.renderCurrentGame();
-        } else {
-          this.showEmptyState();
         }
+        await this.renderCurrentGame();
       } else {
         this.showEmptyState();
       }
@@ -702,9 +706,19 @@ export class ArcadePage {
     }
   }
 
-  private async loadMoreGames(): Promise<void> {
-    if (this.isLoadingMore || !this.hasMore) return;
+  private loadMoreGames(): Promise<boolean> {
+    if (this.moreGamesRequest) return this.moreGamesRequest;
+    if (this.destroyed || !this.hasMore) return Promise.resolve(false);
+    this.moreGamesRequest = this.fetchMoreGames().finally(() => {
+      this.moreGamesRequest = null;
+    });
+    return this.moreGamesRequest;
+  }
+
+  private async fetchMoreGames(): Promise<boolean> {
     this.isLoadingMore = true;
+    const previousCount = this.games.length;
+    const previousOffset = this.shuffleToken ? this.shuffleOffset : this.recommendedOffset;
 
     try {
       const useRecommended = this.props.currentUser && !this.shuffleToken;
@@ -719,8 +733,12 @@ export class ArcadePage {
       const response = await fetch(url, { credentials: 'include' });
       if (response.ok) {
         const data = (await response.json()) as { games: Game[]; hasMore?: boolean; token?: string; offset?: number };
-        if (data.games && data.games.length > 0) {
-          this.games.push(...data.games);
+        if (this.destroyed) return false;
+        const existing = new Set(this.games.map((game) => game.postId));
+        for (const game of data.games || []) {
+          if (this.missingGameIds.has(game.postId) || existing.has(game.postId)) continue;
+          this.games.push(game);
+          existing.add(game.postId);
         }
         this.shuffleToken = data.token || null;
         this.hasMore = data.hasMore || false;
@@ -729,9 +747,13 @@ export class ArcadePage {
         } else {
           this.recommendedOffset = typeof data.offset === 'number' ? data.offset : 0;
         }
+        const nextOffset = data.token ? this.shuffleOffset : this.recommendedOffset;
+        return this.games.length > previousCount || nextOffset > previousOffset;
       }
+      return false;
     } catch (error) {
       console.error('Failed to load more games:', error);
+      return false;
     } finally {
       this.isLoadingMore = false;
     }
@@ -742,17 +764,43 @@ export class ArcadePage {
     emptyState.style.display = 'block';
   }
 
-  private renderCurrentGame(): void {
-    if (this.currentIndex >= this.games.length) return;
-
-    const game = this.games[this.currentIndex];
-
-    // Track impression
-    impressionTracker.trackImpression(game.postId);
-
-    // Clear previous game first so its dwell is recorded with the entry time it
-    // was actually shown for (recordView consumes this.gameEntryTime).
+  private async renderCurrentGame(): Promise<void> {
+    if (this.destroyed) return;
+    this.renderController?.abort();
+    const controller = new AbortController();
+    this.renderController = controller;
     this.clearCurrentGame();
+    this.showLoading(this.gameContainer, this.games[this.currentIndex]?.type ?? 'zip');
+
+    try {
+      const selection = await findAvailableArcadeGame(this.games, this.currentIndex, {
+        isAvailable: (game) => isArcadeGameAvailable(game, this.props.sandboxOrigin, controller.signal),
+        loadMore: () => this.loadMoreGames(),
+        onMissing: (game) => this.missingGameIds.add(game.postId),
+        signal: controller.signal,
+      });
+      if (this.destroyed || controller.signal.aborted) return;
+      this.hideLoading();
+      if (!selection) {
+        this.currentIndex = 0;
+        this.showEmptyState();
+        return;
+      }
+      this.currentIndex = selection.index;
+      const emptyState = this.element.querySelector('.arcade-empty') as HTMLElement;
+      emptyState.style.display = 'none';
+      this.renderAvailableGame(selection.game);
+    } catch (error) {
+      if (this.destroyed || controller.signal.aborted) return;
+      console.error('Failed to select an Arcade game:', error);
+      this.hideLoading();
+      this.showEmptyState();
+    }
+  }
+
+  private renderAvailableGame(game: Game): void {
+    // Missing games never receive impressions or dwell events.
+    impressionTracker.trackImpression(game.postId);
 
     // Record dwell entry time for the new game
     this.gameEntryTime = performance.now();
@@ -1835,7 +1883,11 @@ export class ArcadePage {
     try {
       if (game.type === 'zip' && game.payloadKey) {
         // Use WVFS for ZIP execution
-        const handle = await executeWvfsZip(game.postId, container, undefined, true, false);
+        const handle = await executeWvfsZip(game.postId, container, this.props.sandboxOrigin, true, false);
+        if (this.destroyed || !this.currentViewport?.contains(container)) {
+          handle.destroy();
+          return;
+        }
         this.currentGameHandle = handle;
       } else if (game.type === 'html5') {
         // HTML5 games would use iframe
@@ -1853,9 +1905,11 @@ export class ArcadePage {
           },
         };
       }
+      if (this.destroyed || !this.currentViewport?.contains(container)) return;
       this.setupCapture(game, container);
       this.hideLoading();
     } catch (error) {
+      if (this.destroyed || !this.currentViewport?.contains(container)) return;
       console.error('Failed to execute game:', error);
       this.hideLoading();
       container.replaceChildren();
@@ -2016,7 +2070,7 @@ export class ArcadePage {
 
     try {
       if (game.type === 'zip') {
-        const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
+        const sandboxOrigin = this.props.sandboxOrigin;
         this.prefetchLink(createWvfsGameUrl(sandboxOrigin, game.postId));
       }
     } catch {
@@ -2976,6 +3030,8 @@ export class ArcadePage {
   }
 
   public destroy(): void {
+    this.destroyed = true;
+    this.renderController?.abort();
     this.recordView();
     this.flushEvents();
     this.closeCommentPanel();
