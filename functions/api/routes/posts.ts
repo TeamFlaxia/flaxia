@@ -1651,7 +1651,11 @@ posts.post('/posts/commit', requireAuth, async (c) => {
 
     const result = await c.env.DB.prepare(`
       INSERT INTO posts (id, user_id, username, text, hashtags, mentions, payload_key, gif_key, swf_key, thumbnail_key, quoted_post_id, engagement_hotness, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1.0, 'published')
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1.0, 'published'
+      WHERE ? = 0 OR EXISTS (
+        SELECT 1 FROM posts prepared
+        WHERE prepared.id = ? AND prepared.user_id = ? AND prepared.status IN ('pending', 'published')
+      )
       ON CONFLICT(id) DO UPDATE SET
         text = excluded.text,
         hashtags = excluded.hashtags,
@@ -1676,6 +1680,9 @@ posts.post('/posts/commit', requireAuth, async (c) => {
         swfKey || null,
         thumbnailKey || null,
         quotedPostId || null,
+        Number(Boolean(gifKey || swfKey || payloadKey || thumbnailKey || attachments.length)),
+        postId,
+        userId,
       )
       .run();
 
