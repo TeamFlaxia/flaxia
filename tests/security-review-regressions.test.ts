@@ -186,6 +186,7 @@ describe('recommended feed D1 bind-limit regressions', () => {
           pagination.push(cursor);
         }
 
+        assert.equal(new Set(posts.map((post) => post.id)).size, posts.length, 'every archive page must advance');
         assert.ok(
           posts.some((post) => post.id.startsWith('popular-')),
           JSON.stringify(pagination),
@@ -204,6 +205,36 @@ describe('recommended feed D1 bind-limit regressions', () => {
       }
     });
   }
+
+  it('does not repeat candidates when existing engagement changes between pages', async () => {
+    const { sqlite, request } = fixture(false);
+    try {
+      const insert = sqlite.prepare('INSERT INTO posts (id, user_id, text, engagement_hotness) VALUES (?, ?, ?, ?)');
+      for (let i = 0; i < 30; i++) insert.run(`rank-${i}`, `author-${i}`, `Unique ${i}`, i < 10 ? 10000 : 1);
+      const response = await request('/posts/recommended?limit=10', undefined, 'GET');
+      assert.equal(response.status, 200);
+      const first = (await response.json()) as { posts: Array<{ id: string }>; next_cursor: string };
+      assert.equal(first.posts.length, 10);
+      // Previously delivered posts drop below their old score cursor. They
+      // must still be excluded, while unsent posts remain eligible.
+      for (const post of first.posts)
+        sqlite.prepare('UPDATE posts SET engagement_hotness = 0 WHERE id = ?').run(post.id);
+      const secondResponse = await request(
+        `/posts/recommended?limit=10&cursor=${encodeURIComponent(first.next_cursor)}`,
+        undefined,
+        'GET',
+      );
+      assert.equal(secondResponse.status, 200);
+      const second = (await secondResponse.json()) as { posts: Array<{ id: string }> };
+      assert.equal(second.posts.length, 10);
+      const ids = new Set(first.posts.map((post) => post.id));
+      assert.ok(second.posts.every((post) => !ids.has(post.id)));
+      const invalid = await request('/posts/recommended?cursor=1,date,id,1e100', undefined, 'GET');
+      assert.equal(invalid.status, 400);
+    } finally {
+      sqlite.close();
+    }
+  });
 
   it('computes an interest profile from more than 100 distinct history posts', async () => {
     const { sqlite, db } = fixture();
