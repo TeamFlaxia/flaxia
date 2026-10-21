@@ -1,6 +1,7 @@
 import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post } from '../types/post.js';
 
 export interface SearchResultsProps {
@@ -196,7 +197,7 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
       // Navigate to thread on click
       postItem.onclick = () => {
         // Use SPA navigation instead of full page reload
-        window.history.pushState({ postId: post.id }, '', `/thread/${post.id}`);
+        pushSpaHistory(`/thread/${post.id}`, { postId: post.id });
         // Dispatch custom event to trigger SPA navigation
         window.dispatchEvent(
           new CustomEvent('spaNavigate', {

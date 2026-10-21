@@ -2,6 +2,7 @@ import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { nativeApiHref } from '../lib/native-api.js';
 
 interface BlockedUsersModalOptions {
   onUnblock?: (username: string) => void;
@@ -109,7 +110,7 @@ export function createBlockedUsersModal(options: BlockedUsersModalOptions = {}):
       border-radius: 6px;
     `;
 
-    const avatarUrl = u.avatar_key ? `/api/images/${u.avatar_key}` : '/api/images/default-avatar';
+    const avatarUrl = nativeApiHref(u.avatar_key ? `/api/images/${u.avatar_key}` : '/api/images/default-avatar');
     const avatarWrap = document.createElement('div');
     avatarWrap.style.cssText = 'position: relative; width: 40px; height: 40px; flex-shrink: 0;';
     const img = document.createElement('img');
@@ -117,7 +118,7 @@ export function createBlockedUsersModal(options: BlockedUsersModalOptions = {}):
     img.alt = '';
     img.style.cssText = 'width: 40px; height: 40px; border-radius: 50%; object-fit: cover; display: block;';
     img.onerror = () => {
-      img.src = '/api/images/default-avatar';
+      img.src = nativeApiHref('/api/images/default-avatar');
     };
     avatarWrap.appendChild(img);
     attachPlusBadge(avatarWrap, u.badge_type);

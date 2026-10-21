@@ -333,6 +333,16 @@ describe('file scanning pipeline', () => {
     assert.equal(await adminDelete(admin, auto.id), 200);
   });
 
+  it('requires admin for quarantined-media rescreening', async () => {
+    const { cookie } = await seedUserAndLogin(`rescreen${Date.now() % 100000}`);
+    const res = await fetch(`${BASE_URL}/api/admin/rescreen-quarantined`, {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ limit: 10 }),
+    });
+    assert.equal(res.status, 403);
+  });
+
   it('marks the row clean on a clean ClamAV verdict', async () => {
     const { cookie } = await seedUserAndLogin(`cln${Date.now() % 100000}`);
     const prepared = await prepare(cookie, 'pic.png', 'image/png');

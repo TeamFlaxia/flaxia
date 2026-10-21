@@ -1,5 +1,7 @@
 import { adImpressionTracker } from '../lib/ad-impression-tracker.js';
+import { ADSENSE_INLINE_BOOTSTRAP } from '../lib/adsense-bootstrap.js';
 import { t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { executeUniversalZip, UniversalZipExecutorHandle } from '../lib/zip-manager.js';
 import { Ad } from '../types/post.js';
 import { executeFlash, FlashPlayerHandle } from './FlashPlayer.js';
@@ -168,9 +170,7 @@ function mountAdmax(ad: Ad, placeholder: HTMLElement): void {
                  data-ad-slot="1386532572"
                  data-ad-format="auto"
                  data-full-width-responsive="true"></ins>
-            <script>
-            (adsbygoogle = window.adsbygoogle || []).push({});
-            </script>
+            <script>${ADSENSE_INLINE_BOOTSTRAP}</script>
           </body>
           </html>
         `);
@@ -220,7 +220,7 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
   } else if (ad.payload_type === 'gif' || ad.payload_type === 'image') {
     // Render image
     const img = document.createElement('img');
-    img.src = `/api/ads/${ad.id}/payload`;
+    img.src = nativeApiHref(`/api/ads/${ad.id}/payload`);
     img.style.cssText = `
       position: absolute;
       top: 0;
@@ -236,7 +236,7 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
       postId: ad.id,
       label: t('ad_card.play_zip'),
       icon: '📦',
-      thumbnailUrl: ad.thumbnail_key ? `/api/thumbnail/${ad.id}` : undefined,
+      thumbnailUrl: ad.thumbnail_key ? nativeApiHref(`/api/thumbnail/${ad.id}`) : undefined,
       onClick: async () => {
         // Show loading state
         const originalContent = placeholder.innerHTML;
@@ -300,7 +300,7 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
       postId: ad.id,
       label: t('ad_card.play_swf'),
       icon: '🎮',
-      thumbnailUrl: ad.thumbnail_key ? `/api/thumbnail/${ad.id}` : undefined,
+      thumbnailUrl: ad.thumbnail_key ? nativeApiHref(`/api/thumbnail/${ad.id}`) : undefined,
       onClick: async () => {
         // Show loading state
         const originalContent = placeholder.innerHTML;
@@ -317,7 +317,7 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
             activeFlashHandle = null;
           }
 
-          activeFlashHandle = await executeFlash(ad.id, placeholder, `/api/ads/${ad.id}/payload`);
+          activeFlashHandle = await executeFlash(ad.id, placeholder, nativeApiHref(`/api/ads/${ad.id}/payload`));
 
           // Set pointer events for iframe interaction
           const adBanner = placeholder.closest('.ad-banner') as HTMLElement;

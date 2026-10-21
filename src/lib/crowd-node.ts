@@ -3,7 +3,7 @@
 export const CROWD_ORCHESTRATOR_URL = 'https://crowd.flaxia.app';
 
 /** Pinned `@flaxia/node` version served through the /api/crowd asset proxy. */
-export const CROWD_NODE_VERSION = '0.3.7';
+export const CROWD_NODE_VERSION = '0.5.0';
 
 export const CROWD_SITE_ID = 'flaxia';
 
@@ -49,6 +49,10 @@ export interface CrowdNodeConfig {
     onConsentRequired?: (controls: CrowdConsentControls) => void;
   };
   capabilities?: string[];
+  /** Exact HTTPS origins allowed to serve executable container WASM images. */
+  containerImageOrigins?: string[];
+  /** Exact same-origin API host allowed to serve signed scan-file tickets. */
+  fileSourceOrigins?: string[];
   maxCpuLoad?: number;
 }
 
@@ -57,6 +61,10 @@ export interface FlaxiaNodeModule {
   initFlaxiaNode(config: CrowdNodeConfig): CrowdNodeController;
   /** Persisted consent state, available without initialising the node. */
   getFlaxiaNodeConsentState(): CrowdConsentState;
+  /** Verify the persisted consent record before reading it (required by v0.5.0). */
+  initFlaxiaNodeConsent(): Promise<CrowdConsentState>;
+  /** Allow the app's own explicit consent UI to grant consent. */
+  setFlaxiaNodeHostManagedConsent(allowed: boolean): void;
 }
 
 /**
@@ -78,10 +86,20 @@ let controller: CrowdNodeController | null = null;
  */
 export function loadCrowdNodeModule(version: string = CROWD_NODE_VERSION): Promise<FlaxiaNodeModule> {
   if (!modulePromise) {
-    modulePromise = (import(/* @vite-ignore */ crowdNodeEntry(version)) as Promise<FlaxiaNodeModule>).then((mod) => {
-      moduleRef = mod;
-      return mod;
-    });
+    modulePromise = (import(/* @vite-ignore */ crowdNodeEntry(version)) as Promise<FlaxiaNodeModule>).then(
+      async (mod) => {
+        moduleRef = mod;
+        // v0.5.0 fails closed until the persisted HMAC-backed record is verified.
+        // Await that before initFlaxiaNode reads the state, or every fresh page load
+        // appears to have no consent and opens the prompt again.
+        await mod.initFlaxiaNodeConsent();
+        // Flaxia renders the disclosure itself. The Crowd bundle otherwise rejects
+        // controller.grant()/controls.accept() because it cannot verify a built-in
+        // banner click.
+        mod.setFlaxiaNodeHostManagedConsent(true);
+        return mod;
+      },
+    );
   }
   return modulePromise;
 }
@@ -132,6 +150,7 @@ function buildNodeConfig(onConsentRequired?: (controls: CrowdConsentControls) =>
       onConsentRequired,
     },
     capabilities: CROWD_SITE_CAPABILITIES,
+    fileSourceOrigins: typeof window !== 'undefined' ? [window.location.origin] : [],
     maxCpuLoad: CROWD_NODE_MAX_CPU_LOAD,
   };
 }

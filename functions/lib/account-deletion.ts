@@ -89,26 +89,8 @@ export async function deleteAccount(env: Env, userId: string): Promise<void> {
   statements.push(db.prepare('DELETE FROM user_game_plays WHERE user_id = ?').bind(userId));
   statements.push(db.prepare('DELETE FROM arcade_events WHERE user_id = ?').bind(userId));
 
-  // --- Messaging: bare FKs to users (#131). Authored rows go first, then
-  // memberships, then owned containers (channels/messages cascade from them).
-  statements.push(db.prepare('DELETE FROM chat_message_reactions WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM chat_messages WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM chat_read_states WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM chat_server_members WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM chat_servers WHERE owner_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM group_messages WHERE sender_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM group_read_states WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM group_members WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM group_conversations WHERE created_by = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM server_messages WHERE sender_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM server_read_states WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM server_members WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM server_invites WHERE created_by = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM server_conversations WHERE owner_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM dm_messages WHERE sender_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM dm_conversations WHERE user_a_id = ? OR user_b_id = ?').bind(userId, userId));
-  statements.push(db.prepare('DELETE FROM call_participants WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM calls WHERE initiator_id = ?').bind(userId));
+  // Messaging and calls were removed by migration 0089; no related rows remain
+  // to clean up when deleting a user.
 
   // --- Billing + custom stamps: bare FKs to users (#131) ---
   statements.push(db.prepare('DELETE FROM transactions WHERE user_id = ?').bind(userId));
