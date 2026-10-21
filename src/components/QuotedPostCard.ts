@@ -1,5 +1,6 @@
 import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import type { QuotedPost } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
@@ -164,7 +165,7 @@ export function createQuotedPostCard(props: QuotedPostCardProps): HTMLElement {
     overflow: visible;
   `;
   if (quoted.avatar_key) {
-    avatar.style.backgroundImage = `url(/api/images/${quoted.avatar_key})`;
+    avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${quoted.avatar_key}`)})`;
     avatar.style.backgroundSize = 'cover';
     avatar.style.backgroundPosition = 'center';
     avatar.textContent = '';

@@ -94,10 +94,10 @@ npx wrangler secret put CROWD_API_KEY        --config status-worker/wrangler.tom
 npx wrangler secret put STATUS_TEST_EMAIL    --config status-worker/wrangler.toml
 npx wrangler secret put STATUS_TEST_PASSWORD --config status-worker/wrangler.toml
 
-# 5. マイグレーションを適用してデプロイ
-npm run migrate:status:local   # ローカル
-npm run migrate:status         # 本番
-npm run deploy:status
+# 5. worker・migrations・設定を復元した後にマイグレーションを適用してデプロイ
+npx wrangler d1 migrations apply flaxia-status --local --config status-worker/wrangler.toml
+npx wrangler d1 migrations apply flaxia-status --remote --config status-worker/wrangler.toml
+npx wrangler deploy --config status-worker/wrangler.toml
 ```
 
 削除前の構成では、チェック間隔は `[triggers] crons`（毎分。認証は 2 分おき、Crowd 実タスクは 5 分おき）、
@@ -108,6 +108,11 @@ npm run deploy:status
 ## Post-Deployment Steps
 
 1. **Database Migrations** (production):
+   The GitHub Actions deployment applies pending D1 migrations before deploying
+   Pages. If that step fails, fix the reported migration issue and rerun the
+   deployment; do not leave migrations pending.
+
+   For manual recovery when needed:
    ```bash
    npm run migrate:prod
    ```

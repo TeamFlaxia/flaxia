@@ -1,3 +1,5 @@
+import { nativeApiHref } from './native-api.js';
+
 export class Storage {
   constructor(private bucket: R2Bucket) {}
 
@@ -39,6 +41,6 @@ export class Storage {
   }
 
   getPublicUrl(key: string): string {
-    return `/api/images/${key}`;
+    return nativeApiHref(`/api/images/${key}`);
   }
 }

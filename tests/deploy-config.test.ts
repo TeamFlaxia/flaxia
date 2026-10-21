@@ -41,9 +41,13 @@ test('migrate:local stays on the local database', async () => {
   assert.doesNotMatch(value, /--remote\b/, 'migrate:local must never touch production');
 });
 
-test('status worker migration scripts keep their explicit target', async () => {
-  assert.match(await script('migrate:status'), /--remote\b/);
-  assert.match(await script('migrate:status:local'), /--local\b/);
+test('removed status worker scripts are not advertised as runnable', async () => {
+  const pkg = JSON.parse(await readFile(PKG_URL, 'utf8')) as { scripts: Record<string, string> };
+  for (const name of ['deploy:status', 'dev:status', 'migrate:status', 'migrate:status:local']) {
+    assert.equal(pkg.scripts[name], undefined, `${name} must stay removed until the status worker is restored`);
+  }
+  const doc = await readFile(DEPLOYMENT_DOC_URL, 'utf8');
+  assert.doesNotMatch(doc, /npm run (?:deploy|dev|migrate):status(?::local)?\b/);
 });
 
 test('deployment docs run migrate:prod and verify no migrations are pending', async () => {
@@ -70,13 +74,19 @@ test('CSP script-src stays explicit (no unsafe-eval, no scheme allowlist)', asyn
   const csp = headers.split('\n').find((line) => line.includes('Content-Security-Policy'));
   assert.ok(csp, 'public/_headers must define a Content-Security-Policy');
   const scriptSrc = /script-src ([^;]+)/.exec(csp)?.[1] ?? '';
+  assert.doesNotMatch(scriptSrc, /'unsafe-inline'/, 'inline scripts must be hash-authorized');
   assert.doesNotMatch(scriptSrc, /'unsafe-eval'/, 'eval-compiled scripts must not run in the app origin');
+  assert.match(scriptSrc, /'sha256-[A-Za-z0-9+/]+=*'/, 'fixed inline scripts need hash sources');
+  assert.ok(scriptSrc.includes("'wasm-unsafe-eval'"), 'Ruffle needs WebAssembly compilation');
+  assert.ok(scriptSrc.includes('blob:'), 'game assets may load from sandboxed blob URLs');
   assert.doesNotMatch(
     scriptSrc,
     /(?:^|\s)https:(?:\s|;|$)/,
     'a bare https: scheme lets any host run scripts — allowlist hosts instead',
   );
   assert.doesNotMatch(scriptSrc, /'https'/, 'quoted schemes are invalid CSP and only add noise');
+  const scriptAttr = /script-src-attr ([^;]+)/.exec(csp)?.[1];
+  assert.equal(scriptAttr, "'none'", 'inline event handler attributes must be blocked');
   for (const host of ['https://cdn.jsdelivr.net', 'https://unpkg.com']) {
     assert.ok(scriptSrc.includes(host), `script-src must keep ${host} (runtime-loaded libs)`);
   }
@@ -120,6 +130,7 @@ test('every env binding used in code exists in wrangler.toml (prod parity)', asy
     ['HF_REPO', 'dataset export skips HuggingFace upload without it'],
     ['EXPORT_BUCKET', 'dataset export artifact falls back when unset'],
     ['EXPORT_KV', 'dataset export artifact falls back when unset'],
+    ['CROWD_NODE_ORIGINS', 'file-source CORS origins are optional for same-origin nodes'],
   ]);
 
   async function walk(dir: string): Promise<string[]> {

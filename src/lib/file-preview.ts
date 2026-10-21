@@ -2,6 +2,7 @@ import { createAudioPlayer } from '../components/AudioPlayer.js';
 import { executeFlash } from '../components/FlashPlayer.js';
 import { createVideoPlayer } from '../components/VideoPlayer.js';
 import { t } from './i18n.js';
+import { executeSandboxZipPreview } from './sandbox-zip-preview.js';
 
 export type AttachPreviewKind = 'image' | 'audio' | 'video' | 'game' | 'document';
 
@@ -131,14 +132,12 @@ export function renderFilePreview(file: File, previewContainer: HTMLElement): At
         return;
       }
       if (ext === 'html' || ext === 'htm') {
-        const url = URL.createObjectURL(file);
-        revokeUrls.push(() => URL.revokeObjectURL(url));
-        const iframe = document.createElement('iframe');
-        iframe.className = 'file-preview-game-iframe';
-        iframe.setAttribute('sandbox', 'allow-scripts allow-modals allow-pointer-lock');
-        iframe.style.cssText = 'width: 100%; height: 100%; border: none;';
-        iframe.src = url;
-        gameStage.appendChild(iframe);
+        void runHtmlPreview(file, gameStage)
+          .then((handle) => (gameHandle = handle))
+          .catch((error) => {
+            console.error('Failed to preview HTML game:', error);
+            showGameError(gameStage, error);
+          });
         return;
       }
       void runGame(file, gameStage, (h) => (gameHandle = h));
@@ -217,20 +216,20 @@ async function runGame(
   gameStage: HTMLElement,
   storeHandle: (h: { destroy: () => void }) => void,
 ): Promise<void> {
-  const url = URL.createObjectURL(file);
   try {
-    storeHandle(await executeZipPreview(file, gameStage, url));
+    storeHandle(await executeSandboxZipPreview(gameStage, await file.arrayBuffer()));
   } catch (error) {
     console.error('Failed to preview game:', error);
     showGameError(gameStage, error);
-  } finally {
-    URL.revokeObjectURL(url);
   }
 }
 
-async function executeZipPreview(file: File, gameStage: HTMLElement, url: string): Promise<{ destroy: () => void }> {
-  const { executeZip } = await import('./zip-executor.js');
-  return executeZip('preview', gameStage, url);
+async function runHtmlPreview(file: File, gameStage: HTMLElement): Promise<{ destroy: () => void }> {
+  const { default: JSZip } = await import('jszip');
+  const archive = new JSZip();
+  archive.file('index.html', file);
+  const zipData = await archive.generateAsync({ type: 'arraybuffer' });
+  return executeSandboxZipPreview(gameStage, zipData);
 }
 
 function showGameError(gameStage: HTMLElement, error: unknown): void {

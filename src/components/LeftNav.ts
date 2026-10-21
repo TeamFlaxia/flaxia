@@ -3,6 +3,7 @@ import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { type IconName, icon } from '../lib/icons.js';
 import { isModalOpen } from '../lib/modal-state';
+import { nativeApiHref } from '../lib/native-api.js';
 
 export interface LeftNavProps {
   activeItem?: string;
@@ -169,7 +170,7 @@ export class LeftNav {
       const avatar = document.createElement('div');
       avatar.className = 'nav-user-avatar';
       if (this.props.currentUser.avatar_key) {
-        avatar.style.backgroundImage = `url(/api/images/${this.props.currentUser.avatar_key})`;
+        avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${this.props.currentUser.avatar_key}`)})`;
       } else {
         avatar.textContent = (this.props.currentUser.display_name || this.props.currentUser.username)
           .charAt(0)
@@ -313,6 +314,17 @@ export class LeftNav {
     legalLinks.appendChild(aboutLink);
     legalLinks.appendChild(termsLink);
     legalLinks.appendChild(privacyLink);
+    const childSafetyLink = document.createElement('a');
+    childSafetyLink.href = '/child-safety';
+    childSafetyLink.textContent = t('legal.footer_child_safety');
+    childSafetyLink.style.cssText = privacyLink.style.cssText;
+    childSafetyLink.addEventListener('mouseenter', () => {
+      childSafetyLink.style.color = 'var(--text-primary)';
+    });
+    childSafetyLink.addEventListener('mouseleave', () => {
+      childSafetyLink.style.color = 'var(--text-muted)';
+    });
+    legalLinks.appendChild(childSafetyLink);
 
     // Create Docs link (blog)
     const docsLink = document.createElement('a');
@@ -735,6 +747,17 @@ export function updateLeftNavUser(
   legalLinks.appendChild(aboutLink);
   legalLinks.appendChild(termsLink);
   legalLinks.appendChild(privacyLink);
+  const childSafetyLink = document.createElement('a');
+  childSafetyLink.href = '/child-safety';
+  childSafetyLink.textContent = t('legal.footer_child_safety');
+  childSafetyLink.style.cssText = privacyLink.style.cssText;
+  childSafetyLink.addEventListener('mouseenter', () => {
+    childSafetyLink.style.color = 'var(--text-primary)';
+  });
+  childSafetyLink.addEventListener('mouseleave', () => {
+    childSafetyLink.style.color = 'var(--text-muted)';
+  });
+  legalLinks.appendChild(childSafetyLink);
 
   // Create Docs link (blog)
   const docsLink = document.createElement('a');
@@ -769,7 +792,7 @@ export function updateLeftNavUser(
     const avatar = document.createElement('div');
     avatar.className = 'nav-user-avatar';
     if (currentUser.avatar_key) {
-      avatar.style.backgroundImage = `url(/api/images/${currentUser.avatar_key})`;
+      avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${currentUser.avatar_key}`)})`;
     } else {
       avatar.textContent = (currentUser.display_name || currentUser.username).charAt(0).toUpperCase();
       avatar.style.background = 'var(--accent)';

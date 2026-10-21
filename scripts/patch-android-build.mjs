@@ -1,6 +1,7 @@
 import { execSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { patchAndroidVersionCode, androidVersionCode as versionCodeFromReleaseTag } from './android-version-code.mjs';
 
 // launcher icons (generate from assets/icon.png via capacitor-assets)
 try {
@@ -15,6 +16,10 @@ try {
   console.error('dependencies (sharp) are properly installed.');
   console.error(`Error: ${err.stderr?.toString().trim() || err.message}`);
 }
+
+// RELEASE_TAG must be converted to ANDROID_VERSION_CODE by the build workflow.
+const releaseTag = process.env.RELEASE_TAG ?? process.env.GITHUB_REF_NAME;
+const androidVersionCode = releaseTag ? versionCodeFromReleaseTag(releaseTag) : process.env.ANDROID_VERSION_CODE;
 
 // Generate notification small icon (white leaf silhouette) for Android status bar
 try {
@@ -64,24 +69,37 @@ if (!existsSync(buildGradlePath)) {
 
 let content = readFileSync(buildGradlePath, 'utf8');
 
-// APK output filename
-if (!content.includes('flaxia_install')) {
-  content = content.replace(
-    /(android\s*\{)/,
-    `$1
-    applicationVariants.all { variant ->
-        variant.outputs.all {
-            outputFileName = "flaxia_install.apk"
-        }
-    }`,
-  );
-  console.log('Patched APK output filename');
+// Fail closed if a release tag could not be converted into a versionCode.
+if (releaseTag && !androidVersionCode) {
+  throw new Error(`No Android versionCode is available for ${releaseTag}`);
 }
+if (androidVersionCode) {
+  const versionCode = Number(androidVersionCode);
+  content = patchAndroidVersionCode(content, versionCode);
+  console.log(`Set Android defaultConfig versionCode ${versionCode}`);
+}
+
+// Leave Gradle's default APK/AAB filenames unchanged.
 
 const keystoreFile = process.env.ANDROID_KEYSTORE_FILE;
 const keystorePassword = process.env.ANDROID_KEYSTORE_PASSWORD;
 const keyAlias = process.env.ANDROID_KEY_ALIAS;
 const keyPassword = process.env.ANDROID_KEY_PASSWORD;
+
+// A release must never publish an unsigned bundle. Local debug builds may omit
+// signing credentials, but tagged/explicit release builds fail closed.
+const requireSigning = Boolean(process.env.RELEASE_TAG) || process.env.REQUIRE_ANDROID_SIGNING === '1';
+if (
+  requireSigning &&
+  (!keystoreFile ||
+    !keystorePassword ||
+    !keyAlias ||
+    !keyPassword ||
+    !existsSync(keystoreFile) ||
+    readFileSync(keystoreFile).byteLength === 0)
+) {
+  throw new Error('Android release signing requires all four ANDROID_KEY* variables and a non-empty keystore file');
+}
 
 // #106: Groovy single-quoted strings treat backslash as the escape
 // character, so escape backslashes first — otherwise a trailing backslash

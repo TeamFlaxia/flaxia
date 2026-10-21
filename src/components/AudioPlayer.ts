@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { GifPreviewProps } from '../types/post.js';
 import { AudioVisualizer } from './AudioVisualizer.js';
 
@@ -28,7 +29,7 @@ export function createAudioPlayer(props: GifPreviewProps): HTMLElement {
   audio.style.opacity = '0';
   audio.style.pointerEvents = 'none';
 
-  const audioUrl = props.src || `/api/audio/${props.gifKey || ''}`;
+  const audioUrl = nativeApiHref(props.src || `/api/audio/${props.gifKey || ''}`);
 
   const visualizerCanvas = document.createElement('canvas');
   visualizerCanvas.className = 'audio-visualizer-canvas';
@@ -514,7 +515,7 @@ export function createGifPreview(props: GifPreviewProps): HTMLElement {
   if (props.src) {
     img.src = props.src;
   } else {
-    img.src = `/api/images/${props.gifKey}?_=${Date.now()}`;
+    img.src = nativeApiHref(`/api/images/${props.gifKey}?_=${Date.now()}`);
   }
 
   img.onerror = () => {

@@ -1,3 +1,4 @@
+import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { isKeyBlocked } from '../functions/lib/scan/db';
@@ -16,24 +17,80 @@ type Bindings = {
   BUCKET: R2Bucket;
   DB: D1Database;
   CACHE?: KVNamespace;
+  ASSETS?: { fetch: (request: Request) => Promise<Response> };
 };
 
 const SANDBOX_CSP = [
-  'sandbox allow-scripts allow-pointer-lock',
+  'sandbox allow-scripts allow-pointer-lock allow-forms allow-popups',
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:",
   "style-src 'self' 'unsafe-inline' data: blob: https:",
   "worker-src 'self' blob:",
   "img-src 'self' data: blob: https:",
   "media-src 'self' data: blob: https:",
-  "font-src 'self' data: https:",
+  "font-src 'self' data: blob: https:",
   "connect-src 'self' data: blob: https: wss:",
-  'frame-ancestors https://flaxia.app',
+  "frame-src 'self' blob: data: https:",
+  'frame-ancestors https://flaxia.app https://*.pages.dev http://localhost:5173 http://localhost:8787 http://localhost:8788',
 ].join('; ');
+
+const ZIP_PREVIEW_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:",
+  "style-src 'self' 'unsafe-inline' data: blob: https:",
+  "worker-src 'self' blob:",
+  "img-src 'self' data: blob: https:",
+  "media-src 'self' data: blob: https:",
+  "font-src 'self' data: blob: https:",
+  "connect-src 'self' data: blob: https: wss:",
+  'frame-src blob: data: https:',
+  'frame-ancestors https://flaxia.app https://*.pages.dev http://localhost:5173 http://localhost:8787 http://localhost:8788',
+].join('; ');
+
+const PDF_VIEWER_CSP = [
+  "default-src 'none'",
+  "script-src 'self' 'sha256-G4/emu0SNnFJECp6THR3fUV6IVS9yM8Y/dhtETHdW+E=' 'wasm-unsafe-eval'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' blob: data:",
+  "font-src 'self' blob: data:",
+  "connect-src 'self' blob: data:",
+  "worker-src 'self' blob:",
+  "frame-src 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  'frame-ancestors https://flaxia.app https://*.pages.dev http://localhost:5173 http://localhost:8787 http://localhost:8788',
+].join('; ');
+
+function withPdfViewerCsp(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set('Content-Security-Policy', PDF_VIEWER_CSP);
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('Referrer-Policy', 'no-referrer');
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+function withZipPreviewCsp(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set('Content-Security-Policy', ZIP_PREVIEW_CSP);
+  headers.set('Cache-Control', 'no-store');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('Referrer-Policy', 'no-referrer');
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
 
 function withCsp(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set('Content-Security-Policy', SANDBOX_CSP);
+  if (headers.get('Content-Type')?.toLowerCase().startsWith('text/html')) {
+    // HTML includes the current compatibility runtime even when game assets
+    // are immutable. Revalidate it so sandbox fixes can reach existing games.
+    headers.set('Cache-Control', 'public, no-cache');
+  }
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -44,6 +101,32 @@ function withCsp(response: Response): Response {
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use('/*', cors());
+
+app.use('/*', async (c, next) => {
+  await next();
+  if (!c.res.headers.get('Content-Type')?.toLowerCase().startsWith('text/html')) return;
+  // Cloudflare's injected analytics/challenge scripts assume cookie and child
+  // document access that sandboxed games do not have. Keep HTML unmodified:
+  // https://developers.cloudflare.com/cloudflare-challenges/challenge-types/javascript-detections/
+  const cacheControl = c.res.headers.get('Cache-Control');
+  c.header('Cache-Control', cacheControl ? `${cacheControl}, no-transform` : 'no-transform');
+});
+
+async function serveZipPreviewAsset(
+  c: Context<{ Bindings: Bindings }>,
+  path: '/zip-preview.html' | '/zip-preview.js' | '/zip-preview-protocol.js',
+): Promise<Response> {
+  if (!c.env.ASSETS) return c.text('ZIP preview assets unavailable', 503);
+  const assetUrl = new URL(path, c.req.url);
+  const response = await c.env.ASSETS.fetch(new Request(assetUrl));
+  if (!response.ok) return c.text('ZIP preview asset not found', 404);
+  return withZipPreviewCsp(response);
+}
+
+app.get('/zip-preview', (c) => serveZipPreviewAsset(c, '/zip-preview.html'));
+app.get('/zip-preview.html', (c) => serveZipPreviewAsset(c, '/zip-preview.html'));
+app.get('/zip-preview.js', (c) => serveZipPreviewAsset(c, '/zip-preview.js'));
+app.get('/zip-preview-protocol.js', (c) => serveZipPreviewAsset(c, '/zip-preview-protocol.js'));
 
 app.get('/api/wvfs-zip/:postId/*', async (c) => {
   try {
@@ -195,11 +278,39 @@ app.get('/', (c) => c.json({ status: 'ok', worker: 'flaxia-sandbox' }, 200));
 
 app.get('/favicon.ico', (c) => c.body(null, 204));
 
-// Trusted compatibility broker for game localStorage. This endpoint is kept
-// outside the worker's CSP sandbox so it can read the sandbox origin's legacy
-// storage; untrusted game documents continue to receive SANDBOX_CSP.
+async function serveGameStorageRuntime(c: Context<{ Bindings: Bindings }>): Promise<Response> {
+  if (!c.env.ASSETS) return c.text('Game storage runtime unavailable', 503);
+  const assetUrl = new URL('/game-storage-runtime.js', c.req.url);
+  const response = await c.env.ASSETS.fetch(new Request(assetUrl));
+  if (!response.ok) return c.text('Game storage runtime not found', 404);
+
+  const headers = new Headers(response.headers);
+  headers.set('Content-Type', 'text/javascript; charset=utf-8');
+  headers.set('Cache-Control', 'no-store');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('Referrer-Policy', 'no-referrer');
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+app.get('/api/game-storage-runtime.js', (c) => serveGameStorageRuntime(c));
+
+// Trusted compatibility broker for legacy game localStorage. New saves live
+// on the Flaxia origin; this endpoint remains outside the worker's CSP sandbox
+// so existing sandbox-origin saves can be migrated. Untrusted game documents
+// continue to receive SANDBOX_CSP.
 app.get('/api/game-storage', (c) => {
-  const html = `<!doctype html><meta charset="utf-8"><script>
+  const html = `<!doctype html><meta charset="utf-8"><script type="module">
+    import {
+      clearGameStorage,
+      loadGameStorageSnapshot,
+      removeGameStorageValue,
+      setGameStorageValue,
+    } from '/api/game-storage-runtime.js';
+
     (function(){
       'use strict';
       var allowedOrigins=new Set(['https://flaxia.app','http://localhost:5173','http://localhost:8787','http://localhost:8788']);
@@ -210,21 +321,16 @@ app.get('/api/game-storage', (c) => {
         if(!message||typeof message!=='object')return;
         var namespace=typeof message.namespace==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(message.namespace)?message.namespace:null;
         if(!namespace)return;
-        var prefix='flaxia:game:'+namespace+':';
         try{
           if(message.type==='FLAXIA_STORAGE_READ'&&typeof message.requestId==='string'){
-            var entries=[];
-            for(var i=0;i<localStorage.length;i++){var key=localStorage.key(i);if(key!==null&&key.indexOf(prefix)===0){var value=localStorage.getItem(key);if(value!==null)entries.push([key.slice(prefix.length),value])}}
-            send(event.origin,{type:'FLAXIA_STORAGE_SNAPSHOT',requestId:message.requestId,entries:entries});
+            var snapshot=loadGameStorageSnapshot(localStorage,namespace);
+            send(event.origin,{type:'FLAXIA_STORAGE_SNAPSHOT',requestId:message.requestId,entries:Object.entries(snapshot)});
           }else if(message.type==='FLAXIA_STORAGE_SET'&&typeof message.key==='string'&&typeof message.value==='string'){
-            if(message.key.length>512||message.value.length>100000)return;
-            localStorage.setItem(prefix+message.key,message.value);
+            setGameStorageValue(localStorage,namespace,message.key,message.value);
           }else if(message.type==='FLAXIA_STORAGE_REMOVE'&&typeof message.key==='string'){
-            localStorage.removeItem(prefix+message.key);
+            removeGameStorageValue(localStorage,namespace,message.key);
           }else if(message.type==='FLAXIA_STORAGE_CLEAR'){
-            var doomed=[];
-            for(var j=0;j<localStorage.length;j++){var k=localStorage.key(j);if(k!==null&&k.indexOf(prefix)===0)doomed.push(k)}
-            for(var d=0;d<doomed.length;d++)localStorage.removeItem(doomed[d]);
+            clearGameStorage(localStorage,namespace);
           }
         }catch(error){send(event.origin,{type:'FLAXIA_STORAGE_ERROR',message:String(error)})}
       });
@@ -236,7 +342,7 @@ app.get('/api/game-storage', (c) => {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
       'Content-Security-Policy':
-        "default-src 'none'; script-src 'unsafe-inline'; frame-ancestors https://flaxia.app http://localhost:5173 http://localhost:8787 http://localhost:8788",
+        "default-src 'none'; script-src 'self' 'unsafe-inline'; frame-ancestors https://flaxia.app http://localhost:5173 http://localhost:8787 http://localhost:8788",
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
     },
@@ -260,7 +366,7 @@ app.get('/pdf/*', (c) => {
   const body = pdfViewerAssetBody(asset);
   const headers = pdfViewerAssetHeaders(asset);
   if (body === null || headers === null) return c.text('Not found', 404);
-  return withCsp(new Response(body, { headers }));
+  return withPdfViewerCsp(new Response(body, { headers }));
 });
 
 app.notFound(async (c) => {
