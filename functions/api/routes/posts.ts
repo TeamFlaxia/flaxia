@@ -31,6 +31,7 @@ import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
+import { RECOMMENDATION_MIN_TRUST, refreshUserTrustSafe } from '../../lib/trust';
 import {
   addBusinessDays,
   batchGetFreshAndBookmarkStatus,
@@ -125,6 +126,7 @@ posts.post('/posts', requireAuth, async (c) => {
     if (!result.success) {
       return c.json({ error: 'Failed to create post' }, 500);
     }
+    await refreshUserTrustSafe(c.env.DB, userId, new Date(now));
     return c.json({ id: postId }, 201);
   } catch (error: unknown) {
     console.error('Post creation error:', error);
@@ -545,6 +547,8 @@ const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, 
   COALESCE(p.reply_count, 0) as reply_count, 
   COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at`;
 
+const RECOMMENDATION_TRUST_FILTER = `AND COALESCE(u.trust_score, 1.0) >= ${RECOMMENDATION_MIN_TRUST}`;
+
 // GET /api/posts/recommended - multi-source feed inspired by X's Home Mixer.
 posts.get('/posts/recommended', async (c) => {
   try {
@@ -623,7 +627,7 @@ posts.get('/posts/recommended', async (c) => {
         .prepare(
           `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
            WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
-             ${visibilityFilter} AND p.created_at >= ?
+             ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ?
            ORDER BY p.created_at DESC LIMIT ?`,
         )
         .bind(...visibilityParams, recentCutoff, limit * 4)
@@ -632,7 +636,7 @@ posts.get('/posts/recommended', async (c) => {
         .prepare(
           `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
            WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
-             ${visibilityFilter} AND p.created_at >= ?
+             ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ?
            ORDER BY eng_score DESC, p.created_at DESC LIMIT ?`,
         )
         .bind(asOfUnixSeconds, ...visibilityParams, trendingCutoff, limit * 4)
@@ -644,7 +648,7 @@ posts.get('/posts/recommended', async (c) => {
                WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
                  AND p.created_at >= ?
                  AND EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.followee_id = p.user_id)
-                 ${visibilityFilter}
+                 ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
                ORDER BY p.created_at DESC LIMIT ?`,
             )
             .bind(trendingCutoff, currentUserId, ...visibilityParams, limit * 4)
@@ -674,7 +678,7 @@ posts.get('/posts/recommended', async (c) => {
     const candidateQuery = `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score
       FROM posts p LEFT JOIN users u ON p.user_id = u.id
       WHERE p.id IN (SELECT value FROM json_each(?))
-        AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${visibilityFilter}
+        AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
         AND p.created_at >= ?`;
     const candidateResult = await db
       .prepare(candidateQuery)
@@ -798,7 +802,7 @@ async function loadRecommendedArchivePage(
     .prepare(
       `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
        WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
-         AND ${cursorFilter} ${visibilityFilter}
+         AND ${cursorFilter} ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
        ORDER BY p.created_at DESC, p.id DESC LIMIT ?`,
     )
     .bind(...params)
@@ -1836,6 +1840,8 @@ posts.post('/posts/commit', requireAuth, async (c) => {
     await enrichPostsWithQuotes([fullPost], c.env.DB);
     await enrichPostsWithAttachments([fullPost], c.env.DB);
     await enrichPostsWithReactions([fullPost], c.env.DB, c.get('user')?.id);
+
+    await refreshUserTrustSafe(c.env.DB, userId);
 
     runInBackground(c, () => embedPost(c.env.DB, c.env, fullPost.id, fullPost.text), 'Background embed failed');
 
@@ -3774,6 +3780,7 @@ posts.put('/posts/:id', async (c) => {
 
     await enrichPostsWithQuotes([updated as PostRow], c.env.DB);
     await enrichPostsWithAttachments([updated as PostRow], c.env.DB);
+    await refreshUserTrustSafe(c.env.DB, userId);
 
     // Re-screen on every edit: a swapped-in image kept the old post's verdict,
     // because submitDetectNsfw skips objects already marked done. Reconciling

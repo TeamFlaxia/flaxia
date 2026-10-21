@@ -134,8 +134,9 @@ The feed mode in `src/components/Timeline.ts` selects the API endpoint:
 `functions/api/routes/posts.ts` implements both chronological and recommended
 post retrieval. For You combines separate in-network, vector-similarity,
 popular, and recent candidate sources, then applies freshness, engagement,
-author diversity, and recently-seen filters. Freshs, bookmarks, replies, shares,
-and game dwell time contribute to the interest vector. The shared
+author diversity, and recently-seen filters. Authors with a low trust score
+(repeated near-duplicate posts) are excluded from For You. Freshs, bookmarks,
+replies, shares, and game dwell time contribute to the interest vector. The shared
 interest-vector and LinUCB helpers live in `functions/api/routes/recommender.ts`
 and `functions/lib/linucb.ts`.
 

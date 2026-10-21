@@ -94,8 +94,14 @@ describe('GET /api/posts/recommended — freshness', () => {
     const author = await seedUserAndLogin('rec-source');
 
     const postIds: string[] = [];
-    for (let i = 0; i < 4; i++) {
-      const postId = await createTextPost(author.cookie, `repeatable topic zero post ${i}`);
+    const texts = [
+      'a post about retro platformers',
+      'a post about baking sourdough bread',
+      'a post about orbital mechanics',
+      'a post about watercolor painting',
+    ];
+    for (const text of texts) {
+      const postId = await createTextPost(author.cookie, text);
       await sendVectorEmbed(postId, unitVector(0));
       postIds.push(postId);
     }
@@ -107,5 +113,39 @@ describe('GET /api/posts/recommended — freshness', () => {
 
     const ids = await recommendedIds(reader.cookie, 20);
     assert.ok(ids.includes(postIds[0]!), 'a freshed post can appear again in recommendations');
+  });
+});
+
+describe('GET /api/posts/recommended — author trust', () => {
+  beforeEach(resetDb);
+
+  it('excludes authors who repeatedly post identical content', async () => {
+    const reader = await seedUserAndLogin('trust-reader');
+    const spammer = await seedUserAndLogin('trust-spammer');
+    const author = await seedUserAndLogin('trust-author');
+
+    const spamIds: string[] = [];
+    for (let index = 0; index < 4; index++) {
+      spamIds.push(await createTextPost(spammer.cookie, 'Buy cheap followers now at spam.example'));
+    }
+    const legitId = await createTextPost(author.cookie, 'A distinct post about building a game');
+
+    const ids = await recommendedIds(reader.cookie, 20);
+    for (const spamId of spamIds) {
+      assert.ok(!ids.includes(spamId), `expected repeated post ${spamId} to be filtered out`);
+    }
+    assert.ok(ids.includes(legitId), `expected the distinct author to remain, got ${JSON.stringify(ids)}`);
+  });
+
+  it('keeps authors with only two repeated posts', async () => {
+    const reader = await seedUserAndLogin('trust-two-reader');
+    const author = await seedUserAndLogin('trust-two-author');
+
+    const firstId = await createTextPost(author.cookie, 'Two repeated posts are tolerated');
+    const secondId = await createTextPost(author.cookie, 'Two repeated posts are tolerated');
+
+    const ids = await recommendedIds(reader.cookie, 20);
+    assert.ok(ids.includes(firstId), `expected first post in recommendations, got ${JSON.stringify(ids)}`);
+    assert.ok(ids.includes(secondId), `expected second post in recommendations, got ${JSON.stringify(ids)}`);
   });
 });

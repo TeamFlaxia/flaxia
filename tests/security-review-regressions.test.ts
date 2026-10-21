@@ -34,7 +34,8 @@ function fixture(authenticated = true) {
   sqlite.exec(`
     CREATE TABLE users (
       id TEXT PRIMARY KEY, username TEXT, display_name TEXT, avatar_key TEXT,
-      badge_type TEXT, language TEXT
+      badge_type TEXT, language TEXT, trust_score REAL DEFAULT 1.0,
+      repetition_score REAL DEFAULT 0.0, trust_updated_at TEXT
     );
     INSERT INTO users (id, username, display_name) VALUES ('owner', 'owner', 'Owner');
     CREATE TABLE posts (
@@ -44,7 +45,7 @@ function fixture(authenticated = true) {
       engagement_hotness REAL, status TEXT DEFAULT 'published', hidden INTEGER DEFAULT 0,
       game_description TEXT, fresh_count INTEGER DEFAULT 0, bookmark_count INTEGER DEFAULT 0,
       reply_count INTEGER DEFAULT 0, impressions INTEGER DEFAULT 0, parent_id TEXT,
-      root_id TEXT, depth INTEGER DEFAULT 0, edited_at TEXT,
+      root_id TEXT, depth INTEGER DEFAULT 0, edited_at TEXT, actor_id TEXT,
       created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
     CREATE TABLE post_attachments (post_id TEXT, r2_key TEXT, kind TEXT, position INTEGER);
