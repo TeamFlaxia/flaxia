@@ -112,7 +112,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let legalPage: PageComponent | null = null;
     let docsPage: PageComponent | null = null;
     let notificationsPage: NotificationsPage | null = null;
-    let settingsPage: PageComponent | null = null;
+    let settingsPage: ReturnType<typeof import('./components/SettingsPage.js').createSettingsPage> | null = null;
     let arcadePage: ArcadePageHandle | null = null;
     let searchPage: PageComponent | null = null;
     let bookmarksPage: BookmarksPage | null = null;
@@ -1097,8 +1097,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 const currentSettingsPage = settingsPage;
                 // Recreate settings page with full user data
                 const oldElement = currentSettingsPage.getElement();
+                const initialCategory = currentSettingsPage.getActiveCategory();
                 currentSettingsPage.destroy();
                 settingsPage = settingsModule.createSettingsPage({
+                  initialCategory,
                   currentUser: userData.user as {
                     id: string;
                     username: string;

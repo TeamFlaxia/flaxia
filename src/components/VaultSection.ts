@@ -55,21 +55,6 @@ interface QrDetector {
 }
 type QrDetectorCtor = new (options: { formats: string[] }) => QrDetector;
 
-const SECTION_CSS = `
-  margin-bottom: 2rem;
-  padding: 1.5rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-primary);
-`;
-const TITLE_CSS = `
-  font-size: 1.125rem;
-  font-weight: 600;
-  margin-bottom: 1rem;
-  color: var(--text-primary);
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 0.5rem;
-`;
 const SUBTITLE_CSS = `
   font-size: 0.95rem;
   font-weight: 600;
@@ -130,10 +115,10 @@ function messageElement(kind: 'error' | 'info', text: string): HTMLElement {
 }
 
 export function createVaultSection() {
-  const container = el('div', SECTION_CSS);
+  const container = el('div');
   container.className = 'settings-section';
 
-  const title = el('h2', TITLE_CSS, t('settings.vault'));
+  const title = el('h2', '', t('settings.vault'));
   const desc = el('p', MUTED_CSS, t('settings.vault_desc'));
   const badge = el('span', '');
   const body = el('div');
