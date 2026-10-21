@@ -31,6 +31,8 @@ import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
+import { RECOMMENDATION_MIN_TRUST, refreshUserTrustSafe } from '../../lib/trust';
+import { fetchWithSsrfGuard } from '../../lib/url-guard';
 import {
   addBusinessDays,
   batchGetFreshAndBookmarkStatus,
@@ -45,6 +47,18 @@ import { extractGameDescription } from './post-versions';
 import { cosineSimilarity, loadOrComputeInterestVector } from './recommender';
 
 const posts = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+const EXACT_DUPLICATE_FILTER = `AND (
+  trim(p.text) = '' OR NOT EXISTS (
+    SELECT 1 FROM posts dup
+    WHERE dup.user_id = p.user_id
+      AND dup.text = p.text
+      AND dup.status = 'published'
+      AND dup.hidden = 0
+      AND dup.parent_id IS p.parent_id
+      AND (dup.created_at > p.created_at OR (dup.created_at = p.created_at AND dup.rowid > p.rowid))
+  )
+)`;
 
 /**
  * Per-post attachment ceiling for a user: Flaxia+ subscribers get the larger
@@ -125,6 +139,7 @@ posts.post('/posts', requireAuth, async (c) => {
     if (!result.success) {
       return c.json({ error: 'Failed to create post' }, 500);
     }
+    await refreshUserTrustSafe(c.env.DB, userId, new Date(now));
     return c.json({ id: postId }, 201);
   } catch (error: unknown) {
     console.error('Post creation error:', error);
@@ -177,13 +192,14 @@ posts.get('/posts', async (c) => {
       ? 'AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
       : '';
     const blockParam = currentUserId ? [currentUserId] : [];
+    const feedFilter = `${blockFilter} ${EXACT_DUPLICATE_FILTER}`;
     if (hashtag) {
       // Filter by hashtag using json_each
       if (cursor) {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [hashtag, cursor, ...blockParam, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [hashtag, ...blockParam, limit];
       }
     } else if (following && currentUserId) {
@@ -200,7 +216,7 @@ posts.get('/posts', async (c) => {
             )
             OR p.user_id = ?
           )
-          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${blockFilter}
+          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${feedFilter}
           ORDER BY p.created_at DESC LIMIT ?`;
         params = [currentUserId, currentUserId, cursor, ...blockParam, limit];
       } else {
@@ -215,28 +231,26 @@ posts.get('/posts', async (c) => {
             )
             OR p.user_id = ?
           )
-          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${blockFilter}
+          AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${feedFilter}
           ORDER BY p.created_at DESC LIMIT ?`;
         params = [currentUserId, currentUserId, ...blockParam, limit];
       }
     } else if (username) {
       // Username filter - show posts from specific user
       if (cursor) {
-        query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?";
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ${EXACT_DUPLICATE_FILTER} AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?`;
         params = [username, cursor, limit];
       } else {
-        query =
-          "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ORDER BY p.created_at DESC LIMIT ?";
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ${EXACT_DUPLICATE_FILTER} ORDER BY p.created_at DESC LIMIT ?`;
         params = [username, limit];
       }
     } else {
       // Global timeline
       if (cursor) {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [cursor, ...blockParam, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, p.status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${blockFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, p.status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [...blockParam, limit];
       }
     }
@@ -285,7 +299,7 @@ posts.get('/posts', async (c) => {
         const embeddedIds = new Set((embeddedResult.success ? embeddedResult.results : []).map((r) => r.post_id));
         for (const p of textPosts) {
           if (!embeddedIds.has(p.id)) {
-            embedPost(c.env.DB, c.env, p.id, p.text).catch((e) => console.error('Background embed failed:', e));
+            runInBackground(c, () => embedPost(c.env.DB, c.env, p.id, p.text), 'Background embed failed');
           }
         }
       })(),
@@ -294,7 +308,7 @@ posts.get('/posts', async (c) => {
     // Return total count when filtering by hashtag
     if (hashtag) {
       const countResult = await c.env.DB.prepare(`
-        SELECT COUNT(*) as count FROM posts WHERE status = 'published' AND hidden = 0 AND parent_id IS NULL AND id IN (SELECT posts.id FROM posts, json_each(posts.hashtags) WHERE value = ?)
+        SELECT COUNT(*) as count FROM posts p WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${EXACT_DUPLICATE_FILTER}
       `)
         .bind(hashtag)
         .first<{ count: number }>();
@@ -356,7 +370,7 @@ posts.get('/posts/trending', async (c) => {
       EXP(1.5 * LN((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))) as score
       FROM posts p
       LEFT JOIN users u ON p.user_id = u.id
-      WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')
+      WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER} AND p.created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')
       ORDER BY score DESC, p.created_at DESC
       LIMIT ?
     `;
@@ -503,319 +517,273 @@ function diversifyPosts(
   return result;
 }
 
+// Independent sources keep the feed useful while embeddings are pending or a
+// user has not built an interest profile yet.
+const RECENT_CANDIDATE_WINDOW_HOURS = 72;
+const TRENDING_CANDIDATE_WINDOW_DAYS = 14;
+
+function compareScoredPosts(
+  a: { post: Record<string, unknown>; score: number },
+  b: { post: Record<string, unknown>; score: number },
+): number {
+  const diff = b.score - a.score;
+  if (diff !== 0) return diff;
+  const ca = String(b.post.created_at || '').localeCompare(String(a.post.created_at || ''));
+  if (ca !== 0) return ca;
+  return String(b.post.id || '').localeCompare(String(a.post.id || ''));
+}
+
+function rankCandidateIds(ids: string[]): Map<string, number> {
+  return new Map(ids.map((id, index) => [id, index]));
+}
+
+function candidateRankScore(id: string, ranks: Map<string, number>): number {
+  const rank = ranks.get(id);
+  return rank === undefined ? 0 : 1 / (1 + rank / 20);
+}
+
+function decayingRecommendationPenalty(
+  activityAt: string | null | undefined,
+  asOfMs: number,
+  maxPenalty: number,
+  halfLifeDays: number,
+): number {
+  if (!activityAt) return 0;
+  const activityMs = Date.parse(activityAt);
+  if (!Number.isFinite(activityMs)) return 0;
+  const ageMs = Math.max(0, asOfMs - activityMs);
+  return maxPenalty * 2 ** (-ageMs / (halfLifeDays * 86400_000));
+}
+
 const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
   COALESCE(p.reply_count, 0) as reply_count, 
   COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at`;
 
-// GET /api/posts/recommended - get recommended posts for the user (vector hybrid)
+const RECOMMENDATION_TRUST_FILTER = `AND COALESCE(u.trust_score, 1.0) >= ${RECOMMENDATION_MIN_TRUST}`;
+
+// GET /api/posts/recommended - multi-source feed inspired by X's Home Mixer.
 posts.get('/posts/recommended', async (c) => {
   try {
     const limit = clampLimit(c.req.query('limit'), 20, 50);
     const cursor = c.req.query('cursor');
-    let cursorScore: string | null = null;
-    let cursorCreatedAt: string | null = null;
-    let cursorId: string | null = null;
-    if (cursor) {
-      const parts = cursor.split(',');
-      cursorScore = parts[0] || null;
-      cursorCreatedAt = parts[1] || null;
-      cursorId = parts[2] || null;
-    }
-    let numericCursor = cursorScore !== null ? parseFloat(cursorScore) : null;
-    if (Number.isNaN(numericCursor!)) numericCursor = null;
-
+    const cursorParts = cursor ? cursor.split(',') : [];
+    const isArchiveCursor = cursorParts[0] === 'archive';
+    const [cursorScore, cursorCreatedAt, cursorId] = isArchiveCursor ? [] : cursorParts;
+    const numericCursor = cursorScore ? Number.parseFloat(cursorScore) : null;
+    const cursorAsOf = Number(cursorParts[3]);
+    const asOfMs = Number.isFinite(cursorAsOf) && cursorAsOf > 0 ? cursorAsOf : Date.now();
+    const asOfUnixSeconds = Math.floor(asOfMs / 1000);
     if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
 
-    const currentUserId = c.get('user')?.id;
-
-    // Build user interest vector from Fresh history + game dwell signals.
-    // Uses the materialized user_profiles vector (5-min TTL) instead of
-    // re-deriving and JSON-parsing up to 100 embeddings on every request.
-    let interestVector: number[] | null = null;
-    if (currentUserId) {
-      const profile = await loadOrComputeInterestVector(c.env.DB, currentUserId);
-      interestVector = profile?.vector ?? null;
+    const db = c.env.DB;
+    const currentUserId = c.get('user')?.id || null;
+    if (isArchiveCursor) {
+      return c.json(await loadRecommendedArchivePage(db, currentUserId, limit, cursorCreatedAt, cursorId, asOfMs));
     }
 
-    // Try hybrid vector-based recommendations if we have an interest vector
-    let enrichedPosts: Record<string, unknown>[] = [];
-    let nextCursor: string | null = null;
+    let interestVector: number[] | null = null;
+    if (currentUserId) {
+      interestVector = (await loadOrComputeInterestVector(db, currentUserId))?.vector ?? null;
+    }
 
+    // Build independent candidate sources so a missing profile or embedding
+    // service never collapses For You into a single global popularity list.
+    let vectorMatches: Array<{ id: string; score: number }> = [];
     if (interestVector) {
-      let vectorMatches: Array<{ id: string; score: number }> = [];
-      const vectorize = c.env.VECTORIZE;
-
-      if (vectorize) {
+      if (c.env.VECTORIZE) {
         try {
-          const queryResult = await vectorize.query(interestVector, {
+          const queryResult = await c.env.VECTORIZE.query(interestVector, {
             topK: 100,
             returnValues: false,
             returnMetadata: false,
           });
-          vectorMatches = (queryResult.matches || []).map((m) => ({ id: m.id, score: m.score }));
-          vectorMatches = vectorMatches.slice(0, 80);
-        } catch (e) {
-          console.error('Vectorize query failed, falling back to D1:', e);
+          vectorMatches = (queryResult.matches || [])
+            .map((match) => ({ id: match.id, score: Number(match.score) }))
+            .filter((match) => Number.isFinite(match.score))
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 100);
+        } catch (error) {
+          console.error('Vectorize query failed, falling back to D1:', error);
         }
       }
 
-      // Fallback: compute cosine similarity from D1 post_embeddings
       if (vectorMatches.length === 0) {
-        const allEmbedRows = await c.env.DB.prepare(
-          'SELECT post_id, embedding FROM post_embeddings ORDER BY created_at DESC LIMIT 300',
-        ).all<{
-          post_id: string;
-          embedding: string;
-        }>();
-        for (const row of allEmbedRows.results || []) {
+        const embeddingRows = await db
+          .prepare('SELECT post_id, embedding FROM post_embeddings ORDER BY created_at DESC LIMIT 500')
+          .all<{ post_id: string; embedding: string }>();
+        for (const row of embeddingRows.results || []) {
           try {
-            const v = JSON.parse(row.embedding);
-            if (Array.isArray(v)) {
-              const sim = cosineSimilarity(interestVector, v);
-              vectorMatches.push({ id: row.post_id, score: sim });
+            const vector: unknown = JSON.parse(row.embedding);
+            if (Array.isArray(vector) && vector.every((value) => typeof value === 'number')) {
+              vectorMatches.push({ id: row.post_id, score: cosineSimilarity(interestVector, vector) });
             }
           } catch {
-            /* skip */
+            // Ignore malformed embeddings and keep the remaining candidates.
           }
         }
         vectorMatches.sort((a, b) => b.score - a.score);
-        vectorMatches = vectorMatches.slice(0, 80);
-      }
-
-      if (vectorMatches.length > 0) {
-        const candidateIds = vectorMatches.map((m) => m.id);
-        const engFormula = `(p.engagement_hotness / EXP(1.5 * LN((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0)))`;
-        const candidateQuery = `${RECOMMENDED_SELECT}, ${engFormula} as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id IN (${candidateIds.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL`;
-        const candResult = await c.env.DB.prepare(candidateQuery)
-          .bind(...candidateIds)
-          .all();
-        const candidatePosts = (candResult.results || []) as Array<Record<string, unknown>>;
-
-        if (candidatePosts.length > 0) {
-          // Filter out posts from blocked users
-          if (currentUserId) {
-            const blockedIds = await c.env.DB.prepare('SELECT blocked_id FROM blocks WHERE blocker_id = ?')
-              .bind(currentUserId)
-              .all<{ blocked_id: string }>();
-            if (blockedIds.success && blockedIds.results.length > 0) {
-              const blockedSet = new Set(blockedIds.results.map((r) => r.blocked_id));
-              const filteredPosts = candidatePosts.filter((p) => !blockedSet.has(p.user_id as string));
-              if (filteredPosts.length < candidatePosts.length) {
-                candidatePosts.length = 0;
-                candidatePosts.push(...filteredPosts);
-              }
-            }
-          }
-          const engScores = candidatePosts.map((p) => Number(p.eng_score) || 0);
-          const maxEng = Math.max(...engScores, 1);
-          const vecScoreMap = new Map(vectorMatches.map((m) => [m.id, m.score]));
-          const maxVec = Math.max(...vectorMatches.map((m) => m.score), 1);
-
-          // Compute author quality scores
-          const authorQualityMap = new Map<string, number>();
-          const authorIds = [...new Set(candidatePosts.map((p) => p.user_id as string))].filter(Boolean);
-          if (authorIds.length > 0) {
-            const authorRows = await c.env.DB.prepare(
-              `SELECT u.id, u.display_name, u.bio, u.avatar_key, u.badge_type, u.created_at,
-                COALESCE(SUM(p.fresh_count), 0) as total_fresh,
-                COALESCE(SUM(p.reply_count), 0) as total_reply,
-                COALESCE(SUM(p.impressions), 0) as total_impressions,
-                COUNT(p.id) as post_count
-               FROM users u
-               LEFT JOIN posts p ON p.user_id = u.id AND p.status = 'published'
-               WHERE u.id IN (${authorIds.map(() => '?').join(',')})
-               GROUP BY u.id`,
-            )
-              .bind(...authorIds)
-              .all<{
-                id: string;
-                display_name: string | null;
-                bio: string | null;
-                avatar_key: string | null;
-                created_at: string;
-                total_fresh: number;
-                total_reply: number;
-                total_impressions: number;
-                post_count: number;
-              }>();
-            for (const row of authorRows.results || []) {
-              const ageMs = Date.now() - new Date(row.created_at).getTime();
-              const accountAgeDays = ageMs / 86400000;
-              const postCount = row.post_count || 1;
-              const authorQuality = computeAuthorQuality({
-                freshRatio: (row.total_fresh || 0) / postCount / 5,
-                replyRate: (row.total_reply || 0) / Math.max(row.total_impressions || postCount, 1),
-                accountAgeDays: Math.max(accountAgeDays, 1),
-                hasDisplayName: !!row.display_name,
-                hasBio: !!row.bio,
-                hasAvatar: !!row.avatar_key,
-              });
-              authorQualityMap.set(row.id, 0.5 + authorQuality);
-            }
-          }
-
-          const hybrid = candidatePosts.map((p) => {
-            const vecSim = (vecScoreMap.get(p.id as string) || 0) / maxVec;
-            const engNorm = (Number(p.eng_score) || 0) / maxEng;
-            const qualityScore = computeQualityScore(String(p.text || ''), !!(p.payload_key || p.swf_key), 0);
-            const typeFactor = (() => {
-              const w = getTypeWeights(p.payload_key as string | null, p.swf_key as string | null);
-              return (w.fresh + w.reply + w.impression) / 4.5;
-            })();
-            const authorQuality = authorQualityMap.get(p.user_id as string) || 1.0;
-            const fresh = freshnessBoost(p.created_at as string);
-            return {
-              post: p,
-              score: (0.7 * vecSim + 0.3 * engNorm) * qualityScore * typeFactor * authorQuality * fresh,
-            };
-          });
-
-          hybrid.sort((a, b) => {
-            const diff = b.score - a.score;
-            if (diff !== 0) return diff;
-            const ca = String(b.post.created_at || '').localeCompare(String(a.post.created_at || ''));
-            if (ca !== 0) return ca;
-            return String(b.post.id || '').localeCompare(String(a.post.id || ''));
-          });
-
-          let filtered = hybrid;
-          if (numericCursor !== null && cursorCreatedAt) {
-            filtered = hybrid.filter((h) => {
-              const s = h.score;
-              const ca = String(h.post.created_at || '');
-              const id = String(h.post.id || '');
-              return (
-                s < numericCursor! ||
-                (s === numericCursor && ca < cursorCreatedAt) ||
-                (s === numericCursor && ca === cursorCreatedAt && id < cursorId!)
-              );
-            });
-          }
-
-          const page = diversifyPosts(filtered, limit, 3);
-          const posts = page.map((h) => {
-            const p = h.post;
-            p.score = h.score;
-            return p;
-          });
-
-          enrichedPosts = await enrichRecommendedPosts(posts, c.env.DB, currentUserId);
-          if (enrichedPosts.length > 0) {
-            const last = enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>;
-            nextCursor = `${last.score},${last.created_at},${last.id}`;
-          }
-        }
+        vectorMatches = vectorMatches.slice(0, 100);
       }
     }
 
-    // Fallback: when no interest vector OR hybrid returned nothing
-    if (enrichedPosts.length === 0) {
-      const scoreFormula = `(p.engagement_hotness / EXP(1.5 * LN((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0)))`;
-      const fetchLimit = limit * 5;
-      const blockFilterRecommended = currentUserId
-        ? 'AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
-        : '';
-      const blockParamRecommended = currentUserId ? [currentUserId] : [];
+    const visibilityFilter = currentUserId
+      ? 'AND p.user_id != ? AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
+      : '';
+    const visibilityParams: string[] = currentUserId ? [currentUserId, currentUserId] : [];
+    const recentCutoff = new Date(asOfMs - RECENT_CANDIDATE_WINDOW_HOURS * 3600_000).toISOString();
+    const trendingCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
+    const engagementFormula = `MAX(COALESCE(p.engagement_hotness, 0), p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + COALESCE(p.bookmark_count, 0) * 2.0 + 1.0) / EXP(1.2 * LN(MAX(0.0, (? - unixepoch(p.created_at)) / 3600.0) + 2.0))`;
 
-      // Fetch raw engagement-based candidates, then re-rank with quality/type/author weights
-      const rawQuery = `${RECOMMENDED_SELECT}, ${scoreFormula} as score FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${currentUserId ? 'AND p.user_id != ?' : ''} ${blockFilterRecommended} ORDER BY score DESC, p.created_at DESC LIMIT ?`;
-      const rawParams: Array<unknown> = currentUserId
-        ? [currentUserId, ...blockParamRecommended, fetchLimit]
-        : [...blockParamRecommended, fetchLimit];
-      const result = await c.env.DB.prepare(rawQuery)
-        .bind(...rawParams)
-        .all();
-      const rawPosts = (result.results || []) as Record<string, unknown>[];
-
-      // Compute author quality scores
-      const authorQualityMap = new Map<string, number>();
-      const authorIds = [...new Set(rawPosts.map((p) => p.user_id as string))].filter(Boolean);
-      if (authorIds.length > 0) {
-        const authorRows = await c.env.DB.prepare(
-          `SELECT u.id, u.display_name, u.bio, u.avatar_key, u.badge_type, u.created_at,
-              COALESCE(SUM(p.fresh_count), 0) as total_fresh,
-              COALESCE(SUM(p.reply_count), 0) as total_reply,
-              COALESCE(SUM(p.impressions), 0) as total_impressions,
-              COUNT(p.id) as post_count
-             FROM users u
-             LEFT JOIN posts p ON p.user_id = u.id AND p.status = 'published'
-             WHERE u.id IN (${authorIds.map(() => '?').join(',')})
-             GROUP BY u.id`,
+    const [recentResult, trendingResult, followingResult] = await Promise.all([
+      db
+        .prepare(
+          `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
+           WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
+             ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ?
+           ORDER BY p.created_at DESC LIMIT ?`,
         )
-          .bind(...authorIds)
-          .all<{
-            id: string;
-            display_name: string | null;
-            bio: string | null;
-            avatar_key: string | null;
-            created_at: string;
-            total_fresh: number;
-            total_reply: number;
-            total_impressions: number;
-            post_count: number;
-          }>();
-        for (const row of authorRows.results || []) {
-          const ageMs = Date.now() - new Date(row.created_at).getTime();
-          const accountAgeDays = ageMs / 86400000;
-          const postCount = row.post_count || 1;
-          const authorQuality = computeAuthorQuality({
-            freshRatio: (row.total_fresh || 0) / postCount / 5,
-            replyRate: (row.total_reply || 0) / Math.max(row.total_impressions || postCount, 1),
-            accountAgeDays: Math.max(accountAgeDays, 1),
-            hasDisplayName: !!row.display_name,
-            hasBio: !!row.bio,
-            hasAvatar: !!row.avatar_key,
-          });
-          authorQualityMap.set(row.id, 0.5 + authorQuality);
-        }
-      }
+        .bind(...visibilityParams, recentCutoff, limit * 4)
+        .all<Record<string, unknown>>(),
+      db
+        .prepare(
+          `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
+           WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
+             ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ?
+           ORDER BY eng_score DESC, p.created_at DESC LIMIT ?`,
+        )
+        .bind(asOfUnixSeconds, ...visibilityParams, trendingCutoff, limit * 4)
+        .all<Record<string, unknown>>(),
+      currentUserId
+        ? db
+            .prepare(
+              `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
+               WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
+                 AND p.created_at >= ?
+                 AND EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.followee_id = p.user_id)
+                 ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+               ORDER BY p.created_at DESC LIMIT ?`,
+            )
+            .bind(trendingCutoff, currentUserId, ...visibilityParams, limit * 4)
+            .all<Record<string, unknown>>()
+        : Promise.resolve(null),
+    ]);
 
-      // Re-rank with quality score, type weights, and author quality
-      const reranked = rawPosts.map((p) => {
-        const qualityScore = computeQualityScore(String(p.text || ''), !!(p.payload_key || p.swf_key), 0);
-        const typeFactor = (() => {
-          const w = getTypeWeights(p.payload_key as string | null, p.swf_key as string | null);
-          return (w.fresh + w.reply + w.impression) / 4.5;
-        })();
-        const authorQuality = authorQualityMap.get(p.user_id as string) || 1.0;
-        const rawScore = Number(p.score) || 0;
-        const fresh = freshnessBoost(p.created_at as string);
-        return { post: p, score: rawScore * qualityScore * typeFactor * authorQuality * fresh };
-      });
-
-      // Cursor filter
-      let filtered = reranked;
-      if (numericCursor !== null && cursorCreatedAt) {
-        filtered = reranked.filter((s) => {
-          const ca = String(s.post.created_at || '');
-          const id = String(s.post.id || '');
-          return (
-            s.score < numericCursor! ||
-            (s.score === numericCursor && ca < cursorCreatedAt!) ||
-            (s.score === numericCursor && ca === cursorCreatedAt && id < cursorId!)
-          );
-        });
-      }
-
-      filtered.sort((a, b) => {
-        const diff = b.score - a.score;
-        if (diff !== 0) return diff;
-        const ca = String(b.post.created_at || '').localeCompare(String(a.post.created_at || ''));
-        if (ca !== 0) return ca;
-        return String(b.post.id || '').localeCompare(String(a.post.id || ''));
-      });
-
-      const diverse = diversifyPosts(filtered, limit, 3);
-      const pagePosts = diverse.map((d) => {
-        d.post.score = d.score;
-        return d.post;
-      });
-      enrichedPosts = await enrichRecommendedPosts(pagePosts, c.env.DB, currentUserId);
-      nextCursor =
-        enrichedPosts.length > 0
-          ? `${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).score},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).created_at},${(enrichedPosts[enrichedPosts.length - 1] as Record<string, unknown>).id}`
-          : null;
+    const recentPosts = recentResult.results || [];
+    const trendingPosts = trendingResult.results || [];
+    const followingPosts = followingResult?.results || [];
+    const vectorIds = vectorMatches.map((match) => match.id);
+    const candidateIds = [
+      ...new Set([
+        ...vectorIds,
+        ...followingPosts.map((post) => String(post.id)),
+        ...trendingPosts.map((post) => String(post.id)),
+        ...recentPosts.map((post) => String(post.id)),
+      ]),
+    ];
+    if (candidateIds.length === 0) {
+      return c.json(await loadRecommendedArchivePage(db, currentUserId, limit, undefined, undefined, asOfMs));
     }
+
+    // Candidate sources can contribute hundreds of IDs. Bind the set as JSON
+    // so D1's 100-parameter ceiling does not turn a populated feed into a 500.
+    const serializedCandidateIds = JSON.stringify(candidateIds);
+    const candidateQuery = `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score
+      FROM posts p LEFT JOIN users u ON p.user_id = u.id
+      WHERE p.id IN (SELECT value FROM json_each(?))
+        AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER} ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+        AND p.created_at >= ?`;
+    const candidateResult = await db
+      .prepare(candidateQuery)
+      .bind(asOfUnixSeconds, serializedCandidateIds, ...visibilityParams, trendingCutoff)
+      .all<Record<string, unknown>>();
+    const candidatePosts = candidateResult.results || [];
+    const validCandidateIds = new Set(candidatePosts.map((post) => String(post.id)));
+
+    const vectorRanks = rankCandidateIds(vectorIds.filter((id) => validCandidateIds.has(id)));
+    const followingRanks = rankCandidateIds(followingPosts.map((post) => String(post.id)));
+    const trendingRanks = rankCandidateIds(trendingPosts.map((post) => String(post.id)));
+    const recentRanks = rankCandidateIds(recentPosts.map((post) => String(post.id)));
+
+    const freshAtByPost = new Map<string, string>();
+    const lastSeenAtByPost = new Map<string, string>();
+    if (currentUserId) {
+      const [freshRows, impressionRows] = await Promise.all([
+        db
+          .prepare(
+            'SELECT post_id, created_at FROM freshs WHERE user_id = ? AND post_id IN (SELECT value FROM json_each(?))',
+          )
+          .bind(currentUserId, serializedCandidateIds)
+          .all<{ post_id: string; created_at: string | null }>(),
+        db
+          .prepare(
+            'SELECT post_id, last_seen_at FROM user_post_impressions WHERE user_id = ? AND post_id IN (SELECT value FROM json_each(?))',
+          )
+          .bind(currentUserId, serializedCandidateIds)
+          .all<{ post_id: string; last_seen_at: string }>(),
+      ]);
+      for (const row of freshRows.results || []) {
+        if (row.created_at) freshAtByPost.set(row.post_id, row.created_at);
+      }
+      for (const row of impressionRows.results || []) lastSeenAtByPost.set(row.post_id, row.last_seen_at);
+    }
+
+    const engagementValues = candidatePosts.map((post) => Math.max(0, Number(post.eng_score) || 0));
+    const maxEngagement = Math.max(...engagementValues, 1);
+    const maxLogEngagement = Math.log1p(maxEngagement);
+    const scoredPosts = candidatePosts.map((post) => {
+      const id = String(post.id);
+      const sourceScore =
+        0.35 * candidateRankScore(id, vectorRanks) +
+        0.35 * candidateRankScore(id, followingRanks) +
+        0.18 * candidateRankScore(id, trendingRanks) +
+        0.12 * candidateRankScore(id, recentRanks);
+      const engagement = Math.max(0, Number(post.eng_score) || 0);
+      const popularity = maxLogEngagement > 0 ? Math.log1p(engagement) / maxLogEngagement : 0;
+      const ageHours = Math.max(0, (asOfMs - new Date(String(post.created_at)).getTime()) / 3600000);
+      const freshness = Math.exp(-ageHours / 168);
+      const contentQuality = computeQualityScore(
+        String(post.text || ''),
+        !!(post.payload_key || post.swf_key || post.gif_key || post.thumbnail_key),
+        0,
+      );
+      const qualityFactor = 0.9 + 0.1 * Math.min(1, Math.max(0, contentQuality));
+      const baseScore = (0.65 * sourceScore + 0.18 * popularity + 0.17 * freshness) * qualityFactor;
+      const historyPenalty = Math.min(
+        0.55,
+        decayingRecommendationPenalty(freshAtByPost.get(id), asOfMs, 0.25, 7) +
+          decayingRecommendationPenalty(lastSeenAtByPost.get(id), asOfMs, 0.3, 3),
+      );
+      const score = baseScore * (1 - historyPenalty);
+      delete post.eng_score;
+      return { post, score };
+    });
+
+    let filteredPosts = scoredPosts;
+    const validCursor = numericCursor !== null && Number.isFinite(numericCursor) && cursorCreatedAt && cursorId;
+    if (validCursor) {
+      filteredPosts = scoredPosts.filter(({ post, score }) => {
+        const createdAt = String(post.created_at || '');
+        const id = String(post.id || '');
+        return (
+          score < numericCursor! ||
+          (score === numericCursor && createdAt < cursorCreatedAt!) ||
+          (score === numericCursor && createdAt === cursorCreatedAt && id < cursorId!)
+        );
+      });
+    }
+
+    if (filteredPosts.length === 0) {
+      return c.json(await loadRecommendedArchivePage(db, currentUserId, limit, undefined, undefined, asOfMs));
+    }
+
+    filteredPosts.sort(compareScoredPosts);
+    const pagePosts = diversifyPosts(filteredPosts, limit, 2).map(({ post, score }) => {
+      post.score = score;
+      return post;
+    });
+    const enrichedPosts = await enrichRecommendedPosts(pagePosts, db, currentUserId);
+    const lastPost = enrichedPosts.at(-1) as Record<string, unknown> | undefined;
+    const nextCursor = lastPost ? `${lastPost.score},${lastPost.created_at},${lastPost.id},${asOfMs}` : null;
 
     return c.json({ posts: enrichedPosts, next_cursor: nextCursor });
   } catch (error: unknown) {
@@ -823,6 +791,42 @@ posts.get('/posts/recommended', async (c) => {
     return c.json({ error: 'Internal server error' }, 500);
   }
 });
+
+async function loadRecommendedArchivePage(
+  db: D1Database,
+  currentUserId: string | null,
+  limit: number,
+  cursorCreatedAt?: string,
+  cursorId?: string,
+  asOfMs = Date.now(),
+): Promise<{ posts: Record<string, unknown>[]; next_cursor: string | null }> {
+  const archiveCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
+  const hasCursor = Boolean(cursorCreatedAt && cursorId);
+  const cursorFilter = hasCursor ? '(p.created_at < ? OR (p.created_at = ? AND p.id < ?))' : 'p.created_at < ?';
+  const params: Array<string | number> = hasCursor ? [cursorCreatedAt!, cursorCreatedAt!, cursorId!] : [archiveCutoff];
+  const visibilityFilter = currentUserId
+    ? 'AND p.user_id != ? AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
+    : '';
+  if (currentUserId) params.push(currentUserId, currentUserId);
+  params.push(limit + 1);
+
+  const result = await db
+    .prepare(
+      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
+       WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
+         AND ${cursorFilter} ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+       ORDER BY p.created_at DESC, p.id DESC LIMIT ?`,
+    )
+    .bind(...params)
+    .all<Record<string, unknown>>();
+  const rows = result.results || [];
+  const hasMore = rows.length > limit;
+  const posts = await enrichRecommendedPosts(rows.slice(0, limit), db, currentUserId);
+  const lastPost = posts.at(-1);
+  const nextCursor = hasMore && lastPost ? `archive,${lastPost.created_at},${lastPost.id},${asOfMs}` : null;
+
+  return { posts, next_cursor: nextCursor };
+}
 
 async function enrichFeedPosts(posts: PostRow[], db: D1Database, currentUserId?: string | null): Promise<void> {
   if (posts.length === 0) return;
@@ -917,7 +921,7 @@ posts.get('/posts/:id/similar', async (c) => {
     if (similarIds.length === 0) return c.json({ posts: [] });
 
     const postsResult = await c.env.DB.prepare(
-      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id IN (${similarIds.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0`,
+      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id IN (${similarIds.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0 ${EXACT_DUPLICATE_FILTER}`,
     )
       .bind(...similarIds)
       .all();
@@ -992,24 +996,43 @@ posts.post('/posts/impressions/batch', async (c) => {
       return c.json({ error: 'Too many post IDs (max 100)' }, 400);
     }
 
+    const postIds = [...new Set(body.post_ids.filter((postId) => typeof postId === 'string' && postId.length > 0))];
+    if (postIds.length === 0) return c.json({ error: 'post_ids must contain post IDs' }, 400);
+
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    // Create placeholders for batch update
-    const placeholders = body.post_ids.map(() => '?').join(',');
-    const result = await c.env.DB.prepare(
-      `UPDATE posts SET impressions = impressions + 1, engagement_hotness = engagement_hotness + 0.1 WHERE id IN (${placeholders})`,
-    )
-      .bind(...body.post_ids)
-      .run();
+    const placeholders = postIds.map(() => '?').join(',');
+    const statements = [
+      c.env.DB.prepare(
+        `UPDATE posts SET impressions = impressions + 1, engagement_hotness = engagement_hotness + 0.1 WHERE id IN (${placeholders})`,
+      ).bind(...postIds),
+    ];
+    const currentUserId = c.get('user')?.id;
+    if (currentUserId) {
+      const seenAt = new Date().toISOString();
+      const pruneBefore = new Date(Date.now() - 30 * 86400_000).toISOString();
+      statements.push(
+        c.env.DB.prepare(
+          `INSERT INTO user_post_impressions (user_id, post_id, last_seen_at)
+           SELECT ?, p.id, ? FROM posts p WHERE p.id IN (${placeholders})
+           ON CONFLICT(user_id, post_id) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
+        ).bind(currentUserId, seenAt, ...postIds),
+        c.env.DB.prepare('DELETE FROM user_post_impressions WHERE user_id = ? AND last_seen_at < ?').bind(
+          currentUserId,
+          pruneBefore,
+        ),
+      );
+    }
+    const results = await c.env.DB.batch(statements);
 
-    if (!result.success) {
-      console.error('Batch database update failed:', result);
+    if (results.some((result) => !result.success)) {
+      console.error('Batch impression update failed:', results);
       return c.json({ error: 'Failed to record impressions' }, 500);
     }
 
-    return c.json({ ok: true, updated: result.meta?.changes || 0 });
+    return c.json({ ok: true, updated: results[0]?.meta?.changes || 0 });
   } catch (error: unknown) {
     console.error('Batch post impressions error:', error);
     // Always return success to ensure content display continues
@@ -1591,6 +1614,7 @@ posts.post('/posts/commit', requireAuth, async (c) => {
         thumbnail_key = COALESCE(excluded.thumbnail_key, posts.thumbnail_key),
         quoted_post_id = COALESCE(excluded.quoted_post_id, posts.quoted_post_id),
         status = 'published'
+      WHERE posts.status != 'reaping'
     `)
       .bind(
         postId,
@@ -1611,6 +1635,8 @@ posts.post('/posts/commit', requireAuth, async (c) => {
       console.error('Database insert failed:', result);
       return c.json({ error: 'Failed to create post', details: result }, 500);
     }
+
+    if (result.meta.changes === 0) return c.json({ error: 'Post preparation has expired' }, 409);
 
     // Persist multi-media attachments (full replacement for idempotent commits)
     if (attachments.length > 0) {
@@ -1830,7 +1856,9 @@ posts.post('/posts/commit', requireAuth, async (c) => {
     await enrichPostsWithAttachments([fullPost], c.env.DB);
     await enrichPostsWithReactions([fullPost], c.env.DB, c.get('user')?.id);
 
-    embedPost(c.env.DB, c.env, fullPost.id, fullPost.text).catch((e) => console.error('Background embed failed:', e));
+    await refreshUserTrustSafe(c.env.DB, userId);
+
+    runInBackground(c, () => embedPost(c.env.DB, c.env, fullPost.id, fullPost.text), 'Background embed failed');
 
     // Screen every image the post carries, not just the first: reconcile the
     // scan rows with the current key list, then submit what the throttle allows.
@@ -1913,7 +1941,9 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
     return c.json({ freshed: false, fresh_count: result?.fresh_count ?? 0 });
   } else {
     // Add fresh
-    await c.env.DB.prepare('INSERT INTO freshs (post_id, user_id) VALUES (?, ?)').bind(postId, userId).run();
+    await c.env.DB.prepare('INSERT INTO freshs (post_id, user_id, created_at) VALUES (?, ?, ?)')
+      .bind(postId, userId, new Date().toISOString())
+      .run();
 
     const result = await c.env.DB.prepare(
       'UPDATE posts SET fresh_count = fresh_count + 1, engagement_hotness = engagement_hotness + 2.0 WHERE id = ? RETURNING fresh_count',
@@ -1973,8 +2003,9 @@ posts.post('/posts/:id/fresh', requireAuth, async (c) => {
     // If the post is from a remote actor, send Like activity
     if (post.actor_id && currentUser && c.env.AP_DELIVERY_QUEUE) {
       try {
-        const actorResponse = await fetch(post.actor_id, {
+        const actorResponse = await fetchWithSsrfGuard(post.actor_id, {
           headers: { Accept: 'application/activity+json, application/ld+json' },
+          timeoutMs: 10_000,
         });
         if (actorResponse.ok) {
           const actorData = (await actorResponse.json()) as ActorData;
@@ -2285,7 +2316,11 @@ posts.post('/posts/fresh/batch', requireAuth, async (c) => {
       if (toFresh.length > 0) {
         // Batch insert freshs
         const stmts = toFresh.map((id) =>
-          c.env.DB.prepare('INSERT INTO freshs (post_id, user_id) VALUES (?, ?)').bind(id, userId),
+          c.env.DB.prepare('INSERT INTO freshs (post_id, user_id, created_at) VALUES (?, ?, ?)').bind(
+            id,
+            userId,
+            new Date().toISOString(),
+          ),
         );
         await c.env.DB.batch(stmts);
 
@@ -2453,8 +2488,9 @@ posts.post('/posts/:id/share', requireAuth, async (c) => {
       // Send Announce for remote posts
       if (post.actor_id && c.env.AP_DELIVERY_QUEUE) {
         try {
-          const actorResponse = await fetch(post.actor_id, {
+          const actorResponse = await fetchWithSsrfGuard(post.actor_id, {
             headers: { Accept: 'application/activity+json, application/ld+json' },
+            timeoutMs: 10_000,
           });
           if (actorResponse.ok) {
             const actorData = (await actorResponse.json()) as ActorData;
@@ -2520,7 +2556,7 @@ posts.get('/posts/:id/replies', async (c) => {
        u.display_name, u.avatar_key, u.badge_type, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
-       WHERE p.parent_id = ? AND p.status = 'published' AND p.hidden = 0 
+       WHERE p.parent_id = ? AND p.status = 'published' AND p.hidden = 0 ${EXACT_DUPLICATE_FILTER}
        ORDER BY p.created_at ASC LIMIT ?`;
     const params: Array<unknown> = [postId, limit];
 
@@ -2529,7 +2565,7 @@ posts.get('/posts/:id/replies', async (c) => {
        u.display_name, u.avatar_key, u.badge_type, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
-       WHERE p.parent_id = ? AND p.status = 'published' AND p.hidden = 0 AND p.created_at < ?
+       WHERE p.parent_id = ? AND p.status = 'published' AND p.hidden = 0 ${EXACT_DUPLICATE_FILTER} AND p.created_at < ?
        ORDER BY p.created_at ASC LIMIT ?`;
       params.splice(1, 0, cursor);
     }
@@ -2572,8 +2608,10 @@ posts.get('/posts/:id/replies', async (c) => {
       const existingIds = new Set((existingRows.results || []).map((r) => r.post_id));
       for (const p of toEmbed) {
         if (!existingIds.has(p.id as string)) {
-          embedPost(c.env.DB, c.env, p.id as string, p.text as string).catch((e) =>
-            console.error('Background embed failed:', e),
+          runInBackground(
+            c,
+            () => embedPost(c.env.DB, c.env, p.id as string, p.text as string),
+            'Background embed failed',
           );
         }
       }
@@ -2630,7 +2668,7 @@ posts.get('/posts/:id/thread', async (c) => {
        u.display_name, u.avatar_key, u.badge_type, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
-       WHERE p.root_id = ? AND p.status = 'published' AND p.hidden = 0 AND p.id != ?
+       WHERE p.root_id = ? AND p.status = 'published' AND p.hidden = 0 AND p.id != ? ${EXACT_DUPLICATE_FILTER}
        ORDER BY p.created_at ASC LIMIT 200`,
     )
       .bind(rootId, rootId)
@@ -2684,8 +2722,10 @@ posts.get('/posts/:id/thread', async (c) => {
       const existingIds2 = new Set((existingRows2.results || []).map((r) => r.post_id));
       for (const p of toEmbed2) {
         if (!existingIds2.has(p.id as string)) {
-          embedPost(c.env.DB, c.env, p.id as string, p.text as string).catch((e) =>
-            console.error('Background embed failed:', e),
+          runInBackground(
+            c,
+            () => embedPost(c.env.DB, c.env, p.id as string, p.text as string),
+            'Background embed failed',
           );
         }
       }
@@ -2909,7 +2949,7 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       const updateResult = await c.env.DB.prepare(`
         UPDATE posts 
         SET text = ?, hashtags = ?, mentions = ?, status = 'published', created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-        WHERE id = ? AND user_id = ?
+        WHERE id = ? AND user_id = ? AND status = 'pending'
       `)
         .bind(text, JSON.stringify(hashtags), mentionsJson, replyId, c.get('user')?.id || '')
         .run();
@@ -2917,6 +2957,8 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       if (!updateResult.success) {
         return c.json({ error: 'Failed to commit reply' }, 500);
       }
+
+      if (updateResult.meta.changes === 0) return c.json({ error: 'Reply preparation has expired' }, 409);
 
       // Return the updated reply
       reply =
@@ -3250,7 +3292,7 @@ posts.get('/search', async (c) => {
       return c.json({ type, query, results: [], users: usersResult });
     }
 
-    const whereClause = `WHERE p.status = 'published' AND p.hidden = 0 AND (${conditions.join(' AND ')})`;
+    const whereClause = `WHERE p.status = 'published' AND p.hidden = 0 AND (${conditions.join(' AND ')}) ${EXACT_DUPLICATE_FILTER}`;
 
     const selectColumns = `
       SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
@@ -3757,6 +3799,7 @@ posts.put('/posts/:id', async (c) => {
 
     await enrichPostsWithQuotes([updated as PostRow], c.env.DB);
     await enrichPostsWithAttachments([updated as PostRow], c.env.DB);
+    await refreshUserTrustSafe(c.env.DB, userId);
 
     // Re-screen on every edit: a swapped-in image kept the old post's verdict,
     // because submitDetectNsfw skips objects already marked done. Reconciling

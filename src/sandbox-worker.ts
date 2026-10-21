@@ -86,6 +86,11 @@ function withZipPreviewCsp(response: Response): Response {
 function withCsp(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set('Content-Security-Policy', SANDBOX_CSP);
+  if (headers.get('Content-Type')?.toLowerCase().startsWith('text/html')) {
+    // HTML includes the current compatibility runtime even when game assets
+    // are immutable. Revalidate it so sandbox fixes can reach existing games.
+    headers.set('Cache-Control', 'public, no-cache');
+  }
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
@@ -96,6 +101,16 @@ function withCsp(response: Response): Response {
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use('/*', cors());
+
+app.use('/*', async (c, next) => {
+  await next();
+  if (!c.res.headers.get('Content-Type')?.toLowerCase().startsWith('text/html')) return;
+  // Cloudflare's injected analytics/challenge scripts assume cookie and child
+  // document access that sandboxed games do not have. Keep HTML unmodified:
+  // https://developers.cloudflare.com/cloudflare-challenges/challenge-types/javascript-detections/
+  const cacheControl = c.res.headers.get('Cache-Control');
+  c.header('Cache-Control', cacheControl ? `${cacheControl}, no-transform` : 'no-transform');
+});
 
 async function serveZipPreviewAsset(
   c: Context<{ Bindings: Bindings }>,
@@ -283,9 +298,10 @@ async function serveGameStorageRuntime(c: Context<{ Bindings: Bindings }>): Prom
 
 app.get('/api/game-storage-runtime.js', (c) => serveGameStorageRuntime(c));
 
-// Trusted compatibility broker for game localStorage. This endpoint is kept
-// outside the worker's CSP sandbox so it can read the sandbox origin's legacy
-// storage; untrusted game documents continue to receive SANDBOX_CSP.
+// Trusted compatibility broker for legacy game localStorage. New saves live
+// on the Flaxia origin; this endpoint remains outside the worker's CSP sandbox
+// so existing sandbox-origin saves can be migrated. Untrusted game documents
+// continue to receive SANDBOX_CSP.
 app.get('/api/game-storage', (c) => {
   const html = `<!doctype html><meta charset="utf-8"><script type="module">
     import {
@@ -310,10 +326,8 @@ app.get('/api/game-storage', (c) => {
             var snapshot=loadGameStorageSnapshot(localStorage,namespace);
             send(event.origin,{type:'FLAXIA_STORAGE_SNAPSHOT',requestId:message.requestId,entries:Object.entries(snapshot)});
           }else if(message.type==='FLAXIA_STORAGE_SET'&&typeof message.key==='string'&&typeof message.value==='string'){
-            if(message.key.length>512||message.value.length>100000)return;
             setGameStorageValue(localStorage,namespace,message.key,message.value);
           }else if(message.type==='FLAXIA_STORAGE_REMOVE'&&typeof message.key==='string'){
-            if(message.key.length>512)return;
             removeGameStorageValue(localStorage,namespace,message.key);
           }else if(message.type==='FLAXIA_STORAGE_CLEAR'){
             clearGameStorage(localStorage,namespace);

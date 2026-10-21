@@ -2,9 +2,11 @@ import { createFabButton } from '../lib/fab-button.js';
 import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { createSkeletonCards } from '../lib/loading-ui.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 import { isZipGame } from './PostStage.js';
@@ -241,7 +243,7 @@ export class BookmarksPage {
         card.style.boxShadow = 'none';
       });
       card.addEventListener('click', () => {
-        window.history.pushState({ postId: post.id }, '', `/arcade/${post.id}`);
+        pushSpaHistory(`/arcade/${post.id}`, { postId: post.id });
         window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: post.id } }));
       });
 
@@ -255,7 +257,7 @@ export class BookmarksPage {
       `;
       if (post.thumbnail_key) {
         const img = document.createElement('img');
-        img.src = `/api/images/${post.thumbnail_key}?_=${Date.now()}`;
+        img.src = nativeApiHref(`/api/images/${post.thumbnail_key}?_=${Date.now()}`);
         img.loading = 'lazy';
         img.width = 150;
         img.height = 200;

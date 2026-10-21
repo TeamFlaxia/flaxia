@@ -5,8 +5,7 @@
  * - Right-click prevention on media elements
  * - Drag prevention on media elements
  * - Keyboard shortcut blocking for save operations
- * - Canvas tainting to prevent toDataURL/toBlob extraction
- * - Print prevention
+ * - UI-level save shortcut and context-menu deterrence (not DRM)
  */
 
 const BLOCKED_KEYS = new Set([
@@ -82,39 +81,9 @@ function handleDragStart(e: Event): void {
   }
 }
 
-/**
- * Override Canvas methods to taint the canvas when attempting to extract media.
- * This prevents toDataURL() and toBlob() from working on protected images.
- */
-function enableCanvasTainting(): void {
-  const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-  const originalToBlob = HTMLCanvasElement.prototype.toBlob;
-  const taintedCanvases = new WeakSet<HTMLCanvasElement>();
-
-  HTMLCanvasElement.prototype.toDataURL = function (...args) {
-    if (taintedCanvases.has(this)) {
-      // Return a 1x1 transparent pixel instead of the actual image
-      return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-    }
-    return originalToDataURL.apply(this, args);
-  };
-
-  HTMLCanvasElement.prototype.toBlob = function (callback, ...args) {
-    if (taintedCanvases.has(this)) {
-      // Return a minimal blob
-      const blob = new Blob([''], { type: 'image/png' });
-      callback?.(blob);
-      return;
-    }
-    return originalToBlob.call(this, callback as BlobCallback, ...args);
-  };
-
-  // Expose a way to mark canvases as tainted (used by image components)
-  (window as unknown as Record<string, unknown>).__markCanvasTainted = (canvas: HTMLCanvasElement) => {
-    taintedCanvases.add(canvas);
-  };
-}
-
+// Canvas data extraction is not a security boundary: origin scripts can
+// retain original methods or use other paths to read pixels. Do not monkey-
+// patch native APIs or claim this module can prevent screenshots/printing.
 let initialized = false;
 
 /**
@@ -132,9 +101,6 @@ export function initContentProtection(): void {
 
   // Drag prevention on media
   document.addEventListener('dragstart', handleDragStart, true);
-
-  // Canvas tainting
-  enableCanvasTainting();
 }
 
 /**

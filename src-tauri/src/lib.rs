@@ -8,7 +8,7 @@ struct TrayState(Mutex<Option<tauri::tray::TrayIcon<tauri::Wry>>>);
 fn allow_app_navigation(url: &tauri::Url) -> bool {
   match (url.scheme(), url.host_str()) {
     ("tauri", Some("localhost")) => true,
-    ("http" | "https", Some("tauri.localhost")) => true,
+    ("http" | "https", Some("tauri.localhost")) if url.port().is_none() => true,
     ("http", Some("localhost" | "127.0.0.1")) if cfg!(debug_assertions) && url.port() == Some(3000) => true,
     _ => false,
   }

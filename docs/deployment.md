@@ -108,6 +108,11 @@ npx wrangler deploy --config status-worker/wrangler.toml
 ## Post-Deployment Steps
 
 1. **Database Migrations** (production):
+   The GitHub Actions deployment applies pending D1 migrations before deploying
+   Pages. If that step fails, fix the reported migration issue and rerun the
+   deployment; do not leave migrations pending.
+
+   For manual recovery when needed:
    ```bash
    npm run migrate:prod
    ```
@@ -143,3 +148,25 @@ wrangler tail --config wrangler.toml.worker
 - The sandbox origin is a separate Worker with its own routes
 - `wrangler.toml` references the backend Worker by script name — ensure the backend Worker is deployed first
 - Environment-specific config is handled via Wrangler secrets/vars, not `.env` files in production
+
+## ActivityPub delivery dead-letter queue (#141)
+
+The deployment workflow ensures the dead-letter queue exists in the same
+Cloudflare account before deploying `flaxia-backend`. For manual deployment,
+create it once before deploying with `wrangler.toml.worker`:
+
+```bash
+npx wrangler queues create activitypub-delivery-dlq
+npx wrangler deploy --config wrangler.toml.worker
+```
+
+The `activitypub-delivery` consumer retries a failed delivery **at most three
+times** and then moves the message to `activitypub-delivery-dlq` rather than
+dropping it silently. The DLQ has **no automatic consumer**: inspect it via
+Cloudflare Queues metrics / dashboard, set up alerts for non-zero DLQ depth,
+and review quarantined messages before redelivery. Do not replay messages
+indiscriminately if the original failure was caused by a data constraint;
+fix the root cause first.
+
+If deployment reports that the DLQ does not exist, do **not** remove the
+`dead_letter_queue` setting. Create the queue and redeploy.

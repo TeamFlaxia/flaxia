@@ -18,3 +18,16 @@ display the live `https://flaxia.app` website as its privileged application UI.
   integration instead of navigating the app webview.
 
 The static test `tests/tauri-security-config.test.ts` checks these invariants.
+
+
+## Release blocker: authenticated requests from bundled origins
+
+The current server accepts cookies only with `SameSite=Strict`, and its CORS / CSRF
+allowlist does not include `tauri://localhost`, `http://tauri.localhost`, or
+`https://tauri.localhost`. Rewriting URLs and adding `credentials: include` cannot
+make those cross-site requests work. The desktop must have a reviewed native
+session transport before this bundled-UI migration can ship. Registration, SRP
+login, authenticated API calls, logout, and notification sockets must be verified
+from a packaged application on each supported platform. Do not reintroduce a
+spoofable native header, session tokens in URLs/localStorage, or relax the website's
+cookie policy to bypass this requirement.

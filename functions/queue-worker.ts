@@ -1,6 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 
-import { parsePublicHttpUrl } from './lib/url-guard';
+import { fetchWithSsrfGuard, parsePublicHttpUrl } from './lib/url-guard';
 
 interface DeliveryMessage {
   type: 'delivery';
@@ -45,6 +45,13 @@ export default {
     } catch (error) {
       console.error('Pending reap failed:', (error as Error).message);
     }
+    try {
+      const { recomputeStaleTrustScores } = await import('./lib/trust');
+      const refreshed = await recomputeStaleTrustScores(env.DB);
+      if (refreshed > 0) console.log(`Recomputed trust scores for ${refreshed} users`);
+    } catch (error) {
+      console.error('Trust score recompute failed:', (error as Error).message);
+    }
   },
 
   async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
@@ -70,8 +77,8 @@ export default {
           messageId: message.id,
         });
 
-        // Acknowledge the message to prevent retries for unhandled errors
-        message.ack();
+        // Let Queues apply max_retries and route poison messages to the DLQ.
+        message.retry();
       }
     }
   },
@@ -79,8 +86,7 @@ export default {
 
 async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: Message<QueueMessage>): Promise<void> {
   const { inboxUrl, activity, senderUsername } = msg;
-  const retryCount = (message as { retryCount?: number }).retryCount || 0;
-  const maxRetries = 3;
+  const retryCount = Math.max(0, message.attempts - 1);
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   // The inbox URL is stored from a remote actor document, so it is re-validated
@@ -144,13 +150,9 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
 
       // Retry on server errors (5xx) or network issues
       if (response.status >= 500 || response.status === 429) {
-        if (retryCount < maxRetries) {
-          console.log(`Retrying ActivityPub delivery, attempt ${retryCount + 1}/${maxRetries}`);
-          message.retry({ delaySeconds: 2 ** retryCount * 30 }); // Exponential backoff
-        } else {
-          console.error('Max ActivityPub delivery retries exceeded');
-          message.ack();
-        }
+        // Always retry transient failures, including the final allowed
+        // attempt. Queues owns the retry ceiling and DLQ handoff.
+        message.retry({ delaySeconds: 2 ** Math.min(retryCount, 3) * 30 });
       } else {
         // Don't retry client errors (4xx except 429)
         message.ack();
@@ -167,14 +169,9 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
       activityType: (activity as { type: string }).type,
     });
 
-    // Retry on network errors or timeouts
-    if (retryCount < maxRetries && ((e as Error).name === 'AbortError' || (e as Error).name === 'TypeError')) {
-      console.log(`Retrying ActivityPub delivery after error, attempt ${retryCount + 1}/${maxRetries}`);
-      message.retry({ delaySeconds: 2 ** retryCount * 30 });
-    } else {
-      console.error('Max retries exceeded or non-retryable ActivityPub delivery error');
-      message.ack();
-    }
+    // A database or signing failure must also reach the DLQ after bounded
+    // retries, rather than acknowledging and silently losing the activity.
+    message.retry({ delaySeconds: 2 ** Math.min(retryCount, 3) * 30 });
   }
 }
 
@@ -792,10 +789,12 @@ async function handleUpdateActivity(
   }
 
   if (object.type === 'Person') {
-    // Remote user updated their profile - fetch latest info
+    // Remote user updated their profile - fetch latest info through the
+    // SSRF guard: actorId arrives in a signed-but-remote activity.
     try {
-      const actorResponse = await fetch(actorId, {
+      const actorResponse = await fetchWithSsrfGuard(actorId, {
         headers: { Accept: 'application/activity+json, application/ld+json' },
+        timeoutMs: 10_000,
       });
       if (actorResponse.ok) {
         console.log('Profile update received from:', actorId);

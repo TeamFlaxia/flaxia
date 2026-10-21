@@ -164,6 +164,7 @@ describe('POST /api/vault/devices — joiner starts pairing', () => {
       const { id } = (await created.json()) as { id: string };
       const approver = generateEphemeralKeyPair();
       const approved = await approve(cookie, id, {
+        peer_pub: encodeB64(joiner.publicKey),
         approved_pub: encodeB64(approver.publicKey),
         wrapped_vk: wellFormedDummy,
       });
@@ -200,6 +201,7 @@ describe('POST /api/vault/devices/:id/approve — approver hands over VK', () =>
     const approver = generateEphemeralKeyPair();
     const wrapped = await wrapVaultKeyForPairing(vk, approver.secretKey, joiner.publicKey, id);
     const approved = await approve(cookie, id, {
+      peer_pub: encodeB64(joiner.publicKey),
       approved_pub: encodeB64(approver.publicKey),
       wrapped_vk: wrapped,
     });
@@ -237,6 +239,7 @@ describe('POST /api/vault/devices/:id/approve — approver hands over VK', () =>
 
     const approver = generateEphemeralKeyPair();
     const body = {
+      peer_pub: encodeB64(joiner.publicKey),
       approved_pub: encodeB64(approver.publicKey),
       wrapped_vk: await wrapVaultKeyForPairing(vk, approver.secretKey, joiner.publicKey, id),
     };
@@ -257,6 +260,7 @@ describe('POST /api/vault/devices/:id/approve — approver hands over VK', () =>
     // lookup must then fail (handlers validate before touching the database).
     const wellFormedDummy = `${encodeB64(new Uint8Array(12))}.${encodeB64(new Uint8Array(32))}`;
     const unknown = await approve(cookie, 'fffffffffffffffffffff', {
+      peer_pub: encodeB64(stranger.publicKey),
       approved_pub: encodeB64(stranger.publicKey),
       wrapped_vk: wellFormedDummy,
     });
@@ -268,12 +272,29 @@ describe('POST /api/vault/devices/:id/approve — approver hands over VK', () =>
     ).json()) as {
       id: string;
     };
-    assert.equal((await approve(cookie, id, { approved_pub: 'nope', wrapped_vk: 'x.y' })).status, 400);
+    assert.equal(
+      (await approve(cookie, id, { peer_pub: encodeB64(joiner.publicKey), approved_pub: 'nope', wrapped_vk: 'x.y' }))
+        .status,
+      400,
+    );
+
+    const wrongPeer = await approve(cookie, id, {
+      peer_pub: encodeB64(generateEphemeralKeyPair().publicKey),
+      approved_pub: encodeB64(generateEphemeralKeyPair().publicKey),
+      wrapped_vk: wellFormedDummy,
+    });
+    assert.equal(wrongPeer.status, 403, 'a session alone must not approve a QR without its peer key');
 
     const approver = generateEphemeralKeyPair();
     const blob = await wrapVaultKeyForPairing(vk, approver.secretKey, joiner.publicKey, id);
     assert.equal(
-      (await approve(cookie, id, { approved_pub: encodeB64(approver.publicKey), wrapped_vk: `${blob}.extra` })).status,
+      (
+        await approve(cookie, id, {
+          peer_pub: encodeB64(joiner.publicKey),
+          approved_pub: encodeB64(approver.publicKey),
+          wrapped_vk: `${blob}.extra`,
+        })
+      ).status,
       400,
       'blob must be exactly base64(iv).base64(ct)',
     );
@@ -299,6 +320,7 @@ describe('POST /api/vault/devices/:id/approve — approver hands over VK', () =>
 
     const approver = generateEphemeralKeyPair();
     const res = await approve(cookie, id, {
+      peer_pub: encodeB64(joiner.publicKey),
       approved_pub: encodeB64(approver.publicKey),
       wrapped_vk: await wrapVaultKeyForPairing(vk, approver.secretKey, joiner.publicKey, id),
     });
@@ -310,7 +332,7 @@ describe('POST /api/vault/devices/:id/approve — approver hands over VK', () =>
 describe('device management', () => {
   beforeEach(resetDb);
 
-  it('lists state transitions and lets a device be revoked → 200', async () => {
+  it('requires proof and VK rotation to revoke an active device', async () => {
     const { cookie } = await seedUserAndLogin('1');
     const { vk } = await enableVault(cookie);
     const joiner = generateEphemeralKeyPair();
@@ -332,6 +354,7 @@ describe('device management', () => {
     assert.equal(
       (
         await approve(cookie, id, {
+          peer_pub: encodeB64(joiner.publicKey),
           approved_pub: encodeB64(approver.publicKey),
           wrapped_vk: await wrapVaultKeyForPairing(vk, approver.secretKey, joiner.publicKey, id),
         })
@@ -349,13 +372,27 @@ describe('device management', () => {
       method: 'DELETE',
       headers: headers(cookie),
     });
-    assert.equal(removed.status, 200);
-    assert.equal((await getPairing(cookie, id)).status, 404, 'a revoked device disappears');
+    assert.equal(removed.status, 403);
+    assert.equal((await getPairing(cookie, id)).status, 200, 'active device must survive session-only DELETE');
     assert.equal(
       (await fetch(`${BASE_URL}/api/vault/devices/${id}`, { method: 'DELETE', headers: headers(cookie) })).status,
-      404,
-      'revoking twice is a no-op, not an error path worth hiding',
+      403,
+      'repeat removal attempts must not revoke an active device',
     );
+  });
+
+  it('allows a joiner to cancel only its pending pairing', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    await enableVault(cookie);
+    const joiner = generateEphemeralKeyPair();
+    const { id } = (await (
+      await createPairing(cookie, { label: 'Cancelled QR', peer_pub: encodeB64(joiner.publicKey) })
+    ).json()) as { id: string };
+    assert.equal(
+      (await fetch(`${BASE_URL}/api/vault/devices/${id}`, { method: 'DELETE', headers: headers(cookie) })).status,
+      200,
+    );
+    assert.equal((await getPairing(cookie, id)).status, 404);
   });
 
   it('keeps devices scoped to their owner → 404', async () => {
