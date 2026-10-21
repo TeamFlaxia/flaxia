@@ -19,6 +19,8 @@ export class Timeline {
   private postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
   private seenPostIds: Set<string> = new Set();
   private duplicatePageStreak = 0;
+  private loadGeneration = 0;
+  private destroyed = false;
   private composer!: PostComposer;
   private fabButton?: HTMLElement;
   private composerObserver: IntersectionObserver | null = null;
@@ -388,6 +390,8 @@ export class Timeline {
   }
 
   private resetAndLoadPosts(): void {
+    this.loadGeneration++;
+    this.state.loading = false;
     this.state.posts = [];
     this.state.ads = [];
     this.state.cursor = undefined;
@@ -551,8 +555,9 @@ export class Timeline {
   }
 
   private async loadInitialPosts(): Promise<void> {
-    if (this.state.loading) return;
+    if (this.destroyed || this.state.loading) return;
 
+    const generation = this.loadGeneration;
     this.state.loading = true;
     this.updateLoadMoreButton();
 
@@ -567,6 +572,7 @@ export class Timeline {
       }
 
       const data = (await response.json()) as { posts?: Post[]; next_cursor?: string };
+      if (this.destroyed || generation !== this.loadGeneration) return;
 
       // Ensure posts is an array (handle unexpected API responses)
       const postsArray = Array.isArray(data.posts) ? data.posts : [];
@@ -583,9 +589,7 @@ export class Timeline {
       const postsWithAds = injectAds(uniquePosts, this.state.ads, this.state.everyN);
       this.state.posts = postsWithAds;
 
-      if (postsArray.length > 0) {
-        this.state.cursor = data.next_cursor || postsArray[postsArray.length - 1].created_at;
-      }
+      this.state.cursor = data.next_cursor || postsArray.at(-1)?.created_at || this.state.cursor;
 
       this.state.hasMore = this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === 20;
       this.renderPostList();
@@ -595,8 +599,10 @@ export class Timeline {
     } catch (error) {
       console.error('Failed to load posts:', error);
     } finally {
-      this.state.loading = false;
-      this.updateLoadMoreButton();
+      if (!this.destroyed && generation === this.loadGeneration) {
+        this.state.loading = false;
+        this.updateLoadMoreButton();
+      }
     }
   }
 
@@ -620,8 +626,9 @@ export class Timeline {
   }
 
   private async loadMorePosts(): Promise<void> {
-    if (this.state.loading || !this.state.hasMore || !this.state.cursor) return;
+    if (this.destroyed || this.state.loading || !this.state.hasMore || !this.state.cursor) return;
 
+    const generation = this.loadGeneration;
     this.state.loading = true;
     this.updateLoadingSpinner();
     let continueLoading = false;
@@ -637,6 +644,7 @@ export class Timeline {
       }
 
       const data = (await response.json()) as { posts?: Post[]; next_cursor?: string };
+      if (this.destroyed || generation !== this.loadGeneration) return;
 
       // Ensure posts is an array (handle unexpected API responses)
       const postsArray = Array.isArray(data.posts) ? data.posts : [];
@@ -653,9 +661,7 @@ export class Timeline {
       const postsWithAds = injectAds(newPosts, this.state.ads, this.state.everyN);
       this.state.posts = [...this.state.posts, ...postsWithAds];
 
-      if (postsArray.length > 0) {
-        this.state.cursor = data.next_cursor || postsArray[postsArray.length - 1].created_at;
-      }
+      this.state.cursor = data.next_cursor || postsArray.at(-1)?.created_at || this.state.cursor;
 
       this.state.hasMore = this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === 20;
       this.appendPosts(postsWithAds);
@@ -671,9 +677,14 @@ export class Timeline {
     } catch (error) {
       console.error('Failed to load more posts:', error);
     } finally {
-      this.state.loading = false;
-      this.updateLoadingSpinner();
-      if (continueLoading) setTimeout(() => void this.loadMorePosts(), 0);
+      if (!this.destroyed && generation === this.loadGeneration) {
+        this.state.loading = false;
+        this.updateLoadingSpinner();
+        if (continueLoading)
+          setTimeout(() => {
+            if (!this.destroyed && generation === this.loadGeneration) void this.loadMorePosts();
+          }, 0);
+      }
     }
   }
 
@@ -844,6 +855,8 @@ export class Timeline {
   }
 
   public destroy(): void {
+    this.destroyed = true;
+    this.loadGeneration++;
     // Clean up infinite scroll observer
     this.infiniteScroll.disconnect();
 
