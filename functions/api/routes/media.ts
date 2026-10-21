@@ -54,7 +54,7 @@ async function postMediaAllowed(c: MediaContext, postId: string): Promise<boolea
 /**
  * Same moderation rule as postMediaAllowed for routes addressed by media key
  * instead of post id (legacy gif/payload/swf/thumbnail keys). Attachment keys
- * and avatar/header keys have no posts row and stay unaffected.
+ * are resolved through post_attachments; avatar/header keys stay unaffected.
  */
 async function postKeyMediaAllowed(c: MediaContext, key: string): Promise<boolean> {
   const row = (await c.env.DB.prepare(
@@ -64,11 +64,27 @@ async function postKeyMediaAllowed(c: MediaContext, key: string): Promise<boolea
   )
     .bind(key, key, key, key)
     .first()) as { user_id: string; hidden: number; status: string } | null;
-  if (!row) return true;
-  if (!row.hidden && row.status === 'published') return true;
-  const viewer = c.get('user');
-  if (!viewer) return false;
-  return viewer.id === row.user_id || isAdmin(c.env, viewer);
+  if (row) {
+    if (!row.hidden && row.status === 'published') return true;
+    const viewer = c.get('user');
+    if (!viewer) return false;
+    return viewer.id === row.user_id || isAdmin(c.env, viewer);
+  }
+  // Multi-media attachment lookups enforce the same moderation decision.
+  // Let database errors reach the route's error handler; serving bytes after
+  // a failed authorization lookup would expose hidden attachments.
+  const attached = await c.env.DB.prepare(
+    `SELECT p.user_id, p.hidden, p.status FROM post_attachments a
+     JOIN posts p ON p.id = a.post_id WHERE a.r2_key = ? LIMIT 1`,
+  )
+    .bind(key)
+    .first<{ user_id: string; hidden: number; status: string }>();
+  if (attached) {
+    if (!attached.hidden && attached.status === 'published') return true;
+    const viewer = c.get('user');
+    return Boolean(viewer && (viewer.id === attached.user_id || isAdmin(c.env, viewer)));
+  }
+  return true;
 }
 
 /**
