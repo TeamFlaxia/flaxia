@@ -110,7 +110,7 @@
     "typescript": "^5.0.0",
     "vite": "^5.0.0",
     "vite-plugin-static-copy": "^3.3.0",
-    "wrangler": "^4.73.0"
+    "wrangler": "^4.151.3"
   },
   "packageManager": "pnpm@8.0.0",
   "lint-staged": {
