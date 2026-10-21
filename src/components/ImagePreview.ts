@@ -58,8 +58,8 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   };
 
   // Forced 16:9 preview: reserve the box before the image loads so late image
-  // loads can never push the timeline down. `contain` keeps the whole image
-  // visible; `cover` fills the slide (used by carousels).
+  // loads can never push the timeline down. Fill the frame by default, cropping
+  // the edges while preserving the image's aspect ratio.
   if (props.ratio === '16:9') {
     container.style.cssText = `
       position: relative;
