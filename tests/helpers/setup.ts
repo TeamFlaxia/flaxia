@@ -150,6 +150,26 @@ export async function srpVerifierPayload(password: string): Promise<{
   };
 }
 
+// Seed a pre-KDF-v2 SRP account; public registration correctly rejects v1.
+export async function seedV1SrpUser(
+  email: string,
+  username: string,
+  salt: Uint8Array,
+  verifier: Uint8Array,
+): Promise<Response> {
+  return fetch(`${BASE_URL}/api/test/seed-srp-v1-user`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email,
+      username,
+      display_name: username,
+      srp_salt: b64(salt),
+      srp_verifier: b64(verifier),
+    }),
+  });
+}
+
 // Create an account that predates SRP so the deprecated plaintext /login
 // endpoint stays covered until it is deleted.
 export async function seedLegacyUser(email: string, password: string, username: string): Promise<Response> {

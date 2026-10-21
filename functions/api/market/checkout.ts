@@ -8,6 +8,19 @@ type Env = {
   BASE_URL: string;
 };
 
+function marketJson(request: Request, body: unknown, status = 200, env?: Env): Response {
+  const origin = request.headers.get('Origin');
+  const headers = new Headers({ 'Content-Type': 'application/json' });
+  const allowed =
+    origin && (CHECKOUT_ALLOWED_ORIGINS.has(origin) || (env?.BASE_URL && origin === new URL(env.BASE_URL).origin));
+  if (origin && allowed) {
+    headers.set('Access-Control-Allow-Origin', origin);
+    headers.set('Access-Control-Allow-Credentials', 'true');
+    headers.set('Vary', 'Origin');
+  }
+  return new Response(JSON.stringify(body), { status, headers });
+}
+
 function getStripe(env: Env): Stripe {
   return new Stripe(env.STRIPE_SECRET_KEY, {
     apiVersion: '2026-08-26.dahlia',
@@ -56,31 +69,38 @@ export async function onRequest(context: {
   const url = new URL(context.request.url);
   const method = context.request.method;
   const path = url.pathname.replace(/^\/api\/market\//, '');
+  if (method === 'OPTIONS') {
+    const origin = context.request.headers.get('Origin');
+    if (!isAllowedOrigin(context.request, env)) {
+      return marketJson(context.request, { error: 'Forbidden' }, 403, env);
+    }
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Origin': origin ?? '',
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Methods': 'POST,OPTIONS',
+        'Access-Control-Allow-Headers': 'Authorization,Content-Type,X-Flaxia-Native-App',
+        Vary: 'Origin',
+      },
+    });
+  }
 
   if (method === 'POST' && path === 'checkout') {
     return handleMarketCheckout(context.request, env);
   }
 
-  return new Response(JSON.stringify({ error: 'Not found' }), {
-    status: 404,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return marketJson(context.request, { error: 'Not found' }, 404, env);
 }
 
 async function handleMarketCheckout(request: Request, env: Env): Promise<Response> {
   if (!isAllowedOrigin(request, env)) {
-    return new Response(JSON.stringify({ error: 'CSRF validation failed' }), {
-      status: 403,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return marketJson(request, { error: 'CSRF validation failed' }, 403, env);
   }
 
   const userId = await getUserId(env, request);
   if (!userId) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return marketJson(request, { error: 'Unauthorized' }, 401, env);
   }
 
   const body = (await request.json()) as { postId?: string; amount?: number; title?: string };
@@ -93,10 +113,7 @@ async function handleMarketCheckout(request: Request, env: Env): Promise<Respons
   // the buyer still chooses within the floor/ceiling band; the charge that
   // Stripe actually collects is verified webhook-side before completion.
   if (!postId || typeof amount !== 'number' || !Number.isInteger(amount) || amount < 100 || amount > 50000) {
-    return new Response(JSON.stringify({ error: 'Invalid request: postId and integer amount (100-50000) required' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return marketJson(request, { error: 'Invalid request: postId and integer amount (100-50000) required' }, 400, env);
   }
 
   // Verify the post exists
@@ -105,18 +122,12 @@ async function handleMarketCheckout(request: Request, env: Env): Promise<Respons
     .first<{ id: string; user_id: string; text: string }>();
 
   if (!post) {
-    return new Response(JSON.stringify({ error: 'Post not found' }), {
-      status: 404,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return marketJson(request, { error: 'Post not found' }, 404, env);
   }
 
   // Cannot buy your own content
   if (post.user_id === userId) {
-    return new Response(JSON.stringify({ error: 'Cannot purchase your own content' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return marketJson(request, { error: 'Cannot purchase your own content' }, 400, env);
   }
 
   // Check if user already purchased this content
@@ -127,10 +138,7 @@ async function handleMarketCheckout(request: Request, env: Env): Promise<Respons
     .first();
 
   if (existing) {
-    return new Response(JSON.stringify({ error: 'Already purchased' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return marketJson(request, { error: 'Already purchased' }, 400, env);
   }
 
   // Check if buyer has Flaxia++ (they get free access to marketplace content)
@@ -141,10 +149,7 @@ async function handleMarketCheckout(request: Request, env: Env): Promise<Respons
     .first<{ plan_id: string }>();
 
   if (sub) {
-    return new Response(JSON.stringify({ error: 'Flaxia++ subscribers have free access to marketplace content' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return marketJson(request, { error: 'Flaxia++ subscribers have free access to marketplace content' }, 400, env);
   }
 
   // Get or create Stripe customer
@@ -204,7 +209,5 @@ async function handleMarketCheckout(request: Request, env: Env): Promise<Respons
     .bind(crypto.randomUUID(), userId, postId, session.id, 'marketplace', amount, 'jpy', 'pending')
     .run();
 
-  return new Response(JSON.stringify({ sessionId: session.id, url: session.url }), {
-    headers: { 'Content-Type': 'application/json' },
-  });
+  return marketJson(request, { sessionId: session.id, url: session.url }, 200, env);
 }

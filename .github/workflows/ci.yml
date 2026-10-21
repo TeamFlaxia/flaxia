@@ -49,6 +49,7 @@ jobs:
       - run: npm run build
       - name: Start dev server and run tests
         run: |
+          set -o pipefail
           # The pages dev server binds Durable Objects hosted by these two
           # workers; start them first so the bindings connect.
           npm run dev:do &
@@ -72,9 +73,10 @@ jobs:
             exit 1
           fi
           mkdir -p coverage
+          EXIT_CODE=0
           npm test -- --experimental-test-coverage 2>&1 | tee coverage/test-output.log || EXIT_CODE=$?
           kill $SERVER_PID $MP_PID $DO_PID 2>/dev/null || true
-          exit ${EXIT_CODE:-0}
+          exit "$EXIT_CODE"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

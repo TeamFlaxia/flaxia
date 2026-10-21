@@ -37,6 +37,8 @@ export interface CrowdEnv {
   FILE_SCAN_VIDEO_PHASH_IMAGE?: string;
   /** Orchestrator task-body cap in bytes; defaults to 1 MiB. */
   CROWD_MAX_PAYLOAD_BYTES?: string;
+  /** Enable R2-backed file references for scans after Crowd and nodes are deployed. */
+  CROWD_SCAN_FILE_SOURCES?: string;
   BASE_URL?: string;
   CACHE?: KVNamespace;
   VECTORIZE?: VectorizeLike;
@@ -182,6 +184,114 @@ export async function verifyCallbackSignature(url: URL, config: CrowdConfig): Pr
   const provided = url.searchParams.get('sig');
   if (!provided) return false;
   return signatureEquals(provided, await hmacHex(config.webhookSecret, signingMessage(url)));
+}
+
+// ── Short-lived R2 scan-file tickets ──
+// The ticket is carried in an Authorization header (never a query string) and
+// binds a node's one-file GET to the exact R2 key, bytes, and size Flaxia queued.
+export const FILE_SCAN_SOURCE_MAX_BYTES = 25 * 1024 * 1024;
+export const FILE_SCAN_TICKET_TTL_MS = 30 * 60 * 1000;
+
+export interface FileScanTicketClaims {
+  version: 1;
+  key: string;
+  sha256: string;
+  size: number;
+  expiresAt: number;
+}
+
+function base64UrlEncodeText(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function base64UrlDecodeText(value: string): string | null {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) return null;
+  try {
+    const base64 = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (value.length % 4)) % 4);
+    const binary = atob(base64);
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+function validScanFileKey(key: unknown): key is string {
+  if (typeof key !== 'string' || key.length === 0 || key.length > 1024) return false;
+  for (let i = 0; i < key.length; i++) {
+    const code = key.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return false;
+  }
+  return !key.split('/').some((part) => part === '.' || part === '..');
+}
+
+/** Mint a narrowly scoped, 30-minute bearer for one scanned object. */
+export async function createFileScanTicket(
+  config: CrowdConfig,
+  input: { key: string; sha256: string; size: number },
+): Promise<string> {
+  if (!config.webhookSecret) throw new Error('Crowd file-scan signing secret is not configured');
+  if (!validScanFileKey(input.key)) throw new Error('Invalid R2 key for file-scan ticket');
+  if (!/^[a-f0-9]{64}$/i.test(input.sha256)) throw new Error('Invalid SHA-256 for file-scan ticket');
+  if (!Number.isSafeInteger(input.size) || input.size < 0 || input.size > FILE_SCAN_SOURCE_MAX_BYTES) {
+    throw new Error('File exceeds the Crowd scan-file limit');
+  }
+
+  const claims: FileScanTicketClaims = {
+    version: 1,
+    key: input.key,
+    sha256: input.sha256.toLowerCase(),
+    size: input.size,
+    expiresAt: Date.now() + FILE_SCAN_TICKET_TTL_MS,
+  };
+  const body = base64UrlEncodeText(JSON.stringify(claims));
+  const signature = await hmacHex(config.webhookSecret, `flaxia-file-scan-v1.${body}`);
+  return `${body}.${signature}`;
+}
+
+/** Verify signature, scope, size, and expiry before touching R2 or D1. */
+export async function verifyFileScanTicket(
+  env: CrowdEnv,
+  ticket: string,
+  now = Date.now(),
+): Promise<FileScanTicketClaims | null> {
+  const secret = crowdConfig(env).webhookSecret;
+  if (!secret || typeof ticket !== 'string' || ticket.length > 4096) return null;
+  const parts = ticket.split('.');
+  if (parts.length !== 2 || !/^[a-f0-9]{64}$/.test(parts[1]!)) return null;
+  const [body, signature] = parts as [string, string];
+  if (!/^[A-Za-z0-9_-]+$/.test(body)) return null;
+  const expected = await hmacHex(secret, `flaxia-file-scan-v1.${body}`);
+  if (!signatureEquals(signature, expected)) return null;
+
+  const decoded = base64UrlDecodeText(body);
+  if (!decoded) return null;
+  let claims: unknown;
+  try {
+    claims = JSON.parse(decoded);
+  } catch {
+    return null;
+  }
+  if (!claims || typeof claims !== 'object') return null;
+  const value = claims as Partial<FileScanTicketClaims>;
+  if (
+    value.version !== 1 ||
+    !validScanFileKey(value.key) ||
+    typeof value.sha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(value.sha256) ||
+    !Number.isSafeInteger(value.size) ||
+    (value.size as number) < 0 ||
+    (value.size as number) > FILE_SCAN_SOURCE_MAX_BYTES ||
+    !Number.isSafeInteger(value.expiresAt) ||
+    (value.expiresAt as number) <= now ||
+    (value.expiresAt as number) > now + FILE_SCAN_TICKET_TTL_MS + 60_000
+  ) {
+    return null;
+  }
+  return value as FileScanTicketClaims;
 }
 
 // ── Schema bootstrap ──
@@ -510,21 +620,29 @@ export async function embedPost(
   embeddingPosts.add(postId);
   try {
     const config = crowdConfig(env);
-    if (!config.configured || config.screeningDisabled) {
-      await enqueuePendingEmbed(db, postId, text);
+    if (!db) {
+      if (config.configured && !config.screeningDisabled) await submitEmbedTask(config, postId, text);
       return;
     }
 
-    if (db) {
-      await drainPendingEmbeds(db, env).catch((e) => console.error('Pending embed drain failed:', e));
-    }
+    // Persist to the outbox before the network call. The submit happens after
+    // the response (waitUntil); if the isolate is evicted mid-flight, the row
+    // is still queued for the next drain instead of being lost.
+    await enqueuePendingEmbed(db, postId, text);
+    if (!config.configured || config.screeningDisabled) return;
 
-    if (Date.now() - lastEmbedTime < EMBED_RATE_LIMIT_MS) {
-      await enqueuePendingEmbed(db, postId, text);
-      return;
-    }
+    // This drain skips `postId` (the in-flight guard), so backfilled rows are
+    // submitted here and the current post is handled below without the throttle
+    // consuming the same slot twice.
+    await drainPendingEmbeds(db, env).catch((e) => console.error('Pending embed drain failed:', e));
+
+    if (Date.now() - lastEmbedTime < EMBED_RATE_LIMIT_MS) return;
     const ok = await submitEmbedTask(config, postId, text);
-    if (!ok) await enqueuePendingEmbed(db, postId, text, 1, 'submission failed');
+    if (ok) {
+      await db.prepare('DELETE FROM pending_embeddings WHERE post_id = ?').bind(postId).run();
+    } else {
+      await enqueuePendingEmbed(db, postId, text, 1, 'submission failed');
+    }
   } finally {
     embeddingPosts.delete(postId);
   }
@@ -629,63 +747,75 @@ async function handleVectorEmbedResult(
   console.log(`Vector embed webhook done for post ${postId}: dims=${dimensions}`);
 }
 
-/** SHA prefix a scan callback was submitted for; empty when absent. */
-function scanShaPrefix(url: URL): string | undefined {
-  const sha = url.searchParams.get('sha');
-  return sha || undefined;
+/** Full SHA for new callbacks; accept 16-character prefixes during rollout. */
+function scanSha(url: URL): string | undefined {
+  const sha = url.searchParams.get('sha')?.toLowerCase();
+  return sha && (/^[0-9a-f]{64}$/.test(sha) || /^[0-9a-f]{16}$/.test(sha)) ? sha : undefined;
 }
 
 /** The orchestrator reported the task itself failed (not a verdict). */
 async function handleFileScanTaskFailure(url: URL, event: CrowdWebhookEvent, db: D1Database): Promise<void> {
   const r2Key = url.searchParams.get('key');
   const kind = url.searchParams.get('kind') ?? 'clamav';
-  if (!r2Key) return;
+  const submittedSha = scanSha(url);
+  if (!r2Key || !submittedSha) return;
   if (kind !== 'clamav') return; // keyframe hashing is best-effort
   const detail = (event.error || 'task_failed').slice(0, 300);
-  await setScanStatus(db, r2Key, 'failed', { detail, shaPrefix: scanShaPrefix(url) });
+  await setScanStatus(db, r2Key, 'failed', { detail, shaPrefix: submittedSha });
 }
 
 /**
  * Apply a completed file-scan container task:
  *   kind=clamav      -> clean / infected / failed (+ blocklist + KV on hit)
  *   kind=video-phash -> store keyframe hashes, then re-run the blocklist
- * The sha prefix ties the verdict to the exact content that was submitted, so
- * a slow callback cannot mark re-uploaded bytes with a stale result.
+ * New callbacks carry the full submitted SHA, so a stale verdict can blocklist
+ * the scanned bytes without changing the status of a same-key replacement.
  */
 async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Database, env: CrowdEnv): Promise<void> {
   const r2Key = url.searchParams.get('key');
   const kind = url.searchParams.get('kind') ?? 'clamav';
-  if (!r2Key) return;
+  const submittedSha = scanSha(url);
+  if (!r2Key || !submittedSha) return;
 
-  const shaPrefix = scanShaPrefix(url);
   const output = parseContainerOutput(extractCallbackOutput(event));
   if (!output) {
     if (kind === 'clamav') {
-      await setScanStatus(db, r2Key, 'failed', { detail: 'malformed_result', shaPrefix });
+      await setScanStatus(db, r2Key, 'failed', { detail: 'malformed_result', shaPrefix: submittedSha });
     }
     return;
   }
 
   if (kind === 'video-phash') {
     const hashes = parseVideoPhashes(output.stdout);
+    if (!hashes) return;
     const row = await getFileScan(db, r2Key);
-    if (!hashes || !row) return;
-    // A keyframe callback issued for bytes A must not overwrite the hashes of
-    // re-uploaded bytes B, nor have B's sha matched against A's blocklist entry.
-    if (shaPrefix && !row.sha256.startsWith(shaPrefix)) return;
+    const submittedSha256 =
+      submittedSha.length === 64 ? submittedSha : row?.sha256.startsWith(submittedSha) ? row.sha256 : undefined;
+    if (!submittedSha256) return;
+
+    const rowMatchesSubmitted = row?.sha256 === submittedSha256 ? row : null;
     const joined = hashes.join(',');
-    await setScanPhash(db, r2Key, joined, shaPrefix);
+    await setScanPhash(db, r2Key, joined, submittedSha);
     const features: FileFeatures = {
-      sha256: row.sha256,
-      kind: row.kind as FileFeatures['kind'],
-      structureHash: row.structure_hash ?? undefined,
-      textHash: row.text_hash ?? undefined,
+      // The callback hashes belong to the submitted object, even when the key
+      // has since been reused. Never borrow B's metadata while judging A.
+      sha256: submittedSha256,
+      kind: rowMatchesSubmitted ? (rowMatchesSubmitted.kind as FileFeatures['kind']) : 'video',
+      structureHash: rowMatchesSubmitted?.structure_hash ?? undefined,
+      textHash: rowMatchesSubmitted?.text_hash ?? undefined,
       phash: joined,
     };
     try {
       const hit = await matchBlocklist(db, features);
       if (hit) {
-        await recordInfection(db, env.CACHE, r2Key, hit.signature ?? 'blocklist_phash', 'phash_blocklist', shaPrefix);
+        await recordInfection(
+          db,
+          env.CACHE,
+          r2Key,
+          hit.signature ?? 'blocklist_phash',
+          'phash_blocklist',
+          submittedSha,
+        );
         console.log(`Video phash hit for ${r2Key} (entry #${hit.id})`);
       }
     } catch (e) {
@@ -706,12 +836,12 @@ async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Da
     } catch (e) {
       console.error('Signature blocklist lookup failed:', e);
     }
-    await recordInfection(db, env.CACHE, r2Key, verdict.signature, reason, shaPrefix);
+    await recordInfection(db, env.CACHE, r2Key, verdict.signature, reason, submittedSha);
     console.log(`ClamAV infected ${r2Key}: ${verdict.signature}`);
     return;
   }
   if (verdict.status === 'failed') {
-    await setScanStatus(db, r2Key, 'failed', { detail: verdict.detail ?? 'scan_error', shaPrefix });
+    await setScanStatus(db, r2Key, 'failed', { detail: verdict.detail ?? 'scan_error', shaPrefix: submittedSha });
     return;
   }
 
@@ -719,7 +849,7 @@ async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Da
   // completion still take effect, then mark the row clean.
   try {
     const row = await getFileScan(db, r2Key);
-    if (row) {
+    if (row?.sha256.startsWith(submittedSha)) {
       const hit = await matchBlocklist(db, {
         sha256: row.sha256,
         kind: row.kind as FileFeatures['kind'],
@@ -728,7 +858,7 @@ async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Da
         phash: row.phash ?? undefined,
       });
       if (hit) {
-        await recordInfection(db, env.CACHE, r2Key, hit.signature, hit.reason ?? 'blocklist', shaPrefix);
+        await recordInfection(db, env.CACHE, r2Key, hit.signature, hit.reason ?? 'blocklist', submittedSha);
         return;
       }
       // No marker is cleared here: another container task for the same bytes
@@ -739,7 +869,7 @@ async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Da
   } catch (e) {
     console.error('Post-scan blocklist lookup failed:', e);
   }
-  await setScanStatus(db, r2Key, 'clean', { shaPrefix });
+  await setScanStatus(db, r2Key, 'clean', { shaPrefix: submittedSha });
 }
 
 /**

@@ -8,7 +8,7 @@ import {
   generateSalt,
   verifyServerProof,
 } from '../src/lib/srp.ts';
-import { BASE_URL, resetDb, seedLegacyUser } from './helpers/setup.ts';
+import { BASE_URL, resetDb, seedLegacyUser, seedV1SrpUser } from './helpers/setup.ts';
 
 function b64(b: Uint8Array): string {
   return Buffer.from(b).toString('base64');
@@ -107,19 +107,8 @@ describe('SRP-6a authentication (server never sees plaintext password)', () => {
   it('migrates a v1 verifier only with a current-password proof', async () => {
     const oldSalt = generateSalt();
     const oldVerifier = await computeVerifier('v1-password-123', oldSalt, 'sha256-v1');
-    await fetch(`${BASE_URL}/api/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: 'v1@example.com',
-        username: 'v1user',
-        display_name: 'V1 User',
-        srp_salt: b64(oldSalt),
-        srp_verifier: b64(oldVerifier),
-        srp_group: '2048',
-        srp_kdf: 'sha256-v1',
-      }),
-    });
+    const seeded = await seedV1SrpUser('v1@example.com', 'v1user', oldSalt, oldVerifier);
+    assert.equal(seeded.status, 201);
     const login = await srpLogin('v1@example.com', 'v1-password-123');
     assert.equal(login.status, 200);
 
