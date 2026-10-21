@@ -3,10 +3,13 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import {
   clearGameStorage,
+  hasGameStorageState,
   loadGameStorageSnapshot,
   removeGameStorageValue,
+  replaceGameStorageSnapshot,
   setGameStorageValue,
 } from '../sandbox/game-storage-runtime.js';
+import { connectGameStorage, loadLegacyGameStorage } from '../src/lib/game-storage-broker.ts';
 
 interface GameStorageLike {
   readonly length: number;
@@ -74,6 +77,79 @@ test('#118 per-key storage is read and written without copying the save', () => 
   assert.equal(storage.getItem(scoreKey), '8');
   assert.equal(storage.getItem(blobKeyFor(postId)), null);
   assert.deepEqual(loadGameStorageSnapshot(storage, postId), { score: '8', volume: '0.5' });
+});
+
+test('empty Flaxia-origin save tombstones count as existing state', () => {
+  const postId = 'game-empty';
+  const storage = new MemoryStorage({ [blobKeyFor(postId)]: '{}' });
+
+  assert.equal(hasGameStorageState(storage, postId), true);
+  assert.deepEqual(loadGameStorageSnapshot(storage, postId), {});
+});
+
+test('legacy snapshots migrate into Flaxia-origin storage and replace old keys', () => {
+  const postId = 'game-migrate';
+  const storage = new MemoryStorage({
+    [prefixedKeyFor(postId, 'old-score')]: '1',
+    [prefixedKeyFor(postId, 'stale')]: 'remove-me',
+  });
+
+  replaceGameStorageSnapshot(storage, postId, { score: '2' });
+
+  assert.deepEqual(loadGameStorageSnapshot(storage, postId), { score: '2' });
+  assert.equal(storage.getItem(prefixedKeyFor(postId, 'stale')), null);
+  replaceGameStorageSnapshot(storage, postId, {});
+  assert.equal(hasGameStorageState(storage, postId), true);
+  assert.deepEqual(loadGameStorageSnapshot(storage, postId), {});
+});
+
+test('game writes are persisted in the Flaxia-origin localStorage', () => {
+  const postId = 'game-origin';
+  const storage = new MemoryStorage();
+  const listeners = new Set<EventListenerOrEventListenerObject>();
+  const fakeWindow = {
+    localStorage: storage,
+    addEventListener: (_type: string, listener: EventListenerOrEventListenerObject) => listeners.add(listener),
+    removeEventListener: (_type: string, listener: EventListenerOrEventListenerObject) => listeners.delete(listener),
+  } as unknown as Window;
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: fakeWindow });
+
+  try {
+    const gameWindow = {} as WindowProxy;
+    const gameIframe = { contentWindow: gameWindow } as HTMLIFrameElement;
+    const disconnect = connectGameStorage(gameIframe, postId);
+    const listener = Array.from(listeners)[0];
+    assert.equal(typeof listener, 'function');
+    if (typeof listener !== 'function') throw new Error('Game storage listener was not registered');
+
+    listener({
+      source: gameWindow,
+      origin: 'null',
+      data: { type: 'FLAXIA_GAME_STORAGE_WRITE', operation: 'set', key: 'score', value: '42' },
+    } as unknown as MessageEvent);
+
+    assert.deepEqual(loadGameStorageSnapshot(storage, postId), { score: '42' });
+    disconnect();
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+    else Reflect.deleteProperty(globalThis, 'window');
+  }
+});
+
+test('Flaxia-origin saves are loaded before consulting the legacy sandbox broker', async () => {
+  const postId = 'game-local-first';
+  const storage = new MemoryStorage({ [blobKeyFor(postId)]: JSON.stringify({ level: '3' }) });
+  const fakeWindow = { localStorage: storage } as unknown as Window;
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: fakeWindow });
+
+  try {
+    assert.deepEqual(await loadLegacyGameStorage('https://sandbox.example', postId), { level: '3' });
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+    else Reflect.deleteProperty(globalThis, 'window');
+  }
 });
 
 test('legacy postId blob remains in place and can still be updated', () => {

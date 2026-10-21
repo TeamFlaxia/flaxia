@@ -212,10 +212,13 @@ export async function registerUser(
     srp: SrpRegistration;
   },
 ): Promise<User> {
-  const { email, username, display_name, srp } = userData;
+  const { username, display_name, srp } = userData;
+  // Emails are case-insensitive identifiers: normalize at the write boundary
+  // so `DevTest@flaxia.app` and `devtest@flaxia.app` cannot coexist.
+  const email = userData.email.trim().toLowerCase();
 
-  // Check if email already exists
-  const existingEmail = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+  // Check if email already exists (case-insensitively, including legacy rows).
+  const existingEmail = await env.DB.prepare('SELECT id FROM users WHERE lower(email) = ?').bind(email).first();
   if (existingEmail) {
     throw new Error('Email already registered');
   }
@@ -270,8 +273,9 @@ export async function startSrpLogin(
   env: Env,
   email: string,
 ): Promise<{ challengeId: string; salt: string; B: string; kdf: string } | null> {
-  const user = (await env.DB.prepare('SELECT id, srp_salt, srp_verifier, srp_kdf FROM users WHERE email = ?')
-    .bind(email)
+  const normalizedEmail = email.trim().toLowerCase();
+  const user = (await env.DB.prepare('SELECT id, srp_salt, srp_verifier, srp_kdf FROM users WHERE lower(email) = ?')
+    .bind(normalizedEmail)
     .first()) as { id: string; srp_salt: string | null; srp_verifier: string | null; srp_kdf: string | null } | null;
 
   if (!user || !user.srp_verifier || !user.srp_salt) return null;
@@ -441,12 +445,13 @@ export async function verifySrpPassword(
 
 // Login user
 export async function loginUser(env: Env, email: string, password: string): Promise<{ user: User; session: Session }> {
+  const normalizedEmail = email.trim().toLowerCase();
   // Get user with password hash
   const userWithPassword = (await env.DB.prepare(`
     SELECT id, email, password_hash, srp_salt, srp_verifier, username, display_name, bio, avatar_key, badge_type, created_at
-    FROM users WHERE email = ?
+    FROM users WHERE lower(email) = ?
   `)
-    .bind(email)
+    .bind(normalizedEmail)
     .first()) as {
     id: string;
     email: string;

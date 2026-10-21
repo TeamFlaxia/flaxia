@@ -21,6 +21,7 @@ import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { attachIcons, icon } from '../lib/icons.js';
 import { registerModal } from '../lib/modal-state.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { showToast } from '../lib/toast.js';
 import {
   deleteVaultItem,
@@ -319,7 +320,7 @@ export class PostComposer {
       avatar.style.flexShrink = '0';
 
       if (this.props.currentUser.avatar_key) {
-        avatar.style.backgroundImage = `url(/api/images/${this.props.currentUser.avatar_key})`;
+        avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${this.props.currentUser.avatar_key}`)})`;
         avatar.style.backgroundSize = 'cover';
         avatar.style.backgroundPosition = 'center';
         avatar.textContent = '';
@@ -725,7 +726,7 @@ export class PostComposer {
       `;
       avatarSpan.textContent = user.username.charAt(0).toUpperCase();
       if (user.avatar_key) {
-        avatarSpan.style.backgroundImage = `url(/api/images/${user.avatar_key})`;
+        avatarSpan.style.backgroundImage = `url(${nativeApiHref(`/api/images/${user.avatar_key}`)})`;
         avatarSpan.style.backgroundSize = 'cover';
         avatarSpan.style.backgroundPosition = 'center';
         avatarSpan.textContent = '';
@@ -2422,7 +2423,7 @@ export class PostComposer {
       avatar.style.flexShrink = '0';
 
       if (this.props.currentUser.avatar_key) {
-        avatar.style.backgroundImage = `url(/api/images/${this.props.currentUser.avatar_key})`;
+        avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${this.props.currentUser.avatar_key}`)})`;
         avatar.style.backgroundSize = 'cover';
         avatar.style.backgroundPosition = 'center';
         avatar.textContent = '';

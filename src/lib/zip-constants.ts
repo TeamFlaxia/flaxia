@@ -5,7 +5,7 @@ export const ZIP_TTL = 5 * 60 * 1000;
 export const ZIP_MAX_TOTAL_SIZE = 100 * 1024 * 1024;
 
 /** Maximum number of files allowed in a ZIP archive. */
-export const ZIP_MAX_FILE_COUNT = 1000;
+export const ZIP_MAX_FILE_COUNT = 1024;
 
 /** Maximum path depth allowed in ZIP entries. */
 export const ZIP_MAX_PATH_DEPTH = 10;
