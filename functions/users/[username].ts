@@ -11,19 +11,26 @@ import {
   type UserRow,
 } from '../../src/lib/render-html';
 import { fetchActorPublicKey, verifyDigest, verifyHttpSignature } from '../lib/activitypub/signature';
+import { checkRateLimit, getClientIp } from '../lib/rate-limit';
+import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
+import { renderBreadcrumbJsonLd, renderSsrFooter, renderSsrHeader, renderSsrLayoutCss } from '../lib/ssr-layout';
 
 type Bindings = {
   DB: D1Database;
   BASE_URL: string;
   AP_DELIVERY_QUEUE: Queue;
+  CACHE: KVNamespace;
 };
+
+/** Shared inbox body cap with the API inbox endpoints (small JSON docs). */
+const MAX_INBOX_BODY_BYTES = 256 * 1024;
 
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use('/*', cors());
 
 const POST_SELECT = `
-  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key,
+  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type,
     p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key,
     p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
     COALESCE(p.reply_count, 0) as reply_count,
@@ -41,6 +48,7 @@ type RawUser = {
   display_name: string;
   bio: string;
   avatar_key: string | null;
+  badge_type?: string | null;
   created_at: string;
 };
 
@@ -53,6 +61,7 @@ function toPost(row: RawPost): PostRow {
     username: String(row.username),
     display_name: row.display_name ? String(row.display_name) : null,
     avatar_key: row.avatar_key ? String(row.avatar_key) : null,
+    badge_type: row.badge_type ? String(row.badge_type) : null,
     text: String(row.text),
     hashtags: String(row.hashtags),
     gif_key: row.gif_key ? String(row.gif_key) : null,
@@ -73,12 +82,13 @@ function toPost(row: RawPost): PostRow {
 }
 
 // GET /users/:username
-app.get('/', async (c) => {
+// Matches the full Pages path (`/users/:username`); `onRequest` forwards the
+// original request, so an exact `'/'` route never matched and crawlers got 404.
+app.get('*', async (c) => {
   try {
     const url = new URL(c.req.url);
     const username = url.pathname.split('/users/')[1]?.split('/')[0] ?? '';
     const acceptHeader = c.req.header('Accept') || '';
-    const userAgent = c.req.header('user-agent') || '';
     const baseUrl = c.env.BASE_URL ?? 'https://flaxia.app';
 
     if (!username) {
@@ -89,8 +99,21 @@ app.get('/', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
+    // If ActivityPub client, redirect to canonical actor URL
+    if (acceptHeader.includes('application/activity+json')) {
+      const verification = await c.env.DB.prepare(`
+        SELECT id FROM users WHERE username = ? COLLATE NOCASE
+      `)
+        .bind(username)
+        .first();
+      if (!verification) {
+        return c.json({ error: 'User not found' }, 404);
+      }
+      return c.redirect(`${c.env.BASE_URL}/api/actors/${username}`, 301);
+    }
+
     const user = (await c.env.DB.prepare(`
-      SELECT id, username, display_name, bio, avatar_key, created_at
+      SELECT id, username, display_name, bio, avatar_key, badge_type, created_at
       FROM users
       WHERE username = ? COLLATE NOCASE
     `)
@@ -98,77 +121,82 @@ app.get('/', async (c) => {
       .first()) as RawUser | null;
 
     if (!user) {
-      if (isCrawler(userAgent)) {
-        const canonicalUrl = `${baseUrl}/users/${username}`;
-        return c.html(
-          renderHtmlShell(
-            `<div class="ssr-empty"><h1>User not found</h1><p>The requested user does not exist.</p></div>`,
-            { title: 'User not found', description: 'User not found', canonicalUrl },
-          ),
-          404,
-        );
-      }
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    // Crawler check - serve SSR profile HTML
-    if (isCrawler(userAgent)) {
-      const canonicalUrl = `${baseUrl}/users/${user.username}`;
-      const defaultImage = user.avatar_key
-        ? `${baseUrl}/api/images/${user.avatar_key}`
-        : `${baseUrl}/og-default-v2.png`;
-
-      // Query recent posts
-      const { results: postRows } = await c.env.DB.prepare(
-        `${POST_SELECT} WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ORDER BY p.created_at DESC LIMIT 20`,
-      )
-        .bind(username)
-        .all<RawPost>();
-
-      const posts = (postRows || []).map(toPost);
-
-      // Query follower count
-      const followerCount = (await c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE followee_id = ?')
-        .bind(user.id)
-        .first()) as { count: number };
-      const postCount = (await c.env.DB.prepare(
-        "SELECT COUNT(*) as count FROM posts WHERE user_id = ? AND status = 'published' AND hidden = 0",
-      )
-        .bind(user.id)
-        .first()) as { count: number };
-
-      const jsonLd = renderPersonJsonLd(user as UserRow, canonicalUrl);
-
-      const content = `
-        ${renderProfileHeader(user as UserRow, baseUrl, postCount?.count || 0, followerCount?.count || 0)}
-        <section>
-          <h2 class="ssr-section-title">Posts</h2>
-          ${renderPostList(posts, baseUrl)}
-        </section>
-        <footer class="ssr-footer">
-          <a href="${baseUrl}">← Back to Flaxia</a>
-        </footer>
-      `;
-
+      const canonicalUrl = `${baseUrl}/users/${username}`;
       return c.html(
-        renderHtmlShell(content, {
-          title: `${user.display_name} (@${user.username}) - Flaxia`,
-          description: user.bio ? user.bio.slice(0, 200) : `@${user.username}'s profile on Flaxia`,
-          canonicalUrl,
-          image: defaultImage,
-          type: 'profile',
-          jsonLd,
-        }),
+        renderHtmlShell(
+          `<div class="ssr-empty"><h1>User not found</h1><p>The requested user does not exist.</p></div>`,
+          { title: 'User not found', description: 'User not found', canonicalUrl, spaHeadTags: SPA_HEAD_TAGS },
+        ),
+        404,
       );
     }
 
-    // If ActivityPub client, redirect to canonical actor URL
-    if (acceptHeader.includes('application/activity+json')) {
-      return c.redirect(`${c.env.BASE_URL}/api/actors/${username}`, 301);
-    }
+    const canonicalUrl = `${baseUrl}/users/${user.username}`;
+    const defaultImage = user.avatar_key ? `${baseUrl}/api/images/${user.avatar_key}` : `${baseUrl}/og-default-v2.png`;
 
-    // Browser request - redirect to web profile page
-    return c.redirect(`/users/${username}`);
+    // Query recent posts
+    const { results: postRows } = await c.env.DB.prepare(
+      `${POST_SELECT} WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ORDER BY p.created_at DESC LIMIT 20`,
+    )
+      .bind(username)
+      .all<RawPost>();
+
+    const posts = (postRows || []).map(toPost);
+
+    // Query follower count
+    const followerCount = (await c.env.DB.prepare('SELECT COUNT(*) as count FROM follows WHERE followee_id = ?')
+      .bind(user.id)
+      .first()) as { count: number };
+    const postCount = (await c.env.DB.prepare(
+      "SELECT COUNT(*) as count FROM posts WHERE user_id = ? AND status = 'published' AND hidden = 0",
+    )
+      .bind(user.id)
+      .first()) as { count: number };
+
+    const jsonLd = renderPersonJsonLd(user as UserRow, canonicalUrl);
+
+    const breadcrumbItems = [
+      { label: 'Home', url: `${baseUrl}/home` },
+      { label: user.display_name || `@${user.username}`, url: canonicalUrl },
+    ];
+
+    const header = renderSsrHeader({ baseUrl, breadcrumb: breadcrumbItems });
+    const footer = renderSsrFooter({
+      baseUrl,
+      sections: posts.length
+        ? [
+            {
+              title: `Latest posts by ${user.display_name || user.username}`,
+              links: posts.slice(0, 5).map((p) => ({
+                label: p.text.split('\n')[0].slice(0, 40) || `Post ${p.id}`,
+                url: `${baseUrl}/thread/${p.id}`,
+              })),
+            },
+          ]
+        : [],
+    });
+
+    const content = `
+      ${header}
+      ${renderProfileHeader(user as UserRow, baseUrl, postCount?.count || 0, followerCount?.count || 0)}
+      <section>
+        <h2 class="ssr-section-title">Posts</h2>
+        ${renderPostList(posts, baseUrl)}
+      </section>
+      ${footer}
+    `;
+
+    return c.html(
+      renderHtmlShell(content, {
+        title: `${user.display_name} (@${user.username}) - Flaxia`,
+        description: user.bio ? user.bio.slice(0, 200) : `@${user.username}'s profile on Flaxia`,
+        canonicalUrl,
+        image: defaultImage,
+        jsonLd: `${jsonLd}\n${renderBreadcrumbJsonLd(breadcrumbItems, baseUrl)}`,
+        additionalHead: renderSsrLayoutCss(),
+        spaHeadTags: SPA_HEAD_TAGS,
+      }),
+    );
   } catch (error: unknown) {
     console.error('Get user error:', error);
     return c.json(
@@ -205,7 +233,22 @@ app.post('/inbox', async (c) => {
       return c.json({ error: 'User not found' }, 404);
     }
 
+    const allowed = await checkRateLimit(c.env.CACHE, `ap:inbox:${getClientIp(c.req.raw)}`, {
+      maxRequests: 60,
+      windowSeconds: 60,
+    });
+    if (!allowed) {
+      return c.json({ error: 'Rate limit exceeded' }, 429);
+    }
+
+    const declared = Number(c.req.header('content-length') || 0);
+    if (Number.isFinite(declared) && declared > MAX_INBOX_BODY_BYTES) {
+      return c.json({ error: 'Inbox body too large' }, 413);
+    }
     const body = await c.req.text();
+    if (body.length > MAX_INBOX_BODY_BYTES) {
+      return c.json({ error: 'Inbox body too large' }, 413);
+    }
     let activity: Record<string, unknown>;
     try {
       activity = JSON.parse(body) as Record<string, unknown>;
@@ -216,6 +259,25 @@ app.post('/inbox', async (c) => {
     const actorId = activity.actor;
     if (!actorId || typeof actorId !== 'string') {
       return c.json({ error: 'Invalid actor' }, 400);
+    }
+
+    // #116: same keyId/actor origin binding as the API inboxes (H-5).
+    // Without it a key from one origin could vouch for another's actor.
+    const signatureHeader = c.req.header('Signature');
+    if (signatureHeader) {
+      const keyIdMatch = signatureHeader.match(/keyId="([^"]+)"/);
+      if (keyIdMatch) {
+        try {
+          const keyIdOrigin = new URL(keyIdMatch[1]).origin;
+          const actorOrigin = new URL(actorId).origin;
+          if (keyIdOrigin !== actorOrigin) {
+            console.error(`keyId origin ${keyIdOrigin} does not match actor origin ${actorOrigin}`);
+            return c.json({ error: 'Invalid HTTP Signature: keyId/actor origin mismatch' }, 401);
+          }
+        } catch {
+          return c.json({ error: 'Invalid keyId or actor URL' }, 400);
+        }
+      }
     }
 
     // Try to get local user's keys for signed fetch (authorized fetch support)
@@ -231,7 +293,7 @@ app.post('/inbox', async (c) => {
         .first()) as { private_key_pem: string } | null;
       if (keyRecord?.private_key_pem) {
         signKeyPem = keyRecord.private_key_pem;
-        signKeyId = `${c.env.BASE_URL}/actors/${username}#main-key`;
+        signKeyId = `${c.env.BASE_URL}/api/actors/${username}#main-key`;
       }
     } catch {
       // Proceed without signing
@@ -273,4 +335,24 @@ app.post('/inbox', async (c) => {
   }
 });
 
-export default app;
+export async function onRequest(context: {
+  request: Request;
+  env: Bindings;
+  next: () => Promise<Response>;
+}): Promise<Response> {
+  const { request } = context;
+
+  if (request.method === 'GET') {
+    const acceptHeader = request.headers.get('Accept') || '';
+    if (acceptHeader.includes('application/activity+json')) {
+      return await app.fetch(request, context.env);
+    }
+
+    const userAgent = request.headers.get('User-Agent') || '';
+    if (!isCrawler(userAgent)) {
+      return await context.next();
+    }
+  }
+
+  return await app.fetch(request, context.env);
+}

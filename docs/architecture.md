@@ -61,7 +61,6 @@ Flaxia uses a **two-origin model** to securely execute untrusted user content.
 |---|---|---|---|
 | `DB` | D1 database | `flaxia` | All persistent data |
 | `BUCKET` | R2 bucket | `flaxia-content` | Post payloads, images, audio, avatars |
-| `RATE_LIMIT` | KV namespace | Rate limit counters | Per-IP rate limiting |
 | `AP_DELIVERY_QUEUE` | Queue | `activitypub-delivery` | ActivityPub inbox delivery |
 
 ## postMessage Bridge
@@ -88,7 +87,10 @@ All cross-origin communication between main and sandbox uses a typed bridge (`sr
 
 ## Database (D1 / SQLite)
 
-35 migration files covering:
+The schema evolves through the SQL migrations in [`migrations/`](../migrations/).
+See that directory for the current migration history rather than relying on a
+fixed file count. Major areas include:
+
 - `posts` — Post content, text, payload keys, hashtags
 - `users` — User profiles, sessions
 - `follows` — Follower relationships
@@ -110,7 +112,7 @@ All cross-origin communication between main and sandbox uses a typed bridge (`sr
 ## SPA Routing
 
 The client-side SPA (`src/main.ts`) manages routing with the following views:
-- **Timeline** — Chronological post feed with ad injection
+- **Timeline** — Global, Following, and For You feeds with ad injection
 - **Thread** — Post detail with replies
 - **Profile** — User profile with their posts
 - **Arcade** — Browse playable game posts
@@ -118,6 +120,31 @@ The client-side SPA (`src/main.ts`) manages routing with the following views:
 - **Bookmarks** — Bookmarked posts
 - **Notifications** — Activity notifications
 - **Admin** — Admin panel (alerts, hidden posts, users, ads)
+
+## Timeline and Recommendations
+
+The feed mode in `src/components/Timeline.ts` selects the API endpoint:
+
+| Feed | Endpoint | Ordering |
+|---|---|---|
+| Global | `GET /api/posts` | Reverse chronological |
+| Following | `GET /api/posts?following=true` | Reverse chronological, filtered to followed users |
+| For You | `GET /api/posts/recommended` | Ranked recommendations |
+
+`functions/api/routes/posts.ts` implements both chronological and recommended
+post retrieval. For You combines separate in-network, vector-similarity,
+popular, and recent candidate sources, then applies freshness, engagement,
+author diversity, and recently-seen filters. Authors with a low trust score
+(repeated near-duplicate posts) are excluded from For You, and exact duplicate
+posts are collapsed to their newest copy across feeds. Freshs, bookmarks,
+replies, shares, and game dwell time contribute to the interest vector. The shared
+interest-vector and LinUCB helpers live in `functions/api/routes/recommender.ts`
+and `functions/lib/linucb.ts`.
+
+Arcade recommendations are implemented separately in
+`functions/api/routes/games.ts` (`GET /api/games?recommended=true`) and use
+game-play dwell signals as well as personalization. See
+[`docs/recommendation-rl.md`](recommendation-rl.md) for the recommendation model.
 
 ## Layout
 

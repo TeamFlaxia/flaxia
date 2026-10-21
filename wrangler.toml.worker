@@ -1,6 +1,7 @@
 name = "flaxia-backend"
 main = "functions/queue-worker.ts"
 compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
 binding = "DB"
@@ -9,6 +10,20 @@ database_id = "7c99f35f-69a0-4644-96a1-34c716a3e82d"
 
 [vars]
 BASE_URL = "https://flaxia.app"
+# Optional: destination for the Arcade dwell dataset. Set HF_TOKEN as a secret:
+#   npx wrangler secret put HF_TOKEN --config wrangler.toml.worker
+# HF_REPO = "youruser/flaxia-arcade-dwell"
+
+[[kv_namespaces]]
+binding = "EXPORT_KV"
+id = "5bae08ca0489493d878e18dd64c44c4a"
+
+[[r2_buckets]]
+binding = "EXPORT_BUCKET"
+bucket_name = "flaxia-exports"
+
+[triggers]
+crons = ["0 4 * * *"]
 
 [[queues.consumers]]
 queue = "activitypub-delivery"

@@ -1,4 +1,6 @@
+import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 
 export interface RightPanelProps {
   onSearch?: (query: string) => void;
@@ -10,6 +12,7 @@ export interface UserSuggestion {
   username: string;
   display_name: string;
   avatar_key?: string;
+  badge_type?: string | null;
 }
 
 export class RightPanel {
@@ -269,7 +272,7 @@ export class RightPanel {
         justify-content: center;
         font-weight: 600;
         color: var(--text-primary);
-        background-image: ${user.avatar_key ? `url('/api/images/${user.avatar_key}')` : 'none'};
+        background-image: ${user.avatar_key ? `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')` : 'none'};
         background-size: cover;
         background-position: center;
       `;
@@ -278,6 +281,7 @@ export class RightPanel {
         avatar.textContent = user.display_name.charAt(0).toUpperCase();
         avatar.style.background = `linear-gradient(135deg, #${Math.floor(Math.random() * 16777215).toString(16)} 0%, #${Math.floor(Math.random() * 16777215).toString(16)} 100%)`;
       }
+      attachPlusBadge(avatar, user.badge_type);
 
       // Create info container
       const info = document.createElement('div');

@@ -62,16 +62,10 @@ export async function importPublicKey(pem: string): Promise<CryptoKey> {
   const pemFooter = '-----END PUBLIC KEY-----';
   const pemContents = pem.substring(pemHeader.length, pem.length - pemFooter.length).replace(/\s/g, ''); // Remove all whitespace including newlines and spaces
 
-  console.log('PEM contents length:', pemContents.length);
-  console.log('PEM contents (first 50 chars):', pemContents.substring(0, 50));
-  console.log('PEM contents (last 50 chars):', pemContents.substring(pemContents.length - 50));
-
   // Validate base64 characters and clean
   const cleanedPem = pemContents.replace(/[^A-Za-z0-9+/=]/g, '');
   if (cleanedPem.length !== pemContents.length) {
-    console.error('Invalid characters found and cleaned:', pemContents.length - cleanedPem.length);
-    console.log('Original PEM length:', pemContents.length);
-    console.log('Cleaned PEM length:', cleanedPem.length);
+    throw new Error('Invalid base64 characters in public key PEM');
   }
 
   // Ensure proper padding
@@ -80,8 +74,6 @@ export async function importPublicKey(pem: string): Promise<CryptoKey> {
     paddedPem += '=';
   }
 
-  console.log('Final PEM length after padding:', paddedPem.length);
-
   // Decode base64 using Web Crypto API (Cloudflare Functions compatible)
   try {
     const binaryDerString = atob(paddedPem);
@@ -89,8 +81,6 @@ export async function importPublicKey(pem: string): Promise<CryptoKey> {
     for (let i = 0; i < binaryDerString.length; i++) {
       binaryDerArray[i] = binaryDerString.charCodeAt(i);
     }
-    console.log('Base64 decode successful, array length:', binaryDerArray.length);
-
     return crypto.subtle.importKey(
       'spki',
       binaryDerArray.buffer,
@@ -101,8 +91,7 @@ export async function importPublicKey(pem: string): Promise<CryptoKey> {
       true,
       ['verify'],
     );
-  } catch (error) {
-    console.error('Base64 decode failed:', error);
+  } catch {
     throw new Error('Failed to decode PEM base64 content');
   }
 }
@@ -116,13 +105,9 @@ export async function importPrivateKey(pem: string): Promise<CryptoKey> {
   const pemFooter = '-----END PRIVATE KEY-----';
   const pemContents = pem.substring(pemHeader.length, pem.length - pemFooter.length).replace(/\s/g, ''); // Remove all whitespace including newlines and spaces
 
-  console.log('Private key PEM contents length:', pemContents.length);
-  console.log('Private key PEM contents (first 50 chars):', pemContents.substring(0, 50));
-
   // Validate base64 characters
   const invalidChars = pemContents.replace(/[^A-Za-z0-9+/=]/g, '');
   if (invalidChars.length !== pemContents.length) {
-    console.error('Invalid characters found in private key PEM:', pemContents.length - invalidChars.length);
     throw new Error('Invalid base64 characters in private key PEM');
   }
 
@@ -133,8 +118,6 @@ export async function importPrivateKey(pem: string): Promise<CryptoKey> {
     for (let i = 0; i < binaryDerString.length; i++) {
       binaryDerArray[i] = binaryDerString.charCodeAt(i);
     }
-    console.log('Private key base64 decode successful, array length:', binaryDerArray.length);
-
     return crypto.subtle.importKey(
       'pkcs8',
       binaryDerArray.buffer,
@@ -145,8 +128,7 @@ export async function importPrivateKey(pem: string): Promise<CryptoKey> {
       true,
       ['sign'],
     );
-  } catch (error) {
-    console.error('Private key base64 decode failed:', error);
+  } catch {
     throw new Error('Failed to decode private key PEM base64 content');
   }
 }

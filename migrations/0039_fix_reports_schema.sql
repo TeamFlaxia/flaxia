@@ -1,13 +1,6 @@
 -- Migration: Fix reports schema, add admin_alerts and counter_notifications
 -- This brings the schema in line with the application code.
 
--- Add missing columns to reports table
-ALTER TABLE reports ADD COLUMN category TEXT NOT NULL DEFAULT 'other';
-ALTER TABLE reports ADD COLUMN status TEXT NOT NULL DEFAULT 'pending';
-ALTER TABLE reports ADD COLUMN dmca_work_description TEXT;
-ALTER TABLE reports ADD COLUMN dmca_reporter_email TEXT;
-ALTER TABLE reports ADD COLUMN dmca_sworn INTEGER DEFAULT 0;
-
 -- Create admin_alerts table
 CREATE TABLE IF NOT EXISTS admin_alerts (
   id TEXT PRIMARY KEY,

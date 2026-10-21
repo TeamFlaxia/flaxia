@@ -1,4 +1,6 @@
-import { t } from '../lib/i18n.js';
+import { createInfiniteScroll } from '../lib/infinite-scroll.js';
+import { createLoadingSpinner } from '../lib/loading-ui.js';
+import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
@@ -13,6 +15,10 @@ export function createUserPostList(props: {
   username: string;
   sandboxOrigin: string;
   currentUser: CurrentUser | null;
+  source?: 'posts' | 'freshs' | 'bookmarks';
+  showPinOption?: boolean;
+  pinnedPostId?: string | null;
+  onTogglePin?: (postId: string) => void;
 }): { getElement: () => HTMLElement; addPost: (post: Post) => void; destroy: () => void } {
   // State
   let posts: Post[] = [];
@@ -20,8 +26,6 @@ export function createUserPostList(props: {
   let hasMore = true;
   let loading = false;
   const postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
-  let intersectionObserver: IntersectionObserver | null = null;
-  let loadMoreSentinel: HTMLElement | null = null;
 
   // Create main container
   const container = document.createElement('div');
@@ -36,28 +40,30 @@ export function createUserPostList(props: {
   const loadMoreContainer = document.createElement('div');
   loadMoreContainer.className = 'load-more-container';
 
-  // Create sentinel element for intersection observer
-  loadMoreSentinel = document.createElement('div');
-  loadMoreSentinel.className = 'load-more-sentinel';
-  loadMoreSentinel.style.height = '100px';
-  loadMoreSentinel.style.width = '100%';
-
-  // Add loading spinner (hidden by default)
-  const loadingSpinner = document.createElement('div');
-  loadingSpinner.className = 'loading-spinner';
-  const spinner = document.createElement('div');
-  spinner.className = 'spinner';
-  const spinnerLabel = document.createElement('span');
-  spinnerLabel.textContent = t('common.loading');
-  loadingSpinner.appendChild(spinner);
-  loadingSpinner.appendChild(spinnerLabel);
-  loadingSpinner.style.display = 'none';
+  // Loading spinner (hidden by default, appended after sentinel)
+  const loadingSpinner = createLoadingSpinner();
   loadingSpinner.style.textAlign = 'center';
   loadingSpinner.style.padding = '1rem';
 
-  loadMoreContainer.appendChild(loadMoreSentinel);
-  loadMoreContainer.appendChild(loadingSpinner);
   container.appendChild(loadMoreContainer);
+
+  // Build a PostCard, threading pin options through
+  const buildCard = (post: Post) =>
+    createPostCard({
+      post,
+      sandboxOrigin: props.sandboxOrigin,
+      currentUser: props.currentUser,
+      depth: post.depth,
+      enablePostRefs: true,
+      showPinOption: props.showPinOption,
+      pinned: props.showPinOption ? post.id === (props.pinnedPostId ?? '') : undefined,
+      onTogglePin: props.onTogglePin,
+      onDelete: (postId) => {
+        posts = posts.filter((p) => p.id !== postId);
+        postCards.delete(postId);
+        renderPosts();
+      },
+    });
 
   // Render posts
   const renderPosts = () => {
@@ -71,65 +77,60 @@ export function createUserPostList(props: {
     }
 
     posts.forEach((post) => {
-      const postCard = createPostCard({
-        post,
-        sandboxOrigin: props.sandboxOrigin,
-        currentUser: props.currentUser,
-        depth: post.depth,
-        enablePostRefs: true,
-        onDelete: (postId) => {
-          // Remove post from local state
-          posts = posts.filter((p) => p.id !== postId);
-          postCards.delete(postId);
-          renderPosts();
-        },
-      });
+      const postCard = buildCard(post);
 
       postCards.set(post.id, postCard);
       postList.appendChild(postCard.getElement());
     });
   };
 
-  // Setup intersection observer for infinite scroll
-  const setupIntersectionObserver = () => {
-    if (!loadMoreSentinel) return;
-
-    // Disconnect existing observer if any
-    if (intersectionObserver) {
-      intersectionObserver.disconnect();
-    }
-
-    // Create new intersection observer optimized for mobile
-    intersectionObserver = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (entry.isIntersecting && !loading && hasMore) {
-          loadMorePosts();
-        }
-      },
-      {
-        root: null, // Use viewport as root
-        rootMargin: '300px', // Start loading 300px before sentinel comes into view (better for mobile)
-        threshold: 0.1, // Trigger when 10% is visible (more reliable than 0.1)
-      },
-    );
-
-    // Start observing the sentinel
-    intersectionObserver.observe(loadMoreSentinel);
-  };
-
   // Update loading spinner visibility
   const updateLoadingSpinner = () => {
-    if (loading) {
-      loadingSpinner.style.display = 'block';
+    loadingSpinner.style.display = loading ? 'block' : 'none';
+    infiniteScroll.sentinel.style.display = hasMore ? 'block' : 'none';
+  };
+
+  // Load initial posts
+  const source = props.source ?? 'posts';
+  const limit = 20;
+
+  const fetchPosts = async (activeCursor?: string) => {
+    const params = new URLSearchParams();
+    params.set('limit', String(limit));
+    if (activeCursor) params.set('cursor', activeCursor);
+
+    let url: string;
+    if (source === 'posts') {
+      params.set('username', props.username);
+      url = `/api/posts?${params.toString()}`;
+    } else if (source === 'freshs') {
+      url = `/api/freshs?${params.toString()}`;
     } else {
-      loadingSpinner.style.display = 'none';
+      url = `/api/bookmarks?${params.toString()}`;
     }
 
-    // Hide sentinel when no more posts
-    if (loadMoreSentinel) {
-      loadMoreSentinel.style.display = hasMore ? 'block' : 'none';
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) {
+      throw new Error('Failed to fetch posts');
     }
+
+    const data = (await response.json()) as { posts: Post[]; nextCursor?: string | null };
+    const fetched = data.posts ?? [];
+
+    let next: string | undefined;
+    let more: boolean;
+    if (data.nextCursor !== undefined) {
+      next = data.nextCursor || undefined;
+      more = !!next;
+    } else if (fetched.length > 0) {
+      next = fetched[fetched.length - 1].created_at;
+      more = fetched.length === limit;
+    } else {
+      next = undefined;
+      more = false;
+    }
+
+    return { fetched, next, more };
   };
 
   // Load initial posts
@@ -140,26 +141,10 @@ export function createUserPostList(props: {
     updateLoadingSpinner();
 
     try {
-      const params = new URLSearchParams();
-      params.set('username', props.username);
-      params.set('limit', '20');
-
-      const response = await fetch(`/api/posts?${params.toString()}`, {
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch posts');
-      }
-
-      const data = (await response.json()) as { posts: Post[] };
-      posts = data.posts;
-
-      if (data.posts.length > 0) {
-        cursor = data.posts[data.posts.length - 1].created_at;
-      }
-
-      hasMore = data.posts.length === 20;
+      const { fetched, next, more } = await fetchPosts();
+      posts = fetched;
+      cursor = next;
+      hasMore = more;
       renderPosts();
     } catch (error) {
       console.error('Failed to load posts:', error);
@@ -177,27 +162,10 @@ export function createUserPostList(props: {
     updateLoadingSpinner();
 
     try {
-      const params = new URLSearchParams();
-      params.set('username', props.username);
-      params.set('limit', '20');
-      params.set('cursor', cursor);
-
-      const response = await fetch(`/api/posts?${params.toString()}`, {
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch more posts');
-      }
-
-      const data = (await response.json()) as { posts: Post[] };
-      posts = [...posts, ...data.posts];
-
-      if (data.posts.length > 0) {
-        cursor = data.posts[data.posts.length - 1].created_at;
-      }
-
-      hasMore = data.posts.length === 20;
+      const { fetched, next, more } = await fetchPosts(cursor);
+      posts = [...posts, ...fetched];
+      cursor = next;
+      hasMore = more;
       renderPosts();
     } catch (error) {
       console.error('Failed to load more posts:', error);
@@ -207,25 +175,18 @@ export function createUserPostList(props: {
     }
   };
 
-  // Listen for postUpdated events (fresh, bookmark, reply count changes)
-  const handlePostUpdated = (e: Event): void => {
-    const detail = (e as CustomEvent).detail;
-    if (!detail?.postId) return;
-    const card = postCards.get(detail.postId);
-    if (card) {
-      const update: Partial<Post> = {};
-      if (detail.isFreshed !== undefined) update.is_freshed = detail.isFreshed;
-      if (detail.freshCount !== undefined) update.fresh_count = detail.freshCount;
-      if (detail.isBookmarked !== undefined) update.is_bookmarked = detail.isBookmarked;
-      if (detail.bookmarkCount !== undefined) update.bookmark_count = detail.bookmarkCount;
-      if (detail.replyCount !== undefined) update.reply_count = detail.replyCount;
-      card.updatePost(update);
-    }
-  };
-  window.addEventListener('postUpdated', handlePostUpdated);
+  const infiniteScroll = createInfiniteScroll({
+    onLoadMore: loadMorePosts,
+    canLoadMore: () => !loading && hasMore && !!cursor,
+  });
+  loadMoreContainer.appendChild(loadingSpinner);
+  loadMoreContainer.insertBefore(infiniteScroll.sentinel, loadingSpinner);
 
-  // Setup intersection observer and load initial posts
-  setupIntersectionObserver();
+  // Listen for postUpdated events (fresh, bookmark, reply count changes)
+  const postUpdatedHandler = createPostUpdatedHandler(postCards);
+  window.addEventListener('postUpdated', postUpdatedHandler);
+
+  // Load initial posts
   loadInitialPosts();
 
   return {
@@ -233,48 +194,22 @@ export function createUserPostList(props: {
     addPost: (post) => {
       posts = [post, ...posts];
       postList.innerHTML = '';
-      const card = createPostCard({
-        post,
-        sandboxOrigin: props.sandboxOrigin,
-        currentUser: props.currentUser,
-        depth: post.depth,
-        enablePostRefs: true,
-        onDelete: (postId) => {
-          posts = posts.filter((p) => p.id !== postId);
-          postCards.delete(postId);
-          renderPosts();
-        },
-      });
+      const card = buildCard(post);
       postCards.set(post.id, card);
       postList.appendChild(card.getElement());
       // Re-append existing cards
       for (let i = 1; i < posts.length; i++) {
         let card = postCards.get(posts[i].id);
         if (!card) {
-          card = createPostCard({
-            post: posts[i],
-            sandboxOrigin: props.sandboxOrigin,
-            currentUser: props.currentUser,
-            depth: posts[i].depth,
-            enablePostRefs: true,
-            onDelete: (postId) => {
-              posts = posts.filter((p) => p.id !== postId);
-              postCards.delete(postId);
-              renderPosts();
-            },
-          });
+          card = buildCard(posts[i]);
           postCards.set(posts[i].id, card);
         }
         postList.appendChild(card.getElement());
       }
     },
     destroy: () => {
-      window.removeEventListener('postUpdated', handlePostUpdated);
-      if (intersectionObserver) {
-        intersectionObserver.disconnect();
-        intersectionObserver = null;
-      }
-
+      window.removeEventListener('postUpdated', postUpdatedHandler);
+      infiniteScroll.disconnect();
       postCards.forEach((card) => void card.destroy());
       postCards.clear();
       container.remove();

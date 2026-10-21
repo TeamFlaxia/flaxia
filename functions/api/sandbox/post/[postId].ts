@@ -1,7 +1,10 @@
 import { Hono } from 'hono';
+import { isKeyBlocked } from '../../../lib/scan/db';
 
 interface Env {
   BUCKET: R2Bucket;
+  DB: D1Database;
+  CACHE?: KVNamespace;
 }
 
 type Bindings = Env;
@@ -9,7 +12,6 @@ type Bindings = Env;
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.get('/:postId', async (c) => {
-  console.log('Sandbox POST function called for:', c.req.url);
   const postId = c.req.param('postId');
 
   console.log('Extracted postId:', postId);
@@ -36,6 +38,10 @@ app.get('/:postId', async (c) => {
       return c.json({ error: 'ZIP not found' }, 404);
     }
 
+    if (await isKeyBlocked(c.env.CACHE, zipKey, c.env.DB)) {
+      return c.json({ error: 'ZIP not found' }, 404);
+    }
+
     // Service Worker を使用した sandbox HTML
     const htmlContent = `
 <!DOCTYPE html>
@@ -45,12 +51,12 @@ app.get('/:postId', async (c) => {
   <title>Flaxia Sandbox</title>
   <meta http-equiv="Content-Security-Policy" content="
     default-src 'none';
-    script-src 'self';
-    connect-src 'self' /api/zip/* /api/wvfs-zip/* /api/wvfs/* https://sandbox.flaxia.app;
-    style-src 'self';
-    img-src 'self' data: blob:;
-    media-src 'self' blob:;
-    font-src 'self';
+    script-src 'self' data: 'unsafe-inline';
+    connect-src 'self' data: blob: https: wss:;
+    style-src 'self' data: blob: https:;
+    img-src 'self' data: blob: https:;
+    media-src 'self' data: blob: https:;
+    font-src 'self' https:;
     frame-src 'none';
     object-src 'none';
     base-uri 'self';

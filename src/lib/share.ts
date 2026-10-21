@@ -123,3 +123,40 @@ export async function shareViaWebShare(data: ShareData): Promise<boolean> {
     return false;
   }
 }
+
+export function canUseWebShareWithFiles(): boolean {
+  return canUseWebShare() && typeof navigator.canShare === 'function';
+}
+
+export async function shareViaWebShareWithFile(data: ShareData, file: File): Promise<boolean> {
+  if (!canUseWebShareWithFiles()) {
+    return false;
+  }
+
+  const shareData = {
+    title: data.title,
+    text: data.text,
+    files: [file],
+  };
+  if (!navigator.canShare(shareData)) {
+    return false;
+  }
+
+  try {
+    await navigator.share(shareData);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function downloadFile(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

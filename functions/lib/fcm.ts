@@ -1,6 +1,7 @@
 export interface FcmPayload {
   title: string;
   body: string;
+  url?: string;
 }
 
 interface ServiceAccount {
@@ -74,8 +75,7 @@ async function getAccessToken(serviceAccount: ServiceAccount): Promise<string> {
   });
 
   if (!res.ok) {
-    const body = await res.text();
-    console.error('[fcm] token exchange failed', res.status, body);
+    console.error('[fcm] token exchange failed', res.status);
     throw new Error('FCM token exchange failed');
   }
 
@@ -115,7 +115,7 @@ export async function sendPushToDevice(
           data: {
             title: payload.title,
             body: payload.body,
-            click_url: '/',
+            click_url: payload.url || '/',
           },
           android: {
             priority: 'high',
@@ -129,7 +129,6 @@ export async function sendPushToDevice(
             payload: {
               aps: {
                 sound: 'default',
-                badge: 1,
               },
             },
           },
@@ -138,8 +137,7 @@ export async function sendPushToDevice(
     });
 
     if (!res.ok) {
-      const body = await res.text();
-      console.error('[fcm] send failed', res.status, body);
+      console.error('[fcm] send failed', res.status);
       if (res.status === 400 || res.status === 404 || res.status === 410) {
         return false;
       }
@@ -147,8 +145,8 @@ export async function sendPushToDevice(
     }
 
     return true;
-  } catch (err) {
-    console.error('[fcm] send error', err);
+  } catch {
+    console.error('[fcm] send error');
     return false;
   }
 }

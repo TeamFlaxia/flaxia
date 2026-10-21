@@ -1,5 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 
+import { parsePublicHttpUrl } from './lib/url-guard';
+
 interface DeliveryMessage {
   type: 'delivery';
   inboxUrl: string;
@@ -19,9 +21,39 @@ type QueueMessage = DeliveryMessage | InboxMessage;
 interface Env {
   DB: D1Database;
   BASE_URL: string;
+  EXPORT_KV?: KVNamespace;
+  EXPORT_BUCKET?: R2Bucket;
+  HF_TOKEN?: string;
+  HF_REPO?: string;
 }
 
 export default {
+  // Triggered by `triggers.crons` in wrangler.toml.worker — exports the
+  // anonymized Arcade dwell dataset and uploads it to HuggingFace (optional).
+  async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
+    try {
+      const { runDatasetExport } = await import('./lib/dataset-export');
+      const count = await runDatasetExport(env);
+      console.log(`Dataset export finished: ${count} records exported`);
+    } catch (error) {
+      console.error('Dataset export failed:', (error as Error).message);
+    }
+    try {
+      const { reapStalePendingPosts } = await import('./lib/pending-reap');
+      const reaped = await reapStalePendingPosts(env);
+      if (reaped > 0) console.log(`Reaped ${reaped} stale pending posts`);
+    } catch (error) {
+      console.error('Pending reap failed:', (error as Error).message);
+    }
+    try {
+      const { recomputeStaleTrustScores } = await import('./lib/trust');
+      const refreshed = await recomputeStaleTrustScores(env.DB);
+      if (refreshed > 0) console.log(`Recomputed trust scores for ${refreshed} users`);
+    } catch (error) {
+      console.error('Trust score recompute failed:', (error as Error).message);
+    }
+  },
+
   async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
     console.log(`Processing batch of ${batch.messages.length} messages`);
 
@@ -58,10 +90,22 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
   const maxRetries = 3;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
+  // The inbox URL is stored from a remote actor document, so it is re-validated
+  // at delivery time: a poisoned row must not turn the queue into an
+  // authenticated request forwarder to private addresses.
+  let deliveryUrl: URL;
   try {
-    // Get user's private and public keys for signing
+    deliveryUrl = parsePublicHttpUrl(inboxUrl);
+  } catch {
+    console.error('Blocked ActivityPub delivery to non-public inbox:', inboxUrl);
+    message.ack();
+    return;
+  }
+
+  try {
+    // Get the user's private key for signing.
     const keyResult = await env.DB.prepare(`
-      SELECT ak.private_key_pem, ak.public_key_pem FROM actor_keys ak
+      SELECT ak.private_key_pem FROM actor_keys ak
       JOIN users u ON u.id = ak.user_id
       WHERE u.username = ?
     `)
@@ -75,18 +119,17 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
     }
 
     const privateKeyPem = keyResult.private_key_pem as string;
-    const publicKeyPem = keyResult.public_key_pem as string;
-    const keyId = `${env.BASE_URL}/actors/${senderUsername}#main-key`;
+    const keyId = `${env.BASE_URL}/api/actors/${senderUsername}#main-key`;
 
     const { signRequest } = await import('./lib/activitypub/signature');
     const body = JSON.stringify(activity);
-    const headers = await signRequest(inboxUrl, body, privateKeyPem, publicKeyPem, keyId);
+    const headers = await signRequest(deliveryUrl.toString(), body, privateKeyPem, keyId);
 
     // Add timeout and better error handling
     const controller = new AbortController();
     timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
-    const response = await fetch(inboxUrl, {
+    const response = await fetch(deliveryUrl.toString(), {
       method: 'POST',
       headers: headers,
       body: body,
@@ -98,25 +141,21 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
     }
 
     if (response.ok) {
-      console.log('ActivityPub delivery successful:', inboxUrl, 'activity:', (activity as { type: string }).type);
+      console.log('ActivityPub delivery successful:', (activity as { type: string }).type);
       message.ack();
     } else {
-      const responseText = await response.text();
       console.error('ActivityPub delivery failed:', {
-        inboxUrl,
         status: response.status,
-        statusText: response.statusText,
-        responseText: responseText.substring(0, 500),
         activityType: (activity as { type: string }).type,
       });
 
       // Retry on server errors (5xx) or network issues
       if (response.status >= 500 || response.status === 429) {
         if (retryCount < maxRetries) {
-          console.log(`Retrying delivery to ${inboxUrl}, attempt ${retryCount + 1}/${maxRetries}`);
+          console.log(`Retrying ActivityPub delivery, attempt ${retryCount + 1}/${maxRetries}`);
           message.retry({ delaySeconds: 2 ** retryCount * 30 }); // Exponential backoff
         } else {
-          console.error(`Max retries exceeded for ${inboxUrl}, giving up`);
+          console.error('Max ActivityPub delivery retries exceeded');
           message.ack();
         }
       } else {
@@ -130,8 +169,6 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
     }
 
     console.error('ActivityPub delivery error:', {
-      inboxUrl,
-      error: (e as Error).message,
       name: (e as Error).name,
       retryCount,
       activityType: (activity as { type: string }).type,
@@ -139,10 +176,10 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
 
     // Retry on network errors or timeouts
     if (retryCount < maxRetries && ((e as Error).name === 'AbortError' || (e as Error).name === 'TypeError')) {
-      console.log(`Retrying delivery to ${inboxUrl} after error, attempt ${retryCount + 1}/${maxRetries}`);
+      console.log(`Retrying ActivityPub delivery after error, attempt ${retryCount + 1}/${maxRetries}`);
       message.retry({ delaySeconds: 2 ** retryCount * 30 });
     } else {
-      console.error(`Max retries exceeded or non-retryable error for ${inboxUrl}`);
+      console.error('Max retries exceeded or non-retryable ActivityPub delivery error');
       message.ack();
     }
   }
@@ -213,6 +250,18 @@ async function handleCreateActivity(
     return;
   }
 
+  // The Note must be attributed to the signing actor; otherwise any
+  // federated key could publish content under another actor's name.
+  const attributedTo = object.attributedTo;
+  const attributedMatch =
+    typeof attributedTo === 'string'
+      ? attributedTo === actorId
+      : Array.isArray(attributedTo) && attributedTo.includes(actorId);
+  if (!attributedMatch) {
+    console.error('Note attributedTo does not match signing actor');
+    return;
+  }
+
   const userResult = (await env.DB.prepare(`
     SELECT id FROM users WHERE username = ? COLLATE NOCASE
   `)
@@ -225,12 +274,29 @@ async function handleCreateActivity(
   }
 
   const userId = userResult.id;
-  const postId = activity.id ? (activity.id as string).split('/create-')[1] : generatePostId();
+
+  // Only actors the target user has a follow relationship with may have
+  // their Notes published. Without this, any holder of a federated signing
+  // key could inject posts into any local timeline context.
+  const followRel = await env.DB.prepare(`SELECT id FROM ap_followers WHERE local_user_id = ? AND actor_url = ?`)
+    .bind(userId, actorId)
+    .first();
+  if (!followRel) {
+    console.error('Ignoring Create from non-follower actor:', actorId);
+    return;
+  }
+
+  // Always mint the post id server-side: activity ids are attacker input
+  // and must never become primary keys (id squatting / collision).
+  const postId = generatePostId();
+
+  // Federated content is untrusted markup: store plain text only.
+  const plainContent = content.replace(/<[^>]*>/g, '').slice(0, 200);
 
   const hashtagSet = new Set<string>();
   const hashtagRegex = /#(\w+)/g;
   let match: RegExpExecArray | null;
-  while ((match = hashtagRegex.exec(content)) !== null) {
+  while ((match = hashtagRegex.exec(plainContent)) !== null) {
     hashtagSet.add(match[1]);
   }
   const hashtags = Array.from(hashtagSet);
@@ -239,7 +305,7 @@ async function handleCreateActivity(
   const mentionSet = new Set<string>();
   const mentionRegex = /@([a-zA-Z0-9_]{1,20})/g;
   let mentionMatch: RegExpExecArray | null;
-  while ((mentionMatch = mentionRegex.exec(content)) !== null) {
+  while ((mentionMatch = mentionRegex.exec(plainContent)) !== null) {
     mentionSet.add(mentionMatch[1]);
   }
   const mentionedUsernames = Array.from(mentionSet);
@@ -258,40 +324,44 @@ async function handleCreateActivity(
 
   await env.DB.prepare(`
     INSERT INTO posts (id, user_id, username, text, hashtags, status, parent_id, root_id, depth, actor_id, created_at)
-    VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
-    .bind(postId, userId, username, content, JSON.stringify(hashtags), parentId, rootId, depth, actorId)
+    .bind(postId, userId, username, plainContent, JSON.stringify(hashtags), parentId, rootId, depth, actorId)
     .run();
 
   // Create mention notifications for mentioned users
   if (mentionedUsernames.length > 0) {
     try {
-      for (const mentionedUsername of mentionedUsernames) {
-        // Don't notify if mentioning yourself
-        if (mentionedUsername.toLowerCase() === username.toLowerCase()) {
-          continue;
-        }
+      const filteredUsernames = mentionedUsernames.filter((mu) => mu.toLowerCase() !== username.toLowerCase());
 
-        // Look up the mentioned user
-        const mentionedUser = (await env.DB.prepare(
-          'SELECT id, username, display_name, avatar_key FROM users WHERE username = ? COLLATE NOCASE',
+      if (filteredUsernames.length > 0) {
+        // Batch lookup all mentioned users
+        const placeholders = filteredUsernames.map(() => '?').join(',');
+        const mentionedUsers = (await env.DB.prepare(
+          `SELECT id, username, display_name, avatar_key, badge_type FROM users WHERE username IN (${placeholders}) COLLATE NOCASE`,
         )
-          .bind(mentionedUsername)
-          .first()) as { id: string; username: string; display_name: string; avatar_key: string | null } | null;
+          .bind(...filteredUsernames)
+          .all<{ id: string; username: string; display_name: string; avatar_key: string | null }>()) as D1Result<{
+          id: string;
+          username: string;
+          display_name: string;
+          avatar_key: string | null;
+        }>;
 
-        if (mentionedUser) {
-          // Create mention notification with actor_data for external actor
-          const actorData = JSON.stringify({
-            username: username,
-            display_name: username,
-            domain: new URL(actorId).hostname,
-          });
+        const actorData = JSON.stringify({
+          username: username,
+          display_name: username,
+          domain: new URL(actorId).hostname,
+        });
 
-          await env.DB.prepare(
+        const stmts = (mentionedUsers.results || []).map((mentionedUser) =>
+          env.DB.prepare(
             'INSERT INTO notifications (id, user_id, type, post_id, actor_id, actor_data) VALUES (?, ?, ?, ?, ?, ?)',
-          )
-            .bind(generateId(), mentionedUser.id, 'mention', postId, actorId, actorData)
-            .run();
+          ).bind(generateId(), mentionedUser.id, 'mention', postId, actorId, actorData),
+        );
+
+        if (stmts.length > 0) {
+          await env.DB.batch(stmts);
         }
       }
     } catch (e) {
@@ -333,28 +403,53 @@ async function handleFollowActivity(
     return;
   }
 
-  // Fetch actor's inbox URL and profile information
+  // Fetch actor's inbox URL and profile information.
+  // Both the actor URL and the advertised inbox are remote input: gate them
+  // before fetching, and only accept an inbox on the actor's own origin so a
+  // malicious actor document cannot redirect signed deliveries at intranet URLs.
   let inboxUrl = activity.actor as string;
   let actorData: Record<string, unknown> | null = null;
+  let actorOrigin: string | null = null;
   try {
-    const actorResponse = await fetch(actorId, {
-      headers: {
-        Accept: 'application/activity+json, application/ld+json',
-      },
-    });
+    actorOrigin = parsePublicHttpUrl(actorId).origin;
+  } catch {
+    console.error('Refusing to fetch non-public actor URL:', actorId);
+  }
+  if (actorOrigin) {
+    try {
+      const { fetchWithSsrfGuard } = await import('./lib/url-guard');
+      const actorResponse = await fetchWithSsrfGuard(actorId, {
+        headers: {
+          Accept: 'application/activity+json, application/ld+json',
+        },
+        timeoutMs: 10000,
+      });
 
-    if (actorResponse.ok) {
-      actorData = (await actorResponse.json()) as Record<string, unknown>;
-      inboxUrl = (actorData.inbox as string) || (activity.actor as string);
+      if (actorResponse.ok) {
+        actorData = (await actorResponse.json()) as Record<string, unknown>;
+        const advertised = actorData.inbox;
+        if (typeof advertised === 'string') {
+          try {
+            const inboxParsed = parsePublicHttpUrl(advertised);
+            if (inboxParsed.origin === actorOrigin) {
+              inboxUrl = inboxParsed.toString();
+            } else {
+              console.error('Refusing cross-origin actor inbox:', advertised);
+            }
+          } catch {
+            console.error('Refusing invalid actor inbox:', advertised);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch actor inbox:', e);
     }
-  } catch (e) {
-    console.error('Failed to fetch actor inbox:', e);
   }
 
   const followerId = generateId();
   await env.DB.prepare(`
     INSERT INTO ap_followers (id, local_user_id, actor_url, inbox_url, created_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
     .bind(followerId, localUserId, actorId, inboxUrl)
     .run();
@@ -418,13 +513,13 @@ async function handleFollowActivity(
 
   // Send Accept activity automatically
   try {
-    console.log('Preparing to send Accept activity for follow from:', actorId, 'to user:', username);
+    console.log('Preparing ActivityPub follow acceptance');
 
     const { signRequest } = await import('./lib/activitypub/signature');
 
     // Get user's private and public keys for signing
     const keyResult = await env.DB.prepare(`
-      SELECT ak.private_key_pem, ak.public_key_pem FROM actor_keys ak
+      SELECT ak.private_key_pem FROM actor_keys ak
       JOIN users u ON u.id = ak.user_id
       WHERE u.username = ?
     `)
@@ -437,30 +532,21 @@ async function handleFollowActivity(
     }
 
     const privateKeyPem = keyResult.private_key_pem as string;
-    const publicKeyPem = keyResult.public_key_pem as string;
-    const keyId = `${env.BASE_URL}/actors/${username}#main-key`;
-
-    console.log('Using inbox URL:', inboxUrl);
-    console.log('Key ID:', keyId);
+    const keyId = `${env.BASE_URL}/api/actors/${username}#main-key`;
 
     // Build Accept activity - use the original Follow activity as object
     const acceptActivity = {
       '@context': 'https://www.w3.org/ns/activitystreams',
       id: `${env.BASE_URL}/activities/accept-${followerId}`,
       type: 'Accept',
-      actor: `${env.BASE_URL}/actors/${username}`,
+      actor: `${env.BASE_URL}/api/actors/${username}`,
       object: activity, // Use the entire original Follow activity
       to: [actorId],
       published: new Date().toISOString(),
     };
 
-    console.log('Accept activity:', JSON.stringify(acceptActivity, null, 2));
-
     const body = JSON.stringify(acceptActivity);
-    const headers = await signRequest(inboxUrl, body, privateKeyPem, publicKeyPem, keyId);
-
-    console.log('Sending Accept activity to:', inboxUrl);
-    console.log('Headers:', Object.fromEntries(headers.entries()));
+    const headers = await signRequest(inboxUrl, body, privateKeyPem, keyId);
 
     const response = await fetch(inboxUrl, {
       method: 'POST',
@@ -469,29 +555,16 @@ async function handleFollowActivity(
     });
 
     if (response.status === 200) {
-      console.log('Accept activity sent successfully to:', actorId, 'status:', response.status);
+      console.log('Accept activity sent successfully:', response.status);
     } else if (response.status === 202) {
-      console.warn(
-        'Accept activity accepted but not processed yet (202) - this may cause follow approval issues:',
-        actorId,
-      );
+      console.warn('Accept activity was accepted but not processed yet (202)');
     } else {
-      const responseText = await response.text();
       console.error('Failed to send Accept activity:', {
-        inboxUrl,
         status: response.status,
-        statusText: response.statusText,
-        responseText: responseText.substring(0, 500),
       });
     }
   } catch (e: unknown) {
-    console.error('Error sending Accept activity:', {
-      error: (e as Error).message,
-      stack: (e as Error).stack,
-      actorId,
-      username,
-      inboxUrl,
-    });
+    console.error('Error sending Accept activity:', { name: (e as Error).name });
   }
 }
 
@@ -576,7 +649,7 @@ async function handleLikeActivity(
   const likeId = generateId();
   await env.DB.prepare(`
     INSERT INTO likes (id, post_id, user_id, actor_id, created_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
     .bind(likeId, postId, 'unknown', actorId)
     .run();
@@ -630,7 +703,7 @@ async function handleAnnounceActivity(
   const shareId = generateId();
   await env.DB.prepare(`
     INSERT INTO shares (id, post_id, user_id, actor_id, created_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
     .bind(shareId, postId, 'unknown', actorId)
     .run();

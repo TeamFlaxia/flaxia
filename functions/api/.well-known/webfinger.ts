@@ -52,7 +52,7 @@ app.get('/', async (c) => {
         {
           rel: 'self',
           type: 'application/activity+json',
-          href: `${c.env.BASE_URL}/actors/${username}`,
+          href: `${c.env.BASE_URL}/api/actors/${username}`,
         },
       ],
     };
@@ -62,7 +62,7 @@ app.get('/', async (c) => {
     });
   } catch (error: unknown) {
     console.error('WebFinger error:', error);
-    return c.json({ error: 'WebFinger failed', details: error?.message || 'Unknown error' }, 500);
+    return c.json({ error: 'WebFinger failed' }, 500);
   }
 });
 

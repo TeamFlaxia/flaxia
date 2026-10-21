@@ -1,5 +1,0 @@
-/.well-known/* /api/.well-known/:splat 200
-/users/* /api/users/:splat 200
-/api/* /api/:splat 200
-/login /login.html 200
-/* /index.html 200

@@ -1,0 +1,569 @@
+import assert from 'node:assert';
+import { beforeEach, describe, it } from 'node:test';
+import { BASE_URL, resetDb, seedUserAndLogin } from './helpers/setup.ts';
+
+describe('POST /api/multiplayer/rooms', () => {
+  beforeEach(resetDb);
+
+  it('creates a room → 201', async () => {
+    const { cookie } = await seedUserAndLogin('mp1');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ gameId: 'test-game', maxPlayers: 4, isPublic: true }),
+    });
+    assert.equal(res.status, 201);
+    const data = (await res.json()) as Record<string, unknown>;
+    assert.ok(data.roomId);
+    assert.equal(data.gameId, 'test-game');
+    assert.equal(data.maxPlayers, 4);
+    assert.equal(data.isPublic, true);
+  });
+
+  it('creates a room with defaults → 201', async () => {
+    const { cookie } = await seedUserAndLogin('mp2');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ gameId: 'default-game' }),
+    });
+    const data = (await res.json()) as Record<string, unknown>;
+    assert.equal(data.maxPlayers, 2);
+    assert.equal(data.isPublic, true);
+  });
+
+  it('rejects missing gameId → 400', async () => {
+    const { cookie } = await seedUserAndLogin('mp3');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it('rejects unauthenticated → 401', async () => {
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gameId: 'test' }),
+    });
+    assert.equal(res.status, 401);
+  });
+
+  it('rejects invalid JSON → 400', async () => {
+    const { cookie } = await seedUserAndLogin('mp4');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: 'not-json',
+    });
+    assert.equal(res.status, 400);
+  });
+});
+
+describe('GET /api/multiplayer/rooms', () => {
+  beforeEach(resetDb);
+
+  it('lists public rooms → 200', async () => {
+    const { cookie } = await seedUserAndLogin('mp5');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
+      headers: { Cookie: cookie },
+    });
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as Record<string, unknown>;
+    assert.ok(Array.isArray(data.rooms));
+  });
+
+  it('filters by gameId', async () => {
+    const { cookie } = await seedUserAndLogin('mp6');
+    await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ gameId: 'filter-test' }),
+    });
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms?gameId=filter-test`, {
+      headers: { Cookie: cookie },
+    });
+    const data = (await res.json()) as Record<string, unknown>;
+    const rooms = data.rooms as Array<Record<string, unknown>>;
+    assert.ok(rooms.length >= 1);
+    for (const room of rooms) {
+      assert.equal(room.game_id, 'filter-test');
+    }
+  });
+
+  it('filters by status', async () => {
+    const { cookie } = await seedUserAndLogin('mp7');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms?status=playing`, {
+      headers: { Cookie: cookie },
+    });
+    assert.equal(res.status, 200);
+  });
+
+  it('rejects unauthenticated → 401', async () => {
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms`);
+    assert.equal(res.status, 401);
+  });
+});
+
+describe('GET /api/multiplayer/rooms/:id', () => {
+  beforeEach(resetDb);
+
+  it('returns room details → 200', async () => {
+    const { cookie } = await seedUserAndLogin('mp8');
+    const createRes = await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ gameId: 'detail-test' }),
+    });
+    const { roomId } = (await createRes.json()) as { roomId: string };
+
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms/${roomId}`, {
+      headers: { Cookie: cookie },
+    });
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as Record<string, unknown>;
+    assert.ok(data.room);
+    assert.equal((data.room as Record<string, unknown>).id, roomId);
+    assert.ok(Array.isArray(data.participants));
+  });
+
+  it('returns 404 for non-existent room', async () => {
+    const { cookie } = await seedUserAndLogin('mp9');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms/nonexistent`, {
+      headers: { Cookie: cookie },
+    });
+    assert.equal(res.status, 404);
+  });
+
+  it('rejects unauthenticated → 401', async () => {
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms/fake`);
+    assert.equal(res.status, 401);
+  });
+});
+
+describe('POST /api/multiplayer/rooms/:id/join', () => {
+  beforeEach(resetDb);
+
+  it('joins an existing room → 200', async () => {
+    const { cookie: hostCookie } = await seedUserAndLogin('host');
+    const createRes = await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: hostCookie },
+      body: JSON.stringify({ gameId: 'join-test' }),
+    });
+    const { roomId } = (await createRes.json()) as { roomId: string };
+
+    const { cookie: joinerCookie } = await seedUserAndLogin('joiner');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms/${roomId}/join`, {
+      method: 'POST',
+      headers: { Cookie: joinerCookie },
+    });
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as Record<string, unknown>;
+    assert.ok(data.success);
+    assert.equal(data.roomId, roomId);
+    assert.ok(typeof data.wsUrl === 'string');
+  });
+
+  it('returns 404 for non-existent room', async () => {
+    const { cookie } = await seedUserAndLogin('mp10');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms/nonexistent/join`, {
+      method: 'POST',
+      headers: { Cookie: cookie },
+    });
+    assert.equal(res.status, 404);
+  });
+
+  it('rejects unauthenticated → 401', async () => {
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms/fake/join`, { method: 'POST' });
+    assert.equal(res.status, 401);
+  });
+
+  it('allows multiple players to join', async () => {
+    const { cookie: hostCookie } = await seedUserAndLogin('mhost');
+    const createRes = await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: hostCookie },
+      body: JSON.stringify({ gameId: 'multi-join', maxPlayers: 3 }),
+    });
+    const { roomId } = (await createRes.json()) as { roomId: string };
+
+    const { cookie: p2 } = await seedUserAndLogin('mp2nd');
+    const res2 = await fetch(`${BASE_URL}/api/multiplayer/rooms/${roomId}/join`, {
+      method: 'POST',
+      headers: { Cookie: p2 },
+    });
+    assert.equal(res2.status, 200);
+
+    const { cookie: p3 } = await seedUserAndLogin('mp3rd');
+    const res3 = await fetch(`${BASE_URL}/api/multiplayer/rooms/${roomId}/join`, {
+      method: 'POST',
+      headers: { Cookie: p3 },
+    });
+    assert.equal(res3.status, 200);
+  });
+});
+
+describe('POST /api/multiplayer/rooms/:id/leave', () => {
+  beforeEach(resetDb);
+
+  it('leaves a room → 200', async () => {
+    const { cookie } = await seedUserAndLogin('mp11');
+    const createRes = await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ gameId: 'leave-test' }),
+    });
+    const { roomId } = (await createRes.json()) as { roomId: string };
+
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms/${roomId}/leave`, {
+      method: 'POST',
+      headers: { Cookie: cookie },
+    });
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as Record<string, unknown>;
+    assert.ok(data.success);
+  });
+});
+
+describe('POST /api/multiplayer/scores', () => {
+  beforeEach(resetDb);
+
+  it('submits a score → 201', async () => {
+    const { cookie } = await seedUserAndLogin('mp12');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/scores`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ gameId: 'score-game', score: 1000, label: 'Level 1' }),
+    });
+    assert.equal(res.status, 201);
+    const data = (await res.json()) as Record<string, unknown>;
+    assert.equal(data.score, 1000);
+    assert.equal(data.label, 'Level 1');
+  });
+
+  it('submits score with metadata → 201', async () => {
+    const { cookie } = await seedUserAndLogin('mp13');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/scores`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ gameId: 'meta-game', score: 500, metadata: { level: 3, time: 120 } }),
+    });
+    assert.equal(res.status, 201);
+  });
+
+  it('rejects invalid score (NaN) → 400', async () => {
+    const { cookie } = await seedUserAndLogin('mp14');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/scores`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ gameId: 'bad', score: 'abc' }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it('rejects missing gameId → 400', async () => {
+    const { cookie } = await seedUserAndLogin('mp15');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/scores`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ score: 100 }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it('rejects unauthenticated → 401', async () => {
+    const res = await fetch(`${BASE_URL}/api/multiplayer/scores`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gameId: 'g', score: 100 }),
+    });
+    assert.equal(res.status, 401);
+  });
+});
+
+describe('GET /api/multiplayer/scores/:gameId', () => {
+  beforeEach(resetDb);
+
+  it('returns leaderboard → 200', async () => {
+    const { cookie } = await seedUserAndLogin('mp16');
+    await fetch(`${BASE_URL}/api/multiplayer/scores`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ gameId: 'lb-game', score: 100 }),
+    });
+
+    const res = await fetch(`${BASE_URL}/api/multiplayer/scores/lb-game`);
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as Record<string, unknown>;
+    assert.ok(Array.isArray(data.scores));
+  });
+
+  it('returns empty list for game with no scores', async () => {
+    const res = await fetch(`${BASE_URL}/api/multiplayer/scores/nonexistent-game`);
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as { scores: unknown[] };
+    assert.deepStrictEqual(data.scores, []);
+  });
+
+  it('filters by userId', async () => {
+    const { cookie } = await seedUserAndLogin('mp17');
+    await fetch(`${BASE_URL}/api/multiplayer/scores`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ gameId: 'filter-lb', score: 200 }),
+    });
+
+    const res = await fetch(`${BASE_URL}/api/multiplayer/scores/filter-lb?userId=mp17`);
+    assert.equal(res.status, 200);
+  });
+
+  it('scores are ordered descending', async () => {
+    const { cookie: c1 } = await seedUserAndLogin('ms1');
+    const { cookie: c2 } = await seedUserAndLogin('ms2');
+
+    await fetch(`${BASE_URL}/api/multiplayer/scores`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: c1 },
+      body: JSON.stringify({ gameId: 'order-game', score: 50 }),
+    });
+    await fetch(`${BASE_URL}/api/multiplayer/scores`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: c2 },
+      body: JSON.stringify({ gameId: 'order-game', score: 200 }),
+    });
+
+    const res = await fetch(`${BASE_URL}/api/multiplayer/scores/order-game`);
+    const data = (await res.json()) as { scores: Array<{ score: number }> };
+    assert.ok(data.scores[0].score >= data.scores[1].score);
+  });
+});
+
+describe('POST /api/multiplayer/matchmaking', () => {
+  beforeEach(resetDb);
+
+  it('joins matchmaking queue → 200', async () => {
+    const { cookie } = await seedUserAndLogin('mm1');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/matchmaking`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ gameId: 'mm-game', action: 'join' }),
+    });
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as Record<string, unknown>;
+    assert.ok(data.status === 'queued' || data.status === 'already_in_queue');
+  });
+
+  it('leaves matchmaking queue → 200', async () => {
+    const { cookie } = await seedUserAndLogin('mm2');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/matchmaking`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ gameId: 'mm-game2', action: 'leave' }),
+    });
+    assert.equal(res.status, 200);
+  });
+
+  it('checks matchmaking → 200', async () => {
+    const { cookie } = await seedUserAndLogin('mm3');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/matchmaking`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ gameId: 'mm-game3', action: 'check' }),
+    });
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as Record<string, unknown>;
+    // With only one player in queue, should not match
+    assert.equal(data.matched, false);
+  });
+
+  it('rejects missing gameId → 400', async () => {
+    const { cookie } = await seedUserAndLogin('mm4');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/matchmaking`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ action: 'join' }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it('rejects unknown action → 400', async () => {
+    const { cookie } = await seedUserAndLogin('mm5');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/matchmaking`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ gameId: 'mm-game5', action: 'unknown' }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it('rejects unauthenticated → 401', async () => {
+    const res = await fetch(`${BASE_URL}/api/multiplayer/matchmaking`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gameId: 'g', action: 'join' }),
+    });
+    assert.equal(res.status, 401);
+  });
+
+  it('records the polling caller as host so the room can start', async () => {
+    const a = await seedUserAndLogin('mm-host-a');
+    const b = await seedUserAndLogin('mm-host-b');
+    // A queues first, B second; B polls first and consumes the pair.
+    for (const u of [a, b]) {
+      const join = await fetch(`${BASE_URL}/api/multiplayer/matchmaking`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: u.cookie },
+        body: JSON.stringify({ gameId: 'mm-host-game', action: 'join' }),
+      });
+      assert.equal(join.status, 200);
+    }
+    const check = await fetch(`${BASE_URL}/api/multiplayer/matchmaking`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: b.cookie },
+      body: JSON.stringify({ gameId: 'mm-host-game', action: 'check' }),
+    });
+    assert.equal(check.status, 200);
+    const data = (await check.json()) as { matched: boolean; roomId: string };
+    assert.equal(data.matched, true);
+    assert.ok(data.roomId);
+    // The caller (B) must be the recorded host: it is the only player
+    // who learned the roomId, and only the host may start the game.
+    const roomRes = await fetch(`${BASE_URL}/api/multiplayer/rooms/${data.roomId}`, {
+      headers: { Cookie: b.cookie },
+    });
+    assert.equal(roomRes.status, 200);
+    const { room, participants } = (await roomRes.json()) as {
+      room: { host_id: string };
+      participants: Array<{ user_id: string; username: string; is_host: number }>;
+    };
+    const hostEntry = participants.find((p) => p.username === b.username);
+    assert.ok(hostEntry);
+    assert.equal(room.host_id, hostEntry.user_id);
+    assert.equal(hostEntry.is_host, 1);
+  });
+});
+
+describe('POST /api/multiplayer/rooms/:id/join — error cases', () => {
+  beforeEach(resetDb);
+
+  it('returns 400 when joining a full room', async () => {
+    const { cookie } = await seedUserAndLogin('err1');
+    const createRes = await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ gameId: 'err-game', maxPlayers: 2 }),
+    });
+    const { roomId } = (await createRes.json()) as { roomId: string };
+
+    // Fill the two-player room, then a third join must be rejected.
+    const { cookie: err2 } = await seedUserAndLogin('err2');
+    const second = await fetch(`${BASE_URL}/api/multiplayer/rooms/${roomId}/join`, {
+      method: 'POST',
+      headers: { Cookie: err2 },
+    });
+    assert.equal(second.status, 200);
+    const { cookie: err3 } = await seedUserAndLogin('err3');
+    const res = await fetch(`${BASE_URL}/api/multiplayer/rooms/${roomId}/join`, {
+      method: 'POST',
+      headers: { Cookie: err3 },
+    });
+    assert.equal(res.status, 400);
+  });
+});
+
+function sessionToken(cookie: string): string {
+  const token = /(?:^|;\s*)session=([^;]+)/.exec(cookie)?.[1];
+  assert.ok(token, 'session cookie should contain a token');
+  return decodeURIComponent(token);
+}
+
+// Opens a multiplayer socket the way the client does (session token in the
+// query). Resolves true when the server upgrades the connection.
+function connectMultiplayer(
+  roomId: string,
+  gameId: string,
+  cookie: string,
+): { socket: WebSocket; opened: Promise<boolean> } {
+  const url = new URL(`${BASE_URL}/api/ws/multiplayer`);
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+  url.searchParams.set('roomId', roomId);
+  url.searchParams.set('gameId', gameId);
+  url.searchParams.set('token', sessionToken(cookie));
+
+  const socket = new WebSocket(url);
+  const opened = new Promise<boolean>((resolve) => {
+    let settled = false;
+    const finish = (accepted: boolean) => {
+      if (settled) return;
+      settled = true;
+      if (!accepted && socket.readyState === WebSocket.OPEN) socket.close();
+      resolve(accepted);
+    };
+    const timeout = setTimeout(() => finish(false), 5000);
+    socket.addEventListener(
+      'open',
+      () => {
+        clearTimeout(timeout);
+        finish(true);
+      },
+      { once: true },
+    );
+    socket.addEventListener(
+      'error',
+      () => {
+        clearTimeout(timeout);
+        finish(false);
+      },
+      { once: true },
+    );
+  });
+  return { socket, opened };
+}
+
+async function createWsRoom(cookie: string, gameId: string, maxPlayers: number): Promise<string> {
+  const response = await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ gameId, maxPlayers }),
+  });
+  assert.equal(response.status, 201);
+  return ((await response.json()) as { roomId: string }).roomId;
+}
+
+describe('WebSocket /api/ws/multiplayer — membership gate', () => {
+  beforeEach(resetDb);
+
+  it('refuses sockets from non-members', async () => {
+    const { cookie: hostCookie } = await seedUserAndLogin('ws-host');
+    const roomId = await createWsRoom(hostCookie, 'ws-gate', 4);
+
+    // Never joins over REST: the socket gate (not just capacity) must refuse.
+    const { cookie: outsiderCookie } = await seedUserAndLogin('ws-outsider');
+    const { socket, opened } = connectMultiplayer(roomId, 'ws-gate', outsiderCookie);
+    assert.equal(await opened, false);
+    socket.close();
+  });
+
+  it('admits the host and REST-joined members', async () => {
+    const { cookie: hostCookie } = await seedUserAndLogin('ws-host2');
+    const roomId = await createWsRoom(hostCookie, 'ws-gate2', 4);
+
+    const host = connectMultiplayer(roomId, 'ws-gate2', hostCookie);
+    assert.equal(await host.opened, true);
+
+    const { cookie: memberCookie } = await seedUserAndLogin('ws-member');
+    const joinRes = await fetch(`${BASE_URL}/api/multiplayer/rooms/${roomId}/join`, {
+      method: 'POST',
+      headers: { Cookie: memberCookie },
+    });
+    assert.equal(joinRes.status, 200);
+    const member = connectMultiplayer(roomId, 'ws-gate2', memberCookie);
+    assert.equal(await member.opened, true);
+
+    host.socket.close();
+    member.socket.close();
+  });
+});

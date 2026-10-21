@@ -13,6 +13,8 @@ export interface PushPayload {
   title: string;
   body: string;
   url?: string;
+  type?: string;
+  postId?: string;
 }
 
 let vapidKeys: { publicKey: string; privateKey: string } | null = null;
@@ -24,8 +26,11 @@ let vapidKeys: { publicKey: string; privateKey: string } | null = null;
  */
 function ensureVapid(vapidPublicKey?: string, vapidPrivateKey?: string, subject?: string) {
   if (vapidKeys) return;
-  const pub = vapidPublicKey || VAPID_PUBLIC_KEY;
-  const priv = vapidPrivateKey || VAPID_PRIVATE_KEY;
+  // The globals only exist when the secrets are configured; a bare read
+  // throws ReferenceError otherwise (500 on /api/push/vapid-key), so probe
+  // with typeof first and fall through to generated dev keys.
+  const pub = vapidPublicKey || (typeof VAPID_PUBLIC_KEY !== 'undefined' ? VAPID_PUBLIC_KEY : undefined);
+  const priv = vapidPrivateKey || (typeof VAPID_PRIVATE_KEY !== 'undefined' ? VAPID_PRIVATE_KEY : undefined);
   if (pub && priv) {
     vapidKeys = { publicKey: pub, privateKey: priv };
   } else {
@@ -57,8 +62,7 @@ export async function sendPushToSubscription(
     });
 
     if (!res.ok) {
-      const body = await res.text();
-      console.error('Web Push send failed', res.status, body);
+      console.error('Web Push send failed', res.status);
       // 410 Gone = subscription expired, should be removed
       if (res.status === 410) {
         return false; // signal that subscription should be deleted
@@ -67,8 +71,8 @@ export async function sendPushToSubscription(
     }
 
     return true;
-  } catch (err) {
-    console.error('Web Push send error', err);
+  } catch {
+    console.error('Web Push send error');
     return false;
   }
 }
@@ -89,22 +93,29 @@ export async function sendPushToUser(
     .bind(userId)
     .all()) as { results: { type: string; endpoint: string; auth_key: string; p256dh_key: string }[] };
 
-  for (const row of results) {
-    if (row.type === 'fcm') {
-      const ok = await sendPushToDevice(row.endpoint, payload, env?.FCM_SERVER_KEY || '');
-      if (!ok) {
-        await db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(row.endpoint).run();
+  // Send all pushes in parallel, collect stale subscriptions
+  const staleEndpoints: string[] = [];
+  await Promise.allSettled(
+    results.map(async (row) => {
+      if (row.type === 'fcm') {
+        const ok = await sendPushToDevice(row.endpoint, payload, env?.FCM_SERVER_KEY || '');
+        if (!ok) staleEndpoints.push(row.endpoint);
+      } else {
+        const subscription: PushSubscription = {
+          endpoint: row.endpoint,
+          keys: { p256dh: row.p256dh_key, auth: row.auth_key },
+        };
+        const ok = await sendPushToSubscription(subscription, payload, vapidPublicKey, vapidPrivateKey);
+        if (!ok) staleEndpoints.push(row.endpoint);
       }
-    } else {
-      const subscription: PushSubscription = {
-        endpoint: row.endpoint,
-        keys: { p256dh: row.p256dh_key, auth: row.auth_key },
-      };
-      const ok = await sendPushToSubscription(subscription, payload, vapidPublicKey, vapidPrivateKey);
-      if (!ok) {
-        await db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(row.endpoint).run();
-      }
-    }
+    }),
+  );
+
+  // Batch-delete stale subscriptions
+  if (staleEndpoints.length > 0) {
+    await db.batch(
+      staleEndpoints.map((ep) => db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').bind(ep)),
+    );
   }
 }
 
@@ -125,23 +136,25 @@ export function getPushPayload(
 
   switch (type) {
     case 'fresh':
-      return { title: 'Flaxia', body: `${name} freshed your post${preview}`, url };
+      return { title: 'Flaxia', body: `${name} freshed your post${preview}`, url, type: 'notification' };
     case 'reply':
-      return { title: 'Flaxia', body: `${name} replied to you${preview}`, url };
+      return { title: 'Flaxia', body: `${name} replied to you${preview}`, url, type: 'notification' };
     case 'mention':
-      return { title: 'Flaxia', body: `${name} mentioned you${preview}`, url };
+      return { title: 'Flaxia', body: `${name} mentioned you${preview}`, url, type: 'notification' };
     case 'ap_follow':
-      return { title: 'Flaxia', body: `${name} followed you`, url: '/notifications' };
+      return { title: 'Flaxia', body: `${name} followed you`, url: '/notifications', type: 'notification' };
     case 'ap_like':
-      return { title: 'Flaxia', body: `${name} liked your post${preview}`, url };
+      return { title: 'Flaxia', body: `${name} liked your post${preview}`, url, type: 'notification' };
     case 'ap_announce':
-      return { title: 'Flaxia', body: `${name} boosted your post${preview}`, url };
+      return { title: 'Flaxia', body: `${name} boosted your post${preview}`, url, type: 'notification' };
+    case 'quote':
+      return { title: 'Flaxia', body: `${name} quoted your post${preview}`, url, type: 'notification' };
     case 'poll_ended':
-      return { title: 'Flaxia', body: `Your poll has ended${preview}`, url };
+      return { title: 'Flaxia', body: `Your poll has ended${preview}`, url, type: 'notification' };
     case 'bookmark':
-      return { title: 'Flaxia', body: `${name} bookmarked your post${preview}`, url };
+      return { title: 'Flaxia', body: `${name} bookmarked your post${preview}`, url, type: 'notification' };
     default:
-      return { title: 'Flaxia', body: `New notification${preview}`, url: '/notifications' };
+      return { title: 'Flaxia', body: `New notification${preview}`, url: '/notifications', type: 'notification' };
   }
 }
 

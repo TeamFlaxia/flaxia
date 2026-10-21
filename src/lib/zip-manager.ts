@@ -1,7 +1,8 @@
+import { executeSwZip, SwZipExecutorHandle } from './sw-zip-executor.js';
 import { executeWvfsZip, WvfsZipExecutorHandle } from './wvfs-zip-client.js';
 import { executeZip, ZipExecutorHandle } from './zip-executor.js';
 
-export type ZipExecutionMode = 'legacy' | 'wvfs';
+export type ZipExecutionMode = 'sw' | 'wvfs' | 'legacy';
 
 export interface UniversalZipExecutorHandle {
   destroy: () => void;
@@ -17,6 +18,7 @@ export async function executeUniversalZip(
   containerEl: HTMLElement,
   mode: ZipExecutionMode = 'wvfs',
   url?: string,
+  versionId?: string,
 ): Promise<UniversalZipExecutorHandle> {
   // Clean up any existing execution
   if (activeHandle) {
@@ -25,12 +27,14 @@ export async function executeUniversalZip(
   }
 
   try {
-    let handle: ZipExecutorHandle | WvfsZipExecutorHandle;
+    let handle: ZipExecutorHandle | WvfsZipExecutorHandle | SwZipExecutorHandle;
 
-    if (mode === 'wvfs') {
-      handle = await executeWvfsZip(postId, containerEl, url);
+    if (mode === 'sw') {
+      handle = await executeSwZip(postId, containerEl, url, undefined, undefined, versionId);
+    } else if (mode === 'wvfs') {
+      handle = await executeWvfsZip(postId, containerEl, url, false, true, versionId);
     } else {
-      handle = await executeZip(postId, containerEl, url);
+      handle = await executeZip(postId, containerEl, url, versionId);
     }
 
     // Create universal handle
@@ -57,24 +61,9 @@ export async function executeUniversalZip(
   }
 }
 
-// Helper function to detect best mode based on environment
+// Browser ZIP playback always stays on the isolated sandbox origin.
 export function getOptimalZipMode(): ZipExecutionMode {
-  // Check if running in Cloudflare Workers environment
-  if (
-    typeof globalThis !== 'undefined' &&
-    (globalThis as { WebSocketPair?: unknown }).WebSocketPair &&
-    (globalThis as { D1Database?: unknown }).D1Database
-  ) {
-    return 'wvfs';
-  }
-
-  // Check if browser supports required features for WVFS
-  if (typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.getDirectory === 'function') {
-    return 'wvfs';
-  }
-
-  // Fallback to legacy mode
-  return 'legacy';
+  return 'wvfs';
 }
 
 // Auto-detect and execute with optimal mode
@@ -82,8 +71,10 @@ export async function executeZipAuto(
   postId: string,
   containerEl: HTMLElement,
   url?: string,
+  versionId?: string,
+  mode?: ZipExecutionMode,
 ): Promise<UniversalZipExecutorHandle> {
-  const mode = getOptimalZipMode();
-  console.log(`Using ZIP execution mode: ${mode}`);
-  return executeUniversalZip(postId, containerEl, mode, url);
+  const resolved = mode ?? getOptimalZipMode();
+  console.log(`Using ZIP execution mode: ${resolved}`);
+  return executeUniversalZip(postId, containerEl, resolved, url, versionId);
 }

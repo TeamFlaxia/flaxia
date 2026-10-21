@@ -1,44 +1,84 @@
-import { t } from './i18n.js';
+import { connectGameStorage, loadLegacyGameStorage } from './game-storage-broker.js';
+import { createWvfsGameUrl } from './wvfs-game-url.js';
+import {
+  createZipLoadingIndicator,
+  createZipSandboxIframe,
+  fadeOutLoading,
+  showLoadingTimeoutMessage,
+  waitForZipIframeLoad,
+} from './zip-ui-utils.js';
 
 export interface WvfsZipExecutorHandle {
   destroy: () => void;
   postId: string;
 }
 
-// Global execution manager
+const PREFIX = 'wvfs';
+
 let activeHandle: WvfsZipExecutorHandle | null = null;
 
 export async function executeWvfsZip(
   postId: string,
   containerEl: HTMLElement,
-  workerUrl?: string, // custom worker URL for testing
+  workerUrl?: string,
   hideFullscreen: boolean = false,
+  showLoading: boolean = true,
+  versionId?: string,
 ): Promise<WvfsZipExecutorHandle> {
-  // Clean up any existing execution
   if (activeHandle) {
     activeHandle.destroy();
     activeHandle = null;
   }
 
   try {
-    // Create iframe pointing directly to WVFS sandbox worker (bypass 301 redirect)
+    containerEl.innerHTML = '';
+    containerEl.style.position = 'relative';
+
+    let loadingEl: HTMLElement | null = null;
+    if (showLoading) {
+      loadingEl = createZipLoadingIndicator(PREFIX);
+      containerEl.appendChild(loadingEl);
+    }
+
     const sandboxOrigin = workerUrl || import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
-    const zipUrl = `${sandboxOrigin}/api/wvfs-zip/${postId}`;
+    const zipUrl = createWvfsGameUrl(sandboxOrigin, postId, { versionId });
+    const preWarmUrl = createWvfsGameUrl(sandboxOrigin, postId, { versionId, index: true });
+    fetch(preWarmUrl, { method: 'GET', mode: 'cors' }).catch(() => {});
 
-    const { cleanup } = await createWvfsIframe(postId, containerEl, zipUrl, hideFullscreen);
+    let storageSnapshot: Record<string, string> = {};
+    try {
+      storageSnapshot = await loadLegacyGameStorage(sandboxOrigin, postId);
+    } catch (error) {
+      console.warn('Legacy game storage is unavailable:', error);
+    }
 
-    // Create handle with cleanup
+    const { iframe, cleanup } = createZipSandboxIframe(containerEl, zipUrl, {
+      hideFullscreen,
+      prefix: PREFIX,
+      storageSnapshot,
+    });
+    const disconnectStorage = connectGameStorage(iframe, postId);
+
+    const loaded = await waitForZipIframeLoad(iframe, loadingEl);
+
+    if (loaded) {
+      iframe.style.opacity = '1';
+      fadeOutLoading(loadingEl);
+    } else {
+      showLoadingTimeoutMessage(loadingEl);
+      iframe.style.opacity = '1';
+    }
+
     const handle: WvfsZipExecutorHandle = {
       postId,
       destroy: () => {
+        clearTimeout((iframe as HTMLIFrameElement & { _zipLoadTimeout?: number })._zipLoadTimeout);
+        disconnectStorage();
         cleanup();
-
-        // Remove fullscreen button if it exists
-        const fullscreenBtn = containerEl.querySelector('.wvfs-fullscreen-btn');
+        const fullscreenBtn = containerEl.querySelector(`.${PREFIX}-fullscreen-btn`);
         if (fullscreenBtn) {
           fullscreenBtn.parentNode?.removeChild(fullscreenBtn);
         }
-
         if (activeHandle?.postId === postId) {
           activeHandle = null;
         }
@@ -48,97 +88,10 @@ export async function executeWvfsZip(
     activeHandle = handle;
     return handle;
   } catch (error) {
-    // Clean up on error
     if (activeHandle) {
       activeHandle.destroy();
       activeHandle = null;
     }
     throw error;
   }
-}
-
-async function createWvfsIframe(
-  postId: string,
-  containerEl: HTMLElement,
-  zipUrl: string,
-  hideFullscreen: boolean = false,
-): Promise<{ iframe: HTMLIFrameElement; cleanup: () => void }> {
-  // Create iframe container
-  const iframeContainer = document.createElement('div');
-  iframeContainer.style.cssText = `
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    flex-direction: column;
-  `;
-
-  // Create iframe pointing to WVFS worker endpoint
-  const iframe = document.createElement('iframe');
-  iframe.src = zipUrl;
-  iframe.setAttribute('allow', 'fullscreen');
-  iframe.setAttribute('referrerpolicy', 'no-referrer');
-  iframe.style.cssText = `
-    flex: 1;
-    width: 100%;
-    height: 100%;
-    border: none;
-    background: white;
-  `;
-
-  // Add fullscreen button
-  const fullscreenBtn = document.createElement('button');
-  fullscreenBtn.textContent = t('fullscreen.button');
-  fullscreenBtn.className = 'wvfs-fullscreen-btn';
-  fullscreenBtn.style.cssText = `
-    margin-top: 8px;
-    padding: 4px 8px;
-    font-size: 12px;
-    border: 1px solid #ccc;
-    background: #f0f0f0;
-    cursor: pointer;
-    border-radius: 4px;
-    align-self: center;
-  `;
-  fullscreenBtn.onclick = (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    try {
-      if (iframeContainer.requestFullscreen) {
-        iframeContainer.requestFullscreen().catch((err) => {
-          console.warn('Container fullscreen failed:', err);
-          if (iframe.requestFullscreen) {
-            iframe.requestFullscreen().catch((err2) => {
-              console.warn('Iframe fullscreen failed:', err2);
-            });
-          }
-        });
-      } else if (iframe.requestFullscreen) {
-        iframe.requestFullscreen().catch((err) => {
-          console.warn('Iframe fullscreen failed:', err);
-        });
-      }
-    } catch (error) {
-      console.error('Fullscreen error:', error);
-    }
-  };
-
-  // Clear container and add iframe container
-  containerEl.innerHTML = '';
-  containerEl.appendChild(iframeContainer);
-  iframeContainer.appendChild(iframe);
-  if (!hideFullscreen) {
-    iframeContainer.appendChild(fullscreenBtn);
-  }
-
-  const cleanup = () => {
-    if (iframe.parentNode) {
-      iframe.parentNode.removeChild(iframe);
-    }
-  };
-
-  return { iframe, cleanup };
 }

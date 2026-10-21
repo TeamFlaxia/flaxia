@@ -1,4 +1,3 @@
-import DOMPurify from 'dompurify';
 import type MarkdownIt from 'markdown-it';
 import { PostTextProps } from '../types/post.js';
 
@@ -8,7 +7,32 @@ let md: MarkdownIt | null = null;
 // Cache for dynamic imports
 let katexPromise: Promise<typeof import('katex')> | null = null;
 let markdownitPromise: Promise<typeof import('markdown-it')> | null = null;
+let dompurifyPromise: Promise<typeof import('dompurify')> | null = null;
 let katexLoadingPromise: Promise<void> | null = null;
+
+// Cache for custom emoji stamps
+interface StampCacheEntry {
+  name: string;
+  url: string;
+  user_id: string;
+}
+let stampCachePromise: Promise<Map<string, { url: string; user_id: string }>> | null = null;
+
+async function getStampCache(): Promise<Map<string, { url: string; user_id: string }>> {
+  if (!stampCachePromise) {
+    stampCachePromise = fetch('/api/stamps/all', { credentials: 'include' })
+      .then((r) => r.json() as Promise<{ stamps: StampCacheEntry[] }>)
+      .then((data) => {
+        const map = new Map<string, { url: string; user_id: string }>();
+        for (const s of data.stamps) {
+          map.set(s.name, { url: s.url, user_id: s.user_id });
+        }
+        return map;
+      })
+      .catch(() => new Map<string, { url: string; user_id: string }>());
+  }
+  return stampCachePromise;
+}
 
 async function getMarkdownIt() {
   if (!md) {
@@ -41,6 +65,14 @@ async function getKatex() {
   return katexPromise;
 }
 
+async function getDOMPurify() {
+  if (!dompurifyPromise) {
+    dompurifyPromise = import('dompurify');
+  }
+  const mod = await dompurifyPromise;
+  return mod.default;
+}
+
 interface MathPlaceholder {
   id: string;
   content: string;
@@ -66,11 +98,21 @@ export async function createPostText(props: PostTextProps): Promise<HTMLElement>
     linkifyPostRefs(container);
   }
 
+  await linkifyCustomEmoji(container, props.authorId);
+
   return container;
 }
 
 // Export processing functions for reuse
-export { linkifyHashtags, linkifyMentions, linkifyPostRefs, linkifyUrls, processText, renderMathElements };
+export {
+  linkifyCustomEmoji,
+  linkifyHashtags,
+  linkifyMentions,
+  linkifyPostRefs,
+  linkifyUrls,
+  processText,
+  renderMathElements,
+};
 
 /**
  * Unified text processing pipeline:
@@ -97,9 +139,9 @@ async function processText(text: string, enablePostRefs?: boolean): Promise<stri
 
   // Step 3: Restore math placeholders BEFORE sanitization
   html = restoreMathPlaceholders(html, mathPlaceholders);
-  console.log('HTML before sanitization:', html);
 
   // Step 4: Sanitize HTML (now with proper math placeholders)
+  const DOMPurify = await getDOMPurify();
   html = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: [
       'p',
@@ -141,7 +183,6 @@ async function processText(text: string, enablePostRefs?: boolean): Promise<stri
     ],
     ALLOW_DATA_ATTR: true,
   });
-  console.log('HTML after sanitization:', html);
 
   // Step 4.5: Restore post reference placeholders as clickable links (or plain text)
   for (const ref of refPlaceholders) {
@@ -385,6 +426,65 @@ function linkifyUrls(container: HTMLElement): void {
     }
 
     // Add remaining text
+    if (lastIndex < text.length) {
+      fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
+    }
+
+    parent.replaceChild(fragment, textNode);
+  }
+}
+
+async function linkifyCustomEmoji(container: HTMLElement, authorId?: string): Promise<void> {
+  const stampCache = await getStampCache();
+  if (stampCache.size === 0) return;
+
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+  const textNodes: Text[] = [];
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    textNodes.push(node as Text);
+  }
+
+  // Match :name: format
+  const emojiRegex = /:([a-zA-Z0-9_-]+):/g;
+
+  for (const textNode of textNodes) {
+    const text = textNode.textContent || '';
+    if (!emojiRegex.test(text)) continue;
+
+    emojiRegex.lastIndex = 0;
+
+    const parent = textNode.parentNode;
+    if (!parent) continue;
+
+    const fragment = document.createDocumentFragment();
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = emojiRegex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        fragment.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+      }
+
+      const stampName = match[0]; // e.g. ":hoge:"
+      const stampData = stampCache.get(stampName);
+
+      // For posts/chat: only render if stamp owner matches authorId
+      // For reactions (authorId is undefined): always render
+      if (stampData && (authorId === undefined || stampData.user_id === authorId)) {
+        const img = document.createElement('img');
+        img.src = stampData.url;
+        img.alt = stampName;
+        img.className = 'custom-emoji';
+        img.title = stampName;
+        fragment.appendChild(img);
+      } else {
+        fragment.appendChild(document.createTextNode(match[0]));
+      }
+
+      lastIndex = match.index + match[0].length;
+    }
+
     if (lastIndex < text.length) {
       fragment.appendChild(document.createTextNode(text.slice(lastIndex)));
     }

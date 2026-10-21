@@ -1,12 +1,8 @@
+import { buildGameDescription, buildGameTitle } from '../../src/lib/game-seo';
 import { isCrawler } from '../../src/lib/is-crawler';
-import {
-  escapeHtml,
-  type PostRow,
-  renderBlogPostingJsonLd,
-  renderHtmlShell,
-  renderJsonLd,
-  renderPostArticle,
-} from '../../src/lib/render-html';
+import { type PostRow, renderBlogPostingJsonLd, renderHtmlShell, renderPostArticle } from '../../src/lib/render-html';
+import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
+import { renderBreadcrumbJsonLd, renderSsrFooter, renderSsrHeader, renderSsrLayoutCss } from '../lib/ssr-layout';
 
 const assetUrl = (baseUrl: string, key: string) => `${baseUrl}/api/images/${key}`;
 
@@ -24,12 +20,14 @@ function toPost(row: RawPost): PostRow {
     username: String(row.username),
     display_name: row.display_name ? String(row.display_name) : null,
     avatar_key: row.avatar_key ? String(row.avatar_key) : null,
+    badge_type: row.badge_type ? String(row.badge_type) : null,
     text: String(row.text),
     hashtags: String(row.hashtags),
     gif_key: row.gif_key ? String(row.gif_key) : null,
     payload_key: row.payload_key ? String(row.payload_key) : null,
     swf_key: row.swf_key ? String(row.swf_key) : null,
     thumbnail_key: row.thumbnail_key ? String(row.thumbnail_key) : null,
+    game_description: row.game_description ? String(row.game_description) : null,
     fresh_count: Number(row.fresh_count),
     bookmark_count: Number(row.bookmark_count),
     reply_count: Number(row.reply_count),
@@ -44,8 +42,9 @@ function toPost(row: RawPost): PostRow {
 }
 
 const POST_SELECT = `
-  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key,
+  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type,
     p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key,
+    p.game_description,
     p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
     COALESCE(p.reply_count, 0) as reply_count,
     COALESCE(p.impressions, 0) as impressions,
@@ -56,18 +55,25 @@ const POST_SELECT = `
   LEFT JOIN users u ON p.user_id = u.id
 `;
 
+function detectGameType(post: PostRow): string {
+  if (post.swf_key) return 'flash';
+  if (post.payload_key) return 'zip';
+  return 'html5';
+}
+
 export async function onRequest(context: {
   request: Request;
   env: Env;
   next: () => Promise<Response>;
 }): Promise<Response> {
-  const { request, env, next } = context;
-  const userAgent = request.headers.get('user-agent') || '';
-  const baseUrl = env.BASE_URL ?? 'https://flaxia.app';
+  const { request, env } = context;
 
+  const userAgent = request.headers.get('User-Agent') || '';
   if (!isCrawler(userAgent)) {
-    return next();
+    return context.next();
   }
+
+  const baseUrl = env.BASE_URL ?? 'https://flaxia.app';
 
   const url = new URL(request.url);
   const id = url.pathname.split('/')[2];
@@ -81,6 +87,7 @@ export async function onRequest(context: {
         description: 'Post not found',
         canonicalUrl,
         image: defaultImage,
+        spaHeadTags: SPA_HEAD_TAGS,
       }),
       { status: 404, headers: { 'Content-Type': 'text/html' } },
     );
@@ -95,13 +102,21 @@ export async function onRequest(context: {
       return new Response(
         renderHtmlShell(
           `<div class="ssr-empty"><h1>Post not found</h1><p>The requested post does not exist.</p></div>`,
-          { title: 'Post not found', description: 'Post not found', canonicalUrl, image: defaultImage },
+          {
+            title: 'Post not found',
+            description: 'Post not found',
+            canonicalUrl,
+            image: defaultImage,
+            spaHeadTags: SPA_HEAD_TAGS,
+          },
         ),
         { status: 404, headers: { 'Content-Type': 'text/html' } },
       );
     }
 
     const post = toPost(mainRow);
+    const isGame = !!(post.payload_key || post.swf_key);
+    const authorName = post.display_name || post.username;
 
     // Fetch replies
     const { results: replyRows } = await env.DB.prepare(
@@ -112,25 +127,62 @@ export async function onRequest(context: {
 
     const replies = (replyRows || []).map(toPost);
 
-    // Build OG image
+    // Build OG image: use the actual image for image posts, thumbnail for
+    // video/audio/game posts, fall back to the default image.
     const gifKey = post.gif_key;
-    const isImage = gifKey && !gifKey.startsWith('audio/');
-    const ogImage = isImage
-      ? assetUrl(baseUrl, gifKey)
-      : post.thumbnail_key
-        ? assetUrl(baseUrl, post.thumbnail_key)
-        : defaultImage;
+    const isImage = !!gifKey && !gifKey.startsWith('audio/') && !gifKey.startsWith('video/');
+    let ogImage: string;
+    if (isImage && gifKey) {
+      ogImage = assetUrl(baseUrl, gifKey);
+    } else if (post.thumbnail_key) {
+      ogImage = assetUrl(baseUrl, post.thumbnail_key);
+    } else {
+      ogImage = defaultImage;
+    }
 
-    const hasGame = post.payload_key || post.swf_key;
-    const playerUrl = hasGame ? `${baseUrl}/api/ogp-player/${id}` : undefined;
-    const twitterCard = hasGame ? 'player' : 'summary_large_image';
-    const additionalHead = playerUrl
-      ? `<meta name="twitter:player" content="${escapeHtml(playerUrl)}"><meta name="twitter:player:width" content="600"><meta name="twitter:player:height" content="400">`
-      : '';
+    // Build description: prefer game SEO description for game posts
+    let description = post.game_description || post.text.slice(0, 200);
+    let jsonLdExtra = '';
+    let breadcrumb: Array<{ label: string; url: string }> = [];
+    let footerSections: Array<{ title: string; links: Array<{ label: string; url: string }> }> = [];
+
+    if (isGame) {
+      const title = buildGameTitle(post.text);
+      const typeLabel = detectGameType(post);
+      description = buildGameDescription({
+        gameDescription: post.game_description,
+        title,
+        typeLabel,
+        authorName,
+        text: post.text,
+      });
+      const gameUrl = `${baseUrl}/arcade/${post.id}`;
+      breadcrumb = [
+        { label: 'Home', url: `${baseUrl}/home` },
+        { label: 'Arcade', url: `${baseUrl}/arcade` },
+        { label: title, url: gameUrl },
+      ];
+      jsonLdExtra = renderBreadcrumbJsonLd(breadcrumb, baseUrl);
+      footerSections = [
+        {
+          title: 'Play this game',
+          links: [{ label: title, url: gameUrl }],
+        },
+      ];
+    } else {
+      breadcrumb = [
+        { label: 'Home', url: `${baseUrl}/home` },
+        { label: post.id, url: canonicalUrl },
+      ];
+      jsonLdExtra = renderBreadcrumbJsonLd(breadcrumb, baseUrl);
+    }
 
     // Build JSON-LD
     const profileUrl = `${baseUrl}/users/${post.username}`;
-    const jsonLd = renderBlogPostingJsonLd(post, post.display_name || post.username, profileUrl, canonicalUrl);
+    const jsonLd = [
+      renderBlogPostingJsonLd(post, authorName, profileUrl, canonicalUrl, description, ogImage),
+      jsonLdExtra,
+    ].join('\n');
 
     // Build main content
     const mainPostHtml = renderPostArticle(post, baseUrl);
@@ -139,24 +191,26 @@ export async function onRequest(context: {
         ? `<section class="ssr-replies"><h2>${replies.length} Replies</h2>${replies.map((r) => renderPostArticle(r, baseUrl)).join('\n')}</section>`
         : '';
 
+    const header = renderSsrHeader({ baseUrl, breadcrumb });
+    const footer = renderSsrFooter({ baseUrl, sections: footerSections });
+
     const content = `
+      ${header}
       ${mainPostHtml}
       ${repliesHtml}
-      <footer class="ssr-footer">
-        <a href="${escapeHtml(baseUrl)}">← Back to Flaxia</a>
-      </footer>
+      ${footer}
     `;
 
     return new Response(
       renderHtmlShell(content, {
-        title: `${post.display_name || post.username} on Flaxia`,
-        description: post.text.slice(0, 200),
+        title: `Flaxia - ${authorName}`,
+        description,
         canonicalUrl,
         image: ogImage,
-        type: 'article',
-        twitterCard,
+
         jsonLd,
-        additionalHead,
+        additionalHead: renderSsrLayoutCss(),
+        spaHeadTags: SPA_HEAD_TAGS,
       }),
       { headers: { 'Content-Type': 'text/html' } },
     );
@@ -168,6 +222,7 @@ export async function onRequest(context: {
         description: 'Failed to load post',
         canonicalUrl,
         image: defaultImage,
+        spaHeadTags: SPA_HEAD_TAGS,
       }),
       { status: 500, headers: { 'Content-Type': 'text/html' } },
     );

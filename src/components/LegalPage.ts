@@ -1,7 +1,7 @@
 import { getLocale, t } from '../lib/i18n.js';
 
 interface LegalPageProps {
-  type: 'terms' | 'privacy' | 'about' | 'whitepaper';
+  type: 'terms' | 'privacy' | 'child-safety' | 'about';
 }
 
 const LEGAL_PAGES: Record<
@@ -15,13 +15,13 @@ const LEGAL_PAGES: Record<
     footerKey: 'legal.footer_privacy',
     path: '/privacy',
   },
-  about: { fileName: 'about', titleKey: 'legal.about_title', footerKey: 'legal.footer_about', path: '/about' },
-  whitepaper: {
-    fileName: 'whitepaper',
-    titleKey: 'legal.whitepaper_title',
-    footerKey: 'legal.footer_whitepaper',
-    path: '/whitepaper',
+  'child-safety': {
+    fileName: 'child-safety',
+    titleKey: 'legal.child_safety_title',
+    footerKey: 'legal.footer_child_safety',
+    path: '/child-safety',
   },
+  about: { fileName: 'about', titleKey: 'legal.about_title', footerKey: 'legal.footer_about', path: '/about' },
 };
 
 const ALL_PAGES = Object.values(LEGAL_PAGES) as {

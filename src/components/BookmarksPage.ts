@@ -1,8 +1,15 @@
+import { createFabButton } from '../lib/fab-button.js';
 import { t } from '../lib/i18n.js';
+import { createInfiniteScroll } from '../lib/infinite-scroll.js';
+import { createSkeletonCards } from '../lib/loading-ui.js';
+import { nativeApiHref } from '../lib/native-api.js';
+import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';
+import { createPostUpdatedHandler } from '../lib/post-update.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
-import { createSkeletonCard } from './SkeletonCard.js';
+import { isZipGame } from './PostStage.js';
 
 export interface BookmarksPageProps {
   sandboxOrigin: string;
@@ -17,14 +24,18 @@ export class BookmarksPage {
   private loading = false;
   private hasMore = true;
   private error: string | null = null;
-  private intersectionObserver: IntersectionObserver | null = null;
-  private loadMoreSentinel: HTMLElement | null = null;
+  private infiniteScroll: ReturnType<typeof createInfiniteScroll>;
   private fabButton: HTMLElement | null = null;
   private postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
-  private boundPostUpdatedHandler?: (e: Event) => void;
+  private postUpdatedHandler?: (e: Event) => void;
+  private arcadeSection: HTMLElement | null = null;
 
   constructor(props: BookmarksPageProps) {
     this.props = props;
+    this.infiniteScroll = createInfiniteScroll({
+      onLoadMore: () => this.loadContent(),
+      canLoadMore: () => !this.loading && this.hasMore,
+    });
     this.element = this.createElement();
     this.setupPostUpdatedListener();
     this.loadContent();
@@ -34,51 +45,18 @@ export class BookmarksPage {
     const container = document.createElement('div');
     container.className = 'bookmarks-page';
 
-    const header = document.createElement('div');
-    header.style.cssText = `
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 1rem;
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      background: var(--bg-primary);
-    `;
+    container.appendChild(
+      createPageHeader({
+        title: t('nav.bookmarks'),
+        onBack: () => window.history.back(),
+      }),
+    );
 
-    const backBtn = document.createElement('button');
-    backBtn.textContent = '←';
-    backBtn.style.cssText = `
-      background: none;
-      border: none;
-      font-size: 1.25rem;
-      cursor: pointer;
-      color: var(--text-primary);
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-      transition: background 0.2s;
-    `;
-    backBtn.addEventListener('mouseenter', () => {
-      backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))';
-    });
-    backBtn.addEventListener('mouseleave', () => {
-      backBtn.style.background = 'none';
-    });
-    backBtn.addEventListener('click', () => window.history.back());
-
-    const title = document.createElement('h1');
-    title.textContent = t('nav.bookmarks');
-    title.style.cssText = `
-      margin: 0;
-      font-size: 1.25rem;
-      font-weight: 700;
-      color: var(--text-primary);
-    `;
-
-    header.appendChild(backBtn);
-    header.appendChild(title);
-    container.appendChild(header);
+    const arcadeSection = document.createElement('div');
+    arcadeSection.className = 'bookmarks-arcade';
+    arcadeSection.style.display = 'none';
+    container.appendChild(arcadeSection);
+    this.arcadeSection = arcadeSection;
 
     const postsContainer = document.createElement('div');
     postsContainer.className = 'bookmarks-posts';
@@ -90,21 +68,15 @@ export class BookmarksPage {
     loadingContainer.style.display = 'none';
     container.appendChild(loadingContainer);
 
-    this.loadMoreSentinel = document.createElement('div');
-    this.loadMoreSentinel.className = 'bookmarks-sentinel';
-    this.loadMoreSentinel.style.cssText = 'height: 100px; width: 100%;';
-    container.appendChild(this.loadMoreSentinel);
+    container.appendChild(this.infiniteScroll.sentinel);
 
     if (this.props.currentUser) {
-      this.fabButton = document.createElement('button');
-      this.fabButton.className = 'timeline-fab visible';
-      this.fabButton.textContent = '+';
-      this.fabButton.addEventListener('click', () => {
+      this.fabButton = createFabButton(() => {
         openPostModal({
           currentUser: this.props.currentUser,
           onPostCreated: () => {},
         });
-      });
+      }, true);
       container.appendChild(this.fabButton);
     }
 
@@ -133,7 +105,6 @@ export class BookmarksPage {
         this.cursor = newPosts[newPosts.length - 1].created_at;
         this.hasMore = newPosts.length === 10;
         this.renderPosts();
-        if (!this.intersectionObserver) this.setupIntersectionObserver();
       } else {
         this.hasMore = false;
         if (this.posts.length === 0) this.showEmpty();
@@ -149,21 +120,8 @@ export class BookmarksPage {
   }
 
   private setupPostUpdatedListener(): void {
-    this.boundPostUpdatedHandler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (!detail?.postId) return;
-      const card = this.postCards.get(detail.postId);
-      if (card) {
-        const update: Partial<Post> = {};
-        if (detail.isFreshed !== undefined) update.is_freshed = detail.isFreshed;
-        if (detail.freshCount !== undefined) update.fresh_count = detail.freshCount;
-        if (detail.isBookmarked !== undefined) update.is_bookmarked = detail.isBookmarked;
-        if (detail.bookmarkCount !== undefined) update.bookmark_count = detail.bookmarkCount;
-        if (detail.replyCount !== undefined) update.reply_count = detail.replyCount;
-        card.updatePost(update);
-      }
-    };
-    window.addEventListener('postUpdated', this.boundPostUpdatedHandler);
+    this.postUpdatedHandler = createPostUpdatedHandler(this.postCards);
+    window.addEventListener('postUpdated', this.postUpdatedHandler);
   }
 
   private renderPosts(): void {
@@ -189,6 +147,171 @@ export class BookmarksPage {
     }
 
     postsContainer.appendChild(fragment);
+    this.updateArcadeSection();
+  }
+
+  private isGamePost(post: Post): boolean {
+    return isZipGame(post.payload_key) || (!!post.swf_key && post.swf_key.startsWith('swf/'));
+  }
+
+  private updateArcadeSection(): void {
+    const section = this.arcadeSection;
+    if (!section) return;
+
+    const gamePosts = this.posts.filter((p) => this.isGamePost(p));
+    if (gamePosts.length === 0) {
+      section.style.display = 'none';
+      section.innerHTML = '';
+      return;
+    }
+
+    section.style.display = '';
+    section.innerHTML = '';
+
+    const title = document.createElement('div');
+    title.textContent = t('explore.filter_arcade');
+    title.style.cssText = `
+      font-weight: 600;
+      font-size: 1rem;
+      color: var(--text-primary);
+      margin-bottom: 0.75rem;
+      padding: 0 0.25rem;
+    `;
+    section.appendChild(title);
+
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position: relative;';
+
+    const scrollContainer = document.createElement('div');
+    scrollContainer.style.cssText = `
+      display: flex;
+      overflow-x: auto;
+      gap: 0.75rem;
+      padding: 0.25rem 0 0.75rem;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+      scroll-snap-type: x mandatory;
+      -webkit-overflow-scrolling: touch;
+    `;
+    scrollContainer.addEventListener('wheel', (e) => {
+      if (Math.abs(e.deltaX) < Math.abs(e.deltaY)) {
+        e.preventDefault();
+        scrollContainer.scrollLeft += e.deltaY;
+      }
+    });
+
+    const fadeHint = document.createElement('div');
+    fadeHint.style.cssText = `
+      position: absolute;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      width: 48px;
+      background: linear-gradient(to right, transparent, var(--bg-primary));
+      pointer-events: none;
+      opacity: 1;
+      transition: opacity 0.3s;
+      z-index: 1;
+    `;
+    wrapper.appendChild(fadeHint);
+
+    const updateFade = () => {
+      const atEnd = scrollContainer.scrollLeft >= scrollContainer.scrollWidth - scrollContainer.clientWidth - 4;
+      fadeHint.style.opacity = atEnd ? '0' : '1';
+    };
+    scrollContainer.addEventListener('scroll', updateFade);
+
+    for (const post of gamePosts) {
+      const card = document.createElement('div');
+      card.style.cssText = `
+        width: 150px;
+        flex-shrink: 0;
+        cursor: pointer;
+        border-radius: 0.75rem;
+        overflow: hidden;
+        transition: transform 0.2s, box-shadow 0.2s;
+        scroll-snap-align: start;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border);
+      `;
+      card.addEventListener('mouseenter', () => {
+        card.style.transform = 'translateY(-3px)';
+        card.style.boxShadow = '0 6px 16px rgba(0,0,0,0.15)';
+      });
+      card.addEventListener('mouseleave', () => {
+        card.style.transform = 'none';
+        card.style.boxShadow = 'none';
+      });
+      card.addEventListener('click', () => {
+        pushSpaHistory(`/arcade/${post.id}`, { postId: post.id });
+        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: post.id } }));
+      });
+
+      const thumb = document.createElement('div');
+      thumb.style.cssText = `
+        width: 100%;
+        aspect-ratio: 9 / 12;
+        overflow: hidden;
+        position: relative;
+        background: var(--bg-input);
+      `;
+      if (post.thumbnail_key) {
+        const img = document.createElement('img');
+        img.src = nativeApiHref(`/api/images/${post.thumbnail_key}?_=${Date.now()}`);
+        img.loading = 'lazy';
+        img.width = 150;
+        img.height = 200;
+        img.style.cssText = 'width: 100%; height: 100%; object-fit: cover; display: block;';
+        thumb.appendChild(img);
+      } else {
+        const icon = document.createElement('span');
+        icon.textContent = '🎮';
+        icon.style.cssText =
+          'position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 2rem;';
+        thumb.appendChild(icon);
+      }
+
+      const badge = document.createElement('span');
+      badge.style.cssText = `
+        position: absolute; top: 4px; right: 4px;
+        padding: 0.1rem 0.35rem; border-radius: 4px;
+        background: var(--accent); color: white;
+        font-size: 0.6rem; font-weight: 600; text-transform: uppercase;
+        line-height: 1.2;
+      `;
+      badge.textContent = 'GAME';
+      thumb.appendChild(badge);
+
+      const info = document.createElement('div');
+      info.style.cssText = 'padding: 0.4rem 0.35rem 0.35rem;';
+
+      const cardTitle = document.createElement('div');
+      cardTitle.textContent = post.text?.slice(0, 60) || '(no text)';
+      cardTitle.style.cssText = `
+        font-weight: 600; color: var(--text-primary);
+        font-size: 0.8rem; line-height: 1.3;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      `;
+
+      const meta = document.createElement('div');
+      meta.textContent = `@${post.username}`;
+      meta.style.cssText = `
+        font-size: 0.7rem; color: var(--text-muted);
+        margin-top: 0.15rem;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      `;
+
+      info.appendChild(cardTitle);
+      info.appendChild(meta);
+      card.appendChild(thumb);
+      card.appendChild(info);
+      scrollContainer.appendChild(card);
+    }
+
+    wrapper.appendChild(scrollContainer);
+    section.appendChild(wrapper);
+
+    requestAnimationFrame(updateFade);
   }
 
   private showEmpty(): void {
@@ -265,27 +388,9 @@ export class BookmarksPage {
       loadingElement.style.display = isLoading ? 'block' : 'none';
       if (isLoading && this.posts.length === 0) {
         loadingElement.innerHTML = '';
-        for (let i = 0; i < 2; i++) {
-          loadingElement.appendChild(createSkeletonCard());
-        }
+        loadingElement.appendChild(createSkeletonCards(2));
       }
     }
-  }
-
-  private setupIntersectionObserver(): void {
-    if (!this.loadMoreSentinel) return;
-    if (this.intersectionObserver) this.intersectionObserver.disconnect();
-
-    this.intersectionObserver = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && !this.loading && this.hasMore) {
-          this.loadContent();
-        }
-      },
-      { rootMargin: '300px', threshold: 0.1 },
-    );
-
-    this.intersectionObserver.observe(this.loadMoreSentinel);
   }
 
   public getElement(): HTMLElement {
@@ -293,16 +398,12 @@ export class BookmarksPage {
   }
 
   public destroy(): void {
-    if (this.boundPostUpdatedHandler) {
-      window.removeEventListener('postUpdated', this.boundPostUpdatedHandler);
-      this.boundPostUpdatedHandler = undefined;
+    if (this.postUpdatedHandler) {
+      window.removeEventListener('postUpdated', this.postUpdatedHandler);
     }
     this.postCards.forEach((card) => void card.destroy());
     this.postCards.clear();
-    if (this.intersectionObserver) {
-      this.intersectionObserver.disconnect();
-      this.intersectionObserver = null;
-    }
+    this.infiniteScroll.disconnect();
   }
 }
 

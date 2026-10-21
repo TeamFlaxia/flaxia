@@ -1,5 +1,7 @@
 import { adImpressionTracker } from '../lib/ad-impression-tracker.js';
+import { ADSENSE_INLINE_BOOTSTRAP } from '../lib/adsense-bootstrap.js';
 import { t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { executeUniversalZip, UniversalZipExecutorHandle } from '../lib/zip-manager.js';
 import { Ad } from '../types/post.js';
 import { executeFlash, FlashPlayerHandle } from './FlashPlayer.js';
@@ -95,10 +97,9 @@ function createExecutionButton(props: {
     font-weight: 600;
     text-align: center;
     text-shadow: 0 2px 4px rgba(0,0,0,0.3);
-    background: rgba(0,0,0,0.5);
+    background: rgba(0,0,0,0.65);
     padding: 8px 16px;
     border-radius: 20px;
-    backdrop-filter: blur(4px);
   `;
 
   content.appendChild(icon);
@@ -133,6 +134,10 @@ function handleDirectClick(ad: Ad): void {
 function mountAdmax(ad: Ad, placeholder: HTMLElement): void {
   // Create iframe for isolated ad environment
   const iframe = document.createElement('iframe');
+  // Sandbox: third-party ad scripts must never share the app origin (no DOM,
+  // cookie, or storage access). Scripts + popups stay enabled so ad rendering
+  // and click-through keep working; same-origin access stays blocked.
+  iframe.sandbox.add('allow-scripts', 'allow-popups');
   iframe.style.width = '100%';
   iframe.style.height = '250px';
   iframe.style.border = 'none';
@@ -156,7 +161,16 @@ function mountAdmax(ad: Ad, placeholder: HTMLElement): void {
             </style>
           </head>
           <body>
-            <script src="https://adm.shinobi.jp/o/c450decd2d1550cfac1b91646d8f7f2a"></script>
+            <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-1628379583847546"
+             crossorigin="anonymous"></script>
+            <!-- flaxia ads -->
+            <ins class="adsbygoogle"
+                 style="display:block"
+                 data-ad-client="ca-pub-1628379583847546"
+                 data-ad-slot="1386532572"
+                 data-ad-format="auto"
+                 data-full-width-responsive="true"></ins>
+            <script>${ADSENSE_INLINE_BOOTSTRAP}</script>
           </body>
           </html>
         `);
@@ -170,18 +184,8 @@ function mountAdmax(ad: Ad, placeholder: HTMLElement): void {
 }
 
 function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
-  // Debug logging
-  console.log('mountAdStage called with ad:', {
-    id: ad.id,
-    body_text: ad.body_text,
-    ad_type: ad.ad_type,
-    payload_type: ad.payload_type,
-    payload_key: ad.payload_key,
-  });
-
   // Handle admax ads
   if (ad.ad_type === 'admax') {
-    console.log('Ad is admax type, calling mountAdmax');
     mountAdmax(ad, placeholder);
     return;
   }
@@ -198,15 +202,14 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
 
   // Render based on payload_type
   if (ad.payload_type === null) {
-    console.log('Ad has no payload_type, showing admax iframe');
     // Body text only - show admax iframe
     // Update placeholder styles for admax
     placeholder.style.cssText = `
       position: relative;
       width: 100%;
       height: 250px;
-      background: #f8f9fa;
-      border: 1px solid #e9ecef;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
       border-radius: 8px;
       display: flex;
       align-items: center;
@@ -217,7 +220,7 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
   } else if (ad.payload_type === 'gif' || ad.payload_type === 'image') {
     // Render image
     const img = document.createElement('img');
-    img.src = `/api/ads/${ad.id}/payload`;
+    img.src = nativeApiHref(`/api/ads/${ad.id}/payload`);
     img.style.cssText = `
       position: absolute;
       top: 0;
@@ -233,7 +236,7 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
       postId: ad.id,
       label: t('ad_card.play_zip'),
       icon: '📦',
-      thumbnailUrl: ad.thumbnail_key ? `/api/thumbnail/${ad.id}` : undefined,
+      thumbnailUrl: ad.thumbnail_key ? nativeApiHref(`/api/thumbnail/${ad.id}`) : undefined,
       onClick: async () => {
         // Show loading state
         const originalContent = placeholder.innerHTML;
@@ -297,7 +300,7 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
       postId: ad.id,
       label: t('ad_card.play_swf'),
       icon: '🎮',
-      thumbnailUrl: ad.thumbnail_key ? `/api/thumbnail/${ad.id}` : undefined,
+      thumbnailUrl: ad.thumbnail_key ? nativeApiHref(`/api/thumbnail/${ad.id}`) : undefined,
       onClick: async () => {
         // Show loading state
         const originalContent = placeholder.innerHTML;
@@ -314,7 +317,7 @@ function mountAdStage(ad: Ad, placeholder: HTMLElement): void {
             activeFlashHandle = null;
           }
 
-          activeFlashHandle = await executeFlash(ad.id, placeholder, `/api/ads/${ad.id}/payload`);
+          activeFlashHandle = await executeFlash(ad.id, placeholder, nativeApiHref(`/api/ads/${ad.id}/payload`));
 
           // Set pointer events for iframe interaction
           const adBanner = placeholder.closest('.ad-banner') as HTMLElement;
@@ -408,8 +411,8 @@ export function createAdCard(ad: Ad): HTMLElement {
       position: relative;
       width: 100%;
       height: 250px;
-      background: #f8f9fa;
-      border: 1px solid #e9ecef;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
       border-radius: 8px;
       display: flex;
       align-items: center;
@@ -423,7 +426,7 @@ export function createAdCard(ad: Ad): HTMLElement {
       width: 100%;
       aspect-ratio: ${aspectRatio};
       overflow: hidden;
-      background: #f0f0f0;
+      background: var(--bg-tertiary);
     `;
   }
 

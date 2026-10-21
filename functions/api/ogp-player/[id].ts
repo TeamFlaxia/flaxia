@@ -1,3 +1,5 @@
+import { createWvfsGameUrl } from '../../../src/lib/wvfs-game-url.ts';
+
 type Env = {
   DB: D1Database;
   BASE_URL?: string;
@@ -32,10 +34,6 @@ export async function onRequest(context: { request: Request; env: Env; params: {
       return serveSwfPlayer(postId, baseUrl);
     }
 
-    if (payloadKey.startsWith('dos/')) {
-      return serveDosPlayer(postId, baseUrl);
-    }
-
     if (payloadKey) {
       return serveZipPlayer(postId, sandboxOrigin);
     }
@@ -47,7 +45,17 @@ export async function onRequest(context: { request: Request; env: Env; params: {
   }
 }
 
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function serveZipPlayer(postId: string, sandboxOrigin: string): Response {
+  const safeGameUrl = escapeHtml(createWvfsGameUrl(sandboxOrigin, postId));
   const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -60,8 +68,8 @@ function serveZipPlayer(postId: string, sandboxOrigin: string): Response {
   </style>
 </head>
 <body>
-  <iframe src="${sandboxOrigin}/api/wvfs-zip/${postId}"
-    sandbox="allow-scripts allow-pointer-lock allow-fullscreen allow-same-origin"
+  <iframe src="${safeGameUrl}"
+    sandbox="allow-scripts allow-pointer-lock allow-fullscreen"
     allow="fullscreen"
     referrerpolicy="no-referrer"></iframe>
 </body>
@@ -71,11 +79,14 @@ function serveZipPlayer(postId: string, sandboxOrigin: string): Response {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'public, max-age=3600',
+      'X-Frame-Options': 'SAMEORIGIN',
     },
   });
 }
 
 function serveSwfPlayer(postId: string, baseUrl: string): Response {
+  const safeId = escapeHtml(encodeURIComponent(postId));
+  const safeBase = escapeHtml(baseUrl);
   const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -88,7 +99,7 @@ function serveSwfPlayer(postId: string, baseUrl: string): Response {
   <script src="https://unpkg.com/@ruffle-rs/ruffle"></script>
 </head>
 <body>
-  <embed src="${baseUrl}/api/swf/${postId}"
+  <embed src="${safeBase}/api/swf/${safeId}"
     style="width:100%;height:100%"
     type="application/x-shockwave-flash">
 </body>
@@ -98,10 +109,7 @@ function serveSwfPlayer(postId: string, baseUrl: string): Response {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'public, max-age=3600',
+      'X-Frame-Options': 'SAMEORIGIN',
     },
   });
-}
-
-function serveDosPlayer(postId: string, baseUrl: string): Response {
-  return Response.redirect(`${baseUrl}/api/dos-player/${postId}`, 302);
 }

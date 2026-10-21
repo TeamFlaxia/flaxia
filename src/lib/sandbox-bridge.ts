@@ -30,7 +30,7 @@ export class SandboxBridge {
 
   private handleMessage(event: MessageEvent): void {
     // Validate origin first
-    const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxiausercontent.com';
+    const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
     const allowedOrigins = [sandboxOrigin, 'https://sandbox.flaxia.app'];
     if (!allowedOrigins.includes(event.origin)) return;
 
@@ -180,7 +180,7 @@ export class SandboxBridge {
   }
 
   private sendMessage(message: SandboxMessage): void {
-    const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://flaxiausercontent.com';
+    const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
     this.iframe.contentWindow?.postMessage(message, sandboxOrigin);
   }
 

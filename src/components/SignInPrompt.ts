@@ -124,7 +124,16 @@ export function createSignInPrompt(props: SignInPromptProps = {}) {
   };
 }
 
-export type SignInPromptAction = 'fresh' | 'reply' | 'follow' | 'report' | 'post' | 'bookmark';
+export type SignInPromptAction =
+  | 'fresh'
+  | 'reply'
+  | 'follow'
+  | 'report'
+  | 'post'
+  | 'bookmark'
+  | 'block'
+  | 'upload'
+  | 'reaction';
 
 const signInPromptSubtitles: Record<SignInPromptAction, string> = {
   fresh: 'auth.sign_in_to_fresh',
@@ -133,6 +142,9 @@ const signInPromptSubtitles: Record<SignInPromptAction, string> = {
   report: 'auth.sign_in_to_report',
   post: 'auth.sign_in_to_post',
   bookmark: 'auth.sign_in_to_bookmark',
+  block: 'auth.sign_in_to_block',
+  upload: 'auth.sign_in_to_upload',
+  reaction: 'auth.sign_in_to_reaction',
 };
 
 // Convenience function to show sign-in prompt with preset subtitle

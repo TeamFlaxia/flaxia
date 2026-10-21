@@ -1,5 +1,8 @@
 // Unified file extension and MIME type validation for ZIP execution
 
+/** Executable post payloads use the sandbox flow instead of document attachments. */
+export const GAME_FILE_EXTENSIONS = new Set(['zip', 'swf', 'html', 'htm', 'rsp', 'js', 'wasm']);
+
 export const ALLOWED_EXTENSIONS: Record<string, string> = {
   // Web content
   '.html': 'text/html',
@@ -14,7 +17,9 @@ export const ALLOWED_EXTENSIONS: Record<string, string> = {
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
+  // NOTE: '.svg' is deliberately absent (H-4/M-5): scriptable SVG inside
+  // game ZIPs is an XSS vector. Re-adding it reopens the finding.
+
   '.ico': 'image/x-icon',
 
   // Fonts
@@ -27,10 +32,12 @@ export const ALLOWED_EXTENSIONS: Record<string, string> = {
   '.wav': 'audio/wav',
   '.ogg': 'audio/ogg',
   '.m4a': 'audio/mp4',
+  '.opus': 'audio/opus',
 
   // Video
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
 
   // WebAssembly and binary
   '.wasm': 'application/wasm',
@@ -44,19 +51,8 @@ export const ALLOWED_EXTENSIONS: Record<string, string> = {
   '.glsl': 'text/plain',
   '.wgsl': 'text/plain',
   '.rsp': 'text/plain',
-
-  // DOS executables and support files
-  '.exe': 'application/x-msdos-program',
-  '.com': 'application/x-msdos-program',
-  '.bat': 'text/plain',
-  '.conf': 'text/plain',
-  '.img': 'application/octet-stream',
-  '.iso': 'application/x-iso9660',
-  '.dosz': 'application/octet-stream',
+  '.cf': 'text/plain',
   '.zip': 'application/zip',
-  '.jsdos': 'application/zip',
-  '.ovl': 'application/octet-stream',
-  '.cfg': 'text/plain',
 };
 
 export function isExtensionAllowed(filename: string): boolean {
@@ -75,4 +71,21 @@ export function validateFileType(filename: string): { allowed: boolean; mimeType
   const allowed = ext in ALLOWED_EXTENSIONS;
 
   return { allowed, mimeType };
+}
+
+/**
+ * MIME types for post attachments, used only as a fallback when the browser
+ * reports an empty `File.type`.
+ *
+ * Deliberately separate from ALLOWED_EXTENSIONS: that map also drives the
+ * sandbox's allowlist for files inside a game ZIP, which is not affected by
+ * the post attachment feature.
+ */
+const ATTACHMENT_MIME_TYPES: Record<string, string> = {
+  '.pdf': 'application/pdf',
+};
+
+export function attachmentMimeType(filename: string): string | undefined {
+  const ext = filename.substring(filename.lastIndexOf('.')).toLowerCase();
+  return ATTACHMENT_MIME_TYPES[ext];
 }

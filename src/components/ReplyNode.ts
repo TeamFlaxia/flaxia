@@ -82,12 +82,12 @@ export class ReplyNode {
       `;
       this.expandButton.addEventListener('click', () => this.toggleExpanded());
       this.expandButton.addEventListener('mouseenter', () => {
-        this.expandButton!.style.backgroundColor = '#f1f5f9';
-        this.expandButton!.style.color = '#334155';
+        this.expandButton!.style.backgroundColor = 'var(--bg-input)';
+        this.expandButton!.style.color = 'var(--text-primary)';
       });
       this.expandButton.addEventListener('mouseleave', () => {
         this.expandButton!.style.backgroundColor = 'none';
-        this.expandButton!.style.color = '#64748b';
+        this.expandButton!.style.color = 'var(--text-muted)';
       });
       postWrapper.insertBefore(this.expandButton, postWrapper.firstChild);
     }
@@ -114,7 +114,7 @@ export class ReplyNode {
       this.childrenContainer.style.cssText = `
         margin-top: 0.75rem;
         padding-left: 1rem;
-        border-left: 2px solid #e2e8f0;
+        border-left: 2px solid var(--border);
         display: ${this.props.node.post.depth > 0 ? 'none' : 'block'};
       `;
 
@@ -220,7 +220,7 @@ export class ReplyNode {
       this.childrenContainer.style.cssText = `
         margin-top: 0.75rem;
         padding-left: 1rem;
-        border-left: 2px solid #e2e8f0;
+        border-left: 2px solid var(--border);
         display: block;
       `;
       this.element.appendChild(this.childrenContainer);

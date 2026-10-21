@@ -1,12 +1,17 @@
 import { clearMeCache } from '../lib/auth-cache.js';
+import { attachPlusBadge } from '../lib/avatar.js';
+import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { safeRemoveFromBody } from '../lib/dom-utils.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { Post } from '../types/post.js';
+import { createBlockedUsersModal } from './BlockedUsersModal.js';
 import { createEditProfileModal } from './EditProfileModal.js';
 import { createFollowerListModal } from './FollowerListModal.js';
+import { createPostCard } from './PostCard.js';
 import { linkifyHashtags, linkifyUrls, processText, renderMathElements } from './PostText.js';
 import { showSignInPrompt } from './SignInPrompt.js';
 import { CurrentUser, createUserPostList } from './UserPostList.js';
@@ -15,6 +20,7 @@ interface ProfilePageProps {
   username: string;
   currentUser: CurrentUser | null;
   sandboxOrigin: string;
+  onOpenSettings?: () => void;
 }
 
 interface ProfileUserData {
@@ -22,14 +28,18 @@ interface ProfileUserData {
   display_name?: string;
   bio?: string;
   avatar_key?: string | null;
+  badge_type?: string | null;
+  header_key?: string | null;
   created_at?: string;
+  pinned_post_id?: string | null;
   posts_count?: number;
   followers_count?: number;
   following_count?: number;
   is_following?: boolean;
+  is_blocked?: boolean;
 }
 
-export function createProfilePage({ username, currentUser, sandboxOrigin }: ProfilePageProps) {
+export function createProfilePage({ username, currentUser, sandboxOrigin, onOpenSettings }: ProfilePageProps) {
   // Create main container
   const container = document.createElement('div');
   container.className = 'profile-page';
@@ -80,6 +90,15 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
 
   container.appendChild(topBar);
 
+  // Profile header banner (header image)
+  const bannerEl = document.createElement('div');
+  bannerEl.className = 'profile-banner';
+
+  const bannerOverlay = document.createElement('div');
+  bannerOverlay.className = 'profile-banner-overlay';
+  bannerOverlay.textContent = t('profile.change_header');
+  bannerEl.appendChild(bannerOverlay);
+
   // Profile header
   const header = document.createElement('div');
   header.className = 'profile-header';
@@ -103,6 +122,12 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
   usernameElement.className = 'profile-username';
   usernameElement.textContent = `@${username}`;
 
+  // Own-profile action buttons (Edit / Flaxia settings), shown below the bio.
+  // Inserted into this row only for the user's own profile.
+  const ownActionsRow = document.createElement('div');
+  ownActionsRow.className = 'profile-own-actions';
+  ownActionsRow.style.display = 'none';
+
   const bio = document.createElement('div');
   bio.className = 'profile-bio';
   bio.textContent = '';
@@ -110,18 +135,21 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
   const joinedDate = document.createElement('div');
   joinedDate.className = 'profile-joined-date';
   joinedDate.style.cssText =
-    "color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 0.875rem; margin-top: 0.5rem;";
+    "color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 0.875rem; margin: 0.5rem 0;";
   joinedDate.textContent = t('profile.joined', { date: t('common.loading') });
 
   info.appendChild(displayName);
   info.appendChild(usernameElement);
   info.appendChild(bio);
   info.appendChild(joinedDate);
+  info.appendChild(ownActionsRow);
 
   avatarSection.appendChild(avatar);
   avatarSection.appendChild(info);
 
   header.appendChild(avatarSection);
+
+  const own = currentUser?.username === username;
 
   // Stats row
   const statsRow = document.createElement('div');
@@ -153,52 +181,251 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
   followingStat.appendChild(followingCountSpan);
   followingStat.appendChild(document.createTextNode(' ' + t('profile.following_label')));
 
+  // Blocked-users stat (own profile only), shown to the right of "Following"
+  const blockedStat = document.createElement('div');
+  blockedStat.className = 'profile-stat';
+  blockedStat.style.cssText = 'cursor: pointer; transition: background-color 0.2s;';
+  blockedStat.style.display = own ? 'flex' : 'none';
+  const blockedCountSpan = document.createElement('span');
+  blockedCountSpan.className = 'stat-number';
+  blockedCountSpan.textContent = '0';
+  blockedStat.appendChild(blockedCountSpan);
+  blockedStat.appendChild(document.createTextNode(' ' + t('profile.blocked_label')));
+
   statsRow.appendChild(postsStat);
   statsRow.appendChild(followersStat);
   statsRow.appendChild(followingStat);
+  statsRow.appendChild(blockedStat);
 
-  // Action buttons
-  const actionsRow = document.createElement('div');
-  actionsRow.className = 'profile-actions';
+  let userData: ProfileUserData | null = null;
 
-  // Edit Profile button (only for own profile)
+  // Edit / Settings buttons (own profile) and Logout (kebab menu)
   const editButton = document.createElement('button');
-  editButton.className = 'profile-button profile-button--primary';
+  editButton.className = 'profile-button profile-button--secondary';
   editButton.textContent = t('profile.edit');
-  editButton.style.display = currentUser?.username === username ? 'block' : 'none';
 
-  // Logout button (only for own profile)
+  const settingsButton = document.createElement('button');
+  settingsButton.className = 'profile-button profile-button--secondary';
+  settingsButton.textContent = t('nav.settings');
+
   const logoutButton = document.createElement('button');
-  logoutButton.className = 'profile-button profile-button--secondary';
+  logoutButton.className = 'profile-menu-item';
   logoutButton.textContent = t('profile.log_out');
-  logoutButton.style.display = currentUser?.username === username ? 'block' : 'none';
-  logoutButton.style.marginTop = '0.5rem';
 
   // Follow/Unfollow button (only for others' profiles)
   const followButton = document.createElement('button');
   followButton.className = 'profile-button profile-button--secondary';
   followButton.textContent = t('profile.follow');
-  followButton.style.display = currentUser?.username === username ? 'none' : 'block';
+  followButton.style.display = own ? 'none' : 'block';
 
-  actionsRow.appendChild(editButton);
-  if (currentUser?.username === username) {
-    actionsRow.appendChild(logoutButton);
-  }
+  // Block/Unblock button (only for others' profiles). Starts red; updateBlockButton
+  // switches it to the outline style once we know the user is already blocked.
+  const blockButton = document.createElement('button');
+  blockButton.className = 'profile-button profile-button--danger';
+  blockButton.textContent = t('profile.block');
+  blockButton.style.display = own ? 'none' : 'block';
+
+  // Action buttons row (follow + block buttons, only for others' profiles)
+  const actionsRow = document.createElement('div');
+  actionsRow.className = 'profile-actions';
   actionsRow.appendChild(followButton);
+  actionsRow.appendChild(blockButton);
 
   // Assemble page
   container.appendChild(header);
+  container.insertBefore(bannerEl, header);
   container.appendChild(statsRow);
-  container.appendChild(document.createElement('hr'));
-  container.appendChild(actionsRow);
 
-  // Add user post list
+  if (!own) {
+    container.appendChild(document.createElement('hr'));
+    container.appendChild(actionsRow);
+  }
+
+  // Pinned post container (shown above the tabs for everyone)
+  const pinnedContainer = document.createElement('div');
+  pinnedContainer.className = 'profile-pinned';
+  pinnedContainer.style.display = 'none';
+
+  // User post list (投稿 tab)
   const postList = createUserPostList({
     username: username,
     sandboxOrigin: sandboxOrigin,
     currentUser: currentUser,
+    showPinOption: own,
+    onTogglePin: own ? togglePin : undefined,
   });
-  container.appendChild(postList.getElement());
+
+  // Profile tabs (own profile: 投稿 / いいね / ブックマーク)
+  const tabBar = document.createElement('div');
+  tabBar.className = 'profile-tabs';
+  tabBar.style.display = own ? 'flex' : 'none';
+
+  type ProfileTabKey = 'posts' | 'freshs' | 'bookmarks';
+  const tabDefs: { key: ProfileTabKey; label: string }[] = [
+    { key: 'posts', label: own ? t('profile.your_posts') : t('profile.posts_label') },
+    { key: 'freshs', label: t('profile.view_likes') },
+    { key: 'bookmarks', label: t('profile.view_bookmarks') },
+  ];
+
+  let activeTab: ProfileTabKey = 'posts';
+  const tabEls: Partial<Record<ProfileTabKey, HTMLElement>> = {};
+
+  const tabContent = document.createElement('div');
+  tabContent.className = 'profile-tab-content';
+
+  const selectTab = (key: ProfileTabKey) => {
+    if (key === activeTab) return;
+
+    const current = tabEls[activeTab];
+    if (current) current.style.display = 'none';
+
+    let next = tabEls[key];
+    if (!next) {
+      next = createUserPostList({
+        username,
+        sandboxOrigin,
+        currentUser,
+        source: key,
+      }).getElement();
+      tabEls[key] = next;
+      tabContent.appendChild(next);
+    }
+
+    next.style.display = '';
+    activeTab = key;
+
+    tabBar.querySelectorAll<HTMLElement>('.profile-tab').forEach((el) => {
+      el.classList.toggle('profile-tab--active', el.dataset.tab === key);
+    });
+  };
+
+  tabDefs.forEach((def) => {
+    const tab = document.createElement('button');
+    tab.className = 'profile-tab';
+    tab.dataset.tab = def.key;
+    tab.textContent = def.label;
+    if (def.key === activeTab) tab.classList.add('profile-tab--active');
+    tab.addEventListener('click', () => selectTab(def.key));
+    tabBar.appendChild(tab);
+  });
+
+  // Posts tab wraps the pinned post (top) + the user's posts list
+  const postsTabContent = document.createElement('div');
+  postsTabContent.className = 'profile-posts-tab';
+  postsTabContent.appendChild(pinnedContainer);
+  postsTabContent.appendChild(postList.getElement());
+  tabEls.posts = postsTabContent;
+  tabContent.appendChild(postsTabContent);
+
+  container.appendChild(tabBar);
+  container.appendChild(tabContent);
+
+  // Pinned post logic
+  let pinnedPostCache: Post | null = null;
+
+  const renderPinned = () => {
+    pinnedContainer.innerHTML = '';
+
+    if (!userData?.pinned_post_id) {
+      pinnedContainer.style.display = 'none';
+      return;
+    }
+
+    pinnedContainer.style.display = '';
+
+    const label = document.createElement('div');
+    label.className = 'profile-pinned-label';
+    label.textContent = t('profile.pinned_label');
+    pinnedContainer.appendChild(label);
+
+    const pinnedPost = pinnedPostCache;
+    if (!pinnedPost) return;
+
+    const card = createPostCard({
+      post: pinnedPost,
+      sandboxOrigin,
+      currentUser,
+      depth: pinnedPost.depth,
+      enablePostRefs: true,
+      showPinOption: own,
+      pinned: own,
+      onTogglePin: own ? togglePin : undefined,
+    });
+    pinnedContainer.appendChild(card.getElement());
+  };
+
+  const loadPinned = async () => {
+    try {
+      const res = await fetch(`/api/users/${username}/pinned`, { credentials: 'include' });
+      if (!res.ok) return;
+      const data = (await res.json()) as { post: Post | null };
+      pinnedPostCache = data.post ?? null;
+      renderPinned();
+    } catch (error) {
+      console.error('Failed to load pinned post:', error);
+    }
+  };
+
+  async function togglePin(postId: string) {
+    if (!currentUser) return;
+    const currentlyPinned = userData?.pinned_post_id === postId;
+    try {
+      const res = currentlyPinned
+        ? await fetch('/api/profile/pin', { method: 'DELETE', credentials: 'include' })
+        : await fetch('/api/profile/pin', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ postId }),
+          });
+      if (!res.ok) return;
+      const newPinnedId = currentlyPinned ? null : postId;
+      userData = userData ? { ...userData, pinned_post_id: newPinnedId } : userData;
+      await loadPinned();
+      window.dispatchEvent(new CustomEvent('profilePinChanged', { detail: { pinnedId: newPinnedId } }));
+    } catch (error) {
+      console.error('Failed to toggle pin:', error);
+    }
+  }
+
+  // Own-profile controls: visible Edit + Flaxia settings buttons between the
+  // username and the bio, and a kebab menu (top-right) for logout etc.
+  if (own) {
+    ownActionsRow.appendChild(editButton);
+    ownActionsRow.appendChild(settingsButton);
+    ownActionsRow.style.display = 'flex';
+
+    const menu = document.createElement('div');
+    menu.className = 'profile-kebab-menu';
+    menu.appendChild(logoutButton);
+
+    const kebab = document.createElement('button');
+    kebab.className = 'profile-kebab-button';
+    kebab.textContent = '⋯';
+    kebab.setAttribute('aria-label', t('common.menu'));
+
+    kebab.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    });
+    menu.addEventListener('click', (e) => e.stopPropagation());
+    window.addEventListener('click', () => {
+      menu.style.display = 'none';
+    });
+
+    settingsButton.addEventListener('click', () => {
+      onOpenSettings?.();
+    });
+    logoutButton.addEventListener('click', () => {
+      menu.style.display = 'none';
+    });
+
+    bannerEl.classList.add('profile-banner--editable');
+    bannerEl.addEventListener('click', () => startEdit());
+
+    topBar.appendChild(kebab);
+    topBar.appendChild(menu);
+  }
 
   let fabButton: HTMLElement | null = null;
   if (currentUser) {
@@ -216,9 +443,9 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
     container.appendChild(fabButton);
   }
 
-  let userData: ProfileUserData | null = null;
   const _isEditing = false;
   let isFollowing = false;
+  let isBlocked = false;
 
   // Load user data
   const loadUserData = async () => {
@@ -227,6 +454,12 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
       if (response.ok) {
         const data = (await response.json()) as { user: ProfileUserData };
         userData = data.user;
+
+        // Load the pinned post and sync pin state on visible cards
+        loadPinned();
+        window.dispatchEvent(
+          new CustomEvent('profilePinChanged', { detail: { pinnedId: userData.pinned_post_id ?? null } }),
+        );
 
         // Update UI
         displayName.textContent = userData.display_name ?? null;
@@ -263,10 +496,17 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
         }
 
         if (userData.avatar_key) {
-          avatar.style.backgroundImage = `url(/api/images/${userData.avatar_key})`;
+          avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${userData.avatar_key}`)})`;
           avatar.style.backgroundSize = 'cover';
           avatar.style.backgroundPosition = 'center';
           avatar.textContent = '';
+        }
+        attachPlusBadge(avatar, userData.badge_type);
+
+        if (userData.header_key) {
+          bannerEl.style.backgroundImage = `url(${nativeApiHref(`/api/images/${userData.header_key}`)})`;
+        } else {
+          bannerEl.style.backgroundImage = '';
         }
 
         // Update counts
@@ -277,6 +517,15 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
         // Update follow button state
         isFollowing = userData.is_following || false;
         updateFollowButton();
+
+        // Update block button state
+        isBlocked = userData.is_blocked || false;
+        updateBlockButton();
+
+        // Load blocked-users count (own profile only)
+        if (own) {
+          loadBlockedCount();
+        }
       } else {
         console.error('User not found');
       }
@@ -293,12 +542,38 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
       : 'profile-button profile-button--secondary';
   };
 
+  // Update block button text and state
+  const updateBlockButton = () => {
+    blockButton.textContent = isBlocked ? t('profile.unblock') : t('profile.block');
+    blockButton.className = isBlocked
+      ? 'profile-button profile-button--danger-outline'
+      : 'profile-button profile-button--danger';
+  };
+
+  // Load the count of users this account has blocked (own profile only)
+  const loadBlockedCount = async () => {
+    try {
+      const res = await fetch('/api/users/me/blocked', { credentials: 'include' });
+      if (!res.ok) return;
+      const data = (await res.json()) as { users: unknown[] };
+      blockedCountSpan.textContent = formatCount(data.users.length || 0);
+    } catch {
+      /* ignore */
+    }
+  };
+
   // Edit profile functionality
   const startEdit = () => {
     if (!userData) return;
 
     const modal = createEditProfileModal({
-      currentUser: userData as { username: string; display_name?: string; bio?: string; avatar_key?: string },
+      currentUser: userData as {
+        username: string;
+        display_name?: string;
+        bio?: string;
+        avatar_key?: string;
+        header_key?: string | null;
+      },
       onSave: async () => {
         // Reload user data after save
         await loadUserData();
@@ -497,6 +772,56 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
     }
   });
 
+  // Block / Unblock
+  blockButton.addEventListener('click', async () => {
+    if (!currentUser) {
+      showSignInPrompt(
+        'block',
+        () => {
+          window.history.pushState({}, '', '/login');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        },
+        () => {
+          window.history.pushState({}, '', '/register');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        },
+      );
+      return;
+    }
+
+    if (!userData) return;
+
+    if (!isBlocked) {
+      const confirmed = await createConfirmDialog(t('profile.block_confirm', { username: `@${username}` }));
+      if (!confirmed) return;
+    }
+
+    blockButton.disabled = true;
+
+    try {
+      const response = await fetch(`/api/users/${username}/block`, {
+        method: isBlocked ? 'DELETE' : 'POST',
+        credentials: 'include',
+      });
+
+      if (response.ok) {
+        isBlocked = !isBlocked;
+        updateBlockButton();
+        if (isBlocked) {
+          // Blocking also unfollows; reflect that on the follow button.
+          isFollowing = false;
+          updateFollowButton();
+        }
+      } else {
+        console.error('Failed to update block state:', await response.text());
+      }
+    } catch (error) {
+      console.error('Block/unblock error:', error);
+    } finally {
+      blockButton.disabled = false;
+    }
+  });
+
   // Add click handlers for follower/following stats
   followersStat.addEventListener('click', () => {
     const modal = createFollowerListModal({
@@ -534,6 +859,27 @@ export function createProfilePage({ username, currentUser, sandboxOrigin }: Prof
   });
   followingStat.addEventListener('mouseleave', () => {
     followingStat.style.backgroundColor = 'transparent';
+  });
+
+  // Blocked-users stat (own profile): open the block management modal
+  blockedStat.addEventListener('click', () => {
+    const modal = createBlockedUsersModal({
+      onUnblock: () => {
+        const current = Number.parseInt(blockedCountSpan.textContent || '0', 10);
+        if (!Number.isNaN(current) && current > 0) {
+          blockedCountSpan.textContent = formatCount(current - 1);
+        } else {
+          loadBlockedCount();
+        }
+      },
+    });
+    document.body.appendChild(modal);
+  });
+  blockedStat.addEventListener('mouseenter', () => {
+    blockedStat.style.backgroundColor = 'var(--bg-secondary)';
+  });
+  blockedStat.addEventListener('mouseleave', () => {
+    blockedStat.style.backgroundColor = 'transparent';
   });
 
   // Load initial data

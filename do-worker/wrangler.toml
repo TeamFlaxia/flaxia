@@ -10,3 +10,20 @@ class_name = "NotificationStream"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["NotificationStream"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["ChatStream"]
+
+[[migrations]]
+tag = "v3"
+deleted_classes = ["ChatStream"]
+
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["CallStream"]
+
+[[migrations]]
+tag = "v5"
+deleted_classes = ["CallStream"]
+

@@ -1,0 +1,368 @@
+import { buildGameDescription, buildGameTitle } from '../../src/lib/game-seo';
+import { isCrawler } from '../../src/lib/is-crawler';
+import { escapeHtml, renderAvatarBadge, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
+import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
+import {
+  renderBreadcrumbJsonLd,
+  renderSsrFooter,
+  renderSsrHeader,
+  renderSsrLayoutCss,
+  type SsrFooterSection,
+} from '../lib/ssr-layout';
+
+type Env = {
+  DB: D1Database;
+  BASE_URL?: string;
+  SANDBOX_ORIGIN?: string;
+};
+
+type RawPost = Record<string, unknown>;
+
+interface PostRow {
+  id: string;
+  user_id: string;
+  username: string;
+  display_name: string | null;
+  avatar_key: string | null;
+  badge_type: string | null;
+  text: string;
+  payload_key: string | null;
+  swf_key: string | null;
+  thumbnail_key: string | null;
+  gif_key: string | null;
+  game_description: string | null;
+  fresh_count: number;
+  reply_count: number;
+  bookmark_count: number;
+  created_at: string;
+}
+
+interface RelatedGame {
+  id: string;
+  username: string;
+  display_name: string | null;
+  text: string;
+}
+
+const assetUrl = (baseUrl: string, key: string) => `${baseUrl}/api/images/${key}`;
+
+function toPost(row: RawPost): PostRow {
+  return {
+    id: String(row.id),
+    user_id: String(row.user_id),
+    username: String(row.username),
+    display_name: row.display_name ? String(row.display_name) : null,
+    avatar_key: row.avatar_key ? String(row.avatar_key) : null,
+    badge_type: row.badge_type ? String(row.badge_type) : null,
+    text: String(row.text),
+    payload_key: row.payload_key ? String(row.payload_key) : null,
+    swf_key: row.swf_key ? String(row.swf_key) : null,
+    thumbnail_key: row.thumbnail_key ? String(row.thumbnail_key) : null,
+    gif_key: row.gif_key ? String(row.gif_key) : null,
+    game_description: row.game_description ? String(row.game_description) : null,
+    fresh_count: Number(row.fresh_count),
+    reply_count: Number(row.reply_count),
+    bookmark_count: Number(row.bookmark_count),
+    created_at: String(row.created_at),
+  };
+}
+
+function toRelatedGame(row: RawPost): RelatedGame {
+  return {
+    id: String(row.id),
+    username: String(row.username),
+    display_name: row.display_name ? String(row.display_name) : null,
+    text: String(row.text),
+  };
+}
+
+function detectGameType(post: PostRow): string {
+  if (post.swf_key) return 'flash';
+  if (post.payload_key) return 'zip';
+  return 'html5';
+}
+
+function formatDate(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString('ja-JP', { year: 'numeric', month: 'short', day: 'numeric' });
+  } catch {
+    return iso;
+  }
+}
+
+export async function onRequest(context: {
+  request: Request;
+  env: Env;
+  params: { id: string };
+  next: () => Promise<Response>;
+}): Promise<Response> {
+  const { request, env, params } = context;
+
+  const userAgent = request.headers.get('User-Agent') || '';
+  if (!isCrawler(userAgent)) {
+    return context.next();
+  }
+
+  const baseUrl = env.BASE_URL ?? 'https://flaxia.app';
+  const _sandboxOrigin = env.SANDBOX_ORIGIN ?? 'https://sandbox.flaxia.app';
+  const defaultImage = `${baseUrl}/og-default-v2.png`;
+
+  const gameId = params.id;
+  const canonicalUrl = `${baseUrl}/arcade/${gameId || ''}`;
+
+  if (!gameId) {
+    return new Response(
+      renderHtmlShell(`<div class="ssr-empty"><h1>Game not found</h1></div>`, {
+        title: 'Game not found',
+        description: 'Game not found',
+        canonicalUrl,
+        image: defaultImage,
+        spaHeadTags: SPA_HEAD_TAGS,
+      }),
+      { status: 404, headers: { 'Content-Type': 'text/html' } },
+    );
+  }
+
+  try {
+    const mainRow = (await env.DB.prepare(`
+      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type,
+        p.text, p.payload_key, p.swf_key, p.thumbnail_key, p.gif_key,
+        p.game_description,
+        p.fresh_count, COALESCE(p.reply_count, 0) as reply_count,
+        COALESCE(p.bookmark_count, 0) as bookmark_count,
+        p.created_at
+      FROM posts p
+      LEFT JOIN users u ON p.user_id = u.id
+      WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0
+        AND p.payload_key IS NOT NULL AND p.swf_key IS NULL
+    `)
+      .bind(gameId)
+      .first()) as RawPost | null;
+
+    if (!mainRow) {
+      return new Response(
+        renderHtmlShell(
+          `<div class="ssr-empty"><h1>Game not found</h1><p>This game does not exist or has been removed.</p></div>`,
+          {
+            title: 'Game not found',
+            description: 'Game not found',
+            canonicalUrl,
+            image: defaultImage,
+            spaHeadTags: SPA_HEAD_TAGS,
+          },
+        ),
+        { status: 404, headers: { 'Content-Type': 'text/html' } },
+      );
+    }
+
+    const post = toPost(mainRow);
+    const title = buildGameTitle(post.text);
+    const gameType = detectGameType(post);
+    const typeLabels: Record<string, string> = { flash: 'Flash', zip: 'ZIP', html5: 'HTML5' };
+    const typeLabel = typeLabels[gameType] || 'Game';
+    const authorName = post.display_name || post.username;
+
+    // Build OG image
+    const ogImage = post.thumbnail_key
+      ? assetUrl(baseUrl, post.thumbnail_key)
+      : post.gif_key && !post.gif_key.startsWith('audio/') && !post.gif_key.startsWith('video/')
+        ? assetUrl(baseUrl, post.gif_key)
+        : defaultImage;
+
+    const description = buildGameDescription({
+      gameDescription: post.game_description,
+      title,
+      typeLabel,
+      authorName,
+      text: post.text,
+    });
+
+    // Fetch related games: same author + same type
+    let sameAuthorGames: RelatedGame[] = [];
+    let sameTypeGames: RelatedGame[] = [];
+    if (env.DB) {
+      const authorRows = await env.DB.prepare(`
+        SELECT p.id, p.username, u.display_name, p.text
+        FROM posts p
+        LEFT JOIN users u ON p.user_id = u.id
+        WHERE p.user_id = ? AND p.id != ? AND p.status = 'published' AND p.hidden = 0
+          AND p.payload_key IS NOT NULL AND p.swf_key IS NULL
+          AND p.parent_id IS NULL
+        ORDER BY p.created_at DESC
+        LIMIT 4
+      `)
+        .bind(post.user_id, gameId)
+        .all<RawPost>();
+      sameAuthorGames = (authorRows.results || []).map(toRelatedGame);
+
+      const typeCondition = gameType === 'flash' ? 'p.swf_key IS NOT NULL' : 'p.payload_key IS NOT NULL';
+
+      const typeRows = await env.DB.prepare(`
+        SELECT p.id, p.username, u.display_name, p.text
+        FROM posts p
+        LEFT JOIN users u ON p.user_id = u.id
+        WHERE p.id != ? AND p.status = 'published' AND p.hidden = 0
+          AND p.payload_key IS NOT NULL
+          AND ${typeCondition}
+          AND p.parent_id IS NULL
+        ORDER BY p.created_at DESC
+        LIMIT 4
+      `)
+        .bind(gameId)
+        .all<RawPost>();
+      sameTypeGames = (typeRows.results || []).map(toRelatedGame);
+    }
+
+    const relatedGameSection = (sectionTitle: string, games: RelatedGame[]): SsrFooterSection | null =>
+      games.length > 0
+        ? {
+            title: sectionTitle,
+            links: games.map((game) => ({
+              label: buildGameTitle(game.text),
+              url: `${baseUrl}/arcade/${game.id}`,
+            })),
+          }
+        : null;
+
+    const breadcrumbItems = [
+      { label: 'Home', url: `${baseUrl}/home` },
+      { label: 'Arcade', url: `${baseUrl}/arcade` },
+      { label: title, url: canonicalUrl },
+    ];
+
+    const jsonLd = [
+      renderJsonLd({
+        '@context': 'https://schema.org',
+        '@type': 'BlogPosting',
+        headline: `${title} - ${authorName} on Flaxia`,
+        description,
+        url: canonicalUrl,
+        image: ogImage,
+        datePublished: post.created_at,
+        author: {
+          '@type': 'Person',
+          name: authorName,
+          url: `${baseUrl}/users/${post.username}`,
+        },
+      }),
+      renderBreadcrumbJsonLd(breadcrumbItems, baseUrl),
+    ].join('\n');
+
+    const profileUrl = `${baseUrl}/users/${post.username}`;
+    const avatarSrc = post.avatar_key ? assetUrl(baseUrl, post.avatar_key) : `${baseUrl}/default-avatar.png`;
+
+    const header = renderSsrHeader({ baseUrl, current: 'arcade', breadcrumb: breadcrumbItems });
+    const footerSections: SsrFooterSection[] = [
+      relatedGameSection(`More games by ${authorName}`, sameAuthorGames),
+      relatedGameSection(`More ${typeLabel} games`, sameTypeGames),
+    ].filter((s): s is SsrFooterSection => s !== null);
+    const footer = renderSsrFooter({ baseUrl, sections: footerSections });
+
+    const content = `
+      <div class="ssr-game-detail">
+        ${header}
+        <main>
+          <div class="ssr-game-embed">
+            <iframe src="${escapeHtml(baseUrl)}/api/ogp-player/${escapeHtml(encodeURIComponent(gameId))}"
+              sandbox="allow-scripts allow-pointer-lock allow-fullscreen"
+              allow="fullscreen"
+              referrerpolicy="no-referrer"
+              title="${escapeHtml(title)}"></iframe>
+          </div>
+          <h1 style="font-size:20px;font-weight:700;margin:0 0 12px 0;color:#1a1a1a">${escapeHtml(title)}</h1>
+          <div class="ssr-game-meta">
+            <a href="${escapeHtml(profileUrl)}">
+              <span class="ssr-avatar-wrap"><img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(authorName)}" class="ssr-game-author-img">${renderAvatarBadge(post.badge_type)}</span>
+            </a>
+            <div>
+              <a href="${escapeHtml(profileUrl)}" class="ssr-game-author-name">${escapeHtml(authorName)}</a>
+              <div class="ssr-game-username">@${escapeHtml(post.username)}</div>
+            </div>
+          </div>
+          <div class="ssr-game-stats">
+            <span>❤️ ${post.fresh_count}</span>
+            <span>💬 ${post.reply_count}</span>
+            <span>🔖 ${post.bookmark_count}</span>
+            <span>🏷️ ${typeLabel}</span>
+            <span>📅 ${formatDate(post.created_at)}</span>
+          </div>
+          <div class="ssr-game-text">${escapeHtml(post.text)}</div>
+          <a href="${escapeHtml(canonicalUrl)}" class="ssr-game-play-btn">Play this game</a>
+        </main>
+        ${footer}
+      </div>`;
+
+    const additionalHead = `${renderSsrLayoutCss()}
+    <style>
+      .ssr-game-detail { max-width: 600px; margin: 0 auto; }
+      .ssr-game-embed {
+        width: 100%;
+        aspect-ratio: 16 / 10;
+        background: #000;
+        border-radius: 12px;
+        overflow: hidden;
+        margin-bottom: 16px;
+      }
+      .ssr-game-embed iframe {
+        width: 100%;
+        height: 100%;
+        border: none;
+      }
+      .ssr-game-meta { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+      .ssr-game-author-img {
+        width: 40px; height: 40px; border-radius: 50%; object-fit: cover;
+        background: #e9ecef;
+      }
+      .ssr-game-author-name { font-weight: 600; color: #1a1a1a; text-decoration: none; }
+      .ssr-game-author-name:hover { text-decoration: underline; }
+      .ssr-game-username { font-size: 13px; color: #888; }
+      .ssr-game-stats { display: flex; gap: 16px; font-size: 14px; color: #888; margin-bottom: 16px; }
+      .ssr-game-text {
+        font-size: 15px;
+        line-height: 1.6;
+        color: #333;
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin-bottom: 16px;
+      }
+      .ssr-game-play-btn {
+        display: inline-block;
+        background: #007bff;
+        color: white;
+        text-decoration: none;
+        padding: 10px 24px;
+        border-radius: 8px;
+        font-weight: 600;
+        font-size: 15px;
+      }
+      .ssr-game-play-btn:hover { background: #0056b3; }
+    </style>`;
+
+    return new Response(
+      renderHtmlShell(content, {
+        title: `Flaxia Arcade - ${title}`,
+        description,
+        canonicalUrl,
+        image: ogImage,
+
+        jsonLd,
+        additionalHead,
+        spaHeadTags: SPA_HEAD_TAGS,
+      }),
+      { headers: { 'Content-Type': 'text/html' } },
+    );
+  } catch (error) {
+    console.error('SSR arcade game error:', error);
+    return new Response(
+      renderHtmlShell(`<div class="ssr-empty"><h1>Error</h1><p>Failed to load this game.</p></div>`, {
+        title: 'Error',
+        description: 'Failed to load game',
+        canonicalUrl,
+        image: defaultImage,
+        spaHeadTags: SPA_HEAD_TAGS,
+      }),
+      { status: 500, headers: { 'Content-Type': 'text/html' } },
+    );
+  }
+}

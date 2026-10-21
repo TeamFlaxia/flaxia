@@ -79,6 +79,6 @@ Account registration is not permitted for individuals under the age of 13. If we
 If this policy is changed, we will notify users on Flaxia at least 7 days before the effective date.
 
 ## **Article 12 Contact Information**
-- Email: [RemydreS@proton.me](mailto:RemydreS@proton.me)
+- Email: [teamflaxia@proton.me](mailto:teamflaxia@proton.me)
 
 For GDPR-related complaints, you have the right to lodge a complaint with the data protection authority (DPA) of your EU member state.

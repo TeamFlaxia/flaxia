@@ -1,7 +1,7 @@
 # Flaxia — Project Guide for Claude
 
 ## Project Identity
-Flaxia is a chronological SNS where posts are living, interactive applications. Concept: "Twitter with Flash inside" — spiritual successor to Adobe Flash.
+Flaxia is an SNS where posts are living, interactive applications. Concept: "Twitter with Flash inside" — spiritual successor to Adobe Flash.
 
 ## Tech Stack
 - **Runtime**: Cloudflare Pages + Workers (edge-first)
@@ -9,7 +9,7 @@ Flaxia is a chronological SNS where posts are living, interactive applications. 
 - **Frontend**: Vanilla TypeScript SPA (Vite 5, no React)
 - **Database**: Cloudflare D1 (SQLite)
 - **Storage**: Cloudflare R2 (post payloads, images, audio)
-- **Cache**: Cloudflare KV (rate limiting, game cache)
+- **Cache**: Cloudflare KV (game cache)
 - **Auth**: Custom session-based auth (email/password, cookies, D1 sessions)
 - **Queues**: Cloudflare Queues (ActivityPub delivery)
 - **Package Manager**: pnpm
@@ -26,13 +26,15 @@ Flaxia is a chronological SNS where posts are living, interactive applications. 
 
 ## Project Structure
 ```
-functions/api/[[route]].ts  # Main API router (all endpoints)
-src/main.ts                 # SPA entry point (~2500 lines)
+functions/api/[[route]].ts  # Thin Hono router mounting routes/*.ts
+functions/api/routes/       # Feature routers (posts, media, stamps, ...)
+functions/api/billing/[[route]].ts  # Stripe subscription billing (Flaxia+)
+functions/lib/              # Server-side helpers (auth, billing, ...)
+src/main.ts                 # SPA entry point
 src/components/             # UI components
-src/lib/                    # Utilities (db, r2, bridge, sandbox, zip, etc.)
+src/lib/                    # Utilities (i18n, db, r2, bridge, sandbox, zip, ...)
 migrations/                 # D1 SQL migrations
 tests/                      # Test files (*.test.ts)
-.windsurf/rules/            # Detailed spec docs
 docs/                       # Developer documentation
 ```
 
@@ -46,7 +48,7 @@ docs/                       # Developer documentation
 
 ## Constraints (NON-NEGOTIABLE)
 - Post text ≤ 200 chars, payload ≤ 10MB
-- Timeline: chronological only (`ORDER BY created_at DESC`)
+- Global and Following timelines: reverse chronological (`GET /api/posts`). For You: ranked recommendations (`GET /api/posts/recommended`); see `docs/architecture.md`.
 - `allow-same-origin` banned on all iframes
 - `Sponsored` label mandatory on all ad cards
 - `click_url` with `javascript:` scheme must be rejected
@@ -54,15 +56,13 @@ docs/                       # Developer documentation
 
 ## Security
 - ZIP validation: client-side (JSZip) + server-side (file count, path traversal, forbidden types)
-- Sandbox CSP: `default-src 'none'; script-src 'self'; connect-src 'none'; frame-ancestors https://flaxia.com`
-- Rate limiting via KV for all mutation endpoints
+- Sandbox CSP: `default-src 'none'; script-src 'self'; connect-src 'none'; frame-ancestors https://flaxia.app`
 
 ## Testing
 ```bash
 pnpm test                    # All tests
 pnpm test:auth               # Auth tests
 pnpm test:posts              # Posts tests
-pnpm test:rate-limit         # Rate limit tests
 ```
 
 ## Common Commands
@@ -76,8 +76,4 @@ pnpm migrate:prod            # Run D1 migrations in production
 ```
 
 ## Reference Docs
-- `.windsurf/rules/rule.md` — Full project rules with DB schema, bridge types, design tokens
-- `.windsurf/rules/flaxia-ad-spec.md` — Ad system specification
-- `.windsurf/rules/zipexecution.md` — ZIP execution flow
-- `.windsurf/rules/zipupload.md` — ZIP upload validation
 - `docs/*.md` — Architecture, setup, deployment, API, database docs

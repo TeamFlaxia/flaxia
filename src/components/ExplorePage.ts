@@ -1,9 +1,17 @@
+import { attachPlusBadge } from '../lib/avatar.js';
+import { createFabButton } from '../lib/fab-button.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { createInfiniteScroll } from '../lib/infinite-scroll.js';
+import { createSkeletonCards } from '../lib/loading-ui.js';
+import { nativeApiHref } from '../lib/native-api.js';
+import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';
+import { createPostUpdatedHandler } from '../lib/post-update.js';
+import { updateMetaTags } from '../lib/seo-meta.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
-import { createSkeletonCard } from './SkeletonCard.js';
 
 export interface ExplorePageProps {
   tag?: string;
@@ -11,15 +19,41 @@ export interface ExplorePageProps {
   currentUser?: { username: string; id: string; display_name?: string; avatar_key?: string } | null;
 }
 
+interface ArcadeGame {
+  id: string;
+  postId: string;
+  title: string;
+  username: string;
+  displayName?: string;
+  avatarKey?: string;
+  type: string;
+  swfKey?: string;
+  payloadKey?: string;
+  thumbnailKey?: string;
+  freshCount: number;
+  replyCount: number;
+  impressions: number;
+  isFreshed: boolean;
+  createdAt: string;
+}
 export class ExplorePage {
   private element: HTMLElement;
   private props: ExplorePageProps;
   private posts: Post[] = [];
+  private arcadePosts: ArcadeGame[] = [];
+  private userSuggestions: Array<{
+    id: string;
+    username: string;
+    display_name?: string;
+    avatar_key?: string;
+    badge_type?: string | null;
+    bio?: string;
+  }> = [];
   private cursor?: string;
   private loading = false;
   private hasMore = true;
-  private intersectionObserver: IntersectionObserver | null = null;
-  private loadMoreSentinel: HTMLElement | null = null;
+  private infiniteScroll: ReturnType<typeof createInfiniteScroll>;
+  private activeFilter: 'posts' | 'arcade' | 'users' = 'posts';
   private searchFilter: 'posts' | 'users' | 'arcade' = 'posts';
   private fabButton: HTMLElement | null = null;
   private tagCountEl: HTMLElement | null = null;
@@ -28,14 +62,26 @@ export class ExplorePage {
   private static readonly SEARCH_HISTORY_KEY = 'flaxia_search_history';
   private static readonly MAX_HISTORY = 10;
   private postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
-  private boundPostUpdatedHandler?: (e: Event) => void;
+  private postUpdatedHandler?: (e: Event) => void;
 
   constructor(props: ExplorePageProps) {
     this.props = props;
+    this.infiniteScroll = createInfiniteScroll({
+      onLoadMore: () => this.loadMorePosts(),
+      canLoadMore: () => !this.loading && this.hasMore,
+    });
     this.element = this.createElement();
     this.setupEventListeners();
     this.setupPostUpdatedListener();
     this.loadContent();
+
+    if (props.tag) {
+      updateMetaTags({
+        title: `Flaxia - #${props.tag}`,
+        description: `Explore posts tagged #${props.tag} on Flaxia`,
+        url: `${window.location.origin}/explore?tag=${encodeURIComponent(props.tag)}`,
+      });
+    }
   }
 
   private createElement(): HTMLElement {
@@ -46,71 +92,19 @@ export class ExplorePage {
     const searchSection = this.createSearchSection();
     container.appendChild(searchSection);
 
+    // 'posts' button is set as active by default in createSearchSection
+
     if (this.props.tag) {
-      // Tag view
-      const tagHeader = document.createElement('div');
-      tagHeader.className = 'explore-header explore-tag-header';
-      tagHeader.style.cssText = `
-        display: flex;
-        align-items: center;
-        gap: 1rem;
-        padding: 1rem;
-        border-bottom: 1px solid var(--border);
-        position: sticky;
-        top: 0;
-        z-index: 10;
-        background: var(--bg-primary);
-      `;
-
-      const backBtn = document.createElement('button');
-      backBtn.className = 'explore-tag-back';
-      backBtn.textContent = '←';
-      backBtn.style.cssText = `
-        background: none;
-        border: none;
-        font-size: 1.25rem;
-        cursor: pointer;
-        color: var(--text-primary);
-        padding: 0.25rem 0.5rem;
-        border-radius: 4px;
-        transition: background 0.2s;
-      `;
-      backBtn.addEventListener('mouseenter', () => {
-        backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))';
-      });
-      backBtn.addEventListener('mouseleave', () => {
-        backBtn.style.background = 'none';
-      });
-      backBtn.addEventListener('click', () => {
-        window.history.back();
-      });
-
-      const tagInfo = document.createElement('div');
-      tagInfo.style.cssText = 'display: flex; flex-direction: column;';
-
-      const tagTitle = document.createElement('span');
-      tagTitle.className = 'explore-title';
-      tagTitle.textContent = `# ${this.props.tag}`;
-      tagTitle.style.cssText = `
-        font-size: 1.25rem;
-        font-weight: 700;
-        color: var(--text-primary);
-        line-height: 1.3;
-      `;
-
-      this.tagCountEl = document.createElement('span');
-      this.tagCountEl.className = 'explore-tag-count';
-      this.tagCountEl.textContent = t('explore.tag_count', { count: formatCount(0) });
-      this.tagCountEl.style.cssText = `
-        font-size: 0.8rem;
-        color: var(--text-muted);
-      `;
-
-      tagInfo.appendChild(tagTitle);
-      tagInfo.appendChild(this.tagCountEl);
-      tagHeader.appendChild(backBtn);
-      tagHeader.appendChild(tagInfo);
-      container.appendChild(tagHeader);
+      container.appendChild(
+        createPageHeader({
+          title: `# ${this.props.tag}`,
+          subtitle: t('explore.tag_count', { count: formatCount(0) }),
+          subtitleRef: (el) => {
+            this.tagCountEl = el;
+          },
+          onBack: () => window.history.back(),
+        }),
+      );
 
       const postsContainer = document.createElement('div');
       postsContainer.className = 'explore-posts';
@@ -136,29 +130,16 @@ export class ExplorePage {
     loadingContainer.style.cssText = 'display: none;';
     container.appendChild(loadingContainer);
 
-    // Add sentinel for intersection observer
-    this.loadMoreSentinel = document.createElement('div');
-    this.loadMoreSentinel.className = 'explore-sentinel';
-    this.loadMoreSentinel.style.cssText = `
-      height: 100px;
-      width: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-top: 1rem;
-    `;
-    container.appendChild(this.loadMoreSentinel);
+    container.appendChild(this.infiniteScroll.sentinel);
+    this.infiniteScroll.sentinel.style.marginTop = '1rem';
 
     if (this.props.currentUser) {
-      this.fabButton = document.createElement('button');
-      this.fabButton.className = 'timeline-fab visible';
-      this.fabButton.textContent = '+';
-      this.fabButton.addEventListener('click', () => {
+      this.fabButton = createFabButton(() => {
         openPostModal({
           currentUser: this.props.currentUser,
           onPostCreated: (post) => this.handleNewPost(post as unknown as Post),
         });
-      });
+      }, true);
       container.appendChild(this.fabButton);
     }
 
@@ -218,6 +199,45 @@ export class ExplorePage {
 
     section.appendChild(searchBox);
 
+    // Filter bar
+    const filterBar = document.createElement('div');
+    filterBar.className = 'explore-filter-bar';
+    filterBar.style.cssText = `
+      display: flex;
+      gap: 0.5rem;
+      overflow-x: auto;
+    `;
+
+    const filters: { key: 'posts' | 'arcade' | 'users'; label: string }[] = [
+      { key: 'posts', label: t('explore.filter_posts') },
+      { key: 'arcade', label: t('explore.filter_arcade') },
+      { key: 'users', label: t('explore.filter_users') },
+    ];
+
+    for (const f of filters) {
+      const btn = document.createElement('button');
+      btn.className = 'explore-filter-btn';
+      btn.dataset.filter = f.key;
+      btn.textContent = f.label;
+      const isActive = f.key === 'posts';
+      btn.style.cssText = `
+        padding: 0.4rem 1rem;
+        border-radius: 999px;
+        border: 1px solid ${isActive ? 'var(--accent)' : 'var(--border)'};
+        background: ${isActive ? 'var(--accent)' : 'transparent'};
+        color: ${isActive ? 'white' : 'var(--text-muted)'};
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 0.8rem;
+        white-space: nowrap;
+        transition: all 0.2s ease;
+      `;
+      btn.onclick = () => this.switchFilter(f.key);
+      filterBar.appendChild(btn);
+    }
+
+    section.appendChild(filterBar);
+
     return section;
   }
 
@@ -245,7 +265,7 @@ export class ExplorePage {
             );
           } else {
             const data = (await res.json()) as {
-              users: { username: string; display_name: string; avatar_key: string }[];
+              users: { username: string; display_name: string; avatar_key: string; badge_type?: string | null }[];
             };
             this.renderSuggestions(
               suggestDropdown,
@@ -254,6 +274,7 @@ export class ExplorePage {
                 label: u.username,
                 display: u.display_name,
                 avatar: u.avatar_key,
+                badge: u.badge_type ?? null,
               })),
             );
           }
@@ -342,13 +363,18 @@ export class ExplorePage {
         }
       });
     }
-
-    this.setupIntersectionObserver();
   }
 
   private renderSuggestions(
     dropdown: HTMLElement,
-    items: { type: 'tag' | 'user'; label: string; count?: number; display?: string; avatar?: string }[],
+    items: {
+      type: 'tag' | 'user';
+      label: string;
+      count?: number;
+      display?: string;
+      avatar?: string;
+      badge?: string | null;
+    }[],
   ): void {
     dropdown.innerHTML = '';
 
@@ -402,6 +428,7 @@ export class ExplorePage {
           font-weight: bold; font-size: 0.7rem; flex-shrink: 0;
         `;
         avatar.textContent = (it.display || it.label)[0].toUpperCase();
+        attachPlusBadge(avatar, it.badge);
 
         const info = document.createElement('div');
         info.style.cssText = 'display: flex; flex-direction: column;';
@@ -443,7 +470,17 @@ export class ExplorePage {
       if (this.props.tag) {
         await this.loadTagPosts();
       } else {
-        await this.loadTrendingContent();
+        switch (this.activeFilter) {
+          case 'posts':
+            await this.loadTrendingContent();
+            break;
+          case 'arcade':
+            await this.loadArcadeContent();
+            break;
+          case 'users':
+            await this.loadUsersContent();
+            break;
+        }
       }
     } catch (error) {
       console.error('Failed to load explore content:', error);
@@ -463,37 +500,57 @@ export class ExplorePage {
       let url = '';
       if (this.props.tag) {
         url = `/api/posts?hashtag=${encodeURIComponent(this.props.tag)}&limit=10`;
+      } else if (this.activeFilter === 'arcade') {
+        url = `/api/games?limit=10`;
       } else {
         url = `/api/posts/trending?limit=10`;
       }
 
       if (this.cursor) {
-        if (!this.props.tag && !this.cursor.includes(',')) {
-          this.cursor = undefined;
-        } else {
+        if (this.props.tag) {
           url += `&cursor=${encodeURIComponent(this.cursor)}`;
+        } else if (this.activeFilter === 'arcade') {
+          url += `&cursor=${encodeURIComponent(this.cursor)}`;
+        } else if (this.cursor.includes(',')) {
+          url += `&cursor=${encodeURIComponent(this.cursor)}`;
+        } else {
+          this.cursor = undefined;
         }
       }
 
       const response = await fetch(url);
       if (!response.ok) throw new Error('Failed to load more posts');
 
-      const data = (await response.json()) as { posts: Post[] };
-      const newPosts = data.posts || [];
-
-      if (newPosts.length > 0) {
-        this.posts.push(...newPosts);
-        if (!this.props.tag) {
-          const lastPost = newPosts[newPosts.length - 1] as Post & { score: number };
-          this.cursor = `${lastPost.score},${lastPost.created_at}`;
+      if (this.activeFilter === 'arcade') {
+        const data = (await response.json()) as { games: ArcadeGame[]; hasMore: boolean; cursor?: string | null };
+        const newPosts = data.games || [];
+        if (newPosts.length > 0) {
+          this.arcadePosts.push(...newPosts);
+          this.cursor = data.cursor ?? undefined;
+          this.hasMore = data.hasMore;
+          this.renderArcadePosts();
         } else {
-          this.cursor = newPosts[newPosts.length - 1].created_at;
+          this.hasMore = false;
+          this.showEndOfPosts();
         }
-        this.hasMore = newPosts.length === 10;
-        this.renderPosts();
       } else {
-        this.hasMore = false;
-        this.showEndOfPosts();
+        const data = (await response.json()) as { posts: Post[] };
+        const newPosts = data.posts || [];
+
+        if (newPosts.length > 0) {
+          this.posts.push(...newPosts);
+          if (!this.props.tag) {
+            const lastPost = newPosts[newPosts.length - 1] as Post & { score: number };
+            this.cursor = `${lastPost.score},${lastPost.created_at}`;
+          } else {
+            this.cursor = newPosts[newPosts.length - 1].created_at;
+          }
+          this.hasMore = newPosts.length === 10;
+          this.renderPosts();
+        } else {
+          this.hasMore = false;
+          this.showEndOfPosts();
+        }
       }
     } catch (error) {
       console.error('Failed to load more posts:', error);
@@ -533,6 +590,36 @@ export class ExplorePage {
     }
   }
 
+  private async loadArcadeContent(): Promise<void> {
+    const res = await fetch('/api/games?limit=10');
+    if (res.ok) {
+      const data = (await res.json()) as { games: ArcadeGame[]; hasMore: boolean; cursor?: string | null };
+      this.arcadePosts = data.games || [];
+      this.cursor = data.cursor ?? undefined;
+      this.hasMore = data.hasMore;
+      this.renderArcadePosts();
+    }
+  }
+
+  private async loadUsersContent(): Promise<void> {
+    const res = await fetch('/api/users/suggestions');
+    if (res.ok) {
+      const data = (await res.json()) as {
+        users: Array<{
+          id: string;
+          username: string;
+          display_name?: string;
+          avatar_key?: string;
+          badge_type?: string | null;
+          bio?: string;
+        }>;
+      };
+      this.userSuggestions = data.users || [];
+      this.hasMore = false;
+      this.renderUserSuggestions();
+    }
+  }
+
   private handleNewPosts(newPosts: Post[]): void {
     if (newPosts.length > 0) {
       this.posts.push(...newPosts);
@@ -554,6 +641,56 @@ export class ExplorePage {
         detail: { view: 'search', searchQuery: query, searchType: this.searchFilter },
       }),
     );
+  }
+
+  private switchFilter(filter: 'posts' | 'arcade' | 'users'): void {
+    if (this.activeFilter === filter) return;
+    this.activeFilter = filter;
+
+    // Update filter UI
+    const filterBtns = this.element.querySelectorAll('.explore-filter-btn') as NodeListOf<HTMLElement>;
+    filterBtns.forEach((btn) => {
+      const isActive = btn.dataset.filter === filter;
+      btn.style.border = `1px solid ${isActive ? 'var(--accent)' : 'var(--border)'}`;
+      btn.style.background = isActive ? 'var(--accent)' : 'transparent';
+      btn.style.color = isActive ? 'white' : 'var(--text-muted)';
+    });
+
+    // Show/hide trending tags container
+    const trendingTags = this.element.querySelector('.explore-trending-tags') as HTMLElement;
+    if (trendingTags) {
+      trendingTags.style.display = filter === 'posts' ? 'block' : 'none';
+    }
+
+    // Reset and load content for the new filter
+    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
+    if (postsContainer) {
+      postsContainer.innerHTML = '';
+    }
+
+    // If in tag view, tag view only shows posts
+    if (this.props.tag && filter !== 'posts') {
+      const loadingElement = this.element.querySelector('.explore-loading') as HTMLElement;
+      if (loadingElement) {
+        loadingElement.style.display = 'block';
+        loadingElement.innerHTML = '';
+        const msg = document.createElement('div');
+        msg.style.cssText =
+          "text-align: center; padding: 3rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;";
+        msg.textContent = t('explore.tag_filter_unavailable');
+        loadingElement.appendChild(msg);
+      }
+      return;
+    }
+
+    this.posts = [];
+    this.arcadePosts = [];
+    this.userSuggestions = [];
+    this.cursor = undefined;
+    this.hasMore = true;
+    this.postCards.clear();
+
+    void this.loadContent();
   }
 
   private getSearchHistory(): string[] {
@@ -624,21 +761,8 @@ export class ExplorePage {
   }
 
   private setupPostUpdatedListener(): void {
-    this.boundPostUpdatedHandler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (!detail?.postId) return;
-      const card = this.postCards.get(detail.postId);
-      if (card) {
-        const update: Partial<Post> = {};
-        if (detail.isFreshed !== undefined) update.is_freshed = detail.isFreshed;
-        if (detail.freshCount !== undefined) update.fresh_count = detail.freshCount;
-        if (detail.isBookmarked !== undefined) update.is_bookmarked = detail.isBookmarked;
-        if (detail.bookmarkCount !== undefined) update.bookmark_count = detail.bookmarkCount;
-        if (detail.replyCount !== undefined) update.reply_count = detail.replyCount;
-        card.updatePost(update);
-      }
-    };
-    window.addEventListener('postUpdated', this.boundPostUpdatedHandler);
+    this.postUpdatedHandler = createPostUpdatedHandler(this.postCards);
+    window.addEventListener('postUpdated', this.postUpdatedHandler);
   }
 
   private renderPosts(): void {
@@ -698,16 +822,183 @@ export class ExplorePage {
     });
   }
 
+  private renderArcadePosts(): void {
+    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
+    if (!postsContainer) return;
+
+    if (this.arcadePosts.length === postsContainer.children.length && postsContainer.children.length > 0) {
+      return;
+    }
+
+    if (postsContainer.children.length === 0 || this.arcadePosts.length <= postsContainer.children.length) {
+      if (this.arcadePosts.length <= 10) {
+        postsContainer.innerHTML = '';
+      }
+    }
+
+    const fragment = document.createDocumentFragment();
+    const startIndex = postsContainer.children.length;
+
+    this.arcadePosts.slice(startIndex).forEach((game) => {
+      const row = document.createElement('div');
+      row.style.cssText = `
+        display: flex;
+        gap: 1rem;
+        padding: 0.75rem;
+        border-radius: 0.5rem;
+        cursor: pointer;
+        transition: background 0.2s;
+        margin-bottom: 0.25rem;
+      `;
+      row.addEventListener('mouseenter', () => {
+        row.style.background = 'var(--bg-secondary)';
+      });
+      row.addEventListener('mouseleave', () => {
+        row.style.background = 'transparent';
+      });
+      row.onclick = () => {
+        pushSpaHistory(`/arcade/${game.postId}`, { postId: game.postId });
+        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'arcade', postId: game.postId } }));
+      };
+
+      const thumb = document.createElement('div');
+      thumb.style.cssText = `
+        width: 180px;
+        flex-shrink: 0;
+        aspect-ratio: 16 / 9;
+        border-radius: 0.5rem;
+        overflow: hidden;
+        position: relative;
+        background: var(--bg-secondary);
+      `;
+
+      if (game.thumbnailKey) {
+        const img = document.createElement('img');
+        img.src = nativeApiHref(`/api/thumbnail/${game.postId}`);
+        img.alt = '';
+        img.loading = 'lazy';
+        img.width = 180;
+        img.height = 101;
+        img.style.cssText = 'width: 100%; height: 100%; object-fit: cover;';
+        thumb.appendChild(img);
+      } else {
+        const fallback = document.createElement('div');
+        fallback.style.cssText =
+          'width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 2rem;';
+        fallback.textContent = '🎮';
+        thumb.appendChild(fallback);
+      }
+
+      const info = document.createElement('div');
+      info.style.cssText = 'flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center;';
+
+      const title = document.createElement('div');
+      title.style.cssText =
+        'font-weight: 600; color: var(--text-primary); margin-bottom: 0.25rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+      title.textContent = game.title;
+
+      const meta = document.createElement('div');
+      meta.style.cssText =
+        'font-size: 0.8rem; color: var(--text-muted); display: flex; gap: 0.5rem; align-items: center;';
+
+      const author = document.createElement('span');
+      author.textContent = `@${game.username}`;
+
+      const engagement = document.createElement('span');
+      const freshStr = Number.isNaN(game.freshCount) ? '0' : formatCount(game.freshCount);
+      engagement.textContent = `${freshStr} 💚`;
+
+      meta.appendChild(author);
+      meta.appendChild(engagement);
+      info.appendChild(title);
+      info.appendChild(meta);
+
+      row.appendChild(thumb);
+      row.appendChild(info);
+      fragment.appendChild(row);
+    });
+
+    postsContainer.appendChild(fragment);
+  }
+
+  private renderUserSuggestions(): void {
+    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
+    if (!postsContainer) return;
+    postsContainer.innerHTML = '';
+
+    if (this.userSuggestions.length === 0) {
+      const msg = document.createElement('div');
+      msg.style.cssText =
+        "text-align: center; padding: 3rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;";
+      msg.textContent = t('explore.no_users');
+      postsContainer.appendChild(msg);
+      return;
+    }
+
+    this.userSuggestions.forEach((user) => {
+      const item = document.createElement('div');
+      item.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.75rem;
+        border-radius: 0.25rem;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+      `;
+      item.addEventListener('mouseenter', () => {
+        item.style.background = 'var(--bg-secondary)';
+      });
+      item.addEventListener('mouseleave', () => {
+        item.style.background = 'transparent';
+      });
+      item.onclick = () => {
+        window.history.pushState({ username: user.username }, '', `/profile/${user.username}`);
+        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'profile', username: user.username } }));
+      };
+
+      const avatar = document.createElement('div');
+      avatar.style.cssText = `
+        width: 40px; height: 40px; border-radius: 50%;
+        background: ${user.avatar_key ? `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')` : 'var(--accent)'};
+        background-size: cover;
+        background-position: center;
+        color: var(--bg-primary);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        font-size: 0.875rem;
+        flex-shrink: 0;
+      `;
+      if (!user.avatar_key) {
+        avatar.textContent = user.display_name?.[0]?.toUpperCase() || user.username[0].toUpperCase();
+      }
+      attachPlusBadge(avatar, user.badge_type);
+
+      const userInfo = document.createElement('div');
+      const usernameEl = document.createElement('div');
+      usernameEl.style.cssText = 'font-weight: 600; color: var(--text-primary);';
+      usernameEl.textContent = `@${user.username}`;
+      const displayNameEl = document.createElement('div');
+      displayNameEl.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);';
+      displayNameEl.textContent = user.display_name || '';
+
+      userInfo.appendChild(usernameEl);
+      userInfo.appendChild(displayNameEl);
+      item.appendChild(avatar);
+      item.appendChild(userInfo);
+      postsContainer.appendChild(item);
+    });
+  }
+
   private updateLoadingState(isLoading: boolean): void {
     const loadingElement = this.element.querySelector('.explore-loading') as HTMLElement;
     if (loadingElement) {
       loadingElement.style.display = isLoading ? 'block' : 'none';
       if (isLoading) {
-        // Show skeleton cards while loading more posts
         loadingElement.innerHTML = '';
-        for (let i = 0; i < 2; i++) {
-          loadingElement.appendChild(createSkeletonCard());
-        }
+        loadingElement.appendChild(createSkeletonCards(2));
       }
     }
   }
@@ -772,34 +1063,6 @@ export class ExplorePage {
     }
   }
 
-  private setupIntersectionObserver(): void {
-    if (!this.loadMoreSentinel) return;
-
-    // Disconnect existing observer if any
-    if (this.intersectionObserver) {
-      this.intersectionObserver.disconnect();
-    }
-
-    // Create new intersection observer optimized for mobile
-    this.intersectionObserver = new IntersectionObserver(
-      (entries) => {
-        const entry = entries[0];
-        if (entry.isIntersecting && !this.loading && this.hasMore) {
-          // Immediate loading for better mobile performance
-          this.loadMorePosts();
-        }
-      },
-      {
-        root: null, // Use viewport as root
-        rootMargin: '300px', // Start loading 300px before sentinel comes into view (better for mobile)
-        threshold: 0.1, // Trigger when 10% is visible (more reliable than 0.01)
-      },
-    );
-
-    // Start observing sentinel
-    this.intersectionObserver.observe(this.loadMoreSentinel);
-  }
-
   private handleNewPost(post: Post): void {
     this.posts = [post, ...this.posts];
     const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement;
@@ -828,16 +1091,12 @@ export class ExplorePage {
   }
 
   public destroy(): void {
-    if (this.boundPostUpdatedHandler) {
-      window.removeEventListener('postUpdated', this.boundPostUpdatedHandler);
-      this.boundPostUpdatedHandler = undefined;
+    if (this.postUpdatedHandler) {
+      window.removeEventListener('postUpdated', this.postUpdatedHandler);
     }
     this.postCards.forEach((card) => void card.destroy());
     this.postCards.clear();
-    if (this.intersectionObserver) {
-      this.intersectionObserver.disconnect();
-      this.intersectionObserver = null;
-    }
+    this.infiniteScroll.disconnect();
   }
 }
 

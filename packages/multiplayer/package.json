@@ -1,0 +1,32 @@
+{
+  "name": "@flaxia/multiplayer",
+  "version": "0.1.0",
+  "description": "Flaxia multiplayer SDK for sandbox games",
+  "type": "module",
+  "main": "dist/multiplayer-sdk.js",
+  "module": "dist/multiplayer-sdk.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "vite build && tsc --emitDeclarationOnly --outDir dist",
+    "dev": "vite build --watch",
+    "test": "node --test --experimental-strip-types ../../tests/multiplayer-client.test.ts ../../tests/multiplayer-bridge.test.ts",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RemydreScarlet/flaxia.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vite": "^5.0.0"
+  }
+}

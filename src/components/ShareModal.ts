@@ -1,6 +1,19 @@
 import { t } from '../lib/i18n.js';
+import { attachIcons } from '../lib/icons.js';
 import { registerModal } from '../lib/modal-state.js';
-import { canUseWebShare, copyToClipboard, createShareData, sharePlatforms, shareViaWebShare } from '../lib/share';
+import {
+  canUseWebShare,
+  copyToClipboard,
+  createShareData,
+  sharePlatforms,
+  shareViaWebShare,
+  shareViaWebShareWithFile,
+} from '../lib/share';
+
+export interface ShareMedia {
+  blob: Blob;
+  filename: string;
+}
 
 export interface ShareModalProps {
   post: {
@@ -9,10 +22,13 @@ export interface ShareModalProps {
     username: string;
     display_name?: string;
   };
+  url?: string;
+  media?: ShareMedia;
   onClose: () => void;
+  onQuote?: () => void;
 }
 
-export function createShareModal({ post, onClose }: ShareModalProps): HTMLElement {
+export function createShareModal({ post, url: customUrl, media, onClose, onQuote }: ShareModalProps): HTMLElement {
   const unregister = registerModal();
   const overlay = document.createElement('div');
   overlay.className = 'share-modal-overlay';
@@ -53,6 +69,9 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
   const getPlatformName = (name: string) => t(platformNameKey[name] || name);
 
   const shareData = createShareData(post);
+  if (customUrl) {
+    shareData.url = customUrl;
+  }
   const shareUrl = shareData.url;
   const _shareText = shareData.text;
 
@@ -80,11 +99,65 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
         line-height: 1;
         border-radius: 4px;
         transition: background 0.2s;
-      ">✕</button>
+      "><span class="action-icon" data-icon="close"></span></button>
     </div>
     <div class="share-modal-content" style="
       padding: 1.25rem;
     ">
+      ${
+        onQuote
+          ? `
+        <button class="share-button share-button--quote" style="
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.75rem;
+          padding: 0.875rem 1rem;
+          background: var(--bg-secondary);
+          border: 1px solid var(--border);
+          border-radius: 0.5rem;
+          color: var(--text-primary);
+          font-size: 0.9375rem;
+          font-weight: 500;
+          cursor: pointer;
+          margin-bottom: 1rem;
+          transition: background 0.2s;
+        ">
+          <span class="action-icon" data-icon="quote"></span>
+          <span>${t('share.quote')}</span>
+        </button>
+      `
+          : ''
+      }
+      ${
+        media
+          ? `
+        <div class="share-media-preview" style="
+          margin-bottom: 0.5rem;
+          border-radius: 0.5rem;
+          overflow: hidden;
+          background: #000;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          max-height: 45vh;
+        ">
+          <img src="${URL.createObjectURL(media.blob)}" alt="${t('share.media_preview')}" style="
+            max-width: 100%;
+            max-height: 45vh;
+            display: block;
+          ">
+        </div>
+        <p class="share-save-hint" style="
+          text-align: center;
+          color: var(--text-muted);
+          font-size: 0.8125rem;
+          margin: 0 0 1rem 0;
+        ">${t('share.save_hint')}</p>
+      `
+          : ''
+      }
       ${
         canUseWebShare()
           ? `
@@ -105,7 +178,7 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
           margin-bottom: 1rem;
           transition: opacity 0.2s;
         ">
-          <span style="font-size: 1.25rem;">📤</span>
+          <span class="action-icon" data-icon="send"></span>
           <span>${t('share.native')}</span>
         </button>
       `
@@ -128,7 +201,7 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
         margin-bottom: 1rem;
         transition: background 0.2s;
       ">
-        <span style="font-size: 1.25rem;">📋</span>
+        <span class="action-icon" data-icon="copy"></span>
         <span>${t('share.copy_link')}</span>
       </button>
       <div class="share-toast" style="
@@ -195,12 +268,15 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
     </div>
   `;
 
+  attachIcons(modal);
+
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
 
   const closeButton = modal.querySelector('.share-modal-close') as HTMLButtonElement;
   const nativeShareButton = modal.querySelector('.share-button--native') as HTMLButtonElement;
   const clipboardButton = modal.querySelector('.share-button--clipboard') as HTMLButtonElement;
+  const quoteButton = modal.querySelector('.share-button--quote') as HTMLButtonElement;
   const toast = modal.querySelector('.share-toast') as HTMLElement;
 
   const showToast = (message: string) => {
@@ -219,6 +295,14 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
 
   closeButton.addEventListener('click', close);
 
+  if (quoteButton && onQuote) {
+    quoteButton.addEventListener('click', () => {
+      unregister();
+      overlay.remove();
+      onQuote();
+    });
+  }
+
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay) {
       close();
@@ -233,6 +317,16 @@ export function createShareModal({ post, onClose }: ShareModalProps): HTMLElemen
 
   if (nativeShareButton) {
     nativeShareButton.addEventListener('click', async () => {
+      if (media && canUseWebShare()) {
+        const file = new File([media.blob], media.filename, { type: media.blob.type });
+        const success = await shareViaWebShareWithFile(shareData, file);
+        if (success) {
+          close();
+        } else {
+          showToast(t('share.native_failed'));
+        }
+        return;
+      }
       const success = await shareViaWebShare(shareData);
       if (success) {
         close();

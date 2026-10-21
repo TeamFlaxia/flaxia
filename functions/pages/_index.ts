@@ -1,5 +1,7 @@
 import { isCrawler } from '../../src/lib/is-crawler';
 import { type PostRow, renderHtmlShell, renderPostList, renderWebSiteJsonLd } from '../../src/lib/render-html';
+import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
+import { renderSsrFooter, renderSsrHeader, renderSsrLayoutCss } from '../lib/ssr-layout';
 
 type Env = {
   DB: D1Database;
@@ -15,6 +17,7 @@ function toPost(row: RawPost): PostRow {
     username: String(row.username),
     display_name: row.display_name ? String(row.display_name) : null,
     avatar_key: row.avatar_key ? String(row.avatar_key) : null,
+    badge_type: row.badge_type ? String(row.badge_type) : null,
     text: String(row.text),
     hashtags: String(row.hashtags),
     gif_key: row.gif_key ? String(row.gif_key) : null,
@@ -35,7 +38,7 @@ function toPost(row: RawPost): PostRow {
 }
 
 const POST_SELECT = `
-  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key,
+  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type,
     p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key,
     p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
     COALESCE(p.reply_count, 0) as reply_count,
@@ -52,13 +55,18 @@ export async function onRequest(context: {
   env: Env;
   next: () => Promise<Response>;
 }): Promise<Response> {
-  const { request, env, next } = context;
-  const userAgent = request.headers.get('user-agent') || '';
+  const { request, env } = context;
   const baseUrl = env.BASE_URL ?? 'https://flaxia.app';
   const defaultImage = `${baseUrl}/og-default-v2.png`;
 
+  const acceptHeader = request.headers.get('accept') || '';
+  if (acceptHeader.includes('application/activity+json')) {
+    return context.next();
+  }
+
+  const userAgent = request.headers.get('User-Agent') || '';
   if (!isCrawler(userAgent)) {
-    return next();
+    return context.next();
   }
 
   try {
@@ -72,18 +80,16 @@ export async function onRequest(context: {
 
     const jsonLd = renderWebSiteJsonLd('Flaxia', baseUrl);
 
+    const header = renderSsrHeader({ baseUrl, current: 'home' });
+    const footer = renderSsrFooter({ baseUrl });
+
     const content = `
-      <header class="ssr-header">
-        <a href="${baseUrl}" class="ssr-logo">Flaxia</a>
-        <a href="${baseUrl}/explore" style="color:#007bff;text-decoration:none;font-size:14px">Explore</a>
-      </header>
+      ${header}
       <main>
-        <h1 style="font-size:18px;font-weight:600;margin:0 0 16px 0;color:#333">Latest Posts</h1>
+        <h1 style="font-size:18px;font-weight:600;margin:0 0 16px 0;color:var(--text-primary)">Latest Posts</h1>
         ${renderPostList(posts, baseUrl)}
       </main>
-      <footer class="ssr-footer">
-        <a href="${baseUrl}/explore">Explore</a> · <a href="${baseUrl}/arcade">Arcade</a> · <a href="${baseUrl}/about">About</a>
-      </footer>
+      ${footer}
     `;
 
     return new Response(
@@ -93,8 +99,9 @@ export async function onRequest(context: {
           'Flaxiaは、クリエイティブな投稿を共有できるプラットフォームです。テキスト、画像、音声、ZIPファイルなど、様々な形式のコンテンツを投稿して、コミュニティと繋がりましょう。',
         canonicalUrl: baseUrl,
         image: defaultImage,
-        type: 'website',
         jsonLd,
+        additionalHead: renderSsrLayoutCss(),
+        spaHeadTags: SPA_HEAD_TAGS,
       }),
       { headers: { 'Content-Type': 'text/html' } },
     );
@@ -106,6 +113,7 @@ export async function onRequest(context: {
         description: 'Creative post platform',
         canonicalUrl: baseUrl,
         image: defaultImage,
+        spaHeadTags: SPA_HEAD_TAGS,
       }),
       { headers: { 'Content-Type': 'text/html' } },
     );

@@ -1,0 +1,213 @@
+import Stripe from 'stripe';
+
+type Env = {
+  DB: D1Database;
+  BUCKET: R2Bucket;
+  STRIPE_SECRET_KEY: string;
+  STRIPE_WEBHOOK_SECRET: string;
+  BASE_URL: string;
+};
+
+function marketJson(request: Request, body: unknown, status = 200, env?: Env): Response {
+  const origin = request.headers.get('Origin');
+  const headers = new Headers({ 'Content-Type': 'application/json' });
+  const allowed =
+    origin && (CHECKOUT_ALLOWED_ORIGINS.has(origin) || (env?.BASE_URL && origin === new URL(env.BASE_URL).origin));
+  if (origin && allowed) {
+    headers.set('Access-Control-Allow-Origin', origin);
+    headers.set('Access-Control-Allow-Credentials', 'true');
+    headers.set('Vary', 'Origin');
+  }
+  return new Response(JSON.stringify(body), { status, headers });
+}
+
+function getStripe(env: Env): Stripe {
+  return new Stripe(env.STRIPE_SECRET_KEY, {
+    apiVersion: '2026-08-26.dahlia',
+    httpClient: Stripe.createFetchHttpClient(),
+  });
+}
+
+function getSessionToken(request: Request): string | null {
+  const cookieHeader = request.headers.get('Cookie');
+  if (!cookieHeader) return null;
+  const cookies = cookieHeader.split(';').map((c) => c.trim());
+  const sessionCookie = cookies.find((c) => c.startsWith('session='));
+  return sessionCookie ? sessionCookie.substring('session='.length) : null;
+}
+
+async function getUserId(env: Env, request: Request): Promise<string | null> {
+  const token = getSessionToken(request);
+  if (!token) return null;
+  // Expiry is part of the session check: an expired or leaked token must not
+  // keep creating checkout sessions forever.
+  const session = await env.DB.prepare(
+    "SELECT user_id FROM sessions WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+  )
+    .bind(token)
+    .first<{ user_id: string }>();
+  return session?.user_id ?? null;
+}
+
+// This endpoint lives outside the Hono router, so it enforces the same origin
+// allowlist as the CSRF middleware itself.
+const CHECKOUT_ALLOWED_ORIGINS = new Set(['http://localhost:8787', 'http://localhost:5173', 'https://flaxia.app']);
+
+function isAllowedOrigin(request: Request, env: Env): boolean {
+  const origin = request.headers.get('Origin');
+  if (!origin) return true; // server-side clients do not send Origin
+  if (CHECKOUT_ALLOWED_ORIGINS.has(origin)) return true;
+  return Boolean(env.BASE_URL) && origin === new URL(env.BASE_URL).origin;
+}
+
+export async function onRequest(context: {
+  request: Request;
+  env: Record<string, unknown>;
+  waitUntil(p: Promise<unknown>): void;
+}) {
+  const env = context.env as unknown as Env;
+  const url = new URL(context.request.url);
+  const method = context.request.method;
+  const path = url.pathname.replace(/^\/api\/market\//, '');
+  if (method === 'OPTIONS') {
+    const origin = context.request.headers.get('Origin');
+    if (!isAllowedOrigin(context.request, env)) {
+      return marketJson(context.request, { error: 'Forbidden' }, 403, env);
+    }
+    return new Response(null, {
+      status: 204,
+      headers: {
+        'Access-Control-Allow-Origin': origin ?? '',
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Allow-Methods': 'POST,OPTIONS',
+        'Access-Control-Allow-Headers': 'Authorization,Content-Type,X-Flaxia-Native-App',
+        Vary: 'Origin',
+      },
+    });
+  }
+
+  if (method === 'POST' && path === 'checkout') {
+    return handleMarketCheckout(context.request, env);
+  }
+
+  return marketJson(context.request, { error: 'Not found' }, 404, env);
+}
+
+async function handleMarketCheckout(request: Request, env: Env): Promise<Response> {
+  if (!isAllowedOrigin(request, env)) {
+    return marketJson(request, { error: 'CSRF validation failed' }, 403, env);
+  }
+
+  const userId = await getUserId(env, request);
+  if (!userId) {
+    return marketJson(request, { error: 'Unauthorized' }, 401, env);
+  }
+
+  const body = (await request.json()) as { postId?: string; amount?: number; title?: string };
+  const { postId, amount } = body;
+
+  // #67: amount/title are untrusted client input. Require a strict integer in
+  // range (blocks NaN/coerced/fractional values) and always derive the
+  // product name server-side from the post so receipts cannot be spoofed.
+  // NOTE: there is no seller price table yet (posts has no price column), so
+  // the buyer still chooses within the floor/ceiling band; the charge that
+  // Stripe actually collects is verified webhook-side before completion.
+  if (!postId || typeof amount !== 'number' || !Number.isInteger(amount) || amount < 100 || amount > 50000) {
+    return marketJson(request, { error: 'Invalid request: postId and integer amount (100-50000) required' }, 400, env);
+  }
+
+  // Verify the post exists
+  const post = await env.DB.prepare('SELECT id, user_id, text FROM posts WHERE id = ?')
+    .bind(postId)
+    .first<{ id: string; user_id: string; text: string }>();
+
+  if (!post) {
+    return marketJson(request, { error: 'Post not found' }, 404, env);
+  }
+
+  // Cannot buy your own content
+  if (post.user_id === userId) {
+    return marketJson(request, { error: 'Cannot purchase your own content' }, 400, env);
+  }
+
+  // Check if user already purchased this content
+  const existing = await env.DB.prepare(
+    "SELECT id FROM transactions WHERE user_id = ? AND post_id = ? AND status = 'completed' LIMIT 1",
+  )
+    .bind(userId, postId)
+    .first();
+
+  if (existing) {
+    return marketJson(request, { error: 'Already purchased' }, 400, env);
+  }
+
+  // Check if buyer has Flaxia++ (they get free access to marketplace content)
+  const sub = await env.DB.prepare(
+    "SELECT plan_id FROM subscriptions WHERE user_id = ? AND status IN ('active', 'trialing') AND plan_id IN ('flaxia_plus_plus', 'flaxia_sharp') LIMIT 1",
+  )
+    .bind(userId)
+    .first<{ plan_id: string }>();
+
+  if (sub) {
+    return marketJson(request, { error: 'Flaxia++ subscribers have free access to marketplace content' }, 400, env);
+  }
+
+  // Get or create Stripe customer
+  const existingSub = await env.DB.prepare(
+    'SELECT stripe_customer_id FROM subscriptions WHERE user_id = ? AND stripe_customer_id IS NOT NULL LIMIT 1',
+  )
+    .bind(userId)
+    .first<{ stripe_customer_id: string }>();
+
+  let customerId = existingSub?.stripe_customer_id;
+
+  if (!customerId) {
+    const user = await env.DB.prepare('SELECT email, username FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ email: string; username: string }>();
+
+    const stripe = getStripe(env);
+    const customer = await stripe.customers.create({
+      email: user?.email,
+      metadata: { flaxia_user_id: userId, username: user?.username || '' },
+    });
+    customerId = customer.id;
+  }
+
+  const stripe = getStripe(env);
+  const baseUrl = env.BASE_URL || 'https://flaxia.app';
+  // Product name is always server-derived: client `title` is ignored (#67).
+  const contentTitle = post.text.slice(0, 50) || 'Flaxia Content';
+
+  const session = await stripe.checkout.sessions.create({
+    customer: customerId,
+    mode: 'payment',
+    line_items: [
+      {
+        price_data: {
+          currency: 'jpy',
+          product_data: {
+            name: contentTitle,
+            metadata: { post_id: postId, seller_id: post.user_id },
+          },
+          unit_amount: amount,
+        },
+        quantity: 1,
+      },
+    ],
+    success_url: `${baseUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}&type=marketplace`,
+    cancel_url: `${baseUrl}/billing/canceled`,
+    metadata: { user_id: userId, post_id: postId, type: 'marketplace' },
+  });
+
+  // Record pending transaction
+  await env.DB.prepare(
+    `INSERT INTO transactions (id, user_id, post_id, stripe_session_id, type, amount, currency, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(stripe_session_id) DO NOTHING`,
+  )
+    .bind(crypto.randomUUID(), userId, postId, session.id, 'marketplace', amount, 'jpy', 'pending')
+    .run();
+
+  return marketJson(request, { sessionId: session.id, url: session.url }, 200, env);
+}

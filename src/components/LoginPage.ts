@@ -1,3 +1,4 @@
+import { loginWithSrp } from '../lib/auth-srp.js';
 import { t } from '../lib/i18n.js';
 
 interface LoginProps {
@@ -112,23 +113,12 @@ export function createLoginPage({ onSuccess }: LoginProps) {
     submitButton.textContent = t('login.submitting');
 
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
+      const ok = await loginWithSrp(email, password);
 
-      const data = (await response.json()) as { error?: string; sessionId?: string };
-
-      if (response.ok) {
-        if (data.sessionId) {
-          localStorage.setItem('flaxia_session', data.sessionId);
-        }
+      if (ok) {
         onSuccess();
       } else {
-        errorDiv.textContent = data.error || t('login.error_invalid');
+        errorDiv.textContent = t('login.error_invalid');
         errorDiv.style.display = 'block';
       }
     } catch (error) {

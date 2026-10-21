@@ -32,7 +32,8 @@ const generateSitemap = async (env: Bindings): Promise<string> => {
 
   // Add static pages
   const staticPages = [
-    { loc: `${baseUrl}/arcade`, changefreq: 'weekly', priority: '1.0' },
+    { loc: `${baseUrl}/home`, changefreq: 'daily', priority: '1.0' },
+    { loc: `${baseUrl}/arcade`, changefreq: 'weekly', priority: '0.9' },
     { loc: `${baseUrl}/explore`, changefreq: 'weekly', priority: '0.5' },
     { loc: `${baseUrl}/legal`, changefreq: 'monthly', priority: '0.5' },
   ];
@@ -74,12 +75,15 @@ const generateSitemap = async (env: Bindings): Promise<string> => {
       console.error('Error fetching users for sitemap:', error);
     }
 
-    // Add public posts (limit to 10000 for performance)
+    // Add public posts with games or attachments only (limit to 10000 for performance)
     try {
       const posts = (await env.DB.prepare(`
         SELECT id, created_at 
         FROM posts 
-        WHERE text != '' 
+        WHERE (payload_key IS NOT NULL OR swf_key IS NOT NULL OR gif_key IS NOT NULL)
+          AND status = 'published'
+          AND hidden = 0
+          AND parent_id IS NULL
         ORDER BY created_at DESC 
         LIMIT 10000
       `).all()) as { results: Array<{ id: string; created_at: string }> };
@@ -96,6 +100,33 @@ const generateSitemap = async (env: Bindings): Promise<string> => {
       });
     } catch (error) {
       console.error('Error fetching posts for sitemap:', error);
+    }
+
+    // Add game posts (for arcade pages, limit to 5000)
+    try {
+      const games = (await env.DB.prepare(`
+        SELECT id, created_at
+        FROM posts
+        WHERE (payload_key IS NOT NULL OR swf_key IS NOT NULL)
+          AND status = 'published'
+          AND hidden = 0
+          AND parent_id IS NULL
+        ORDER BY created_at DESC
+        LIMIT 5000
+      `).all()) as { results: Array<{ id: string; created_at: string }> };
+
+      games.results.forEach((game) => {
+        const gameUrl = `${baseUrl}/arcade/${escapeXml(game.id)}`;
+        xml += `
+  <url>
+    <loc>${gameUrl}</loc>
+    <lastmod>${formatDate(game.created_at)}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.7</priority>
+  </url>`;
+      });
+    } catch (error) {
+      console.error('Error fetching games for sitemap:', error);
     }
   }
 

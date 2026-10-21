@@ -1,0 +1,1146 @@
+import { Hono } from 'hono';
+import { nanoid } from 'nanoid';
+import { isAdmin } from '../../../src/lib/admin';
+import { extractFileFromZip } from '../../../src/lib/wvfs-zip-server';
+import { deleteAccount } from '../../lib/account-deletion';
+import { drainPendingEmbeds, enqueuePendingEmbed, ensureNsfwScansTable, submitDetectNsfw } from '../../lib/crowd';
+import { validateImageDimensions } from '../../lib/image-dimensions';
+import {
+  addBlocklistEntry,
+  listBlocklist,
+  removeBlocklistEntry,
+  validateBlocklistEntry,
+} from '../../lib/scan/blocklist';
+import { submitFileScans } from '../../lib/scan/clamav';
+import { runInBackground, scanUploadSync } from '../../lib/scan/index';
+import { rescreenQuarantinedObject } from '../../lib/scan/rescreen';
+import { requireAdmin, requireAuth } from '../helpers';
+import type { Bindings, Variables } from '../types';
+
+const admin = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+// ─── NSFW scanning constants & helpers ────────────────────────────────────────
+const IMAGE_KEY_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
+const IMAGE_EXTENSION_LIKE = IMAGE_KEY_EXTENSIONS.map((ext) => `(lower(gif_key) LIKE '%${ext}')`).join(' OR ');
+
+// ─── Game description extraction ──────────────────────────────────────────────
+async function extractGameDescription(
+  bucket: R2Bucket,
+  db: D1Database,
+  payloadKey: string,
+  postId: string,
+): Promise<void> {
+  try {
+    const result = await extractFileFromZip(bucket, payloadKey, 'index.html');
+    if (!result) return;
+    const decoder = new TextDecoder('utf-8');
+    const html = decoder.decode(result.data);
+    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const title = titleMatch ? titleMatch[1].trim() : '';
+
+    const contentMatch = (attrValue: string): string => {
+      const escaped = attrValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const patterns = [
+        new RegExp(`<meta[^>]+name=["']${escaped}["'][^>]+content=["']([^"']*)["']`, 'i'),
+        new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+name=["']${escaped}["']`, 'i'),
+        new RegExp(`<meta[^>]+property=["']${escaped}["'][^>]+content=["']([^"']*)["']`, 'i'),
+        new RegExp(`<meta[^>]+content=["']([^"']*)["'][^>]+property=["']${escaped}["']`, 'i'),
+      ];
+      for (const pattern of patterns) {
+        const m = html.match(pattern);
+        if (m && m[1].trim()) return m[1].trim();
+      }
+      return '';
+    };
+
+    const metaDesc =
+      contentMatch('description') || contentMatch('og:description') || contentMatch('twitter:description');
+    const gameDescription = metaDesc || title || '';
+    if (gameDescription) {
+      const cleaned = gameDescription
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (cleaned) {
+        await db
+          .prepare('UPDATE posts SET game_description = ? WHERE id = ?')
+          .bind(cleaned.slice(0, 500), postId)
+          .run();
+      }
+    }
+  } catch (e) {
+    console.error(`Failed to extract game description for post ${postId}:`, e);
+  }
+}
+
+// ─── Auto-restore helper ──────────────────────────────────────────────────────
+async function autoRestoreIfEligible(db: D1Database, postId: string): Promise<void> {
+  try {
+    const now = new Date().toISOString();
+    const result = await db
+      .prepare(
+        `SELECT id FROM counter_notifications
+         WHERE post_id = ? AND status = 'pending' AND restore_at IS NOT NULL AND restore_at <= ?`,
+      )
+      .bind(postId, now)
+      .first();
+
+    if (result) {
+      await db.prepare('UPDATE posts SET hidden = 0 WHERE id = ?').bind(postId).run();
+      await db
+        .prepare("UPDATE counter_notifications SET status = ? WHERE post_id = ? AND status = 'pending'")
+        .bind('auto_restored', postId)
+        .run();
+      console.log(`Auto-restored post ${postId} after counter-notification period`);
+    }
+  } catch (err) {
+    console.error('Auto-restore check failed:', err);
+  }
+}
+
+// ─── Admin Alerts ─────────────────────────────────────────────────────────────
+
+// GET /api/admin/alerts - get unresolved admin alerts (admin only)
+admin.get('/alerts', requireAuth, requireAdmin, async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const result = await c.env.DB.prepare(`
+      SELECT id, post_id, category, priority, resolved, created_at
+      FROM admin_alerts
+      WHERE resolved = 0
+      ORDER BY CASE priority
+        WHEN 'critical' THEN 1
+        WHEN 'high' THEN 2
+        WHEN 'normal' THEN 3
+      END, created_at DESC
+    `).all();
+
+    return c.json({ alerts: result.results || [] });
+  } catch (error: unknown) {
+    console.error('Fetch admin alerts error:', error);
+    return c.json({ error: 'Failed to fetch alerts' }, 500);
+  }
+});
+
+// POST /api/admin/alerts/:id/resolve - mark alert as resolved (admin only)
+admin.post('/alerts/:id/resolve', requireAuth, requireAdmin, async (c) => {
+  try {
+    const alertId = c.req.param('id');
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    await c.env.DB.prepare('UPDATE admin_alerts SET resolved = 1 WHERE id = ?').bind(alertId).run();
+
+    return c.json({ success: true });
+  } catch (error: unknown) {
+    console.error('Resolve alert error:', error);
+    return c.json({ error: 'Failed to resolve alert' }, 500);
+  }
+});
+
+// ─── Admin Posts ──────────────────────────────────────────────────────────────
+
+// POST /api/admin/posts/:id/hide - manually hide a post (admin only)
+admin.post('/posts/:id/hide', requireAuth, requireAdmin, async (c) => {
+  try {
+    const postId = c.req.param('id');
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const post = await c.env.DB.prepare('SELECT id, user_id FROM posts WHERE id = ?').bind(postId).first();
+
+    if (!post) {
+      return c.json({ error: 'Post not found' }, 404);
+    }
+
+    await c.env.DB.prepare('UPDATE posts SET hidden = 1 WHERE id = ?').bind(postId).run();
+
+    return c.json({ success: true });
+  } catch (error: unknown) {
+    console.error('Hide post error:', error);
+    return c.json({ error: 'Failed to hide post' }, 500);
+  }
+});
+
+// POST /api/admin/posts/:id/unhide - restore a hidden post (admin only)
+admin.post('/posts/:id/unhide', requireAuth, requireAdmin, async (c) => {
+  try {
+    const postId = c.req.param('id');
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const post = await c.env.DB.prepare('SELECT id, user_id FROM posts WHERE id = ?').bind(postId).first();
+
+    if (!post) {
+      return c.json({ error: 'Post not found' }, 404);
+    }
+
+    await c.env.DB.prepare('UPDATE posts SET hidden = 0 WHERE id = ?').bind(postId).run();
+
+    return c.json({ success: true });
+  } catch (error: unknown) {
+    console.error('Unhide post error:', error);
+    return c.json({ error: 'Failed to unhide post' }, 500);
+  }
+});
+
+// GET /api/admin/posts/hidden - get hidden posts (admin only)
+admin.get('/posts/hidden', requireAuth, requireAdmin, async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    // Auto-restore any expired counter-notifications
+    const now = new Date().toISOString();
+    const expired = await c.env.DB.prepare(
+      `SELECT post_id FROM counter_notifications WHERE status = 'pending' AND restore_at IS NOT NULL AND restore_at <= ?`,
+    )
+      .bind(now)
+      .all();
+
+    if (expired.results && expired.results.length > 0) {
+      for (const row of expired.results as Array<{ post_id: string }>) {
+        await autoRestoreIfEligible(c.env.DB, row.post_id);
+      }
+    }
+
+    const result = await c.env.DB.prepare(`
+      SELECT posts.*, users.username, users.display_name
+      FROM posts
+      JOIN users ON posts.user_id = users.id
+      WHERE posts.hidden = 1
+      ORDER BY posts.created_at DESC
+    `).all();
+
+    return c.json({ posts: result.results || [] });
+  } catch (error: unknown) {
+    console.error('Fetch hidden posts error:', error);
+    return c.json({ error: 'Failed to fetch hidden posts' }, 500);
+  }
+});
+
+// ─── Admin Users ──────────────────────────────────────────────────────────────
+
+// GET /api/admin/users - get all users (admin only)
+admin.get('/users', requireAuth, requireAdmin, async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const result = await c.env.DB.prepare(`
+      SELECT id, username, display_name, email, created_at, role
+      FROM users
+      ORDER BY created_at DESC
+    `).all();
+
+    return c.json({ users: result.results || [] });
+  } catch (error: unknown) {
+    console.error('Fetch users error:', error);
+    return c.json({ error: 'Failed to fetch users' }, 500);
+  }
+});
+
+// DELETE /api/admin/users/:id - delete a user account (admin only)
+admin.delete('/users/:id', requireAuth, requireAdmin, async (c) => {
+  try {
+    const targetUserId = c.req.param('id');
+    const _adminUsername = c.get('user')?.username;
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    // Get the target user
+    const targetUser = (await c.env.DB.prepare('SELECT id, username, role FROM users WHERE id = ?')
+      .bind(targetUserId)
+      .first()) as { id: string; username: string; role: string | null } | null;
+
+    if (!targetUser) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+
+    // Check if trying to delete an admin
+    if (isAdmin(c.env, targetUser)) {
+      return c.json({ error: 'Cannot delete admin accounts' }, 403);
+    }
+
+    // Delete the user along with their posts, related data, and R2 files
+    await deleteAccount(c.env, targetUser.id);
+
+    return c.json({ success: true });
+  } catch (error: unknown) {
+    console.error('Delete user error:', error);
+    return c.json({ error: 'Failed to delete user' }, 500);
+  }
+});
+
+// ─── Admin Counter Notifications ──────────────────────────────────────────────
+
+// GET /api/admin/counter/pending - get pending counter-notifications (admin only)
+admin.get('/counter/pending', requireAuth, requireAdmin, async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    // Auto-restore any expired counter-notifications before listing
+    const now = new Date().toISOString();
+    const expired = await c.env.DB.prepare(
+      `SELECT post_id FROM counter_notifications WHERE status = 'pending' AND restore_at IS NOT NULL AND restore_at <= ?`,
+    )
+      .bind(now)
+      .all();
+
+    if (expired.results && expired.results.length > 0) {
+      for (const row of expired.results as Array<{ post_id: string }>) {
+        await autoRestoreIfEligible(c.env.DB, row.post_id);
+      }
+    }
+
+    const result = await c.env.DB.prepare(`
+      SELECT cn.*, u.username, u.display_name
+      FROM counter_notifications cn
+      JOIN users u ON cn.user_id = u.id
+      WHERE cn.status = 'pending'
+      ORDER BY cn.submitted_at ASC
+    `).all();
+
+    return c.json({ counter_notices: result.results || [] });
+  } catch (error: unknown) {
+    console.error('Fetch counter-notices error:', error);
+    return c.json({ error: 'Failed to fetch counter-notices' }, 500);
+  }
+});
+
+// POST /api/admin/counter/:id/reject - reject a counter-notification (admin only)
+admin.post('/counter/:id/reject', requireAuth, requireAdmin, async (c) => {
+  try {
+    const counterId = c.req.param('id');
+    const adminId = c.get('user')?.id || '';
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const counter = (await c.env.DB.prepare('SELECT id, status FROM counter_notifications WHERE id = ?')
+      .bind(counterId)
+      .first()) as { id: string; status: string } | null;
+
+    if (!counter) {
+      return c.json({ error: 'Counter-notification not found' }, 404);
+    }
+
+    if (counter.status !== 'pending') {
+      return c.json({ error: 'Counter-notification is not pending' }, 400);
+    }
+
+    await c.env.DB.prepare('UPDATE counter_notifications SET status = ?, rejected_by = ?, rejected_at = ? WHERE id = ?')
+      .bind('rejected_by_admin', adminId, new Date().toISOString(), counterId)
+      .run();
+
+    return c.json({ success: true });
+  } catch (error: unknown) {
+    console.error('Reject counter-notice error:', error);
+    return c.json({ error: 'Failed to reject counter-notice' }, 500);
+  }
+});
+
+// ─── Admin Ads ────────────────────────────────────────────────────────────────
+
+// GET /api/admin/ads/config - get ad configuration (admin endpoint)
+admin.get('/ads/config', async (c) => {
+  try {
+    const user = c.get('user');
+    if (!user || !isAdmin(c.env, user)) {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const result = await c.env.DB.prepare("SELECT value FROM ad_config WHERE key = 'every_n'").first();
+
+    if (!result) {
+      return c.json({ error: 'Ad config not found' }, 404);
+    }
+
+    return c.json({ every_n: Number(result.value) });
+  } catch (error: unknown) {
+    console.error('Get ad config error:', error);
+    return c.json({ error: 'Failed to get ad config' }, 500);
+  }
+});
+
+// PATCH /api/admin/ads/config - update ad configuration (admin endpoint)
+admin.patch('/ads/config', requireAuth, async (c) => {
+  try {
+    const user = c.get('user');
+    if (!user || !isAdmin(c.env, user)) {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    const { every_n } = await c.req.json();
+
+    // Validate: must be an integer >= 1
+    if (!Number.isInteger(every_n) || every_n < 1) {
+      return c.json({ error: 'every_n must be an integer >= 1' }, 400);
+    }
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const result = await c.env.DB.prepare("UPDATE ad_config SET value = ? WHERE key = 'every_n'")
+      .bind(String(every_n))
+      .run();
+
+    if (!result.success) {
+      console.error('Database update failed:', result);
+      return c.json({ error: 'Failed to update ad config' }, 500);
+    }
+
+    return c.json({ every_n });
+  } catch (error: unknown) {
+    console.error('Update ad config error:', error);
+    return c.json({ error: 'Failed to update ad config' }, 500);
+  }
+});
+
+// GET /api/admin/ads - get all ads with analytics (admin endpoint)
+admin.get('/ads', requireAuth, async (c) => {
+  try {
+    const user = c.get('user');
+    if (!user || !isAdmin(c.env, user)) {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const result = await c.env.DB.prepare(`
+      SELECT
+        ads.id,
+        ads.title,
+        ads.body_text,
+        ads.click_url,
+        ads.payload_key,
+        ads.payload_type,
+        ads.thumbnail_key,
+        ads.impressions,
+        ads.clicks,
+        ads.active,
+        ads.created_at,
+        ROUND(CAST(clicks AS FLOAT) / NULLIF(impressions, 0) * 100, 2) AS ctr,
+        (SELECT COUNT(*) FROM ad_interactions WHERE ad_id = ads.id) AS interaction_count
+      FROM ads
+      ORDER BY created_at DESC
+    `).all();
+
+    if (!result.success) {
+      console.error('Database query failed:', result);
+      return c.json({ error: 'Failed to fetch ads' }, 500);
+    }
+
+    return c.json({ ads: result.results || [] });
+  } catch (error: unknown) {
+    console.error('Get admin ads error:', error);
+    return c.json({ error: 'Failed to fetch ads' }, 500);
+  }
+});
+
+// POST /api/admin/ads - create new ad (admin endpoint)
+admin.post('/ads', requireAuth, async (c) => {
+  try {
+    const user = c.get('user');
+    if (!user || !isAdmin(c.env, user)) {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    // Generate ad ID early so it can be used for both payload and thumbnail
+    const adId = nanoid();
+
+    const contentType = c.req.header('content-type');
+    let title: string,
+      body_text: string,
+      click_url: string,
+      ad_type: string,
+      payloadFile: File | undefined,
+      thumbnailFile: File | undefined;
+
+    if (contentType?.includes('multipart/form-data')) {
+      const formData = await c.req.formData();
+      title = formData.get('title') as string;
+      body_text = formData.get('body_text') as string;
+      click_url = formData.get('click_url') as string;
+      ad_type = formData.get('ad_type') as string;
+      payloadFile = (formData.get('payload') as File | null) || undefined;
+      thumbnailFile = (formData.get('thumbnail') as File | null) || undefined;
+    } else {
+      const body = await c.req.json();
+      title = body.title;
+      body_text = body.body_text;
+      click_url = body.click_url;
+      ad_type = body.ad_type;
+    }
+
+    // Validate required fields
+    if (!title || !body_text) {
+      return c.json({ error: 'title and body_text are required' }, 400);
+    }
+
+    // #119: click_url is rendered to every visitor — reject non-http(s)
+    // schemes (e.g. `javascript:`) at creation, like the update paths do.
+    if (click_url) {
+      try {
+        const parsed = new URL(click_url);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          return c.json({ error: 'Invalid click_url format' }, 400);
+        }
+      } catch {
+        return c.json({ error: 'Invalid click_url format' }, 400);
+      }
+    }
+
+    // Validate ad_type
+    if (!ad_type || !['self_hosted', 'admax'].includes(ad_type)) {
+      return c.json({ error: 'ad_type must be either "self_hosted" or "admax"' }, 400);
+    }
+
+    // For admax ads, payload files are not allowed
+    if (ad_type === 'admax' && payloadFile && payloadFile.size > 0) {
+      return c.json({ error: 'Admax ads do not support payload files' }, 400);
+    }
+
+    let payload_key: string | null = null;
+    let payload_type: 'zip' | 'swf' | 'gif' | 'image' | null = null;
+
+    // Handle payload file if present (only for self_hosted ads)
+    if (payloadFile && payloadFile.size > 0) {
+      // Validate size <= 100MB (Cloudflare Free/Pro plan limit)
+      const maxSize = 100 * 1024 * 1024;
+      if (payloadFile.size > maxSize) {
+        return c.json(
+          {
+            error:
+              'Payload file must be <=100MB on Free/Pro plans. For larger files, upgrade to Business plan (200MB) or use chunked upload.',
+            limit: maxSize,
+            actualSize: payloadFile.size,
+          },
+          400,
+        );
+      }
+
+      if (!c.env.BUCKET) {
+        return c.json({ error: 'Storage not available' }, 500);
+      }
+
+      // Detect payload_type from file extension
+      const fileName = payloadFile.name.toLowerCase();
+      if (fileName.endsWith('.zip')) {
+        payload_type = 'zip';
+      } else if (fileName.endsWith('.swf')) {
+        payload_type = 'swf';
+      } else if (fileName.endsWith('.gif')) {
+        payload_type = 'gif';
+      } else if (fileName.endsWith('.png') || fileName.endsWith('.jpg') || fileName.endsWith('.jpeg')) {
+        payload_type = 'image';
+      } else {
+        return c.json({ error: 'Unsupported file type. Use .zip, .swf, .gif, .png, or .jpg' }, 400);
+      }
+
+      // If zip, validate that index.html exists at root
+      if (payload_type === 'zip') {
+        const _fileBuffer = await payloadFile.arrayBuffer();
+        // For now, we'll assume the zip is valid - in a real implementation you'd extract and check
+        console.log('ZIP file validation skipped - would check for index.html at root');
+      }
+
+      // Upload to R2
+      const r2Key = `ad/payload/${adId}`;
+      const fileBuffer = await payloadFile.arrayBuffer();
+
+      // Sync scan: the stored payload_type is chosen from this filename's
+      // extension, so the extension ↔ magic-byte check runs against it. The
+      // stored Content-Type switches to the sniffed type instead of trusting
+      // the multipart header.
+      const verdict = await scanUploadSync(c.env.DB, {
+        bytes: fileBuffer,
+        declaredType: payloadFile.type,
+        name: payloadFile.name,
+        r2Key,
+      });
+      if (!verdict.ok) {
+        return c.json({ error: verdict.error, code: verdict.code }, verdict.status);
+      }
+      const payloadMime = verdict.detectedMime;
+
+      if (payload_type === 'zip') {
+        await c.env.BUCKET.put(r2Key, fileBuffer);
+      } else {
+        await c.env.BUCKET.put(r2Key, fileBuffer, {
+          httpMetadata: {
+            contentType: payloadMime,
+          },
+        });
+      }
+      runInBackground(c, () => submitFileScans(c.env.DB, c.env, r2Key, payloadMime, fileBuffer));
+
+      payload_key = r2Key;
+    }
+
+    let thumbnail_key: string | null = null;
+
+    // Handle thumbnail file if present
+    if (thumbnailFile && thumbnailFile.size > 0) {
+      // Validate thumbnail size <= 1MB
+      if (thumbnailFile.size > 1024 * 1024) {
+        return c.json({ error: 'Thumbnail must be <=1MB' }, 400);
+      }
+
+      // Validate thumbnail extension
+      const allowedExts = ['jpg', 'jpeg', 'png', 'gif'];
+      const ext = thumbnailFile.name.toLowerCase().split('.').pop();
+      if (!ext || !allowedExts.includes(ext)) {
+        return c.json({ error: 'Thumbnail must be .jpg, .jpeg, .png, or .gif' }, 400);
+      }
+
+      // Upload thumbnail to R2
+      const thumbnailR2Key = `ad/thumbnail/${adId}.${ext}`;
+      const thumbnailBuffer = await thumbnailFile.arrayBuffer();
+
+      const verdict = await scanUploadSync(c.env.DB, {
+        bytes: thumbnailBuffer,
+        declaredType: thumbnailFile.type,
+        name: thumbnailR2Key,
+        r2Key: thumbnailR2Key,
+      });
+      if (!verdict.ok) {
+        return c.json({ error: verdict.error, code: verdict.code }, verdict.status);
+      }
+      const thumbMime = verdict.detectedMime;
+
+      const thumbnailDimError = validateImageDimensions(thumbnailBuffer, thumbMime);
+      if (thumbnailDimError) {
+        return c.json({ error: `Thumbnail too large. ${thumbnailDimError}` }, 413);
+      }
+      await c.env.BUCKET.put(thumbnailR2Key, thumbnailBuffer, {
+        httpMetadata: {
+          contentType: thumbMime,
+        },
+      });
+      runInBackground(c, () => submitFileScans(c.env.DB, c.env, thumbnailR2Key, thumbMime, thumbnailBuffer));
+
+      thumbnail_key = thumbnailR2Key;
+    }
+
+    // Insert into database
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const result = await c.env.DB.prepare(`
+      INSERT INTO ads (id, title, body_text, click_url, payload_key, payload_type, thumbnail_key, impressions, clicks, active, created_at, ad_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?)
+    `)
+      .bind(adId, title, body_text, click_url || null, payload_key, payload_type, thumbnail_key, ad_type)
+      .run();
+
+    if (!result.success) {
+      console.error('Database insert failed:', result);
+      return c.json({ error: 'Failed to create ad' }, 500);
+    }
+
+    // Return created ad
+    const createdAd = await c.env.DB.prepare('SELECT * FROM ads WHERE id = ?').bind(adId).first();
+
+    return c.json({ ad: createdAd });
+  } catch (error: unknown) {
+    console.error('Create ad error:', error);
+    return c.json({ error: 'Failed to create ad' }, 500);
+  }
+});
+
+// PATCH /api/admin/ads/:id - update ad (admin endpoint)
+admin.patch('/ads/:id', requireAuth, async (c) => {
+  try {
+    const user = c.get('user');
+    if (!user || !isAdmin(c.env, user)) {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    const adId = c.req.param('id');
+    const body = await c.req.json();
+
+    if (body.click_url !== undefined && body.click_url !== null) {
+      if (typeof body.click_url !== 'string') {
+        return c.json({ error: 'Invalid click_url format' }, 400);
+      }
+      try {
+        const parsed = new URL(body.click_url);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+          return c.json({ error: 'Invalid click_url format' }, 400);
+        }
+      } catch {
+        return c.json({ error: 'Invalid click_url format' }, 400);
+      }
+    }
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    // Build UPDATE query dynamically
+    const updates: string[] = [];
+    const values: (string | number | null)[] = [];
+
+    if (body.title !== undefined) {
+      updates.push('title = ?');
+      values.push(body.title);
+    }
+    if (body.body_text !== undefined) {
+      updates.push('body_text = ?');
+      values.push(body.body_text);
+    }
+    if (body.click_url !== undefined) {
+      updates.push('click_url = ?');
+      values.push(body.click_url);
+    }
+    if (body.active !== undefined) {
+      updates.push('active = ?');
+      values.push(body.active ? 1 : 0);
+    }
+
+    if (updates.length === 0) {
+      return c.json({ error: 'No fields to update' }, 400);
+    }
+
+    values.push(adId ?? '');
+
+    const result = await c.env.DB.prepare(`
+      UPDATE ads SET ${updates.join(', ')} WHERE id = ?
+    `)
+      .bind(...values)
+      .run();
+
+    if (!result.success) {
+      console.error('Database update failed:', result);
+      return c.json({ error: 'Failed to update ad' }, 500);
+    }
+
+    return c.json({ success: true });
+  } catch (error) {
+    console.error('Error updating ad:', error);
+    return c.json({ error: 'Failed to update ad' }, 500);
+  }
+});
+
+// PUT /api/admin/ads/:id - update ad (for PATCH-like updates)
+admin.put('/ads/:id', requireAdmin, async (c) => {
+  try {
+    const adId = c.req.param('id');
+    const body = await c.req.json();
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    // Build UPDATE query dynamically
+    const updates: string[] = [];
+    const values: (string | number | null)[] = [];
+
+    if (body.title !== undefined) {
+      updates.push('title = ?');
+      values.push(body.title);
+    }
+    if (body.body_text !== undefined) {
+      updates.push('body_text = ?');
+      values.push(body.body_text);
+    }
+    if (body.click_url !== undefined) {
+      updates.push('click_url = ?');
+      values.push(body.click_url);
+    }
+    if (body.active !== undefined) {
+      updates.push('active = ?');
+      values.push(body.active ? 1 : 0);
+    }
+
+    if (updates.length === 0) {
+      return c.json({ error: 'No fields to update' }, 400);
+    }
+
+    values.push(adId ?? '');
+
+    const result = await c.env.DB.prepare(`
+      UPDATE ads SET ${updates.join(', ')} WHERE id = ?
+    `)
+      .bind(...values)
+      .run();
+
+    if (!result.success) {
+      console.error('Database update failed:', result);
+      return c.json({ error: 'Failed to update ad' }, 500);
+    }
+
+    // Return updated ad
+    const updatedAd = await c.env.DB.prepare('SELECT * FROM ads WHERE id = ?').bind(adId).first();
+
+    return c.json({ ad: updatedAd });
+  } catch (error: unknown) {
+    console.error('Update ad error:', error);
+    return c.json({ error: 'Failed to update ad' }, 500);
+  }
+});
+
+// DELETE /api/admin/ads/:id - delete ad (admin endpoint)
+admin.delete('/ads/:id', requireAuth, async (c) => {
+  try {
+    const user = c.get('user');
+    if (!user || !isAdmin(c.env, user)) {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    const adId = c.req.param('id');
+
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    // Fetch the ad to get payload_key
+    const ad = await c.env.DB.prepare('SELECT payload_key FROM ads WHERE id = ?').bind(adId).first();
+
+    if (!ad) {
+      return c.json({ error: 'Ad not found' }, 404);
+    }
+
+    // Delete R2 object if payload_key exists
+    if (ad.payload_key && c.env.BUCKET) {
+      await c.env.BUCKET.delete(ad.payload_key as string);
+    }
+
+    // Delete the ad row (cascades to ad_interactions)
+    const result = await c.env.DB.prepare('DELETE FROM ads WHERE id = ?').bind(adId).run();
+
+    if (!result.success) {
+      console.error('Database delete failed:', result);
+      return c.json({ error: 'Failed to delete ad' }, 500);
+    }
+
+    return c.json({ ok: true });
+  } catch (error: unknown) {
+    console.error('Delete ad error:', error);
+    return c.json({ error: 'Failed to delete ad' }, 500);
+  }
+});
+
+// ─── Admin Backfill Operations ────────────────────────────────────────────────
+
+// POST /api/admin/backfill-game-descriptions - extract descriptions for existing game posts (admin only)
+admin.post('/backfill-game-descriptions', requireAuth, requireAdmin, async (c) => {
+  try {
+    if (!c.env.DB || !c.env.BUCKET) {
+      return c.json({ error: 'Database or bucket not available' }, 500);
+    }
+
+    const url = new URL(c.req.url);
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '200', 10), 1000);
+
+    const games = (await c.env.DB.prepare(`
+      SELECT id, payload_key
+      FROM posts
+      WHERE payload_key IS NOT NULL
+        AND (payload_key LIKE '%.zip')
+        AND (game_description IS NULL OR game_description = '')
+      ORDER BY created_at DESC
+      LIMIT ?
+    `)
+      .bind(limit)
+      .all()) as { results: Array<{ id: string; payload_key: string }> };
+
+    for (const game of games.results) {
+      await extractGameDescription(c.env.BUCKET, c.env.DB, game.payload_key, game.id);
+    }
+
+    return c.json({ success: true, processed: games.results.length });
+  } catch (error: unknown) {
+    console.error('Backfill game descriptions error:', error);
+    return c.json({ error: 'Failed to backfill game descriptions' }, 500);
+  }
+});
+
+// POST /api/admin/backfill-nsfw - submit NudeNet screening for existing image posts (admin only)
+admin.post('/backfill-nsfw', requireAuth, requireAdmin, async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const url = new URL(c.req.url);
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 500);
+
+    await ensureNsfwScansTable(c.env.DB);
+
+    // One candidate per (post, image): a 4-image post needs 4 verdicts and
+    // post_nsfw_scans now tracks them individually.
+    const candidates = (await c.env.DB.prepare(`
+      SELECT post_id, media_key
+      FROM (
+        SELECT id AS post_id, gif_key AS media_key, created_at
+        FROM posts
+        WHERE gif_key IS NOT NULL
+          AND status = 'published'
+          AND (${IMAGE_EXTENSION_LIKE})
+        UNION ALL
+        SELECT p.id, a.r2_key AS media_key, p.created_at
+        FROM posts p
+        JOIN post_attachments a ON a.post_id = p.id AND a.kind = 'image'
+        WHERE p.status = 'published'
+      ) cand
+      WHERE NOT EXISTS (
+        SELECT 1 FROM post_nsfw_scans s
+        WHERE s.post_id = cand.post_id AND s.media_key = cand.media_key
+      )
+      GROUP BY post_id, media_key
+      ORDER BY MAX(created_at) DESC
+      LIMIT ?
+    `)
+      .bind(limit)
+      .all()) as { results: Array<{ post_id: string; media_key: string }> };
+
+    // The global 10s ceiling lets one image through per call by default;
+    // ?throttle=false is the admin's explicit way to flush a backlog.
+    const respectThrottle = url.searchParams.get('throttle') !== 'false';
+    let submitted = 0;
+    for (const cand of candidates.results) {
+      if (await submitDetectNsfw(c.env.DB, c.env, cand.post_id, cand.media_key, { respectThrottle })) submitted++;
+    }
+
+    return c.json({ success: true, submitted, remaining: candidates.results.length - submitted });
+  } catch (error: unknown) {
+    console.error('Backfill nsfw error:', error);
+    return c.json({ error: 'Failed to backfill nsfw screening' }, 500);
+  }
+});
+
+// POST /api/admin/backfill-embeddings - enqueue vector-embed tasks for existing
+// posts that have no embedding yet, then drain as much of the backlog as the
+// request budget allows. Idempotent: posts are skipped if already embedded or
+// already queued.
+admin.post('/backfill-embeddings', requireAuth, requireAdmin, async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+
+    const url = new URL(c.req.url);
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '100', 10), 500);
+    const drain = url.searchParams.get('drain') !== 'false';
+
+    const candidates = (await c.env.DB.prepare(`
+      SELECT p.id, p.text, CASE WHEN pe.post_id IS NULL THEN 0 ELSE 1 END AS pending
+      FROM posts p
+      LEFT JOIN post_embeddings e ON p.id = e.post_id
+      LEFT JOIN pending_embeddings pe ON pe.post_id = p.id
+      WHERE p.status = 'published'
+        AND p.hidden = 0
+        AND p.parent_id IS NULL
+        AND p.text IS NOT NULL
+        AND p.text != ''
+        AND e.post_id IS NULL
+      ORDER BY p.created_at DESC
+      LIMIT ?
+    `)
+      .bind(limit)
+      .all()) as { results: Array<{ id: string; text: string; pending: number }> };
+
+    let enqueued = 0;
+    for (const post of candidates.results) {
+      // Posts already in the outbox are counted but not re-enqueued, so failed
+      // retry state (attempts/last_error) is preserved.
+      if (!post.pending) await enqueuePendingEmbed(c.env.DB, post.id, post.text);
+      enqueued++;
+    }
+
+    const submitted = 0;
+    const remaining = enqueued;
+    const execCtx = (c as any).executionCtx;
+    if (drain && execCtx?.waitUntil) {
+      // Let the response return immediately; keep draining in the background.
+      execCtx.waitUntil(
+        (async () => {
+          const result = await drainPendingEmbeds(c.env.DB, c.env, {
+            maxBatch: enqueued || 50,
+            delayMs: 50,
+            respectThrottle: false,
+          }).catch((e) => {
+            console.error('Backfill embed drain failed:', e);
+            return { submitted: 0, remaining: enqueued };
+          });
+          console.log(`Backfill embed drain done: submitted=${result.submitted} remaining=${result.remaining}`);
+        })(),
+      );
+    }
+
+    return c.json({ success: true, enqueued, submitted, remaining });
+  } catch (error: unknown) {
+    console.error('Backfill embeddings error:', error);
+    return c.json({ error: 'Failed to backfill embeddings' }, 500);
+  }
+});
+
+// GET /auth-migration — progress of the plaintext-password retirement.
+//
+// Two independent counters, because they retire at different times:
+//   no_srp       accounts that can only use the deprecated POST /auth/login.
+//                Hits 0 as every remaining legacy account signs in once.
+//   plaintext_hash accounts still carrying password_hash (PBKDF2). Non-empty
+//                for the same set; it is blanked by the upgrade itself.
+// `cutoffReached` is the signal that POST /api/auth/login can be deleted (see
+// the comment on that route). srp_v1 rows are verifiers still derived with a
+// single SHA-256; they migrate at the next password-holding event.
+admin.get('/auth-migration', requireAuth, requireAdmin, async (c) => {
+  try {
+    const row = await c.env.DB.prepare(
+      `SELECT
+         COUNT(*) AS total,
+         COALESCE(SUM(CASE WHEN password_hash <> '' THEN 1 ELSE 0 END), 0) AS plaintext_hash,
+         COALESCE(SUM(CASE WHEN srp_salt IS NULL THEN 1 ELSE 0 END), 0) AS no_srp,
+         COALESCE(SUM(CASE WHEN srp_kdf = 'sha256-v1' THEN 1 ELSE 0 END), 0) AS srp_v1,
+         COALESCE(SUM(CASE WHEN srp_kdf = 'pbkdf2-600k-v2' THEN 1 ELSE 0 END), 0) AS srp_v2,
+         COALESCE(SUM(CASE WHEN srp_salt IS NOT NULL AND srp_kdf IS NULL THEN 1 ELSE 0 END), 0) AS srp_kdf_unlabelled
+       FROM users`,
+    ).first<{
+      total: number;
+      plaintext_hash: number;
+      no_srp: number;
+      srp_v1: number;
+      srp_v2: number;
+      srp_kdf_unlabelled: number;
+    }>();
+
+    const stats = row ?? {
+      total: 0,
+      plaintext_hash: 0,
+      no_srp: 0,
+      srp_v1: 0,
+      srp_v2: 0,
+      srp_kdf_unlabelled: 0,
+    };
+    return c.json({ ...stats, cutoff_reached: stats.plaintext_hash === 0 && stats.no_srp === 0 });
+  } catch (error: unknown) {
+    console.error('Auth migration stats error:', error);
+    return c.json({ error: 'Failed to read migration stats' }, 500);
+  }
+});
+
+// ─── File blocklist ──────────────────────────────────────────────────────────
+
+// POST /api/admin/rescreen-quarantined — retry skipped image scans after confirming
+// their current R2 bytes still match the D1 row.
+admin.post('/rescreen-quarantined', requireAuth, requireAdmin, async (c) => {
+  if (!c.env.DB || !c.env.BUCKET) return c.json({ error: 'Database or bucket unavailable' }, 500);
+
+  let body: { limit?: unknown } = {};
+  try {
+    body = await c.req.json<{ limit?: unknown }>();
+  } catch {
+    // An empty request body is allowed; the default batch is small.
+  }
+  const requested = typeof body.limit === 'number' ? body.limit : Number(body.limit ?? 25);
+  const limit = Number.isFinite(requested) ? Math.min(Math.max(Math.floor(requested), 1), 100) : 25;
+
+  try {
+    const rows = await c.env.DB.prepare(
+      `SELECT r2_key FROM file_scans
+       WHERE status = 'skipped' AND detail IN ('too_large', 'orchestrator_unconfigured')
+         AND kind = 'image'
+       ORDER BY created_at ASC LIMIT ?`,
+    )
+      .bind(limit)
+      .all<{ r2_key: string }>();
+
+    const results: Record<string, number> = {};
+    for (const row of rows.results ?? []) {
+      const result = await rescreenQuarantinedObject(c.env.DB, c.env.BUCKET, c.env, row.r2_key);
+      results[result] = (results[result] ?? 0) + 1;
+    }
+    return c.json({ success: true, considered: rows.results?.length ?? 0, results });
+  } catch (error: unknown) {
+    console.error('Quarantined media rescreen error:', error);
+    return c.json({ error: 'Failed to rescreen quarantined media' }, 500);
+  }
+});
+
+// GET /api/admin/file-blocklist — list all entries.
+admin.get('/file-blocklist', requireAuth, requireAdmin, async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+    const entries = await listBlocklist(c.env.DB);
+    return c.json({ entries });
+  } catch (error: unknown) {
+    console.error('File blocklist list error:', error);
+    return c.json({ error: 'Failed to list blocklist' }, 500);
+  }
+});
+
+// POST /api/admin/file-blocklist — add (or refresh) one entry.
+admin.post('/file-blocklist', requireAuth, requireAdmin, async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+    const body = await c.req.json<{ kind?: unknown; value?: unknown; signature?: unknown; reason?: unknown }>();
+    const parsed = validateBlocklistEntry(body.kind, body.value);
+    if ('error' in parsed) {
+      return c.json({ error: parsed.error }, 400);
+    }
+    await addBlocklistEntry(c.env.DB, {
+      ...parsed,
+      signature: typeof body.signature === 'string' ? body.signature.slice(0, 200) : null,
+      reason: typeof body.reason === 'string' ? body.reason.slice(0, 500) : null,
+      addedBy: c.get('user')?.id ?? 'admin',
+    });
+    return c.json({ ok: true, ...parsed }, 201);
+  } catch (error: unknown) {
+    console.error('File blocklist add error:', error);
+    return c.json({ error: 'Failed to add blocklist entry' }, 500);
+  }
+});
+
+// DELETE /api/admin/file-blocklist/:id — remove one entry.
+admin.delete('/file-blocklist/:id', requireAuth, requireAdmin, async (c) => {
+  try {
+    if (!c.env.DB) {
+      return c.json({ error: 'Database not available' }, 500);
+    }
+    const id = Number(c.req.param('id'));
+    if (!Number.isInteger(id) || id <= 0) {
+      return c.json({ error: 'Invalid id' }, 400);
+    }
+    const removed = await removeBlocklistEntry(c.env.DB, id);
+    if (!removed) {
+      return c.json({ error: 'Entry not found' }, 404);
+    }
+    return c.json({ ok: true });
+  } catch (error: unknown) {
+    console.error('File blocklist delete error:', error);
+    return c.json({ error: 'Failed to delete blocklist entry' }, 500);
+  }
+});
+
+export default admin;

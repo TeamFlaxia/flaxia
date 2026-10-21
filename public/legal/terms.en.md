@@ -76,7 +76,7 @@ If you find content that you believe infringes your copyright, please send a DMC
 False DMCA claims may result in legal liability.
 
 Designated Agent: [To be filled after US Copyright Office registration]
-Contact: [RemydreS@proton.me](mailto:RemydreS@proton.me)
+Contact: [teamflaxia@proton.me](mailto:teamflaxia@proton.me)
 
 ## **Article 11 Governing Law**
 
@@ -84,4 +84,4 @@ These terms are governed by the laws of Japan.
 
 ## **Article 12 Contact**
 
-E-mail: [RemydreS@proton.me](mailto:RemydreS@proton.me)
+E-mail: [teamflaxia@proton.me](mailto:teamflaxia@proton.me)
