@@ -2,7 +2,8 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { isAdmin } from '../../../src/lib/admin';
 import type { AttachmentKind } from '../../lib/attachments';
-import { parseAttachmentKey } from '../../lib/attachments';
+import { MAX_ATTACHMENTS, MAX_ATTACHMENTS_PLUS, parseAttachmentKey } from '../../lib/attachments';
+import { getUserPlan } from '../../lib/billing';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
@@ -92,7 +93,7 @@ async function postKeyMediaAllowed(c: MediaContext, key: string): Promise<boolea
  * moderation hide lands quickly; the previous 24h/1y windows could serve a
  * blocked file long after the KV/D1 verdict was written.
  */
-const MEDIA_CACHE_CONTROL = 'public, max-age=300, s-maxage=300';
+const MEDIA_CACHE_CONTROL = 'public, max-age=300, s-maxage=300, stale-while-revalidate=60';
 
 /**
  * Does a detected MIME type belong in an attachment slot of this kind?
@@ -177,6 +178,15 @@ media.put('/upload/*', requireAuth, async (c) => {
 
     // Multi-media attachment keys: gif|audio|video/{postId}/{position}{ext}
     const attachment = parseAttachmentKey(key);
+    // Enforce the same plan ceiling as prepare/commit before consuming a body
+    // or writing a forged, out-of-plan attachment slot into R2.
+    if (attachment) {
+      const plan = await getUserPlan(c.env, user.id);
+      const allowedSlots = plan.isActive ? MAX_ATTACHMENTS_PLUS : MAX_ATTACHMENTS;
+      if (attachment.position > allowedSlots) {
+        return c.json({ error: 'Attachment position exceeds your plan limit' }, 403);
+      }
+    }
 
     // Verify the user owns a pending or published post with this storage key
     // For published posts, extract the postId from the key path to verify ownership

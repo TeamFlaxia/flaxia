@@ -161,3 +161,52 @@ describe('GET /api/posts/recommended — author trust', () => {
     assert.ok(!ids.includes(firstId), `expected the older copy to be hidden, got ${JSON.stringify(ids)}`);
   });
 });
+
+describe('GET /api/posts/recommended — pagination', () => {
+  beforeEach(resetDb);
+
+  it('does not repeat posts when impressions update between pages', async () => {
+    const reader = await seedUserAndLogin('pagination-reader');
+    const authors = [];
+    for (let index = 0; index < 6; index++) {
+      authors.push(await seedUserAndLogin(`pagination-author-${index}`));
+    }
+    for (const author of authors) {
+      for (let index = 0; index < 8; index++) {
+        // Keep every post text distinct after normalization. Repeating the
+        // same text would lower the author's trust score and empty the feed.
+        await createTextPost(author.cookie, `pagination ${crypto.randomUUID().replace(/[0-9-]/g, '')}`);
+      }
+    }
+
+    const firstParams = new URLSearchParams({ limit: '10' });
+    const firstResponse = await fetch(`${BASE_URL}/api/posts/recommended?${firstParams}`, {
+      headers: { Cookie: reader.cookie },
+    });
+    assert.equal(firstResponse.status, 200);
+    const firstPage = (await firstResponse.json()) as {
+      posts: Array<{ id: string }>;
+      next_cursor: string | null;
+    };
+    assert.equal(firstPage.posts.length, 10, 'expected a full first page');
+    assert.ok(firstPage.next_cursor, 'expected a cursor for the second page');
+
+    const firstIds = new Set(firstPage.posts.map((post) => post.id));
+    const impressions = await fetch(`${BASE_URL}/api/posts/impressions/batch`, {
+      method: 'POST',
+      headers: { Cookie: reader.cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ post_ids: [...firstIds] }),
+    });
+    assert.equal(impressions.status, 200, 'recording impressions should succeed');
+
+    const secondParams = new URLSearchParams({ limit: '10', cursor: firstPage.next_cursor! });
+    const secondResponse = await fetch(`${BASE_URL}/api/posts/recommended?${secondParams}`, {
+      headers: { Cookie: reader.cookie },
+    });
+    assert.equal(secondResponse.status, 200);
+    const secondPage = (await secondResponse.json()) as { posts: Array<{ id: string }> };
+
+    const repeated = secondPage.posts.filter((post) => firstIds.has(post.id));
+    assert.deepEqual(repeated, [], 'the second page must not repeat first-page posts');
+  });
+});

@@ -149,8 +149,10 @@ export interface GifPreviewProps {
   postId: string;
   isThumbnail?: boolean;
   src?: string;
-  // Force the preview into a 16:9 box, center-cropping the image to fill it.
+  // Force the preview into a 16:9 box so it can be reserved before the image
+  // loads. `fit` chooses between filling (crop) and letterboxing.
   ratio?: '16:9';
+  fit?: 'cover' | 'contain';
   /** All image attachment keys of the post, for lightbox prev/next navigation. */
   gallery?: string[];
   /** Index of this image inside `gallery`. */
