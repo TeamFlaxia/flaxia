@@ -27,11 +27,17 @@ export const authMiddleware = async (c: Context<{ Bindings: Bindings; Variables:
       path.startsWith('/api/audio/') ||
       path.startsWith('/api/video/') ||
       path.startsWith('/api/documents/') ||
-      path === '/api/link-preview' ||
       path === '/api/games' ||
       (path.startsWith('/api/ads/') && path.endsWith('/payload')) ||
       path.startsWith('/api/wvfs-zip/'));
   if (skipsSession) {
+    const token = getSessionToken(c.req.raw);
+    if (token) {
+      const sessionData = await getMeWithSession(c.env, token);
+      c.set('user', sessionData?.user || null);
+    } else {
+      c.set('user', null);
+    }
     await next();
     return;
   }
@@ -194,8 +200,7 @@ export async function kvCacheSet(c: RouteContext, key: string, data: unknown, tt
 }
 
 export function makeCacheKey(prefix: string, c: RouteContext, extra?: string, includeUser = true): string {
-  const token = getSessionToken(c.req.raw);
-  const userId = token ? token.substring(0, 12) : 'anon';
+  const userId = c.get('user')?.id ?? 'anon';
   const query = c.req.raw.url.split('?')[1] || '';
   const userPart = includeUser ? userId : '';
   return `${prefix}:${userPart}:${query}${extra ? ':' + extra : ''}`;

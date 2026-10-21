@@ -9,6 +9,8 @@ describe('parseRoute', () => {
     assert.equal(parseRoute('/register', '')?.view, 'register');
     assert.equal(parseRoute('/terms', '')?.view, 'terms');
     assert.equal(parseRoute('/privacy', '')?.view, 'privacy');
+    assert.equal(parseRoute('/child-safety', '')?.view, 'child-safety');
+    assert.equal(parseRoute('/child-safety/', '')?.view, 'child-safety');
     assert.equal(parseRoute('/about', '')?.view, 'about');
   });
 
