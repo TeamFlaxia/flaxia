@@ -279,3 +279,14 @@ It rejects an **active** device with HTTP 403 even for authenticated sessions.
 Active device revocation requires the SRP password proof and atomic vault-key
 rotation provided by `POST /api/vault/keys/revoke-device`; never use direct
 row deletion as a shortcut for an active device.
+
+### QR possession check during approval (#102)
+
+The approver must supply both the ephemeral approver public key
+(`approved_pub`, A) and the scanned joiner QR public key (`peer_pub`, B)
+when calling `POST /api/vault/devices/:id/approve`. The server verifies that
+B matches the original pairing row, including in the conditional update.
+These are **different** X25519 public keys; they must never be compared with
+each other. The joiner uses A to unwrap the handoff. The server does not return
+B in the pending-pairing polling/list APIs to avoid providing it to a party
+holding only a stolen session.

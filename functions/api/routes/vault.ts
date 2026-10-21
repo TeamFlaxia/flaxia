@@ -706,8 +706,13 @@ vault.post('/vault/devices/:id/approve', requireAuth, async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
 
-  const body = (await c.req.json().catch(() => ({}))) as { approved_pub?: unknown; wrapped_vk?: unknown };
+  const body = (await c.req.json().catch(() => ({}))) as {
+    approved_pub?: unknown;
+    peer_pub?: unknown;
+    wrapped_vk?: unknown;
+  };
   if (!isValidB64(body.approved_pub, 32)) return c.json({ error: 'Invalid pairing public key' }, 400);
+  if (!isValidB64(body.peer_pub, 32)) return c.json({ error: 'Invalid QR public key' }, 400);
   if (!isValidWrappedKey(body.wrapped_vk)) return c.json({ error: 'Invalid wrapped vault key' }, 400);
 
   const deviceId = c.req.param('id') ?? '';
@@ -715,13 +720,16 @@ vault.post('/vault/devices/:id/approve', requireAuth, async (c) => {
   if (!row) return c.json({ error: 'Pairing not found' }, 404);
   if (row.state !== 'pending') return c.json({ error: 'pairing_already_used' }, 409);
   if (isExpired(row)) return c.json({ error: 'pairing_expired' }, 410);
+  // The QR carries the joiner's public key; a stolen session cannot read it
+  // from the pending-pairing API. Approval must prove knowledge of this value.
+  if (body.peer_pub !== row.peer_pub) return c.json({ error: 'pairing_peer_mismatch' }, 403);
 
   const updated = await c.env.DB.prepare(
     `UPDATE device_keys
      SET state = 'active', approved_pub = ?, wrapped_vk = ?, last_seen_at = ${NOW_SQL}
-     WHERE id = ? AND user_id = ? AND state = 'pending'`,
+     WHERE id = ? AND user_id = ? AND state = 'pending' AND peer_pub = ?`,
   )
-    .bind(body.approved_pub as string, body.wrapped_vk as string, row.id, user.id)
+    .bind(body.approved_pub as string, body.wrapped_vk as string, row.id, user.id, body.peer_pub as string)
     .run();
   if (!updated.success || updated.meta.changes === 0) {
     return c.json({ error: 'pairing_already_used' }, 409);

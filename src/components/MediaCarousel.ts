@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import type { PostAttachment } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { createDocumentViewer } from './DocumentViewer.js';
@@ -20,13 +21,13 @@ export interface MediaCarouselProps {
 export function attachmentUrl(att: PostAttachment): string {
   switch (att.kind) {
     case 'audio':
-      return `/api/audio/${att.r2_key}`;
+      return nativeApiHref(`/api/audio/${att.r2_key}`);
     case 'video':
-      return `/api/video/${att.r2_key}`;
+      return nativeApiHref(`/api/video/${att.r2_key}`);
     case 'document':
-      return `/api/documents/${att.r2_key}`;
+      return nativeApiHref(`/api/documents/${att.r2_key}`);
     case 'image':
-      return `/api/images/${att.r2_key}`;
+      return nativeApiHref(`/api/images/${att.r2_key}`);
   }
 }
 

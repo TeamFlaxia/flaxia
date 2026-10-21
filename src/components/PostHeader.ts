@@ -1,5 +1,6 @@
 import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { PostHeaderProps } from '../types/post.js';
 
 export function createPostHeader(props: PostHeaderProps & { editedAt?: string }): HTMLElement {
@@ -112,7 +113,7 @@ function loadAvatarImage(avatar: HTMLElement, avatarKey: string): void {
   const img = new Image();
   img.onload = () => {
     // 画像読み込み完了後に背景画像を設定
-    avatar.style.backgroundImage = `url(/api/images/${avatarKey})`;
+    avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${avatarKey}`)})`;
     avatar.style.backgroundSize = 'cover';
     avatar.style.backgroundPosition = 'center';
     // Clear only the initial letter — keep the badge element.
@@ -122,7 +123,7 @@ function loadAvatarImage(avatar: HTMLElement, avatarKey: string): void {
     // 読み込み失敗時は初期文字のまま
     console.warn(`Failed to load avatar: ${avatarKey}`);
   };
-  img.src = `/api/images/${avatarKey}`;
+  img.src = nativeApiHref(`/api/images/${avatarKey}`);
 }
 
 function formatTimestamp(isoString: string): string {
