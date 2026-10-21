@@ -108,6 +108,11 @@ npx wrangler deploy --config status-worker/wrangler.toml
 ## Post-Deployment Steps
 
 1. **Database Migrations** (production):
+   The GitHub Actions deployment applies pending D1 migrations before deploying
+   Pages. If that step fails, fix the reported migration issue and rerun the
+   deployment; do not leave migrations pending.
+
+   For manual recovery when needed:
    ```bash
    npm run migrate:prod
    ```

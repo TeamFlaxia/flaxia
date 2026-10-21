@@ -4,9 +4,12 @@ import { t } from '../lib/i18n.js';
 import { attachIcons, type IconName, icon } from '../lib/icons.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { registerModal } from '../lib/modal-state.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { getReplyStyle } from '../lib/settings.js';
+import { pushSpaHistory } from '../lib/spa-history.js';
 import { buildTree } from '../lib/thread.js';
 import { showToast } from '../lib/toast.js';
+import { createWvfsGameUrl } from '../lib/wvfs-game-url.js';
 import { executeWvfsZip } from '../lib/wvfs-zip-client.js';
 import type { ArcadePageProps, Game, GameType } from '../types/game.js';
 import type { Post } from '../types/post.js';
@@ -181,8 +184,8 @@ export class ArcadePage {
     if (this.props.onBack) {
       const backBtn = document.createElement('button');
       backBtn.className = 'arcade-back-btn';
-      backBtn.textContent = t('arcade.back_home');
-      backBtn.title = t('arcade.back_home');
+      backBtn.textContent = t('arcade.back');
+      backBtn.title = t('arcade.back');
       backBtn.style.cssText = `
         background: none;
         border: none;
@@ -1440,7 +1443,7 @@ export class ArcadePage {
   }
 
   private navigateToGame(postId: string): void {
-    window.history.pushState({}, '', `/arcade/${postId}`);
+    pushSpaHistory(`/arcade/${postId}`, { postId });
     window.dispatchEvent(new PopStateEvent('popstate'));
   }
 
@@ -1837,7 +1840,7 @@ export class ArcadePage {
       } else if (game.type === 'html5') {
         // HTML5 games would use iframe
         const iframe = document.createElement('iframe');
-        iframe.src = `/api/games/html5/${game.id}`;
+        iframe.src = nativeApiHref(`/api/games/html5/${game.id}`);
         iframe.style.cssText = `
           width: 100%;
           height: 100%;
@@ -2014,7 +2017,7 @@ export class ArcadePage {
     try {
       if (game.type === 'zip') {
         const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
-        this.prefetchLink(`${sandboxOrigin}/api/wvfs-zip/${game.postId}`);
+        this.prefetchLink(createWvfsGameUrl(sandboxOrigin, game.postId));
       }
     } catch {
       // Prefetch failed — game will load normally on demand

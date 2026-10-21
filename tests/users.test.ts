@@ -28,6 +28,21 @@ describe('GET /api/users/:username', () => {
     const res = await fetch(`${BASE_URL}/api/users/`);
     assert.equal(res.status, 404);
   });
+
+  it('does not expose the internal trust score', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const profileRes = await fetch(`${BASE_URL}/api/users/testuser1`);
+    assert.equal(profileRes.status, 200);
+    const profile = (await profileRes.json()) as { user: Record<string, unknown> };
+    assert.equal('trust_score' in profile.user, false);
+    assert.equal('repetition_score' in profile.user, false);
+
+    const meRes = await fetch(`${BASE_URL}/api/me`, { headers: { Cookie: cookie } });
+    assert.equal(meRes.status, 200);
+    const me = (await meRes.json()) as { user: Record<string, unknown> };
+    assert.equal('trust_score' in me.user, false);
+    assert.equal('repetition_score' in me.user, false);
+  });
 });
 
 describe('PATCH /api/users/me', () => {

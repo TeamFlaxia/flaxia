@@ -1,3 +1,5 @@
+import { createWvfsGameUrl } from '../../../src/lib/wvfs-game-url.ts';
+
 type Env = {
   DB: D1Database;
   BASE_URL?: string;
@@ -53,8 +55,7 @@ function escapeHtml(text: string): string {
 }
 
 function serveZipPlayer(postId: string, sandboxOrigin: string): Response {
-  const safeId = escapeHtml(encodeURIComponent(postId));
-  const safeOrigin = escapeHtml(sandboxOrigin);
+  const safeGameUrl = escapeHtml(createWvfsGameUrl(sandboxOrigin, postId));
   const html = `<!DOCTYPE html>
 <html>
 <head>
@@ -67,7 +68,7 @@ function serveZipPlayer(postId: string, sandboxOrigin: string): Response {
   </style>
 </head>
 <body>
-  <iframe src="${safeOrigin}/api/wvfs-zip/${safeId}"
+  <iframe src="${safeGameUrl}"
     sandbox="allow-scripts allow-pointer-lock allow-fullscreen"
     allow="fullscreen"
     referrerpolicy="no-referrer"></iframe>

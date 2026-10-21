@@ -5,6 +5,7 @@ import { safeRemoveFromBody } from '../lib/dom-utils.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { Post } from '../types/post.js';
 import { createBlockedUsersModal } from './BlockedUsersModal.js';
@@ -495,7 +496,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
         }
 
         if (userData.avatar_key) {
-          avatar.style.backgroundImage = `url(/api/images/${userData.avatar_key})`;
+          avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${userData.avatar_key}`)})`;
           avatar.style.backgroundSize = 'cover';
           avatar.style.backgroundPosition = 'center';
           avatar.textContent = '';
@@ -503,7 +504,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
         attachPlusBadge(avatar, userData.badge_type);
 
         if (userData.header_key) {
-          bannerEl.style.backgroundImage = `url(/api/images/${userData.header_key})`;
+          bannerEl.style.backgroundImage = `url(${nativeApiHref(`/api/images/${userData.header_key}`)})`;
         } else {
           bannerEl.style.backgroundImage = '';
         }

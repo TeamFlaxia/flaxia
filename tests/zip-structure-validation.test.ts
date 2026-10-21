@@ -2,6 +2,7 @@ import assert from 'node:assert';
 import { describe, it } from 'node:test';
 import JSZip from 'jszip';
 import { validateZipStructure } from '../src/lib/wvfs-zip-server.ts';
+import { ZIP_MAX_FILE_COUNT } from '../src/lib/zip-constants.ts';
 
 async function createZip(files: Record<string, string | Uint8Array>): Promise<Uint8Array> {
   const zip = new JSZip();
@@ -42,18 +43,18 @@ describe('validateZipStructure', () => {
     assert.doesNotThrow(() => validateZipStructure(zipData));
   });
 
-  it('rejects zip with too many files (> 255)', async () => {
+  it(`rejects zip with too many files (> ${ZIP_MAX_FILE_COUNT})`, async () => {
     const files: Record<string, string> = { 'index.html': '<html></html>' };
-    for (let i = 0; i < 256; i++) {
+    for (let i = 0; i < ZIP_MAX_FILE_COUNT; i++) {
       files[`file${i}.txt`] = 'content';
     }
     const zipData = await createZip(files);
     assert.throws(() => validateZipStructure(zipData), /Too many files/);
   });
 
-  it('accepts zip with exactly 255 files', async () => {
+  it(`accepts zip with exactly ${ZIP_MAX_FILE_COUNT} files`, async () => {
     const files: Record<string, string> = { 'index.html': '<html></html>' };
-    for (let i = 0; i < 254; i++) {
+    for (let i = 0; i < ZIP_MAX_FILE_COUNT - 1; i++) {
       files[`file${i}.txt`] = 'content';
     }
     const zipData = await createZip(files);

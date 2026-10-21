@@ -113,7 +113,9 @@ test('main CSP applies to legacy paths; game previews use sandbox.flaxia.app', a
 test('legacy Arcade frames use the sandbox WVFS route and typed opaque bridge', async () => {
   const sandboxFrame = await readFile(new URL('../src/components/SandboxFrame.ts', import.meta.url), 'utf8');
   const multiplayer = await readFile(new URL('../src/lib/multiplayer-manager.ts', import.meta.url), 'utf8');
-  assert.match(sandboxFrame, /api\/wvfs-zip\//);
+  assert.match(sandboxFrame, /createWvfsGameUrl/);
+  const gameUrl = await readFile(new URL('../src/lib/wvfs-game-url.ts', import.meta.url), 'utf8');
+  assert.match(gameUrl, /api\/wvfs-zip\//);
   assert.match(sandboxFrame, /iframe\.sandbox = 'allow-scripts allow-pointer-lock allow-forms allow-popups'/);
   assert.match(sandboxFrame, /iframe\.allow = 'fullscreen; web-share'/);
   assert.doesNotMatch(sandboxFrame, /\/run\//, 'retired /run route must not be used');

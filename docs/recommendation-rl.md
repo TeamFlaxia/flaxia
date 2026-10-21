@@ -28,8 +28,8 @@ Flaxia の Arcade は TikTok/Shorts 風の縦スクロール全画面フィー�
 
 ### マテリアライズ済みプロファイル (`user_profiles`)
 `interest_vec`（重み付き平均の 1024 次元ベクトル）を DB に保存し、
-`loadOrComputeInterestVector()` が 5 分 TTL でキャッシュします。お気に入り (fresh) と
-高滞在 (dwell>5s) のプレイから重み付きで導出されます。
+`loadOrComputeInterestVector()` が 5 分 TTL でキャッシュします。Fresh、ブックマーク、返信、
+シェア、高滞在 (dwell>5s) のプレイから重み付きで導出されます。
 
 ## 2. 推論: コンテキスチュアル・バンディット (LinUCB)
 
