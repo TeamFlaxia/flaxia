@@ -41,8 +41,8 @@ function isLocalEnvironment(c: AuthContext): boolean {
 
 /**
  * Apply a KV-backed rate limit. Returns a 429 Response when the limit is
- * exceeded, or null when the request may proceed. Falls through (allows) if KV
- * is unavailable, matching the behaviour of the shared limiter.
+ * exceeded, or null when the request may proceed. Returns 503 when KV
+ * is unavailable so authentication cannot bypass its request ceiling.
  */
 async function rateLimit(
   c: AuthContext,
