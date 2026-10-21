@@ -13,7 +13,7 @@ const config: CapacitorConfig = {
     // virtual server or custom hostname is involved.
     ...(process.env.CAPACITOR_PLATFORM === 'android' ? { url: 'https://flaxia.app' } : {}),
     // Keep external origins, including the untrusted sandbox, out of the
-    // privileged top-level WebView. The configured app origin remains local.
+    // privileged top-level WebView. Capacitor permits the configured app origin.
   },
   plugins: {
     LocalNotifications: {

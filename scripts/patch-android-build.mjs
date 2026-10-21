@@ -67,6 +67,13 @@ if (!existsSync(buildGradlePath)) {
   process.exit(0);
 }
 
+// Capacitor's default client sends iframe navigations through the same external
+// navigation policy as the app window. Preserve sandbox frame navigation while
+// the config restricts the privileged top-level WebView to the app origin.
+const mainActivityPath = resolve('android/app/src/main/java/app/flaxia/app/MainActivity.java');
+if (!existsSync(mainActivityPath)) throw new Error('Generated Android MainActivity is missing');
+copyFileSync(resolve('scripts/android-main-activity.java'), mainActivityPath);
+
 let content = readFileSync(buildGradlePath, 'utf8');
 
 // Fail closed if a release tag could not be converted into a versionCode.
