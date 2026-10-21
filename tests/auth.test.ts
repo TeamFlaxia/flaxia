@@ -410,6 +410,29 @@ describe('SRP migration hardening', () => {
     assert.equal(res.status, 400);
   });
 
+  it('rejects verifier swaps using a stolen legacy-upgrade session without the password', async () => {
+    await seedLegacyUser('legacy-stolen@test.com', 'legacy-password-9', 'legacystolen');
+    const { cookie } = await loginUser('legacy-stolen@test.com', 'legacy-password-9');
+    const salt = generateSalt();
+    const verifier = await computeVerifier('attacker-password', salt, 'pbkdf2-600k-v2');
+    const payload = {
+      srp_salt: b64(salt),
+      srp_verifier: b64(verifier),
+      srp_group: '2048',
+      srp_kdf: 'pbkdf2-600k-v2',
+    };
+    for (const extra of [{}, { legacy_password: 'wrong-password' }]) {
+      const res = await fetch(`${BASE_URL}/api/auth/upgrade-srp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ ...payload, ...extra }),
+      });
+      assert.equal(res.status, 401);
+    }
+    const { res } = await loginUser('legacy-stolen@test.com', 'legacy-password-9');
+    assert.equal(res.status, 200);
+  });
+
   it('deletes the legacy hash when a pre-SRP account migrates', async () => {
     await seedLegacyUser('legacy-migrate@test.com', 'legacy-password-3', 'legacymig');
     const { cookie } = await loginUser('legacy-migrate@test.com', 'legacy-password-3');
@@ -423,6 +446,7 @@ describe('SRP migration hardening', () => {
         srp_verifier: b64(verifier),
         srp_group: '2048',
         srp_kdf: 'pbkdf2-600k-v2',
+        legacy_password: 'legacy-password-3',
       }),
     });
     assert.equal(migrated.status, 200);
