@@ -142,10 +142,22 @@ describe('GET /api/posts/recommended — author trust', () => {
     const author = await seedUserAndLogin('trust-two-author');
 
     const firstId = await createTextPost(author.cookie, 'Two repeated posts are tolerated');
-    const secondId = await createTextPost(author.cookie, 'Two repeated posts are tolerated');
+    const secondId = await createTextPost(author.cookie, 'Two repeated posts are tolerated!');
 
     const ids = await recommendedIds(reader.cookie, 20);
     assert.ok(ids.includes(firstId), `expected first post in recommendations, got ${JSON.stringify(ids)}`);
     assert.ok(ids.includes(secondId), `expected second post in recommendations, got ${JSON.stringify(ids)}`);
+  });
+
+  it('hides the older of two exact duplicates', async () => {
+    const reader = await seedUserAndLogin('dupe-reader');
+    const author = await seedUserAndLogin('dupe-author');
+
+    const firstId = await createTextPost(author.cookie, 'An exactly repeated post');
+    const secondId = await createTextPost(author.cookie, 'An exactly repeated post');
+
+    const ids = await recommendedIds(reader.cookie, 20);
+    assert.ok(ids.includes(secondId), `expected the newest copy, got ${JSON.stringify(ids)}`);
+    assert.ok(!ids.includes(firstId), `expected the older copy to be hidden, got ${JSON.stringify(ids)}`);
   });
 });
