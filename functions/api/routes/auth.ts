@@ -90,11 +90,16 @@ auth.post('/register', async (c) => {
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     // Bound the string before it reaches the regex: overlapping `[^\s@]+`
-    // classes backtrack quadratically on long dot-heavy input.
-    if (typeof email !== 'string' || email.length > 254) {
+    // classes backtrack quadratically on long dot-heavy input. Normalize
+    // first: email is a case-insensitive identifier, not a display string.
+    if (typeof email !== 'string') {
       return c.json({ error: 'Invalid email format' }, 400);
     }
-    if (!emailRegex.test(email)) {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (normalizedEmail.length === 0 || normalizedEmail.length > 254) {
+      return c.json({ error: 'Invalid email format' }, 400);
+    }
+    if (!emailRegex.test(normalizedEmail)) {
       return c.json({ error: 'Invalid email format' }, 400);
     }
 
@@ -112,7 +117,7 @@ auth.post('/register', async (c) => {
     }
 
     const user = await registerUser(c.env, {
-      email,
+      email: normalizedEmail,
       username,
       display_name,
       srp: {
@@ -214,7 +219,13 @@ auth.post('/login/verify', async (c) => {
     const ip = getClientIp(c.req.raw);
     const limitedIp = await rateLimit(c, 'auth:srp-verify:ip', ip, 10, 60);
     if (limitedIp) return limitedIp;
-    const limitedEmail = await rateLimit(c, 'auth:srp-verify:email', String(email).toLowerCase(), 5, 60);
+    const limitedEmail = await rateLimit(
+      c,
+      'auth:srp-verify:email',
+      String(email).trim().toLowerCase().slice(0, 254),
+      5,
+      60,
+    );
     if (limitedEmail) return limitedEmail;
 
     const result = await verifySrpLogin(c.env, email, challenge_id, A, M1);

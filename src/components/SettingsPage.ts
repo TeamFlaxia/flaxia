@@ -15,6 +15,7 @@ import {
   stopCrowdNode,
 } from '../lib/crowd-node.js';
 import { getLocale, setLocale, t } from '../lib/i18n.js';
+import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
 import { getReplyStyle, getShowNsfw, ReplyStyle, setReplyStyle, setShowNsfw } from '../lib/settings.js';
 import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
@@ -128,7 +129,9 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
       margin-bottom: 1.5rem;
     `;
 
-    const avatarUrl = currentUser.avatar_key ? `/api/images/${currentUser.avatar_key}` : '/api/images/default-avatar';
+    const avatarUrl = nativeApiHref(
+      currentUser.avatar_key ? `/api/images/${currentUser.avatar_key}` : '/api/images/default-avatar',
+    );
     const displayName = currentUser.display_name || currentUser.username;
 
     const avatarWrap = document.createElement('div');
@@ -139,7 +142,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     avatarEl.style.cssText =
       'width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border); display: block;';
     avatarEl.onerror = () => {
-      avatarEl.src = '/api/images/default-avatar';
+      avatarEl.src = nativeApiHref('/api/images/default-avatar');
     };
     avatarWrap.appendChild(avatarEl);
     attachPlusBadge(avatarWrap, currentUser.badge_type);
