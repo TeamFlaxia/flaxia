@@ -117,7 +117,7 @@ describe('security guards', () => {
     const src = readFileSync(join(ROOT, 'functions/api/routes/auth.ts'), 'utf8');
     assert.ok(src.includes("from '../../lib/rate-limit'"), 'auth must use the shared limiter');
     assert.ok(
-      src.includes("startsWith('http://localhost')"),
+      src.includes('return localEnvironment && localAddress;'),
       'auth rate limiter must bypass local/test environments for integration tests',
     );
     for (const scope of [
