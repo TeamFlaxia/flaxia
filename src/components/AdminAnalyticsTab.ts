@@ -144,7 +144,9 @@ export function createAdminAnalyticsTab() {
       rankings.style.cssText =
         'display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin: 20px 0;';
       rankings.appendChild(createGameRankingTable('admin_analytics.top_games', 'play_records', data.top_games));
-      rankings.appendChild(createGameRankingTable('admin_analytics.top_dwell_games', 'dwell_time', data.top_dwell_games));
+      rankings.appendChild(
+        createGameRankingTable('admin_analytics.top_dwell_games', 'dwell_time', data.top_dwell_games),
+      );
       content.appendChild(rankings);
       const wrapper = document.createElement('div');
       wrapper.style.overflowX = 'auto';
