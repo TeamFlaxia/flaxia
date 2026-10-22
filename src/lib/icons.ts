@@ -19,6 +19,7 @@ import {
   Music2,
   Pencil,
   Quote,
+  Repeat2,
   Save,
   Search,
   Send,
@@ -36,6 +37,7 @@ export type IconName =
   | 'fresh'
   | 'bookmark'
   | 'reply'
+  | 'reload'
   | 'share'
   | 'quote'
   | 'impressions'
@@ -71,6 +73,7 @@ const ICON_NODES: Record<IconName, IconNode> = {
   fresh: Leaf,
   bookmark: Bookmark,
   reply: MessageCircle,
+  reload: Repeat2,
   share: Share2,
   quote: Quote,
   impressions: Eye,

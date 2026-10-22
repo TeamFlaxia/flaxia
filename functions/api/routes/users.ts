@@ -11,7 +11,7 @@ import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { isCreatableSrpKdf } from '../../lib/srp';
 import { fetchWithSsrfGuard, parsePublicHttpUrl, SsrfError } from '../../lib/url-guard';
-import { detectMimeType, isAllowedImageMime, requireAuth } from '../helpers';
+import { batchGetFreshAndBookmarkStatus, detectMimeType, isAllowedImageMime, requireAuth } from '../helpers';
 import type { Bindings, PostRow, SrpProofBody, Variables } from '../types';
 
 const users = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -32,7 +32,7 @@ async function fetchRemoteJson(url: string, accept: string): Promise<{ url: stri
   return { url: parsed.toString(), response };
 }
 
-const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
+const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
   COALESCE(p.reply_count, 0) as reply_count, 
   COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at`;
 
@@ -544,6 +544,14 @@ users.get('/users/:username/pinned', async (c) => {
     const posts = [row as unknown as PostRow];
     await enrichPostsWithReactions(posts, c.env.DB, currentUserId);
     await enrichPostsWithAttachments(posts, c.env.DB);
+    if (currentUserId) {
+      const { freshed, reloaded, bookmarked } = await batchGetFreshAndBookmarkStatus(c.env.DB, currentUserId, [
+        posts[0].id,
+      ]);
+      posts[0].is_freshed = freshed.has(posts[0].id);
+      posts[0].is_reloaded = reloaded.has(posts[0].id);
+      posts[0].is_bookmarked = bookmarked.has(posts[0].id);
+    }
 
     return c.json({ post: posts[0] });
   } catch (error: unknown) {

@@ -532,6 +532,124 @@ describe('POST /api/posts/:id/fresh', () => {
   });
 });
 
+describe('POST /api/posts/:id/reload', () => {
+  beforeEach(resetDb);
+
+  async function createTextPost(cookie: string, text: string): Promise<string> {
+    const res = await fetch(`${BASE_URL}/api/posts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ text }),
+    });
+    assert.equal(res.status, 201);
+    return ((await res.json()) as { id: string }).id;
+  }
+
+  it('toggles reload and updates the count without touching replies', async () => {
+    const author = await seedUserAndLogin('reload-author');
+    const reader = await seedUserAndLogin('reload-reader');
+    const postId = await createTextPost(author.cookie, 'Reload me');
+
+    const first = await fetch(`${BASE_URL}/api/posts/${postId}/reload`, {
+      method: 'POST',
+      headers: { Cookie: reader.cookie },
+    });
+    assert.equal(first.status, 200);
+    const firstData = (await first.json()) as { reloaded: boolean; reload_count: number };
+    assert.equal(firstData.reloaded, true);
+    assert.equal(firstData.reload_count, 1);
+
+    const feed = await fetch(`${BASE_URL}/api/posts?username=${author.username}`, {
+      headers: { Cookie: reader.cookie },
+    });
+    assert.equal(feed.status, 200);
+    const feedData = (await feed.json()) as {
+      posts: Array<{ id: string; reload_count: number; reply_count: number; is_reloaded: boolean }>;
+    };
+    const feedPost = feedData.posts.find((post) => post.id === postId);
+    assert.ok(feedPost);
+    assert.equal(feedPost.reload_count, 1);
+    assert.equal(feedPost.reply_count, 0);
+    assert.equal(feedPost.is_reloaded, true);
+
+    const second = await fetch(`${BASE_URL}/api/posts/${postId}/reload`, {
+      method: 'POST',
+      headers: { Cookie: reader.cookie },
+    });
+    assert.equal(second.status, 200);
+    const secondData = (await second.json()) as { reloaded: boolean; reload_count: number };
+    assert.equal(secondData.reloaded, false);
+    assert.equal(secondData.reload_count, 0);
+  });
+
+  it('creates a reload notification for the post author', async () => {
+    const author = await seedUserAndLogin('reload-notif-author');
+    const reader = await seedUserAndLogin('reload-notif-reader');
+    const postId = await createTextPost(author.cookie, 'Notify on reload');
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}/reload`, {
+      method: 'POST',
+      headers: { Cookie: reader.cookie },
+    });
+    assert.equal(res.status, 200);
+
+    const notificationsRes = await fetch(`${BASE_URL}/api/notifications`, {
+      headers: { Cookie: author.cookie },
+    });
+    assert.equal(notificationsRes.status, 200);
+    const data = (await notificationsRes.json()) as {
+      notifications: Array<{ type: string; post_id: string }>;
+    };
+    assert.ok(data.notifications.some((n) => n.type === 'reload' && n.post_id === postId));
+  });
+
+  it('does not notify on self reload', async () => {
+    const author = await seedUserAndLogin('reload-self');
+    const postId = await createTextPost(author.cookie, 'Self reload');
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}/reload`, {
+      method: 'POST',
+      headers: { Cookie: author.cookie },
+    });
+    assert.equal(res.status, 200);
+
+    const notificationsRes = await fetch(`${BASE_URL}/api/notifications`, {
+      headers: { Cookie: author.cookie },
+    });
+    const data = (await notificationsRes.json()) as { notifications: unknown[] };
+    assert.equal(data.notifications.length, 0);
+  });
+
+  it('keeps the deprecated share alias working', async () => {
+    const author = await seedUserAndLogin('reload-alias-author');
+    const reader = await seedUserAndLogin('reload-alias-reader');
+    const postId = await createTextPost(author.cookie, 'Alias reload');
+
+    const res = await fetch(`${BASE_URL}/api/posts/${postId}/share`, {
+      method: 'POST',
+      headers: { Cookie: reader.cookie },
+    });
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as { reloaded: boolean; reload_count: number };
+    assert.equal(data.reloaded, true);
+    assert.equal(data.reload_count, 1);
+  });
+
+  it('rejects reload on a non-existent post → 404', async () => {
+    const { cookie } = await seedUserAndLogin('reload-404');
+    const res = await fetch(`${BASE_URL}/api/posts/nonexistent-id/reload`, {
+      method: 'POST',
+      headers: { Cookie: cookie },
+    });
+    assert.equal(res.status, 404);
+  });
+
+  it('rejects unauthenticated reload → 401', async () => {
+    const res = await fetch(`${BASE_URL}/api/posts/some-id/reload`, { method: 'POST' });
+    assert.equal(res.status, 401);
+  });
+});
+
 describe('POST /api/posts/:id/reactions', () => {
   beforeEach(resetDb);
 

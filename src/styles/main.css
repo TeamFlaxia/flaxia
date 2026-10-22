@@ -2661,6 +2661,14 @@ h1 {
   color: var(--accent);
 }
 
+.action-button--reload.action-button--active {
+  color: var(--accent);
+}
+
+.action-button--reload.action-button--active svg {
+  fill: var(--accent);
+}
+
 .action-icon {
   font-size: 1rem;
   display: inline-flex;
@@ -2681,6 +2689,10 @@ h1 {
 }
 
 .action-button--fresh.action-button--active .action-count {
+  color: var(--accent);
+}
+
+.action-button--reload.action-button--active .action-count {
   color: var(--accent);
 }
 

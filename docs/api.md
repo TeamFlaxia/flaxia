@@ -135,8 +135,12 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 ### Like (Fresh)
 `POST /api/posts/:id/fresh`
 
-### Share
-`POST /api/posts/:id/share`
+### Reload (retweet)
+`POST /api/posts/:id/reload`
+- Toggles a reload for the current user
+- Returns `{ reloaded: boolean, reload_count: number }`
+- Federates an ActivityPub `Announce` (and `Undo` on un-reload)
+- `POST /api/posts/:id/share` remains as a deprecated alias
 
 ### Bookmark
 `POST /api/posts/:id/bookmark`

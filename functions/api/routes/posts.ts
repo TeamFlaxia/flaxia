@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { isAdmin } from '../../../src/lib/admin';
 import { copyHtmlToWvfs, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
@@ -196,16 +196,16 @@ posts.get('/posts', async (c) => {
     if (hashtag) {
       // Filter by hashtag using json_each
       if (cursor) {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [hashtag, cursor, ...blockParam, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [hashtag, ...blockParam, limit];
       }
     } else if (following && currentUserId) {
       // Following tab - show posts from followed users and current user's own posts
       if (cursor) {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
           COALESCE(p.reply_count, 0) as reply_count, 
           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at 
           FROM posts p 
@@ -220,7 +220,7 @@ posts.get('/posts', async (c) => {
           ORDER BY p.created_at DESC LIMIT ?`;
         params = [currentUserId, currentUserId, cursor, ...blockParam, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
           COALESCE(p.reply_count, 0) as reply_count, 
           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at 
           FROM posts p 
@@ -238,19 +238,19 @@ posts.get('/posts', async (c) => {
     } else if (username) {
       // Username filter - show posts from specific user
       if (cursor) {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ${EXACT_DUPLICATE_FILTER} AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ${EXACT_DUPLICATE_FILTER} AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?`;
         params = [username, cursor, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ${EXACT_DUPLICATE_FILTER} ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ${EXACT_DUPLICATE_FILTER} ORDER BY p.created_at DESC LIMIT ?`;
         params = [username, limit];
       }
     } else {
       // Global timeline
       if (cursor) {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [cursor, ...blockParam, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, p.status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, p.status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [...blockParam, limit];
       }
     }
@@ -272,9 +272,14 @@ posts.get('/posts', async (c) => {
       (async () => {
         if (!currentUserId || posts.length === 0) return;
         const postIds = posts.map((p: Record<string, unknown>) => String(p.id));
-        const { freshed, bookmarked } = await batchGetFreshAndBookmarkStatus(c.env.DB, currentUserId, postIds);
+        const { freshed, reloaded, bookmarked } = await batchGetFreshAndBookmarkStatus(
+          c.env.DB,
+          currentUserId,
+          postIds,
+        );
         posts.forEach((post: Record<string, unknown>) => {
           post.is_freshed = freshed.has(post.id as string);
+          post.is_reloaded = reloaded.has(post.id as string);
           post.is_bookmarked = bookmarked.has(post.id as string);
         });
       })(),
@@ -363,7 +368,7 @@ posts.get('/posts/trending', async (c) => {
     //   adjusted by content type weights and quality score
     const trendingFetchLimit = limit * 5;
     const query = `
-      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
       COALESCE(p.reply_count, 0) as reply_count,
       COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
       ((p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + p.impressions * 0.1 + 1.0) /
@@ -555,7 +560,7 @@ function decayingRecommendationPenalty(
   return maxPenalty * 2 ** (-ageMs / (halfLifeDays * 86400_000));
 }
 
-const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, 
+const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
   COALESCE(p.reply_count, 0) as reply_count, 
   COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at`;
 
@@ -884,9 +889,10 @@ async function enrichFeedPosts(posts: PostRow[], db: D1Database, currentUserId?:
     (async () => {
       if (!currentUserId) return;
       const postIds = posts.map((post) => String(post.id));
-      const { freshed, bookmarked } = await batchGetFreshAndBookmarkStatus(db, currentUserId, postIds);
+      const { freshed, reloaded, bookmarked } = await batchGetFreshAndBookmarkStatus(db, currentUserId, postIds);
       posts.forEach((post) => {
         post.is_freshed = freshed.has(post.id);
+        post.is_reloaded = reloaded.has(post.id);
         post.is_bookmarked = bookmarked.has(post.id);
       });
     })(),
@@ -1882,7 +1888,7 @@ posts.post('/posts/commit', requireAuth, async (c) => {
 
     // Fetch the created post for enrichment
     const fullPost = (await c.env.DB.prepare(
-      "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key as payloadKey, p.swf_key as swfKey, p.thumbnail_key as thumbnailKey, p.game_description, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?",
+      "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key as payloadKey, p.swf_key as swfKey, p.thumbnail_key as thumbnailKey, p.game_description, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?",
     )
       .bind(postId)
       .first()) as PostRow;
@@ -2199,7 +2205,7 @@ posts.get('/bookmarks', requireAuth, async (c) => {
     if (cursor) {
       params.push(cursor);
       query = `
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
         COALESCE(p.reply_count, 0) as reply_count,
         COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
         FROM posts p
@@ -2212,7 +2218,7 @@ posts.get('/bookmarks', requireAuth, async (c) => {
       params.push(limit);
     } else {
       query = `
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
         COALESCE(p.reply_count, 0) as reply_count,
         COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
         FROM posts p
@@ -2234,6 +2240,19 @@ posts.get('/bookmarks', requireAuth, async (c) => {
     posts.forEach((post: Record<string, unknown>) => {
       post.is_bookmarked = true;
     });
+
+    if (posts.length > 0) {
+      const postIds = posts.map((post: Record<string, unknown>) => post.id);
+      const reloadResult = await c.env.DB.prepare(
+        `SELECT post_id FROM shares WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`,
+      )
+        .bind(userId, ...postIds)
+        .all<{ post_id: string }>();
+      const reloaded = new Set((reloadResult.results || []).map((row) => row.post_id));
+      posts.forEach((post: Record<string, unknown>) => {
+        post.is_reloaded = reloaded.has(post.id as string);
+      });
+    }
 
     await enrichPostsWithQuotes(posts as PostRow[], c.env.DB);
     await enrichPostsWithAttachments(posts as PostRow[], c.env.DB);
@@ -2261,7 +2280,7 @@ posts.get('/freshs', requireAuth, async (c) => {
     if (cursor) {
       params.push(cursor);
       query = `
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
         COALESCE(p.reply_count, 0) as reply_count,
         COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
         FROM posts p
@@ -2274,7 +2293,7 @@ posts.get('/freshs', requireAuth, async (c) => {
       params.push(limit);
     } else {
       query = `
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
         COALESCE(p.reply_count, 0) as reply_count,
         COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
         FROM posts p
@@ -2308,6 +2327,16 @@ posts.get('/freshs', requireAuth, async (c) => {
       const bookmarked = new Set((bmResult.results || []).map((r) => r.post_id));
       posts.forEach((post: Record<string, unknown>) => {
         post.is_bookmarked = bookmarked.has(post.id as string);
+      });
+
+      const reloadResult = await c.env.DB.prepare(
+        `SELECT post_id FROM shares WHERE user_id = ? AND post_id IN (${postIds.map(() => '?').join(',')})`,
+      )
+        .bind(userId, ...postIds)
+        .all<{ post_id: string }>();
+      const reloaded = new Set((reloadResult.results || []).map((r) => r.post_id));
+      posts.forEach((post: Record<string, unknown>) => {
+        post.is_reloaded = reloaded.has(post.id as string);
       });
     }
 
@@ -2491,94 +2520,201 @@ posts.post('/posts/fresh/batch', requireAuth, async (c) => {
   }
 });
 
-// POST /api/posts/:id/share - toggle share/repost (protected)
-posts.post('/posts/:id/share', requireAuth, async (c) => {
+type PostsContext = Context<{ Bindings: Bindings; Variables: Variables }>;
+
+/**
+ * Delivers a reload Announce/Undo to the reloading user's federated followers
+ * and, for remote posts, to the original author's inbox.
+ */
+async function deliverReloadActivity(
+  c: PostsContext,
+  post: { actor_id: string | null },
+  currentUser: { username: string },
+  activity: Record<string, unknown>,
+): Promise<void> {
+  if (!c.env.AP_DELIVERY_QUEUE) return;
+
+  try {
+    const followers = await c.env.DB.prepare('SELECT DISTINCT inbox_url FROM ap_followers WHERE local_user_id = ?')
+      .bind(c.get('user')?.id || '')
+      .all<{ inbox_url: string }>();
+
+    for (const follower of followers.results || []) {
+      await c.env.AP_DELIVERY_QUEUE.send({
+        type: 'delivery',
+        inboxUrl: follower.inbox_url,
+        activity,
+        senderUsername: currentUser.username,
+      });
+    }
+  } catch (e) {
+    console.error('Failed to deliver reload activity to followers:', e);
+  }
+
+  if (!post.actor_id) return;
+
+  try {
+    const actorResponse = await fetchWithSsrfGuard(post.actor_id, {
+      headers: { Accept: 'application/activity+json, application/ld+json' },
+      timeoutMs: 10_000,
+    });
+    if (!actorResponse.ok) return;
+
+    const actorData = (await actorResponse.json()) as ActorData;
+    if (!actorData.inbox) return;
+
+    await c.env.AP_DELIVERY_QUEUE.send({
+      type: 'delivery',
+      inboxUrl: actorData.inbox,
+      activity,
+      senderUsername: currentUser.username,
+    });
+  } catch (e) {
+    console.error('Failed to deliver reload activity to remote actor:', e);
+  }
+}
+
+// POST /api/posts/:id/reload - toggle reload (retweet, protected)
+const toggleReload = async (c: PostsContext, legacyAlias = false) => {
   try {
     const postId = c.req.param('id');
     const currentUser = c.get('user');
     if (!currentUser) return c.json({ error: 'Unauthorized' }, 401);
 
-    // Get post info
     const post = (await c.env.DB.prepare(
-      "SELECT id, user_id, actor_id, username FROM posts WHERE id = ? AND status = 'published'",
+      "SELECT id, user_id, actor_id, username, text FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
     )
       .bind(postId)
-      .first()) as { id: string; user_id: string; actor_id: string | null; username: string } | null;
+      .first()) as {
+      id: string;
+      user_id: string;
+      actor_id: string | null;
+      username: string;
+      text: string;
+    } | null;
 
     if (!post) {
       return c.json({ error: 'Post not found' }, 404);
     }
 
-    // Check if already shared
-    const existing = await c.env.DB.prepare('SELECT id FROM shares WHERE post_id = ? AND user_id = ?')
+    const existing = (await c.env.DB.prepare('SELECT id FROM shares WHERE post_id = ? AND user_id = ?')
       .bind(postId, currentUser.id)
-      .first();
+      .first()) as { id: string } | null;
+
+    const actorUrl = `${c.env.BASE_URL}/api/actors/${currentUser.username}`;
+    const noteUrl = `${c.env.BASE_URL}/notes/${postId}`;
+    const publicAudience = 'https://www.w3.org/ns/activitystreams#Public';
 
     if (existing) {
-      // Remove share
-      await c.env.DB.prepare('DELETE FROM shares WHERE post_id = ? AND user_id = ?').bind(postId, currentUser.id).run();
+      await c.env.DB.prepare('DELETE FROM shares WHERE id = ?').bind(existing.id).run();
 
-      await c.env.DB.prepare(
-        'UPDATE posts SET reply_count = MAX(0, reply_count - 1), engagement_hotness = MAX(0.0, engagement_hotness - 3.0) WHERE id = ?',
+      const result = await c.env.DB.prepare(
+        'UPDATE posts SET reload_count = MAX(0, reload_count - 1), engagement_hotness = MAX(0.0, engagement_hotness - 3.0) WHERE id = ? RETURNING reload_count',
       )
         .bind(postId)
-        .run();
+        .first<{ reload_count: number }>();
 
-      return c.json({ shared: false });
-    } else {
-      // Add share
-      const shareId = nanoid();
-      await c.env.DB.prepare(
-        "INSERT INTO shares (id, post_id, user_id, actor_id, created_at) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-      )
-        .bind(shareId, postId, currentUser.id, `${c.env.BASE_URL}/api/actors/${currentUser.username}`)
-        .run();
+      const announce = {
+        id: `${c.env.BASE_URL}/activities/announce-${existing.id}`,
+        type: 'Announce',
+        actor: actorUrl,
+        object: noteUrl,
+        to: [publicAudience],
+        cc: [`${c.env.BASE_URL}/api/actors/${currentUser.username}/followers`],
+      };
+      await deliverReloadActivity(c, post, currentUser, {
+        '@context': 'https://www.w3.org/ns/activitystreams',
+        id: `${c.env.BASE_URL}/activities/undo-announce-${existing.id}`,
+        type: 'Undo',
+        actor: actorUrl,
+        object: announce,
+        to: announce.to,
+        cc: announce.cc,
+      });
 
-      await c.env.DB.prepare(
-        'UPDATE posts SET reply_count = reply_count + 1, engagement_hotness = engagement_hotness + 3.0 WHERE id = ?',
-      )
-        .bind(postId)
-        .run();
-
-      // Send Announce for remote posts
-      if (post.actor_id && c.env.AP_DELIVERY_QUEUE) {
-        try {
-          const actorResponse = await fetchWithSsrfGuard(post.actor_id, {
-            headers: { Accept: 'application/activity+json, application/ld+json' },
-            timeoutMs: 10_000,
-          });
-          if (actorResponse.ok) {
-            const actorData = (await actorResponse.json()) as ActorData;
-            const inboxUrl = actorData.inbox;
-            if (inboxUrl) {
-              const announceActivity = {
-                '@context': 'https://www.w3.org/ns/activitystreams',
-                id: `${c.env.BASE_URL}/activities/announce-${shareId}`,
-                type: 'Announce',
-                actor: `${c.env.BASE_URL}/api/actors/${currentUser.username}`,
-                object: `${c.env.BASE_URL}/notes/${postId}`,
-                to: [post.actor_id, 'https://www.w3.org/ns/activitystreams#Public'],
-              };
-              await c.env.AP_DELIVERY_QUEUE.send({
-                type: 'delivery',
-                inboxUrl,
-                activity: announceActivity,
-                senderUsername: currentUser.username,
-              });
-            }
-          }
-        } catch (e) {
-          console.error('Failed to send Announce activity:', e);
-        }
-      }
-
-      return c.json({ shared: true, share_id: shareId });
+      const response = { reloaded: false, reload_count: result?.reload_count ?? 0 };
+      return c.json(legacyAlias ? { ...response, shared: false } : response);
     }
+
+    const reloadId = nanoid();
+    await c.env.DB.prepare(
+      "INSERT INTO shares (id, post_id, user_id, actor_id, created_at) VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+    )
+      .bind(reloadId, postId, currentUser.id, actorUrl)
+      .run();
+
+    const result = await c.env.DB.prepare(
+      'UPDATE posts SET reload_count = reload_count + 1, engagement_hotness = engagement_hotness + 3.0 WHERE id = ? RETURNING reload_count',
+    )
+      .bind(postId)
+      .first<{ reload_count: number }>();
+
+    // Remote posts are stored under the receiving local account; only notify
+    // the author of a genuinely local post.
+    if (!post.actor_id && post.user_id !== currentUser.id) {
+      try {
+        const existingNotif = (await c.env.DB.prepare(
+          "SELECT id, actor_id, actor_data FROM notifications WHERE user_id = ? AND post_id = ? AND type = 'reload' ORDER BY created_at DESC LIMIT 1",
+        )
+          .bind(post.user_id, postId)
+          .first()) as Record<string, unknown> | null;
+
+        if (existingNotif) {
+          const actorData = existingNotif.actor_data
+            ? (JSON.parse(existingNotif.actor_data as string) as string[])
+            : existingNotif.actor_id
+              ? [existingNotif.actor_id as string]
+              : [];
+          if (!actorData.includes(currentUser.id)) actorData.push(currentUser.id);
+          await c.env.DB.prepare(
+            "UPDATE notifications SET actor_id = ?, actor_data = ?, created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), read = 0 WHERE id = ?",
+          )
+            .bind(actorData[0], JSON.stringify(actorData), existingNotif.id as string)
+            .run();
+        } else {
+          await c.env.DB.prepare(
+            'INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)',
+          )
+            .bind(nanoid(), post.user_id, 'reload', postId, currentUser.id)
+            .run();
+          await sendPushToAll(
+            c.env,
+            post.user_id,
+            'reload',
+            currentUser.username,
+            currentUser.display_name,
+            post.text,
+            postId,
+          );
+        }
+      } catch (e) {
+        console.error('Failed to create reload notification:', e);
+      }
+    }
+
+    const announce = {
+      '@context': 'https://www.w3.org/ns/activitystreams',
+      id: `${c.env.BASE_URL}/activities/announce-${reloadId}`,
+      type: 'Announce',
+      actor: actorUrl,
+      object: noteUrl,
+      to: [publicAudience],
+      cc: [`${c.env.BASE_URL}/api/actors/${currentUser.username}/followers`],
+      published: new Date().toISOString(),
+    };
+    await deliverReloadActivity(c, post, currentUser, announce);
+
+    const response = { reloaded: true, reload_count: result?.reload_count ?? 0 };
+    return c.json(legacyAlias ? { ...response, shared: true, share_id: reloadId } : response);
   } catch (error: unknown) {
-    console.error('Share error:', error);
-    return c.json({ error: 'Share operation failed' }, 500);
+    console.error('Reload error:', error);
+    return c.json({ error: 'Reload operation failed' }, 500);
   }
-});
+};
+
+posts.post('/posts/:id/reload', requireAuth, (c) => toggleReload(c));
+// Deprecated alias kept for API clients that used the old share endpoint.
+posts.post('/posts/:id/share', requireAuth, (c) => toggleReload(c, true));
 
 // GET /api/posts/:id/replies - get direct replies
 posts.get('/posts/:id/replies', async (c) => {
@@ -2598,7 +2734,7 @@ posts.get('/posts/:id/replies', async (c) => {
 
     // Verify parent post exists and is published
     const parentPost = await c.env.DB.prepare(
-      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
+      "SELECT id, user_id, username, text, hashtags, mentions, gif_key, payload_key, swf_key, fresh_count, COALESCE(reload_count, 0) as reload_count, COALESCE(reply_count, 0) as reply_count, parent_id, root_id, COALESCE(depth, 0) as depth, COALESCE(status, 'published') as status, created_at FROM posts WHERE id = ? AND status = 'published' AND hidden = 0",
     )
       .bind(postId)
       .first();
@@ -2607,7 +2743,7 @@ posts.get('/posts/:id/replies', async (c) => {
       return c.json({ error: 'Post not found' }, 404);
     }
 
-    let query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+    let query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
        u.display_name, u.avatar_key, u.badge_type, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
@@ -2616,7 +2752,7 @@ posts.get('/posts/:id/replies', async (c) => {
     const params: Array<unknown> = [postId, limit];
 
     if (cursor) {
-      query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+      query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
        u.display_name, u.avatar_key, u.badge_type, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
@@ -2640,6 +2776,18 @@ posts.get('/posts/:id/replies', async (c) => {
     await enrichPostsWithQuotes(replies as PostRow[], c.env.DB);
     await enrichPostsWithAttachments(replies as PostRow[], c.env.DB);
     await enrichPostsWithReactions(replies as PostRow[], c.env.DB, currentUserId);
+
+    if (currentUserId) {
+      const allPostRows = [parentPost as Record<string, unknown>, ...(replies as Array<Record<string, unknown>>)];
+      const { reloaded } = await batchGetFreshAndBookmarkStatus(
+        c.env.DB,
+        currentUserId,
+        allPostRows.map((post) => String(post.id)),
+      );
+      allPostRows.forEach((post) => {
+        post.is_reloaded = reloaded.has(String(post.id));
+      });
+    }
 
     // Add poll data
     await enrichPostsWithPolls([parentPost as PostRow], c.env.DB, currentUserId);
@@ -2705,7 +2853,7 @@ posts.get('/posts/:id/thread', async (c) => {
     const rootId = (post as Record<string, unknown>).root_id || (post as Record<string, unknown>).id;
 
     const rootPost = await c.env.DB.prepare(
-      `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+      `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
        u.display_name, u.avatar_key, u.badge_type, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
@@ -2719,7 +2867,7 @@ posts.get('/posts/:id/thread', async (c) => {
     }
 
     const repliesResult = await c.env.DB.prepare(
-      `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
+      `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
        u.display_name, u.avatar_key, u.badge_type, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
@@ -2742,12 +2890,18 @@ posts.get('/posts/:id/thread', async (c) => {
       ];
       const postIds = allPosts.map((p: Record<string, unknown>) => p.id as string);
 
-      const { freshed, bookmarked } = await batchGetFreshAndBookmarkStatus(c.env.DB, currentUserId, postIds);
+      const { freshed, reloaded, bookmarked } = await batchGetFreshAndBookmarkStatus(c.env.DB, currentUserId, postIds);
       (rootPost as Record<string, unknown>).is_freshed = freshed.has(
         (rootPost as Record<string, unknown>).id as string,
       );
       (replies as Array<Record<string, unknown>>).forEach((post: Record<string, unknown>) => {
         post.is_freshed = freshed.has(post.id as string);
+      });
+      (rootPost as Record<string, unknown>).is_reloaded = reloaded.has(
+        (rootPost as Record<string, unknown>).id as string,
+      );
+      (replies as Array<Record<string, unknown>>).forEach((post: Record<string, unknown>) => {
+        post.is_reloaded = reloaded.has(post.id as string);
       });
       (rootPost as Record<string, unknown>).is_bookmarked = bookmarked.has(
         (rootPost as Record<string, unknown>).id as string,
@@ -3018,7 +3172,7 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       // Return the updated reply
       reply =
         (await c.env.DB.prepare(`
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
       `)
           .bind(replyId)
           .first()) ?? undefined;
@@ -3060,7 +3214,7 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
         // Return the created reply
         reply =
           (await c.env.DB.prepare(`
-          SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
+          SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
         `)
             .bind(replyId)
             .first()) ?? undefined;
@@ -3252,6 +3406,20 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
 });
 
 // GET /api/search - search posts and users
+async function addReloadStatus(
+  db: D1Database,
+  userId: string | undefined,
+  rows: Record<string, unknown>[],
+): Promise<Record<string, unknown>[]> {
+  if (!userId || rows.length === 0) return rows;
+  const { reloaded } = await batchGetFreshAndBookmarkStatus(
+    db,
+    userId,
+    rows.map((row) => String(row.id)),
+  );
+  return rows.map((row) => ({ ...row, is_reloaded: reloaded.has(String(row.id)) }));
+}
+
 posts.get('/search', async (c) => {
   try {
     const query = c.req.query('q');
@@ -3275,7 +3443,7 @@ posts.get('/search', async (c) => {
       users: Record<string, unknown>[];
     }>(c, cacheKey);
     if (cached) {
-      return c.json(cached);
+      return c.json({ ...cached, results: await addReloadStatus(c.env.DB, c.get('user')?.id, cached.results) });
     }
 
     const tokens = query.trim().split(/\s+/).filter(Boolean);
@@ -3350,7 +3518,7 @@ posts.get('/search', async (c) => {
     const whereClause = `WHERE p.status = 'published' AND p.hidden = 0 AND (${conditions.join(' AND ')}) ${EXACT_DUPLICATE_FILTER}`;
 
     const selectColumns = `
-      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
+      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
       FROM posts p
       LEFT JOIN users u ON p.user_id = u.id
     `;
@@ -3388,7 +3556,10 @@ posts.get('/search', async (c) => {
       users: usersResult,
     };
     await kvCacheSet(c, cacheKey, responseData, 60);
-    return c.json(responseData);
+    return c.json({
+      ...responseData,
+      results: await addReloadStatus(c.env.DB, c.get('user')?.id, responseData.results),
+    });
   } catch (error: unknown) {
     console.error('Search error:', error);
     return c.json({ error: 'Search failed' }, 500);
@@ -3847,7 +4018,7 @@ posts.put('/posts/:id', async (c) => {
 
     // Fetch updated post
     const updated = (await c.env.DB.prepare(
-      "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key as payloadKey, p.swf_key as swfKey, p.thumbnail_key as thumbnailKey, p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.edited_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?",
+      "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key as payloadKey, p.swf_key as swfKey, p.thumbnail_key as thumbnailKey, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.edited_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?",
     )
       .bind(postId)
       .first()) as Record<string, unknown> | null;
@@ -3891,6 +4062,12 @@ posts.get('/posts/:id', async (c) => {
 
     if (!post) {
       return c.json({ error: 'Not found' }, 404);
+    }
+
+    const currentUserId = c.get('user')?.id;
+    if (currentUserId) {
+      const { reloaded } = await batchGetFreshAndBookmarkStatus(c.env.DB, currentUserId, [postId]);
+      post.is_reloaded = reloaded.has(postId);
     }
 
     // Auto-restore if counter-notification period has passed

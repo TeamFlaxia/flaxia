@@ -41,8 +41,10 @@ export class PostCard {
   private props: PostCardProps;
   private mode: PostCardMode;
   private isFreshed: boolean;
+  private isReloaded: boolean;
   private isBookmarked: boolean;
   private freshCount: number;
+  private reloadCount: number;
   private bookmarkCount: number;
   private replyCount: number;
   private impressions: number;
@@ -57,6 +59,7 @@ export class PostCard {
   private menuDropdown?: HTMLElement;
   private onPinChanged?: (e: Event) => void;
   private freshLoading: boolean = false;
+  private reloadLoading: boolean = false;
   private bookmarkLoading: boolean = false;
   private originalText: string;
   private isEditing: boolean = false;
@@ -76,8 +79,10 @@ export class PostCard {
     this.mode = props.initialMode || PostCardMode.PREVIEW;
     // Use is_freshed from API response if available, otherwise default to false
     this.isFreshed = props.post.is_freshed || false;
+    this.isReloaded = props.post.is_reloaded || false;
     this.isBookmarked = props.post.is_bookmarked || false;
     this.freshCount = props.post.fresh_count;
+    this.reloadCount = props.post.reload_count || 0;
     this.bookmarkCount = props.post.bookmark_count;
     this.replyCount = props.post.reply_count || 0;
     this.impressions = props.post.impressions || 0;
@@ -265,14 +270,17 @@ export class PostCard {
       const actions = createPostActions({
         postId: this.props.post.id,
         freshCount: this.freshCount,
+        reloadCount: this.reloadCount,
         bookmarkCount: this.bookmarkCount,
         replyCount: this.replyCount,
         impressions: this.impressions,
         isFreshed: this.isFreshed,
+        isReloaded: this.isReloaded,
         isBookmarked: this.isBookmarked,
         reactions: this.reactions,
         depth: this.props.depth ?? this.props.post.depth,
         onFreshToggle: () => this.handleFreshToggle(),
+        onReloadToggle: () => this.handleReloadToggle(),
         onBookmarkToggle: () => this.handleBookmarkToggle(),
         onReplyToggle: () => this.handleReplyToggle(),
         onShare: () => this.handleShare(),
@@ -611,6 +619,63 @@ export class PostCard {
     this.updateActions();
   }
 
+  private async handleReloadToggle(): Promise<void> {
+    if (this.reloadLoading) return;
+
+    if (!this.props.currentUser) {
+      showSignInPrompt(
+        'reload',
+        () => {
+          window.history.pushState({}, '', '/login');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        },
+        () => {
+          window.history.pushState({}, '', '/register');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+        },
+      );
+      return;
+    }
+
+    const previousReloaded = this.isReloaded;
+    const previousCount = this.reloadCount;
+
+    this.isReloaded = !previousReloaded;
+    this.reloadCount = previousReloaded ? previousCount - 1 : previousCount + 1;
+    this.updateActions();
+
+    this.reloadLoading = true;
+
+    try {
+      const response = await fetch(`/api/posts/${this.props.post.id}/reload`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to toggle reload');
+      }
+
+      const result = (await response.json()) as { reloaded: boolean; reload_count: number };
+      this.isReloaded = result.reloaded;
+      this.reloadCount = result.reload_count;
+
+      window.dispatchEvent(
+        new CustomEvent('postUpdated', {
+          detail: { postId: this.props.post.id, isReloaded: result.reloaded, reloadCount: result.reload_count },
+        }),
+      );
+    } catch (error) {
+      this.isReloaded = previousReloaded;
+      this.reloadCount = previousCount;
+      console.error('Failed to toggle reload:', error);
+    } finally {
+      this.reloadLoading = false;
+    }
+
+    this.updateActions();
+  }
+
   private async handleReactionToggle(emoji: string): Promise<void> {
     if (!this.props.currentUser) {
       showSignInPrompt(
@@ -871,14 +936,17 @@ export class PostCard {
       const newActions = createPostActions({
         postId: this.props.post.id,
         freshCount: this.freshCount,
+        reloadCount: this.reloadCount,
         bookmarkCount: this.bookmarkCount,
         replyCount: this.replyCount,
         impressions: this.impressions,
         isFreshed: this.isFreshed,
+        isReloaded: this.isReloaded,
         isBookmarked: this.isBookmarked,
         reactions: this.reactions,
         depth: this.props.depth ?? this.props.post.depth,
         onFreshToggle: () => this.handleFreshToggle(),
+        onReloadToggle: () => this.handleReloadToggle(),
         onBookmarkToggle: () => this.handleBookmarkToggle(),
         onReplyToggle: () => this.handleReplyToggle(),
         onShare: () => this.handleShare(),
@@ -903,6 +971,12 @@ export class PostCard {
     }
     if (post.fresh_count !== undefined) {
       this.freshCount = post.fresh_count;
+    }
+    if (post.reload_count !== undefined) {
+      this.reloadCount = post.reload_count;
+    }
+    if (post.is_reloaded !== undefined) {
+      this.isReloaded = post.is_reloaded;
     }
     if (post.bookmark_count !== undefined) {
       this.bookmarkCount = post.bookmark_count;

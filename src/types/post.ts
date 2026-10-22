@@ -65,6 +65,7 @@ export interface Post {
   thumbnail_key?: string; // Stores thumbnail image for ZIP/SWF posts
   attachments?: PostAttachment[]; // Multiple image/audio/video attachments
   fresh_count: number;
+  reload_count: number;
   bookmark_count: number;
   reply_count: number;
   impressions: number;
@@ -79,6 +80,7 @@ export interface Post {
   quoted_post_id?: string;
   quoted_post?: QuotedPost | null;
   is_freshed?: boolean; // Whether current user has freshed this post
+  is_reloaded?: boolean; // Whether current user has reloaded this post
   is_bookmarked?: boolean; // Whether current user has bookmarked this post
   reactions?: ReactionSummary[]; // Emoji reactions summary for this post
   poll?: {
@@ -168,14 +170,17 @@ export interface SandboxFrameProps {
 export interface PostActionsProps {
   postId: string;
   freshCount: number;
+  reloadCount: number;
   bookmarkCount: number;
   replyCount: number;
   impressions: number;
   isFreshed: boolean;
+  isReloaded: boolean;
   isBookmarked: boolean;
   reactions: ReactionSummary[];
   depth: number;
   onFreshToggle: () => void;
+  onReloadToggle: () => void;
   onBookmarkToggle: () => void;
   onReplyToggle: () => void;
   onShare?: () => void;

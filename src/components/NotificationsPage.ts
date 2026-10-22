@@ -6,6 +6,7 @@ export interface Notification {
   type:
     | 'reported'
     | 'fresh'
+    | 'reload'
     | 'warned'
     | 'hidden'
     | 'ap_follow'
@@ -172,6 +173,9 @@ export class NotificationsPage {
       case 'ap_like':
         icon.textContent = '🌿';
         break;
+      case 'reload':
+        icon.textContent = '🔁';
+        break;
       case 'ap_follow':
         icon.textContent = '👥';
         break;
@@ -293,6 +297,26 @@ export class NotificationsPage {
           mainText.appendChild(document.createTextNode(' '));
           appendMuted(`(${notification.actor.display_name})`);
           mainText.appendChild(document.createTextNode(t('notifications.quoted_your_post', { actor: '' })));
+        }
+        break;
+      case 'reload':
+        if (notification.actors && notification.actors.length > 1) {
+          const validActors = notification.actors.filter((a): a is NonNullable<typeof a> => a !== null);
+          if (validActors.length > 0) {
+            const reversed = [...validActors].reverse();
+            reversed.slice(0, 2).forEach((a, i) => {
+              if (i > 0) mainText.appendChild(document.createTextNode('、'));
+              appendStrong(`@${a.username}`);
+              mainText.appendChild(document.createTextNode(' '));
+              appendMuted(`(${a.display_name})`);
+            });
+            mainText.appendChild(document.createTextNode(t('notifications.reloaded_your_post', { actor: '' })));
+          }
+        } else if (notification.actor) {
+          appendStrong(`@${notification.actor.username}`);
+          mainText.appendChild(document.createTextNode(' '));
+          appendMuted(`(${notification.actor.display_name})`);
+          mainText.appendChild(document.createTextNode(t('notifications.reloaded_your_post', { actor: '' })));
         }
         break;
       case 'ap_follow':

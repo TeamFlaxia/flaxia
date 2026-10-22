@@ -197,7 +197,7 @@ push.get('/notifications', requireAuth, async (c) => {
 
     const allActorIds = new Set<string>();
     for (const row of rows) {
-      if (row.type === 'fresh' && row.actor_data) {
+      if ((row.type === 'fresh' || row.type === 'reload') && row.actor_data) {
         try {
           const ids = JSON.parse(row.actor_data as string);
           if (Array.isArray(ids)) ids.forEach((id: string) => void allActorIds.add(id));
@@ -239,7 +239,7 @@ push.get('/notifications', requireAuth, async (c) => {
         created_at: row.created_at,
       };
 
-      if (row.type === 'fresh' && row.actor_data) {
+      if ((row.type === 'fresh' || row.type === 'reload') && row.actor_data) {
         try {
           const ids = JSON.parse(row.actor_data as string);
           if (Array.isArray(ids) && ids.length > 1) {

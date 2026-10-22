@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { batchGetFreshAndBookmarkStatus } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
 const topic = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -31,7 +32,8 @@ topic.get('/current-topic', async (c) => {
              u.display_name, u.avatar_key, u.badge_type, u.language as author_language,
              COALESCE(p.reply_count, 0) as reply_count,
              COALESCE(p.impressions, 0) as impressions,
-             p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count
+             p.fresh_count, COALESCE(p.reload_count, 0) as reload_count,
+             COALESCE(p.bookmark_count, 0) as bookmark_count
       FROM posts p
       LEFT JOIN users u ON p.user_id = u.id
       WHERE p.id = ?
@@ -69,11 +71,19 @@ topic.get('/current-topic', async (c) => {
       swf_key: result.swf_key,
       thumbnail_key: result.thumbnail_key,
       fresh_count: result.fresh_count,
+      reload_count: result.reload_count,
       reply_count: result.reply_count,
       impressions: result.impressions,
       created_at: result.created_at,
       type: result.swf_key ? 'flash' : 'html',
+      is_reloaded: false,
     };
+
+    const currentUserId = c.get('user')?.id;
+    if (currentUserId) {
+      const { reloaded } = await batchGetFreshAndBookmarkStatus(c.env.DB, currentUserId, [String(topicPost.id)]);
+      topicPost.is_reloaded = reloaded.has(String(topicPost.id));
+    }
 
     return c.json(topicPost);
   } catch (error: unknown) {

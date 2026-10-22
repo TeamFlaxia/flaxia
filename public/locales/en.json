@@ -891,5 +891,8 @@
   "crowd.consent_accept": "Agree and help",
   "crowd.consent_reject": "Don't help",
   "badge.flaxia_plus": "Flaxia+ subscriber",
-  "settings.vault_revoke_failed": "Password not changed — the device could not be revoked. Please try again."
+  "settings.vault_revoke_failed": "Password not changed — the device could not be revoked. Please try again.",
+  "auth.sign_in_to_reload": "Sign in to reload",
+  "post_actions.reload": "Reload",
+  "notifications.reloaded_your_post": "{actor} reloaded your post"
 }
