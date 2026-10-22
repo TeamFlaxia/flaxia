@@ -117,14 +117,20 @@ test('analytics bounds periods, fills zero days, and deduplicates users across e
       dwell_ms: 210000,
     });
     assert.deepEqual(data.totals, { users: 3, posts: 6 });
-    assert.deepEqual(data.top_games.map((game) => [game.post_id, game.title, game.username, game.play_count]), [
-      ['game-a', 'Puzzle World', 'alice', 2],
-      ['game-b', 'Arcade cabinet', 'bob', 1],
-    ]);
-    assert.deepEqual(data.top_dwell_games.map((game) => [game.post_id, game.dwell_ms]), [
-      ['game-b', 120000],
-      ['game-a', 90000],
-    ]);
+    assert.deepEqual(
+      data.top_games.map((game) => [game.post_id, game.title, game.username, game.play_count]),
+      [
+        ['game-a', 'Puzzle World', 'alice', 2],
+        ['game-b', 'Arcade cabinet', 'bob', 1],
+      ],
+    );
+    assert.deepEqual(
+      data.top_dwell_games.map((game) => [game.post_id, game.dwell_ms]),
+      [
+        ['game-b', 120000],
+        ['game-a', 90000],
+      ],
+    );
     assert.deepEqual(data.daily[1], {
       day: '2026-10-17',
       new_users: 0,
@@ -164,10 +170,14 @@ test('game rankings include only published visible root games with plays from lo
         ('deleted-player', 'missing-user', 'public-game', 600000, '2026-10-22T01:00:00.000Z');
     `);
     const data = await getAdminAnalytics(db, 7, now);
-    assert.deepEqual(data.top_games.map((game) => [game.post_id, game.play_count, game.dwell_ms]), [
-      ['public-game', 1, 30000],
-    ]);
-    assert.deepEqual(data.top_dwell_games.map((game) => game.post_id), ['public-game']);
+    assert.deepEqual(
+      data.top_games.map((game) => [game.post_id, game.play_count, game.dwell_ms]),
+      [['public-game', 1, 30000]],
+    );
+    assert.deepEqual(
+      data.top_dwell_games.map((game) => game.post_id),
+      ['public-game'],
+    );
   } finally {
     sqlite.close();
   }
