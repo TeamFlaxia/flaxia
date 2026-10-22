@@ -44,7 +44,8 @@ function createGameRankingTable(
       const creator = document.createElement('small');
       creator.textContent = `@${game.username}`;
       creator.style.color = '#94a3b8';
-      gameCell.append(title, creator);
+      gameCell.appendChild(title);
+      gameCell.appendChild(creator);
       const metric = row.insertCell();
       metric.textContent =
         metricKey === 'play_records'
@@ -142,10 +143,8 @@ export function createAdminAnalyticsTab() {
       const rankings = document.createElement('div');
       rankings.style.cssText =
         'display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin: 20px 0;';
-      rankings.append(
-        createGameRankingTable('admin_analytics.top_games', 'play_records', data.top_games),
-        createGameRankingTable('admin_analytics.top_dwell_games', 'dwell_time', data.top_dwell_games),
-      );
+      rankings.appendChild(createGameRankingTable('admin_analytics.top_games', 'play_records', data.top_games));
+      rankings.appendChild(createGameRankingTable('admin_analytics.top_dwell_games', 'dwell_time', data.top_dwell_games));
       content.appendChild(rankings);
       const wrapper = document.createElement('div');
       wrapper.style.overflowX = 'auto';
