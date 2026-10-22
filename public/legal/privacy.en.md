@@ -16,6 +16,7 @@
 - Server logs — IP address, User-Agent, timestamp (via Cloudflare infrastructure)
 
 ### **Analytics & Advertisement Information**
+- **Database service analytics** — Existing registration, post, Fresh, and play records are aggregated for administrators only. They are not sent to Google Analytics.
 - **Cloudflare Web Analytics** — Privacy-first analytics tool that does not collect IP addresses. No cookies used.
 - **Playable ad measurement** — Only aggregate counts are collected via the API; no user information is collected.
 

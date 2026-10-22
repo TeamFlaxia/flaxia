@@ -43,6 +43,9 @@ describe('parseRoute', () => {
   it('parses admin tabs with alerts as default', () => {
     assert.equal(parseRoute('/admin', '')?.adminTab, 'alerts');
     assert.equal(parseRoute('/admin/users', '')?.adminTab, 'users');
+    assert.equal(parseRoute('/admin/analytics', '')?.adminTab, 'analytics');
+    assert.equal(parseRoute('/admin/analytics/', '')?.adminTab, 'analytics');
+    assert.equal(parseRoute('/admin/ads', '')?.adminTab, 'ads');
   });
 
   it('returns null for sandbox routes', () => {

@@ -236,16 +236,6 @@ export const initPerformanceMonitoring = (): void => {
     setTimeout(() => {
       const metrics = monitor.getMetrics();
       console.log('Core Web Vitals:', metrics);
-
-      // Report to analytics if available
-      if (typeof window !== 'undefined' && window.gtag) {
-        window.gtag('event', 'core_web_vitals', {
-          cls: metrics.cls,
-          lcp: metrics.lcp,
-          fid: metrics.fid,
-          ttfb: metrics.ttfb,
-        });
-      }
     }, 3000);
   } else {
     window.addEventListener('load', () => {
