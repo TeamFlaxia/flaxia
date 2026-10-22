@@ -101,7 +101,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let currentPostId: string | null = null;
     let _currentUsername: string | null = null;
     let currentTag: string | null = null;
-    let currentAdminTab: 'alerts' | 'hidden' | 'users' | 'ads' | 'counter' = 'alerts';
+    let currentAdminTab: 'analytics' | 'alerts' | 'hidden' | 'users' | 'ads' | 'counter' = 'alerts';
     let timeline: Timeline | null = null;
     let threadPage: ThreadPage | null = null;
     let savedScrollY = 0;
@@ -326,7 +326,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       postId?: string,
       username?: string,
       tag?: string,
-      adminTab?: 'alerts' | 'hidden' | 'users' | 'counter',
+      adminTab?: 'analytics' | 'alerts' | 'hidden' | 'users' | 'ads' | 'counter',
       searchQuery?: string,
       searchType?: 'posts' | 'users' | 'arcade',
     ) => {
@@ -583,7 +583,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             import('./components/AdminAdsTab.js'),
           ]);
 
-          const onTabChange = async (tab: 'alerts' | 'hidden' | 'users' | 'ads' | 'counter') => {
+          let adminAccessGranted = false;
+          const onTabChange = async (tab: 'analytics' | 'alerts' | 'hidden' | 'users' | 'ads' | 'counter') => {
+            if (!adminAccessGranted) return;
             currentAdminTab = tab;
             window.history.pushState({}, '', `/admin/${tab}`);
             renderAdminTab(tab);
@@ -597,10 +599,25 @@ document.addEventListener('DOMContentLoaded', async () => {
           app.appendChild(adminLayout.getElement());
           hidePageLoader();
 
-          const renderAdminTab = async (tab: 'alerts' | 'hidden' | 'users' | 'ads' | 'counter') => {
+          try {
+            const access = await fetch('/api/admin/access', { credentials: 'include', cache: 'no-store' });
+            if (!access.ok) {
+              adminLayout.setAccessDenied();
+              return;
+            }
+          } catch {
+            adminLayout.setAccessDenied();
+            return;
+          }
+
+          adminAccessGranted = true;
+          const renderAdminTab = async (tab: 'analytics' | 'alerts' | 'hidden' | 'users' | 'ads' | 'counter') => {
             if (!adminLayout) return;
 
-            if (tab === 'alerts') {
+            if (tab === 'analytics') {
+              const { createAdminAnalyticsTab } = await import('./components/AdminAnalyticsTab.js');
+              adminLayout.updateMainContent(createAdminAnalyticsTab().getElement());
+            } else if (tab === 'alerts') {
               adminAlertsTab = adminTabsModule[0].createAdminAlertsTab({
                 onNavigateToTab: onTabChange,
               });

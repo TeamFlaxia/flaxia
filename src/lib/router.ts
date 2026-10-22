@@ -28,7 +28,7 @@ export interface RouteInfo {
   postId: string | null;
   username: string | null;
   tag: string | null;
-  adminTab?: 'alerts' | 'hidden' | 'users' | 'counter';
+  adminTab?: 'analytics' | 'alerts' | 'hidden' | 'users' | 'ads' | 'counter';
   searchQuery?: string;
   searchType?: 'posts' | 'users' | 'arcade';
 }
@@ -181,11 +181,11 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
   }
 
   // Admin route - requires auth
-  const adminMatch = cleanPath.match(/^\/admin(\/alerts|\/hidden|\/users|\/counter)?$/);
+  const adminMatch = cleanPath.match(/^\/admin(\/analytics|\/ads|\/alerts|\/hidden|\/users|\/counter)?$/);
   if (adminMatch) {
     console.log('Admin route detected');
     const tab = adminMatch[1]
-      ? (adminMatch[1].replace('/', '') as 'alerts' | 'hidden' | 'users' | 'counter')
+      ? (adminMatch[1].replace('/', '') as 'analytics' | 'alerts' | 'hidden' | 'users' | 'ads' | 'counter')
       : 'alerts';
     return { view: 'admin', postId: null, username: null, tag: null, adminTab: tab };
   }

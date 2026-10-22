@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 import { isAdmin } from '../../../src/lib/admin';
 import { extractFileFromZip } from '../../../src/lib/wvfs-zip-server';
 import { deleteAccount } from '../../lib/account-deletion';
+import { getAdminAnalytics, parseAnalyticsDays } from '../../lib/admin-analytics';
 import { drainPendingEmbeds, enqueuePendingEmbed, ensureNsfwScansTable, submitDetectNsfw } from '../../lib/crowd';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import {
@@ -18,6 +19,25 @@ import { requireAdmin, requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
 const admin = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+admin.get('/access', requireAuth, requireAdmin, (c) => {
+  c.header('Cache-Control', 'private, no-store');
+  return c.json({ allowed: true });
+});
+
+// Only aggregate data is returned, and it must never be cached by a CDN.
+admin.get('/analytics', requireAuth, requireAdmin, async (c) => {
+  c.header('Cache-Control', 'private, no-store');
+  const days = parseAnalyticsDays(c.req.query('days'));
+  if (days === null) return c.json({ error: 'days must be 7, 30, or 90' }, 400);
+  if (!c.env.DB) return c.json({ error: 'Database not available' }, 503);
+  try {
+    return c.json(await getAdminAnalytics(c.env.DB, days));
+  } catch (error: unknown) {
+    console.error('Admin analytics error:', error);
+    return c.json({ error: 'Failed to fetch analytics' }, 500);
+  }
+});
 
 // ─── NSFW scanning constants & helpers ────────────────────────────────────────
 const IMAGE_KEY_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
