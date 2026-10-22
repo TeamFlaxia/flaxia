@@ -68,6 +68,7 @@ export type PostRow = {
   root_id: string | null;
   depth: number;
   fresh_count: number;
+  reload_count: number;
   bookmark_count: number;
   reply_count: number;
   impressions: number;
@@ -79,6 +80,7 @@ export type PostRow = {
   quoted_post_id?: string | null;
   quoted_post?: Record<string, unknown> | null;
   is_freshed?: boolean;
+  is_reloaded?: boolean;
   is_bookmarked?: boolean;
   reactions?: Array<{ emoji: string; count: number; reacted: boolean }>;
   attachments?: Array<{ r2_key: string; kind: 'image' | 'audio' | 'video'; position: number }>;

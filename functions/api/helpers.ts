@@ -326,21 +326,25 @@ export function addBusinessDays(date: Date, days: number): Date {
   return result;
 }
 
-// Batch get fresh and bookmark status for a set of post IDs
+// Batch get fresh, reload, and bookmark status for a set of post IDs
 export async function batchGetFreshAndBookmarkStatus(
   db: D1Database,
   userId: string | null,
   postIds: string[],
-): Promise<{ freshed: Set<string>; bookmarked: Set<string> }> {
+): Promise<{ freshed: Set<string>; reloaded: Set<string>; bookmarked: Set<string> }> {
   if (!userId || postIds.length === 0) {
-    return { freshed: new Set(), bookmarked: new Set() };
+    return { freshed: new Set(), reloaded: new Set(), bookmarked: new Set() };
   }
 
   const placeholders = postIds.map(() => '?').join(',');
 
-  const [freshResult, bookmarkResult] = await Promise.all([
+  const [freshResult, reloadResult, bookmarkResult] = await Promise.all([
     db
       .prepare(`SELECT post_id FROM freshs WHERE user_id = ? AND post_id IN (${placeholders})`)
+      .bind(userId, ...postIds)
+      .all(),
+    db
+      .prepare(`SELECT post_id FROM shares WHERE user_id = ? AND post_id IN (${placeholders})`)
       .bind(userId, ...postIds)
       .all(),
     db
@@ -351,6 +355,7 @@ export async function batchGetFreshAndBookmarkStatus(
 
   return {
     freshed: new Set(freshResult.results?.map((r: Record<string, unknown>) => r.post_id as string) || []),
+    reloaded: new Set(reloadResult.results?.map((r: Record<string, unknown>) => r.post_id as string) || []),
     bookmarked: new Set(bookmarkResult.results?.map((r: Record<string, unknown>) => r.post_id as string) || []),
   };
 }

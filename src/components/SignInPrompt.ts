@@ -126,6 +126,7 @@ export function createSignInPrompt(props: SignInPromptProps = {}) {
 
 export type SignInPromptAction =
   | 'fresh'
+  | 'reload'
   | 'reply'
   | 'follow'
   | 'report'
@@ -137,6 +138,7 @@ export type SignInPromptAction =
 
 const signInPromptSubtitles: Record<SignInPromptAction, string> = {
   fresh: 'auth.sign_in_to_fresh',
+  reload: 'auth.sign_in_to_reload',
   reply: 'auth.sign_in_to_reply',
   follow: 'auth.sign_in_to_follow',
   report: 'auth.sign_in_to_report',

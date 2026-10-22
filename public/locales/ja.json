@@ -891,5 +891,8 @@
   "crowd.consent_accept": "同意して協力",
   "crowd.consent_reject": "協力しない",
   "badge.flaxia_plus": "Flaxia+ メンバー",
-  "settings.vault_revoke_failed": "端末を失効できませんでした。もう一度お試しください。"
+  "settings.vault_revoke_failed": "端末を失効できませんでした。もう一度お試しください。",
+  "auth.sign_in_to_reload": "リロードするにはログインしてください",
+  "post_actions.reload": "リロード",
+  "notifications.reloaded_your_post": "{actor} があなたの投稿をリロードしました"
 }

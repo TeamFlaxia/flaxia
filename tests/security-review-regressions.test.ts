@@ -43,7 +43,8 @@ function fixture(authenticated = true) {
       hashtags TEXT DEFAULT '[]', mentions TEXT DEFAULT '[]', gif_key TEXT,
       payload_key TEXT, swf_key TEXT, thumbnail_key TEXT, quoted_post_id TEXT,
       engagement_hotness REAL, status TEXT DEFAULT 'published', hidden INTEGER DEFAULT 0,
-      game_description TEXT, fresh_count INTEGER DEFAULT 0, bookmark_count INTEGER DEFAULT 0,
+      game_description TEXT, fresh_count INTEGER DEFAULT 0, reload_count INTEGER DEFAULT 0,
+      bookmark_count INTEGER DEFAULT 0,
       reply_count INTEGER DEFAULT 0, impressions INTEGER DEFAULT 0, parent_id TEXT,
       root_id TEXT, depth INTEGER DEFAULT 0, edited_at TEXT, actor_id TEXT,
       created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))

@@ -75,7 +75,9 @@ for (const type of ['Like', 'Announce', 'Follow']) {
             async first() {
               return { id: 'local-user' };
             },
-            async run() {},
+            async run() {
+              return { success: true, meta: { changes: 1 } };
+            },
           };
         },
       },

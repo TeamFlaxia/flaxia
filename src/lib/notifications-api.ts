@@ -8,6 +8,7 @@ export interface NotificationData {
     type:
       | 'reported'
       | 'fresh'
+      | 'reload'
       | 'warned'
       | 'hidden'
       | 'ap_follow'

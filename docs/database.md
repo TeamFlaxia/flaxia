@@ -46,7 +46,7 @@ Flaxia uses Cloudflare D1 (SQLite-compatible) with migrations in `migrations/`.
 | gif_key | TEXT | R2 key for GIF preview |
 | parent_id | TEXT | For replies, FK → posts(id) |
 | fresh_count | INTEGER | Denormalized like count |
-| share_count | INTEGER | Denormalized share count |
+| reload_count | INTEGER | Denormalized reload (retweet) count |
 | created_at | TEXT | ISO 8601 |
 
 ### `post_attachments`

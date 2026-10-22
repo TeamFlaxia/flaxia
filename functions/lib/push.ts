@@ -149,6 +149,8 @@ export function getPushPayload(
       return { title: 'Flaxia', body: `${name} boosted your post${preview}`, url, type: 'notification' };
     case 'quote':
       return { title: 'Flaxia', body: `${name} quoted your post${preview}`, url, type: 'notification' };
+    case 'reload':
+      return { title: 'Flaxia', body: `${name} reloaded your post${preview}`, url, type: 'notification' };
     case 'poll_ended':
       return { title: 'Flaxia', body: `Your poll has ended${preview}`, url, type: 'notification' };
     case 'bookmark':

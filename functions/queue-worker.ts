@@ -671,11 +671,11 @@ async function handleAnnounceActivity(
 
   const postId = postIdMatch[1];
 
-  const postResult = await env.DB.prepare(`
-    SELECT id FROM posts WHERE id = ?
+  const postResult = (await env.DB.prepare(`
+    SELECT id, user_id, text FROM posts WHERE id = ?
   `)
     .bind(postId)
-    .first();
+    .first()) as { id: string; user_id: string; text: string } | null;
 
   if (!postResult) {
     console.log('Announced post not found:', postId);
@@ -694,12 +694,30 @@ async function handleAnnounceActivity(
   }
 
   const shareId = generateId();
-  await env.DB.prepare(`
+  const inserted = await env.DB.prepare(`
     INSERT OR IGNORE INTO shares (id, post_id, user_id, actor_id, created_at)
     VALUES (?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   `)
     .bind(shareId, postId, null, actorId)
     .run();
+
+  if (inserted.meta.changes === 0) return;
+
+  await env.DB.prepare(
+    'UPDATE posts SET reload_count = reload_count + 1, engagement_hotness = engagement_hotness + 3.0 WHERE id = ?',
+  )
+    .bind(postId)
+    .run();
+
+  if (postResult.user_id) {
+    try {
+      await env.DB.prepare('INSERT INTO notifications (id, user_id, type, post_id, actor_id) VALUES (?, ?, ?, ?, ?)')
+        .bind(generateId(), postResult.user_id, 'ap_announce', postId, actorId)
+        .run();
+    } catch (e) {
+      console.error('Failed to create Announce notification:', e);
+    }
+  }
 
   console.log('Share recorded:', postId, actorId);
 }
@@ -757,11 +775,22 @@ async function handleUndoActivity(
       const announceUrl = typeof object.object === 'string' ? object.object : '';
       const sharePostIdMatch = announceUrl?.match(/\/notes\/([a-zA-Z0-9_-]+)$/);
       if (sharePostIdMatch) {
-        await env.DB.prepare(`
+        const removed = await env.DB.prepare(`
           DELETE FROM shares WHERE post_id = ? AND actor_id = ?
         `)
           .bind(sharePostIdMatch[1], actorId)
           .run();
+
+        if (removed.meta.changes > 0) {
+          await env.DB.prepare(
+            'UPDATE posts SET reload_count = MAX(0, reload_count - 1), engagement_hotness = MAX(0.0, engagement_hotness - 3.0) WHERE id = ?',
+          )
+            .bind(sharePostIdMatch[1])
+            .run();
+          await env.DB.prepare("DELETE FROM notifications WHERE post_id = ? AND actor_id = ? AND type = 'ap_announce'")
+            .bind(sharePostIdMatch[1], actorId)
+            .run();
+        }
         console.log('Share removed:', sharePostIdMatch[1], actorId);
       }
       break;

@@ -11,6 +11,8 @@ export function createPostUpdatedHandler(postCards: Map<string, PostCardLike>): 
       const update: Partial<Post> = {};
       if (detail.isFreshed !== undefined) update.is_freshed = detail.isFreshed;
       if (detail.freshCount !== undefined) update.fresh_count = detail.freshCount;
+      if (detail.isReloaded !== undefined) update.is_reloaded = detail.isReloaded;
+      if (detail.reloadCount !== undefined) update.reload_count = detail.reloadCount;
       if (detail.isBookmarked !== undefined) update.is_bookmarked = detail.isBookmarked;
       if (detail.bookmarkCount !== undefined) update.bookmark_count = detail.bookmarkCount;
       if (detail.replyCount !== undefined) update.reply_count = detail.replyCount;

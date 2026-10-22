@@ -22,6 +22,10 @@ export function createPostActions(props: PostActionsProps): HTMLElement {
   const replyButton = createActionButton('reply', formatCount(props.replyCount), false, true);
   replyButton.addEventListener('click', props.onReplyToggle);
 
+  // Reload (retweet) button
+  const reloadButton = createActionButton('reload', formatCount(props.reloadCount), props.isReloaded, true);
+  reloadButton.addEventListener('click', props.onReloadToggle);
+
   // Quote button (no count)
   const quoteButton = createActionButton('quote', '', false, false);
   quoteButton.addEventListener('click', () => {
@@ -51,6 +55,7 @@ export function createPostActions(props: PostActionsProps): HTMLElement {
 
   leftGroup.appendChild(freshButton);
   leftGroup.appendChild(replyButton);
+  leftGroup.appendChild(reloadButton);
   leftGroup.appendChild(quoteButton);
 
   // Right-aligned group: rightmost impressions, then share, then bookmark
@@ -132,7 +137,9 @@ function openEmojiPicker(anchor: HTMLElement, onPick: (emoji: string) => void): 
 function createActionButton(type: ActionButtonType, count: string, isActive: boolean, showCount: boolean): HTMLElement {
   const button = document.createElement('button');
   button.className = `action-button action-button--${type}`;
-  button.setAttribute('aria-label', t('post_actions.aria_label', { type }));
+  const label = type === 'reload' ? t('post_actions.reload') : t('post_actions.aria_label', { type });
+  button.setAttribute('aria-label', label);
+  button.setAttribute('title', label);
 
   if (isActive) {
     button.classList.add('action-button--active');
@@ -157,7 +164,7 @@ function createActionButton(type: ActionButtonType, count: string, isActive: boo
   return button;
 }
 
-type ActionButtonType = 'fresh' | 'bookmark' | 'reply' | 'share' | 'impressions' | 'quote';
+type ActionButtonType = 'fresh' | 'bookmark' | 'reply' | 'reload' | 'share' | 'impressions' | 'quote';
 
 function getIconNameForType(type: ActionButtonType): IconName {
   switch (type) {
@@ -167,6 +174,8 @@ function getIconNameForType(type: ActionButtonType): IconName {
       return 'bookmark';
     case 'reply':
       return 'reply';
+    case 'reload':
+      return 'reload';
     case 'share':
       return 'share';
     case 'impressions':
