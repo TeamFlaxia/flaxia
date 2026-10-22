@@ -18,6 +18,7 @@ import { getLocale, setLocale, t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
 import { getReplyStyle, getShowNsfw, ReplyStyle, setReplyStyle, setShowNsfw } from '../lib/settings.js';
+import { createSettingsNavigation } from '../lib/settings-navigation.js';
 import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
 import { getTheme, setTheme, Theme } from '../lib/theme.js';
 import { prepareVaultRewrap } from '../lib/vault/client.js';
@@ -31,6 +32,7 @@ function b64(b: Uint8Array): string {
 }
 
 interface SettingsPageProps {
+  initialCategory?: string | null;
   currentUser?: {
     id: string;
     username: string;
@@ -42,86 +44,23 @@ interface SettingsPageProps {
   };
 }
 
-export function createSettingsPage({ currentUser }: SettingsPageProps) {
-  const container = document.createElement('div');
-  container.className = 'settings-page';
-  container.style.cssText = `
-    max-width: 600px;
-    margin: 0 auto;
-    padding: 0 1rem 2rem;
-  `;
-
-  const topBar = document.createElement('div');
-  topBar.style.cssText = `
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.5rem;
-    border-bottom: 1px solid var(--border);
-    position: sticky;
-    top: 0;
-    background: var(--bg-primary);
-    z-index: 10;
-    margin-bottom: 2rem;
-  `;
-
-  const backBtn = document.createElement('button');
-  backBtn.textContent = '←';
-  backBtn.style.cssText = `
-    background: none;
-    border: none;
-    font-size: 1.25rem;
-    cursor: pointer;
-    color: var(--text-primary);
-    padding: 0.25rem 0.5rem;
-    border-radius: 4px;
-    transition: background 0.2s;
-  `;
-  backBtn.addEventListener('mouseenter', () => {
-    backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))';
-  });
-  backBtn.addEventListener('mouseleave', () => {
-    backBtn.style.background = 'none';
-  });
-  backBtn.addEventListener('click', () => window.history.back());
-
-  const title = document.createElement('h1');
-  title.textContent = t('settings.title');
-  title.style.cssText = `
-    font-size: 1.25rem;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin: 0;
-  `;
-
-  topBar.appendChild(backBtn);
-  topBar.appendChild(title);
-  container.appendChild(topBar);
+export function createSettingsPage({ currentUser, initialCategory }: SettingsPageProps) {
+  const navigation = createSettingsNavigation();
+  const container = navigation.getElement();
+  let accountSection: HTMLDivElement | undefined;
+  let emojiSection: HTMLDivElement | undefined;
+  let billingSection: HTMLDivElement | undefined;
 
   // Account Section
   if (currentUser) {
-    const accountSection = document.createElement('div');
+    accountSection = document.createElement('div');
     accountSection.className = 'settings-section';
-    accountSection.style.cssText = `
-      margin-bottom: 2rem;
-      padding: 1.5rem;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--bg-primary);
-    `;
 
     const accountTitle = document.createElement('h2');
     accountTitle.textContent = t('settings.account');
-    accountTitle.style.cssText = `
-      font-size: 1.125rem;
-      font-weight: 600;
-      margin-bottom: 1rem;
-      color: var(--text-primary);
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 0.5rem;
-    `;
 
     const userChip = document.createElement('div');
+    userChip.className = 'settings-user';
     userChip.style.cssText = `
       display: flex;
       align-items: center;
@@ -266,32 +205,20 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
     accountSection.appendChild(accountTitle);
     accountSection.appendChild(userChip);
-    accountSection.appendChild(logoutButton);
-    accountSection.appendChild(deleteButton);
-    container.appendChild(accountSection);
+    const accountActions = document.createElement('div');
+    accountActions.className = 'settings-account-actions';
+    accountActions.appendChild(logoutButton);
+    accountActions.appendChild(deleteButton);
+    deleteButton.style.marginTop = '0';
+    accountSection.appendChild(accountActions);
   }
 
   // Display Section
   const displaySection = document.createElement('div');
   displaySection.className = 'settings-section';
-  displaySection.style.cssText = `
-    margin-bottom: 2rem;
-    padding: 1.5rem;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--bg-primary);
-  `;
 
   const displayTitle = document.createElement('h2');
   displayTitle.textContent = t('settings.display');
-  displayTitle.style.cssText = `
-    font-size: 1.125rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
-    color: var(--text-primary);
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.5rem;
-  `;
 
   const currentStyle = getReplyStyle();
 
@@ -478,6 +405,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   });
 
   const displayMessage = document.createElement('div');
+  displayMessage.setAttribute('role', 'status');
   displayMessage.style.cssText = `
     margin-top: 0.5rem;
     font-size: 0.875rem;
@@ -491,29 +419,12 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   displaySection.appendChild(themeRadioGroup);
   displaySection.appendChild(displayMessage);
 
-  container.appendChild(displaySection);
-
   // Crowd Section (opt in/out of donating browser compute)
   const crowdSection = document.createElement('div');
   crowdSection.className = 'settings-section';
-  crowdSection.style.cssText = `
-    margin-bottom: 2rem;
-    padding: 1.5rem;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--bg-primary);
-  `;
 
   const crowdTitle = document.createElement('h2');
   crowdTitle.textContent = t('settings.crowd');
-  crowdTitle.style.cssText = `
-    font-size: 1.125rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
-    color: var(--text-primary);
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.5rem;
-  `;
 
   const nodeAvailable = canRunFlaxiaNode();
 
@@ -557,6 +468,7 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   crowdStatus.style.cssText = 'font-size: 0.8125rem; color: var(--text-muted);';
 
   const crowdMessage = document.createElement('div');
+  crowdMessage.setAttribute('role', 'status');
   crowdMessage.style.cssText = `
     margin-top: 0.5rem;
     font-size: 0.875rem;
@@ -625,42 +537,16 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   crowdSection.appendChild(crowdStatus);
   crowdSection.appendChild(crowdMessage);
 
-  container.appendChild(crowdSection);
-
   // Language Section
   const languageSection = document.createElement('div');
   languageSection.className = 'settings-section';
-  languageSection.style.cssText = `
-    margin-bottom: 2rem;
-    padding: 1.5rem;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--bg-primary);
-  `;
 
   const languageTitle = document.createElement('h2');
   languageTitle.textContent = t('settings.language');
-  languageTitle.style.cssText = `
-    font-size: 1.125rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
-    color: var(--text-primary);
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.5rem;
-  `;
 
   const languageSelect = document.createElement('select');
-  languageSelect.style.cssText = `
-    width: 100%;
-    padding: 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--bg-input);
-    color: var(--text-primary);
-    font-size: 1rem;
-    margin-bottom: 1rem;
-    cursor: pointer;
-  `;
+  languageSelect.setAttribute('aria-label', t('settings.language'));
+  languageSelect.className = 'settings-input';
 
   fetch('/locales/index.json')
     .then((r) => r.json())
@@ -694,19 +580,10 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
   const languageSaveButton = document.createElement('button');
   languageSaveButton.textContent = t('common.save');
-  languageSaveButton.style.cssText = `
-    background: var(--accent);
-    color: white;
-    border: none;
-    padding: 0.75rem 1.5rem;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.875rem;
-    font-weight: 600;
-    transition: opacity 0.2s;
-  `;
+  languageSaveButton.className = 'settings-save';
 
   const languageMessage = document.createElement('div');
+  languageMessage.setAttribute('role', 'status');
   languageMessage.style.cssText = `
     margin-top: 0.5rem;
     font-size: 0.875rem;
@@ -721,24 +598,9 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   // Email Section
   const emailSection = document.createElement('div');
   emailSection.className = 'settings-section';
-  emailSection.style.cssText = `
-    margin-bottom: 2rem;
-    padding: 1.5rem;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--bg-primary);
-  `;
 
   const emailTitle = document.createElement('h2');
   emailTitle.textContent = t('settings.change_email');
-  emailTitle.style.cssText = `
-    font-size: 1.125rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
-    color: var(--text-primary);
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.5rem;
-  `;
 
   const currentPasswordLabel = document.createElement('label');
   currentPasswordLabel.textContent = t('settings.email_current_password');
@@ -751,18 +613,11 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
   const currentPasswordInput = document.createElement('input');
   currentPasswordInput.type = 'password';
+  currentPasswordInput.id = 'settings-email-current-password';
+  currentPasswordLabel.htmlFor = currentPasswordInput.id;
+  currentPasswordInput.autocomplete = 'current-password';
   currentPasswordInput.placeholder = t('settings.email_current_password_placeholder');
-  currentPasswordInput.style.cssText = `
-    width: 100%;
-    padding: 0.75rem;
-    border: none;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-input);
-    color: var(--text-primary);
-    font-size: 1rem;
-    margin-bottom: 1rem;
-    border-radius: 0;
-  `;
+  currentPasswordInput.className = 'settings-input';
 
   const newEmailLabel = document.createElement('label');
   newEmailLabel.textContent = t('settings.email_new_email');
@@ -775,34 +630,18 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
   const newEmailInput = document.createElement('input');
   newEmailInput.type = 'email';
+  newEmailInput.id = 'settings-new-email';
+  newEmailLabel.htmlFor = newEmailInput.id;
+  newEmailInput.autocomplete = 'email';
   newEmailInput.placeholder = t('settings.email_new_email_placeholder');
-  newEmailInput.style.cssText = `
-    width: 100%;
-    padding: 0.75rem;
-    border: none;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-input);
-    color: var(--text-primary);
-    font-size: 1rem;
-    margin-bottom: 1rem;
-    border-radius: 0;
-  `;
+  newEmailInput.className = 'settings-input';
 
   const emailSaveButton = document.createElement('button');
   emailSaveButton.textContent = t('common.save');
-  emailSaveButton.style.cssText = `
-    background: var(--accent);
-    color: white;
-    border: none;
-    padding: 0.75rem 1.5rem;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.875rem;
-    font-weight: 600;
-    transition: opacity 0.2s;
-  `;
+  emailSaveButton.className = 'settings-save';
 
   const emailMessage = document.createElement('div');
+  emailMessage.setAttribute('role', 'status');
   emailMessage.style.cssText = `
     margin-top: 0.5rem;
     font-size: 0.875rem;
@@ -820,24 +659,9 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
   // Password Section
   const passwordSection = document.createElement('div');
   passwordSection.className = 'settings-section';
-  passwordSection.style.cssText = `
-    margin-bottom: 2rem;
-    padding: 1.5rem;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    background: var(--bg-primary);
-  `;
 
   const passwordTitle = document.createElement('h2');
   passwordTitle.textContent = t('settings.change_password');
-  passwordTitle.style.cssText = `
-    font-size: 1.125rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
-    color: var(--text-primary);
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.5rem;
-  `;
 
   const currentPasswordLabel2 = document.createElement('label');
   currentPasswordLabel2.textContent = t('settings.password_current');
@@ -850,18 +674,11 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
   const currentPasswordInput2 = document.createElement('input');
   currentPasswordInput2.type = 'password';
+  currentPasswordInput2.id = 'settings-password-current';
+  currentPasswordLabel2.htmlFor = currentPasswordInput2.id;
+  currentPasswordInput2.autocomplete = 'current-password';
   currentPasswordInput2.placeholder = t('settings.password_current_placeholder');
-  currentPasswordInput2.style.cssText = `
-    width: 100%;
-    padding: 0.75rem;
-    border: none;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-input);
-    color: var(--text-primary);
-    font-size: 1rem;
-    margin-bottom: 1rem;
-    border-radius: 0;
-  `;
+  currentPasswordInput2.className = 'settings-input';
 
   const newPasswordLabel = document.createElement('label');
   newPasswordLabel.textContent = t('settings.password_new');
@@ -874,18 +691,11 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
   const newPasswordInput = document.createElement('input');
   newPasswordInput.type = 'password';
+  newPasswordInput.id = 'settings-new-password';
+  newPasswordLabel.htmlFor = newPasswordInput.id;
+  newPasswordInput.autocomplete = 'new-password';
   newPasswordInput.placeholder = t('settings.password_new_placeholder');
-  newPasswordInput.style.cssText = `
-    width: 100%;
-    padding: 0.75rem;
-    border: none;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-input);
-    color: var(--text-primary);
-    font-size: 1rem;
-    margin-bottom: 1rem;
-    border-radius: 0;
-  `;
+  newPasswordInput.className = 'settings-input';
 
   const confirmPasswordLabel = document.createElement('label');
   confirmPasswordLabel.textContent = t('settings.password_confirm');
@@ -898,34 +708,18 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
   const confirmPasswordInput = document.createElement('input');
   confirmPasswordInput.type = 'password';
+  confirmPasswordInput.id = 'settings-confirm-password';
+  confirmPasswordLabel.htmlFor = confirmPasswordInput.id;
+  confirmPasswordInput.autocomplete = 'new-password';
   confirmPasswordInput.placeholder = t('settings.password_confirm_placeholder');
-  confirmPasswordInput.style.cssText = `
-    width: 100%;
-    padding: 0.75rem;
-    border: none;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg-input);
-    color: var(--text-primary);
-    font-size: 1rem;
-    margin-bottom: 1rem;
-    border-radius: 0;
-  `;
+  confirmPasswordInput.className = 'settings-input';
 
   const passwordSaveButton = document.createElement('button');
   passwordSaveButton.textContent = t('common.save');
-  passwordSaveButton.style.cssText = `
-    background: var(--accent);
-    color: white;
-    border: none;
-    padding: 0.75rem 1.5rem;
-    border-radius: 4px;
-    cursor: pointer;
-    font-size: 0.875rem;
-    font-weight: 600;
-    transition: opacity 0.2s;
-  `;
+  passwordSaveButton.className = 'settings-save';
 
   const passwordMessage = document.createElement('div');
+  passwordMessage.setAttribute('role', 'status');
   passwordMessage.style.cssText = `
     margin-top: 0.5rem;
     font-size: 0.875rem;
@@ -1142,15 +936,10 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     });
   });
 
-  container.appendChild(languageSection);
-  container.appendChild(emailSection);
-  container.appendChild(passwordSection);
-
   // ─── Personal Vault Section ──────────────────────────────────────────────
   // Own component: it has three states of its own (setup / locked / unlocked)
   // and timers to clean up, which would drown the settings page otherwise.
-  const vaultSection = createVaultSection();
-  container.appendChild(vaultSection.getElement());
+  const vaultSection = currentUser ? createVaultSection() : null;
 
   // Shared billing state: populated by `loadBilling`, read by the stamp counter.
   let currentPlan: {
@@ -1163,26 +952,11 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
 
   // ─── Custom Emoji Section ────────────────────────────────────────────────
   if (currentUser) {
-    const emojiSection = document.createElement('div');
+    emojiSection = document.createElement('div');
     emojiSection.className = 'settings-section';
-    emojiSection.style.cssText = `
-      margin-bottom: 2rem;
-      padding: 1.5rem;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--bg-primary);
-    `;
 
     const emojiTitle = document.createElement('h2');
     emojiTitle.textContent = t('settings.custom_emoji') || 'Custom Emoji';
-    emojiTitle.style.cssText = `
-      font-size: 1.125rem;
-      font-weight: 600;
-      margin-bottom: 1rem;
-      color: var(--text-primary);
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 0.5rem;
-    `;
 
     const emojiDesc = document.createElement('p');
     emojiDesc.textContent =
@@ -1321,7 +1095,6 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     emojiSection.appendChild(emojiDesc);
     emojiSection.appendChild(emojiCountRow);
     emojiSection.appendChild(stampsGrid);
-    container.appendChild(emojiSection);
 
     refreshStamps = loadStamps;
     loadStamps();
@@ -1335,26 +1108,11 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     typeof window.Capacitor?.isNativePlatform === 'function' &&
     window.Capacitor.isNativePlatform();
   if (currentUser && !isCapacitorApp) {
-    const billingSection = document.createElement('div');
+    billingSection = document.createElement('div');
     billingSection.className = 'settings-section';
-    billingSection.style.cssText = `
-      margin-bottom: 2rem;
-      padding: 1.5rem;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--bg-primary);
-    `;
 
     const billingTitle = document.createElement('h2');
     billingTitle.textContent = t('settings.billing') || 'Billing & Plans';
-    billingTitle.style.cssText = `
-      font-size: 1.125rem;
-      font-weight: 600;
-      margin-bottom: 1rem;
-      color: var(--text-primary);
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 0.5rem;
-    `;
     billingSection.appendChild(billingTitle);
 
     // Current plan display
@@ -1453,8 +1211,6 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     historySection.appendChild(historyTitle);
     historySection.appendChild(historyList);
     billingSection.appendChild(historySection);
-
-    container.appendChild(billingSection);
 
     const planNames: Record<string, string> = {
       flaxia_plus: 'Flaxia+ (¥300/mo)',
@@ -1594,11 +1350,70 @@ export function createSettingsPage({ currentUser }: SettingsPageProps) {
     void loadBilling();
   }
 
+  if (accountSection) {
+    navigation.addCategory({
+      id: 'account',
+      groupKey: 'settings.group_account',
+      titleKey: 'settings.account',
+      descriptionKey: 'settings.account_description',
+      iconName: 'user',
+      sections: [accountSection, emailSection],
+    });
+  }
+  if (vaultSection) {
+    navigation.addCategory({
+      id: 'security',
+      groupKey: 'settings.group_account',
+      titleKey: 'settings.security',
+      descriptionKey: 'settings.security_description',
+      iconName: 'key',
+      sections: [passwordSection, vaultSection.getElement()],
+    });
+  }
+  navigation.addCategory({
+    id: 'appearance',
+    groupKey: 'settings.group_preferences',
+    titleKey: 'settings.appearance',
+    descriptionKey: 'settings.appearance_description',
+    iconName: 'settings',
+    sections: [displaySection, languageSection],
+  });
+  if (emojiSection) {
+    navigation.addCategory({
+      id: 'emoji',
+      groupKey: 'settings.group_preferences',
+      titleKey: 'settings.custom_emoji',
+      descriptionKey: 'settings.emoji_description',
+      iconName: 'emoji',
+      sections: [emojiSection],
+    });
+  }
+  if (billingSection) {
+    navigation.addCategory({
+      id: 'billing',
+      groupKey: 'settings.group_more',
+      titleKey: 'settings.billing',
+      descriptionKey: 'settings.billing_description',
+      iconName: 'fresh',
+      sections: [billingSection],
+    });
+  }
+  navigation.addCategory({
+    id: 'crowd',
+    groupKey: 'settings.group_more',
+    titleKey: 'settings.crowd',
+    descriptionKey: 'settings.crowd_description',
+    iconName: 'poll',
+    sections: [crowdSection],
+  });
+  navigation.showCategory(initialCategory ?? null, false);
+
   return {
+    getActiveCategory: navigation.getActiveCategory,
     getElement: () => container,
     destroy: () => {
       window.removeEventListener(CROWD_CONSENT_CHANGE_EVENT, onCrowdConsentChange);
-      vaultSection.destroy();
+      vaultSection?.destroy();
       container.remove();
     },
   };
