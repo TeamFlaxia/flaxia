@@ -29,10 +29,30 @@ const { default: admin } = await import('../functions/api/routes/admin.ts');
 function fixture() {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec(`
-    CREATE TABLE users (id TEXT PRIMARY KEY, created_at TEXT);
-    CREATE TABLE posts (id TEXT PRIMARY KEY, user_id TEXT, created_at TEXT);
+    CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT NOT NULL, created_at TEXT);
+    CREATE TABLE posts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      created_at TEXT,
+      text TEXT,
+      game_description TEXT,
+      payload_key TEXT,
+      swf_key TEXT,
+      status TEXT NOT NULL DEFAULT 'published',
+      hidden INTEGER NOT NULL DEFAULT 0,
+      parent_id TEXT
+    );
     CREATE TABLE freshs (post_id TEXT, user_id TEXT, created_at TEXT);
-    CREATE TABLE user_game_plays (id TEXT PRIMARY KEY, user_id TEXT, dwell_ms INTEGER, created_at TEXT);
+    CREATE TABLE user_game_plays (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      post_id TEXT NOT NULL,
+      dwell_ms INTEGER NOT NULL DEFAULT 0,
+      is_fullscreen INTEGER NOT NULL DEFAULT 0,
+      game_type TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'arcade',
+      created_at TEXT NOT NULL
+    );
   `);
   // Applying twice must be safe. Use the real migration, not a parallel schema.
   const migration = readFileSync(new URL('../migrations/0109_admin_analytics_indexes.sql', import.meta.url), 'utf8');
@@ -67,17 +87,21 @@ test('analytics bounds periods, fills zero days, and deduplicates users across e
   const { sqlite, db } = fixture();
   try {
     sqlite.exec(`
-      INSERT INTO users VALUES ('a', '2026-10-16T00:00:00.000Z'), ('b', '2026-01-01T00:00:00.000Z'),
-        ('signup-only', '2026-10-22T00:00:00.000Z');
-      INSERT INTO posts VALUES ('first', 'a', '2026-10-16T00:00:00.000Z'),
-        ('second', 'a', '2026-10-22T11:59:59.999Z'),
-        ('old', 'b', '2026-10-15T23:59:59.999Z'),
-        ('future', 'b', '2026-10-22T12:00:00.000Z'),
-        ('remote', 'remote-actor', '2026-10-22T01:00:00.000Z');
+      INSERT INTO users VALUES ('a', 'alice', '2026-10-16T00:00:00.000Z'), ('b', 'bob', '2026-01-01T00:00:00.000Z'),
+        ('signup-only', 'signup-only', '2026-10-22T00:00:00.000Z');
+      INSERT INTO posts (id, user_id, created_at, text) VALUES ('first', 'a', '2026-10-16T00:00:00.000Z', 'First'),
+        ('second', 'a', '2026-10-22T11:59:59.999Z', 'Second'),
+        ('old', 'b', '2026-10-15T23:59:59.999Z', 'Old'),
+        ('future', 'b', '2026-10-22T12:00:00.000Z', 'Future'),
+        ('remote', 'remote-actor', '2026-10-22T01:00:00.000Z', 'Remote');
+      INSERT INTO posts (id, user_id, created_at, text, game_description, payload_key, swf_key) VALUES
+        ('game-a', 'a', '2026-01-01T00:00:00.000Z', 'Puzzle post', 'Puzzle World', 'games/a.zip', NULL),
+        ('game-b', 'b', '2026-01-01T00:00:00.000Z', 'Arcade cabinet', '', NULL, 'games/b.swf');
       INSERT INTO freshs VALUES ('first', 'a', '2026-10-16T10:00:00.000Z'),
         ('first', 'b', '2026-10-22T02:00:00.000Z'), ('first', 'deleted-user', '2026-10-22T02:00:00.000Z');
-      INSERT INTO user_game_plays VALUES ('p1', 'a', 60000, '2026-10-22T01:00:00.000Z'),
-        ('p2', 'a', 30000, '2026-10-22T02:00:00.000Z');
+      INSERT INTO user_game_plays VALUES ('p1', 'a', 'game-a', 60000, 0, 'zip', 'arcade', '2026-10-22T01:00:00.000Z'),
+        ('p2', 'a', 'game-a', 30000, 0, 'zip', 'arcade', '2026-10-22T02:00:00.000Z'),
+        ('p3', 'b', 'game-b', 120000, 0, 'html5', 'arcade', '2026-10-21T23:00:00.000Z');
     `);
     const data = await getAdminAnalytics(db, 7, now);
     assert.equal(data.start, '2026-10-16T00:00:00.000Z');
@@ -88,11 +112,25 @@ test('analytics bounds periods, fills zero days, and deduplicates users across e
       new_users: 2,
       posts: 2,
       freshs: 2,
-      game_plays: 2,
+      game_plays: 3,
       active_users: 2,
-      dwell_ms: 90000,
+      dwell_ms: 210000,
     });
-    assert.deepEqual(data.totals, { users: 3, posts: 4 });
+    assert.deepEqual(data.totals, { users: 3, posts: 6 });
+    assert.deepEqual(
+      data.top_games.map((game) => [game.post_id, game.title, game.username, game.play_count]),
+      [
+        ['game-a', 'Puzzle World', 'alice', 2],
+        ['game-b', 'Arcade cabinet', 'bob', 1],
+      ],
+    );
+    assert.deepEqual(
+      data.top_dwell_games.map((game) => [game.post_id, game.dwell_ms]),
+      [
+        ['game-b', 120000],
+        ['game-a', 90000],
+      ],
+    );
     assert.deepEqual(data.daily[1], {
       day: '2026-10-17',
       new_users: 0,
@@ -111,6 +149,40 @@ test('analytics bounds periods, fills zero days, and deduplicates users across e
   }
 });
 
+test('game rankings include only published visible root games with plays from local accounts', async () => {
+  const { sqlite, db } = fixture();
+  try {
+    sqlite.exec(`
+      INSERT INTO users VALUES ('owner', 'creator', '2026-01-01T00:00:00.000Z'),
+        ('player', 'player', '2026-01-01T00:00:00.000Z');
+      INSERT INTO posts (id, user_id, created_at, text, game_description, payload_key, swf_key, status, hidden, parent_id) VALUES
+        ('public-game', 'owner', '2026-01-01T00:00:00.000Z', 'Public game', '', 'games/public.zip', NULL, 'published', 0, NULL),
+        ('hidden-game', 'owner', '2026-01-01T00:00:00.000Z', 'Hidden game', '', 'games/hidden.zip', NULL, 'published', 1, NULL),
+        ('draft-game', 'owner', '2026-01-01T00:00:00.000Z', 'Draft game', '', 'games/draft.zip', NULL, 'draft', 0, NULL),
+        ('reply-game', 'owner', '2026-01-01T00:00:00.000Z', 'Reply game', '', 'games/reply.zip', NULL, 'published', 0, 'public-game'),
+        ('text-post', 'owner', '2026-01-01T00:00:00.000Z', 'Text', '', NULL, NULL, 'published', 0, NULL);
+      INSERT INTO user_game_plays (id, user_id, post_id, dwell_ms, created_at) VALUES
+        ('good', 'player', 'public-game', 30000, '2026-10-22T01:00:00.000Z'),
+        ('hidden', 'player', 'hidden-game', 600000, '2026-10-22T01:00:00.000Z'),
+        ('draft', 'player', 'draft-game', 600000, '2026-10-22T01:00:00.000Z'),
+        ('reply', 'player', 'reply-game', 600000, '2026-10-22T01:00:00.000Z'),
+        ('text', 'player', 'text-post', 600000, '2026-10-22T01:00:00.000Z'),
+        ('deleted-player', 'missing-user', 'public-game', 600000, '2026-10-22T01:00:00.000Z');
+    `);
+    const data = await getAdminAnalytics(db, 7, now);
+    assert.deepEqual(
+      data.top_games.map((game) => [game.post_id, game.play_count, game.dwell_ms]),
+      [['public-game', 1, 30000]],
+    );
+    assert.deepEqual(
+      data.top_dwell_games.map((game) => game.post_id),
+      ['public-game'],
+    );
+  } finally {
+    sqlite.close();
+  }
+});
+
 test('empty databases return numeric zeros and calendar ranges across month/year boundaries', async () => {
   const { sqlite, db } = fixture();
   try {
@@ -120,6 +192,8 @@ test('empty databases return numeric zeros and calendar ranges across month/year
       assert.equal(data.daily.at(-1)?.day, '2026-01-02');
       assert.ok(Object.values(data.summary).every((value) => value === 0));
       assert.deepEqual(data.totals, { users: 0, posts: 0 });
+      assert.deepEqual(data.top_games, []);
+      assert.deepEqual(data.top_dwell_games, []);
     }
   } finally {
     sqlite.close();
@@ -172,6 +246,8 @@ test('admin can read aggregate analytics with private no-store headers; validati
     const data = await response.json();
     assert.equal(data.daily.length, 7);
     assert.equal(data.summary.active_users, 0);
+    assert.deepEqual(data.top_games, []);
+    assert.deepEqual(data.top_dwell_games, []);
     assert.equal((await (await app.request('/api/admin/analytics')).json()).days, 30);
   } finally {
     sqlite.close();
