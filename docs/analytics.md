@@ -9,7 +9,9 @@ admin authorization middleware. Anonymous requests receive 401; non-admins
 
 The optional `days` parameter accepts exactly 7, 30, or 90 (default: 30).
 Periods start at midnight UTC and include today up to the response's `end`
-timestamp. Days with no activity have zero counts.
+timestamp. Days with no activity have zero counts. The response includes the
+top 10 currently published, visible root games ranked independently by play
+record count and total recorded dwell time.
 
 | Metric | Source / definition |
 | --- | --- |
@@ -18,10 +20,13 @@ timestamp. Days with no activity have zero counts.
 | Posts | `posts.created_at`, joined to local `users`; includes replies and hidden posts |
 | Freshs | Retained `freshs` rows by `created_at`; remote ActivityPub likes are excluded |
 | Play records / duration | `user_game_plays` rows and sum of `dwell_ms`; not unique game launches |
+| Game rankings | Selected-period play records by retained local accounts for published, visible root posts with a ZIP or SWF payload; the two lists sort by record count and total dwell time |
 | Engaged users | Distinct local user IDs with a post, Fresh, or play record, deduplicated separately for each day and the whole period |
 
 These are operational DB metrics, not GA4 page views, visitors, or sessions.
-Read-only visitors are not represented. Deleted records and undone Freshs change
+Read-only visitors are not represented. Responses include per-game aggregate
+counts and public game title/creator labels, but never player identities or
+individual play records. Deleted records and undone Freshs change
 historical counts. Migration 0106 backfilled older Fresh timestamps at migration
 time, so those dates are not their original event dates. No GA4 history is
 imported, and no new browser identifiers, URLs, IPs, or tracking events are stored.

@@ -6,6 +6,38 @@ export function parseAnalyticsDays(value: string | undefined): number | null {
 }
 
 // Only existing local accounts contribute. No new client tracking is needed.
+const GAME_RANKING_BASE_SQL = `
+  SELECT p.id AS post_id,
+    COALESCE(
+      NULLIF(p.game_description, ''),
+      NULLIF(TRIM(p.text), ''),
+      'Game by @' || owner.username
+    ) AS title,
+    owner.username,
+    COUNT(*) AS play_count,
+    COALESCE(SUM(g.dwell_ms), 0) AS dwell_ms
+  FROM user_game_plays g
+    INNER JOIN users player ON player.id = g.user_id
+    INNER JOIN posts p ON p.id = g.post_id
+    INNER JOIN users owner ON owner.id = p.user_id
+  WHERE g.created_at >= ? AND g.created_at < ?
+    AND (p.payload_key IS NOT NULL OR p.swf_key IS NOT NULL)
+    AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL
+  GROUP BY p.id, p.game_description, p.text, owner.username
+`;
+
+const TOP_GAMES_SQL = `
+  ${GAME_RANKING_BASE_SQL}
+  ORDER BY play_count DESC, dwell_ms DESC, title COLLATE NOCASE ASC
+  LIMIT 10
+`;
+
+const TOP_DWELL_GAMES_SQL = `
+  ${GAME_RANKING_BASE_SQL}
+  ORDER BY dwell_ms DESC, play_count DESC, title COLLATE NOCASE ASC
+  LIMIT 10
+`;
+
 const ANALYTICS_SQL = `
   WITH events AS (
     SELECT created_at, id AS user_id, 'signup' AS kind, 0 AS dwell_ms
@@ -44,10 +76,16 @@ export async function getAdminAnalytics(db: D1Database, days: number, now = new 
   startDate.setUTCDate(startDate.getUTCDate() - days + 1);
   const start = startDate.toISOString();
   const end = now.toISOString();
-  const [metrics, totals] = await db.batch<AnalyticsMetrics & { day: string; users: number }>([
-    db.prepare(ANALYTICS_SQL).bind(start, end, start, end, start, end, start, end),
-    db.prepare(`SELECT (SELECT COUNT(*) FROM users) AS users,
-      (SELECT COUNT(*) FROM posts p INNER JOIN users u ON u.id = p.user_id) AS posts`),
+  const [[metrics, totals], [topGames, topDwellGames]] = await Promise.all([
+    db.batch<AnalyticsMetrics & { day: string; users: number }>([
+      db.prepare(ANALYTICS_SQL).bind(start, end, start, end, start, end, start, end),
+      db.prepare(`SELECT (SELECT COUNT(*) FROM users) AS users,
+        (SELECT COUNT(*) FROM posts p INNER JOIN users u ON u.id = p.user_id) AS posts`),
+    ]),
+    db.batch<AdminAnalytics['top_games'][number]>([
+      db.prepare(TOP_GAMES_SQL).bind(start, end),
+      db.prepare(TOP_DWELL_GAMES_SQL).bind(start, end),
+    ]),
   ]);
   const empty: AnalyticsMetrics = { new_users: 0, posts: 0, freshs: 0, game_plays: 0, active_users: 0, dwell_ms: 0 };
   const rows = new Map(metrics.results.map((row) => [row.day, row]));
@@ -65,6 +103,8 @@ export async function getAdminAnalytics(db: D1Database, days: number, now = new 
     end,
     timezone: 'UTC',
     totals: { users: totals.results[0]?.users ?? 0, posts: totals.results[0]?.posts ?? 0 },
+    top_games: topGames.results || [],
+    top_dwell_games: topDwellGames.results || [],
     summary: {
       new_users: summary.new_users,
       posts: summary.posts,

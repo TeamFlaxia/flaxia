@@ -25,7 +25,7 @@ admin.get('/access', requireAuth, requireAdmin, (c) => {
   return c.json({ allowed: true });
 });
 
-// Only aggregate data is returned, and it must never be cached by a CDN.
+// Return aggregate metrics and public labels for ranked games; never cache analytics by a CDN.
 admin.get('/analytics', requireAuth, requireAdmin, async (c) => {
   c.header('Cache-Control', 'private, no-store');
   const days = parseAnalyticsDays(c.req.query('days'));
