@@ -52,8 +52,11 @@ function fixture(t: TestContext) {
     },
     async get(key: string) {
       reads++;
-      if (key.endsWith('/index.html')) return { text: async () => '<html><head></head><body>game</body></html>' };
-      return { body: new Uint8Array([0, 97, 115, 109]) };
+      const customMetadata = { 'wvfs-source-key': 'zip/cache-game.zip', 'wvfs-source-etag': revision };
+      if (key.endsWith('/index.html')) {
+        return { customMetadata, text: async () => '<html><head></head><body>game</body></html>' };
+      }
+      return { customMetadata, body: new Uint8Array([0, 97, 115, 109]) };
     },
   } as unknown as R2Bucket;
   const waitUntil = (promise: Promise<unknown>) => pending.push(promise);
@@ -78,8 +81,8 @@ function fixture(t: TestContext) {
     flush: async () => {
       await Promise.all(pending);
     },
-    fetch: (path = '/api/wvfs-zip/cache-game/game.wasm', headers = {}) =>
-      worker.fetch(new Request(`https://sandbox.example${path}`, { headers }), env, execution),
+    fetch: (path = '/api/wvfs-zip/cache-game/game.wasm', headers = {}, method = 'GET') =>
+      worker.fetch(new Request(`https://sandbox.example${path}`, { headers, method }), env, execution),
   };
 }
 
@@ -132,6 +135,35 @@ test('blocked payloads cannot use a warm edge entry or a browser validator', asy
   const blocked = await f.fetch(undefined, { 'If-None-Match': response.headers.get('ETag')! });
   assert.equal(blocked.status, 404);
   assert.equal(f.lookups(), lookups);
+});
+
+test('HEAD uses the same validator and cache policy as GET without rereading the asset', async (t) => {
+  const f = fixture(t);
+  const cold = await f.fetch();
+  await cold.arrayBuffer();
+  await f.flush();
+  const reads = f.reads();
+  const head = await f.fetch(undefined, {}, 'HEAD');
+  assert.equal(head.status, 200);
+  assert.equal(head.headers.get('ETag'), cold.headers.get('ETag'));
+  assert.equal(head.headers.get('Cache-Control'), cold.headers.get('Cache-Control'));
+  assert.equal(await head.text(), '');
+  assert.equal(f.reads(), reads);
+});
+
+test('root asset fallback revalidates and checks the current scan verdict', async (t) => {
+  const f = fixture(t);
+  const headers = { Referer: 'https://sandbox.example/api/wvfs-zip/cache-game/' };
+  const cold = await f.fetch('/game.wasm', headers);
+  assert.equal(cold.headers.get('Cache-Control'), 'public, no-cache');
+  await cold.arrayBuffer();
+  await f.flush();
+  const warm = await f.fetch('/game.wasm', headers);
+  assert.equal(warm.headers.get('X-WVFS-Cache'), 'HIT');
+  await warm.arrayBuffer();
+  f.block();
+  const blocked = await f.fetch('/game.wasm', { ...headers, 'If-None-Match': cold.headers.get('ETag')! });
+  assert.equal(blocked.status, 404);
 });
 
 test('cache failures fall back to delivery, and errors are never stored', async (t) => {
