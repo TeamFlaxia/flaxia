@@ -90,6 +90,7 @@ export interface Post {
     endsAt?: string | null;
     options: Array<{ id: string; label: string; votes_count: number }>;
     userVote: string | null;
+    expired?: boolean;
   };
 }
 

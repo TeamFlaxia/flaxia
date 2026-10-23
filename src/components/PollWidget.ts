@@ -1,11 +1,12 @@
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { isPollExpired, shouldShowPollResults } from '../lib/poll-state.js';
 
 export interface PollData {
   id: string;
   question: string;
   userVote: string | null;
-  expired: boolean;
+  expired?: boolean;
   multipleChoice: boolean;
   endsAt?: string | null;
   options: Array<{ id: string; label: string; votes_count: number }>;
@@ -29,8 +30,8 @@ export function createPollElement(poll: PollData): HTMLElement {
     0,
   );
   const hasVoted = !!poll.userVote;
-  const isExpired = poll.expired;
-  const showResults = hasVoted || isExpired;
+  const isExpired = isPollExpired(poll);
+  const showResults = shouldShowPollResults(poll, hasVoted);
   const canChangeVote = hasVoted && !isExpired;
 
   const container = document.createElement('div');
@@ -142,6 +143,23 @@ export function createPollElement(poll: PollData): HTMLElement {
 
   footer.textContent = `${voteText}${votedText}${changeHint}${timeText}`;
   container.appendChild(footer);
+
+  if (!isExpired && poll.endsAt) {
+    const endTime = Date.parse(poll.endsAt);
+    if (Number.isFinite(endTime) && endTime > Date.now()) {
+      const scheduleExpiry = () => {
+        const remainingTime = endTime - Date.now();
+        if (remainingTime > 0) {
+          window.setTimeout(scheduleExpiry, Math.min(remainingTime, 2_147_483_647));
+          return;
+        }
+        if (container.isConnected) {
+          container.replaceWith(createPollElement({ ...poll, expired: true }));
+        }
+      };
+      window.setTimeout(scheduleExpiry, Math.min(endTime - Date.now(), 2_147_483_647));
+    }
+  }
 
   return container;
 }
