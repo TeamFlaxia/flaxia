@@ -179,5 +179,5 @@ test('real SW cache restores expanded assets after reload while the game stays o
   });
   await page.waitForFunction(() => document.getElementById('status').dataset.state === 'error');
   assert.match(await page.locator('#status').textContent(), /require the WVFS player/);
-  console.log(JSON.stringify({ browser: engine.name(), cold, warm }));
+  console.log(JSON.stringify({ browser: engine.name(), version: browser.version(), cold, warm }));
 });

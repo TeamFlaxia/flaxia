@@ -71,7 +71,7 @@ Public games continue to use WVFS, including games incompatible with this lab.
 node --test --experimental-strip-types tests/game-loader.test.ts
 
 # Optional browser tooling; not an application dependency.
-npm install --no-save --package-lock=false --ignore-scripts playwright@1.51.1
+npm install --no-save --package-lock=false --ignore-scripts playwright@1.62.1
 npx playwright install chromium
 npm run build:game-loader
 npm run test:game-loader:browser
@@ -82,7 +82,8 @@ CSP headers. Its fixture exercises CSS, image/canvas reads, audio metadata,
 fetch, XHR and WASM. It reloads the page to discard memory state, then checks a
 cache HIT with no extraction worker request and verifies that game code cannot
 access parent DOM, persistent storage or SW registration. It also checks that
-unsupported module games fail explicitly. This test has a separate CI job.
+unsupported module games fail explicitly. This test has a separate CI job using
+the GitHub runner's installed Chrome, without additional OS/browser downloads.
 
 Set `LOADER_BROWSER=firefox` or `LOADER_BROWSER=webkit` after installing that
 Playwright engine to run the same experiment there. An optional

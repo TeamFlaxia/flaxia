@@ -17,6 +17,7 @@ env:
 jobs:
   game-loader-prototype:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -24,12 +25,12 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci --ignore-scripts
-      # Optional test tooling, kept out of the app's production dependencies.
-      # Pin a known Chromium baseline for this isolated compatibility experiment.
-      - run: npm install --no-save --package-lock=false --ignore-scripts playwright@1.51.1
-      - run: npx playwright install --with-deps chromium
+      # Use the runner's installed Chrome; avoid OS package/browser downloads.
+      - run: npm install --no-save --package-lock=false --ignore-scripts playwright@1.62.1
       - run: npm run build:game-loader
       - run: npm run test:game-loader:browser
+        env:
+          LOADER_CHROMIUM_EXECUTABLE: /usr/bin/google-chrome
 
   lint:
     runs-on: ubuntu-latest
