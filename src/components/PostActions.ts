@@ -1,8 +1,11 @@
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { type IconName, icon } from '../lib/icons.js';
+import { createMenuItem } from '../lib/modal-overlay.js';
 import { type PostActionsProps, type ReactionSummary } from '../types/post.js';
 import { openStampPicker } from './StampPicker.js';
+
+let nextActionDropdownId = 0;
 
 export function createPostActions(props: PostActionsProps): HTMLElement {
   const container = document.createElement('div');
@@ -22,27 +25,11 @@ export function createPostActions(props: PostActionsProps): HTMLElement {
   const replyButton = createActionButton('reply', formatCount(props.replyCount), false, true);
   replyButton.addEventListener('click', props.onReplyToggle);
 
-  // Reload (retweet) button
-  const reloadButton = createActionButton('reload', formatCount(props.reloadCount), props.isReloaded, true);
-  reloadButton.addEventListener('click', props.onReloadToggle);
-
-  // Quote button (no count)
-  const quoteButton = createActionButton('quote', '', false, false);
-  quoteButton.addEventListener('click', () => {
-    if (props.onQuote) props.onQuote();
-  });
+  const reloadActionsDropdown = createReloadActionsDropdown(props);
 
   // Bookmark button (no count)
   const bookmarkButton = createActionButton('bookmark', '', props.isBookmarked, false);
   bookmarkButton.addEventListener('click', props.onBookmarkToggle);
-
-  // Share button (no count)
-  const shareButton = createActionButton('share', '', false, false);
-  shareButton.addEventListener('click', () => {
-    if (props.onShare) {
-      props.onShare();
-    }
-  });
 
   // Impressions button (display only, not clickable)
   const impressionsButton = createActionButton('impressions', formatCount(props.impressions), false, true);
@@ -55,12 +42,10 @@ export function createPostActions(props: PostActionsProps): HTMLElement {
 
   leftGroup.appendChild(freshButton);
   leftGroup.appendChild(replyButton);
-  leftGroup.appendChild(reloadButton);
-  leftGroup.appendChild(quoteButton);
+  leftGroup.appendChild(reloadActionsDropdown);
 
-  // Right-aligned group: rightmost impressions, then share, then bookmark
+  // Right-aligned group: rightmost impressions, then bookmark
   rightGroup.appendChild(bookmarkButton);
-  rightGroup.appendChild(shareButton);
   rightGroup.appendChild(impressionsButton);
 
   container.appendChild(leftGroup);
@@ -69,6 +54,85 @@ export function createPostActions(props: PostActionsProps): HTMLElement {
   container.appendChild(createReactionsRow(props.reactions, props.onReactionToggle));
 
   return container;
+}
+
+function createReloadActionsDropdown(props: PostActionsProps): HTMLElement {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'post-action-dropdown';
+
+  const trigger = createActionButton('reload', formatCount(props.reloadCount), props.isReloaded, true);
+  const dropdownId = `post-action-dropdown-${++nextActionDropdownId}`;
+  trigger.setAttribute('aria-label', t('post_actions.more_actions'));
+  trigger.setAttribute('title', t('post_actions.more_actions'));
+  trigger.setAttribute('aria-expanded', 'false');
+  trigger.setAttribute('aria-controls', dropdownId);
+  wrapper.appendChild(trigger);
+
+  let dropdown: HTMLDivElement | null = null;
+
+  const closeDropdown = () => {
+    if (!dropdown) return;
+    dropdown.remove();
+    dropdown = null;
+    trigger.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', handlePointerDown, true);
+    document.removeEventListener('keydown', handleKeyDown);
+  };
+
+  const handlePointerDown = (event: PointerEvent) => {
+    if (!wrapper.contains(event.target as Node)) closeDropdown();
+  };
+
+  const handleKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && dropdown) {
+      event.stopPropagation();
+      closeDropdown();
+      trigger.focus();
+    }
+  };
+
+  const openDropdown = () => {
+    dropdown = document.createElement('div');
+    dropdown.id = dropdownId;
+    dropdown.className = 'post-action-dropdown-menu';
+    dropdown.setAttribute('role', 'group');
+    dropdown.setAttribute('aria-label', t('post_actions.more_actions'));
+
+    const actions = [
+      { label: t('post_actions.reload'), onClick: props.onReloadToggle },
+      { label: t('post_actions.quote'), onClick: () => props.onQuote?.() },
+      { label: t('post_actions.share'), onClick: () => props.onShare?.() },
+    ];
+
+    for (const action of actions) {
+      const item = createMenuItem({
+        label: action.label,
+        onClick: () => {
+          closeDropdown();
+          action.onClick();
+        },
+      });
+      item.type = 'button';
+      item.className = 'post-action-dropdown-item';
+      dropdown.appendChild(item);
+    }
+
+    wrapper.appendChild(dropdown);
+    trigger.setAttribute('aria-expanded', 'true');
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('keydown', handleKeyDown);
+  };
+
+  trigger.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (dropdown) {
+      closeDropdown();
+    } else {
+      openDropdown();
+    }
+  });
+
+  return wrapper;
 }
 
 function createReactionsRow(reactions: ReactionSummary[], onToggle: (emoji: string) => void): HTMLElement {

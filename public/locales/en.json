@@ -920,5 +920,8 @@
   "settings.vault_revoke_failed": "Password not changed — the device could not be revoked. Please try again.",
   "auth.sign_in_to_reload": "Sign in to reload",
   "post_actions.reload": "Reload",
+  "post_actions.more_actions": "More actions",
+  "post_actions.quote": "Quote",
+  "post_actions.share": "Share",
   "notifications.reloaded_your_post": "{actor} reloaded your post"
 }
