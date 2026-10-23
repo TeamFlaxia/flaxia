@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flaxia local game loader prototype</title>
+  <link rel="stylesheet" href="/game-loader/prototype.css">
+</head>
+<body>
+  <header>
+    <h1>Local game loader · prototype</h1>
+    <p>Choose a trusted test ZIP. Games run in an isolated frame. Public posts still use WVFS.</p>
+    <label>Game ZIP (up to 25 MB) <input id="archive" type="file" accept=".zip"></label>
+    <button type="button" id="reopen" disabled>Reopen saved game</button>
+    <button type="button" id="clear">Clear prototype cache</button>
+    <p id="status" role="status">Initializing Service Worker…</p>
+    <output id="metrics"></output>
+  </header>
+  <main id="game"></main>
+  <script type="module" src="/game-loader/prototype.js"></script>
+</body>
+</html>

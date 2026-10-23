@@ -67,7 +67,7 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - name: Deploy Sandbox Worker
-        run: npx wrangler deploy src/sandbox-worker.ts --config wrangler.sandbox.toml
+        run: npm run deploy:sandbox
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

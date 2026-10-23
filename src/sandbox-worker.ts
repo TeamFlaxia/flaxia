@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { isKeyBlocked } from '../functions/lib/scan/db';
+import { serveGameLoaderAsset } from './lib/game-loader-routes';
 import { MULTIPLAYER_SDK_IIFE } from './lib/multiplayer-sdk.generated';
 import { pdfViewerAssetBody, pdfViewerAssetHeaders } from './lib/pdf-viewer-page';
 import { cacheWvfsResponse } from './lib/wvfs-response-cache';
@@ -128,6 +129,8 @@ app.get('/zip-preview', (c) => serveZipPreviewAsset(c, '/zip-preview.html'));
 app.get('/zip-preview.html', (c) => serveZipPreviewAsset(c, '/zip-preview.html'));
 app.get('/zip-preview.js', (c) => serveZipPreviewAsset(c, '/zip-preview.js'));
 app.get('/zip-preview-protocol.js', (c) => serveZipPreviewAsset(c, '/zip-preview-protocol.js'));
+
+app.get('/game-loader/*', (c) => serveGameLoaderAsset(c));
 
 app.get('/api/wvfs-zip/:postId/*', async (c) => {
   try {

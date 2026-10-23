@@ -13,14 +13,14 @@
     "dev:api": "npm run migrate:local && wrangler pages dev dist --binding ADMIN_USERNAMES=remydrescarlet --port 8787 --binding ENVIRONMENT=development --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000 --do NOTIFICATION_STREAM=NotificationStream@notif-stream",
     "dev:local": "vite --host",
     "dev:all": "npm run migrate:local && rm -rf dist && mkdir dist && (trap 'kill 0 2>/dev/null' EXIT; vite --host & wrangler pages dev dist --binding ADMIN_USERNAMES=remydrescarlet --port 8787 --binding ENVIRONMENT=development --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000 --do NOTIFICATION_STREAM=NotificationStream@notif-stream & wait)",
-    "build": "npm run build:sdk && npm run build:capture && npm run build:pdfjs && vite build",
+    "build": "npm run build:sdk && npm run build:capture && npm run build:pdfjs && npm run build:game-loader && vite build",
     "build:sdk": "vite build --config packages/multiplayer/vite.config.ts && node scripts/embed-multiplayer-sdk.mjs",
     "build:capture": "vite build --config packages/capture/vite.config.ts && node scripts/embed-capture-bridge.mjs",
     "build:pdfjs": "node scripts/embed-pdfjs.mjs",
     "watch:sdk": "node scripts/embed-multiplayer-sdk.mjs && node scripts/embed-capture-bridge.mjs && node scripts/embed-pdfjs.mjs",
     "preview": "vite preview",
     "deploy": "CONTENT_ORIGIN=https://sandbox.flaxia.app SANDBOX_ORIGIN=https://sandbox.flaxia.app wrangler pages deploy dist",
-    "deploy:sandbox": "wrangler deploy src/sandbox-worker.ts --config wrangler.sandbox.toml",
+    "deploy:sandbox": "npm run build:game-loader && wrangler deploy src/sandbox-worker.ts --config wrangler.sandbox.toml",
     "deploy:do": "wrangler deploy --config do-worker/wrangler.toml",
     "deploy:multiplayer": "wrangler deploy --config multiplayer-worker/wrangler.toml",
     "dev:do": "wrangler dev --config do-worker/wrangler.toml --port 8789 --inspector-port 9232",
@@ -59,7 +59,9 @@
     "cap:build:android": "CAPACITOR_PLATFORM=android npx cap sync && node scripts/patch-android-build.mjs && npx cap copy && cd android && ./gradlew assembleDebug",
     "cap:build:android:release": "npm run build && CAPACITOR_PLATFORM=android npx cap sync && node scripts/patch-android-build.mjs && cd android && ./gradlew bundleRelease",
     "cap:build:ios": "npx cap sync && npx cap copy",
-    "prepare": "husky"
+    "prepare": "husky",
+    "build:game-loader": "node scripts/build-game-loader.mjs",
+    "test:game-loader:browser": "node --experimental-strip-types --test tests/game-loader.browser.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.3.4",
