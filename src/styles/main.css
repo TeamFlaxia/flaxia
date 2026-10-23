@@ -2638,7 +2638,8 @@ h1 {
 
 .post-action-dropdown-menu {
   position: absolute;
-  top: calc(100% + 2px);
+  top: auto;
+  bottom: calc(100% + 2px);
   left: 0;
   z-index: 100;
   min-width: 140px;
