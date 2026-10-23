@@ -2631,6 +2631,29 @@ h1 {
   margin-left: auto;
 }
 
+.post-action-dropdown {
+  position: relative;
+  display: inline-flex;
+}
+
+.post-action-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 100;
+  min-width: 140px;
+  padding: 4px 0;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.post-action-dropdown-item {
+  font-family: inherit;
+  white-space: nowrap;
+}
+
 .action-button {
   display: flex;
   align-items: center;
