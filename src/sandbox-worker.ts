@@ -2,6 +2,8 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { isKeyBlocked } from '../functions/lib/scan/db';
+import { servePublicLoader } from './lib/game-loader-public';
+import { serveGameLoaderAsset } from './lib/game-loader-routes';
 import { MULTIPLAYER_SDK_IIFE } from './lib/multiplayer-sdk.generated';
 import { pdfViewerAssetBody, pdfViewerAssetHeaders } from './lib/pdf-viewer-page';
 import { cacheWvfsResponse } from './lib/wvfs-response-cache';
@@ -32,7 +34,7 @@ const SANDBOX_CSP = [
   "font-src 'self' data: blob: https:",
   "connect-src 'self' data: blob: https: wss:",
   "frame-src 'self' blob: data: https:",
-  'frame-ancestors https://flaxia.app https://*.pages.dev http://localhost:5173 http://localhost:8787 http://localhost:8788',
+  "frame-ancestors 'self' https://flaxia.app https://*.pages.dev http://localhost:5173 http://localhost:8787 http://localhost:8788",
 ].join('; ');
 
 const ZIP_PREVIEW_CSP = [
@@ -301,6 +303,10 @@ async function serveWvfsFile(
     return c.text('Internal server error', 500);
   }
 }
+
+app.get('/game-loader/*', (c) => serveGameLoaderAsset(c));
+app.get('/api/game-loader/:postId', (c) => servePublicLoader(c));
+app.get('/api/game-loader/:postId/archive', (c) => servePublicLoader(c));
 
 app.get('/api/wvfs-zip/:postId/*', (c) => {
   const postId = c.req.param('postId');

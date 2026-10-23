@@ -15,6 +15,23 @@ env:
   ONNXRUNTIME_NODE_DISABLE_DOWNLOAD: 1
 
 jobs:
+  game-loader-prototype:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      # Use the runner's installed Chrome; avoid OS package/browser downloads.
+      - run: npm install --no-save --package-lock=false --ignore-scripts playwright@1.62.1
+      - run: npm run build:game-loader
+      - run: npm run test:game-loader:browser
+        env:
+          LOADER_CHROMIUM_EXECUTABLE: /usr/bin/google-chrome
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -47,6 +64,8 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build
+      - name: Apply migrations before starting the readiness timeout
+        run: npm run migrate:local
       - name: Start dev server and run tests
         run: |
           set -o pipefail
