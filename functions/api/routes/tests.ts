@@ -4,6 +4,7 @@ import { getMeWithSession, getSessionToken, hashPassword } from '../../lib/auth.
 import { badgeTypeForPlan } from '../../lib/billing.ts';
 import { ensureNsfwScansTable, ensurePendingEmbedsTable } from '../../lib/crowd.ts';
 import { ensureFileScansTable } from '../../lib/scan/db.ts';
+import { TOPIC_DEFINITIONS, TOPIC_VERSION } from '../../lib/topics';
 import type { Bindings, Variables } from '../types';
 
 async function ensureReactionsTable(db: D1Database): Promise<void> {
@@ -79,6 +80,7 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
       'post_nsfw_scans',
       'file_scans',
       'file_blocklist',
+      'topic_prototypes',
       'pending_embeddings',
       'post_embeddings',
       'post_translations',
@@ -339,3 +341,17 @@ app.post('/api/test/seed-legacy-user', requireTestEnvironment, async (c) => {
 });
 
 export default app;
+
+// Topic embedding leases for signed callback integration tests. Test environment only.
+app.post('/api/test/topic-prototypes', requireTestEnvironment, async (c) => {
+  await c.env.DB.batch(
+    TOPIC_DEFINITIONS.map((topic, index) =>
+      c.env.DB.prepare(`
+    INSERT INTO topic_prototypes (tag, version, token, retry_at) VALUES (?, ?, ?, '2999-01-01T00:00:00.000Z')
+    ON CONFLICT(tag) DO UPDATE SET version = excluded.version, token = excluded.token,
+      embedding = NULL, model = NULL, retry_at = excluded.retry_at
+  `).bind(topic.tag, TOPIC_VERSION, `test-prototype-${index}`),
+    ),
+  );
+  return c.json({ ok: true });
+});

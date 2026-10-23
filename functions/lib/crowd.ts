@@ -22,6 +22,14 @@ import { loadBlocklist, matchBlocklist, matchSignatureEntry } from './scan/block
 import { clamavVerdict, parseContainerOutput, parseVideoPhashes } from './scan/container-result.ts';
 import { getFileScan, recordInfection, setScanPhash, setScanStatus } from './scan/db.ts';
 import type { FileFeatures } from './scan/features.ts';
+import {
+  backfillTopicTags,
+  parseTopicVector,
+  TOPIC_DEFINITIONS,
+  TOPIC_MODEL,
+  TOPIC_VERSION,
+  textSha,
+} from './topics.ts';
 
 export interface CrowdEnv {
   CROWD_ORCHESTRATOR_URL?: string;
@@ -94,6 +102,7 @@ const nsfwScanPosts = new Set<string>();
 const embeddingPosts = new Set<string>();
 let lastNsfwSubmitTime = 0;
 let lastEmbedTime = 0;
+let lastTopicRefreshTime = 0;
 
 const projectionCache = new Map<string, number[][]>();
 
@@ -518,12 +527,14 @@ export async function enqueuePendingEmbed(
     await db
       .prepare(
         `INSERT INTO pending_embeddings (post_id, text, attempts, last_error)
-         VALUES (?, ?, ?, ?)
+         SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM posts WHERE id = ? AND text = ?)
          ON CONFLICT(post_id) DO UPDATE SET
-           attempts = excluded.attempts,
-           last_error = excluded.last_error`,
+           text = excluded.text,
+           attempts = CASE WHEN pending_embeddings.text = excluded.text
+             THEN MAX(pending_embeddings.attempts, excluded.attempts) ELSE excluded.attempts END,
+           last_error = COALESCE(excluded.last_error, pending_embeddings.last_error)`,
       )
-      .bind(postId, text, attempts, error ?? null)
+      .bind(postId, text, attempts, error ?? null, postId, text)
       .run();
   } catch (e) {
     console.error(`Failed to enqueue pending embed for post ${postId}:`, e);
@@ -537,7 +548,7 @@ async function submitEmbedTask(config: CrowdConfig, postId: string, text: string
   const callbackUrl = await signedCallbackUrl(config, {
     baseUrl: config.baseUrl,
     type: 'vector-embed',
-    params: { postId },
+    params: { postId, sha: await textSha(text) },
   });
   try {
     await client.submit({
@@ -575,13 +586,13 @@ export async function drainPendingEmbeds(
     return total;
   };
 
-  if (!config.configured) return { submitted: 0, remaining: await count() };
+  if (!config.configured || config.screeningDisabled) return { submitted: 0, remaining: await count() };
 
   const rows = await db
     .prepare(
-      `SELECT post_id, text, attempts FROM pending_embeddings
-       WHERE attempts < ?
-       ORDER BY created_at ASC
+      `SELECT pe.post_id, pe.text, pe.attempts FROM pending_embeddings pe JOIN posts p ON p.id = pe.post_id
+       WHERE pe.attempts < ? AND p.status = 'published' AND p.hidden = 0 AND p.text = pe.text
+       ORDER BY pe.created_at ASC
        LIMIT ?`,
     )
     .bind(PENDING_EMBED_MAX_ATTEMPTS, maxBatch)
@@ -594,7 +605,10 @@ export async function drainPendingEmbeds(
 
     const ok = await submitEmbedTask(config, row.post_id, row.text);
     if (ok) {
-      await db.prepare('DELETE FROM pending_embeddings WHERE post_id = ?').bind(row.post_id).run();
+      await db
+        .prepare('DELETE FROM pending_embeddings WHERE post_id = ? AND text = ?')
+        .bind(row.post_id, row.text)
+        .run();
       submitted++;
     } else {
       await enqueuePendingEmbed(db, row.post_id, row.text, row.attempts + 1, 'submission failed');
@@ -639,13 +653,112 @@ export async function embedPost(
     if (Date.now() - lastEmbedTime < EMBED_RATE_LIMIT_MS) return;
     const ok = await submitEmbedTask(config, postId, text);
     if (ok) {
-      await db.prepare('DELETE FROM pending_embeddings WHERE post_id = ?').bind(postId).run();
+      await db.prepare('DELETE FROM pending_embeddings WHERE post_id = ? AND text = ?').bind(postId, text).run();
     } else {
       await enqueuePendingEmbed(db, postId, text, 1, 'submission failed');
     }
   } finally {
     embeddingPosts.delete(postId);
   }
+}
+
+// Topic prototypes share Crowd's existing multilingual vector-embed workload.
+// No new node model/SDK release or per-post classification inference is needed.
+export async function refreshTopicEmbeddings(db: D1Database, env: CrowdEnv): Promise<void> {
+  const config = crowdConfig(env);
+  if (!config.configured || config.screeningDisabled) return;
+  if (Date.now() - lastTopicRefreshTime < 10_000) return;
+  lastTopicRefreshTime = Date.now();
+  const client = getCrowdClient(config);
+  if (!client) return;
+  await db.batch(
+    TOPIC_DEFINITIONS.map((topic) =>
+      db
+        .prepare(`
+    INSERT INTO topic_prototypes (tag, version) VALUES (?, ?)
+    ON CONFLICT(tag) DO UPDATE SET version = excluded.version, embedding = NULL, model = NULL,
+      token = NULL, attempts = 0, retry_at = '1970-01-01T00:00:00.000Z'
+    WHERE topic_prototypes.version != excluded.version
+  `)
+        .bind(topic.tag, TOPIC_VERSION),
+    ),
+  );
+  const now = new Date().toISOString();
+  const candidates = await db
+    .prepare(`
+    SELECT tag, attempts FROM topic_prototypes
+    WHERE version = ? AND embedding IS NULL AND retry_at <= ? ORDER BY tag LIMIT 3
+  `)
+    .bind(TOPIC_VERSION, now)
+    .all<{ tag: string; attempts: number }>();
+  for (const row of candidates.results || []) {
+    const definition = TOPIC_DEFINITIONS.find((topic) => topic.tag === row.tag);
+    if (!definition) continue;
+    // Persist a callback token BEFORE submit. A fast callback is safe, and a
+    // dropped submit/callback is retried after the lease with a new token.
+    const token = crypto.randomUUID();
+    const retryAt = new Date(Date.now() + Math.max(600_000, 60_000 * 2 ** Math.min(row.attempts, 6))).toISOString();
+    const claimed = await db
+      .prepare(`
+      UPDATE topic_prototypes SET token = ?, attempts = attempts + 1, retry_at = ?
+      WHERE tag = ? AND version = ? AND embedding IS NULL AND retry_at <= ? RETURNING tag
+    `)
+      .bind(token, retryAt, row.tag, TOPIC_VERSION, now)
+      .first();
+    if (!claimed) continue;
+    try {
+      const callbackUrl = await signedCallbackUrl(config, {
+        baseUrl: config.baseUrl,
+        type: 'topic-prototype',
+        params: { tag: row.tag, version: TOPIC_VERSION, token },
+      });
+      await client.submit({
+        workload: 'vector-embed',
+        payload: { text: definition.description },
+        callbackUrl,
+        timeoutMs: DEFAULT_WORKLOAD_TIMEOUT_MS['vector-embed'],
+      });
+    } catch (error) {
+      console.error('Topic prototype submission failed:', row.tag, error);
+    }
+  }
+  await backfillTopicTags(db);
+  // Legacy vectors cannot prove which text they embedded. Requeue a bounded
+  // slice instead of assigning labels to potentially stale content.
+  await db
+    .prepare(`
+    INSERT INTO pending_embeddings (post_id, text)
+    SELECT p.id, p.text FROM posts p LEFT JOIN post_embeddings e ON e.post_id = p.id
+    WHERE p.status = 'published' AND p.hidden = 0 AND trim(p.text) != ''
+      AND (e.post_id IS NULL OR e.source_sha IS NULL OR e.model != ?)
+    ORDER BY p.created_at DESC LIMIT 20
+    ON CONFLICT(post_id) DO NOTHING
+  `)
+    .bind(TOPIC_MODEL)
+    .run();
+  await drainPendingEmbeds(db, env, { maxBatch: 1 });
+}
+
+async function handleTopicPrototypeResult(url: URL, event: CrowdWebhookEvent, db: D1Database): Promise<void> {
+  const tag = url.searchParams.get('tag');
+  const token = url.searchParams.get('token');
+  if (
+    url.searchParams.get('version') !== TOPIC_VERSION ||
+    !token ||
+    !TOPIC_DEFINITIONS.some((topic) => topic.tag === tag)
+  )
+    return;
+  const output = extractCallbackOutput(event) as Record<string, unknown> | undefined;
+  const vector = parseTopicVector(output?.vector);
+  if (event.status !== 'done' || output?.model !== TOPIC_MODEL || !vector) return;
+  await db
+    .prepare(`
+    UPDATE topic_prototypes SET embedding = ?, model = ?, token = NULL
+    WHERE tag = ? AND version = ? AND token = ?
+  `)
+    .bind(JSON.stringify(vector), TOPIC_MODEL, tag, TOPIC_VERSION, token)
+    .run();
+  await backfillTopicTags(db);
 }
 
 // ── Webhook handling ──
@@ -725,8 +838,13 @@ async function handleVectorEmbedResult(
   const vector = output.vector as number[] | undefined;
   if (!vector || !Array.isArray(vector)) return;
 
+  const sourceSha = url.searchParams.get('sha');
+  const live = await db.prepare('SELECT text FROM posts WHERE id = ?').bind(postId).first<{ text: string }>();
+  if (!live || (sourceSha && (await textSha(live.text)) !== sourceSha)) return;
+
   const model = (output.model as string) || 'Qwen/Qwen3-Embedding-0.6B';
   const dimensions = (output.dimensions as number) || 1024;
+  if (sourceSha && (model !== TOPIC_MODEL || dimensions !== 1024 || !parseTopicVector(vector))) return;
 
   if (env.VECTORIZE) {
     try {
@@ -740,10 +858,22 @@ async function handleVectorEmbedResult(
   const projected = project(vector, getProjection(banditConfig));
   await db
     .prepare(
-      'INSERT OR REPLACE INTO post_embeddings (post_id, embedding, model, dimensions, bandit_vec, bandit_cfg) VALUES (?, ?, ?, ?, ?, ?)',
+      `INSERT OR REPLACE INTO post_embeddings (post_id, embedding, model, dimensions, bandit_vec, bandit_cfg, source_sha)
+       SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM posts WHERE id = ? AND text = ?)`,
     )
-    .bind(postId, JSON.stringify(vector), model, dimensions, JSON.stringify(projected), projConfigKey(banditConfig))
+    .bind(
+      postId,
+      JSON.stringify(vector),
+      model,
+      dimensions,
+      JSON.stringify(projected),
+      projConfigKey(banditConfig),
+      sourceSha,
+      postId,
+      live.text,
+    )
     .run();
+  if (sourceSha && model === TOPIC_MODEL && parseTopicVector(vector)) await backfillTopicTags(db);
   console.log(`Vector embed webhook done for post ${postId}: dims=${dimensions}`);
 }
 
@@ -907,6 +1037,8 @@ export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1
         await handleNsfwResult(url, event, db);
       } else if (callbackType === 'vector-embed') {
         await handleVectorEmbedResult(url, event, db, env);
+      } else if (callbackType === 'topic-prototype') {
+        await handleTopicPrototypeResult(url, event, db);
       } else if (callbackType === 'file-scan') {
         await handleFileScanResult(url, event, db, env);
       }

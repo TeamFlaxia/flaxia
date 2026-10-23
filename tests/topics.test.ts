@@ -1,30 +1,63 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { aggregateTopicTags, extractTopicTags, topicAffinity } from '../functions/lib/topics.ts';
+import {
+  aggregateTopicTags,
+  classifyTopicVector,
+  parseTopicVector,
+  postTopicTags,
+  TOPIC_DEFINITIONS,
+  TOPIC_DIMENSIONS,
+  topicAffinity,
+} from '../functions/lib/topics.ts';
 
-describe('automatic topic tagging', () => {
-  it('unifies Japanese and English topic signals without hashtags', () => {
-    assert.ok(extractTopicTags('Godotでゲームを制作しています').includes('ゲーム'));
-    assert.ok(extractTopicTags('Building a new game in Godot').includes('ゲーム'));
-    assert.ok(extractTopicTags('ＴｙｐｅＳｃｒｉｐｔで開発').includes('プログラミング'));
+function vector(index: number): number[] {
+  const values = Array<number>(TOPIC_DIMENSIONS).fill(0);
+  values[index] = 1;
+  return values;
+}
+const prototypes = TOPIC_DEFINITIONS.map((topic, index) => ({ tag: topic.tag, vector: vector(index) }));
+
+describe('semantic topic classification', () => {
+  it('assigns a label by vector meaning without checking text or keywords', () => {
+    assert.deepEqual(classifyTopicVector(vector(0), prototypes), ['ゲーム']);
+    assert.deepEqual(classifyTopicVector(vector(3), prototypes), ['音楽']);
   });
 
-  it('supports multiple topics and preserves normalized custom tags', () => {
-    const tags = extractTopicTags('AIで音楽を作曲', '["CustomTag","customtag","AI"]');
-    assert.deepEqual(new Set(tags), new Set(['customtag', 'ai', '音楽']));
+  it('supports multiple similarly strong topic matches, at most three', () => {
+    const mixed = vector(0);
+    mixed[3] = 1;
+    assert.deepEqual(classifyTopicVector(mixed, prototypes), ['ゲーム', '音楽']);
   });
 
-  it('ignores URL/mention keywords, substrings and malformed historical tags', () => {
-    assert.deepEqual(extractTopicTags('chair gameplay https://example.com/gaming @music', 'broken'), []);
-    assert.deepEqual(extractTopicTags('hello', '[42,null,"<script>"]'), []);
-    assert.deepEqual(extractTopicTags('ordinary text', '{}'), []);
+  it('does not guess from incomplete prototypes, miscellaneous or low-similarity vectors', () => {
+    assert.deepEqual(classifyTopicVector(vector(0), prototypes.slice(0, 1)), []);
+    assert.deepEqual(classifyTopicVector(vector(12), prototypes), []);
+    assert.deepEqual(classifyTopicVector(vector(30), prototypes), []);
   });
 
-  it('counts each post once per topic with actual sample percentages', () => {
+  it('rejects nonfinite, zero, malformed and dimension-mismatched output', () => {
+    assert.equal(parseTopicVector([1, 0]), null);
+    assert.equal(parseTopicVector(Array(TOPIC_DIMENSIONS).fill(0)), null);
+    const invalid = vector(0);
+    invalid[5] = NaN;
+    assert.equal(parseTopicVector(invalid), null);
+    assert.equal(parseTopicVector({ vector: vector(0) }), null);
+  });
+
+  it('merges saved AI labels and normalized custom hashtags without reading text', () => {
+    assert.deepEqual(
+      new Set(postTopicTags({ hashtags: '["CustomTag","customtag"]', auto_topic_tags: '["ゲーム"]' })),
+      new Set(['customtag', 'ゲーム']),
+    );
+    assert.deepEqual(postTopicTags({ hashtags: 'broken', auto_topic_tags: '[null,42,"<script>"]' }), []);
+    assert.deepEqual(postTopicTags({ hashtags: '[]' }), []);
+  });
+
+  it('counts posts once and calculates percentages from the actual sample', () => {
     const tags = aggregateTopicTags([
-      { id: 'a', text: 'ゲーム game gaming', hashtags: '["ゲーム","ゲーム"]' },
-      { id: 'b', text: 'music', hashtags: '[]' },
-      { id: 'c', text: 'another game', hashtags: '[]' },
+      { id: 'a', text: 'no keyword', hashtags: '["ゲーム"]', auto_topic_tags: '["ゲーム"]' },
+      { id: 'b', text: 'no keyword', hashtags: '[]', auto_topic_tags: '["音楽"]' },
+      { id: 'c', text: 'no keyword', hashtags: '[]', auto_topic_tags: '["ゲーム"]' },
     ]);
     assert.deepEqual(
       tags.find((tag) => tag.tag === 'ゲーム'),
@@ -33,7 +66,7 @@ describe('automatic topic tagging', () => {
     assert.deepEqual(aggregateTopicTags([]), []);
   });
 
-  it('ranks matching topics higher and does not reward unrelated tag stuffing', () => {
+  it('ranks matching topics higher without rewarding unrelated tag stuffing', () => {
     const interests = new Map([
       ['ゲーム', 3],
       ['音楽', 1],

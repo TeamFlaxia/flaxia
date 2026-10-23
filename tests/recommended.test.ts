@@ -2,6 +2,7 @@ import assert from 'node:assert';
 import { createHmac } from 'node:crypto';
 import { beforeEach, describe, it } from 'node:test';
 import { BASE_URL, resetDb, seedUserAndLogin } from './helpers/setup.ts';
+import { embedTopic, seedTopicPrototypes } from './helpers/topics.ts';
 
 // The test dev server binds this secret (see package.json dev:test).
 const CROWD_WEBHOOK_SECRET = 'test-callback-secret';
@@ -212,21 +213,30 @@ describe('GET /api/posts/recommended — pagination', () => {
 });
 
 describe('GET /api/posts/recommended — automatic topics', () => {
-  beforeEach(resetDb);
+  beforeEach(async () => {
+    await resetDb();
+    await seedTopicPrototypes();
+  });
 
-  it("prefers the reader's Fresh topic without any embeddings or manual tags", async () => {
+  it("prefers the reader's Fresh topic using Crowd embeddings without manual tags", async () => {
     const reader = await seedUserAndLogin('topic-reader');
     const source = await seedUserAndLogin('topic-source');
     const matched = await seedUserAndLogin('topic-matched');
     const other = await seedUserAndLogin('topic-other');
-    const seed = await createTextPost(source.cookie, 'Godotでゲーム制作の進捗');
+    const seedText = '足場を飛び越えて最後のボスを倒した';
+    const seed = await createTextPost(source.cookie, seedText);
+    await embedTopic(seed, seedText, 0);
     const response = await fetch(`${BASE_URL}/api/posts/${seed}/fresh`, {
       method: 'POST',
       headers: { Cookie: reader.cookie },
     });
     assert.equal(response.status, 200);
-    const matchingId = await createTextPost(matched.cookie, 'A new game built in Godot');
-    const unrelatedId = await createTextPost(other.cookie, 'A new recipe for baking sourdough');
+    const matchingText = 'Finally cleared the last boss after jumping across platforms';
+    const matchingId = await createTextPost(matched.cookie, matchingText);
+    await embedTopic(matchingId, matchingText, 0);
+    const unrelatedText = 'The dough rose beautifully overnight';
+    const unrelatedId = await createTextPost(other.cookie, unrelatedText);
+    await embedTopic(unrelatedId, unrelatedText, 7);
     const feed = await fetch(`${BASE_URL}/api/posts/recommended?limit=20`, { headers: { Cookie: reader.cookie } });
     assert.equal(feed.status, 200);
     const data = (await feed.json()) as { posts: Array<{ id: string; topic_tags: string[] }> };

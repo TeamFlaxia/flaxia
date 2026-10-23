@@ -176,38 +176,65 @@ node --experimental-strip-types scripts/deploy-prior.mjs \
 - 大量の `bandit_state` 書き込みを避けるため、報酬更新はイベントバッチごとに
   1 回の読み書きにまとめています。
 
-## Automatic topic signals
+## Semantic topic signals via Crowd
 
-`functions/lib/topics.ts` maintains a small, deterministic Japanese/English
-vocabulary for games, programming, AI, music, illustration, anime, photography,
-cooking, travel, sports, science and books. It also preserves normalized custom
-hashtags as interest signals. Latin keywords use word boundaries; URLs and
-mentions do not generate topics. This is a keyword baseline, not a semantic
-classifier: ambiguous context, negation and topics outside the vocabulary can
-still be missed. Extend the vocabulary alongside classification tests.
+`functions/lib/topics.ts` defines 12 canonical topic labels with bilingual
+reference descriptions, plus a miscellaneous reference. These descriptions
+are embedded by Crowd's existing `vector-embed` workload using
+`Qwen/Qwen3-Embedding-0.6B`. Posts use that same embedding model. Cosine
+similarity assigns up to three labels without keyword matching; it is a
+semantic classifier, not LLM-generated free-form tags. No Crowd node or SDK
+change is required. Crowd's separate `ai-inference` workload exists, but a
+new zero-shot or generative model would require node model registration and
+additional pipeline options.
 
-Tags are derived when reading posts and returned as `topic_tags` in global/tag
-feeds and recommendations. User-authored `hashtags` remain intact. There is no
-migration, external model call or backfill requirement; older posts and edits
-are classified from their current text.
+Apply `0110_semantic_topics.sql` before deploying this code. It stores prototype
+embeddings and automatic post tags separately from user-authored `hashtags`.
+Prototype descriptions/model compatibility are versioned by `TOPIC_VERSION`.
+All reference vectors must be ready before classification starts. Initial
+similarity cutoff is 0.5; labels within 0.08 of the best score are eligible.
+The miscellaneous reference winning yields no labels. Similarities are not
+probabilities: thresholds and multilingual quality require real-model evaluation.
 
-Trending tags count manual and automatic tags once per top-level published,
-visible post. Percentages use the actual sampled post count. Existing Explore
-tag URLs also match automatic topics among the latest 1,000 eligible posts;
-exact manual hashtag matches remain available across the full history.
+Topic maintenance runs in the background when global/tag/recommendation/trend
+feeds are read, at most once per ten seconds per worker isolate. Up to three
+prototype tasks are submitted per pass. D1 leases and signed callback tokens
+prevent duplicate claims and stale task results; missing, failed or invalid
+results retry after an exponential backoff (10-minute minimum, capped at
+64 minutes). `CROWD_SCREENING_DISABLED=1` also stops maintenance submissions.
+The first rollout requires active Crowd nodes and receives labels progressively;
+feed responses never wait for inference and retain manual-tag and existing
+recommendation signals while classification is pending or Crowd is unavailable.
+
+Database triggers enqueue embeddings for publishing paths and edits, clear
+labels and old embeddings on text changes, and remove vector/outbox rows on
+deletion. New embedding callback URLs include the submitted text's SHA-256.
+Callbacks for a different current text are ignored; updates also compare the
+text inside the D1 statement. Legacy unsigned-in-content vectors remain usable
+by the existing recommender but cannot supply semantic labels. They are
+requeued in bounded slices, or via `/api/admin/backfill-embeddings`. Existing
+submission retry caps still apply; operators can inspect/reset exhausted
+`pending_embeddings` attempts when recovering an extended outage.
+
+Stored compatible post vectors are classified in batches of 50 during
+maintenance and callback handling. AI labels and normalized manual hashtags
+are deduplicated for trend counts, tag browsing and interest signals.
+Percentages use the actual sampled top-level published, visible post count.
+Automatic tag browsing uses persisted tags across the entire history.
 
 For You derives a topic profile from up to 80 distinct visible, unblocked posts
 Fresh-ed or bookmarked within the preceding 90 days. Bookmarks weigh 1.5 and
 Fresh weighs 1; overlapping actions use the strongest weight. Interest decays
-with a 30-day half-life and each source post's weight is split across its tags.
-The strongest matching topic produces a bounded affinity score, so adding
-unrelated tags cannot increase affinity. Self-posts do not train this profile.
+with a 30-day half-life, and each source post's weight is split across its tags.
+The strongest matching topic produces a bounded affinity score. Self-posts do
+not train this profile. Up to 100 topic matches from the latest 1,000 eligible
+posts in the existing 14-day candidate window supplement the existing sources.
+When topic history exists, 30% of the base score is affinity and 70% is the
+existing ranking. The existing visibility, trust, duplicate, author diversity,
+impression/history and pagination rules still apply. Users without topic
+history retain the existing ranking. Validate engagement and classification
+quality before claiming measured recommendation improvements.
 
-An additional source takes up to 100 topic matches from the latest 1,000
-eligible posts in the existing 14-day candidate window. The usual visibility,
-trust, duplicate, author-diversity and impression/history rules still apply.
-When a topic profile exists, 30% of the base score is topic affinity and 70%
-is the existing ranking. Users without topic history retain the existing
-ranking. Topic retrieval is intentionally bounded for edge cost; it can miss
-older or less recent matches on high-volume instances. This baseline needs
-engagement evaluation before claiming a measured recommendation improvement.
+Tests use synthetic vectors to verify callback authentication, model/vector
+validation, persistence, edit invalidation, tag browsing and ranking. They do
+not download or execute the real model and do not measure semantic accuracy.

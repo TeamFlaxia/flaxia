@@ -1,4 +1,6 @@
 import { Hono } from 'hono';
+import { refreshTopicEmbeddings } from '../../lib/crowd';
+import { runInBackground } from '../../lib/scan/index';
 import { aggregateTopicTags, type TopicPost } from '../../lib/topics';
 import type { Bindings, Variables } from '../types';
 
@@ -11,12 +13,14 @@ tags.get('/tags/trending', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
+    runInBackground(c, () => refreshTopicEmbeddings(c.env.DB, c.env), 'Topic refresh failed');
+
     const recentCountParam = c.req.query('recent_count');
     const recentCount = recentCountParam ? parseInt(recentCountParam, 10) : 100;
     const validRecentCount = Number.isNaN(recentCount) || recentCount < 10 || recentCount > 1000 ? 100 : recentCount;
 
     const result = await c.env.DB.prepare(`
-      SELECT id, text, hashtags FROM posts
+      SELECT id, text, hashtags, auto_topic_tags FROM posts
       WHERE hidden = 0 AND status = 'published' AND parent_id IS NULL
       ORDER BY created_at DESC, id DESC LIMIT ?
     `)

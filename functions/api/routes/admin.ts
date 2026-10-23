@@ -4,7 +4,13 @@ import { isAdmin } from '../../../src/lib/admin';
 import { extractFileFromZip } from '../../../src/lib/wvfs-zip-server';
 import { deleteAccount } from '../../lib/account-deletion';
 import { getAdminAnalytics, parseAnalyticsDays } from '../../lib/admin-analytics';
-import { drainPendingEmbeds, enqueuePendingEmbed, ensureNsfwScansTable, submitDetectNsfw } from '../../lib/crowd';
+import {
+  drainPendingEmbeds,
+  enqueuePendingEmbed,
+  ensureNsfwScansTable,
+  refreshTopicEmbeddings,
+  submitDetectNsfw,
+} from '../../lib/crowd';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import {
   addBlocklistEntry,
@@ -979,7 +985,7 @@ admin.post('/backfill-embeddings', requireAuth, requireAdmin, async (c) => {
         AND p.parent_id IS NULL
         AND p.text IS NOT NULL
         AND p.text != ''
-        AND e.post_id IS NULL
+        AND (e.post_id IS NULL OR e.source_sha IS NULL)
       ORDER BY p.created_at DESC
       LIMIT ?
     `)
@@ -1001,6 +1007,7 @@ admin.post('/backfill-embeddings', requireAuth, requireAdmin, async (c) => {
       // Let the response return immediately; keep draining in the background.
       execCtx.waitUntil(
         (async () => {
+          await refreshTopicEmbeddings(c.env.DB, c.env);
           const result = await drainPendingEmbeds(c.env.DB, c.env, {
             maxBatch: enqueued || 50,
             delayMs: 50,

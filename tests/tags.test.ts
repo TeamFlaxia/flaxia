@@ -1,6 +1,8 @@
 import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
+import { textSha } from '../functions/lib/topics.ts';
 import { BASE_URL, resetDb, seedUserAndLogin } from './helpers/setup.ts';
+import { embedTopic, seedTopicPrototypes, topicCallback, topicVector } from './helpers/topics.ts';
 
 describe('GET /api/tags/trending', () => {
   beforeEach(resetDb);
@@ -94,12 +96,19 @@ describe('public cache headers', () => {
 });
 
 describe('automatic topic trends and browsing', () => {
-  beforeEach(resetDb);
+  beforeEach(async () => {
+    await resetDb();
+    await seedTopicPrototypes();
+  });
 
   it('finds untagged Japanese/English posts and uses actual sample size', async () => {
     const author = await seedUserAndLogin('topic-author');
     const ids: string[] = [];
-    for (const text of ['Godotでゲーム制作', 'Building a new game', 'Baking sourdough']) {
+    for (const [index, text] of [
+      '足場を飛び越えてボスを倒した',
+      'Defeated the final boss',
+      'The dough rose overnight',
+    ].entries()) {
       const postId = crypto.randomUUID();
       const response = await fetch(`${BASE_URL}/api/posts/commit`, {
         method: 'POST',
@@ -107,6 +116,7 @@ describe('automatic topic trends and browsing', () => {
         body: JSON.stringify({ postId, text }),
       });
       assert.equal(response.status, 200);
+      await embedTopic(postId, text, index < 2 ? 0 : 7);
       ids.push(postId);
     }
     const trendResponse = await fetch(`${BASE_URL}/api/tags/trending`);
@@ -121,5 +131,55 @@ describe('automatic topic trends and browsing', () => {
     const data = (await browse.json()) as { posts: Array<{ id: string }>; count: number };
     assert.equal(data.count, 2);
     assert.deepEqual(new Set(data.posts.map((post) => post.id)), new Set(ids.slice(0, 2)));
+  });
+});
+
+describe('semantic topic callback freshness', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await seedTopicPrototypes();
+  });
+
+  it('invalidates edited labels and ignores delayed results for the old text', async () => {
+    const author = await seedUserAndLogin('topic-edit');
+    const postId = crypto.randomUUID();
+    const oldText = 'Defeated the final boss';
+    const newText = 'The dough rose overnight';
+    const published = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { Cookie: author.cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ postId, text: oldText }),
+    });
+    assert.equal(published.status, 200);
+    await embedTopic(postId, oldText, 0);
+    const edited = await fetch(`${BASE_URL}/api/posts/${postId}`, {
+      method: 'PUT',
+      headers: { Cookie: author.cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: newText }),
+    });
+    assert.equal(edited.status, 200);
+    await embedTopic(postId, oldText, 0);
+    const stale = await fetch(`${BASE_URL}/api/posts?hashtag=${encodeURIComponent('ゲーム')}`);
+    assert.equal((await stale.json()).count, 0);
+    await embedTopic(postId, newText, 7);
+    const updated = await fetch(`${BASE_URL}/api/posts?hashtag=${encodeURIComponent('料理')}`);
+    assert.equal((await updated.json()).count, 1);
+  });
+
+  it('does not assign labels to wrong-model and malformed embeddings', async () => {
+    const author = await seedUserAndLogin('topic-invalid');
+    const postId = crypto.randomUUID();
+    const text = 'Something to classify';
+    const response = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { Cookie: author.cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ postId, text }),
+    });
+    assert.equal(response.status, 200);
+    const params = { type: 'vector-embed', postId, sha: await textSha(text) };
+    assert.equal((await topicCallback(params, topicVector(0), 'wrong-model')).status, 200);
+    assert.equal((await topicCallback(params, [1, 0])).status, 200);
+    const feed = await fetch(`${BASE_URL}/api/posts?hashtag=${encodeURIComponent('ゲーム')}`);
+    assert.equal((await feed.json()).count, 0);
   });
 });
