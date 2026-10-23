@@ -74,8 +74,98 @@ body {
   overflow-y: auto;
 }
 .arcade-page {
+  width: 100%;
+  min-width: 0;
   flex: none;
   height: 100dvh;
+}
+
+.arcade-header {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.arcade-header-title-group {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  min-width: 0;
+}
+
+.arcade-header h1 {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.arcade-header-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.arcade-header-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.arcade-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: auto;
+}
+
+.arcade-back-btn,
+.arcade-header-action {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem 0.5rem;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.2s,
+    background 0.2s;
+}
+
+.arcade-back-btn {
+  padding: 0.15rem 0.35rem;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+}
+
+.arcade-header-action {
+  font-size: 1.2rem;
+}
+
+.arcade-header button:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.1));
+  color: var(--text-primary);
 }
 
 .auth-card {
@@ -980,12 +1070,28 @@ h1 {
   }
 
   .arcade-header {
+    min-height: 2.5rem;
     padding: 0.3rem 0.5rem;
     gap: 0.35rem;
   }
 
   .arcade-header h1 {
+    gap: 0.25rem;
     font-size: 0.9rem;
+  }
+
+  .arcade-header-actions {
+    gap: 0.125rem;
+  }
+
+  .arcade-back-btn {
+    padding-inline: 0.25rem;
+    font-size: 0.8rem;
+  }
+
+  .arcade-header-action {
+    padding-inline: 0.35rem;
+    font-size: 1.05rem;
   }
 
   /* In mobile mode the fixed bottom nav overlays the arcade, so force a gap at
