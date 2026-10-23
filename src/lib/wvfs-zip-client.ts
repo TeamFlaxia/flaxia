@@ -42,8 +42,6 @@ export async function executeWvfsZip(
 
     const sandboxOrigin = workerUrl || import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
     const zipUrl = createWvfsGameUrl(sandboxOrigin, postId, { versionId });
-    const preWarmUrl = createWvfsGameUrl(sandboxOrigin, postId, { versionId, index: true });
-    fetch(preWarmUrl, { method: 'GET', mode: 'cors' }).catch(() => {});
 
     let storageSnapshot: Record<string, string> = {};
     try {
