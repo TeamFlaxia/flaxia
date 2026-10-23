@@ -1,5 +1,5 @@
 // Bump when HTML injection changes. Never reuse an older compatibility runtime.
-const RESPONSE_REVISION = '1';
+const RESPONSE_REVISION = '2';
 const EDGE_TTL = 86400;
 
 interface WvfsResponseIdentity {
@@ -19,7 +19,7 @@ export async function cacheWvfsResponse(
 ): Promise<Response> {
   // No reliable source revision => no persistent cache or synthetic validator.
   // This also keeps local runtimes without the Workers Cache API functional.
-  if (request.method !== 'GET' || !identity.payloadEtag) return load();
+  if ((request.method !== 'GET' && request.method !== 'HEAD') || !identity.payloadEtag) return load();
 
   const key = new URL('/__wvfs-response-cache', request.url);
   key.search = new URLSearchParams({
@@ -71,6 +71,10 @@ export async function cacheWvfsResponse(
     if (response.body) waitUntil(response.body.cancel().catch(() => {}));
     headers.delete('Content-Length');
     return new Response(null, { status: 304, headers });
+  }
+  if (request.method === 'HEAD') {
+    if (response.body) waitUntil(response.body.cancel().catch(() => {}));
+    return new Response(null, { status: response.status, headers });
   }
   return response;
 }

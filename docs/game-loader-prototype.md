@@ -4,7 +4,7 @@ This is the first compatibility experiment for a dedicated loader and Service
 Worker. It is deliberately separate from public post playback: no timeline,
 Arcade, or existing player chooses this path. Open `/game-loader/prototype` on
 the sandbox origin and choose a local test ZIP. ZIP bytes never upload to a
-server. The prototype is a developer page, not an offline public-game player.
+server. The prototype is a developer page. An opt-in public-post experiment is also available below; public playback still requires an online publication check.
 
 ## Running
 
@@ -24,6 +24,40 @@ initialization, not the game's first playable frame.
 The sandbox deployment workflow uses the latter so the generated asset is
 available even when the main app build runs in another CI job. Generated assets
 are ignored by git; no third-party CDN scripts are loaded at runtime.
+
+## Public-post fallback experiment
+
+Open `/game-loader/player?post=<postId>` on the sandbox origin (optionally add
+`&v=<versionId>`). This is an explicit experimental URL; the main app and Arcade
+still select WVFS normally. Account, save, capture and multiplayer bridges are
+not connected in this standalone page.
+
+The launch sequence is:
+
+1. Fetch a no-store descriptor. The server requires an existing published,
+   visible ZIP post and a current passing delivery/scan decision. This decision
+   is never reused from local cache. Lookup failure stops playback rather than
+   bypassing publication checks.
+2. Probe the expanded local archive with a 150 ms budget. A miss, unavailable SW,
+   slow read, corrupt cache or rejected shell preparation selects the normal
+   isolated WVFS iframe. A late cache reply cannot replace a running game.
+3. After WVFS navigation completes, give it a paint opportunity and schedule ZIP
+   download, worker extraction and persistence during idle time. Do not await
+   persistence on the display path, and do not reload WVFS when saving finishes.
+4. Revisit the same source revision to use the saved files. Source key/ETag and
+   version identify the cache; updated archives miss the old entry. Archive
+   download repeats publication/scan checks and uses an R2 ETag precondition.
+
+Cache/download/quota failures are reported separately and leave the WVFS iframe
+and its ready status intact. Warming is skipped for Save-Data, oversized archives
+and hidden documents, and fetch is aborted on page exit. This is best-effort
+page-owned work; closing the page is allowed to interrupt it. An incomplete
+cache entry is never used. Runtime game logic errors after initialization do not
+restart the game automatically.
+
+The budget is a conservative initial setting, not a measured optimum. Neither
+iframe `load` nor the displayed `navigationReadyMs` proves that a game is already
+interactive. Initial metadata access and existing WVFS asset requests remain.
 
 ## Boundaries
 
@@ -94,9 +128,9 @@ Playwright engine to run the same experiment there. An optional
 
 1. Establish the browser/engine compatibility matrix with representative games;
    measure first playable frame and memory on mobile, not just shell timing.
-2. Add a server-authoritative public-game descriptor and versioned download
-   endpoint. Validate publication and scan state at each launch before local
-   cache reuse. No user-provided message may authorize a public game.
+2. Extend the public-game descriptor/fallback experiment to supported content
+   types and verify real games before choosing it in the main app. Keep current
+   publication/scan checks ahead of every local-cache launch.
 3. Make asset resolution explicit per supported engine. Add storage/capture/
    multiplayer bridge relays with source validation and game namespaces.
 4. Add storage-budget/LRU management, concurrent-session pins and cache-schema
@@ -109,3 +143,9 @@ Local verification: build, unit tests, lint, TypeScript 6 checking and sandbox
 dry-run bundling can run in the Codex environment. Native Chromium exits at
 startup in that environment; browser compatibility results must come from the
 dedicated CI job or a normal local browser, not from mocked cache tests.
+
+The browser suite also holds ZIP delivery open while asserting WVFS is already
+visible, then verifies persistence and a cache-backed revisit. It covers rejected
+cache preparation, failed background download, SW registration failure, source
+updates and publication revocation. Unit tests exercise the bounded probe and
+late-reply behavior without relying on browser timing.

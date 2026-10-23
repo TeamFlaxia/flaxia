@@ -15,7 +15,7 @@ self.addEventListener('message', (event) => {
     const url = new URL(client.url);
     if (
       url.origin !== self.location.origin ||
-      !['/game-loader/prototype', '/game-loader/prototype.html'].includes(url.pathname)
+      !['/game-loader/prototype', '/game-loader/prototype.html', '/game-loader/player'].includes(url.pathname)
     )
       return;
     const { type, hash, files } = event.data ?? {};

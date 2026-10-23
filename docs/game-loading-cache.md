@@ -17,6 +17,14 @@ archive revision therefore cannot hit an older archive's response. Increment
 `RESPONSE_REVISION` in `src/lib/wvfs-response-cache.ts` whenever HTML injection
 changes; current sandbox CSP is applied after reading the cache.
 
+The extracted R2 files and their manifest carry `wvfs-source-key` and
+`wvfs-source-etag` custom metadata. Files without matching metadata, including
+legacy extractions, are re-extracted on access. In-memory files and rewritten
+HTML are also separated by source revision. Conditional R2 reads prevent a
+replacement during ZIP range reads or direct HTML reads from being stored under
+the previous source's validator. Such an interrupted request returns 404 and can
+be retried against the new source.
+
 HTML keeps `no-cache, no-transform` so compatibility and policy updates reach
 existing games. Unpinned asset URLs also revalidate because their contents can
 change when a new release becomes current. Responses include a weak ETag so
@@ -24,6 +32,10 @@ unchanged resources can return 304 without sending the body. Explicitly pinned
 asset URLs retain immutable browser caching. Edge cache TTL is independent of
 these browser directives. Cache API failures fall back to normal delivery;
 errors and responses with cookies are never stored.
+
+GET and HEAD use the same validators and cache policy. Root-relative asset
+fallbacks use the same payload resolution, scan gate, and response cache as the
+canonical WVFS route; unpinned fallback URLs revalidate as well.
 
 The player no longer sends an additional GET to `/index.html` immediately
 before navigating the iframe to the same game's entry document.
@@ -33,7 +45,7 @@ before navigating the iframe to the same game's entry document.
 Run the focused tests:
 
 ```sh
-node --test --experimental-strip-types tests/wvfs-response-cache.test.ts tests/sandbox-response-policy.test.ts tests/wvfs-game-url.test.ts tests/legacy-sandbox-disabled.test.ts
+node --test --experimental-strip-types tests/wvfs-response-cache.test.ts tests/wvfs-source-revision.test.ts tests/extract-zip-to-r2.test.ts tests/sandbox-response-policy.test.ts tests/wvfs-game-url.test.ts tests/legacy-sandbox-disabled.test.ts
 ```
 
 After deploying the sandbox worker, inspect a game's requests in browser

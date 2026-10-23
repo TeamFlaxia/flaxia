@@ -7,6 +7,7 @@ const reopen = document.getElementById('reopen');
 const clear = document.getElementById('clear');
 const container = document.getElementById('game');
 const LAST_HASH = 'flaxia-loader-prototype-last';
+const publicMode = location.pathname === '/game-loader/player';
 let lastHash;
 try {
   lastHash = localStorage.getItem(LAST_HASH);
@@ -196,12 +197,27 @@ clear.addEventListener('click', async () => {
     status.textContent = String(error);
   }
 });
-swReady
-  .then(() => {
-    status.textContent = 'Choose a ZIP or reopen the saved game.';
-    reopen.disabled = !HASH_PATTERN.test(lastHash);
-  })
-  .catch(() => {
-    input.disabled = reopen.disabled = clear.disabled = true;
-    status.textContent = 'Service Worker unavailable. Normal public games continue to use WVFS.';
-  });
+if (publicMode) {
+  document.querySelector('h1').textContent = 'Public game loader · experiment';
+  document.querySelector('header p').textContent =
+    'Experimental player. Account, save and multiplayer bridges are not connected.';
+  input.parentElement.hidden = true;
+  reopen.hidden = clear.hidden = true;
+  // A failed SW must not stop a public game's WVFS fallback.
+  void swReady.catch(() => {});
+  import('./public-player.js')
+    .then(({ startPublicPlayer }) => startPublicPlayer({ cacheRequest, unzip, play, container, status, metrics }))
+    .catch((error) => {
+      status.textContent = String(error);
+      status.dataset.state = 'error';
+    });
+} else
+  swReady
+    .then(() => {
+      status.textContent = 'Choose a ZIP or reopen the saved game.';
+      reopen.disabled = !HASH_PATTERN.test(lastHash);
+    })
+    .catch(() => {
+      input.disabled = reopen.disabled = clear.disabled = true;
+      status.textContent = 'Service Worker unavailable. Normal public games continue to use WVFS.';
+    });

@@ -3,6 +3,8 @@ import type { Context } from 'hono';
 const ALLOWED_ASSETS = new Set([
   'prototype.html',
   'prototype.js',
+  'launch.js',
+  'public-player.js',
   'prototype.css',
   'protocol.js',
   'cache.js',
@@ -45,7 +47,7 @@ export async function serveGameLoaderAsset<B extends { ASSETS?: { fetch: (reques
   c: Context<{ Bindings: B }>,
 ): Promise<Response> {
   const path = c.req.path.slice('/game-loader/'.length);
-  const asset = path === 'prototype' ? 'prototype.html' : path;
+  const asset = ['prototype', 'player'].includes(path) ? 'prototype.html' : path;
   // CacheStorage keys and arbitrary uploaded content are never HTTP routes.
   if (!ALLOWED_ASSETS.has(asset)) return c.text('Not found', 404);
   if (!c.env.ASSETS) return c.text('Loader assets unavailable', 503);
