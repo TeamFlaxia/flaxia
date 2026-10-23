@@ -31,6 +31,15 @@ import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
+import {
+  extractTopicTags,
+  isAutomaticTopic,
+  loadTopicInterests,
+  normalizeTag,
+  TOPIC_SCAN_LIMIT,
+  type TopicPost,
+  topicAffinity,
+} from '../../lib/topics';
 import { RECOMMENDATION_MIN_TRUST, refreshUserTrustSafe } from '../../lib/trust';
 import { fetchWithSsrfGuard } from '../../lib/url-guard';
 import {
@@ -193,14 +202,30 @@ posts.get('/posts', async (c) => {
       : '';
     const blockParam = currentUserId ? [currentUserId] : [];
     const feedFilter = `${blockFilter} ${EXACT_DUPLICATE_FILTER}`;
+    let automaticTopicIds: string[] = [];
+    if (hashtag && isAutomaticTopic(hashtag)) {
+      const rows = await c.env.DB.prepare(`
+        SELECT p.id, p.text, p.hashtags FROM posts p
+        WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${feedFilter}
+        ORDER BY p.created_at DESC, p.id DESC LIMIT ?
+      `)
+        .bind(...blockParam, TOPIC_SCAN_LIMIT)
+        .all<TopicPost>();
+      automaticTopicIds = (rows.results || [])
+        .filter((post) => extractTopicTags(post.text, post.hashtags).includes(normalizeTag(hashtag)))
+        .map((post) => post.id);
+    }
+    const tagFilter = `(EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE lower(value) = ?)
+      OR p.id IN (SELECT value FROM json_each(?)))`;
+    const tagParams = hashtag ? [normalizeTag(hashtag), JSON.stringify(automaticTopicIds)] : [];
     if (hashtag) {
       // Filter by hashtag using json_each
       if (cursor) {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
-        params = [hashtag, cursor, ...blockParam, limit];
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND ${tagFilter} AND p.created_at < ? ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        params = [...tagParams, cursor, ...blockParam, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
-        params = [hashtag, ...blockParam, limit];
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND ${tagFilter} ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        params = [...tagParams, ...blockParam, limit];
       }
     } else if (following && currentUserId) {
       // Following tab - show posts from followed users and current user's own posts
@@ -265,6 +290,8 @@ posts.get('/posts', async (c) => {
     }
 
     const posts = result.results || [];
+    for (const post of posts)
+      post.topic_tags = extractTopicTags(String(post.text || ''), String(post.hashtags || '[]'));
 
     // Parallel: fresh/bookmark status, poll enrichment, vector embedding check
     await Promise.all([
@@ -313,9 +340,9 @@ posts.get('/posts', async (c) => {
     // Return total count when filtering by hashtag
     if (hashtag) {
       const countResult = await c.env.DB.prepare(`
-        SELECT COUNT(*) as count FROM posts p WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${EXACT_DUPLICATE_FILTER}
+        SELECT COUNT(*) as count FROM posts p WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND ${tagFilter} ${feedFilter}
       `)
-        .bind(hashtag)
+        .bind(...tagParams, ...blockParam)
         .first<{ count: number }>();
       return c.json({ posts, count: countResult?.count || 0 });
     }
@@ -585,7 +612,7 @@ posts.get('/posts/recommended', async (c) => {
     // follows and impression timestamps can still change after asOf; a time
     // bound alone cannot make a mutable ranking safe for score pagination.
     const seenIds = new Set(cursorParts[4]?.split(':').filter(Boolean) ?? []);
-    if (seenIds.size > 700 || [...seenIds].some((id) => !/^[A-Za-z0-9_-]{1,36}$/.test(id))) {
+    if (seenIds.size > 800 || [...seenIds].some((id) => !/^[A-Za-z0-9_-]{1,36}$/.test(id))) {
       return c.json({ error: 'Invalid recommendation cursor' }, 400);
     }
     const asOfUnixSeconds = Math.floor(asOfMs / 1000);
@@ -600,6 +627,9 @@ posts.get('/posts/recommended', async (c) => {
       return c.json(await loadRecommendedArchivePage(db, currentUserId, limit, cursorCreatedAt, cursorId, asOfMs));
     }
 
+    const topicInterests = currentUserId
+      ? await loadTopicInterests(db, currentUserId, asOfIso)
+      : new Map<string, number>();
     let interestVector: number[] | null = null;
     if (currentUserId) {
       interestVector = (await loadOrComputeInterestVector(db, currentUserId))?.vector ?? null;
@@ -673,7 +703,7 @@ posts.get('/posts/recommended', async (c) => {
     const trendingCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
     const engagementFormula = `MAX(COALESCE(p.engagement_hotness, 0), p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + COALESCE(p.bookmark_count, 0) * 2.0 + 1.0) / EXP(1.2 * LN(MAX(0.0, (? - unixepoch(p.created_at)) / 3600.0) + 2.0))`;
 
-    const [recentResult, trendingResult, followingResult] = await Promise.all([
+    const [recentResult, trendingResult, followingResult, topicResult] = await Promise.all([
       db
         .prepare(
           `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
@@ -705,8 +735,28 @@ posts.get('/posts/recommended', async (c) => {
             .bind(trendingCutoff, asOfIso, currentUserId, ...visibilityParams, limit * 4)
             .all<Record<string, unknown>>()
         : Promise.resolve(null),
+      topicInterests.size > 0
+        ? db
+            .prepare(`
+            SELECT p.id, p.text, p.hashtags FROM posts p LEFT JOIN users u ON p.user_id = u.id
+            WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
+              ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+            ORDER BY p.created_at DESC, p.id DESC LIMIT ?
+          `)
+            .bind(...visibilityParams, trendingCutoff, asOfIso, TOPIC_SCAN_LIMIT)
+            .all<TopicPost>()
+        : Promise.resolve(null),
     ]);
 
+    const topicIds = (topicResult?.results || [])
+      .map((post) => ({
+        id: post.id,
+        affinity: topicAffinity(extractTopicTags(post.text, post.hashtags), topicInterests),
+      }))
+      .filter((post) => post.affinity > 0)
+      .sort((a, b) => b.affinity - a.affinity)
+      .slice(0, 100)
+      .map((post) => post.id);
     const recentPosts = recentResult.results || [];
     const trendingPosts = trendingResult.results || [];
     const followingPosts = followingResult?.results || [];
@@ -714,6 +764,7 @@ posts.get('/posts/recommended', async (c) => {
     const candidateIds = [
       ...new Set([
         ...vectorIds,
+        ...topicIds,
         ...followingPosts.map((post) => String(post.id)),
         ...trendingPosts.map((post) => String(post.id)),
         ...recentPosts.map((post) => String(post.id)),
@@ -790,7 +841,12 @@ posts.get('/posts/recommended', async (c) => {
         0,
       );
       const qualityFactor = 0.9 + 0.1 * Math.min(1, Math.max(0, contentQuality));
-      const baseScore = (0.65 * sourceScore + 0.18 * popularity + 0.17 * freshness) * qualityFactor;
+      const topicTags = extractTopicTags(String(post.text || ''), String(post.hashtags || '[]'));
+      post.topic_tags = topicTags;
+      const affinity = topicAffinity(topicTags, topicInterests);
+      const existingScore = 0.65 * sourceScore + 0.18 * popularity + 0.17 * freshness;
+      const baseScore =
+        (topicInterests.size > 0 ? 0.7 * existingScore + 0.3 * affinity : existingScore) * qualityFactor;
       const historyPenalty = Math.min(
         0.55,
         decayingRecommendationPenalty(freshAtByPost.get(id), asOfMs, 0.25, 7) +
@@ -827,12 +883,12 @@ posts.get('/posts/recommended', async (c) => {
     const enrichedPosts = await enrichRecommendedPosts(pagePosts, db, currentUserId);
     const lastPost = enrichedPosts.at(-1) as Record<string, unknown> | undefined;
     for (const post of enrichedPosts) seenIds.add(String(post.id));
-    // At most 700 candidates come from the four sources (100 vector + 3*200).
+    // At most 800 candidates come from five sources (100 vector + 100 topic + 3*200).
     // Bound cursor growth well below Cloudflare's URL ceiling before moving
     // into the chronological archive, whose cursor does not need an ID set.
     const nextCursor = !lastPost
       ? null
-      : seenIds.size >= 700
+      : seenIds.size >= 800
         ? `archive,,,${asOfMs}`
         : `${lastPost.score},${lastPost.created_at},${lastPost.id},${asOfMs},${[...seenIds].join(':')}`;
 
@@ -908,6 +964,7 @@ async function enrichRecommendedPosts(
   db: D1Database,
   currentUserId: string | null | undefined,
 ): Promise<Record<string, unknown>[]> {
+  for (const post of posts) post.topic_tags = extractTopicTags(String(post.text || ''), String(post.hashtags || '[]'));
   await enrichFeedPosts(posts as PostRow[], db, currentUserId);
   return posts;
 }

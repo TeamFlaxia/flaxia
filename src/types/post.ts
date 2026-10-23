@@ -22,6 +22,7 @@ export interface QuotedPost {
   badge_type?: string | null;
   text: string;
   hashtags: string;
+  topic_tags?: string[];
   mentions?: string;
   gif_key?: string | null;
   payload_key?: string | null;

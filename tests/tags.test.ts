@@ -92,3 +92,34 @@ describe('public cache headers', () => {
     assert.match(res.headers.get('cache-control') ?? '', /public/);
   });
 });
+
+describe('automatic topic trends and browsing', () => {
+  beforeEach(resetDb);
+
+  it('finds untagged Japanese/English posts and uses actual sample size', async () => {
+    const author = await seedUserAndLogin('topic-author');
+    const ids: string[] = [];
+    for (const text of ['Godotでゲーム制作', 'Building a new game', 'Baking sourdough']) {
+      const postId = crypto.randomUUID();
+      const response = await fetch(`${BASE_URL}/api/posts/commit`, {
+        method: 'POST',
+        headers: { Cookie: author.cookie, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ postId, text }),
+      });
+      assert.equal(response.status, 200);
+      ids.push(postId);
+    }
+    const trendResponse = await fetch(`${BASE_URL}/api/tags/trending`);
+    assert.equal(trendResponse.status, 200);
+    const trends = (await trendResponse.json()) as { tags: Array<{ tag: string; count: number; percentage: number }> };
+    assert.deepEqual(
+      trends.tags.find((tag) => tag.tag === 'ゲーム'),
+      { tag: 'ゲーム', count: 2, percentage: 66.7 },
+    );
+    const browse = await fetch(`${BASE_URL}/api/posts?hashtag=${encodeURIComponent('ゲーム')}`);
+    assert.equal(browse.status, 200);
+    const data = (await browse.json()) as { posts: Array<{ id: string }>; count: number };
+    assert.equal(data.count, 2);
+    assert.deepEqual(new Set(data.posts.map((post) => post.id)), new Set(ids.slice(0, 2)));
+  });
+});

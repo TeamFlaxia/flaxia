@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
+import { aggregateTopicTags, type TopicPost } from '../../lib/topics';
 import type { Bindings, Variables } from '../types';
 
 const tags = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
-// GET /api/tags/trending - top hashtags from recent posts
+// GET /api/tags/trending - manual and automatically detected topics from recent posts
 tags.get('/tags/trending', async (c) => {
   try {
     if (!c.env.DB) {
@@ -15,30 +16,14 @@ tags.get('/tags/trending', async (c) => {
     const validRecentCount = Number.isNaN(recentCount) || recentCount < 10 || recentCount > 1000 ? 100 : recentCount;
 
     const result = await c.env.DB.prepare(`
-WITH recent_posts AS (
-  SELECT id, hashtags
-  FROM posts
-  WHERE hidden = 0 AND status = 'published'
-  ORDER BY created_at DESC
-  LIMIT ?
-)
-SELECT
-  value AS tag,
-  COUNT(*) AS count,
-  ROUND(COUNT(*) * 100.0 / ?, 1) AS percentage
-FROM recent_posts, json_each(recent_posts.hashtags)
-GROUP BY value
-ORDER BY count DESC
-LIMIT 5
+      SELECT id, text, hashtags FROM posts
+      WHERE hidden = 0 AND status = 'published' AND parent_id IS NULL
+      ORDER BY created_at DESC, id DESC LIMIT ?
     `)
-      .bind(validRecentCount, validRecentCount)
-      .all();
-
-    if (!result.success) {
-      return c.json({ error: 'Failed to fetch trending tags' }, 500);
-    }
-
-    const tagsList = result.results || [];
+      .bind(validRecentCount)
+      .all<TopicPost>();
+    if (!result.success) return c.json({ error: 'Failed to fetch trending tags' }, 500);
+    const tagsList = aggregateTopicTags(result.results || []);
 
     return c.json({ tags: tagsList }, 200, {
       'Cache-Control': 'public, max-age=60',

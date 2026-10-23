@@ -175,3 +175,39 @@ node --experimental-strip-types scripts/deploy-prior.mjs \
 - `seed` 変更は射影行列を変えるため学習状態をリセットしてください。
 - 大量の `bandit_state` 書き込みを避けるため、報酬更新はイベントバッチごとに
   1 回の読み書きにまとめています。
+
+## Automatic topic signals
+
+`functions/lib/topics.ts` maintains a small, deterministic Japanese/English
+vocabulary for games, programming, AI, music, illustration, anime, photography,
+cooking, travel, sports, science and books. It also preserves normalized custom
+hashtags as interest signals. Latin keywords use word boundaries; URLs and
+mentions do not generate topics. This is a keyword baseline, not a semantic
+classifier: ambiguous context, negation and topics outside the vocabulary can
+still be missed. Extend the vocabulary alongside classification tests.
+
+Tags are derived when reading posts and returned as `topic_tags` in global/tag
+feeds and recommendations. User-authored `hashtags` remain intact. There is no
+migration, external model call or backfill requirement; older posts and edits
+are classified from their current text.
+
+Trending tags count manual and automatic tags once per top-level published,
+visible post. Percentages use the actual sampled post count. Existing Explore
+tag URLs also match automatic topics among the latest 1,000 eligible posts;
+exact manual hashtag matches remain available across the full history.
+
+For You derives a topic profile from up to 80 distinct visible, unblocked posts
+Fresh-ed or bookmarked within the preceding 90 days. Bookmarks weigh 1.5 and
+Fresh weighs 1; overlapping actions use the strongest weight. Interest decays
+with a 30-day half-life and each source post's weight is split across its tags.
+The strongest matching topic produces a bounded affinity score, so adding
+unrelated tags cannot increase affinity. Self-posts do not train this profile.
+
+An additional source takes up to 100 topic matches from the latest 1,000
+eligible posts in the existing 14-day candidate window. The usual visibility,
+trust, duplicate, author-diversity and impression/history rules still apply.
+When a topic profile exists, 30% of the base score is topic affinity and 70%
+is the existing ranking. Users without topic history retain the existing
+ranking. Topic retrieval is intentionally bounded for edge cost; it can miss
+older or less recent matches on high-volume instances. This baseline needs
+engagement evaluation before claiming a measured recommendation improvement.

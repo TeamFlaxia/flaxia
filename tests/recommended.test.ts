@@ -210,3 +210,30 @@ describe('GET /api/posts/recommended — pagination', () => {
     assert.deepEqual(repeated, [], 'the second page must not repeat first-page posts');
   });
 });
+
+describe('GET /api/posts/recommended — automatic topics', () => {
+  beforeEach(resetDb);
+
+  it("prefers the reader's Fresh topic without any embeddings or manual tags", async () => {
+    const reader = await seedUserAndLogin('topic-reader');
+    const source = await seedUserAndLogin('topic-source');
+    const matched = await seedUserAndLogin('topic-matched');
+    const other = await seedUserAndLogin('topic-other');
+    const seed = await createTextPost(source.cookie, 'Godotでゲーム制作の進捗');
+    const response = await fetch(`${BASE_URL}/api/posts/${seed}/fresh`, {
+      method: 'POST',
+      headers: { Cookie: reader.cookie },
+    });
+    assert.equal(response.status, 200);
+    const matchingId = await createTextPost(matched.cookie, 'A new game built in Godot');
+    const unrelatedId = await createTextPost(other.cookie, 'A new recipe for baking sourdough');
+    const feed = await fetch(`${BASE_URL}/api/posts/recommended?limit=20`, { headers: { Cookie: reader.cookie } });
+    assert.equal(feed.status, 200);
+    const data = (await feed.json()) as { posts: Array<{ id: string; topic_tags: string[] }> };
+    const matchIndex = data.posts.findIndex((post) => post.id === matchingId);
+    const otherIndex = data.posts.findIndex((post) => post.id === unrelatedId);
+    assert.ok(matchIndex >= 0 && otherIndex >= 0);
+    assert.ok(matchIndex < otherIndex, 'topic match should outrank equally fresh unrelated content');
+    assert.ok(data.posts[matchIndex].topic_tags.includes('ゲーム'));
+  });
+});
