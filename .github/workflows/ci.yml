@@ -64,6 +64,8 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build
+      - name: Apply migrations before starting the readiness timeout
+        run: npm run migrate:local
       - name: Start dev server and run tests
         run: |
           set -o pipefail
