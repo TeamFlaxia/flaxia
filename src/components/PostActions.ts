@@ -1,8 +1,8 @@
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { type IconName, icon } from '../lib/icons.js';
-import { type PostActionsProps, type ReactionSummary } from '../types/post.js';
 import { createMenuItem } from '../lib/modal-overlay.js';
+import { type PostActionsProps, type ReactionSummary } from '../types/post.js';
 import { openStampPicker } from './StampPicker.js';
 
 let nextActionDropdownId = 0;
