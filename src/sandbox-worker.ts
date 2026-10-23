@@ -4,6 +4,7 @@ import { cors } from 'hono/cors';
 import { isKeyBlocked } from '../functions/lib/scan/db';
 import { MULTIPLAYER_SDK_IIFE } from './lib/multiplayer-sdk.generated';
 import { pdfViewerAssetBody, pdfViewerAssetHeaders } from './lib/pdf-viewer-page';
+import { cacheWvfsResponse } from './lib/wvfs-response-cache';
 import {
   copyHtmlToWvfs,
   ensureFileInWvfs,
@@ -128,13 +129,14 @@ app.get('/zip-preview.html', (c) => serveZipPreviewAsset(c, '/zip-preview.html')
 app.get('/zip-preview.js', (c) => serveZipPreviewAsset(c, '/zip-preview.js'));
 app.get('/zip-preview-protocol.js', (c) => serveZipPreviewAsset(c, '/zip-preview-protocol.js'));
 
-app.get('/api/wvfs-zip/:postId/*', async (c) => {
+async function serveWvfsFile(
+  c: Context<{ Bindings: Bindings }>,
+  postId: string,
+  filePath: string,
+  requestedVersion?: string,
+): Promise<Response> {
   try {
-    const postId = c.req.param('postId');
-    let versionId = c.req.query('v') ?? undefined;
-    const fullPath = c.req.path;
-    const basePath = `/api/wvfs-zip/${postId}`;
-    const filePath = fullPath.replace(basePath, '').replace(/^\//, '') || 'index.html';
+    let versionId = requestedVersion;
 
     if (!c.env.BUCKET) {
       return c.json({ error: 'Storage not available' }, 500);
@@ -144,6 +146,7 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
     // CDN-cached WVFS files are immutable, so a blocked archive can otherwise
     // keep serving extracted bytes after the scan verdict lands.
     let zipKey: string | null = null;
+    let payloadEtag: string | undefined;
 
     if (!versionId && c.env.DB) {
       try {
@@ -158,7 +161,10 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
             versionId = versionMatch[1];
           } else {
             const obj = await c.env.BUCKET.head(postResult.payload_key);
-            if (obj) zipKey = postResult.payload_key;
+            if (obj) {
+              zipKey = postResult.payload_key;
+              payloadEtag = obj.etag;
+            }
           }
         }
       } catch {
@@ -175,7 +181,10 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
           .first()) as { payload_key: string } | null;
         if (versionResult?.payload_key) {
           const obj = await c.env.BUCKET.head(versionResult.payload_key);
-          if (obj) zipKey = versionResult.payload_key;
+          if (obj) {
+            zipKey = versionResult.payload_key;
+            payloadEtag = obj.etag;
+          }
         }
       } catch {
         // proceed without version lookup on DB failure
@@ -191,7 +200,10 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
           .first()) as { payload_key: string } | null;
         if (adResult?.payload_key) {
           const obj = await c.env.BUCKET.head(adResult.payload_key);
-          if (obj) zipKey = adResult.payload_key;
+          if (obj) {
+            zipKey = adResult.payload_key;
+            payloadEtag = obj.etag;
+          }
         }
       } catch {
         // proceed without ad lookup on DB failure
@@ -207,6 +219,7 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
         const obj = await c.env.BUCKET.head(key);
         if (obj) {
           zipKey = key;
+          payloadEtag = obj.etag;
           break;
         }
       }
@@ -220,51 +233,66 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
       return c.text('Not found', 404);
     }
 
-    // 2. Try pre-extracted R2 files (fast path — persists across workers, CDN-cacheable)
-    let response = await serveFileFromR2(c.env.BUCKET, postId, filePath, versionId);
-    if (response) return withCsp(response);
+    // The scan gate above runs even on cache hits. Key by the actual archive
+    // revision, not just the public URL, which can point to a new release.
+    const sourceKey = zipKey;
+    const source = payloadEtag ? { key: sourceKey, etag: payloadEtag } : undefined;
+    const response = await cacheWvfsResponse(
+      c.req.raw,
+      { postId, filePath, versionId, payloadKey: sourceKey, payloadEtag },
+      async () => {
+        // 2. Try pre-extracted R2 files (fast path — persists across workers, CDN-cacheable)
+        let response = await serveFileFromR2(c.env.BUCKET, postId, filePath, versionId, source);
+        if (response) return response;
 
-    // 3. Try in-memory cache (second fast path)
-    response = await serveFileFromWvfs(postId, filePath, versionId);
-    if (response) return withCsp(response);
+        // 3. Try in-memory cache (second fast path)
+        response = await serveFileFromWvfs(postId, filePath, versionId, source);
+        if (response) return response;
 
-    // 3a. Direct HTML file — serve from R2 directly (not a ZIP)
-    if (zipKey.endsWith('.html')) {
-      const obj = await c.env.BUCKET.get(zipKey);
-      if (obj) {
-        const htmlContent = await obj.text();
-        const withoutCsp = htmlContent.replace(/<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*\/?>/gi, '');
-        const modifiedHtml = injectBaseTag(withoutCsp, postId);
-        c.executionCtx.waitUntil(copyHtmlToWvfs(c.env.BUCKET, zipKey, postId));
-        return withCsp(
-          new Response(modifiedHtml, {
-            headers: {
-              'Content-Type': 'text/html',
-              'Cache-Control': 'public, max-age=3600',
-              'Access-Control-Allow-Origin': '*',
-            },
-          }),
-        );
-      }
-    }
+        // 3a. Direct HTML file — serve from R2 directly (not a ZIP)
+        if (sourceKey.endsWith('.html')) {
+          const obj = await c.env.BUCKET.get(sourceKey, {
+            onlyIf: source ? { etagMatches: source.etag } : undefined,
+          });
+          if (obj && 'text' in obj) {
+            const htmlContent = await obj.text();
+            const withoutCsp = htmlContent.replace(
+              /<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*\/?>/gi,
+              '',
+            );
+            const modifiedHtml = injectBaseTag(withoutCsp, postId);
+            c.executionCtx.waitUntil(copyHtmlToWvfs(c.env.BUCKET, sourceKey, postId, source));
+            return new Response(modifiedHtml, {
+              headers: {
+                'Content-Type': 'text/html',
+                'Cache-Control': 'public, max-age=3600',
+                'Access-Control-Allow-Origin': '*',
+              },
+            });
+          }
+        }
 
-    // 4. Try progressive extraction: parse central dir + extract just this file
-    const loaded = await ensureFileInWvfs(c.env.BUCKET, zipKey, postId, filePath, versionId);
-    if (loaded) {
-      response = await serveFileFromWvfs(postId, filePath, versionId);
-      if (response) {
-        // Persist just this file to R2 so subsequent requests skip extraction.
-        // Deliberately not a full-archive extraction: that would exceed the
-        // CPU/subrequest limits on the free plan.
-        c.executionCtx.waitUntil(persistFileToWvfsR2(c.env.BUCKET, postId, filePath, versionId));
-        return withCsp(response);
-      }
-    }
+        // 4. Try progressive extraction: parse central dir + extract just this file
+        const loaded = await ensureFileInWvfs(c.env.BUCKET, sourceKey, postId, filePath, versionId, source);
+        if (loaded) {
+          response = await serveFileFromWvfs(postId, filePath, versionId, source);
+          if (response) {
+            // Persist just this file to R2 so subsequent requests skip extraction.
+            // Deliberately not a full-archive extraction: that would exceed the
+            // CPU/subrequest limits on the free plan.
+            c.executionCtx.waitUntil(persistFileToWvfsR2(c.env.BUCKET, postId, filePath, versionId, source));
+            return response;
+          }
+        }
 
-    // 5. Lazy extraction failed — the requested file is not present in this ZIP.
-    // Avoid full-archive decompression in the request path (CPU time limit).
-    console.warn(`WVFS: File not found after lazy extraction: ${filePath} (zipKey: ${zipKey})`);
-    return c.text('Not found', 404);
+        // 5. Lazy extraction failed — the requested file is not present in this ZIP.
+        // Avoid full-archive decompression in the request path (CPU time limit).
+        console.warn(`WVFS: File not found after lazy extraction: ${filePath} (sourceKey: ${sourceKey})`);
+        return c.text('Not found', 404);
+      },
+      (pending) => c.executionCtx.waitUntil(pending),
+    );
+    return withCsp(response);
   } catch (error: unknown) {
     console.error('WVFS error:', error);
     if (error instanceof Error && error.message.includes('Path traversal')) {
@@ -272,6 +300,13 @@ app.get('/api/wvfs-zip/:postId/*', async (c) => {
     }
     return c.text('Internal server error', 500);
   }
+}
+
+app.get('/api/wvfs-zip/:postId/*', (c) => {
+  const postId = c.req.param('postId');
+  const basePath = `/api/wvfs-zip/${postId}`;
+  const filePath = c.req.path.replace(basePath, '').replace(/^\//, '') || 'index.html';
+  return serveWvfsFile(c, postId, filePath, c.req.query('v'));
 });
 
 app.get('/', (c) => c.json({ status: 'ok', worker: 'flaxia-sandbox' }, 200));
@@ -382,10 +417,7 @@ app.notFound(async (c) => {
       }
     })();
     const filePath = c.req.path.replace(/^\//, '') || 'index.html';
-    let response = await serveFileFromR2(c.env.BUCKET, postId, filePath, versionId);
-    if (response) return withCsp(response);
-    response = await serveFileFromWvfs(postId, filePath, versionId);
-    if (response) return withCsp(response);
+    return serveWvfsFile(c, postId, filePath, versionId);
   }
   return c.text('Not found', 404);
 });

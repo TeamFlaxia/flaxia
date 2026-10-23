@@ -20,6 +20,28 @@ function wvfsBase(postId: string, versionId?: string | null): string {
   return versionId ? `${WVFS_R2_PREFIX}${postId}/${versionId}` : `${WVFS_R2_PREFIX}${postId}`;
 }
 
+export interface WvfsSource {
+  key: string;
+  etag: string;
+}
+
+function memoryKey(postId: string, versionId?: string | null, source?: WvfsSource): string {
+  const base = wvfsBase(postId, versionId);
+  return source ? `${base}:${JSON.stringify([source.key, source.etag])}` : base;
+}
+
+function sourceMetadata(source?: WvfsSource): Record<string, string> | undefined {
+  return source ? { 'wvfs-source-key': source.key, 'wvfs-source-etag': source.etag } : undefined;
+}
+
+function matchesSource(object: R2Object, source?: WvfsSource): boolean {
+  return (
+    !source ||
+    (object.customMetadata?.['wvfs-source-key'] === source.key &&
+      object.customMetadata?.['wvfs-source-etag'] === source.etag)
+  );
+}
+
 // Maximum files to persist to R2 in a single invocation. Keeps the number of
 // subrequests under the Workers Free plan limit (50 per invocation):
 // 1 head + 1 tail + 1 central dir + 1 manifest get + 3 * files + 1 manifest put.
@@ -44,7 +66,7 @@ interface WvfsEntry {
 const wvfsStorage = new Map<string, WvfsEntry>();
 
 // Cache of rewritten HTML (base tag + CSP removal) to avoid re-running the
-// rewrite regexes on every request. Keyed by `postId:resolvedPath`.
+// rewrite regexes on every request. Include the source revision in the key.
 const HTML_CACHE_MAX = 512;
 const htmlCache = new Map<string, Uint8Array>();
 
@@ -226,11 +248,17 @@ export function validateZipStructure(zipData: Uint8Array): void {
 // Extract a single file from a ZIP stored in R2 using range requests.
 // Avoids downloading and decompressing the entire archive.
 // This avoids downloading the entire ZIP before serving the first file.
-async function extractFileFromR2(bucket: R2Bucket, zipKey: string, entry: ZipIndexEntry): Promise<Uint8Array | null> {
+async function extractFileFromR2(
+  bucket: R2Bucket,
+  zipKey: string,
+  entry: ZipIndexEntry,
+  source?: WvfsSource,
+): Promise<Uint8Array | null> {
   try {
+    const onlyIf = source ? { etagMatches: source.etag } : undefined;
     // Read local file header (30 bytes) to get filename length and extra field length
-    const headerBuf = await bucket.get(zipKey, { range: { offset: entry.localHeaderOffset, length: 30 } });
-    if (!headerBuf) return null;
+    const headerBuf = await bucket.get(zipKey, { range: { offset: entry.localHeaderOffset, length: 30 }, onlyIf });
+    if (!headerBuf || !('arrayBuffer' in headerBuf)) return null;
     const headerArr = new Uint8Array(await headerBuf.arrayBuffer());
     const headerView = new DataView(headerArr.buffer, headerArr.byteOffset);
 
@@ -241,8 +269,8 @@ async function extractFileFromR2(bucket: R2Bucket, zipKey: string, entry: ZipInd
 
     // Read the compressed data portion
     const dataOffset = entry.localHeaderOffset + 30 + fileNameLen + extraLen;
-    const dataChunk = await bucket.get(zipKey, { range: { offset: dataOffset, length: entry.compressedSize } });
-    if (!dataChunk) return null;
+    const dataChunk = await bucket.get(zipKey, { range: { offset: dataOffset, length: entry.compressedSize }, onlyIf });
+    if (!dataChunk || !('arrayBuffer' in dataChunk)) return null;
     const compressedData = new Uint8Array(await dataChunk.arrayBuffer());
 
     if (entry.compressionMethod === 0) {
@@ -409,10 +437,11 @@ export async function ensureFileInWvfs(
   postId: string,
   filePath: string,
   versionId?: string | null,
+  source?: WvfsSource,
 ): Promise<boolean> {
   cleanupExpiredEntries();
 
-  const entry = wvfsStorage.get(wvfsBase(postId, versionId));
+  const entry = wvfsStorage.get(memoryKey(postId, versionId, source));
 
   // Already fully extracted — just check if file exists
   if (entry && !entry.index) {
@@ -445,7 +474,7 @@ export async function ensureFileInWvfs(
     const existing = findFileInMap(entry.data, resolvedIndexPath);
     if (existing) return true;
 
-    const fileData = await extractFileFromR2(bucket, zipKey, indexEntry);
+    const fileData = await extractFileFromR2(bucket, zipKey, indexEntry, source);
     if (!fileData) return false;
 
     entry.data.set(resolvedIndexPath, fileData);
@@ -455,18 +484,20 @@ export async function ensureFileInWvfs(
   // No entry at all — parse central directory first
   const head = await bucket.head(zipKey);
   if (!head) return false;
+  if (source && head.etag !== source.etag) return false;
+  const onlyIf = source ? { etagMatches: source.etag } : undefined;
 
   // Read last 64KB (or entire file if smaller) to find EOCD + central directory
   const tailSize = Math.min(head.size, 65536);
-  const tailObj = await bucket.get(zipKey, { range: { offset: head.size - tailSize, length: tailSize } });
-  if (!tailObj) return false;
+  const tailObj = await bucket.get(zipKey, { range: { offset: head.size - tailSize, length: tailSize }, onlyIf });
+  if (!tailObj || !('arrayBuffer' in tailObj)) return false;
   const tailData = new Uint8Array(await tailObj.arrayBuffer());
 
   const eocd = findEocd(tailData);
   if (!eocd) return false;
 
-  const cdObj = await bucket.get(zipKey, { range: { offset: eocd.cdOffset, length: eocd.cdSize } });
-  if (!cdObj) return false;
+  const cdObj = await bucket.get(zipKey, { range: { offset: eocd.cdOffset, length: eocd.cdSize }, onlyIf });
+  if (!cdObj || !('arrayBuffer' in cdObj)) return false;
   const cdData = new Uint8Array(await cdObj.arrayBuffer());
 
   // #80: the serve path must enforce the same archive policy as the upload
@@ -499,13 +530,13 @@ export async function ensureFileInWvfs(
 
   if (!indexEntry) return false;
 
-  const fileData = await extractFileFromR2(bucket, zipKey, indexEntry);
+  const fileData = await extractFileFromR2(bucket, zipKey, indexEntry, source);
   if (!fileData) return false;
 
   const fileMap = new Map<string, Uint8Array>();
   fileMap.set(resolvedIndexPath, fileData);
 
-  wvfsStorage.set(wvfsBase(postId, versionId), {
+  wvfsStorage.set(memoryKey(postId, versionId, source), {
     data: fileMap,
     createdAt: Date.now(),
     index,
@@ -607,10 +638,11 @@ export async function serveFileFromWvfs(
   postId: string,
   filePath: string,
   versionId?: string | null,
+  source?: WvfsSource,
 ): Promise<Response | null> {
   cleanupExpiredEntries();
 
-  const entry = wvfsStorage.get(wvfsBase(postId, versionId));
+  const entry = wvfsStorage.get(memoryKey(postId, versionId, source));
   if (!entry) {
     console.log(`WVFS: No file map found for postId: ${postId}`);
     return null;
@@ -649,7 +681,7 @@ export async function serveFileFromWvfs(
     const ext = resolvedPath.split('.').pop()?.toLowerCase();
 
     if (ext === 'html') {
-      const cacheKey = `${wvfsBase(postId, versionId)}:${resolvedPath}`;
+      const cacheKey = `${memoryKey(postId, versionId, source)}:${resolvedPath}`;
       let cached = htmlCache.get(cacheKey);
       if (!cached) {
         const htmlContent = new TextDecoder().decode(fileData);
@@ -764,8 +796,11 @@ export function injectBaseTag(htmlContent: string, postId: string, subPath: stri
 export async function cleanupWvfsZip(postId: string, versionId?: string | null): Promise<void> {
   cleanupExpiredEntries();
   try {
-    wvfsStorage.delete(wvfsBase(postId, versionId));
-    const prefix = `${wvfsBase(postId, versionId)}:`;
+    const base = wvfsBase(postId, versionId);
+    for (const key of wvfsStorage.keys()) {
+      if (key === base || key.startsWith(`${base}:`)) wvfsStorage.delete(key);
+    }
+    const prefix = `${base}:`;
     for (const key of htmlCache.keys()) {
       if (key.startsWith(prefix)) {
         htmlCache.delete(key);
@@ -794,24 +829,26 @@ export async function extractZipToR2(
       console.error(`extractZipToR2: ZIP not found at ${zipKey}`);
       return 0;
     }
+    const source = head.etag ? { key: zipKey, etag: head.etag } : undefined;
+    const onlyIf = source ? { etagMatches: source.etag } : undefined;
 
     const tailSize = Math.min(head.size, 65536);
-    const tailObj = await bucket.get(zipKey, { range: { offset: head.size - tailSize, length: tailSize } });
-    if (!tailObj) return 0;
+    const tailObj = await bucket.get(zipKey, { range: { offset: head.size - tailSize, length: tailSize }, onlyIf });
+    if (!tailObj || !('arrayBuffer' in tailObj)) return 0;
     const tailData = new Uint8Array(await tailObj.arrayBuffer());
 
     const eocd = findEocd(tailData);
     if (!eocd) return 0;
 
-    const cdObj = await bucket.get(zipKey, { range: { offset: eocd.cdOffset, length: eocd.cdSize } });
-    if (!cdObj) return 0;
+    const cdObj = await bucket.get(zipKey, { range: { offset: eocd.cdOffset, length: eocd.cdSize }, onlyIf });
+    if (!cdObj || !('arrayBuffer' in cdObj)) return 0;
     const cdData = new Uint8Array(await cdObj.arrayBuffer());
 
     validateZipCentralDirectory(cdData, eocd.cdEntries);
 
     const index = parseCentralDirectory(cdData);
     const manifestKey = `${wvfsBase(postId, versionId)}/.wvfs-manifest`;
-    const existing = new Set(await readWvfsManifest(bucket, postId, versionId));
+    const existing = new Set(await readWvfsManifest(bucket, postId, versionId, source));
 
     // Deterministic order: extract the earliest files first (index.html + core assets).
     const entries = [...index.entries()].sort((a, b) => a[1].localHeaderOffset - b[1].localHeaderOffset);
@@ -823,7 +860,7 @@ export async function extractZipToR2(
       if (newFiles.length >= maxFiles) break;
       if (existing.has(fileName)) continue;
 
-      const fileData = await extractFileFromR2(bucket, zipKey, entry);
+      const fileData = await extractFileFromR2(bucket, zipKey, entry, source);
       if (!fileData) continue;
 
       const r2Key = `${wvfsBase(postId, versionId)}/${fileName}`;
@@ -832,6 +869,7 @@ export async function extractZipToR2(
         bucket
           .put(r2Key, fileData, {
             httpMetadata: { contentType },
+            customMetadata: sourceMetadata(source),
           })
           .then(() => {}),
       );
@@ -842,6 +880,7 @@ export async function extractZipToR2(
       await Promise.all(puts);
       await bucket.put(manifestKey, JSON.stringify({ files: [...existing, ...newFiles] }), {
         httpMetadata: { contentType: 'application/json' },
+        customMetadata: sourceMetadata(source),
       });
     }
 
@@ -856,9 +895,14 @@ export async function extractZipToR2(
 }
 
 // Read the list of files already persisted under wvfs/{postId} (or a version).
-async function readWvfsManifest(bucket: R2Bucket, postId: string, versionId?: string | null): Promise<string[]> {
+async function readWvfsManifest(
+  bucket: R2Bucket,
+  postId: string,
+  versionId?: string | null,
+  source?: WvfsSource,
+): Promise<string[]> {
   const manifestObj = await bucket.get(`${wvfsBase(postId, versionId)}/.wvfs-manifest`);
-  if (!manifestObj) return [];
+  if (!manifestObj || !matchesSource(manifestObj, source)) return [];
   try {
     const manifest = JSON.parse(await manifestObj.text()) as { files?: string[] };
     return Array.isArray(manifest.files) ? manifest.files : [];
@@ -869,20 +913,28 @@ async function readWvfsManifest(bucket: R2Bucket, postId: string, versionId?: st
 
 // Copy a raw HTML file from R2 to the WVFS cache as index.html.
 // Used for direct HTML uploads (non-ZIP).
-export async function copyHtmlToWvfs(bucket: R2Bucket, htmlKey: string, postId: string): Promise<void> {
+export async function copyHtmlToWvfs(
+  bucket: R2Bucket,
+  htmlKey: string,
+  postId: string,
+  source?: WvfsSource,
+): Promise<void> {
   try {
-    const obj = await bucket.get(htmlKey);
-    if (!obj) {
+    const obj = await bucket.get(htmlKey, { onlyIf: source ? { etagMatches: source.etag } : undefined });
+    if (!obj || !('text' in obj)) {
       console.error(`copyHtmlToWvfs: HTML not found at ${htmlKey}`);
       return;
     }
     const r2Key = `${WVFS_R2_PREFIX}${postId}/index.html`;
     const htmlContent = await obj.text();
+    source ??= obj.etag ? { key: htmlKey, etag: obj.etag } : undefined;
     await bucket.put(r2Key, htmlContent, {
       httpMetadata: { contentType: 'text/html' },
+      customMetadata: sourceMetadata(source),
     });
     await bucket.put(`${WVFS_R2_PREFIX}${postId}/.wvfs-manifest`, JSON.stringify({ files: ['index.html'] }), {
       httpMetadata: { contentType: 'application/json' },
+      customMetadata: sourceMetadata(source),
     });
     console.log(`copyHtmlToWvfs: Copied HTML to ${r2Key} for post ${postId}`);
   } catch (error) {
@@ -898,9 +950,10 @@ export async function persistFileToWvfsR2(
   postId: string,
   filePath: string,
   versionId?: string | null,
+  source?: WvfsSource,
 ): Promise<void> {
   try {
-    const entry = wvfsStorage.get(wvfsBase(postId, versionId));
+    const entry = wvfsStorage.get(memoryKey(postId, versionId, source));
     if (!entry) return;
 
     const normalizedPath = normalizePath(filePath);
@@ -925,13 +978,14 @@ export async function persistFileToWvfsR2(
 
     const r2Key = `${wvfsBase(postId, versionId)}/${resolvedPath}`;
     const contentType = getMimeType(resolvedPath);
-    await bucket.put(r2Key, fileData, { httpMetadata: { contentType } });
+    await bucket.put(r2Key, fileData, { httpMetadata: { contentType }, customMetadata: sourceMetadata(source) });
 
-    const existing = await readWvfsManifest(bucket, postId, versionId);
+    const existing = await readWvfsManifest(bucket, postId, versionId, source);
     if (!existing.includes(resolvedPath)) {
       existing.push(resolvedPath);
       await bucket.put(`${wvfsBase(postId, versionId)}/.wvfs-manifest`, JSON.stringify({ files: existing }), {
         httpMetadata: { contentType: 'application/json' },
+        customMetadata: sourceMetadata(source),
       });
     }
   } catch (error) {
@@ -946,6 +1000,7 @@ export async function serveFileFromR2(
   postId: string,
   filePath: string,
   versionId?: string | null,
+  source?: WvfsSource,
 ): Promise<Response | null> {
   try {
     const normalizedPath = normalizePath(filePath);
@@ -968,7 +1023,7 @@ export async function serveFileFromR2(
       const fileName = normalizedPath.split('/').pop()?.toLowerCase();
       if (fileName === 'index.html' || fileName === 'index.htm') {
         const manifestObj = await bucket.get(baseKey + '.wvfs-manifest');
-        if (manifestObj) {
+        if (manifestObj && matchesSource(manifestObj, source)) {
           try {
             const manifest = JSON.parse(await manifestObj.text()) as { files: string[] };
             const indexFiles = manifest.files.filter((f: string) => {
@@ -991,13 +1046,14 @@ export async function serveFileFromR2(
       }
     }
 
-    if (!obj) return null;
+    // Untagged legacy files and files from another archive must be re-extracted.
+    if (!obj || !matchesSource(obj, source)) return null;
 
     const contentType = getMimeType(resolvedPath);
     const ext = resolvedPath.split('.').pop()?.toLowerCase();
 
     if (ext === 'html') {
-      const cacheKey = `${wvfsBase(postId, versionId)}:${resolvedPath}`;
+      const cacheKey = `${memoryKey(postId, versionId, source)}:${resolvedPath}`;
       let cached = htmlCache.get(cacheKey);
       if (cached) {
         return new Response(new Uint8Array(cached), {
