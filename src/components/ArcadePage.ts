@@ -167,6 +167,8 @@ export class ArcadePage {
     const container = document.createElement('div');
     container.className = 'arcade-page';
     container.style.cssText = `
+      width: 100%;
+      min-width: 0;
       flex: 1;
       display: flex;
       flex-direction: column;
@@ -179,11 +181,9 @@ export class ArcadePage {
     const header = document.createElement('div');
     header.className = 'arcade-header';
     header.style.cssText = `
-      padding: 0.4rem 0.75rem;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
+      width: 100%;
+      min-width: 0;
+      flex: 0 0 auto;
     `;
 
     if (this.props.onBack) {
@@ -191,43 +191,18 @@ export class ArcadePage {
       backBtn.className = 'arcade-back-btn';
       backBtn.textContent = t('arcade.back');
       backBtn.title = t('arcade.back');
-      backBtn.style.cssText = `
-        background: none;
-        border: none;
-        font-size: 0.85rem;
-        cursor: pointer;
-        color: var(--text-primary);
-        padding: 0.15rem 0.35rem;
-        border-radius: 4px;
-        line-height: 1;
-        transition: background 0.2s;
-      `;
-      backBtn.addEventListener('mouseenter', () => {
-        backBtn.style.background = 'var(--bg-hover, rgba(255,255,255,0.1))';
-      });
-      backBtn.addEventListener('mouseleave', () => {
-        backBtn.style.background = 'none';
-      });
       backBtn.addEventListener('click', () => this.props.onBack?.());
       header.appendChild(backBtn);
     }
 
     const titleGroup = document.createElement('div');
-    titleGroup.style.cssText = 'display: flex; flex-direction: column;';
+    titleGroup.className = 'arcade-header-title-group';
 
     const title = document.createElement('h1');
-    title.style.cssText = `
-      margin: 0;
-      font-size: 1rem;
-      font-weight: 600;
-      color: var(--text-primary);
-      white-space: nowrap;
-      display: flex;
-      align-items: center;
-      gap: 0.4rem;
-    `;
+    title.className = 'arcade-header-title';
     const titleIcon = icon('arcade', { width: '18', height: '18' });
     const titleText = document.createElement('span');
+    titleText.className = 'arcade-header-title-text';
     titleText.textContent = t('arcade.title');
     title.appendChild(titleIcon);
     title.appendChild(titleText);
@@ -235,63 +210,30 @@ export class ArcadePage {
     titleGroup.appendChild(title);
     header.appendChild(titleGroup);
 
-    // Spacer to push upload/tutorial buttons to the right
+    // Keep the header full-width and group actions at the trailing edge.
     const headerSpacer = document.createElement('div');
-    headerSpacer.style.cssText = 'flex: 1;';
+    headerSpacer.className = 'arcade-header-spacer';
+    const headerActions = document.createElement('div');
+    headerActions.className = 'arcade-header-actions';
 
     // Upload game button
     const uploadBtn = document.createElement('button');
+    uploadBtn.className = 'arcade-header-action';
     uploadBtn.textContent = t('arcade.upload_btn');
     uploadBtn.title = t('arcade.upload_title');
-    uploadBtn.style.cssText = `
-      background: none;
-      border: none;
-      font-size: 1.2rem;
-      cursor: pointer;
-      color: var(--text-muted);
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-      line-height: 1;
-      transition: color 0.2s, background 0.2s;
-    `;
-    uploadBtn.addEventListener('mouseenter', () => {
-      uploadBtn.style.color = 'var(--text-primary)';
-      uploadBtn.style.background = 'var(--bg-hover, rgba(255,255,255,0.1))';
-    });
-    uploadBtn.addEventListener('mouseleave', () => {
-      uploadBtn.style.color = 'var(--text-muted)';
-      uploadBtn.style.background = 'none';
-    });
     uploadBtn.addEventListener('click', () => this.handleUploadClick());
 
     // Tutorial button
     const tutorialBtn = document.createElement('button');
+    tutorialBtn.className = 'arcade-header-action';
     tutorialBtn.textContent = t('arcade.tutorial_btn');
     tutorialBtn.title = 'Tutorial';
-    tutorialBtn.style.cssText = `
-      background: none;
-      border: none;
-      font-size: 1.2rem;
-      cursor: pointer;
-      color: var(--text-muted);
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-      line-height: 1;
-      transition: color 0.2s, background 0.2s;
-    `;
-    tutorialBtn.addEventListener('mouseenter', () => {
-      tutorialBtn.style.color = 'var(--text-primary)';
-      tutorialBtn.style.background = 'var(--bg-hover, rgba(255,255,255,0.1))';
-    });
-    tutorialBtn.addEventListener('mouseleave', () => {
-      tutorialBtn.style.color = 'var(--text-muted)';
-      tutorialBtn.style.background = 'none';
-    });
     tutorialBtn.addEventListener('click', () => this.showTutorial());
 
+    headerActions.appendChild(uploadBtn);
+    headerActions.appendChild(tutorialBtn);
     header.appendChild(headerSpacer);
-    header.appendChild(uploadBtn);
-    header.appendChild(tutorialBtn);
+    header.appendChild(headerActions);
 
     // Game container (vertical scroll area)
     const gameContainer = document.createElement('div');
