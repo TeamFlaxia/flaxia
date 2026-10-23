@@ -224,7 +224,7 @@ export class PostCard {
 
     // Poll section
     if (this.props.post.poll) {
-      const pollEl = createPollElement({ ...this.props.post.poll, expired: false });
+      const pollEl = createPollElement(this.props.post.poll);
       container.appendChild(pollEl);
     }
 
