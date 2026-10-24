@@ -1,4 +1,4 @@
-"""Exercise the actual release binary with WebKitWebDriver; no mocked API/UI."""
+"""Real production TL plus a clearly separate, test-only offline-game fixture."""
 
 import base64
 import json
@@ -99,6 +99,26 @@ def wait_for_timeline(offline):
     raise AssertionError("Native timeline did not become ready: " + json.dumps(state, ensure_ascii=False))
 
 
+def game_harness(method):
+    command("POST", "/session/" + session + "/url",
+            {"url": "tauri://localhost/__native-game-test.html"})
+    deadline = time.monotonic() + 60
+    while not execute("return Boolean(window.nativeGameHarness)"):
+        if time.monotonic() > deadline:
+            raise AssertionError("Game harness did not load")
+        time.sleep(0.25)
+    execute("window.nativeGameHarness." + method +
+            "().then(r => window.harnessResult = {ok:true, value:r}).catch(e => window.harnessResult = {ok:false,error:String(e)});")
+    result = None
+    while time.monotonic() < deadline:
+        result = execute("return window.harnessResult || null")
+        if result:
+            assert result["ok"], result
+            return result["value"]
+        time.sleep(0.25)
+    raise AssertionError("Game harness timed out: " + str(result))
+
+
 firewall = False
 desktop = subprocess.Popen(["openbox"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 with (OUTPUT / "driver.log").open("w") as log:
@@ -129,9 +149,32 @@ with (OUTPUT / "driver.log").open("w") as log:
         offline = wait_for_timeline(True)
         assert offline["posts"] > 0 and online["posts"] > 0
         capture("timeline-offline-cold-start")
+        # This fixture uses a mock account/publication descriptor, actual ZIP
+        # extraction/IndexedDB/player, and the same real HTTPS firewall block.
+        assert game_harness("prepare") == "saved"
+        stop_app()
+        start_app()
+        game = game_harness("play")
+        assert game == {"played": True, "networkRequests": 0, "saved": 1}, game
+        frame = command("POST", "/session/" + session + "/element",
+                        {"using": "css selector", "value": "iframe"})
+        command("POST", "/session/" + session + "/frame", {"id": frame})
+        deadline = time.monotonic() + 30
+        details = None
+        while time.monotonic() < deadline:
+            details = execute("return document.querySelector('#result')?.textContent || null")
+            if details:
+                break
+            time.sleep(0.25)
+        assert json.loads(details or "null") == {"parentBlocked": True, "bridgeBlocked": True, "asset": 42}, details
+        execute("document.querySelector('#counter').click(); document.querySelector('#counter').click();")
+        assert execute("return document.querySelector('#counter').textContent") == "2"
+        command("POST", "/session/" + session + "/frame", {"id": None})
+        capture("downloaded-game-offline")
         (OUTPUT / "result.json").write_text(json.dumps({
             "binary": BINARY, "online": online, "offline_cold_start": offline,
             "network": "Outbound TCP/443 rejected by iptables for the offline phase",
+            "downloaded_game_fixture": game,
         }, ensure_ascii=False, indent=2))
     except Exception:
         capture("failure")

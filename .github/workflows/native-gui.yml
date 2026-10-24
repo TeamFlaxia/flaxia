@@ -42,7 +42,9 @@ jobs:
           workspaces: 'src-tauri -> target'
       - run: npm ci --ignore-scripts
       - name: Build the release desktop application with bundled UI
-        run: npm run tauri:build -- --no-bundle
+        run: >-
+          npm run tauri:build -- --no-bundle --config
+          '{"build":{"beforeBuildCommand":"npm run build && node scripts/build-native-game-harness.mjs"}}'
       - name: Install native WebKit automation driver
         run: cargo install tauri-driver --version 2.1.0 --locked
       - name: Verify the real native timeline online and after an offline cold start
