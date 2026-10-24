@@ -152,6 +152,28 @@ describe('NSFW verdict binding', () => {
     assert.equal(scanRow(sqlite).task_id, 'task-old', 'an unchanged image keeps its verdict');
   });
 
+  it('admin rechecks completed historical verdicts and clears prior approval while pending', async () => {
+    const bytes = encoder.encode('historical image bytes');
+    const bucket = memoryBucket(new Map([[MEDIA_KEY, bytes]]));
+    const { db, sqlite } = testDb();
+    try {
+      seedPost(sqlite);
+      await ensureNsfwScansTable(db);
+      sqlite
+        .prepare(`INSERT INTO post_nsfw_scans
+        (post_id, media_key, status, task_id, content_sha, ai_passed) VALUES (?, ?, 'done', 'old', ?, 1)`)
+        .run(POST_ID, MEDIA_KEY, bytesToHex(sha256(bytes)));
+      const submitted = await withSubmitStub(() =>
+        submitDetectNsfw(db, crowdEnv(bucket), POST_ID, MEDIA_KEY, { respectThrottle: false, recheckCompleted: true }),
+      );
+      assert.equal(submitted, true);
+      assert.equal(scanRow(sqlite).status, 'submitted');
+      assert.equal(sqlite.prepare('SELECT ai_passed FROM post_nsfw_scans').get()?.ai_passed, null);
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it('re-screens a legacy verdict that has no content hash', async () => {
     const bytes = encoder.encode('legacy scanned bytes');
     const bucket = memoryBucket(new Map([[MEDIA_KEY, bytes]]));

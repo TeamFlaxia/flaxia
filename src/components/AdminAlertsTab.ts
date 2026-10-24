@@ -76,6 +76,59 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
     }
   };
 
+  const markNsfw = async (postId: string): Promise<boolean> => {
+    try {
+      const response = await fetch(`/api/admin/posts/${encodeURIComponent(postId)}/nsfw`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error('Failed to mark post as NSFW');
+      return true;
+    } catch (error) {
+      console.error('Mark post NSFW error:', error);
+      return false;
+    }
+  };
+
+  // Available even when no reports have been submitted.
+  const createNsfwForm = () => {
+    const form = document.createElement('form');
+    form.style.cssText = 'display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 24px;';
+    const label = document.createElement('label');
+    label.textContent = t('admin_alerts.nsfw_post_id');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.required = true;
+    input.style.cssText =
+      'margin-left: 8px; padding: 8px; color: #f1f5f9; background: #1e293b; border: 1px solid #64748b;';
+    label.appendChild(input);
+    form.appendChild(label);
+    const submit = document.createElement('button');
+    submit.type = 'submit';
+    submit.textContent = t('admin_alerts.mark_nsfw');
+    submit.style.cssText =
+      'background: #334155; color: #f1f5f9; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;';
+    form.appendChild(submit);
+    const status = document.createElement('span');
+    status.setAttribute('role', 'status');
+    form.appendChild(status);
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const postId = input.value.trim();
+      if (!postId || submit.disabled) return;
+      submit.disabled = true;
+      status.textContent = '';
+      try {
+        if (!(await createConfirmDialog(t('admin_alerts.nsfw_confirm', { id: postId })))) return;
+        const success = await markNsfw(postId);
+        status.textContent = t(success ? 'admin_alerts.nsfw_success' : 'admin_alerts.nsfw_error');
+      } finally {
+        submit.disabled = false;
+      }
+    });
+    return form;
+  };
+
   const formatTimeAgo = (dateStr: string): string => {
     const date = new Date(dateStr);
     const now = new Date();
@@ -235,6 +288,28 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
     });
     actions.appendChild(hideBtn);
 
+    if (alert.category !== 'csam' && alert.category !== 'malware') {
+      const nsfwBtn = document.createElement('button');
+      nsfwBtn.textContent = t('admin_alerts.mark_nsfw');
+      nsfwBtn.style.cssText = hideBtn.style.cssText;
+      const status = document.createElement('span');
+      status.setAttribute('role', 'status');
+      nsfwBtn.addEventListener('click', async () => {
+        if (nsfwBtn.disabled) return;
+        nsfwBtn.disabled = true;
+        status.textContent = '';
+        try {
+          if (!(await createConfirmDialog(t('admin_alerts.nsfw_confirm', { id: alert.post_id })))) return;
+          const success = await markNsfw(alert.post_id);
+          status.textContent = t(success ? 'admin_alerts.nsfw_success' : 'admin_alerts.nsfw_error');
+        } finally {
+          nsfwBtn.disabled = false;
+        }
+      });
+      actions.appendChild(nsfwBtn);
+      actions.appendChild(status);
+    }
+
     const dismissBtn = document.createElement('button');
     dismissBtn.textContent = t('admin_alerts.dismiss');
     dismissBtn.style.cssText = `
@@ -273,6 +348,7 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
       margin-bottom: 24px;
     `;
     element.appendChild(title);
+    element.appendChild(createNsfwForm());
 
     if (alerts.length === 0) {
       const empty = document.createElement('div');

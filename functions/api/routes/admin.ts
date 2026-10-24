@@ -4,7 +4,13 @@ import { isAdmin } from '../../../src/lib/admin';
 import { extractFileFromZip } from '../../../src/lib/wvfs-zip-server';
 import { deleteAccount } from '../../lib/account-deletion';
 import { getAdminAnalytics, parseAnalyticsDays } from '../../lib/admin-analytics';
-import { drainPendingEmbeds, enqueuePendingEmbed, ensureNsfwScansTable, submitDetectNsfw } from '../../lib/crowd';
+import {
+  applyNsfwTags,
+  drainPendingEmbeds,
+  enqueuePendingEmbed,
+  ensureNsfwScansTable,
+  submitDetectNsfw,
+} from '../../lib/crowd';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import {
   addBlocklistEntry,
@@ -164,6 +170,31 @@ admin.post('/alerts/:id/resolve', requireAuth, requireAdmin, async (c) => {
 });
 
 // ─── Admin Posts ──────────────────────────────────────────────────────────────
+
+// POST /api/admin/posts/:id/nsfw - apply the existing NSFW filter without waiting for reports or scans.
+admin.post('/posts/:id/nsfw', requireAuth, requireAdmin, async (c) => {
+  if (!c.env.DB) return c.json({ error: 'Database not available' }, 503);
+  try {
+    const postId = c.req.param('id');
+    if (!postId) return c.json({ error: 'Post ID is required' }, 400);
+    const post = await c.env.DB.prepare('SELECT hashtags FROM posts WHERE id = ?')
+      .bind(postId)
+      .first<{ hashtags: string | null }>();
+    if (!post) return c.json({ error: 'Post not found' }, 404);
+
+    const hashtags: string[] = JSON.parse(post.hashtags || '[]');
+    if (hashtags.some((tag) => tag.toLowerCase() === 'nsfw')) {
+      return c.json({ success: true, changed: false });
+    }
+    if (!(await applyNsfwTags(c.env.DB, postId, ['nsfw']))) {
+      return c.json({ error: 'Failed to mark post as NSFW' }, 500);
+    }
+    return c.json({ success: true, changed: true });
+  } catch (error: unknown) {
+    console.error('Mark post NSFW error:', error);
+    return c.json({ error: 'Failed to mark post as NSFW' }, 500);
+  }
+});
 
 // POST /api/admin/posts/:id/hide - manually hide a post (admin only)
 admin.post('/posts/:id/hide', requireAuth, requireAdmin, async (c) => {
@@ -932,6 +963,7 @@ admin.post('/backfill-nsfw', requireAuth, requireAdmin, async (c) => {
       WHERE NOT EXISTS (
         SELECT 1 FROM post_nsfw_scans s
         WHERE s.post_id = cand.post_id AND s.media_key = cand.media_key
+          AND (s.status = 'submitted' OR (s.status = 'done' AND s.ai_passed IS NOT NULL))
       )
       GROUP BY post_id, media_key
       ORDER BY MAX(created_at) DESC
@@ -945,7 +977,13 @@ admin.post('/backfill-nsfw', requireAuth, requireAdmin, async (c) => {
     const respectThrottle = url.searchParams.get('throttle') !== 'false';
     let submitted = 0;
     for (const cand of candidates.results) {
-      if (await submitDetectNsfw(c.env.DB, c.env, cand.post_id, cand.media_key, { respectThrottle })) submitted++;
+      if (
+        await submitDetectNsfw(c.env.DB, c.env, cand.post_id, cand.media_key, {
+          respectThrottle,
+          recheckCompleted: true,
+        })
+      )
+        submitted++;
     }
 
     return c.json({ success: true, submitted, remaining: candidates.results.length - submitted });

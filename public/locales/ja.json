@@ -1,4 +1,11 @@
 {
+  "post.ai_checked_label": "Flaxia AI Checked",
+  "post.ai_checked_description": "Flaxia AIが確認をしました",
+  "admin_alerts.nsfw_post_id": "NSFW規制する投稿ID",
+  "admin_alerts.mark_nsfw": "NSFW規制を適用",
+  "admin_alerts.nsfw_confirm": "投稿 {id} にNSFWタグを付けますか？NSFW表示が無効な利用者には表示されなくなります。",
+  "admin_alerts.nsfw_success": "NSFW規制を適用しました。",
+  "admin_alerts.nsfw_error": "適用できませんでした。投稿IDと管理者権限を確認してください。",
   "_comment": "Flaxia UI strings - Japanese",
   "nav.home": "ホーム",
   "nav.explore": "探す",

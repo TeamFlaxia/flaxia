@@ -50,6 +50,7 @@ export interface ReactionSummary {
 }
 
 export interface Post {
+  ai_checked?: boolean; // All current images passed the recorded AI review.
   id: string;
   user_id: string;
   username: string;
