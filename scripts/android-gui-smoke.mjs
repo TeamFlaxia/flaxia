@@ -63,13 +63,43 @@ try {
         const result = [];
         for (const path of ['/api/me', '/api/posts?limit=20', '/api/posts/recommended?limit=20']) {
           try {
-            const response = await fetch(path);
-            result.push({ path, status: response.status, text: (await response.text()).slice(0, 500) });
+            result.push(
+              await Promise.race([
+                (async () => {
+                  const response = await fetch(path);
+                  return { path, status: response.status, text: (await response.text()).slice(0, 500) };
+                })(),
+                new Promise((resolve) => setTimeout(() => resolve({ path, timeout: true }), 12000)),
+              ]),
+            );
           } catch (error) {
             result.push({ path, error: String(error) });
           }
         }
-        return { url: location.href, online: navigator.onLine, native: Boolean(window.Capacitor), result };
+        let direct;
+        try {
+          direct = await Promise.race([
+            window.Capacitor.nativePromise('CapacitorHttp', 'request', {
+              url: 'https://flaxia.app/api/posts?limit=1',
+              method: 'GET',
+              responseType: 'json',
+              headers: { Accept: 'application/json' },
+              connectTimeout: 5000,
+              readTimeout: 5000,
+            }).then((r) => ({ status: r.status, data: JSON.stringify(r.data).slice(0, 500) })),
+            new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 12000)),
+          ]);
+        } catch (error) {
+          direct = { error: String(error) };
+        }
+        return {
+          url: location.href,
+          online: navigator.onLine,
+          platform: window.Capacitor?.getPlatform?.(),
+          native: window.Capacitor?.isNativePlatform?.(),
+          result,
+          direct,
+        };
       }),
     ),
   );
