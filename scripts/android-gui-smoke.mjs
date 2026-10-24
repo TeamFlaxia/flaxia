@@ -5,7 +5,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
 
 mkdirSync('android-gui-artifacts', { recursive: true });
-const adb = (...args) => execFileSync('adb', args, { encoding: 'utf8' }).trim();
+const adb = (...args) => execFileSync('adb', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trim();
 const app = 'app.flaxia.app';
 const start = () => console.log(adb('shell', 'am', 'start', '-W', '-n', app + '/.MainActivity'));
 async function connect() {
@@ -17,7 +17,7 @@ async function connect() {
         adb('forward', 'tcp:9222', 'localabstract:webview_devtools_remote_' + pid);
         // Android WebView exposes this socket but does not advertise it through
         // /json/version. Use the same endpoint as Playwright's Android adapter.
-        const browser = await chromium.connectOverCDP('ws://127.0.0.1:9222/devtools/browser');
+        const browser = await chromium.connectOverCDP('ws://127.0.0.1:9222/devtools/browser', { noDefaults: true });
         const page = browser.contexts()[0].pages()[0];
         if (page) return { browser, page };
         await browser.close();
@@ -97,5 +97,8 @@ try {
   adb('shell', 'svc', 'wifi', 'enable');
   adb('shell', 'svc', 'data', 'enable');
   writeFileSync('android-gui-artifacts/logcat.txt', adb('logcat', '-d'));
-  writeFileSync('android-gui-artifacts/native-screen.png', execFileSync('adb', ['exec-out', 'screencap', '-p']));
+  writeFileSync(
+    'android-gui-artifacts/native-screen.png',
+    execFileSync('adb', ['exec-out', 'screencap', '-p'], { maxBuffer: 16 * 1024 * 1024 }),
+  );
 }

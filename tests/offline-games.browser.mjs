@@ -34,7 +34,7 @@ test('downloaded game survives reload, plays with no network and keeps an isolat
     url = `http://127.0.0.1:${server.address().port}/__native-game-test.html`;
   }
   const browser = android
-    ? await chromium.connectOverCDP(process.env.ANDROID_CDP)
+    ? await chromium.connectOverCDP(process.env.ANDROID_CDP, { noDefaults: true })
     : await chromium.launch({
         headless: true,
         executablePath: process.env.LOADER_CHROMIUM_EXECUTABLE,
