@@ -1,5 +1,16 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 
+// Capacitor 8's config reader calls the compiler API removed in TypeScript 7.
+// Node 22 loads this type-only TS config without that compiler API.
+const cli = 'node_modules/@capacitor/cli/dist/config.js';
+const cliSource = readFileSync(cli, 'utf8');
+const configReader = 'const extConfigObject = (0, node_1.requireTS)(ts, extConfigFilePath);';
+const nativeReader =
+  "const extConfigObject = await import(require('node:url').pathToFileURL(extConfigFilePath).href); // Flaxia: Node type stripping";
+if (!cliSource.includes(configReader) && !cliSource.includes(nativeReader))
+  throw new Error('Capacitor config loader changed; review TypeScript compatibility');
+writeFileSync(cli, cliSource.replace(configReader, nativeReader));
+
 // Sandboxed games must not invoke native plugins, including through Capacitor's
 // legacy Android fallback or WKScriptMessageHandler in a child frame.
 const android = 'node_modules/@capacitor/android/capacitor/src/main/java/com/getcapacitor/MessageHandler.java';

@@ -23,6 +23,7 @@ export function createOfflineGames(options: Options) {
   const jobs = new Map<string, symbol>();
   const pendingDownloads = new Map<string, Promise<void>>();
   const removed = new Set<string>();
+  const bookmarkVersions = new Map<string, symbol>();
   let bookmarkGeneration = 0;
   const states = new Map<string, DownloadState>();
   const now = options.now ?? Date.now;
@@ -34,6 +35,7 @@ export function createOfflineGames(options: Options) {
     jobs.clear();
     pendingDownloads.clear();
     removed.clear();
+    bookmarkVersions.clear();
     states.clear();
     syncing = undefined;
     await options.store.activate(next).catch(() => {});
@@ -45,6 +47,7 @@ export function createOfflineGames(options: Options) {
   }
   async function remove(id: string) {
     removed.add(id);
+    bookmarkVersions.delete(id);
     jobs.delete(id);
     pendingDownloads.delete(id);
     states.delete(id);
@@ -254,14 +257,21 @@ export function createOfflineGames(options: Options) {
       if (method === 'DELETE' && url.pathname === '/api/users/me' && response.ok) await account(null);
       const bookmark = url.pathname.match(/^\/api\/posts\/([^/]+)\/bookmark$/);
       if (bookmark && method === 'POST' && response.ok) {
-        const savedBookmarks = ++bookmarkGeneration;
+        bookmarkGeneration++;
+        const bookmarkVersion = Symbol();
+        bookmarkVersions.set(bookmark[1], bookmarkVersion);
         const data = (await response.clone().json()) as { bookmarked: boolean };
         if (!data.bookmarked) await remove(bookmark[1]);
         else {
           removed.delete(bookmark[1]);
           void (async () => {
             const postResponse = await request(`/api/posts/${bookmark[1]}`);
-            if (savedGeneration !== generation || savedBookmarks !== bookmarkGeneration || !postResponse.ok) return;
+            if (
+              savedGeneration !== generation ||
+              bookmarkVersions.get(bookmark[1]) !== bookmarkVersion ||
+              !postResponse.ok
+            )
+              return;
             const postData = (await postResponse.json()) as { post: Post };
             if (postData.post) await download(postData.post);
           })().catch(() => {});

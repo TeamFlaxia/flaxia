@@ -37,6 +37,7 @@ function fixture(factory = new IDBFactory()) {
     const url = new URL((input as Request).url);
     requests.push(url.pathname);
     if (url.pathname === '/api/bookmarks') return Response.json({ posts: bookmarks });
+    if (url.pathname.startsWith('/api/posts/')) return Response.json({ post: post(url.pathname.split('/').at(-1)) });
     if (url.pathname.endsWith('/archive')) return new Response('ZIP');
     if (status !== 200) return new Response(null, { status });
     const id = url.pathname.split('/').at(-1);
@@ -219,9 +220,26 @@ test('saved content never overrides HTTP denials, external APIs or an aborted re
   const denied = games.wrap(async () => new Response(null, { status: 403 }));
   assert.equal((await denied('/api/bookmarks')).status, 403);
   assert.equal((await denied('https://external.example/api/bookmarks')).status, 403);
+  const unavailable = games.wrap(async () => new Response(null, { status: 503 }));
+  assert.equal((await unavailable('/api/bookmarks')).status, 503);
   const controller = new AbortController();
   controller.abort();
   await assert.rejects(denied('/api/bookmarks', { signal: controller.signal }), { name: 'AbortError' });
+});
+
+test('quickly bookmarking two games downloads both without cancelling the first metadata lookup', async () => {
+  const f = fixture();
+  const games = f.make();
+  await games.account('alice');
+  const fetch = games.wrap(async () => Response.json({ bookmarked: true }));
+  await Promise.all([
+    fetch('/api/posts/first/bookmark', { method: 'POST' }),
+    fetch('/api/posts/second/bookmark', { method: 'POST' }),
+  ]);
+  for (let attempt = 0; attempt < 100 && (await games.list()).length < 2; attempt++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.deepEqual((await games.list()).map((game) => game.id).sort(), ['first', 'second']);
 });
 
 test('store commits atomically, isolates accounts and rejects stale writers or over-budget games', async () => {
