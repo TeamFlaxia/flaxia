@@ -259,3 +259,37 @@ test('storage evicts oldest responses within its count and size budgets', async 
   assert.ok(await store.get('large-2'));
   assert.ok(await store.get('identity'));
 });
+
+test('reauthentication and SRP upgrades preserve the saved identity and feed, including failures', async () => {
+  const c = client(async (input) => {
+    const path = new URL((input as Request).url).pathname;
+    if (path === '/api/me') return me('alice');
+    if (path.startsWith('/api/auth/')) return json({ error: 'wrong proof' }, 403);
+    return json({ posts: ['saved'] });
+  });
+  await c.fetch('/api/me');
+  await c.fetch('/api/posts');
+  for (const path of ['/api/auth/reauth/start', '/api/auth/reauth/verify', '/api/auth/upgrade-srp']) {
+    await c.fetch(path, { method: 'POST' });
+  }
+  c.setOnline(false);
+  assert.equal((await (await c.restart()('/api/me')).json()).user.id, 'alice');
+  assert.deepEqual(await (await c.restart()('/api/posts')).json(), { posts: ['saved'] });
+});
+
+test('unrelated successes cannot hide a saved-feed warning; refreshing that feed clears it', async () => {
+  let fail = false;
+  const c = client(async (input) => {
+    if (new URL((input as Request).url).pathname === '/api/posts' && fail) throw new TypeError('offline');
+    return json({ posts: ['saved'] });
+  });
+  await c.fetch('/api/posts');
+  fail = true;
+  assert.equal((await c.fetch('/api/posts')).headers.get('X-Flaxia-Offline'), '1');
+  await c.fetch('/api/notifications');
+  await c.fetch('/api/images/avatar.png');
+  assert.equal(c.offline(), true);
+  fail = false;
+  await c.fetch('/api/posts');
+  assert.equal(c.offline(), false);
+});

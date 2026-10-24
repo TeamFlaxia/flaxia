@@ -59,6 +59,7 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
   const now = options.now ?? Date.now;
   let owner = 'guest';
   let generation = 0;
+  const unavailableReads = new Set<string>();
   let initialized: Promise<void> | undefined;
   const safely = async <T>(operation: () => Promise<T>): Promise<T | undefined> => {
     try {
@@ -83,6 +84,7 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
   const reset = async () => {
     generation++;
     owner = 'guest';
+    unavailableReads.clear();
     await safely(() => store.clear());
   };
   return async (input, init) => {
@@ -95,7 +97,9 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
     if (request.signal.aborted) throw new DOMException('The request was aborted', 'AbortError');
     await initialize();
     const isMe = url.pathname === '/api/me';
-    const authMutation = request.method !== 'GET' && url.pathname.startsWith('/api/auth/');
+    // Reauthentication and SRP upgrades do not change the active account.
+    const authMutation =
+      request.method === 'POST' && /^\/api\/auth\/(?:register|login(?:\/(?:start|verify))?|logout)$/.test(url.pathname);
     if (authMutation) await reset();
     const currentGeneration = generation;
     const key = isMe ? 'identity' : owner + ':' + url.pathname + url.search;
@@ -106,6 +110,7 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
       !request.headers.has('Authorization') &&
       !request.headers.has('Range');
     const fallback = async (): Promise<Response> => {
+      if (request.method === 'GET') unavailableReads.add(key);
       options.setOffline(true);
       const record = cacheable ? await safely(() => store.get(key)) : undefined;
       if (request.signal.aborted) throw new DOMException('The request was aborted', 'AbortError');
@@ -166,8 +171,10 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
       clearTimeout(timer);
       request.signal.removeEventListener('abort', abort);
     }
-    options.setOffline(false);
     if (currentGeneration !== generation) return response;
+    // A notification/image success cannot make a saved feed fresh.
+    unavailableReads.delete(key);
+    options.setOffline(unavailableReads.size > 0 || !options.isOnline());
     if (
       (isMe && response.status === 401) ||
       (request.method === 'DELETE' && url.pathname === '/api/users/me' && response.ok)

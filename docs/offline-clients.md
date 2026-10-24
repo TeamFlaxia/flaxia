@@ -19,6 +19,7 @@ the session and timeline without recreating the composer.
   are untouched.
 - Account-scoped keys include the complete feed query/cursor. Login/logout,
   account changes, deletion, and an authoritative /api/me 401 clear snapshots.
+  Password reauthentication and SRP upgrades preserve the saved identity and reads.
 - Only the display identity (id, username, display name, avatar, badge) is
   retained from /api/me. It is UI metadata, never an authentication credential.
 - No vault payloads/keys, notifications, account settings, email, billing,
@@ -36,6 +37,14 @@ existing CSRF allowlist; the sandbox remains excluded. SameSite=Strict remains.
 Tauri's browser WebSocket cannot share the native HTTP cookie jar. Native
 clients poll notification badges every 60 seconds while connected; Tauri also
 shows newly received notifications. Capacitor still uses FCM for OS push.
+Multiplayer obtains an opaque, room-scoped socket ticket over authenticated native
+HTTP before opening a browser WebSocket. Tickets expire after 60 seconds; the
+server checks the session and room membership again on every socket upgrade.
+Session cookies are never returned to JavaScript.
+
+A successful image or notification request does not dismiss the offline banner
+while another read still uses saved content; refreshing that read clears its
+stale state.
 
 ## Online-only features
 

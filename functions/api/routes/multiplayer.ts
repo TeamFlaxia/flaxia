@@ -1,4 +1,6 @@
 import { Hono } from 'hono';
+import { getSessionToken } from '../../lib/auth';
+import { createMultiplayerTicket } from '../../lib/multiplayer-ticket.ts';
 import { clampLimit } from '../../lib/pagination';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { requireAuth } from '../helpers';
@@ -13,6 +15,29 @@ async function checkRoomRateLimit(c: { req: { raw: Request }; env: Bindings }, u
   if (!byUser) return false;
   return checkRateLimit(c.env.CACHE, `mp:rooms:ip:${ip}`, { maxRequests: 30, windowSeconds: 60 });
 }
+
+// Native WebSockets cannot use the native HTTP cookie jar.
+multiplayer.post('/rooms/:roomId/socket-ticket', requireAuth, async (c) => {
+  c.header('Cache-Control', 'no-store');
+  const user = c.get('user')!;
+  const sessionToken = getSessionToken(c.req.raw);
+  if (!sessionToken) return c.json({ error: 'Unauthorized' }, 401);
+  const roomId = c.req.param('roomId');
+  if (!roomId) return c.json({ error: 'roomId is required' }, 400);
+  const room = await c.env.DB.prepare(`
+    SELECT 1 FROM multiplayer_rooms r WHERE r.id = ? AND
+    (r.host_id = ? OR EXISTS (SELECT 1 FROM multiplayer_room_participants p
+      WHERE p.room_id = r.id AND p.user_id = ? AND p.left_at IS NULL))
+  `)
+    .bind(roomId, user.id, user.id)
+    .first();
+  if (!room) return c.json({ error: 'Forbidden' }, 403);
+  if (!(await checkRateLimit(c.env.CACHE, `mp:tickets:${user.id}`, { maxRequests: 30, windowSeconds: 60 }))) {
+    return c.json({ error: 'Rate limit exceeded' }, 429);
+  }
+  const ticket = await createMultiplayerTicket(c.env.CACHE, sessionToken, roomId);
+  return c.json({ ticket });
+});
 
 // POST /api/multiplayer/rooms - Create a room
 multiplayer.post('/rooms', requireAuth, async (c) => {
