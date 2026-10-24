@@ -48,6 +48,20 @@ describe('fetchNotifications', () => {
     assert.deepEqual(data, { notifications: [], unread_count: 0 });
   });
 
+  it('keeps the previous in-memory inbox through an outage after TTL', async () => {
+    const originalNow = Date.now;
+    let now = originalNow();
+    Date.now = () => now;
+    try {
+      const saved = await mod.fetchNotifications();
+      now += 11000;
+      ok = false;
+      assert.equal(await mod.fetchNotifications(), saved);
+    } finally {
+      Date.now = originalNow;
+    }
+  });
+
   it('falls back to empty on network failure', async () => {
     (globalThis as unknown as Record<string, unknown>).fetch = async () => {
       throw new Error('down');

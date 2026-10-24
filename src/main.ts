@@ -7,7 +7,7 @@ import type { LeftNav } from './components/LeftNav.js';
 import type { NotificationsPage } from './components/NotificationsPage.js';
 import type { ThreadPage } from './components/ThreadPage.js';
 import type { Timeline } from './components/Timeline.js';
-import { getMe } from './lib/auth-cache.js';
+import { clearMeCache, getMe } from './lib/auth-cache.js';
 import { resolveAuthRedirect } from './lib/auth-guard.js';
 import type { BottomNavDeps } from './lib/bottom-nav-setup.js';
 import { ensureBottomNav, getBottomNav } from './lib/bottom-nav-setup.js';
@@ -18,7 +18,8 @@ import { lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from '
 import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
 import type { LeftNavHandlers } from './lib/left-nav-handlers.js';
 import { createLeftNavHandlers } from './lib/left-nav-handlers.js';
-import { isCapacitorNativePlatform, nativeApiUrl } from './lib/native-api.js';
+import { API_ORIGIN, isCapacitorNativePlatform, isNativeApp, isTauriNativePlatform } from './lib/native-api.js';
+import { createNativeFetch } from './lib/native-fetch.js';
 import {
   clearNativeBadge,
   initNativeNotify,
@@ -27,6 +28,9 @@ import {
   setNativeBadge,
 } from './lib/native-notify.js';
 import { fetchNotifications, invalidateNotificationsCache } from './lib/notifications-api.js';
+import { createOfflineFetch } from './lib/offline-fetch.js';
+import { initOfflineStatus, setOffline } from './lib/offline-status.js';
+import { createOfflineStore } from './lib/offline-store.js';
 import { hidePageLoader, showPageLoader, showPageLoaderFailure } from './lib/page-loader.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
 import { createPushSocket } from './lib/push-socket.js';
@@ -45,20 +49,18 @@ interface PageComponent {
 // Initialize performance monitoring
 initPerformanceMonitoring();
 
-// Keep API fetches on the first-party production origin for native Capacitor.
-// Direct media and iframe URLs use nativeApiHref at construction sites.
-const originalFetch = window.fetch.bind(window);
-window.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  const rewrittenInput = nativeApiUrl(input);
-  if (isCapacitorNativePlatform()) {
-    const requestUrl = new URL(input instanceof Request ? input.url : input.toString(), window.location.href);
-    const apiRequest = requestUrl.pathname.startsWith('/api/');
-    if (!apiRequest) return originalFetch(rewrittenInput, init);
-    const request = input instanceof Request ? new Request(rewrittenInput, input) : new Request(rewrittenInput, init);
-    return originalFetch(new Request(request, { credentials: 'include' }));
-  }
-  return originalFetch(rewrittenInput, init);
-}) as typeof window.fetch;
+// Capture Capacitor's patched fetch; local assets stay in the bundle.
+const nativeClient = isNativeApp();
+const nativeFetch = createNativeFetch(window.fetch.bind(window));
+window.fetch = nativeClient
+  ? createOfflineFetch(nativeFetch, {
+      store: createOfflineStore(),
+      baseUrl: window.location.href,
+      apiOrigin: API_ORIGIN,
+      isOnline: () => navigator.onLine !== false,
+      setOffline,
+    })
+  : nativeFetch;
 
 // Initialize content protection (right-click, drag, keyboard shortcuts)
 initContentProtection();
@@ -76,6 +78,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     history.scrollRestoration = 'manual';
 
     await initI18n();
+    if (nativeClient) initOfflineStatus();
 
     // Routing state
     let currentView:
@@ -149,9 +152,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const pushSocket = createPushSocket(
       () => {
-        // The bundled Android app shares the flaxia.app site; use the API
-        // host for its cross-origin WebSocket, and same-origin in browsers.
-        const host = isCapacitorNative ? 'flaxia.app' : window.location.host;
+        const host = window.location.host;
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         return `${protocol}//${host}/api/ws/notifications`;
       },
@@ -195,7 +196,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           if (isActive) {
             // フォアグラウンド復帰時、WebSocket を再接続 & 未読カウント即時取得
             // (connect は接続中なら何もしない)
-            pushSocket.connect();
+            if (!nativeClient) pushSocket.connect();
             refreshNotificationBadges();
           }
         });
@@ -218,9 +219,21 @@ document.addEventListener('DOMContentLoaded', async () => {
       setNativeBadge(unreadNotificationCount);
     };
 
+    let previousNotificationIds: Set<string> | null = null;
     const refreshNotificationBadges = async () => {
       console.log('[poll] refreshNotificationBadges called');
       const data = await fetchNotifications();
+      // Native HTTP owns Tauri's session jar; browser sockets cannot share it.
+      if (isTauriNativePlatform()) {
+        if (previousNotificationIds) {
+          for (const notification of data.notifications) {
+            if (!notification.read && !previousNotificationIds.has(notification.id)) {
+              notifyViaTauri('Flaxia', notification.post_text_preview);
+            }
+          }
+        }
+        previousNotificationIds = new Set(data.notifications.map((notification) => notification.id));
+      }
       unreadNotificationCount = data.unread_count || 0;
       console.log('[poll] unread count:', unreadNotificationCount);
       updateBadgeUI();
@@ -268,7 +281,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           refreshNotificationBadges();
 
           // WebSocket でリアルタイム通知受信（全プラットフォーム）
-          pushSocket.connect();
+          if (!nativeClient) pushSocket.connect();
 
           return true;
         }
@@ -279,6 +292,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       // Clear user state when not authenticated
       const wasLoggedIn = currentUser !== null;
       currentUser = null;
+      previousNotificationIds = null;
 
       // Update all existing LeftNav instances to remove user area
       leftNavInstances.forEach((leftNav) => {
@@ -298,6 +312,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       return false;
     };
+
+    if (nativeClient) {
+      window.setInterval(() => {
+        if (currentUser && navigator.onLine !== false) void refreshNotificationBadges();
+      }, 60000);
+      const reconnect = async () => {
+        clearMeCache();
+        await checkAuth();
+        timeline?.refresh();
+      };
+      window.addEventListener('online', () => void reconnect());
+      window.addEventListener('flaxiaReconnect', () => void reconnect());
+    }
 
     // Fetch notifications (see src/lib/notifications-api.ts)
 

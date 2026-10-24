@@ -36,6 +36,7 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_notification::init())
     .plugin(tauri_plugin_process::init())
+    .plugin(tauri_plugin_http::init())
     .invoke_handler(tauri::generate_handler![set_notification_count])
     .setup(|app| {
       if cfg!(debug_assertions) {

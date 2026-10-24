@@ -1,4 +1,7 @@
 {
+  "offline.browsing": "Offline — showing saved content. Posting and other updates require a connection.",
+  "offline.retry": "Reconnect",
+  "offline.no_saved_posts": "Posts could not be loaded. Connect to the internet to save this feed, then use Reload to try again.",
   "post.ai_indexed_label": "Flaxia AI Indexed",
   "post.ai_indexed_description": "Indexed by Flaxia AI",
   "admin_alerts.nsfw_post_id": "Post ID to mark as NSFW",

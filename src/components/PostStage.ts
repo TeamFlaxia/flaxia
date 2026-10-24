@@ -1,5 +1,6 @@
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { setOfflineImage } from '../lib/offline-image.js';
 import { executeZipAuto } from '../lib/zip-manager.js';
 import { PostCardMode, PostStageProps } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
@@ -189,7 +190,7 @@ function createThumbnailWithOverlay(props: {
 
   // Thumbnail image
   const image = document.createElement('img');
-  image.src = nativeApiHref(`/api/thumbnail/${props.postId}`);
+  setOfflineImage(image, nativeApiHref(`/api/thumbnail/${props.postId}`));
   // Timeline mounts dozens of stages: decode lazily so off-screen
   // thumbnails don't contend with first paint.
   image.loading = 'lazy';

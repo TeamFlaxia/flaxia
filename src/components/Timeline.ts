@@ -71,10 +71,11 @@ export class Timeline {
     this.setupEventListeners();
     this.setupComposerObserver();
 
-    // Load ads first, then posts
-    this.loadAdConfig().then(() => {
-      this.loadInitialPosts();
-    });
+    // A slow ad service must not prevent cached posts from appearing.
+    void Promise.race([
+      this.loadAdConfig().catch(() => {}),
+      new Promise<void>((resolve) => setTimeout(resolve, 1000)),
+    ]).then(() => this.loadInitialPosts());
   }
 
   private createElement(): HTMLElement {
@@ -389,6 +390,10 @@ export class Timeline {
     this.resetAndLoadPosts();
   }
 
+  public refresh(): void {
+    this.resetAndLoadPosts();
+  }
+
   private resetAndLoadPosts(): void {
     this.loadGeneration++;
     this.state.loading = false;
@@ -406,7 +411,8 @@ export class Timeline {
     this.infiniteScroll.reconnect();
 
     // Load ads and posts in parallel
-    Promise.all([this.loadInitialPosts(), this.loadAdConfig()]);
+    void this.loadInitialPosts();
+    void this.loadAdConfig().catch(() => {});
   }
 
   /**
@@ -592,12 +598,20 @@ export class Timeline {
       this.state.cursor = data.next_cursor || postsArray.at(-1)?.created_at || this.state.cursor;
 
       this.state.hasMore = this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === 20;
+      this.element.querySelector('.offline-empty')?.remove();
       this.renderPostList();
 
       // Dispatch ready event for scroll restoration
       this.element.dispatchEvent(new CustomEvent('timelineReady'));
     } catch (error) {
       console.error('Failed to load posts:', error);
+      if (!this.destroyed && generation === this.loadGeneration && this.state.posts.length === 0) {
+        this.element.querySelector('.offline-empty')?.remove();
+        const empty = document.createElement('p');
+        empty.className = 'offline-empty';
+        empty.textContent = t('offline.no_saved_posts');
+        this.element.querySelector('.post-list')?.appendChild(empty);
+      }
     } finally {
       if (!this.destroyed && generation === this.loadGeneration) {
         this.state.loading = false;

@@ -1,6 +1,7 @@
 import type { Context, Next } from 'hono';
 import { isAdmin } from '../../src/lib/admin';
 import { getMeWithSession, getSessionToken } from '../lib/auth';
+import { NATIVE_APP_ORIGINS } from '../lib/native-origins';
 import type { Bindings, Variables } from './types';
 
 // Shared security headers for all media responses
@@ -70,6 +71,7 @@ export const allowedOrigins = new Set([
   'http://localhost:3000',
   'http://localhost:5173',
   'https://flaxia.app',
+  ...NATIVE_APP_ORIGINS,
 ]);
 
 export function getBaseOrigin(c: { env: { BASE_URL?: string } }): string {
