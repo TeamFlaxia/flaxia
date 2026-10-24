@@ -48,12 +48,49 @@ stale state. A fresh first page also clears saved pagination warnings for the
 same feed and filters. Uncached failures do not retain a stale-content warning
 after connectivity recovers.
 
+## Bookmarked game downloads
+
+Native clients download bookmarked public ZIP and standalone HTML games after
+sign-in, on reconnect, and after a successful bookmark action. The Bookmarks
+page shows saved/pending/failed counts and a retry button. Offline Bookmarks
+and Arcade list completed game downloads, even after a cold start. Removing a
+bookmark deletes its download; logout, account changes, deletion and /me 401
+clear downloads. Late downloads cannot restore a removed game or old account.
+
+Downloads use a separate IndexedDB database with a 250 MiB expanded-size budget,
+25 MiB per archive, 100 MiB expanded per game, and at most 1024 archive entries.
+Extraction runs in a disposable worker. Metadata and files commit atomically;
+quota, interruption and extraction failures never mark a partial game as saved.
+Existing downloads are not silently evicted to make space. Account-scoped game
+saves use a separate 64 KiB namespace per game; the game receives only its own
+snapshot and never reads application storage.
+
+Publication/scan checks and source revisions use the main-origin public game
+descriptor API. Online launches revalidate; revoked games are removed and
+changed archives replace the previous revision. During an outage, a completed
+download can play for seven days after its last successful verification.
+Offline devices cannot learn about revocations until they reconnect or expire.
+
+The bundled bootstrap runs in an opaque iframe without same-origin or native
+plugin access. No game code runs in the privileged app document. Native build
+preparation disables Capacitor's unsafe legacy Android bridge fallback and
+restricts iOS plugin messages to the main frame. A current Android System
+WebView is required for native plugin support.
+
+Self-contained classic-script HTML5 games support bundled images, CSS, audio,
+fetch/XHR data and WASM via the existing local asset runtime. External assets,
+ES modules, nested frames, multi-page navigation and unsupported engines require
+the online player; an explicit message explains incompatible local launches.
+Flash/SWF is not included in this downloader. Production builds contain no test
+harness. CI adds a fixture only to the debug test APK and exercises the actual
+download/store/player with a mock account and publication descriptor.
+
 ## Online-only features
 
 Posting, likes, follows, authentication, payments, vault operations, uploads,
 and multiplayer require a connection. Mutations are never queued or replayed.
-Game payloads/runtimes, audio, video, and documents are not downloaded for
-offline playback by this change; a saved listing is not a downloaded game.
+Unbookmarked game payloads, external game services, standalone audio/video and
+documents are not downloaded for offline playback.
 The browser/PWA service-worker policy is unchanged.
 
 ## Verification

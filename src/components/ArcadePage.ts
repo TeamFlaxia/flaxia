@@ -1863,7 +1863,10 @@ export class ArcadePage {
       warnIconWrap.appendChild(icon('warning', { width: '48', height: '48' }));
 
       const message = document.createElement('div');
-      message.textContent = t('arcade.load_failed');
+      message.textContent =
+        error instanceof Error && error.message === t('offline_games.unsupported')
+          ? error.message
+          : t('arcade.load_failed');
 
       wrapper.appendChild(warnIconWrap);
       wrapper.appendChild(message);

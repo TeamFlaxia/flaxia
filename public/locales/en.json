@@ -933,5 +933,11 @@
   "post_actions.more_actions": "More actions",
   "post_actions.quote": "Quote",
   "post_actions.share": "Share",
-  "notifications.reloaded_your_post": "{actor} reloaded your post"
+  "notifications.reloaded_your_post": "{actor} reloaded your post",
+  "offline_games.player": "Downloaded game",
+  "offline_games.unsupported": "This game needs the online player (modules, external assets or unsupported features).",
+  "offline_games.hint": "Bookmarked ZIP games download automatically. Self-contained HTML5 games can play offline for 7 days after verification. External services and multiplayer need a connection. Limit: 250 MiB total; 25 MiB per ZIP.",
+  "offline_games.retry": "Check bookmarks and retry downloads",
+  "offline_games.status": "Downloaded: {saved} · Downloading: {downloading} · Failed: {errors}",
+  "offline_games.storage_error": "Downloads are unavailable. Check free storage and try again."
 }

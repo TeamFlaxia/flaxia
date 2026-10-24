@@ -105,7 +105,7 @@ test('failed WVFS navigation cannot trigger a background download', async () => 
   );
 });
 
-function publicApi() {
+function publicApi(key = 'zip/public-game.zip') {
   let hidden = false;
   let blocked = false;
   let etag = 'source-1';
@@ -117,8 +117,7 @@ function publicApi() {
           return this;
         },
         async first() {
-          if (sql.includes('FROM posts'))
-            return { payload_key: 'zip/public-game.zip', status: 'published', hidden: hidden ? 1 : 0 };
+          if (sql.includes('FROM posts')) return { payload_key: key, status: 'published', hidden: hidden ? 1 : 0 };
           return null;
         },
       };
@@ -182,5 +181,26 @@ test('publication and scan checks reject cached launches and archive requests', 
     assert.equal((await api.fetch()).status, 404);
     assert.equal((await api.fetch(descriptor.archiveUrl)).status, 404);
     assert.equal(api.reads(), 0);
+  }
+});
+
+test('public download descriptors support standalone HTML and keep payload keys post-scoped', async () => {
+  for (const key of ['html/public-game.html', 'payload/public-game.zip']) {
+    const api = publicApi(key);
+    const response = await api.fetch();
+    assert.equal(response.status, 200);
+    const descriptor = (await response.json()) as { format: string; archiveUrl: string };
+    assert.equal(descriptor.format, key.endsWith('.html') ? 'html' : 'zip');
+    const archive = await api.fetch(descriptor.archiveUrl);
+    assert.equal(archive.status, 200);
+    assert.equal(archive.headers.get('Cache-Control'), 'no-store');
+    assert.equal(archive.headers.get('Content-Type'), 'application/octet-stream');
+    assert.equal(archive.headers.get('Content-Disposition'), 'attachment');
+    assert.match(archive.headers.get('Content-Security-Policy') ?? '', /sandbox/);
+    api.block();
+    assert.equal((await api.fetch(descriptor.archiveUrl)).status, 404);
+  }
+  for (const key of ['html/another-game.html', 'dm/secret.zip', 'payload/public-game.js']) {
+    assert.equal((await publicApi(key).fetch()).status, 404);
   }
 });

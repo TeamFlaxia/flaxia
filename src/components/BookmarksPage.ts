@@ -3,11 +3,13 @@ import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { createSkeletonCards } from '../lib/loading-ui.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { isNativeApp } from '../lib/native-api.ts';
 import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post } from '../types/post.js';
+import { createOfflineDownloads } from './OfflineDownloads.ts';
 import { createPostCard } from './PostCard.js';
 import { isZipGame } from './PostStage.js';
 
@@ -29,6 +31,7 @@ export class BookmarksPage {
   private postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
   private postUpdatedHandler?: (e: Event) => void;
   private arcadeSection: HTMLElement | null = null;
+  private downloads?: ReturnType<typeof createOfflineDownloads>;
 
   constructor(props: BookmarksPageProps) {
     this.props = props;
@@ -53,6 +56,10 @@ export class BookmarksPage {
     );
 
     const arcadeSection = document.createElement('div');
+    if (isNativeApp()) {
+      this.downloads = createOfflineDownloads();
+      container.appendChild(this.downloads.element);
+    }
     arcadeSection.className = 'bookmarks-arcade';
     arcadeSection.style.display = 'none';
     container.appendChild(arcadeSection);
@@ -398,6 +405,7 @@ export class BookmarksPage {
   }
 
   public destroy(): void {
+    this.downloads?.destroy();
     if (this.postUpdatedHandler) {
       window.removeEventListener('postUpdated', this.postUpdatedHandler);
     }

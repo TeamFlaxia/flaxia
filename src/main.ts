@@ -27,6 +27,7 @@ import {
   notifyViaTauri,
   setNativeBadge,
 } from './lib/native-notify.js';
+import { initOfflineGames } from './lib/native-offline-games.js';
 import { fetchNotifications, invalidateNotificationsCache } from './lib/notifications-api.js';
 import { createOfflineFetch } from './lib/offline-fetch.js';
 import { initOfflineStatus, setOffline } from './lib/offline-status.js';
@@ -61,6 +62,7 @@ window.fetch = nativeClient
       setOffline,
     })
   : nativeFetch;
+if (nativeClient) window.fetch = initOfflineGames(nativeFetch).wrap(window.fetch);
 
 // Initialize content protection (right-click, drag, keyboard shortcuts)
 initContentProtection();

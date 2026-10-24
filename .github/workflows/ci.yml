@@ -28,6 +28,7 @@ jobs:
       # Use the runner's installed Chrome; avoid OS package/browser downloads.
       - run: npm install --no-save --package-lock=false --ignore-scripts playwright@1.62.1
       - run: npm run build:game-loader
+      - run: node scripts/build-native-game-harness.mjs
       - run: npm run test:game-loader:browser
         env:
           LOADER_CHROMIUM_EXECUTABLE: /usr/bin/google-chrome
