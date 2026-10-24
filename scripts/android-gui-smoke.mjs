@@ -7,8 +7,9 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright')
 mkdirSync('android-gui-artifacts', { recursive: true });
 const adb = (...args) => execFileSync('adb', args, { encoding: 'utf8' }).trim();
 const app = 'app.flaxia.app';
-const start = () => adb('shell', 'am', 'start', '-n', app + '/.MainActivity');
+const start = () => console.log(adb('shell', 'am', 'start', '-W', '-n', app + '/.MainActivity'));
 async function connect() {
+  let lastError;
   for (let attempt = 0; attempt < 60; attempt++) {
     try {
       const pid = adb('shell', 'pidof', app).split(' ')[0];
@@ -19,12 +20,28 @@ async function connect() {
         if (page) return { browser, page };
         await browser.close();
       }
-    } catch {
+    } catch (error) {
+      lastError = error;
+      if (attempt % 10 === 0) console.log('WebView connection:', String(error));
       /* the WebView is still starting */
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  throw new Error('Android WebView debugger did not start');
+  console.log(
+    'Processes:',
+    adb('shell', 'ps', '-A')
+      .split('\n')
+      .filter((line) => line.includes('flaxia'))
+      .join('\n'),
+  );
+  console.log(
+    'Debug sockets:',
+    adb('shell', 'cat', '/proc/net/unix')
+      .split('\n')
+      .filter((line) => line.includes('devtools'))
+      .join('\n'),
+  );
+  throw new Error('Android WebView debugger did not start: ' + String(lastError));
 }
 let current;
 try {
@@ -77,5 +94,6 @@ try {
   }
   adb('shell', 'svc', 'wifi', 'enable');
   adb('shell', 'svc', 'data', 'enable');
-  writeFileSync('android-gui-artifacts/logcat.txt', adb('logcat', '-d', '-t', '3000'));
+  writeFileSync('android-gui-artifacts/logcat.txt', adb('logcat', '-d'));
+  writeFileSync('android-gui-artifacts/native-screen.png', execFileSync('adb', ['exec-out', 'screencap', '-p']));
 }
