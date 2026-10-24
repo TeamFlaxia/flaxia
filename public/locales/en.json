@@ -1,4 +1,6 @@
 {
+  "post.ai_checked_label": "Flaxia AI Checked",
+  "post.ai_checked_description": "Flaxia AI has checked this post",
   "admin_alerts.nsfw_post_id": "Post ID to mark as NSFW",
   "admin_alerts.mark_nsfw": "Mark as NSFW",
   "admin_alerts.nsfw_confirm": "Mark post {id} as NSFW? It will be filtered for users who disable NSFW content.",

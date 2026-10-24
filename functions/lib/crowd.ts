@@ -85,7 +85,7 @@ const PENDING_EMBED_MAX_ATTEMPTS = 5;
 // `content_sha` records the bytes a verdict belongs to: media keys are stable
 // across overwrites (gif/{postId}/{position}.{ext}), so a verdict keyed only on
 // (post, key) would keep vouching for an image that was swapped in later.
-const NSFW_SCAN_SCHEMA = `post_id TEXT NOT NULL, media_key TEXT NOT NULL DEFAULT '', task_id TEXT, content_sha TEXT, status TEXT NOT NULL DEFAULT 'submitted' CHECK(status IN ('submitted', 'done', 'failed')), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), scanned_at TEXT, PRIMARY KEY (post_id, media_key)`;
+const NSFW_SCAN_SCHEMA = `post_id TEXT NOT NULL, media_key TEXT NOT NULL DEFAULT '', task_id TEXT, content_sha TEXT, ai_passed INTEGER, status TEXT NOT NULL DEFAULT 'submitted' CHECK(status IN ('submitted', 'done', 'failed')), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), scanned_at TEXT, PRIMARY KEY (post_id, media_key)`;
 const PENDING_EMBEDS_SCHEMA = `post_id TEXT PRIMARY KEY, text TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), last_error TEXT`;
 
 // In-flight / rate-limit guards. Kept module-scoped so every route bundled into
@@ -307,6 +307,11 @@ async function ensureNsfwContentShaColumn(db: D1Database): Promise<void> {
   } catch {
     // Already present (fresh CREATE above, or a previous ALTER).
   }
+  try {
+    await db.prepare('ALTER TABLE post_nsfw_scans ADD COLUMN ai_passed INTEGER').run();
+  } catch {
+    // Already present, or deployed before migration 0110.
+  }
   nsfwShaColumnChecked.add(db);
 }
 
@@ -372,6 +377,7 @@ async function markNsfwScan(
              status = 'submitted',
              task_id = excluded.task_id,
              content_sha = excluded.content_sha,
+             ai_passed = NULL,
              scanned_at = NULL`,
         )
         .bind(postId, mediaKey, opts.taskId ?? null, opts.contentSha ?? null)
@@ -390,6 +396,8 @@ async function markNsfwScan(
 export interface SubmitNsfwOptions {
   /** Set false to skip the global 10s ceiling (admin backfill only). */
   respectThrottle?: boolean;
+  /** Admin backfill can obtain a recorded verdict for historical done rows. */
+  recheckCompleted?: boolean;
 }
 
 /**
@@ -428,7 +436,7 @@ export async function submitDetectNsfw(
       .prepare('SELECT status, content_sha FROM post_nsfw_scans WHERE post_id = ? AND media_key = ?')
       .bind(postId, mediaKey)
       .first()) as { status: string; content_sha: string | null } | null;
-    if (existing?.status === 'done') {
+    if (existing?.status === 'done' && !opts.recheckCompleted) {
       // No hash available (no bucket binding, or the object vanished): keep the
       // old behaviour rather than re-submitting on every call.
       if (!contentSha || existing.content_sha === contentSha) return false;
@@ -678,14 +686,22 @@ async function handleNsfwResult(url: URL, event: CrowdWebhookEvent, db: D1Databa
   const output = extractCallbackOutput(event) as { detections?: NudeNetDetection[] } | undefined;
   const detections = output?.detections ?? [];
 
-  const { nsfw, tags } = resolveNsfwTags(detections);
+  // Missing/malformed output is not evidence that an image passed review.
+  const validDetections =
+    Array.isArray(output?.detections) &&
+    output.detections.every(
+      (d) => d && typeof d.label === 'string' && Number.isFinite(d.score) && d.score >= 0 && d.score <= 1,
+    );
+  const { nsfw, tags } = resolveNsfwTags(validDetections ? detections : []);
+  const aiPassed = validDetections ? (nsfw ? 0 : 1) : null;
   const applied = await applyNsfwTags(db, postId, tags);
   await db
     .prepare(
-      `INSERT INTO post_nsfw_scans (post_id, media_key, status, scanned_at) VALUES (?, ?, 'done', ?)
-       ON CONFLICT(post_id, media_key) DO UPDATE SET status = 'done', scanned_at = excluded.scanned_at`,
+      `INSERT INTO post_nsfw_scans (post_id, media_key, status, scanned_at, ai_passed) VALUES (?, ?, 'done', ?, ?)
+       ON CONFLICT(post_id, media_key) DO UPDATE SET status = 'done', scanned_at = excluded.scanned_at,
+         ai_passed = excluded.ai_passed`,
     )
-    .bind(postId, mediaKey, new Date().toISOString())
+    .bind(postId, mediaKey, new Date().toISOString(), aiPassed)
     .run();
   console.log(
     `NSFW webhook for post ${postId} [${mediaKey}]: nsfw=${nsfw}, tags=${tags.join(',') || 'none'}, applied=${applied}`,

@@ -368,3 +368,18 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 - Idempotent: returns `{ success: true, changed: boolean }`.
 - Returns 401 for guests, 403 for non-admins, 404 for missing posts, 503 without a database, and 500 on write failure.
 - Available from the admin Alerts tab by post ID or an alert’s Mark as NSFW button; does not require reports or Crowd scanning.
+
+### Flaxia AI Checked
+
+Post responses enriched with attachments include `ai_checked: boolean`.
+The check beside the post menu is shown only when every current image has a
+valid completed, non-NSFW verdict bound by SHA-256 to its current clean file-scan
+record. Pending, failed, malformed, historical verdicts without recorded outcomes,
+NSFW-tagged posts, and posts with games or unsupported attachments have no badge.
+Text-only posts have no image audit and therefore no badge. The badge records
+image screening; text and other content are outside this audit's scope.
+
+Migration `0110_nsfw_ai_passed.sql` records passing outcomes. Historical rows stay
+unknown until reviewed again. The existing admin `POST /api/admin/backfill-nsfw`
+can re-submit these rows (`?throttle=false` allows an explicit batch flush).
+The Japanese hover description is “Flaxia AIが確認をしました”.

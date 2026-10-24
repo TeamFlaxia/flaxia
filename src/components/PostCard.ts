@@ -154,8 +154,19 @@ export class PostCard {
     // ... menu button
     const isOwnPost = this.props.currentUser?.username === this.props.post.username;
     const menuButton = createMenuButton(() => this.toggleMenu(isOwnPost));
-    menuButton.style.marginLeft = 'auto';
-    headerContainer.appendChild(menuButton);
+    const aiCheck = document.createElement('span');
+    aiCheck.className = 'post-ai-check';
+    aiCheck.textContent = '✓';
+    aiCheck.title = `${t('post.ai_checked_label')} — ${t('post.ai_checked_description')}`;
+    aiCheck.setAttribute('aria-label', aiCheck.title);
+    aiCheck.tabIndex = 0;
+    aiCheck.hidden = this.props.post.ai_checked !== true;
+    aiCheck.style.cssText = 'color: var(--accent, #22c55e); font-size: 18px; padding: 4px; flex-shrink: 0;';
+    const headerActions = document.createElement('div');
+    headerActions.style.cssText = 'display: flex; align-items: center; margin-left: auto; flex-shrink: 0;';
+    headerActions.appendChild(aiCheck);
+    headerActions.appendChild(menuButton);
+    headerContainer.appendChild(headerActions);
 
     container.appendChild(headerContainer);
 
@@ -991,6 +1002,8 @@ export class PostCard {
       this.reactions = post.reactions;
     }
     this.props.post = { ...this.props.post, ...post };
+    const aiCheck = this.element.querySelector<HTMLElement>('.post-ai-check');
+    if (aiCheck) aiCheck.hidden = this.props.post.ai_checked !== true;
     this.updateActions();
   }
 
@@ -1514,6 +1527,7 @@ export class PostCard {
         return;
       }
       saving = true;
+      this.updatePost({ ai_checked: false });
       saveBtn.disabled = true;
       saveBtn.textContent = '...';
       try {
@@ -1608,6 +1622,7 @@ export class PostCard {
         const data = (await res.json()) as {
           post: {
             text: string;
+            ai_checked?: boolean;
             edited_at: string;
             gif_key?: string;
             payload_key?: string;
@@ -1615,6 +1630,7 @@ export class PostCard {
             attachments?: PostAttachment[];
           };
         };
+        this.updatePost({ ai_checked: data.post.ai_checked === true });
         this.originalText = data.post.text;
         this.props.post.text = data.post.text;
         this.props.post.edited_at = data.post.edited_at;

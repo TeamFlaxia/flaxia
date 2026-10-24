@@ -963,6 +963,7 @@ admin.post('/backfill-nsfw', requireAuth, requireAdmin, async (c) => {
       WHERE NOT EXISTS (
         SELECT 1 FROM post_nsfw_scans s
         WHERE s.post_id = cand.post_id AND s.media_key = cand.media_key
+          AND (s.status = 'submitted' OR (s.status = 'done' AND s.ai_passed IS NOT NULL))
       )
       GROUP BY post_id, media_key
       ORDER BY MAX(created_at) DESC
@@ -976,7 +977,13 @@ admin.post('/backfill-nsfw', requireAuth, requireAdmin, async (c) => {
     const respectThrottle = url.searchParams.get('throttle') !== 'false';
     let submitted = 0;
     for (const cand of candidates.results) {
-      if (await submitDetectNsfw(c.env.DB, c.env, cand.post_id, cand.media_key, { respectThrottle })) submitted++;
+      if (
+        await submitDetectNsfw(c.env.DB, c.env, cand.post_id, cand.media_key, {
+          respectThrottle,
+          recheckCompleted: true,
+        })
+      )
+        submitted++;
     }
 
     return c.json({ success: true, submitted, remaining: candidates.results.length - submitted });
