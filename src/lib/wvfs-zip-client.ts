@@ -37,7 +37,12 @@ export async function executeWvfsZip(
 
     if (isNativeApp()) {
       const { executeDownloadedGame } = await import('./offline-game-player.ts');
-      const downloaded = await executeDownloadedGame(postId, containerEl, versionId);
+      const downloaded = await executeDownloadedGame(postId, containerEl, versionId).catch((error: unknown) => {
+        // The local runtime supports fewer game formats than the online player.
+        // Preserve the explicit compatibility error when no fallback is reachable.
+        if (navigator.onLine === false) throw error;
+        return undefined;
+      });
       if (downloaded) {
         activeHandle = downloaded;
         return downloaded;

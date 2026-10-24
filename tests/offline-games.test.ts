@@ -103,6 +103,43 @@ test('bookmarked games survive a cold start and are available without any networ
   assert.equal(await restarted.files('game1', 'different-version'), undefined);
 });
 
+test('a fresh same-account identity resumes downloads after an offline start or failed sync', async () => {
+  const f = fixture();
+  const games = f.make();
+  let cachedIdentity = true;
+  const fetch = games.wrap(async () =>
+    Response.json({ user: { id: 'alice' } }, cachedIdentity ? { headers: { 'X-Flaxia-Offline': '1' } } : undefined),
+  );
+  await fetch('/api/me');
+  assert.deepEqual(f.requests, [], 'restoring the offline identity must not start network downloads');
+  cachedIdentity = false;
+  // The interface is still up, so recovery will not dispatch a browser online event.
+  await fetch('/api/me');
+  for (let attempt = 0; attempt < 100 && games.states.get('game1') !== 'saved'; attempt++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.equal(games.states.get('game1'), 'saved');
+  assert.ok(f.requests.includes('/api/bookmarks'));
+  assert.ok(f.requests.includes('/api/game-loader/game1/archive'));
+  await games.sync();
+
+  f.setBookmarks([post('game2')]);
+  f.setOnline(false);
+  await fetch('/api/me');
+  await games.sync();
+  f.setOnline(true);
+  await fetch('/api/me');
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const saved = await games.list();
+    if (saved.length === 1 && saved[0].id === 'game2') break;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.deepEqual(
+    (await games.list()).map((game) => game.id),
+    ['game2'],
+  );
+});
+
 test('a successful bookmark toggle starts a download; removing it deletes the saved game', async () => {
   const f = fixture();
   const games = f.make();

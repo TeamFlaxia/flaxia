@@ -284,9 +284,9 @@ export function createOfflineGames(options: Options) {
         else if (response.ok) {
           const data = (await response.clone().json()) as { user?: { id?: string } };
           if (typeof data.user?.id === 'string') {
-            const switched = owner !== data.user.id;
             await account(data.user.id);
-            if (switched && !response.headers.has('X-Flaxia-Offline')) void sync();
+            // A fresh identity is also the reconnect checkpoint for the same account.
+            if (!response.headers.has('X-Flaxia-Offline')) void sync();
           }
         }
       }

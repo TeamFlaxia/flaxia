@@ -14,6 +14,11 @@ test('downloaded game survives reload, plays with no network and keeps an isolat
   if (!android) {
     const server = createServer(async (request, response) => {
       const path = new URL(request.url, 'http://localhost').pathname;
+      if (path === '/api/wvfs-zip/offline-modules') {
+        response.writeHead(200, { 'Content-Type': 'text/html' });
+        response.end('<html><body>Online module game fallback</body></html>');
+        return;
+      }
       if (!/^\/[A-Za-z0-9_.\/-]+$/.test(path) || path.includes('..')) {
         response.writeHead(404).end();
         return;
@@ -79,4 +84,18 @@ test('downloaded game survives reload, plays with no network and keeps an isolat
   if (!android) await context.setOffline(true);
   assert.equal((await page.evaluate(() => window.nativeGameHarness.play())).played, true);
   assert.equal(await game.locator('#counter').innerText(), '2');
+  if (!android) {
+    await context.setOffline(false);
+    assert.equal(await page.evaluate(() => window.nativeGameHarness.prepareUnsupported()), 'saved');
+    assert.deepEqual(await page.evaluate(() => window.nativeGameHarness.launchUnsupported(true)), {
+      played: true,
+      error: '',
+    });
+    await page.frameLocator('iframe').getByText('Online module game fallback').waitFor();
+    await context.setOffline(true);
+    const offline = await page.evaluate(() => window.nativeGameHarness.launchUnsupported(false));
+    assert.equal(offline.played, false);
+    assert.match(offline.error, /offline_games.unsupported/);
+    assert.equal(await page.locator('iframe').count(), 0);
+  }
 });
