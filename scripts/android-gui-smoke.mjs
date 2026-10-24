@@ -52,10 +52,46 @@ async function connect() {
   throw new Error('Android WebView debugger did not start: ' + String(lastError));
 }
 let current;
+async function waitForNetwork(page) {
+  let last;
+  for (let attempt = 0; attempt < 15; attempt++) {
+    last = await page.evaluate(async () => {
+      try {
+        return await Promise.race([
+          window.Capacitor.nativePromise('CapacitorHttp', 'request', {
+            url: 'https://flaxia.app/api/posts?limit=1',
+            method: 'GET',
+            responseType: 'json',
+            headers: { Accept: 'application/json' },
+            connectTimeout: 5000,
+            readTimeout: 5000,
+          }).then((response) => ({
+            status: response.status,
+            posts: Array.isArray(response.data?.posts),
+            text: JSON.stringify(response.data).slice(0, 300),
+          })),
+          new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 7000)),
+        ]);
+      } catch (error) {
+        return { error: String(error) };
+      }
+    });
+    console.log('Device API readiness:', JSON.stringify(last));
+    if (last.status === 200 && last.posts) return;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  throw new Error('Device cannot reach the production API: ' + JSON.stringify(last));
+}
 try {
   adb('install', '-r', 'android/app/build/outputs/apk/debug/app-debug.apk');
+  adb('shell', 'svc', 'wifi', 'enable');
+  adb('shell', 'svc', 'data', 'enable');
   start();
   current = await connect();
+  await waitForNetwork(current.page);
+  await current.page.evaluate(() => localStorage.setItem('flaxia_locale', 'ja'));
+  await current.page.reload();
+  await current.page.locator('.timeline').waitFor({ timeout: 60000 });
   console.log(
     'API probe:',
     JSON.stringify(
@@ -118,7 +154,7 @@ try {
   assert.ok(online > 0 && offline > 0);
   await current.page.screenshot({ path: 'android-gui-artifacts/timeline-offline-cold-start.png' });
   adb('shell', 'svc', 'wifi', 'enable');
-  await current.page.waitForFunction(() => navigator.onLine, { timeout: 60000 });
+  await current.page.waitForFunction(() => navigator.onLine, null, { timeout: 60000 });
   await current.browser.close();
   current = undefined;
   execFileSync('node', ['--experimental-strip-types', '--test', 'tests/offline-games.browser.mjs'], {

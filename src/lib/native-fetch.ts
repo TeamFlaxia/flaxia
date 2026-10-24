@@ -33,7 +33,6 @@ export function createNativeFetch(
         const http = await loadCapacitorHttp();
         if (request.signal.aborted) throw new DOMException('The request was aborted', 'AbortError');
         const headers = new Headers(request.headers);
-        if (!headers.has('User-Agent')) headers.set('User-Agent', navigator.userAgent);
         let abort: () => void = () => {};
         try {
           const response = await Promise.race([
