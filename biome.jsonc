@@ -16,6 +16,7 @@
       "!!**/ios",
       "!!**/migrations",
       "!!src/lib/pdfjs.generated.ts",
+      "!!src/lib/offline-game-shell.generated.ts",
       "!!**/*.pem",
       "!!**/*.zip",
       "!!worker-configuration.d.ts",

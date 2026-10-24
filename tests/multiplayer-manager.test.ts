@@ -132,6 +132,81 @@ describe('MultiplayerManager', () => {
     });
   });
 
+  describe('native socket authentication', () => {
+    const originalFetch = globalThis.fetch;
+    afterEach(() => {
+      globalThis.fetch = originalFetch;
+      delete (globalThis as { window?: unknown }).window;
+    });
+    function native() {
+      Object.defineProperty(globalThis, 'window', {
+        configurable: true,
+        value: {
+          __TAURI_INTERNALS__: true,
+          location: { href: 'tauri://localhost/' },
+        },
+      });
+      return new MultiplayerManager({
+        gameId: 'game1',
+        roomId: 'room1',
+        userId: 'u1',
+        wsUrl: '/api/ws/multiplayer',
+        iframe: mockIframe as unknown as HTMLIFrameElement,
+      });
+    }
+    it('gets a room ticket through authenticated HTTP before opening a socket', async () => {
+      manager = native();
+      globalThis.fetch = async (input, init) => {
+        assert.equal(input, '/api/multiplayer/rooms/room1/socket-ticket');
+        assert.equal(init?.credentials, 'include');
+        assert.equal(init?.method, 'POST');
+        return Response.json({ ticket: 'opaque-ticket' });
+      };
+      let destination = '';
+      const ExistingWebSocket = globalThis.WebSocket;
+      globalThis.WebSocket = class extends ExistingWebSocket {
+        constructor(url: string | URL) {
+          destination = String(url);
+          super(url);
+        }
+      };
+      await manager.connect();
+      const url = new URL(destination);
+      assert.equal(url.origin, 'wss://flaxia.app');
+      assert.equal(url.searchParams.get('ticket'), 'opaque-ticket');
+      assert.equal(url.searchParams.has('token'), false);
+    });
+    it('does not open a socket if disconnected while the ticket is pending', async () => {
+      manager = native();
+      let complete!: (r: Response) => void;
+      globalThis.fetch = (input) =>
+        String(input).endsWith('/socket-ticket')
+          ? new Promise<Response>((resolve) => {
+              complete = resolve;
+            })
+          : Promise.resolve(Response.json({ ok: true }));
+      let opened = false;
+      const ExistingWebSocket = globalThis.WebSocket;
+      globalThis.WebSocket = class extends ExistingWebSocket {
+        constructor(url: string | URL) {
+          super(url);
+          opened = true;
+        }
+      };
+      const connecting = manager.connect();
+      manager.disconnect();
+      complete(Response.json({ ticket: 'late-ticket' }));
+      await connecting;
+      assert.equal(opened, false);
+    });
+    it('reports authorization failure without opening a socket', async () => {
+      manager = native();
+      globalThis.fetch = async () => new Response(null, { status: 401 });
+      await manager.connect();
+      assert.ok(mockIframe.postedMessages.some((m) => (m.msg as { type: string }).type === 'MULTIPLAYER_ERROR'));
+    });
+  });
+
   describe('disconnect()', () => {
     it('closes WebSocket', () => {
       manager = new MultiplayerManager({

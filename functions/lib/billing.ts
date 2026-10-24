@@ -1,5 +1,6 @@
 import Stripe from 'stripe';
 import { getSession, getSessionToken } from './auth.ts';
+import { NATIVE_APP_ORIGINS } from './native-origins.ts';
 
 /**
  * Environment bindings required by the billing code. Stripe secrets are only
@@ -286,6 +287,7 @@ export async function resolvePlanIdForSubscription(
 }
 
 const ALLOWED_ORIGINS = new Set([
+  ...NATIVE_APP_ORIGINS,
   'http://localhost:8787',
   'http://localhost:5173',
   'https://flaxia.app',

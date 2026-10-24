@@ -2,6 +2,7 @@ import { safeRemoveFromBody } from '../lib/dom-utils.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { setOfflineImage } from '../lib/offline-image.js';
 import { GifPreviewProps } from '../types/post.js';
 
 export function createImagePreview(props: GifPreviewProps): HTMLElement {
@@ -83,7 +84,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     `;
 
     if (props.isThumbnail) {
-      img.src = baseImageUrl;
+      setOfflineImage(img, baseImageUrl);
       container.appendChild(img);
       return container;
     }
@@ -128,7 +129,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
       container.appendChild(fallback);
     };
 
-    img.src = imageUrl;
+    setOfflineImage(img, imageUrl);
     container.appendChild(placeholder);
     container.appendChild(img);
     return container;
@@ -186,7 +187,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
   if (props.isThumbnail) {
     img.onload = fit;
     if (img.complete) fit();
-    img.src = baseImageUrl;
+    setOfflineImage(img, baseImageUrl);
     container.appendChild(img);
   } else {
     // Show a placeholder with the same styling before load
@@ -231,7 +232,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
       container.appendChild(fallback);
     };
 
-    img.src = imageUrl;
+    setOfflineImage(img, imageUrl);
     container.appendChild(placeholder);
     container.appendChild(img);
   }
@@ -372,7 +373,7 @@ function createImageOverlay(imageUrl: string, postId: string, gallery?: string[]
 
   fullImage.onload = initImage;
   fullImage.onerror = clearImage;
-  fullImage.src = imageUrl;
+  setOfflineImage(fullImage, imageUrl);
   if (fullImage.complete && fullImage.naturalWidth > 0) {
     initImage();
   } else {
@@ -623,7 +624,7 @@ function createImageOverlay(imageUrl: string, postId: string, gallery?: string[]
     currentIndex = (next + gallery.length) % gallery.length;
     resetZoom();
     clearImage();
-    fullImage.src = nativeApiHref(`/api/images/${gallery[currentIndex]}`);
+    setOfflineImage(fullImage, nativeApiHref(`/api/images/${gallery[currentIndex]}`));
     if (fullImage.complete && fullImage.naturalWidth > 0) {
       initImage();
     }

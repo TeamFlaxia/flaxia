@@ -11,6 +11,7 @@ export function isPublicRoute(pathname: string): boolean {
   return (
     cleanPath === '' ||
     cleanPath === '/' ||
+    cleanPath === '/index.html' ||
     cleanPath === '/home' ||
     cleanPath === '/explore' ||
     cleanPath === '/search' ||

@@ -7,7 +7,7 @@ const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const MAX_BYTES = 25 * 1024 * 1024;
 
 /** Public posts only. Never cache an authorization/publication decision. */
-export async function servePublicLoader(c: Context<{ Bindings: Bindings }>): Promise<Response> {
+export async function servePublicLoader<E extends { Bindings: Bindings }>(c: Context<E>): Promise<Response> {
   c.header('Cache-Control', 'no-store');
   const postId = c.req.param('postId');
   const requestedVersion = c.req.query('v');
@@ -32,7 +32,9 @@ export async function servePublicLoader(c: Context<{ Bindings: Bindings }>): Pro
     if (match) {
       if (version && version !== match[1]) return c.text('Not found', 404);
       version = match[1];
-    } else if (key !== `zip/${postId}.zip` || version) return c.text('Not found', 404);
+    } else if (![`zip/${postId}.zip`, `payload/${postId}.zip`, `html/${postId}.html`].includes(key) || version)
+      return c.text('Not found', 404);
+    const format = key.endsWith('.html') ? 'html' : 'zip';
     if (await isKeyBlocked(c.env.CACHE, key, c.env.DB)) return c.text('Not found', 404);
     const object = await c.env.BUCKET.head(key);
     if (!object) return c.text('Not found', 404);
@@ -49,7 +51,10 @@ export async function servePublicLoader(c: Context<{ Bindings: Bindings }>): Pro
       if (!archive || !('body' in archive) || !archive.body) return c.text('Game changed; restart the loader', 409);
       return new Response(archive.body, {
         headers: {
-          'Content-Type': 'application/zip',
+          // Downloads are data, never executable HTML on the authenticated origin.
+          'Content-Type': 'application/octet-stream',
+          'Content-Disposition': 'attachment',
+          'Content-Security-Policy': "sandbox; default-src 'none'",
           'Content-Length': String(archive.size),
           'Cache-Control': 'no-store',
           'X-Content-Type-Options': 'nosniff',
@@ -62,6 +67,7 @@ export async function servePublicLoader(c: Context<{ Bindings: Bindings }>): Pro
     return c.json({
       postId,
       revision,
+      format,
       cacheable: object.size <= MAX_BYTES,
       wvfsUrl: createWvfsGameUrl(url.origin, postId, { versionId: version }),
       archiveUrl: archiveUrl.href,

@@ -1,4 +1,5 @@
 import { connectGameStorage, loadLegacyGameStorage } from './game-storage-broker.js';
+import { isNativeApp } from './native-api.ts';
 import { createWvfsGameUrl } from './wvfs-game-url.js';
 import {
   createZipLoadingIndicator,
@@ -33,6 +34,21 @@ export async function executeWvfsZip(
   try {
     containerEl.innerHTML = '';
     containerEl.style.position = 'relative';
+
+    if (isNativeApp()) {
+      const { executeDownloadedGame } = await import('./offline-game-player.ts');
+      const downloaded = await executeDownloadedGame(postId, containerEl, versionId).catch((error: unknown) => {
+        // The local runtime supports fewer game formats than the online player.
+        // Preserve the explicit compatibility error when no fallback is reachable.
+        if (navigator.onLine === false) throw error;
+        return undefined;
+      });
+      if (downloaded) {
+        activeHandle = downloaded;
+        return downloaded;
+      }
+      if (navigator.onLine === false) throw new Error('This game has not been downloaded');
+    }
 
     let loadingEl: HTMLElement | null = null;
     if (showLoading) {

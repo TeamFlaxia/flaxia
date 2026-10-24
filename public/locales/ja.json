@@ -1,4 +1,7 @@
 {
+  "offline.browsing": "オフラインです。保存済みの情報を表示しています。投稿などの更新には接続が必要です。",
+  "offline.retry": "再接続",
+  "offline.no_saved_posts": "投稿を読み込めませんでした。インターネットに接続してこのフィードを保存し、「更新」で再試行してください。",
   "post.ai_indexed_label": "Flaxia AI Indexed",
   "post.ai_indexed_description": "Flaxia AIにインデックスされています",
   "admin_alerts.nsfw_post_id": "NSFW規制する投稿ID",
@@ -930,5 +933,11 @@
   "post_actions.more_actions": "その他の操作",
   "post_actions.quote": "引用",
   "post_actions.share": "共有",
-  "notifications.reloaded_your_post": "{actor} があなたの投稿をリロードしました"
+  "notifications.reloaded_your_post": "{actor} があなたの投稿をリロードしました",
+  "offline_games.player": "保存したゲーム",
+  "offline_games.unsupported": "このゲームはオンライン再生が必要です（モジュール・外部素材など未対応の機能を使用）。",
+  "offline_games.hint": "ブックマークしたZIPゲームを自動保存します。外部通信を使わないHTML5ゲームは確認後7日間オフラインで遊べます。外部サービス・マルチプレイは通信が必要です。保存上限は合計250 MiB、ZIPごとに25 MiBです。",
+  "offline_games.retry": "ブックマークを確認して保存を再試行",
+  "offline_games.status": "保存済み: {saved}件 · 保存中: {downloading}件 · 失敗: {errors}件",
+  "offline_games.storage_error": "ゲームを保存できません。端末の空き容量を確認して再試行してください。"
 }

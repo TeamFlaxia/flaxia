@@ -5,9 +5,9 @@
   "identifier": "app.flaxia.app",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "https://flaxia.app",
-    "beforeDevCommand": "",
-    "beforeBuildCommand": ""
+    "devUrl": "http://localhost:3000",
+    "beforeDevCommand": "npm run dev:local",
+    "beforeBuildCommand": "npm run build:desktop"
   },
   "app": {
     "security": {
@@ -16,7 +16,7 @@
     "windows": [
       {
         "title": "Flaxia",
-        "url": "https://flaxia.app",
+        "url": "index.html",
         "width": 1200,
         "height": 800,
         "minWidth": 240,
@@ -28,6 +28,11 @@
         "fullscreen": false
       }
     ]
+  },
+  "plugins": {
+    "http": {
+      "scopeRedirects": true
+    }
   },
   "bundle": {
     "active": true,

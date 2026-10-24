@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { getSession, getSessionToken, User } from '../lib/auth';
+import { resolveMultiplayerTicket } from '../lib/multiplayer-ticket.ts';
 import { allowedOrigins, authMiddleware, csrfProtection, getBaseOrigin } from './helpers';
 import activitypubRouter from './routes/activitypub';
 import adminRouter from './routes/admin';
@@ -159,7 +160,10 @@ export async function onRequest(context: Record<string, unknown>) {
     const gameId = url.searchParams.get('gameId');
     if (!roomId || !gameId) return new Response('Missing roomId or gameId', { status: 400 });
 
-    const sessionToken = getSessionToken(request) || url.searchParams.get('token');
+    const ticket = url.searchParams.get('ticket');
+    const sessionToken = ticket
+      ? await resolveMultiplayerTicket(env.CACHE, ticket, roomId)
+      : getSessionToken(request) || url.searchParams.get('token');
     if (!sessionToken) return new Response('Unauthorized', { status: 401 });
     const session = await getSession(env, sessionToken);
     if (!session) return new Response('Unauthorized', { status: 401 });
@@ -190,6 +194,7 @@ export async function onRequest(context: Record<string, unknown>) {
     forwardUrl.searchParams.set('gameId', gameId);
     forwardUrl.searchParams.set('roomId', roomId);
     forwardUrl.searchParams.delete('token');
+    forwardUrl.searchParams.delete('ticket');
     // Capacity and host come from D1, never from client query params: the
     // DO trusts these values for room sizing and host authority.
     forwardUrl.searchParams.set('maxPlayers', String(room.max_players ?? 2));

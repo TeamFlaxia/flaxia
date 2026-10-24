@@ -1,0 +1,60 @@
+name: Native GUI
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/native-gui.yml'
+      - 'src/**'
+      - 'src-tauri/**'
+      - 'public/**'
+      - 'package*.json'
+      - 'scripts/native-gui-smoke.py'
+      - 'scripts/build-native-crowd.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  linux-timeline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      ONNXRUNTIME_NODE_DISABLE_DOWNLOAD: 1
+      CARGO_BUILD_JOBS: 2
+      GDK_BACKEND: x11
+      LIBGL_ALWAYS_SOFTWARE: 1
+      WEBKIT_DISABLE_DMABUF_RENDERER: 1
+      TAURI_TARGET_PLATFORM: linux
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Install native build and virtual desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+            webkit2gtk-driver xvfb dbus-x11 openbox imagemagick fonts-noto-cjk
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'src-tauri -> target'
+      - run: npm ci --ignore-scripts
+      - name: Build the release desktop application with bundled UI
+        run: >-
+          npm run tauri:build -- --no-bundle --config
+          '{"build":{"beforeBuildCommand":"npm run build:desktop && node scripts/build-native-game-harness.mjs"}}'
+      - name: Install native WebKit automation driver
+        run: cargo install tauri-driver --version 2.1.0 --locked
+      - name: Verify the real native timeline online and after an offline cold start
+        run: |
+          mkdir -p native-gui-artifacts
+          xvfb-run -a -s '-screen 0 1440x1000x24' dbus-run-session -- \
+            python3 scripts/native-gui-smoke.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-linux-timeline
+          path: native-gui-artifacts/

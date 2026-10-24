@@ -567,3 +567,77 @@ describe('WebSocket /api/ws/multiplayer — membership gate', () => {
     member.socket.close();
   });
 });
+
+describe('native multiplayer socket tickets', () => {
+  beforeEach(resetDb);
+
+  async function createRoom(cookie: string) {
+    const response = await fetch(`${BASE_URL}/api/multiplayer/rooms`, {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ gameId: 'native-game' }),
+    });
+    assert.equal(response.status, 201);
+    return ((await response.json()) as { roomId: string }).roomId;
+  }
+
+  async function socketOpens(roomId: string, ticket: string): Promise<boolean> {
+    const url = new URL('/api/ws/multiplayer', BASE_URL.replace(/^http/, 'ws'));
+    url.searchParams.set('roomId', roomId);
+    url.searchParams.set('gameId', 'native-game');
+    url.searchParams.set('ticket', ticket);
+    // No Cookie header: this is the same authentication boundary as the bundled app.
+    const socket = new WebSocket(url);
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        socket.close();
+        reject(new Error('Socket handshake timed out'));
+      }, 5000);
+      socket.addEventListener(
+        'open',
+        () => {
+          clearTimeout(timeout);
+          socket.close();
+          resolve(true);
+        },
+        { once: true },
+      );
+      socket.addEventListener(
+        'error',
+        () => {
+          clearTimeout(timeout);
+          resolve(false);
+        },
+        { once: true },
+      );
+    });
+  }
+
+  it('requires an authenticated room member to issue a ticket', async () => {
+    const { cookie } = await seedUserAndLogin('ticket-owner');
+    const roomId = await createRoom(cookie);
+    const endpoint = `${BASE_URL}/api/multiplayer/rooms/${roomId}/socket-ticket`;
+    assert.equal((await fetch(endpoint, { method: 'POST' })).status, 401);
+    const other = await seedUserAndLogin('ticket-other');
+    assert.equal((await fetch(endpoint, { method: 'POST', headers: { Cookie: other.cookie } })).status, 403);
+  });
+
+  it('opens a socket without cookies but rejects another room and a revoked session', async () => {
+    const { cookie } = await seedUserAndLogin('ticket-native');
+    const roomId = await createRoom(cookie);
+    const otherRoom = await createRoom(cookie);
+    const response = await fetch(`${BASE_URL}/api/multiplayer/rooms/${roomId}/socket-ticket`, {
+      method: 'POST',
+      headers: { Cookie: cookie },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+    const { ticket } = (await response.json()) as { ticket: string };
+    assert.equal(cookie.includes(ticket), false);
+    assert.equal(await socketOpens(otherRoom, ticket), false);
+    assert.equal(await socketOpens(roomId, ticket), true);
+    const logout = await fetch(`${BASE_URL}/api/auth/logout`, { method: 'POST', headers: { Cookie: cookie } });
+    assert.equal(logout.status, 200);
+    assert.equal(await socketOpens(roomId, ticket), false);
+  });
+});

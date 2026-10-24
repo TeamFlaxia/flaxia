@@ -30,6 +30,8 @@ export class MultiplayerManager {
   private ws: WebSocket | null = null;
   private config: MultiplayerConfig;
   private connected = false;
+  private connecting = false;
+  private connectionGeneration = 0;
   private pc: RTCPeerConnection | null = null;
   private dataChannel: RTCDataChannel | null = null;
   private p2pConnected = false;
@@ -40,8 +42,9 @@ export class MultiplayerManager {
     this.config = config;
   }
 
-  connect(): void {
-    if (this.connected) return;
+  async connect(): Promise<void> {
+    if (this.connected || this.connecting) return;
+    const generation = ++this.connectionGeneration;
 
     const wsUrl = new URL(
       isNativeApp() ? nativeApiHref(this.config.wsUrl) : this.config.wsUrl,
@@ -49,6 +52,32 @@ export class MultiplayerManager {
     );
     wsUrl.searchParams.set('gameId', this.config.gameId);
     wsUrl.searchParams.set('roomId', this.config.roomId);
+
+    if (isNativeApp()) {
+      this.connecting = true;
+      try {
+        const response = await fetch(`/api/multiplayer/rooms/${encodeURIComponent(this.config.roomId)}/socket-ticket`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        if (!response.ok) throw new Error('Socket authorization failed');
+        const { ticket } = (await response.json()) as { ticket: string };
+        if (generation !== this.connectionGeneration) return;
+        wsUrl.searchParams.delete('token');
+        wsUrl.searchParams.set('ticket', ticket);
+      } catch {
+        if (generation === this.connectionGeneration) {
+          this.postToGame({
+            type: 'MULTIPLAYER_ERROR',
+            code: 'CONNECTION_ERROR',
+            message: 'Socket authorization failed',
+          });
+        }
+        return;
+      } finally {
+        if (generation === this.connectionGeneration) this.connecting = false;
+      }
+    }
 
     this.ws = new WebSocket(wsUrl.toString().replace(/^http/, 'ws'));
 
@@ -78,6 +107,8 @@ export class MultiplayerManager {
   }
 
   disconnect(): void {
+    this.connectionGeneration++;
+    this.connecting = false;
     this.closeP2P();
     // #121: tell D1 we left. The DO forgets the socket on close, but the
     // participants row would otherwise stay forever (ghost seat that still

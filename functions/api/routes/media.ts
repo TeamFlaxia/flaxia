@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { isAdmin } from '../../../src/lib/admin';
+import { servePublicLoader } from '../../../src/lib/game-loader-public.ts';
 import type { AttachmentKind } from '../../lib/attachments';
 import { MAX_ATTACHMENTS, MAX_ATTACHMENTS_PLUS, parseAttachmentKey } from '../../lib/attachments';
 import { getUserPlan } from '../../lib/billing';
@@ -21,6 +22,10 @@ import {
 import type { Bindings, Variables } from '../types';
 
 const media = new Hono<{ Bindings: Bindings; Variables: Variables }>();
+
+// Native download transport is scoped to the main first-party API origin.
+media.get('/game-loader/:postId', (c) => servePublicLoader(c));
+media.get('/game-loader/:postId/archive', (c) => servePublicLoader(c));
 
 type MediaContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 

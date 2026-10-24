@@ -4,10 +4,31 @@ import { test } from 'node:test';
 
 const config = readFileSync(new URL('../capacitor.config.ts', import.meta.url), 'utf8');
 
-test('Capacitor retains bundled assets and only Android selects the first-party remote origin', () => {
+test('all Capacitor platforms boot bundled assets with cookie-aware native HTTP', () => {
   assert.match(config, /webDir:\s*'dist'/);
-  assert.match(config, /CAPACITOR_PLATFORM === 'android'/);
-  assert.match(config, /url: 'https:\/\/flaxia\.app'/);
+  assert.doesNotMatch(config, /url:\s*'https?:/);
+  assert.match(config, /CapacitorHttp:\s*\{\s*enabled:\s*true/);
+});
+
+test('desktop apps boot local assets with first-party-only HTTP permissions', () => {
+  for (const os of ['windows', 'macos', 'linux']) {
+    const desktop = JSON.parse(
+      readFileSync(new URL('../src-tauri/tauri.conf.' + os + '.json', import.meta.url), 'utf8'),
+    );
+    assert.equal(desktop.app.windows[0].url, 'index.html');
+  }
+  const capabilities = JSON.parse(
+    readFileSync(new URL('../src-tauri/capabilities/default.json', import.meta.url), 'utf8'),
+  );
+  const http = capabilities.permissions.find(
+    (permission: unknown) =>
+      typeof permission === 'object' &&
+      permission !== null &&
+      'identifier' in permission &&
+      permission.identifier === 'http:default',
+  );
+  assert.deepEqual(http.allow, [{ url: 'https://flaxia.app/api/*' }]);
+  assert.equal(capabilities.remote, undefined);
 });
 
 test('privileged WebView does not allow remote site navigation', () => {

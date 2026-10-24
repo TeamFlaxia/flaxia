@@ -24,7 +24,7 @@ test('custom-scheme Capacitor calls target the first-party API origin', async ()
   assert.equal(nativeApiUrl('/assets/main.js'), '/assets/main.js');
   const rewrittenString = nativeApiUrl('/api/auth/login/start');
   assert.equal(rewrittenString, 'https://flaxia.app/api/auth/login/start');
-  const inputRequest = new Request('https://localhost/api/users/me', {
+  const inputRequest = new Request('capacitor://localhost/api/users/me', {
     method: 'DELETE',
     headers: { 'Content-Type': 'application/json' },
   });

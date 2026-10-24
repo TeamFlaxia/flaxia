@@ -50,7 +50,9 @@ export const fetchNotifications = async (): Promise<NotificationData> => {
   } catch (error) {
     console.log('Failed to fetch notifications:', error);
   }
-  return { notifications: [], unread_count: 0 };
+  // Keep the last in-memory result through a transient outage. Native polling
+  // must not treat an outage as an empty inbox and re-notify on recovery.
+  return cachedNotifications ?? { notifications: [], unread_count: 0 };
 };
 
 /** Drop the cache so the next fetch gets fresh data (e.g. after mark-all-read). */
