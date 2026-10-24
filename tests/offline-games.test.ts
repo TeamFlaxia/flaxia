@@ -37,7 +37,7 @@ function fixture(factory = new IDBFactory()) {
     const url = new URL((input as Request).url);
     requests.push(url.pathname);
     if (url.pathname === '/api/bookmarks') return Response.json({ posts: bookmarks });
-    if (url.pathname.startsWith('/api/posts/')) return Response.json({ post: post(url.pathname.split('/').at(-1)) });
+    if (url.pathname.startsWith('/api/posts/')) return Response.json(post(url.pathname.split('/').at(-1)));
     if (url.pathname.endsWith('/archive')) return new Response('ZIP');
     if (status !== 200) return new Response(null, { status });
     const id = url.pathname.split('/').at(-1);
@@ -275,7 +275,7 @@ test('standalone HTML downloads do not require a ZIP extractor', async () => {
   assert.equal(new TextDecoder().decode((await games.files('game1'))?.[0].bytes), '<button>Play</button>');
 });
 
-test('quickly bookmarking two games downloads both without cancelling the first metadata lookup', async () => {
+test('bookmark toggles download both games using the single-post API response without cancelling either lookup', async () => {
   const f = fixture();
   const games = f.make();
   await games.account('alice');
@@ -288,6 +288,59 @@ test('quickly bookmarking two games downloads both without cancelling the first 
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
   assert.deepEqual((await games.list()).map((game) => game.id).sort(), ['first', 'second']);
+  assert.ok(f.requests.includes('/api/game-loader/first'));
+  assert.ok(f.requests.includes('/api/game-loader/second'));
+});
+
+test('a stalled descriptor body times out, aborts the request and lets the next download finish', {
+  timeout: 5000,
+}, async (t) => {
+  let reading = false;
+  let signal: AbortSignal | undefined;
+  const games = createOfflineGames({
+    store: createOfflineGameStore(new IDBFactory()),
+    online: () => true,
+    network: async (input) => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/archive')) return new Response('ZIP');
+      if (path === '/api/game-loader/stalled') {
+        signal = request.signal;
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{'));
+            },
+            pull() {
+              reading = true;
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' } },
+        );
+      }
+      return Response.json({
+        postId: 'next',
+        revision: 'a'.repeat(64),
+        cacheable: true,
+        archiveUrl: 'https://flaxia.app/api/game-loader/next/archive',
+      });
+    },
+    extract: async () => files(),
+  });
+  await games.account('alice');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const stalled = games.download(post('stalled'));
+  const next = games.download(post('next'));
+  while (!reading) await new Promise<void>((resolve) => setImmediate(resolve));
+  t.mock.timers.tick(30_001);
+  await Promise.all([stalled, next]);
+  assert.equal(signal?.aborted, true);
+  assert.equal(games.states.get('stalled'), 'error');
+  assert.equal(games.states.get('next'), 'saved');
+  assert.deepEqual(
+    (await games.list()).map((game) => game.id),
+    ['next'],
+  );
 });
 
 test('store commits atomically, isolates accounts and rejects stale writers or over-budget games', async () => {

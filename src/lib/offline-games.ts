@@ -56,18 +56,20 @@ export function createOfflineGames(options: Options) {
     await options.store.delete(id).catch(() => {});
     changed();
   }
-  async function request(path: string): Promise<Response> {
+  async function boundedRequest<T>(path: string, consume: (response: Response) => T | Promise<T>): Promise<T> {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
-        options.network(
-          new Request(new URL(path, 'https://flaxia.app'), {
-            credentials: 'include',
-            cache: 'no-store',
-            signal: controller.signal,
-          }),
-        ),
+        options
+          .network(
+            new Request(new URL(path, 'https://flaxia.app'), {
+              credentials: 'include',
+              cache: 'no-store',
+              signal: controller.signal,
+            }),
+          )
+          .then(consume),
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
             controller.abort();
@@ -79,6 +81,12 @@ export function createOfflineGames(options: Options) {
       clearTimeout(timer);
     }
   }
+  const request = (path: string) => boundedRequest(path, (response) => response);
+  const requestJson = <T>(path: string) =>
+    boundedRequest(path, async (response) => ({
+      response,
+      data: response.ok ? ((await response.json()) as T) : undefined,
+    }));
   function download(post: Post): Promise<void> {
     if (jobs.has(post.id)) return pendingDownloads.get(post.id) ?? Promise.resolve();
     if (!owner || !post.payload_key || !options.online() || removed.has(post.id)) return Promise.resolve();
@@ -93,20 +101,19 @@ export function createOfflineGames(options: Options) {
     const run = queue.then(async () => {
       if (!valid()) return;
       try {
-        const descriptor = await request(`/api/game-loader/${encodeURIComponent(post.id)}`).catch((error) => {
-          if (valid()) transportFailures.add(post.id);
-          throw error;
-        });
-        if (!valid()) return;
-        if ([401, 403, 404, 410].includes(descriptor.status)) await options.store.delete(post.id);
-        if (!descriptor.ok) throw new Error('Game is unavailable');
-        const data = (await descriptor.json()) as {
+        const { response: descriptor, data } = await requestJson<{
           postId: string;
           revision: string;
           cacheable: boolean;
           archiveUrl: string;
           format?: 'zip' | 'html';
-        };
+        }>(`/api/game-loader/${encodeURIComponent(post.id)}`).catch((error) => {
+          if (valid()) transportFailures.add(post.id);
+          throw error;
+        });
+        if (!valid()) return;
+        if ([401, 403, 404, 410].includes(descriptor.status)) await options.store.delete(post.id);
+        if (!descriptor.ok || !data) throw new Error('Game is unavailable');
         const archiveUrl = new URL(data.archiveUrl);
         if (
           data.postId !== post.id ||
@@ -190,11 +197,11 @@ export function createOfflineGames(options: Options) {
       const cursors = new Set<string>();
       let cursor = '';
       do {
-        const response = await request(
+        const { response, data } = await requestJson<{ posts: Post[] }>(
           `/api/bookmarks?limit=50${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`,
         );
         if (!response.ok || savedGeneration !== generation || savedBookmarks !== bookmarkGeneration) return;
-        const { posts } = (await response.json()) as { posts: Post[] };
+        const posts = data?.posts;
         if (!Array.isArray(posts)) return;
         for (const post of posts) {
           ids.add(post.id);
@@ -294,15 +301,14 @@ export function createOfflineGames(options: Options) {
         else {
           removed.delete(bookmark[1]);
           void (async () => {
-            const postResponse = await request(`/api/posts/${bookmark[1]}`);
+            const { response: postResponse, data: postData } = await requestJson<Post>(`/api/posts/${bookmark[1]}`);
             if (
               savedGeneration !== generation ||
               bookmarkVersions.get(bookmark[1]) !== bookmarkVersion ||
               !postResponse.ok
             )
               return;
-            const postData = (await postResponse.json()) as { post: Post };
-            if (postData.post) await download(postData.post);
+            if (postData) await download(postData);
           })().catch(() => {});
         }
       }
