@@ -8,6 +8,7 @@ describe('isPublicRoute', () => {
     for (const p of [
       '/',
       '/home',
+      '/index.html',
       '/explore',
       '/search',
       '/arcade',
@@ -38,6 +39,7 @@ describe('isPublicRoute', () => {
 describe('resolveAuthRedirect', () => {
   it('returns null when allowed', () => {
     assert.equal(resolveAuthRedirect('/home', false), null);
+    assert.equal(resolveAuthRedirect('/index.html', false), null);
     assert.equal(resolveAuthRedirect('/settings', true), null);
     assert.equal(resolveAuthRedirect('/notifications', true), null);
   });
