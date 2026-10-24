@@ -59,7 +59,7 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
   const now = options.now ?? Date.now;
   let owner = 'guest';
   let generation = 0;
-  const unavailableReads = new Set<string>();
+  const unavailableReads = new Map<string, string>();
   let initialized: Promise<void> | undefined;
   const safely = async <T>(operation: () => Promise<T>): Promise<T | undefined> => {
     try {
@@ -103,6 +103,11 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
     if (authMutation) await reset();
     const currentGeneration = generation;
     const key = isMe ? 'identity' : owner + ':' + url.pathname + url.search;
+    const isFeed = url.pathname === '/api/posts' || url.pathname === '/api/posts/recommended';
+    const feedParams = new URLSearchParams(url.search);
+    feedParams.delete('cursor');
+    feedParams.sort();
+    const readGroup = isFeed ? owner + ':' + url.pathname + '?' + feedParams.toString() : key;
     const cacheable =
       request.method === 'GET' &&
       isOfflineReadable(url.pathname) &&
@@ -110,11 +115,12 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
       !request.headers.has('Authorization') &&
       !request.headers.has('Range');
     const fallback = async (): Promise<Response> => {
-      if (request.method === 'GET') unavailableReads.add(key);
       options.setOffline(true);
       const record = cacheable ? await safely(() => store.get(key)) : undefined;
       if (request.signal.aborted) throw new DOMException('The request was aborted', 'AbortError');
       if (record && generation === currentGeneration && now() - record.savedAt <= MAX_AGE) {
+        // Only saved content can stay stale after connectivity recovers.
+        unavailableReads.set(key, readGroup);
         return new Response(record.body, {
           headers: {
             'Content-Type': record.body.type,
@@ -173,7 +179,16 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
     }
     if (currentGeneration !== generation) return response;
     // A notification/image success cannot make a saved feed fresh.
-    unavailableReads.delete(key);
+    if (request.method === 'GET') {
+      unavailableReads.delete(key);
+      // A fresh first page replaces the feed, including previously saved pages.
+      // Keep other feed filters and unrelated reads independently stale.
+      if (response.ok && isFeed && !url.searchParams.has('cursor')) {
+        for (const [savedKey, group] of unavailableReads) {
+          if (group === readGroup) unavailableReads.delete(savedKey);
+        }
+      }
+    }
     options.setOffline(unavailableReads.size > 0 || !options.isOnline());
     if (
       (isMe && response.status === 401) ||

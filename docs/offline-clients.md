@@ -44,7 +44,9 @@ Session cookies are never returned to JavaScript.
 
 A successful image or notification request does not dismiss the offline banner
 while another read still uses saved content; refreshing that read clears its
-stale state.
+stale state. A fresh first page also clears saved pagination warnings for the
+same feed and filters. Uncached failures do not retain a stale-content warning
+after connectivity recovers.
 
 ## Online-only features
 

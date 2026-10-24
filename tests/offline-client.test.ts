@@ -293,3 +293,48 @@ test('unrelated successes cannot hide a saved-feed warning; refreshing that feed
   await c.fetch('/api/posts');
   assert.equal(c.offline(), false);
 });
+
+for (const savedPage of [false, true]) {
+  test(`refreshing a feed clears its offline pagination warning (saved page: ${savedPage})`, async () => {
+    const c = client(async (input) =>
+      new URL((input as Request).url).pathname === '/api/me' ? me('alice') : json({ posts: ['fresh'] }),
+    );
+    await c.fetch('/api/me');
+    await c.fetch('/api/posts?limit=20');
+    if (savedPage) await c.fetch('/api/posts?cursor=old&limit=20');
+    c.setOnline(false);
+    await c.fetch('/api/posts?limit=20');
+    assert.equal((await c.fetch('/api/posts?cursor=old&limit=20')).status, savedPage ? 200 : 503);
+    c.setOnline(true);
+    await c.fetch('/api/me');
+    await c.fetch('/api/posts?limit=20');
+    assert.equal(c.offline(), false);
+  });
+}
+
+test('refreshing another feed or receiving an HTTP error does not clear saved pages', async () => {
+  let status = 200;
+  const c = client(async () => json({ posts: [] }, status));
+  await c.fetch('/api/posts?following=true&limit=20&cursor=old');
+  c.setOnline(false);
+  await c.fetch('/api/posts?following=true&limit=20&cursor=old');
+  c.setOnline(true);
+  await c.fetch('/api/posts?limit=20');
+  await c.fetch('/api/posts/recommended?following=true&limit=20');
+  assert.equal(c.offline(), true);
+  status = 500;
+  await c.fetch('/api/posts?limit=20&following=true');
+  assert.equal(c.offline(), true);
+  status = 200;
+  await c.fetch('/api/posts?limit=20&following=true');
+  assert.equal(c.offline(), false);
+});
+
+test('an uncached failed read does not keep the banner after connectivity recovers', async () => {
+  const c = client(async () => json({ posts: [] }));
+  c.setOnline(false);
+  assert.equal((await c.fetch('/api/posts?cursor=missing')).status, 503);
+  c.setOnline(true);
+  await c.fetch('/api/posts');
+  assert.equal(c.offline(), false);
+});
