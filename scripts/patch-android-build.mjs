@@ -18,7 +18,8 @@ try {
 }
 
 // RELEASE_TAG must be converted to ANDROID_VERSION_CODE by the build workflow.
-const releaseTag = process.env.RELEASE_TAG ?? process.env.GITHUB_REF_NAME;
+const releaseTag =
+  process.env.RELEASE_TAG ?? (process.env.GITHUB_REF_TYPE === 'tag' ? process.env.GITHUB_REF_NAME : undefined);
 const androidVersionCode = releaseTag ? versionCodeFromReleaseTag(releaseTag) : process.env.ANDROID_VERSION_CODE;
 
 // Generate notification small icon (white leaf silhouette) for Android status bar

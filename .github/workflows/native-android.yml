@@ -18,6 +18,7 @@ jobs:
     env:
       ONNXRUNTIME_NODE_DISABLE_DOWNLOAD: 1
       HUSKY: 0
+      PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -41,13 +42,12 @@ jobs:
       - run: npm run cap:sync
         env:
           CAPACITOR_PLATFORM: android
-          GITHUB_REF_NAME: ''
       - name: Build debug APK
         run: |
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" 'platforms;android-36' 'build-tools;36.0.0' > /dev/null
           cd android
           ./gradlew assembleDebug
-      - run: npm install --no-save --package-lock=false --ignore-scripts playwright@1.62.1
+      - run: npm install --prefix "$RUNNER_TEMP/flaxia-browser-tools" --package-lock=false --ignore-scripts playwright@1.62.1
       - name: Test the Android WebView online, after an offline restart, and with a downloaded game
         uses: reactivecircus/android-emulator-runner@v2
         with:

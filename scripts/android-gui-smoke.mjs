@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { chromium } from 'playwright';
+
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright');
 
 mkdirSync('android-gui-artifacts', { recursive: true });
 const adb = (...args) => execFileSync('adb', args, { encoding: 'utf8' }).trim();

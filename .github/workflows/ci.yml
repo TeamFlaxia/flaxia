@@ -26,12 +26,13 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       # Use the runner's installed Chrome; avoid OS package/browser downloads.
-      - run: npm install --no-save --package-lock=false --ignore-scripts playwright@1.62.1
+      - run: npm install --prefix "$RUNNER_TEMP/flaxia-browser-tools" --package-lock=false --ignore-scripts playwright@1.62.1
       - run: npm run build:game-loader
       - run: node scripts/build-native-game-harness.mjs
       - run: npm run test:game-loader:browser
         env:
           LOADER_CHROMIUM_EXECUTABLE: /usr/bin/google-chrome
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
 
   lint:
     runs-on: ubuntu-latest

@@ -56,9 +56,9 @@
     "cap:copy": "node scripts/patch-native-bridges.mjs && npx cap copy && node scripts/patch-android-build.mjs",
     "cap:open:android": "npx cap open android",
     "cap:open:ios": "npx cap open ios",
-    "cap:build:android": "CAPACITOR_PLATFORM=android npx cap sync && node scripts/patch-android-build.mjs && npx cap copy && cd android && ./gradlew assembleDebug",
+    "cap:build:android": "node scripts/patch-native-bridges.mjs && CAPACITOR_PLATFORM=android npx cap sync && node scripts/patch-android-build.mjs && npx cap copy && cd android && ./gradlew assembleDebug",
     "cap:build:android:release": "npm run build && CAPACITOR_PLATFORM=android npx cap sync && node scripts/patch-android-build.mjs && cd android && ./gradlew bundleRelease",
-    "cap:build:ios": "npx cap sync && npx cap copy",
+    "cap:build:ios": "node scripts/patch-native-bridges.mjs && npx cap sync && npx cap copy",
     "prepare": "husky",
     "build:game-loader": "node scripts/patch-native-bridges.mjs && node scripts/build-game-loader.mjs && node scripts/build-offline-game.mjs",
     "test:game-loader:browser": "node --experimental-strip-types --test tests/game-loader.browser.mjs tests/offline-games.browser.mjs"
