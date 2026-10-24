@@ -222,9 +222,57 @@ test('saved content never overrides HTTP denials, external APIs or an aborted re
   assert.equal((await denied('https://external.example/api/bookmarks')).status, 403);
   const unavailable = games.wrap(async () => new Response(null, { status: 503 }));
   assert.equal((await unavailable('/api/bookmarks')).status, 503);
+  const offline = games.wrap(async () => {
+    throw new TypeError('offline');
+  });
+  await assert.rejects(offline('/api/bookmarks', { headers: { Authorization: 'Bearer another-account' } }));
+  await assert.rejects(offline('/api/bookmarks', { headers: { Range: 'bytes=0-10' } }));
+  assert.equal((await offline('/api/bookmarks', { cache: 'no-store' })).status, 503);
   const controller = new AbortController();
   controller.abort();
   await assert.rejects(denied('/api/bookmarks', { signal: controller.signal }), { name: 'AbortError' });
+});
+
+test('an unresponsive native transport reaches its deadline instead of blocking the download queue', async (t) => {
+  let started = false;
+  const games = createOfflineGames({
+    store: createOfflineGameStore(new IDBFactory()),
+    online: () => true,
+    network: async () => {
+      started = true;
+      return new Promise<Response>(() => {});
+    },
+    extract: async () => files(),
+  });
+  await games.account('alice');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const pending = games.download(post());
+  while (!started) await new Promise<void>((resolve) => setImmediate(resolve));
+  t.mock.timers.tick(30_001);
+  await pending;
+  assert.equal(games.states.get('game1'), 'error');
+});
+
+test('standalone HTML downloads do not require a ZIP extractor', async () => {
+  const games = createOfflineGames({
+    store: createOfflineGameStore(new IDBFactory()),
+    online: () => true,
+    network: async (input) =>
+      new URL((input as Request).url).pathname.endsWith('/archive')
+        ? new Response('<button>Play</button>')
+        : Response.json({
+            postId: 'game1',
+            revision: 'a'.repeat(64),
+            format: 'html',
+            cacheable: true,
+            archiveUrl: 'https://flaxia.app/api/game-loader/game1/archive',
+          }),
+    extract: async () => assert.fail('HTML must not be parsed as ZIP'),
+  });
+  await games.account('alice');
+  await games.download({ ...post(), payload_key: 'html/game1.html' });
+  assert.equal(games.states.get('game1'), 'saved');
+  assert.equal(new TextDecoder().decode((await games.files('game1'))?.[0].bytes), '<button>Play</button>');
 });
 
 test('quickly bookmarking two games downloads both without cancelling the first metadata lookup', async () => {

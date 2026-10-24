@@ -26,6 +26,7 @@ export function createOfflineGames(options: Options) {
   const bookmarkVersions = new Map<string, symbol>();
   let bookmarkGeneration = 0;
   const states = new Map<string, DownloadState>();
+  const transportFailures = new Set<string>();
   const now = options.now ?? Date.now;
   const changed = () => options.changed?.();
   async function account(next: string | null) {
@@ -37,6 +38,7 @@ export function createOfflineGames(options: Options) {
     removed.clear();
     bookmarkVersions.clear();
     states.clear();
+    transportFailures.clear();
     syncing = undefined;
     await options.store.activate(next).catch(() => {});
     changed();
@@ -55,13 +57,27 @@ export function createOfflineGames(options: Options) {
     changed();
   }
   async function request(path: string): Promise<Response> {
-    return options.network(
-      new Request(new URL(path, 'https://flaxia.app'), {
-        credentials: 'include',
-        cache: 'no-store',
-        signal: AbortSignal.timeout(30_000),
-      }),
-    );
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        options.network(
+          new Request(new URL(path, 'https://flaxia.app'), {
+            credentials: 'include',
+            cache: 'no-store',
+            signal: controller.signal,
+          }),
+        ),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(new TypeError('Game download timed out'));
+          }, 30_000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
   function download(post: Post): Promise<void> {
     if (jobs.has(post.id)) return pendingDownloads.get(post.id) ?? Promise.resolve();
@@ -72,11 +88,15 @@ export function createOfflineGames(options: Options) {
     jobs.set(post.id, job);
     const valid = () => savedGeneration === generation && owner === savedOwner && jobs.get(post.id) === job;
     states.set(post.id, 'downloading');
+    transportFailures.delete(post.id);
     changed();
     const run = queue.then(async () => {
       if (!valid()) return;
       try {
-        const descriptor = await request(`/api/game-loader/${encodeURIComponent(post.id)}`);
+        const descriptor = await request(`/api/game-loader/${encodeURIComponent(post.id)}`).catch((error) => {
+          if (valid()) transportFailures.add(post.id);
+          throw error;
+        });
         if (!valid()) return;
         if ([401, 403, 404, 410].includes(descriptor.status)) await options.store.delete(post.id);
         if (!descriptor.ok) throw new Error('Game is unavailable');
@@ -107,16 +127,21 @@ export function createOfflineGames(options: Options) {
           if (!reader) throw new Error('Empty archive');
           const chunks: Uint8Array[] = [];
           let size = 0;
+          let bodyTimer: ReturnType<typeof setTimeout> | undefined;
+          const deadline = new Promise<never>((_, reject) => {
+            bodyTimer = setTimeout(() => reject(new TypeError('Archive body timed out')), 30_000);
+          });
           try {
             while (true) {
-              const { done, value } = await reader.read();
+              const { done, value } = await Promise.race([reader.read(), deadline]);
               if (done) break;
               size += value.byteLength;
               if (size > MAX_ZIP_BYTES || !valid()) throw new Error('Archive too large or cancelled');
               chunks.push(value);
             }
           } finally {
-            await reader.cancel().catch(() => {});
+            clearTimeout(bodyTimer);
+            void reader.cancel().catch(() => {});
           }
           const joined = new Uint8Array(size);
           let offset = 0;
@@ -198,6 +223,7 @@ export function createOfflineGames(options: Options) {
     if (options.online()) {
       await download(game.post);
       if (states.get(id) === 'error') {
+        if (!transportFailures.has(id)) return undefined;
         // Transport outages may use the snapshot; HTTP revocations delete it.
         const retained = (await list()).find((item) => item.id === id);
         return generation === savedGeneration && retained && owner
@@ -215,6 +241,9 @@ export function createOfflineGames(options: Options) {
       if (url.origin !== 'https://flaxia.app' && !(url.protocol === base.protocol && url.host === base.host))
         return next(input, init);
       const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+      const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+      if (headers.has('Authorization') || headers.has('Range')) return next(input, init);
+      const noStore = (init?.cache ?? (input instanceof Request ? input.cache : undefined)) === 'no-store';
       const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
       if (signal?.aborted) throw new DOMException('The request was aborted', 'AbortError');
       if (method === 'POST' && /^\/api\/auth\/(?:register|login(?:\/(?:start|verify))?|logout)$/.test(url.pathname))
@@ -279,6 +308,7 @@ export function createOfflineGames(options: Options) {
       }
       if (
         method === 'GET' &&
+        !noStore &&
         ['/api/bookmarks', '/api/games'].includes(url.pathname) &&
         (transportFailed || response.headers.has('X-Flaxia-Offline'))
       ) {
