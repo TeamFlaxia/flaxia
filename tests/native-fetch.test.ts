@@ -116,3 +116,77 @@ test('static assets and third-party APIs keep the browser transport', async () =
   await native('https://other.example/api/upload', { method: 'POST', body: 'data' });
   assert.deepEqual(received, ['/locales/ja.json', 'https://other.example/api/upload']);
 });
+
+test('Capacitor reads use native HTTP directly and decode JSON/binary without exposing cookies', async () => {
+  platform('android');
+  let binary = false;
+  const native = createNativeFetch(
+    async () => assert.fail('reads must not use the WebView proxy'),
+    undefined,
+    async () => ({
+      platform: 'android',
+      request: async (options) => {
+        assert.equal(options.disableRedirects, true);
+        assert.equal(options.responseType, 'arraybuffer');
+        assert.equal(options.url.startsWith('https://flaxia.app/api/'), true);
+        return {
+          status: 200,
+          url: options.url,
+          headers: {
+            'Content-Type': binary ? 'application/octet-stream' : 'application/json',
+            'Set-Cookie': 'secret=private',
+          },
+          data: binary ? 'AP+ACg==' : { posts: ['native'] },
+        };
+      },
+    }),
+  );
+  const response = await native('/api/posts');
+  assert.deepEqual(await response.json(), { posts: ['native'] });
+  assert.equal(response.url, 'https://flaxia.app/api/posts');
+  assert.equal(response.headers.get('Set-Cookie'), null);
+  binary = true;
+  const archive = await native('/api/game-loader/game1/archive');
+  assert.deepEqual(new Uint8Array(await archive.arrayBuffer()), new Uint8Array([0, 255, 128, 10]));
+});
+
+test('Capacitor native reads preserve HTTP errors and ignore responses after abort', async () => {
+  platform('android');
+  let release!: (value: import('@capacitor/core').HttpResponse) => void;
+  let started!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let pending = false;
+  const native = createNativeFetch(
+    async () => assert.fail('unexpected proxy'),
+    undefined,
+    async () => ({
+      platform: 'android',
+      request: async (options) => {
+        if (pending) {
+          started();
+          return new Promise((resolve) => {
+            release = resolve;
+          });
+        }
+        return { status: 404, headers: { 'Content-Type': 'text/plain' }, data: 'Not found', url: options.url };
+      },
+    }),
+  );
+  const missing = await native('/api/game-loader/game1');
+  assert.equal(missing.status, 404);
+  assert.equal(await missing.text(), 'Not found');
+  pending = true;
+  const controller = new AbortController();
+  const reading = native('/api/posts', { signal: controller.signal });
+  await ready;
+  controller.abort();
+  await assert.rejects(reading, { name: 'AbortError' });
+  release({
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+    data: { posts: [] },
+    url: 'https://flaxia.app/api/posts',
+  });
+});
