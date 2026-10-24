@@ -369,17 +369,19 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 - Returns 401 for guests, 403 for non-admins, 404 for missing posts, 503 without a database, and 500 on write failure.
 - Available from the admin Alerts tab by post ID or an alert’s Mark as NSFW button; does not require reports or Crowd scanning.
 
-### Flaxia AI Checked
+### Flaxia AI Indexed
 
-Post responses enriched with attachments include `ai_checked: boolean`.
-The check beside the post menu is shown only when every current image has a
-valid completed, non-NSFW verdict bound by SHA-256 to its current clean file-scan
-record. Pending, failed, malformed, historical verdicts without recorded outcomes,
-NSFW-tagged posts, and posts with games or unsupported attachments have no badge.
-Text-only posts have no image audit and therefore no badge. The badge records
-image screening; text and other content are outside this audit's scope.
+Post responses include `ai_indexed: boolean`: the current post text has a completed
+embedding stored in `post_embeddings`. The check beside the menu has the tooltip
+“Flaxia AI Indexed — Flaxia AIにインデックスされています”. This is an indexing
+indicator, independent of NSFW screening and moderation. It applies to text-only
+posts and posts with images, games, or other attachments; it does not claim that
+image pixels or game contents have been indexed.
 
-Migration `0110_nsfw_ai_passed.sql` records passing outcomes. Historical rows stay
-unknown until reviewed again. The existing admin `POST /api/admin/backfill-nsfw`
-can re-submit these rows (`?throttle=false` allows an explicit batch flush).
-The Japanese hover description is “Flaxia AIが確認をしました”.
+Migration `0111_embedding_source_sha.sql` records the SHA-256 of the embedded
+text. Pending/failed jobs, old results for edited text, and historical embeddings
+without a source hash do not display the check. Edits enqueue re-indexing. Signed
+callbacks bind the result to the submitted text and ignore stale results.
+
+The admin `POST /api/admin/backfill-embeddings` also re-indexes historical rows
+without a source hash.

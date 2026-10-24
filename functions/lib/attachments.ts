@@ -11,7 +11,7 @@
  */
 
 import { GAME_FILE_EXTENSIONS } from '../../src/lib/file-extensions.ts';
-import { enrichPostsWithAiCheck } from './ai-check.ts';
+import { enrichPostsWithAiIndex } from './ai-index.ts';
 
 export type AttachmentKind = 'image' | 'audio' | 'video' | 'document';
 
@@ -230,7 +230,7 @@ export async function enrichPostsWithAttachments<T extends AttachmentsEnrichable
       const list = byPost.get(post.id);
       (post as Record<string, unknown>).attachments = list ? list : [];
     }
-    await enrichPostsWithAiCheck(posts, db);
+    await enrichPostsWithAiIndex(posts, db);
   } catch (e) {
     console.error('Failed to enrich posts with attachments:', e);
   }

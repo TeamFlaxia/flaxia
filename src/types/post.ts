@@ -50,7 +50,7 @@ export interface ReactionSummary {
 }
 
 export interface Post {
-  ai_checked?: boolean; // All current images passed the recorded AI review.
+  ai_indexed?: boolean; // The current post text has been embedded and stored.
   id: string;
   user_id: string;
   username: string;
