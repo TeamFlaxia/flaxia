@@ -5,6 +5,11 @@ including all lazy modules and locale files. Startup no longer requires
 flaxia.app to be reachable. A first launch without saved content shows an
 explanation rather than waiting indefinitely for the timeline.
 
+Tauri builds use `npm run build:desktop` to include the pinned Crowd runtime,
+its workers, and inference modules under `/native-crowd/`. This adds about
+129 MiB of uncompressed desktop assets. Web and Capacitor builds use
+`npm run build` and do not include this desktop runtime.
+
 After an online visit, native clients can read the saved timeline, previously
 opened threads and replies, game listings, and saved image previews/avatars.
 Reads try the network first; on a network failure or an eight-second read

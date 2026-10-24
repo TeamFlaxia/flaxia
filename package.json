@@ -14,6 +14,7 @@
     "dev:local": "vite --host",
     "dev:all": "npm run migrate:local && rm -rf dist && mkdir dist && (trap 'kill 0 2>/dev/null' EXIT; vite --host & wrangler pages dev dist --binding ADMIN_USERNAMES=remydrescarlet --port 8787 --binding ENVIRONMENT=development --binding BASE_URL=http://localhost:8787 --binding SANDBOX_ORIGIN=http://localhost:3000 --do NOTIFICATION_STREAM=NotificationStream@notif-stream & wait)",
     "build": "npm run build:sdk && npm run build:capture && npm run build:pdfjs && npm run build:game-loader && vite build",
+    "build:desktop": "npm run build && node scripts/build-native-crowd.mjs",
     "build:sdk": "vite build --config packages/multiplayer/vite.config.ts && node scripts/embed-multiplayer-sdk.mjs",
     "build:capture": "vite build --config packages/capture/vite.config.ts && node scripts/embed-capture-bridge.mjs",
     "build:pdfjs": "node scripts/embed-pdfjs.mjs",

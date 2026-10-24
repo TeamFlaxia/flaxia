@@ -9,6 +9,7 @@ on:
       - 'public/**'
       - 'package*.json'
       - 'scripts/native-gui-smoke.py'
+      - 'scripts/build-native-crowd.mjs'
 
 permissions:
   contents: read
@@ -44,7 +45,7 @@ jobs:
       - name: Build the release desktop application with bundled UI
         run: >-
           npm run tauri:build -- --no-bundle --config
-          '{"build":{"beforeBuildCommand":"npm run build && node scripts/build-native-game-harness.mjs"}}'
+          '{"build":{"beforeBuildCommand":"npm run build:desktop && node scripts/build-native-game-harness.mjs"}}'
       - name: Install native WebKit automation driver
         run: cargo install tauri-driver --version 2.1.0 --locked
       - name: Verify the real native timeline online and after an offline cold start

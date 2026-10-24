@@ -194,6 +194,7 @@ export function createOfflineGames(options: Options) {
     removed.clear();
     const work = (async () => {
       const ids = new Set<string>();
+      const bookmarkedPosts: Post[] = [];
       const cursors = new Set<string>();
       let cursor = '';
       do {
@@ -205,8 +206,7 @@ export function createOfflineGames(options: Options) {
         if (!Array.isArray(posts)) return;
         for (const post of posts) {
           ids.add(post.id);
-          await download(post);
-          if (savedGeneration !== generation || savedBookmarks !== bookmarkGeneration) return;
+          bookmarkedPosts.push(post);
         }
         if (posts.length < 50) break;
         cursor = posts.at(-1)?.created_at ?? '';
@@ -214,7 +214,16 @@ export function createOfflineGames(options: Options) {
         cursors.add(cursor);
       } while (savedGeneration === generation);
       if (savedGeneration !== generation || savedBookmarks !== bookmarkGeneration || !owner) return;
-      for (const game of await options.store.list(owner)) if (!ids.has(game.id)) await remove(game.id);
+      // Reconcile the complete list before downloading: removed bookmarks must
+      // release their quota before replacement games try to commit.
+      for (const game of await options.store.list(owner)) {
+        if (savedGeneration !== generation || savedBookmarks !== bookmarkGeneration) return;
+        if (!ids.has(game.id)) await remove(game.id);
+      }
+      for (const post of bookmarkedPosts) {
+        if (savedGeneration !== generation || savedBookmarks !== bookmarkGeneration) return;
+        await download(post);
+      }
     })()
       .catch(() => {})
       .finally(() => {

@@ -1,5 +1,6 @@
-// Client-side Crowd constants. Kept dependency-free so both the SPA and the
-// Pages Functions can share one pinned node version / orchestrator origin.
+import { API_ORIGIN, isTauriNativePlatform } from './native-api.ts';
+
+// Shared by the SPA, native build preparation, and Pages Functions.
 export const CROWD_ORCHESTRATOR_URL = 'https://crowd.flaxia.app';
 
 /** Pinned `@flaxia/node` version served through the /api/crowd asset proxy. */
@@ -72,7 +73,8 @@ export interface FlaxiaNodeModule {
  * {@link CROWD_NODE_VERSION} invalidates the immutable proxy cache.
  */
 export function crowdNodeEntry(version: string = CROWD_NODE_VERSION): string {
-  return `/api/crowd/v${version}-0/index.js`;
+  const root = isTauriNativePlatform() ? '/native-crowd' : '/api/crowd';
+  return `${root}/v${version}-0/index.js`;
 }
 
 let modulePromise: Promise<FlaxiaNodeModule> | null = null;
@@ -150,7 +152,8 @@ function buildNodeConfig(onConsentRequired?: (controls: CrowdConsentControls) =>
       onConsentRequired,
     },
     capabilities: CROWD_SITE_CAPABILITIES,
-    fileSourceOrigins: typeof window !== 'undefined' ? [window.location.origin] : [],
+    fileSourceOrigins:
+      typeof window !== 'undefined' ? [isTauriNativePlatform() ? API_ORIGIN : window.location.origin] : [],
     maxCpuLoad: CROWD_NODE_MAX_CPU_LOAD,
   };
 }

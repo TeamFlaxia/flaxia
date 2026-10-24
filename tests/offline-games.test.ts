@@ -208,6 +208,110 @@ test('full bookmark reconciliation removes downloads no longer bookmarked', asyn
   assert.equal((await games.list()).length, 0);
 });
 
+test('one sync frees removed bookmarks before replacement downloads consume their quota', async () => {
+  const store = createOfflineGameStore(new IDBFactory());
+  await store.activate('alice');
+  for (const [id, mib] of [
+    ['old1', 100],
+    ['old2', 100],
+    ['old3', 50],
+  ] as const) {
+    await store.put(
+      {
+        id,
+        owner: 'alice',
+        post: post(id),
+        revision: 'a'.repeat(64),
+        savedAt: Date.now(),
+        files: files(),
+        size: mib * 1024 * 1024,
+      },
+      () => true,
+    );
+  }
+  let archives = 0;
+  const games = createOfflineGames({
+    store,
+    online: () => true,
+    network: async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path === '/api/bookmarks') return Response.json({ posts: [post('replacement')] });
+      if (path.endsWith('/archive')) {
+        archives++;
+        return new Response('ZIP');
+      }
+      assert.equal((await store.list('alice')).length, 0, 'removed downloads must release quota first');
+      return Response.json({
+        postId: 'replacement',
+        revision: 'b'.repeat(64),
+        cacheable: true,
+        archiveUrl: 'https://flaxia.app/api/game-loader/replacement/archive',
+      });
+    },
+    extract: async () => files(),
+  });
+  await games.account('alice');
+  await games.sync();
+  assert.equal(games.states.get('replacement'), 'saved');
+  assert.deepEqual(
+    (await games.list()).map((game) => game.id),
+    ['replacement'],
+  );
+  assert.equal(archives, 1);
+});
+
+test('bookmark reconciliation preserves later pages and keeps downloads when a page fails', async () => {
+  let failSecondPage = true;
+  let reads = 0;
+  const store = createOfflineGameStore(new IDBFactory());
+  await store.activate('alice');
+  await store.put(
+    {
+      id: 'retained',
+      owner: 'alice',
+      post: post('retained'),
+      revision: 'a'.repeat(64),
+      savedAt: Date.now(),
+      files: files(),
+      size: 100,
+    },
+    () => true,
+  );
+  const reconciler = createOfflineGames({
+    store,
+    online: () => true,
+    extract: async () => files(),
+    network: async (input) => {
+      const url = new URL((input as Request).url);
+      if (url.pathname === '/api/bookmarks') {
+        reads++;
+        if (!url.searchParams.has('cursor')) {
+          return Response.json({
+            posts: Array.from({ length: 50 }, (_, index) => ({ ...post(`text${index}`), payload_key: null })),
+          });
+        }
+        if (failSecondPage) throw new TypeError('offline');
+        return Response.json({ posts: [post('retained')] });
+      }
+      return Response.json({
+        postId: 'retained',
+        revision: 'a'.repeat(64),
+        cacheable: true,
+        archiveUrl: 'https://flaxia.app/api/game-loader/retained/archive',
+      });
+    },
+  });
+  await reconciler.account('alice');
+  await reconciler.sync();
+  assert.equal(reads, 2);
+  assert.equal((await reconciler.list())[0].id, 'retained');
+  failSecondPage = false;
+  await reconciler.sync();
+  assert.equal(reads, 4);
+  assert.equal(reconciler.states.get('retained'), 'saved');
+  assert.equal((await reconciler.list())[0].id, 'retained');
+});
+
 test('a download finishing after logout or unbookmark cannot resurrect files', async () => {
   for (const logout of [true, false]) {
     let release!: () => void;
