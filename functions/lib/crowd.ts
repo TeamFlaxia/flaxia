@@ -17,6 +17,7 @@ import {
   parseCrowdWebhook,
   resolveNsfwTags,
 } from '@flaxia/sdk';
+import { postTextSha } from './ai-index.ts';
 import { createProjection, parseBanditConfig, projConfigKey, project } from './linucb.ts';
 import { loadBlocklist, matchBlocklist, matchSignatureEntry } from './scan/blocklist.ts';
 import { clamavVerdict, parseContainerOutput, parseVideoPhashes } from './scan/container-result.ts';
@@ -325,6 +326,17 @@ export async function ensureNsfwScansTable(db: D1Database): Promise<void> {
   }
 }
 
+const embeddingSourceChecked = new WeakSet<D1Database>();
+async function ensureEmbeddingSourceColumn(db: D1Database): Promise<void> {
+  if (embeddingSourceChecked.has(db)) return;
+  try {
+    await db.prepare('ALTER TABLE post_embeddings ADD COLUMN source_sha TEXT').run();
+  } catch {
+    // The migration or another isolate may already have added it.
+  }
+  embeddingSourceChecked.add(db);
+}
+
 export async function ensurePendingEmbedsTable(db: D1Database): Promise<void> {
   try {
     await db.prepare(`CREATE TABLE IF NOT EXISTS pending_embeddings (${PENDING_EMBEDS_SCHEMA})`).run();
@@ -545,7 +557,7 @@ async function submitEmbedTask(config: CrowdConfig, postId: string, text: string
   const callbackUrl = await signedCallbackUrl(config, {
     baseUrl: config.baseUrl,
     type: 'vector-embed',
-    params: { postId },
+    params: { postId, sha: await postTextSha(text) },
   });
   try {
     await client.submit({
@@ -739,7 +751,19 @@ async function handleVectorEmbedResult(
   if (!postId || !output) return;
 
   const vector = output.vector as number[] | undefined;
-  if (!vector || !Array.isArray(vector)) return;
+  if (
+    !Array.isArray(vector) ||
+    !vector.length ||
+    !vector.every((value) => typeof value === 'number' && Number.isFinite(value))
+  )
+    return;
+
+  const sourceSha = url.searchParams.get('sha');
+  if (sourceSha) {
+    const current = await db.prepare('SELECT text FROM posts WHERE id = ?').bind(postId).first<{ text: string }>();
+    if (!current || sourceSha !== (await postTextSha(current.text))) return;
+  }
+  await ensureEmbeddingSourceColumn(db);
 
   const model = (output.model as string) || 'Qwen/Qwen3-Embedding-0.6B';
   const dimensions = (output.dimensions as number) || 1024;
@@ -756,9 +780,17 @@ async function handleVectorEmbedResult(
   const projected = project(vector, getProjection(banditConfig));
   await db
     .prepare(
-      'INSERT OR REPLACE INTO post_embeddings (post_id, embedding, model, dimensions, bandit_vec, bandit_cfg) VALUES (?, ?, ?, ?, ?, ?)',
+      'INSERT OR REPLACE INTO post_embeddings (post_id, embedding, model, dimensions, bandit_vec, bandit_cfg, source_sha) VALUES (?, ?, ?, ?, ?, ?, ?)',
     )
-    .bind(postId, JSON.stringify(vector), model, dimensions, JSON.stringify(projected), projConfigKey(banditConfig))
+    .bind(
+      postId,
+      JSON.stringify(vector),
+      model,
+      dimensions,
+      JSON.stringify(projected),
+      projConfigKey(banditConfig),
+      sourceSha,
+    )
     .run();
   console.log(`Vector embed webhook done for post ${postId}: dims=${dimensions}`);
 }

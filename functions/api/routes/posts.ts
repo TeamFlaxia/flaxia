@@ -4026,6 +4026,10 @@ posts.put('/posts/:id', async (c) => {
     await enrichPostsWithQuotes([updated as PostRow], c.env.DB);
     await enrichPostsWithAttachments([updated as PostRow], c.env.DB);
     await refreshUserTrustSafe(c.env.DB, userId);
+    const updatedText = updated?.text;
+    if (typeof updatedText === 'string') {
+      runInBackground(c, () => embedPost(c.env.DB, c.env, postId, updatedText), 'Background re-index failed');
+    }
 
     // Re-screen on every edit: a swapped-in image kept the old post's verdict,
     // because submitDetectNsfw skips objects already marked done. Reconciling

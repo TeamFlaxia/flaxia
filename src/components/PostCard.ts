@@ -155,12 +155,12 @@ export class PostCard {
     const isOwnPost = this.props.currentUser?.username === this.props.post.username;
     const menuButton = createMenuButton(() => this.toggleMenu(isOwnPost));
     const aiCheck = document.createElement('span');
-    aiCheck.className = 'post-ai-check';
+    aiCheck.className = 'post-ai-index';
     aiCheck.textContent = '✓';
-    aiCheck.title = `${t('post.ai_checked_label')} — ${t('post.ai_checked_description')}`;
+    aiCheck.title = `${t('post.ai_indexed_label')} — ${t('post.ai_indexed_description')}`;
     aiCheck.setAttribute('aria-label', aiCheck.title);
     aiCheck.tabIndex = 0;
-    aiCheck.hidden = this.props.post.ai_checked !== true;
+    aiCheck.hidden = this.props.post.ai_indexed !== true;
     aiCheck.style.cssText = 'color: var(--accent, #22c55e); font-size: 18px; padding: 4px; flex-shrink: 0;';
     const headerActions = document.createElement('div');
     headerActions.style.cssText = 'display: flex; align-items: center; margin-left: auto; flex-shrink: 0;';
@@ -1002,8 +1002,8 @@ export class PostCard {
       this.reactions = post.reactions;
     }
     this.props.post = { ...this.props.post, ...post };
-    const aiCheck = this.element.querySelector<HTMLElement>('.post-ai-check');
-    if (aiCheck) aiCheck.hidden = this.props.post.ai_checked !== true;
+    const aiCheck = this.element.querySelector<HTMLElement>('.post-ai-index');
+    if (aiCheck) aiCheck.hidden = this.props.post.ai_indexed !== true;
     this.updateActions();
   }
 
@@ -1527,7 +1527,7 @@ export class PostCard {
         return;
       }
       saving = true;
-      this.updatePost({ ai_checked: false });
+      this.updatePost({ ai_indexed: false });
       saveBtn.disabled = true;
       saveBtn.textContent = '...';
       try {
@@ -1622,7 +1622,7 @@ export class PostCard {
         const data = (await res.json()) as {
           post: {
             text: string;
-            ai_checked?: boolean;
+            ai_indexed?: boolean;
             edited_at: string;
             gif_key?: string;
             payload_key?: string;
@@ -1630,7 +1630,7 @@ export class PostCard {
             attachments?: PostAttachment[];
           };
         };
-        this.updatePost({ ai_checked: data.post.ai_checked === true });
+        this.updatePost({ ai_indexed: data.post.ai_indexed === true });
         this.originalText = data.post.text;
         this.props.post.text = data.post.text;
         this.props.post.edited_at = data.post.edited_at;
