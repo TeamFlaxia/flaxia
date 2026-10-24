@@ -360,3 +360,11 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 `POST /api/link-preview`
 - Body: `{ url }`
 - Returns: `{ title, description, image, url }`
+
+### Manual NSFW moderation (admin only)
+
+- `POST /api/admin/posts/:id/nsfw` requires an authenticated administrator.
+- Adds `nsfw` to the existing hashtags, preserving other tags and the hidden state.
+- Idempotent: returns `{ success: true, changed: boolean }`.
+- Returns 401 for guests, 403 for non-admins, 404 for missing posts, 503 without a database, and 500 on write failure.
+- Available from the admin Alerts tab by post ID or an alert’s Mark as NSFW button; does not require reports or Crowd scanning.
