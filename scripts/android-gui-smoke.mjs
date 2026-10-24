@@ -19,7 +19,13 @@ async function connect() {
         // /json/version. Use the same endpoint as Playwright's Android adapter.
         const browser = await chromium.connectOverCDP('ws://127.0.0.1:9222/devtools/browser', { noDefaults: true });
         const page = browser.contexts()[0].pages()[0];
-        if (page) return { browser, page };
+        if (page) {
+          page.on('pageerror', (error) => console.log('App error:', String(error)));
+          page.on('console', (message) => {
+            if (message.type() === 'error') console.log('App console:', message.text().slice(0, 1000));
+          });
+          return { browser, page };
+        }
         await browser.close();
       }
     } catch (error) {
@@ -50,6 +56,23 @@ try {
   adb('install', '-r', 'android/app/build/outputs/apk/debug/app-debug.apk');
   start();
   current = await connect();
+  console.log(
+    'API probe:',
+    JSON.stringify(
+      await current.page.evaluate(async () => {
+        const result = [];
+        for (const path of ['/api/me', '/api/posts?limit=20', '/api/posts/recommended?limit=20']) {
+          try {
+            const response = await fetch(path);
+            result.push({ path, status: response.status, text: (await response.text()).slice(0, 500) });
+          } catch (error) {
+            result.push({ path, error: String(error) });
+          }
+        }
+        return { url: location.href, online: navigator.onLine, native: Boolean(window.Capacitor), result };
+      }),
+    ),
+  );
   await current.page.locator('.post-card').first().waitFor({ timeout: 90000 });
   const online = await current.page.locator('.post-card').count();
   await current.page.screenshot({ path: 'android-gui-artifacts/timeline-online.png' });
@@ -89,16 +112,43 @@ try {
       2,
     ),
   );
+} catch (error) {
+  console.error('Android smoke failed:', error);
+  if (current) {
+    const state = await current.page
+      .evaluate(() => ({
+        url: location.href,
+        text: document.body.innerText,
+        native: Boolean(window.Capacitor),
+        online: navigator.onLine,
+      }))
+      .catch(() => null);
+    writeFileSync('android-gui-artifacts/failure.json', JSON.stringify(state, null, 2));
+  }
+  throw error;
 } finally {
   if (current) {
     await current.page.screenshot({ path: 'android-gui-artifacts/last-state.png' }).catch(() => {});
     await current.browser.close().catch(() => {});
   }
-  adb('shell', 'svc', 'wifi', 'enable');
-  adb('shell', 'svc', 'data', 'enable');
-  writeFileSync('android-gui-artifacts/logcat.txt', adb('logcat', '-d'));
-  writeFileSync(
-    'android-gui-artifacts/native-screen.png',
-    execFileSync('adb', ['exec-out', 'screencap', '-p'], { maxBuffer: 16 * 1024 * 1024 }),
-  );
+  for (const service of ['wifi', 'data']) {
+    try {
+      adb('shell', 'svc', service, 'enable');
+    } catch {
+      /* retain primary failure */
+    }
+  }
+  try {
+    writeFileSync('android-gui-artifacts/logcat.txt', adb('logcat', '-d'));
+  } catch (error) {
+    writeFileSync('android-gui-artifacts/logcat.txt', error.stdout ?? String(error));
+  }
+  try {
+    writeFileSync(
+      'android-gui-artifacts/native-screen.png',
+      execFileSync('adb', ['exec-out', 'screencap', '-p'], { maxBuffer: 16 * 1024 * 1024 }),
+    );
+  } catch {
+    /* retain primary failure */
+  }
 }
