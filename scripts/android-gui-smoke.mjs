@@ -15,7 +15,9 @@ async function connect() {
       const pid = adb('shell', 'pidof', app).split(' ')[0];
       if (pid) {
         adb('forward', 'tcp:9222', 'localabstract:webview_devtools_remote_' + pid);
-        const browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
+        // Android WebView exposes this socket but does not advertise it through
+        // /json/version. Use the same endpoint as Playwright's Android adapter.
+        const browser = await chromium.connectOverCDP('ws://127.0.0.1:9222/devtools/browser');
         const page = browser.contexts()[0].pages()[0];
         if (page) return { browser, page };
         await browser.close();
@@ -70,7 +72,7 @@ try {
     stdio: 'inherit',
     env: {
       ...process.env,
-      ANDROID_CDP: 'http://127.0.0.1:9222',
+      ANDROID_CDP: 'ws://127.0.0.1:9222/devtools/browser',
       OFFLINE_GAME_SCREENSHOT: 'android-gui-artifacts/downloaded-game-offline.png',
     },
   });
