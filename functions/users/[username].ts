@@ -49,6 +49,7 @@ type RawUser = {
   display_name: string;
   bio: string;
   avatar_key: string | null;
+  header_key?: string | null;
   badge_type?: string | null;
   created_at: string;
   frozen_at?: string | null;
@@ -116,7 +117,7 @@ app.get('*', async (c) => {
     }
 
     const user = (await c.env.DB.prepare(`
-      SELECT id, username, display_name, bio, avatar_key, badge_type, created_at, frozen_at, frozen_reason
+      SELECT id, username, display_name, bio, avatar_key, header_key, badge_type, created_at, frozen_at, frozen_reason
       FROM users
       WHERE username = ? COLLATE NOCASE
     `)
@@ -140,11 +141,26 @@ app.get('*', async (c) => {
       const notice = japanese
         ? `このアカウントは凍結されています。理由: ${user.frozen_reason || ''}`
         : `This account is frozen. Reason: ${user.frozen_reason || ''}`;
+      const displayName = user.display_name || user.username;
+      const avatarSrc = user.avatar_key ? `${baseUrl}/api/images/${user.avatar_key}` : `${baseUrl}/default-avatar.png`;
+      const banner = user.header_key
+        ? `<img src="${escapeHtml(`${baseUrl}/api/images/${user.header_key}`)}" alt="" style="display:block;width:100%;height:160px;object-fit:cover">`
+        : '';
+      const frozenProfile = `
+        <main style="max-width:600px;margin:0 auto">
+          <div style="height:160px;overflow:hidden;background:linear-gradient(135deg,#dcefe5,#e9ecef)">${banner}</div>
+          <header style="display:flex;align-items:center;gap:1rem;padding:1rem;border-bottom:1px solid #ddd">
+            <img src="${escapeHtml(avatarSrc)}" alt="" width="88" height="88" style="width:88px;height:88px;border-radius:50%;object-fit:cover">
+            <div><h1 style="margin:0">${escapeHtml(displayName)}</h1><div>@${escapeHtml(user.username)}</div></div>
+          </header>
+          <p style="margin:1rem;padding:1rem 1.25rem;border:1px solid #ddd;border-radius:.75rem;line-height:1.6">${escapeHtml(notice)}</p>
+        </main>`;
       return c.html(
-        renderHtmlShell(`<div class="ssr-empty"><p>${escapeHtml(notice)}</p></div>`, {
-          title: notice,
+        renderHtmlShell(frozenProfile, {
+          title: `${displayName} (@${user.username}) - Flaxia`,
           description: notice,
           canonicalUrl,
+          image: avatarSrc,
           spaHeadTags: SPA_HEAD_TAGS,
         }),
         200,

@@ -465,7 +465,16 @@ users.get('/users/:username', async (c) => {
     }
 
     if (user.frozen_at) {
-      return c.json({ user: { frozen: true, frozen_reason: user.frozen_reason ?? '' } });
+      return c.json({
+        user: {
+          frozen: true,
+          frozen_reason: user.frozen_reason ?? '',
+          username: user.username,
+          display_name: user.display_name,
+          avatar_key: user.avatar_key,
+          header_key: user.header_key,
+        },
+      });
     }
 
     const [followersResult, followingResult, postsResult] = await Promise.all([

@@ -456,7 +456,31 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
       if (response.ok) {
         const data = (await response.json()) as { user: ProfileUserData };
         if (data.user.frozen) {
-          container.replaceChildren();
+          userData = data.user;
+          displayName.textContent = data.user.display_name || data.user.username;
+
+          if (data.user.avatar_key) {
+            avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${data.user.avatar_key}`)})`;
+            avatar.style.backgroundSize = 'cover';
+            avatar.style.backgroundPosition = 'center';
+            avatar.textContent = '';
+          } else {
+            avatar.style.backgroundImage = '';
+            avatar.textContent = data.user.username.charAt(0).toUpperCase();
+          }
+
+          if (data.user.header_key) {
+            bannerEl.style.backgroundImage = `url(${nativeApiHref(`/api/images/${data.user.header_key}`)})`;
+          }
+          bannerOverlay.remove();
+          bannerEl.classList.remove('profile-banner--editable');
+          bannerEl.style.pointerEvents = 'none';
+
+          info.replaceChildren(displayName);
+          for (const action of topBar.querySelectorAll('.profile-kebab-button, .profile-kebab-menu')) {
+            action.remove();
+          }
+
           const notice = document.createElement('p');
           notice.className = 'profile-frozen-notice';
           notice.textContent = t('profile.frozen_notice', { reason: data.user.frozen_reason || '' });
@@ -470,7 +494,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
             background: var(--bg-secondary);
             line-height: 1.6;
           `;
-          container.appendChild(notice);
+          container.replaceChildren(topBar, bannerEl, header, notice);
           return;
         }
         userData = data.user;
