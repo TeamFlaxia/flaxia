@@ -113,10 +113,13 @@ export function createLoginPage({ onSuccess }: LoginProps) {
     submitButton.textContent = t('login.submitting');
 
     try {
-      const ok = await loginWithSrp(email, password);
+      const result = await loginWithSrp(email, password);
 
-      if (ok) {
+      if (result === true) {
         onSuccess();
+      } else if (result && result.frozen) {
+        window.history.pushState({}, '', `/users/${encodeURIComponent(result.username)}`);
+        window.dispatchEvent(new PopStateEvent('popstate'));
       } else {
         errorDiv.textContent = t('login.error_invalid');
         errorDiv.style.display = 'block';

@@ -24,6 +24,8 @@ interface ProfilePageProps {
 }
 
 interface ProfileUserData {
+  frozen?: boolean;
+  frozen_reason?: string | null;
   username: string;
   display_name?: string;
   bio?: string;
@@ -453,6 +455,24 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
       const response = await fetch(`/api/users/${username}`);
       if (response.ok) {
         const data = (await response.json()) as { user: ProfileUserData };
+        if (data.user.frozen) {
+          container.replaceChildren();
+          const notice = document.createElement('p');
+          notice.className = 'profile-frozen-notice';
+          notice.textContent = t('profile.frozen_notice', { reason: data.user.frozen_reason || '' });
+          notice.style.cssText = `
+            margin: 2rem auto;
+            max-width: 680px;
+            padding: 1.25rem 1.5rem;
+            border: 1px solid var(--border);
+            border-radius: 0.75rem;
+            color: var(--text-primary);
+            background: var(--bg-secondary);
+            line-height: 1.6;
+          `;
+          container.appendChild(notice);
+          return;
+        }
         userData = data.user;
 
         // Load the pinned post and sync pin state on visible cards

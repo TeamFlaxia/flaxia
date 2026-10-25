@@ -293,6 +293,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Clear user state when not authenticated
       const wasLoggedIn = currentUser !== null;
+      const previousUsername = currentUser?.username ?? null;
       currentUser = null;
       previousNotificationIds = null;
 
@@ -306,6 +307,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // If user was logged in and now is not, they were logged out
       if (wasLoggedIn) {
+        let frozenUsername: string | null = null;
+        if (previousUsername) {
+          try {
+            const response = await fetch(`/api/users/${encodeURIComponent(previousUsername)}`);
+            if (response.ok) {
+              const data = (await response.json()) as { user?: { frozen?: boolean } };
+              if (data.user?.frozen) frozenUsername = previousUsername;
+            }
+          } catch {
+            // Fall through to the normal login redirect when profile state is unavailable.
+          }
+        }
+        if (frozenUsername) {
+          window.history.replaceState({}, '', `/users/${encodeURIComponent(frozenUsername)}`);
+          navigateTo('profile', undefined, frozenUsername);
+          return false;
+        }
+
         console.log('User session expired - redirecting to login');
         window.history.replaceState({}, '', '/login');
         navigateTo('login');

@@ -80,7 +80,9 @@ app.get('/.well-known/webfinger', async (c) => {
     }
 
     // Check if user exists (case-insensitive)
-    const user = await c.env.DB.prepare('SELECT username FROM users WHERE username = ? COLLATE NOCASE')
+    const user = await c.env.DB.prepare(
+      'SELECT username FROM users WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL',
+    )
       .bind(username)
       .first();
 
@@ -114,7 +116,7 @@ app.get('/api/actors/:username', async (c) => {
   try {
     const username = c.req.param('username');
     const user = (await c.env.DB.prepare(
-      `SELECT id, username, display_name, bio, avatar_key FROM users WHERE username = ? COLLATE NOCASE`,
+      `SELECT id, username, display_name, bio, avatar_key FROM users WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL`,
     )
       .bind(username)
       .first()) as {
@@ -464,7 +466,7 @@ app.get('/api/actors/:username/followers', async (c) => {
   try {
     const username = c.req.param('username');
 
-    const user = (await c.env.DB.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE')
+    const user = (await c.env.DB.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL')
       .bind(username)
       .first()) as { id: string } | null;
 
@@ -566,7 +568,7 @@ app.get('/api/actors/:username/following', async (c) => {
   try {
     const username = c.req.param('username');
 
-    const user = (await c.env.DB.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE')
+    const user = (await c.env.DB.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL')
       .bind(username)
       .first()) as { id: string } | null;
 
@@ -651,7 +653,8 @@ app.get('/api/notes/:noteId', async (c) => {
     const post = (await c.env.DB.prepare(`
       SELECT p.id, p.text, p.created_at, p.status, p.user_id, p.username
       FROM posts p
-      WHERE p.id = ? AND p.status = 'published'
+      WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0
+        AND p.user_id IN (SELECT id FROM users WHERE frozen_at IS NULL)
     `)
       .bind(noteId)
       .first()) as {
@@ -720,7 +723,7 @@ app.get('/api/actors/:username/outbox', async (c) => {
     // Find user in database
     const user = (await c.env.DB.prepare(`
       SELECT id, username, display_name FROM users 
-      WHERE username = ? COLLATE NOCASE
+      WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL
     `)
       .bind(username)
       .first()) as { id: string; username: string; display_name: string } | null;
@@ -732,7 +735,7 @@ app.get('/api/actors/:username/outbox', async (c) => {
     // Get total count of published posts
     const countResult = (await c.env.DB.prepare(`
       SELECT COUNT(*) as total FROM posts
-      WHERE user_id = ? AND status = 'published'
+      WHERE user_id = ? AND status = 'published' AND hidden = 0
     `)
       .bind(user.id)
       .first()) as { total: number };
@@ -824,7 +827,8 @@ app.get('/notes/:noteId', async (c) => {
     const post = (await c.env.DB.prepare(`
       SELECT p.id, p.text, p.created_at, p.status, p.user_id, p.username
       FROM posts p
-      WHERE p.id = ? AND p.status = 'published'
+      WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0
+        AND p.user_id IN (SELECT id FROM users WHERE frozen_at IS NULL)
     `)
       .bind(noteId)
       .first()) as {
@@ -842,7 +846,7 @@ app.get('/notes/:noteId', async (c) => {
 
     // Get user info by username (posts store username, not user_id)
     const user = (await c.env.DB.prepare(`
-      SELECT id, username, display_name FROM users WHERE username = ? COLLATE NOCASE
+      SELECT id, username, display_name FROM users WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL
     `)
       .bind(post.username)
       .first()) as { id: string; username: string; display_name: string } | null;

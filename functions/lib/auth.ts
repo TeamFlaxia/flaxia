@@ -25,6 +25,11 @@ export interface Session {
   srp_upgrade_allowed?: number;
 }
 
+export type LoginResult = { frozen: false; user: User; session: Session } | { frozen: true; user: User };
+export type SrpLoginResult =
+  | { frozen: false; user: User; session: Session; M2: string }
+  | { frozen: true; user: User; M2: string };
+
 function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = '';
   for (let i = 0; i < bytes.length; i++) {
@@ -133,7 +138,7 @@ export async function getSession(env: Env, token: string): Promise<{ user: User;
   // Get user from database
   const user = (await env.DB.prepare(`
     SELECT id, email, username, display_name, bio, avatar_key, badge_type, created_at, role
-    FROM users WHERE id = ?
+    FROM users WHERE id = ? AND frozen_at IS NULL
   `)
     .bind(session.user_id)
     .first()) as User | undefined;
@@ -152,11 +157,12 @@ export async function getMeWithSession(env: Env, token: string): Promise<{ user:
   const result = (await env.DB.prepare(`
     SELECT 
       u.id, u.email, u.username, u.display_name, 
-      u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.created_at, u.role, u.role
+      u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.created_at, u.role
     FROM sessions s
     JOIN users u ON s.user_id = u.id
     WHERE s.id = ?
       AND s.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      AND u.frozen_at IS NULL
   `)
     .bind(token)
     .first()) as User | undefined;
@@ -274,7 +280,9 @@ export async function startSrpLogin(
   email: string,
 ): Promise<{ challengeId: string; salt: string; B: string; kdf: string } | null> {
   const normalizedEmail = email.trim().toLowerCase();
-  const user = (await env.DB.prepare('SELECT id, srp_salt, srp_verifier, srp_kdf FROM users WHERE lower(email) = ?')
+  const user = (await env.DB.prepare(
+    'SELECT id, srp_salt, srp_verifier, srp_kdf FROM users WHERE lower(email) = ?',
+  )
     .bind(normalizedEmail)
     .first()) as { id: string; srp_salt: string | null; srp_verifier: string | null; srp_kdf: string | null } | null;
 
@@ -325,7 +333,7 @@ export async function verifySrpLogin(
   challengeId: string,
   A: string,
   M1: string,
-): Promise<{ user: User; session: Session; M2: string } | null> {
+): Promise<SrpLoginResult | null> {
   const hs = (await env.DB.prepare(
     "SELECT * FROM srp_handshakes WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
   )
@@ -341,7 +349,7 @@ export async function verifySrpLogin(
   if (!consumed.success || (consumed.meta?.changes ?? 0) === 0) return null;
 
   const user = (await env.DB.prepare(`
-    SELECT id, email, srp_salt, srp_verifier, username, display_name, bio, avatar_key, badge_type, created_at
+    SELECT id, email, srp_salt, srp_verifier, username, display_name, bio, avatar_key, badge_type, created_at, frozen_at
     FROM users WHERE id = ?
   `)
     .bind(hs.user_id)
@@ -355,6 +363,7 @@ export async function verifySrpLogin(
     bio: string;
     avatar_key: string | null;
     created_at: string;
+    frozen_at: string | null;
   } | null;
   if (!user || !user.srp_verifier || !user.srp_salt) return null;
 
@@ -366,7 +375,6 @@ export async function verifySrpLogin(
   const result = await serverStep2(A_bytes, B, BigInt(hs.b_scalar), v, M1_bytes);
   if (!result) return null;
 
-  const session = await createSession(env, user.id);
   const safeUser: User = {
     id: user.id,
     email: user.email,
@@ -376,7 +384,11 @@ export async function verifySrpLogin(
     avatar_key: user.avatar_key ?? undefined,
     created_at: user.created_at,
   };
-  return { user: safeUser, session, M2: uint8ArrayToBase64(result.M2) };
+  const M2 = uint8ArrayToBase64(result.M2);
+  if (user.frozen_at) return { frozen: true, user: safeUser, M2 };
+
+  const session = await createSession(env, user.id);
+  return { frozen: false, user: safeUser, session, M2 };
 }
 
 // Store (or replace) the SRP verifier for an already-authenticated user.
@@ -444,11 +456,11 @@ export async function verifySrpPassword(
 }
 
 // Login user
-export async function loginUser(env: Env, email: string, password: string): Promise<{ user: User; session: Session }> {
+export async function loginUser(env: Env, email: string, password: string): Promise<LoginResult> {
   const normalizedEmail = email.trim().toLowerCase();
   // Get user with password hash
   const userWithPassword = (await env.DB.prepare(`
-    SELECT id, email, password_hash, srp_salt, srp_verifier, username, display_name, bio, avatar_key, badge_type, created_at
+    SELECT id, email, password_hash, srp_salt, srp_verifier, username, display_name, bio, avatar_key, badge_type, created_at, frozen_at
     FROM users WHERE lower(email) = ?
   `)
     .bind(normalizedEmail)
@@ -463,6 +475,7 @@ export async function loginUser(env: Env, email: string, password: string): Prom
     bio: string;
     avatar_key: string | null;
     created_at: string;
+    frozen_at: string | null;
   } | null;
 
   if (!userWithPassword) {
@@ -481,9 +494,6 @@ export async function loginUser(env: Env, email: string, password: string): Prom
     throw new Error('Invalid credentials');
   }
 
-  // Create session
-  const session = await createSession(env, userWithPassword.id, { srpUpgradeAllowed: true });
-
   // Return user without password hash
   const user: User = {
     id: userWithPassword.id,
@@ -495,7 +505,12 @@ export async function loginUser(env: Env, email: string, password: string): Prom
     created_at: userWithPassword.created_at,
   };
 
-  return { user, session };
+  if (userWithPassword.frozen_at) return { frozen: true, user };
+
+  // Create session
+  const session = await createSession(env, userWithPassword.id, { srpUpgradeAllowed: true });
+
+  return { frozen: false, user, session };
 }
 
 // Extract session token from request

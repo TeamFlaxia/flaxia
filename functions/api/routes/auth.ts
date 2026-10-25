@@ -172,6 +172,10 @@ auth.post('/login', async (c) => {
 
     const result = await loginUser(c.env, email, password);
 
+    if (result.frozen) {
+      return c.json({ error: 'account_frozen', username: result.user.username }, 403);
+    }
+
     const response = c.json({ user: result.user });
     setSessionCookie(response, result.session.id);
 
@@ -231,6 +235,10 @@ auth.post('/login/verify', async (c) => {
 
     const result = await verifySrpLogin(c.env, email, challenge_id, A, M1);
     if (!result) return c.json({ error: 'Invalid credentials' }, 401);
+
+    if (result.frozen) {
+      return c.json({ error: 'account_frozen', username: result.user.username, M2: result.M2 }, 403);
+    }
 
     const response = c.json({ user: result.user, M2: result.M2 });
     setSessionCookie(response, result.session.id);

@@ -87,7 +87,7 @@ export async function registerWithSrp(
 
 // Log in via SRP. Legacy (non-SRP) accounts transparently fall back to the
 // plaintext endpoint, then upgrade to SRP on first login.
-export async function loginWithSrp(email: string, password: string): Promise<boolean> {
+export async function loginWithSrp(email: string, password: string): Promise<boolean | { frozen: true; username: string }> {
   const start = await fetch('/api/auth/login/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -111,7 +111,13 @@ export async function loginWithSrp(email: string, password: string): Promise<boo
       credentials: 'include',
       body: JSON.stringify({ email, password }),
     });
-    if (!legacy.ok) return false;
+    if (!legacy.ok) {
+      const data = (await legacy.json().catch(() => ({}))) as { error?: string; username?: string };
+      if (legacy.status === 403 && data.error === 'account_frozen' && data.username) {
+        return { frozen: true, username: data.username };
+      }
+      return false;
+    }
     return await upgradeSrp(password);
   }
 
@@ -125,10 +131,12 @@ export async function loginWithSrp(email: string, password: string): Promise<boo
     credentials: 'include',
     body: JSON.stringify({ email, challenge_id: s.challenge_id, A: b64(A), M1: b64(finish.M1) }),
   });
-  if (!verify.ok) return false;
-  const data = (await verify.json()) as { M2?: string };
+  const data = (await verify.json().catch(() => ({}))) as { M2?: string; error?: string; username?: string };
+  if (!verify.ok && !(verify.status === 403 && data.error === 'account_frozen' && data.username)) return false;
   const ok = data.M2 ? await verifyServerProof(finish.A, finish.M1, finish.K, unb64(data.M2)) : false;
   if (!ok) return false;
+
+  if (verify.status === 403 && data.username) return { frozen: true, username: data.username };
 
   storeSrpSalt(salt);
   return true;

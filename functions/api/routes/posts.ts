@@ -4059,13 +4059,17 @@ posts.get('/posts/:id', async (c) => {
     }
 
     const post = (await c.env.DB.prepare(
-      'SELECT p.*, u.language as author_language FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?',
+      'SELECT p.*, u.language as author_language, u.frozen_at as author_frozen_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?',
     )
       .bind(postId)
       .first()) as Record<string, unknown> | null;
 
     if (!post) {
       return c.json({ error: 'Not found' }, 404);
+    }
+
+    if (post.author_frozen_at) {
+      return c.json({ error: 'Gone' }, 410);
     }
 
     const currentUserId = c.get('user')?.id;

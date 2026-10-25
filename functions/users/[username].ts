@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { isCrawler } from '../../src/lib/is-crawler';
 import {
+  escapeHtml,
   type PostRow,
   renderHtmlShell,
   renderPersonJsonLd,
@@ -50,6 +51,8 @@ type RawUser = {
   avatar_key: string | null;
   badge_type?: string | null;
   created_at: string;
+  frozen_at?: string | null;
+  frozen_reason?: string | null;
 };
 
 type RawPost = Record<string, unknown>;
@@ -102,7 +105,7 @@ app.get('*', async (c) => {
     // If ActivityPub client, redirect to canonical actor URL
     if (acceptHeader.includes('application/activity+json')) {
       const verification = await c.env.DB.prepare(`
-        SELECT id FROM users WHERE username = ? COLLATE NOCASE
+        SELECT id FROM users WHERE username = ? COLLATE NOCASE AND frozen_at IS NULL
       `)
         .bind(username)
         .first();
@@ -113,7 +116,7 @@ app.get('*', async (c) => {
     }
 
     const user = (await c.env.DB.prepare(`
-      SELECT id, username, display_name, bio, avatar_key, badge_type, created_at
+      SELECT id, username, display_name, bio, avatar_key, badge_type, created_at, frozen_at, frozen_reason
       FROM users
       WHERE username = ? COLLATE NOCASE
     `)
@@ -128,6 +131,22 @@ app.get('*', async (c) => {
           { title: 'User not found', description: 'User not found', canonicalUrl, spaHeadTags: SPA_HEAD_TAGS },
         ),
         404,
+      );
+    }
+
+    if (user.frozen_at) {
+      const canonicalUrl = `${baseUrl}/users/${user.username}`;
+      const japanese = (c.req.header('Accept-Language') || '').toLowerCase().startsWith('ja');
+      const notice = japanese
+        ? `このアカウントは凍結されています。理由: ${user.frozen_reason || ''}`
+        : `This account is frozen. Reason: ${user.frozen_reason || ''}`;
+      return c.html(
+        renderHtmlShell(
+          `<div class="ssr-empty"><p>${escapeHtml(notice)}</p></div>`,
+          { title: notice, description: notice, canonicalUrl, spaHeadTags: SPA_HEAD_TAGS },
+        ),
+        200,
+        { 'Cache-Control': 'private, no-store' },
       );
     }
 

@@ -121,7 +121,7 @@ users.get('/users/suggestions', async (c) => {
     const pool = await c.env.DB.prepare(`
       SELECT id, username, display_name, avatar_key, badge_type
       FROM users
-      WHERE id != ?
+      WHERE id != ? AND frozen_at IS NULL
       AND id NOT IN (
         SELECT followee_id FROM follows WHERE follower_id = ?
       )
@@ -412,7 +412,7 @@ users.get('/users/suggest', async (c) => {
     const result = await c.env.DB.prepare(`
       SELECT id, username, display_name, avatar_key, badge_type
       FROM users
-      WHERE LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?
+      WHERE frozen_at IS NULL AND (LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?)
       ORDER BY
         CASE WHEN LOWER(username) LIKE ? THEN 0 ELSE 1 END,
         created_at DESC
@@ -442,6 +442,7 @@ users.get('/users/suggest', async (c) => {
 users.get('/users/:username', async (c) => {
   try {
     const username = c.req.param('username');
+    c.header('Cache-Control', 'private, no-store');
 
     if (!username) {
       return c.json({ error: 'Username required' }, 400);
@@ -452,7 +453,7 @@ users.get('/users/:username', async (c) => {
     }
 
     const user = await c.env.DB.prepare(`
-      SELECT id, username, display_name, bio, avatar_key, badge_type, header_key, created_at, pinned_post_id 
+      SELECT id, username, display_name, bio, avatar_key, badge_type, header_key, created_at, pinned_post_id, frozen_at, frozen_reason
       FROM users 
       WHERE username = ? COLLATE NOCASE
     `)
@@ -461,6 +462,10 @@ users.get('/users/:username', async (c) => {
 
     if (!user) {
       return c.json({ error: 'User not found' }, 404);
+    }
+
+    if (user.frozen_at) {
+      return c.json({ user: { frozen: true, frozen_reason: user.frozen_reason ?? '' } });
     }
 
     const [followersResult, followingResult, postsResult] = await Promise.all([
@@ -515,13 +520,16 @@ users.get('/users/:username/pinned', async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    const user = await c.env.DB.prepare('SELECT id, pinned_post_id FROM users WHERE username = ? COLLATE NOCASE')
+    const user = await c.env.DB.prepare(
+      'SELECT id, pinned_post_id, frozen_at FROM users WHERE username = ? COLLATE NOCASE',
+    )
       .bind(username)
-      .first<{ id: string; pinned_post_id: string | null }>();
+      .first<{ id: string; pinned_post_id: string | null; frozen_at: string | null }>();
 
     if (!user) {
       return c.json({ error: 'User not found' }, 404);
     }
+    if (user.frozen_at) return c.json({ error: 'User not found' }, 404);
 
     if (!user.pinned_post_id) {
       return c.json({ post: null });
@@ -633,7 +641,7 @@ users.get('/users/:username/followers', async (c) => {
     }
 
     const user = await c.env.DB.prepare(`
-      SELECT id, username, display_name, bio, avatar_key, badge_type, created_at 
+      SELECT id, username, display_name, bio, avatar_key, badge_type, created_at, frozen_at
       FROM users 
       WHERE username = ? COLLATE NOCASE
     `)
@@ -643,6 +651,7 @@ users.get('/users/:username/followers', async (c) => {
     if (!user) {
       return c.json({ error: 'User not found' }, 404);
     }
+    if (user.frozen_at) return c.json({ error: 'User not found' }, 404);
 
     let currentUserId: string | null = null;
     const token = getSessionToken(c.req.raw);
@@ -746,7 +755,7 @@ users.get('/users/:username/following', async (c) => {
     }
 
     const user = await c.env.DB.prepare(`
-      SELECT id, username, display_name, bio, avatar_key, badge_type, created_at 
+      SELECT id, username, display_name, bio, avatar_key, badge_type, created_at, frozen_at
       FROM users 
       WHERE username = ? COLLATE NOCASE
     `)
@@ -756,6 +765,7 @@ users.get('/users/:username/following', async (c) => {
     if (!user) {
       return c.json({ error: 'User not found' }, 404);
     }
+    if (user.frozen_at) return c.json({ error: 'User not found' }, 404);
 
     let currentUserId: string | null = null;
     const token = getSessionToken(c.req.raw);

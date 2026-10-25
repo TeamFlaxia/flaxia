@@ -9,6 +9,9 @@ export interface AdminUser {
   email: string;
   created_at: string;
   role?: string | null;
+  is_admin?: boolean;
+  frozen_at?: string | null;
+  frozen_reason?: string | null;
 }
 
 export interface AdminUsersTabProps {
@@ -55,6 +58,29 @@ export function createAdminUsersTab({ onNavigateToTab }: AdminUsersTabProps) {
       return true;
     } catch (error) {
       console.error('Delete user error:', error);
+      return false;
+    }
+  };
+
+  const setUserFrozen = async (user: AdminUser, frozen: boolean, reason = '') => {
+    try {
+      const action = frozen ? 'freeze' : 'unfreeze';
+      const response = await fetch(`/api/admin/users/${encodeURIComponent(user.id)}/${action}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: frozen ? { 'Content-Type': 'application/json' } : undefined,
+        body: frozen ? JSON.stringify({ reason }) : undefined,
+      });
+      if (!response.ok) {
+        const error = (await response.json()) as { error?: string };
+        throw new Error(error.error || 'Failed to update account status');
+      }
+      user.frozen_at = frozen ? new Date().toISOString() : null;
+      user.frozen_reason = frozen ? reason : null;
+      return true;
+    } catch (error) {
+      console.error('Update account status error:', error);
+      alert(t('admin_users.freeze_failed'));
       return false;
     }
   };
@@ -109,8 +135,58 @@ export function createAdminUsersTab({ onNavigateToTab }: AdminUsersTabProps) {
     row.appendChild(joined);
 
     // #134: server enforces admin-only delete; this only hides the button.
-    const isTargetAdmin = user.role === 'admin';
+    const isTargetAdmin = user.is_admin ?? user.role === 'admin';
     if (!isTargetAdmin) {
+      const isFrozen = Boolean(user.frozen_at);
+      if (isFrozen) {
+        const frozenBadge = document.createElement('span');
+        frozenBadge.textContent = t('admin_users.frozen_badge');
+        frozenBadge.title = user.frozen_reason ?? '';
+        frozenBadge.style.cssText = `
+          background: #ef444420;
+          color: #fca5a5;
+          border: 1px solid #ef444440;
+          padding: 4px 8px;
+          border-radius: 4px;
+          font-size: 11px;
+          font-weight: 600;
+        `;
+        row.appendChild(frozenBadge);
+      }
+
+      const freezeBtn = document.createElement('button');
+      freezeBtn.textContent = t(isFrozen ? 'admin_users.unfreeze_account' : 'admin_users.freeze_account');
+      freezeBtn.style.cssText = `
+        background: ${isFrozen ? '#166534' : '#7f1d1d'};
+        color: #f1f5f9;
+        border: none;
+        padding: 6px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+      `;
+      freezeBtn.addEventListener('click', async () => {
+        let reason = '';
+        if (!isFrozen) {
+          const enteredReason = window.prompt(t('admin_users.freeze_reason_prompt'));
+          if (enteredReason === null) return;
+          reason = enteredReason.trim();
+          if (!reason) {
+            alert(t('admin_users.freeze_reason_required'));
+            return;
+          }
+          if (reason.length > 500) {
+            alert(t('admin_users.freeze_reason_too_long'));
+            return;
+          }
+        }
+        const messageKey = isFrozen ? 'admin_users.unfreeze_confirm' : 'admin_users.freeze_confirm';
+        const confirmed = await createConfirmDialog(t(messageKey, { username: user.username, reason }));
+        if (!confirmed) return;
+        if (await setUserFrozen(user, !isFrozen, reason)) renderUsersList();
+      });
+      row.appendChild(freezeBtn);
+
       const deleteBtn = document.createElement('button');
       deleteBtn.textContent = t('admin_users.delete_account');
       deleteBtn.style.cssText = `

@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { nanoid } from 'nanoid';
 import { isAdmin } from '../../../src/lib/admin';
 import { extractFileFromZip } from '../../../src/lib/wvfs-zip-server';
@@ -290,17 +290,98 @@ admin.get('/users', requireAuth, requireAdmin, async (c) => {
     }
 
     const result = await c.env.DB.prepare(`
-      SELECT id, username, display_name, email, created_at, role
+      SELECT id, username, display_name, email, created_at, role, frozen_at, frozen_reason
       FROM users
       ORDER BY created_at DESC
-    `).all();
+    `).all<{
+      id: string;
+      username: string;
+      display_name: string;
+      email: string;
+      created_at: string;
+      role: string | null;
+      frozen_at: string | null;
+      frozen_reason: string | null;
+    }>();
 
-    return c.json({ users: result.results || [] });
+    const users = (result.results || []).map((user) => ({
+      ...user,
+      is_admin: isAdmin(c.env, user),
+    }));
+    return c.json({ users });
   } catch (error: unknown) {
     console.error('Fetch users error:', error);
     return c.json({ error: 'Failed to fetch users' }, 500);
   }
 });
+
+async function setAccountFrozen(c: Context<{ Bindings: Bindings; Variables: Variables }>, frozen: boolean) {
+  if (!c.env.DB) {
+    return c.json({ error: 'Database not available' }, 500);
+  }
+
+  const targetUser = await c.env.DB.prepare('SELECT id, username, role, frozen_at FROM users WHERE id = ?')
+    .bind(c.req.param('id'))
+    .first<{ id: string; username: string; role: string | null; frozen_at: string | null }>();
+
+  if (!targetUser) {
+    return c.json({ error: 'User not found' }, 404);
+  }
+  if (isAdmin(c.env, targetUser)) {
+    return c.json({ error: 'Cannot freeze admin accounts' }, 403);
+  }
+  if (!frozen && !targetUser.frozen_at) {
+    return c.json({ error: 'Account is not frozen' }, 409);
+  }
+
+  let reason: string | null = null;
+  if (frozen) {
+    const body = await c.req.json<{ reason?: unknown }>().catch(() => null);
+    if (!body) return c.json({ error: 'A freeze reason of 1 to 500 characters is required' }, 400);
+    if (typeof body.reason !== 'string' || !body.reason.trim() || body.reason.trim().length > 500) {
+      return c.json({ error: 'A freeze reason of 1 to 500 characters is required' }, 400);
+    }
+    reason = body.reason.trim();
+  }
+
+  const frozenAt = frozen ? new Date().toISOString() : null;
+  const statements = frozen
+    ? [
+        c.env.DB.prepare(
+          'INSERT OR IGNORE INTO account_freeze_posts (user_id, post_id, hidden_before_freeze) SELECT user_id, id, hidden FROM posts WHERE user_id = ?',
+        ).bind(targetUser.id),
+        c.env.DB.prepare('UPDATE posts SET hidden = 1 WHERE user_id = ?').bind(targetUser.id),
+        c.env.DB.prepare('UPDATE users SET frozen_at = ?, frozen_reason = ? WHERE id = ?').bind(
+          frozenAt,
+          reason,
+          targetUser.id,
+        ),
+      ]
+    : [
+        c.env.DB.prepare(
+          `UPDATE posts SET hidden = (
+             SELECT hidden_before_freeze FROM account_freeze_posts
+             WHERE account_freeze_posts.user_id = posts.user_id AND account_freeze_posts.post_id = posts.id
+           ) WHERE user_id = ? AND EXISTS (
+             SELECT 1 FROM account_freeze_posts
+             WHERE account_freeze_posts.user_id = posts.user_id AND account_freeze_posts.post_id = posts.id
+           )`,
+        ).bind(targetUser.id),
+        c.env.DB.prepare('DELETE FROM account_freeze_posts WHERE user_id = ?').bind(targetUser.id),
+        c.env.DB.prepare('UPDATE users SET frozen_at = NULL, frozen_reason = NULL WHERE id = ?').bind(targetUser.id),
+      ];
+  statements.push(
+    c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(targetUser.id),
+    c.env.DB.prepare('DELETE FROM srp_handshakes WHERE user_id = ?').bind(targetUser.id),
+  );
+  await c.env.DB.batch(statements);
+
+  return c.json({ success: true, frozen_at: frozenAt, frozen_reason: reason });
+}
+
+// Freezing clears sessions and pending SRP logins. Unfreezing requires a fresh login.
+admin.post('/users/:id/freeze', requireAuth, requireAdmin, (c) => setAccountFrozen(c, true));
+admin.post('/users/:id/unfreeze', requireAuth, requireAdmin, (c) => setAccountFrozen(c, false));
 
 // DELETE /api/admin/users/:id - delete a user account (admin only)
 admin.delete('/users/:id', requireAuth, requireAdmin, async (c) => {
