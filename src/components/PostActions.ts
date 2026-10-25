@@ -77,10 +77,13 @@ function createReloadActionsDropdown(props: PostActionsProps): HTMLElement {
     trigger.setAttribute('aria-expanded', 'false');
     document.removeEventListener('pointerdown', handlePointerDown, true);
     document.removeEventListener('keydown', handleKeyDown);
+    window.removeEventListener('resize', positionDropdown);
+    window.removeEventListener('scroll', positionDropdown, true);
   };
 
   const handlePointerDown = (event: PointerEvent) => {
-    if (!wrapper.contains(event.target as Node)) closeDropdown();
+    const target = event.target as Node;
+    if (!wrapper.contains(target) && !dropdown?.contains(target)) closeDropdown();
   };
 
   const handleKeyDown = (event: KeyboardEvent) => {
@@ -91,6 +94,23 @@ function createReloadActionsDropdown(props: PostActionsProps): HTMLElement {
     }
   };
 
+  const positionDropdown = () => {
+    if (!dropdown) return;
+
+    const triggerRect = trigger.getBoundingClientRect();
+    const menuRect = dropdown.getBoundingClientRect();
+    const margin = 8;
+    const maxLeft = Math.max(margin, window.innerWidth - menuRect.width - margin);
+    const maxTop = Math.max(margin, window.innerHeight - menuRect.height - margin);
+    const left = Math.min(Math.max(margin, triggerRect.left), maxLeft);
+    const openAbove = triggerRect.top >= menuRect.height + margin * 2;
+    const desiredTop = openAbove ? triggerRect.top - menuRect.height - 2 : triggerRect.bottom + 2;
+    const top = Math.min(Math.max(margin, desiredTop), maxTop);
+
+    dropdown.style.left = `${left}px`;
+    dropdown.style.top = `${top}px`;
+  };
+
   const openDropdown = () => {
     dropdown = document.createElement('div');
     dropdown.id = dropdownId;
@@ -98,10 +118,10 @@ function createReloadActionsDropdown(props: PostActionsProps): HTMLElement {
     dropdown.setAttribute('role', 'group');
     dropdown.setAttribute('aria-label', t('post_actions.more_actions'));
 
-    const actions = [
-      { label: t('post_actions.reload'), onClick: props.onReloadToggle },
-      { label: t('post_actions.quote'), onClick: () => props.onQuote?.() },
-      { label: t('post_actions.share'), onClick: () => props.onShare?.() },
+    const actions: Array<{ label: string; iconName: IconName; onClick: () => void }> = [
+      { label: t('post_actions.reload'), iconName: 'reload', onClick: props.onReloadToggle },
+      { label: t('post_actions.quote'), iconName: 'quote', onClick: () => props.onQuote?.() },
+      { label: t('post_actions.share'), iconName: 'share', onClick: () => props.onShare?.() },
     ];
 
     for (const action of actions) {
@@ -114,13 +134,28 @@ function createReloadActionsDropdown(props: PostActionsProps): HTMLElement {
       });
       item.type = 'button';
       item.className = 'post-action-dropdown-item';
+      item.style.display = 'flex';
+      item.style.alignItems = 'center';
+      item.style.gap = '0.5rem';
+
+      const iconEl = document.createElement('span');
+      iconEl.className = 'post-action-dropdown-icon';
+      iconEl.appendChild(icon(action.iconName));
+
+      const labelEl = document.createElement('span');
+      labelEl.className = 'post-action-dropdown-label';
+      labelEl.textContent = action.label;
+      item.replaceChildren(iconEl, labelEl);
       dropdown.appendChild(item);
     }
 
-    wrapper.appendChild(dropdown);
+    document.body.appendChild(dropdown);
+    positionDropdown();
     trigger.setAttribute('aria-expanded', 'true');
     document.addEventListener('pointerdown', handlePointerDown, true);
     document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', positionDropdown);
+    window.addEventListener('scroll', positionDropdown, true);
   };
 
   trigger.addEventListener('click', (event) => {
