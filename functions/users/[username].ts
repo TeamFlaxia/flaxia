@@ -141,10 +141,12 @@ app.get('*', async (c) => {
         ? `このアカウントは凍結されています。理由: ${user.frozen_reason || ''}`
         : `This account is frozen. Reason: ${user.frozen_reason || ''}`;
       return c.html(
-        renderHtmlShell(
-          `<div class="ssr-empty"><p>${escapeHtml(notice)}</p></div>`,
-          { title: notice, description: notice, canonicalUrl, spaHeadTags: SPA_HEAD_TAGS },
-        ),
+        renderHtmlShell(`<div class="ssr-empty"><p>${escapeHtml(notice)}</p></div>`, {
+          title: notice,
+          description: notice,
+          canonicalUrl,
+          spaHeadTags: SPA_HEAD_TAGS,
+        }),
         200,
         { 'Cache-Control': 'private, no-store' },
       );

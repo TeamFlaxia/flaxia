@@ -280,9 +280,7 @@ export async function startSrpLogin(
   email: string,
 ): Promise<{ challengeId: string; salt: string; B: string; kdf: string } | null> {
   const normalizedEmail = email.trim().toLowerCase();
-  const user = (await env.DB.prepare(
-    'SELECT id, srp_salt, srp_verifier, srp_kdf FROM users WHERE lower(email) = ?',
-  )
+  const user = (await env.DB.prepare('SELECT id, srp_salt, srp_verifier, srp_kdf FROM users WHERE lower(email) = ?')
     .bind(normalizedEmail)
     .first()) as { id: string; srp_salt: string | null; srp_verifier: string | null; srp_kdf: string | null } | null;
 

@@ -87,7 +87,10 @@ export async function registerWithSrp(
 
 // Log in via SRP. Legacy (non-SRP) accounts transparently fall back to the
 // plaintext endpoint, then upgrade to SRP on first login.
-export async function loginWithSrp(email: string, password: string): Promise<boolean | { frozen: true; username: string }> {
+export async function loginWithSrp(
+  email: string,
+  password: string,
+): Promise<boolean | { frozen: true; username: string }> {
   const start = await fetch('/api/auth/login/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
