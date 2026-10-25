@@ -2743,11 +2743,11 @@ h1 {
 }
 
 .post-action-dropdown-menu {
-  position: absolute;
-  top: auto;
-  bottom: calc(100% + 2px);
+  position: fixed;
+  top: 0;
+  bottom: auto;
   left: 0;
-  z-index: 100;
+  z-index: 10000;
   min-width: 140px;
   padding: 4px 0;
   background: var(--bg-primary);
@@ -2759,6 +2759,23 @@ h1 {
 .post-action-dropdown-item {
   font-family: inherit;
   white-space: nowrap;
+}
+
+.post-action-dropdown-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 1.2em;
+}
+
+.post-action-dropdown-icon svg {
+  display: block;
+  width: 1.1em;
+  height: 1.1em;
+}
+
+.post-action-dropdown-label {
+  flex: 1;
 }
 
 .action-button {
