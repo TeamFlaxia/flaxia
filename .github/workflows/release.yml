@@ -186,11 +186,24 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Upload Release Artifacts
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.release-context.outputs.tag_name }}
-        run: gh release upload "$RELEASE_TAG" src-tauri/target/release/bundle/msi/*.msi --clobber
+        run: |
+          $installerDirectory = "src-tauri/target/release/bundle/msi"
+          if (-not (Test-Path $installerDirectory)) {
+            throw "MSI artifact directory was not produced by the Windows release build."
+          }
+          $artifacts = @(Get-ChildItem -Path $installerDirectory -Filter "*.msi" -File | ForEach-Object { $_.FullName })
+          if ($artifacts.Count -eq 0) {
+            throw "No MSI artifacts were produced by the Windows release build."
+          }
+          gh release upload $env:RELEASE_TAG @artifacts --clobber
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
   android:
     runs-on: ubuntu-latest
