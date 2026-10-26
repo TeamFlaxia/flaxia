@@ -266,8 +266,8 @@ jobs:
           export REQUIRE_ANDROID_SIGNING=1
           export ANDROID_VERSION_CODE="$(node scripts/android-version-code.mjs code "$RELEASE_TAG")"
           node scripts/patch-android-build.mjs
-          cd android && ./gradlew bundleRelease
-      - name: Verify release AAB
+          cd android && ./gradlew bundleRelease assembleRelease
+      - name: Verify release AAB and APK
         env:
           ANDROID_KEYSTORE_FILE: ${{ github.workspace }}/android/app/release.keystore
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -290,14 +290,31 @@ jobs:
             "$AAB_PATH" "$ANDROID_KEY_ALIAS"
           EXPECTED_VERSION_CODE="$(node scripts/android-version-code.mjs code "$RELEASE_TAG")"
           node scripts/android-version-code.mjs verify "$AAB_PATH" "$EXPECTED_VERSION_CODE"
-          echo "Verified Android versionCode: $EXPECTED_VERSION_CODE"
+          echo "Verified Android AAB versionCode: $EXPECTED_VERSION_CODE"
+
+          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "::error::$APK_PATH was not produced — the release has no directly installable APK."
+            ls -la android/app/build/outputs/apk/release/ 2>/dev/null || true
+            exit 1
+          fi
+          "$ANDROID_SDK_ROOT/build-tools/36.0.0/apksigner" verify --verbose "$APK_PATH"
+          APK_VERSION_CODE="$("$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt" dump badging "$APK_PATH" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")"
+          if [ "$APK_VERSION_CODE" != "$EXPECTED_VERSION_CODE" ]; then
+            echo "::error::Expected APK versionCode $EXPECTED_VERSION_CODE, got $APK_VERSION_CODE"
+            exit 1
+          fi
+          echo "Verified Android APK signature and versionCode: $APK_VERSION_CODE"
       - name: Upload Release Artifacts
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.release-context.outputs.tag_name }}
         run: |
-          gh release upload "$RELEASE_TAG" android/app/build/outputs/bundle/release/app-release.aab --clobber
+          gh release upload "$RELEASE_TAG" \
+            android/app/build/outputs/bundle/release/app-release.aab \
+            android/app/build/outputs/apk/release/app-release.apk \
+            --clobber
           gh release edit "$RELEASE_TAG" --draft=false
 
 
