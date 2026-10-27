@@ -16,7 +16,12 @@ export async function onRequest(context: {
   // CI の Arcade 計測専用プレビューだけ候補ブランチの確認に使う。
   const url = new URL(context.request.url);
   const hostname = url.hostname;
-  const isArcadeBenchmarkPreview = /^bench-pr-\d+\.flaxia\.pages\.dev$/.test(hostname);
+  const [subdomain, projectDomain, pagesSuffix, extra] = hostname.split('.');
+  const isArcadeBenchmarkPreview =
+    /^bench-pr-\d+$/.test(subdomain ?? '') &&
+    /^flaxia(?:-[a-z0-9-]+)?$/.test(projectDomain ?? '') &&
+    pagesSuffix === 'pages' &&
+    extra === 'dev';
   if (hostname.endsWith('.pages.dev') && !isArcadeBenchmarkPreview) {
     return applySecurityHeaders(renderNotFoundPage(), url.pathname);
   }

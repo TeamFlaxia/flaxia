@@ -138,12 +138,21 @@ jobs:
         run: node "$RUNNER_TEMP/flaxia-browser-tools/node_modules/playwright/cli.js" install firefox
       - name: Deploy candidate to a PR-specific Pages preview
         run: |
+          set -o pipefail
           npx wrangler pages deploy dist \
             --project-name flaxia \
             --branch "$BENCH_DEPLOY_BRANCH" \
             --commit-hash "$GITHUB_SHA" \
-            --commit-message "PR #$PR_NUMBER Arcade benchmark"
-          echo "ARCADE_BENCH_URL=https://${BENCH_DEPLOY_BRANCH}.flaxia.pages.dev/arcade" >> "$GITHUB_ENV"
+            --commit-message "PR #$PR_NUMBER Arcade benchmark" \
+            2>&1 | tee "$RUNNER_TEMP/flaxia-pages-deploy.log"
+          preview_origin="$(sed -n 's/.*Deployment alias URL: //p' "$RUNNER_TEMP/flaxia-pages-deploy.log" | tail -n 1 | tr -d '\r')"
+          if [ -z "$preview_origin" ]; then
+            echo "Wrangler did not report the PR preview alias" >&2
+            cat "$RUNNER_TEMP/flaxia-pages-deploy.log"
+            exit 1
+          fi
+          echo "ARCADE_BENCH_URL=${preview_origin}/arcade" >> "$GITHUB_ENV"
+          echo "Benchmark target: ${preview_origin}/arcade"
         env:
           BENCH_DEPLOY_BRANCH: bench-pr-${{ github.event.pull_request.number }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
