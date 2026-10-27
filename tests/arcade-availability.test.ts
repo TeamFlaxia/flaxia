@@ -181,7 +181,9 @@ test('aborting an old selection does not cancel or poison the prefetched next ga
   let checked = 0;
   globalThis.fetch = async () => {
     checked++;
-    return new Promise<Response>((resolve) => { release = resolve; });
+    return new Promise<Response>((resolve) => {
+      release = resolve;
+    });
   };
   const prefetch = new ArcadeAvailabilityPrefetch('https://sandbox.flaxia.app');
   const next = game('next');
@@ -198,9 +200,10 @@ test('aborting an old selection does not cancel or poison the prefetched next ga
 });
 
 test('a prefetched missing game is still omitted by the normal Arcade selection logic', async () => {
-  globalThis.fetch = async (url) => new Response(null, {
-    status: String(url).includes('/missing?') ? 404 : 200,
-  });
+  globalThis.fetch = async (url) =>
+    new Response(null, {
+      status: String(url).includes('/missing?') ? 404 : 200,
+    });
   const prefetch = new ArcadeAvailabilityPrefetch('https://sandbox.flaxia.app');
   const games = [game('missing'), game('available')];
   await Promise.all(games.map((item) => prefetch.prefetch(item)));
