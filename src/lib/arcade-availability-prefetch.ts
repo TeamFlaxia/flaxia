@@ -33,8 +33,7 @@ export class ArcadeAvailabilityPrefetch {
     const key = `${game.type}:${game.postId}:${game.id}`;
     const existing = this.probes.get(key);
     if (existing) {
-      const maxAge =
-        existing.available === false ? MAX_MISSING_PROBE_AGE_MS : MAX_AVAILABLE_PROBE_AGE_MS;
+      const maxAge = existing.available === false ? MAX_MISSING_PROBE_AGE_MS : MAX_AVAILABLE_PROBE_AGE_MS;
       if (existing.checkedAt === undefined || Date.now() - existing.checkedAt < maxAge) {
         return existing.promise;
       }
