@@ -1,4 +1,6 @@
-import { findAvailableArcadeGame, isArcadeGameAvailable } from '../lib/arcade-availability.js';
+import { findAvailableArcadeGame } from '../lib/arcade-availability.js';
+import { ArcadeAvailabilityPrefetch } from '../lib/arcade-availability-prefetch.js';
+import { loadLegacyGameStorage } from '../lib/game-storage-broker.js';
 import { ArcadeCaptureClient } from '../lib/capture-client.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
@@ -81,7 +83,7 @@ export class ArcadePage {
   // same immersive overlay so the game remains playable (e.g. iOS Safari).
   private fakeFullscreenActive: boolean = false;
   private loadingEl: HTMLElement | null = null;
-  private preloadedIds = new Set<string>();
+  private readonly availability: ArcadeAvailabilityPrefetch;
 
   private static TUTORIAL_SEEN_KEY = 'flaxia_tutorial_seen';
 
@@ -107,6 +109,7 @@ export class ArcadePage {
 
   constructor(props: ArcadePageProps) {
     this.props = props;
+    this.availability = new ArcadeAvailabilityPrefetch(props.sandboxOrigin);
     this.initialGameId = props.initialGameId;
     this.sessionId = crypto.randomUUID();
     this.element = this.createElement();
@@ -714,9 +717,19 @@ export class ArcadePage {
     this.clearCurrentGame();
     this.showLoading(this.gameContainer, this.games[this.currentIndex]?.type ?? 'zip');
 
+    // Warm legacy game storage while the availability HEAD is in flight. This
+    // removes a second sequential cross-origin round trip from a cold launch.
+    const candidate = this.games[this.currentIndex];
+    const storageSnapshot = candidate?.type === 'zip' && candidate.payloadKey
+      ? loadLegacyGameStorage(this.props.sandboxOrigin, candidate.postId).catch((error: unknown) => {
+          console.warn('Legacy game storage is unavailable:', error);
+          return {} as Record<string, string>;
+        })
+      : undefined;
+
     try {
       const selection = await findAvailableArcadeGame(this.games, this.currentIndex, {
-        isAvailable: (game) => isArcadeGameAvailable(game, this.props.sandboxOrigin, controller.signal),
+        isAvailable: (game) => this.availability.isAvailable(game, controller.signal),
         loadMore: () => this.loadMoreGames(),
         onMissing: (game) => this.missingGameIds.add(game.postId),
         signal: controller.signal,
@@ -731,7 +744,7 @@ export class ArcadePage {
       this.currentIndex = selection.index;
       const emptyState = this.element.querySelector('.arcade-empty') as HTMLElement;
       emptyState.style.display = 'none';
-      this.renderAvailableGame(selection.game);
+      this.renderAvailableGame(selection.game, candidate?.postId === selection.game.postId ? storageSnapshot : undefined);
     } catch (error) {
       if (this.destroyed || controller.signal.aborted) return;
       console.error('Failed to select an Arcade game:', error);
@@ -740,7 +753,7 @@ export class ArcadePage {
     }
   }
 
-  private renderAvailableGame(game: Game): void {
+  private renderAvailableGame(game: Game, storageSnapshot?: Promise<Record<string, string>>): void {
     // Missing games never receive impressions or dwell events.
     impressionTracker.trackImpression(game.postId);
 
@@ -819,7 +832,7 @@ export class ArcadePage {
     this.currentViewport = viewport;
 
     // Execute the game
-    this.executeGame(game, gameArea);
+    this.executeGame(game, gameArea, storageSnapshot);
 
     // Animate in the new game
     requestAnimationFrame(() => {
@@ -1820,12 +1833,18 @@ export class ArcadePage {
     }
   }
 
-  private async executeGame(game: Game, container: HTMLElement): Promise<void> {
+  private async executeGame(
+    game: Game,
+    container: HTMLElement,
+    storageSnapshot?: Promise<Record<string, string>>,
+  ): Promise<void> {
     this.showLoading(container, game.type);
     try {
       if (game.type === 'zip' && game.payloadKey) {
         // Use WVFS for ZIP execution
-        const handle = await executeWvfsZip(game.postId, container, this.props.sandboxOrigin, true, false);
+        const handle = await executeWvfsZip(
+          game.postId, container, this.props.sandboxOrigin, true, false, undefined, storageSnapshot,
+        );
         if (this.destroyed || !this.currentViewport?.contains(container)) {
           handle.destroy();
           return;
@@ -1991,35 +2010,11 @@ export class ArcadePage {
   }
 
   private preloadNextGame(): void {
+    // Speculate on lightweight HEAD checks, not full unversioned HTML GETs
+    // which must revalidate and compete with the active game's assets.
     for (let i = 1; i <= 2; i++) {
-      const nextIndex = this.currentIndex + i;
-      if (nextIndex < this.games.length) {
-        const game = this.games[nextIndex];
-        this.prefetchGameBinary(game);
-      }
-    }
-  }
-
-  private prefetchLink(href: string): void {
-    if (this.preloadedIds.has(href)) return;
-    this.preloadedIds.add(href);
-    const link = document.createElement('link');
-    link.rel = 'prefetch';
-    link.href = href;
-    document.head.appendChild(link);
-  }
-
-  private async prefetchGameBinary(game: Game): Promise<void> {
-    if (this.preloadedIds.has(game.postId)) return;
-    this.preloadedIds.add(game.postId);
-
-    try {
-      if (game.type === 'zip') {
-        const sandboxOrigin = this.props.sandboxOrigin;
-        this.prefetchLink(createWvfsGameUrl(sandboxOrigin, game.postId));
-      }
-    } catch {
-      // Prefetch failed — game will load normally on demand
+      const game = this.games[this.currentIndex + i];
+      if (game) void this.availability.prefetch(game);
     }
   }
 
@@ -2977,6 +2972,7 @@ export class ArcadePage {
   public destroy(): void {
     this.destroyed = true;
     this.renderController?.abort();
+    this.availability.destroy();
     this.recordView();
     this.flushEvents();
     this.closeCommentPanel();
