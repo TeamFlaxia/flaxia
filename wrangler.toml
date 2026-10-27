@@ -91,6 +91,13 @@ binding = "AP_DELIVERY_QUEUE"
 #   npx wrangler secret put VAPID_PRIVATE_KEY
 # 開発環境では自動生成される（毎回変わるので通知が切れる可能性あり）
 
+# GitHub App credentials for Settings → Other → Report a bug.
+# Install an App with Issues: read and write permission on TeamFlaxia/flaxia.
+# Store every value as a Cloudflare Pages Secret (and in .dev.vars locally):
+#   npx wrangler pages secret put GITHUB_APP_ID --project-name flaxia
+#   npx wrangler pages secret put GITHUB_APP_INSTALLATION_ID --project-name flaxia
+#   npx wrangler pages secret put GITHUB_APP_PRIVATE_KEY --project-name flaxia
+
 # Stripe (billing)
 # Dashboard で商品「Flaxia+」＋月次 Price (JPY 150) と Customer Portal を作成し、
 # Webhook エンドポイント https://flaxia.app/api/billing/webhook を登録する。

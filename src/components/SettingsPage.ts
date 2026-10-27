@@ -23,6 +23,7 @@ import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
 import { getTheme, setTheme, Theme } from '../lib/theme.js';
 import { prepareVaultRewrap } from '../lib/vault/client.js';
 import { createAddStampModal } from './AddStampModal.js';
+import { createBugReportForm } from './BugReportForm.js';
 import { createVaultSection } from './VaultSection.js';
 
 function b64(b: Uint8Array): string {
@@ -47,6 +48,7 @@ interface SettingsPageProps {
 export function createSettingsPage({ currentUser, initialCategory }: SettingsPageProps) {
   const navigation = createSettingsNavigation();
   const container = navigation.getElement();
+  const bugReportForm = createBugReportForm();
   let accountSection: HTMLDivElement | undefined;
   let emojiSection: HTMLDivElement | undefined;
   let billingSection: HTMLDivElement | undefined;
@@ -1406,6 +1408,14 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     iconName: 'poll',
     sections: [crowdSection],
   });
+  navigation.addCategory({
+    id: 'bug-report',
+    groupKey: 'settings.group_other',
+    titleKey: 'settings.bug_report',
+    descriptionKey: 'settings.bug_report_description',
+    iconName: 'flag',
+    sections: [bugReportForm.getElement()],
+  });
   navigation.showCategory(initialCategory ?? null, false);
 
   return {
@@ -1414,6 +1424,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     destroy: () => {
       window.removeEventListener(CROWD_CONSENT_CHANGE_EVENT, onCrowdConsentChange);
       vaultSection?.destroy();
+      bugReportForm.destroy();
       container.remove();
     },
   };

@@ -33,6 +33,10 @@ export type Bindings = {
   MATCHMAKER?: DurableObjectNamespace;
   FCM_SERVER_KEY?: string;
   VECTORIZE?: Vectorize;
+  /** GitHub App credentials used only by the public bug-report endpoint. */
+  GITHUB_APP_ID?: string;
+  GITHUB_APP_INSTALLATION_ID?: string;
+  GITHUB_APP_PRIVATE_KEY?: string;
 };
 
 export type Variables = {

@@ -34,6 +34,23 @@ pnpm build && pnpm deploy
 
 The build output is in `dist/`.
 
+## GitHub bug reports (#263)
+
+The Settings → Other → Report a bug form creates public issues in
+`TeamFlaxia/flaxia`. Configure a GitHub App installed on that repository with
+**Issues: read and write** permission. Keep the App ID, installation ID, and
+private key in Pages Secrets; local development can use `.dev.vars`:
+
+```bash
+npx wrangler pages secret put GITHUB_APP_ID --project-name flaxia
+npx wrangler pages secret put GITHUB_APP_INSTALLATION_ID --project-name flaxia
+npx wrangler pages secret put GITHUB_APP_PRIVATE_KEY --project-name flaxia
+```
+
+The private key may be the PEM downloaded from GitHub. The installation token
+is created server-side for each submission and is never sent to the browser.
+If credentials are missing, the form reports that submission is unavailable.
+
 ## Backend Worker (flaxia-backend)
 
 This worker hosts Durable Objects and consumes the ActivityPub delivery queue.
