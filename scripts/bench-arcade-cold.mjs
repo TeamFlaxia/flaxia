@@ -219,5 +219,7 @@ const samples = results
   .filter((time) => time !== null)
   .sort((a, b) => a - b);
 if (samples.length)
-  console.log(`${engineName} cold iframe load median: ${samples[Math.floor(samples.length / 2)]} ms / ${samples.length} successful runs`);
+  console.log(
+    `${engineName} cold iframe load median: ${samples[Math.floor(samples.length / 2)]} ms / ${samples.length} successful runs`,
+  );
 if (samples.length !== trials) process.exitCode = 1;
