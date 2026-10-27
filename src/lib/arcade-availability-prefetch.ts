@@ -2,6 +2,7 @@ import type { Game } from '../types/game.js';
 import { isArcadeGameAvailable } from './arcade-availability.js';
 
 const MAX_PROBES = 8;
+const MAX_PROBE_AGE_MS = 10_000;
 
 /**
  * Share bounded, asynchronous availability checks between the active game and
@@ -13,7 +14,7 @@ const MAX_PROBES = 8;
  * checks with client-side assumptions.
  */
 export class ArcadeAvailabilityPrefetch {
-  private readonly probes = new Map<string, Promise<boolean>>();
+  private readonly probes = new Map<string, { startedAt: number; promise: Promise<boolean> }>();
   private readonly controller = new AbortController();
 
   constructor(private readonly sandboxOrigin: string) {}
@@ -21,7 +22,10 @@ export class ArcadeAvailabilityPrefetch {
   prefetch(game: Game): Promise<boolean> {
     const key = `${game.type}:${game.postId}:${game.id}`;
     const existing = this.probes.get(key);
-    if (existing) return existing;
+    // A long-running game must not reuse stale availability indefinitely.
+    // The sandbox still enforces a fresh scan/publication gate on each GET.
+    if (existing && Date.now() - existing.startedAt < MAX_PROBE_AGE_MS) return existing.promise;
+    this.probes.delete(key);
 
     if (this.probes.size >= MAX_PROBES) {
       const oldest = this.probes.keys().next().value;
@@ -34,7 +38,7 @@ export class ArcadeAvailabilityPrefetch {
       if (this.controller.signal.aborted) return true;
       throw error;
     });
-    this.probes.set(key, check);
+    this.probes.set(key, { startedAt: Date.now(), promise: check });
     return check;
   }
 
