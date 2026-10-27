@@ -1,4 +1,4 @@
-import type MarkdownIt from 'markdown-it';
+import type { MarkdownIt } from 'markdown-it';
 import { PostTextProps } from '../types/post.js';
 
 // Configure markdown-it with security settings
