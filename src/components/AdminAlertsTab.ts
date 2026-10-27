@@ -147,7 +147,7 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
     input.type = 'number';
     input.name = 'limit';
     input.min = '1';
-    input.max = '500';
+    input.max = '2147483647';
     input.step = '1';
     input.value = '5';
     input.required = true;
@@ -174,7 +174,7 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       const limit = Number(input.value);
-      if (!Number.isInteger(limit) || limit < 1 || limit > 500 || button.disabled) {
+      if (!Number.isInteger(limit) || limit < 1 || limit > 2147483647 || button.disabled) {
         input.reportValidity();
         return;
       }
