@@ -31,11 +31,13 @@ const browser = await engine.launch({
     ? { executablePath: process.env.LOADER_CHROMIUM_EXECUTABLE }
     : {}),
   ...(engine === firefox
-    ? { firefoxUserPrefs: {
-      'browser.cache.disk.enable': false,
-      'browser.cache.memory.enable': false,
-      'browser.cache.offline.enable': false,
-    } }
+    ? {
+        firefoxUserPrefs: {
+          'browser.cache.disk.enable': false,
+          'browser.cache.memory.enable': false,
+          'browser.cache.offline.enable': false,
+        },
+      }
     : {}),
   args: engine === chromium ? ['--no-sandbox'] : [],
 });
@@ -71,25 +73,33 @@ try {
       failures.push({ url: request.url(), error: request.failure()?.errorText });
     });
     page.on('requestfinished', (request) => {
-      pending.push((async () => {
-        const response = await request.response();
-        const timing = request.timing();
-        let sizes;
-        try { sizes = await request.sizes(); } catch { sizes = null; }
-        requests.push({
-          method: request.method(),
-          type: request.resourceType(),
-          url: request.url(),
-          status: response?.status() ?? null,
-          ttfbMs: timing.responseStart >= 0 ? Math.round(timing.responseStart) : null,
-          downloadMs: timing.responseEnd >= 0 && timing.responseStart >= 0
-            ? Math.round(timing.responseEnd - timing.responseStart) : null,
-          elapsedMs: timing.responseEnd >= 0 ? Math.round(timing.responseEnd) : null,
-          transferBytes: sizes?.responseBodySize ?? null,
-          edgeCache: response?.headers()['x-wvfs-cache'] ?? null,
-          browserServiceWorker: response?.fromServiceWorker() ?? false,
-        });
-      })().catch((error) => failures.push({ url: request.url(), error: String(error) })));
+      pending.push(
+        (async () => {
+          const response = await request.response();
+          const timing = request.timing();
+          let sizes;
+          try {
+            sizes = await request.sizes();
+          } catch {
+            sizes = null;
+          }
+          requests.push({
+            method: request.method(),
+            type: request.resourceType(),
+            url: request.url(),
+            status: response?.status() ?? null,
+            ttfbMs: timing.responseStart >= 0 ? Math.round(timing.responseStart) : null,
+            downloadMs:
+              timing.responseEnd >= 0 && timing.responseStart >= 0
+                ? Math.round(timing.responseEnd - timing.responseStart)
+                : null,
+            elapsedMs: timing.responseEnd >= 0 ? Math.round(timing.responseEnd) : null,
+            transferBytes: sizes?.responseBodySize ?? null,
+            edgeCache: response?.headers()['x-wvfs-cache'] ?? null,
+            browserServiceWorker: response?.fromServiceWorker() ?? false,
+          });
+        })().catch((error) => failures.push({ url: request.url(), error: String(error) })),
+      );
     });
 
     const begun = Date.now();
@@ -143,20 +153,27 @@ try {
       error,
     };
     results.push(result);
-    console.log(JSON.stringify({
-      browser: engineName,
-      trial: result.trial,
-      firstIframeLoadMs,
-      mainDomContentLoadedMs: pageMetrics?.domContentLoadedMs ?? null,
-      requestCount: requests.length,
-      wvfsHead: result.counts.wvfsHead,
-      wvfsGet: result.counts.wvfsGet,
-      transferBytes: result.transferBytes,
-      slowestRequests: result.requests.slice(0, 5).map(({ method, url, status, ttfbMs, elapsedMs, edgeCache }) => ({
-        method, path: new URL(url).pathname, status, ttfbMs, elapsedMs, edgeCache,
-      })),
-      error,
-    }));
+    console.log(
+      JSON.stringify({
+        browser: engineName,
+        trial: result.trial,
+        firstIframeLoadMs,
+        mainDomContentLoadedMs: pageMetrics?.domContentLoadedMs ?? null,
+        requestCount: requests.length,
+        wvfsHead: result.counts.wvfsHead,
+        wvfsGet: result.counts.wvfsGet,
+        transferBytes: result.transferBytes,
+        slowestRequests: result.requests.slice(0, 5).map(({ method, url, status, ttfbMs, elapsedMs, edgeCache }) => ({
+          method,
+          path: new URL(url).pathname,
+          status,
+          ttfbMs,
+          elapsedMs,
+          edgeCache,
+        })),
+        error,
+      }),
+    );
     await context.close();
   }
 } finally {
@@ -166,6 +183,10 @@ try {
 const path = `${directory}/arcade-cold-${engineName}.json`;
 await writeFile(path, JSON.stringify({ measuredAt: new Date().toISOString(), results }, null, 2) + '\n');
 console.log(`Saved browser waterfall measurements: ${path}`);
-const samples = results.map((result) => result.firstIframeLoadMs).filter((time) => time !== null).sort((a,b) => a-b);
-if (samples.length) console.log(`${engineName} cold iframe load median: ${samples[Math.floor(samples.length / 2)]} ms / ${samples.length} successful runs`);
+const samples = results
+  .map((result) => result.firstIframeLoadMs)
+  .filter((time) => time !== null)
+  .sort((a, b) => a - b);
+if (samples.length)
+  console.log(`${engineName} cold iframe load median: ${samples[Math.floor(samples.length / 2)]} ms / ${samples.length} successful runs`);
 if (samples.length !== trials) process.exitCode = 1;
