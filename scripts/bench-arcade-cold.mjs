@@ -49,8 +49,9 @@ try {
       deviceScaleFactor: 1,
     });
     const page = await context.newPage();
+    let cdp = null;
     if (engine === chromium) {
-      const cdp = await context.newCDPSession(page);
+      cdp = await context.newCDPSession(page);
       await cdp.send('Network.enable');
       await cdp.send('Network.setCacheDisabled', { cacheDisabled: true });
       await cdp.send('Performance.enable');
@@ -106,6 +107,8 @@ try {
     let firstIframeLoadMs = null;
     let iframeUrl = null;
     let pageMetrics = null;
+    let frameMetrics = null;
+    let devtoolsMetrics = null;
     let error = null;
     try {
       await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -115,6 +118,19 @@ try {
       if (!frame) throw new Error('Arcade iframe was detached');
       await frame.waitForLoadState('load', { timeout: 35000 });
       firstIframeLoadMs = Date.now() - begun;
+      frameMetrics = await frame.evaluate(() => {
+        const navigation = performance.getEntriesByType('navigation')[0];
+        return {
+          navigationTTFBMs: navigation?.responseStart ?? null,
+          navigationResponseEndMs: navigation?.responseEnd ?? null,
+          domContentLoadedMs: navigation?.domContentLoadedEventEnd ?? null,
+          loadMs: navigation?.loadEventEnd ?? null,
+          paints: performance.getEntriesByType('paint').map((item) => ({
+            name: item.name,
+            startTime: item.startTime,
+          })),
+        };
+      });
       // Allow late assets to appear in the waterfall, without counting them
       // as a claim of the game's first interactive frame.
       await page.waitForTimeout(1200);
@@ -126,6 +142,17 @@ try {
           paints: window.__arcadeColdPaints ?? [],
         };
       });
+      if (cdp) {
+        const raw = await cdp.send('Performance.getMetrics');
+        const metrics = Object.fromEntries(raw.metrics.map(({ name, value }) => [name, value]));
+        devtoolsMetrics = {
+          JSHeapUsedSize: metrics.JSHeapUsedSize ?? null,
+          TaskDuration: metrics.TaskDuration ?? null,
+          ScriptDuration: metrics.ScriptDuration ?? null,
+          LayoutDuration: metrics.LayoutDuration ?? null,
+          RecalcStyleDuration: metrics.RecalcStyleDuration ?? null,
+        };
+      }
     } catch (failure) {
       error = String(failure);
     }
@@ -141,6 +168,8 @@ try {
       iframeUrl,
       firstIframeLoadMs,
       pageMetrics,
+      frameMetrics,
+      devtoolsMetrics,
       counts: {
         total: requests.length,
         wvfsHead: resources.filter((r) => r.method === 'HEAD').length,
@@ -159,6 +188,8 @@ try {
         trial: result.trial,
         firstIframeLoadMs,
         mainDomContentLoadedMs: pageMetrics?.domContentLoadedMs ?? null,
+        frameNavigationTTFBMs: frameMetrics?.navigationTTFBMs ?? null,
+        chromeTaskDuration: devtoolsMetrics?.TaskDuration ?? null,
         requestCount: requests.length,
         wvfsHead: result.counts.wvfsHead,
         wvfsGet: result.counts.wvfsGet,
