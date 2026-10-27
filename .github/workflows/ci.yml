@@ -116,21 +116,52 @@ jobs:
       - run: npm run build
 
   arcade-cold-load:
-    # Advisory benchmark of the currently deployed public Arcade. This DOES NOT
-    # benchmark the PR's code until that code is deployed to ARCADE_BENCH_URL.
-    if: github.event_name == 'pull_request'
+    # Build and benchmark this PR's exact merge candidate in an isolated Pages preview.
+    # Cloudflare credentials are only available to same-repository PRs.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Build PR candidate
+        run: npm run build
       - name: Install isolated Playwright tools
         run: npm install --prefix "$RUNNER_TEMP/flaxia-browser-tools" --package-lock=false --ignore-scripts playwright@1.62.1
       - name: Install Firefox engine
         run: node "$RUNNER_TEMP/flaxia-browser-tools/node_modules/playwright/cli.js" install firefox
-      - name: Measure cold Chromium request waterfall
+      - name: Deploy candidate to a PR-specific Pages preview
+        run: |
+          npx wrangler pages deploy dist \
+            --project-name flaxia \
+            --branch "$BENCH_DEPLOY_BRANCH" \
+            --commit-hash "$GITHUB_SHA" \
+            --commit-message "PR #$PR_NUMBER Arcade benchmark"
+          echo "ARCADE_BENCH_URL=https://${BENCH_DEPLOY_BRANCH}.flaxia.pages.dev/arcade" >> "$GITHUB_ENV"
+        env:
+          BENCH_DEPLOY_BRANCH: bench-pr-${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Wait for the candidate preview
+        run: |
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent --show-error "$ARCADE_BENCH_URL" --output /dev/null; then
+              echo "Candidate preview is ready: $ARCADE_BENCH_URL"
+              exit 0
+            fi
+            echo "Waiting for candidate preview (attempt $attempt/20)"
+            sleep 3
+          done
+          echo "Candidate preview did not become available: $ARCADE_BENCH_URL" >&2
+          exit 1
+      - name: Measure PR candidate cold Chromium waterfall
         continue-on-error: true
         run: node scripts/bench-arcade-cold.mjs
         env:
@@ -138,7 +169,7 @@ jobs:
           LOADER_CHROMIUM_EXECUTABLE: /usr/bin/google-chrome
           ARCADE_BENCH_BROWSER: chromium
           ARCADE_BENCH_TRIALS: 3
-      - name: Measure cold Firefox request waterfall
+      - name: Measure PR candidate cold Firefox waterfall
         continue-on-error: true
         run: node scripts/bench-arcade-cold.mjs
         env:
