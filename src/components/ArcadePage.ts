@@ -1,8 +1,8 @@
 import { findAvailableArcadeGame } from '../lib/arcade-availability.js';
 import { ArcadeAvailabilityPrefetch } from '../lib/arcade-availability-prefetch.js';
-import { loadLegacyGameStorage } from '../lib/game-storage-broker.js';
 import { ArcadeCaptureClient } from '../lib/capture-client.js';
 import { formatCount } from '../lib/format.js';
+import { loadLegacyGameStorage } from '../lib/game-storage-broker.js';
 import { t } from '../lib/i18n.js';
 import { attachIcons, type IconName, icon } from '../lib/icons.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
@@ -719,12 +719,13 @@ export class ArcadePage {
     // Warm legacy game storage while the availability HEAD is in flight. This
     // removes a second sequential cross-origin round trip from a cold launch.
     const candidate = this.games[this.currentIndex];
-    const storageSnapshot = candidate?.type === 'zip' && candidate.payloadKey
-      ? loadLegacyGameStorage(this.props.sandboxOrigin, candidate.postId).catch((error: unknown) => {
-          console.warn('Legacy game storage is unavailable:', error);
-          return {} as Record<string, string>;
-        })
-      : undefined;
+    const storageSnapshot =
+      candidate?.type === 'zip' && candidate.payloadKey
+        ? loadLegacyGameStorage(this.props.sandboxOrigin, candidate.postId).catch((error: unknown) => {
+            console.warn('Legacy game storage is unavailable:', error);
+            return {} as Record<string, string>;
+          })
+        : undefined;
 
     try {
       const selection = await findAvailableArcadeGame(this.games, this.currentIndex, {
@@ -743,7 +744,10 @@ export class ArcadePage {
       this.currentIndex = selection.index;
       const emptyState = this.element.querySelector('.arcade-empty') as HTMLElement;
       emptyState.style.display = 'none';
-      this.renderAvailableGame(selection.game, candidate?.postId === selection.game.postId ? storageSnapshot : undefined);
+      this.renderAvailableGame(
+        selection.game,
+        candidate?.postId === selection.game.postId ? storageSnapshot : undefined,
+      );
     } catch (error) {
       if (this.destroyed || controller.signal.aborted) return;
       console.error('Failed to select an Arcade game:', error);
@@ -1842,7 +1846,13 @@ export class ArcadePage {
       if (game.type === 'zip' && game.payloadKey) {
         // Use WVFS for ZIP execution
         const handle = await executeWvfsZip(
-          game.postId, container, this.props.sandboxOrigin, true, false, undefined, storageSnapshot,
+          game.postId,
+          container,
+          this.props.sandboxOrigin,
+          true,
+          false,
+          undefined,
+          storageSnapshot,
         );
         if (this.destroyed || !this.currentViewport?.contains(container)) {
           handle.destroy();
