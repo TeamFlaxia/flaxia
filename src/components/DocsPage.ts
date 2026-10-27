@@ -1,5 +1,5 @@
 import DOMPurify from 'dompurify';
-import type MarkdownIt from 'markdown-it';
+import type { MarkdownIt } from 'markdown-it';
 import { getLocale, t } from '../lib/i18n.js';
 
 interface DocsPageProps {
