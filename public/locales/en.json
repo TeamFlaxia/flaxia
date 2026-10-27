@@ -587,7 +587,8 @@
   "docs.not_found": "The requested document could not be found.",
   "admin_alerts.title": "Alerts",
   "admin_alerts.embedding_backfill": "Retry post text indexing (up to 5)",
-  "admin_alerts.embedding_backfill_hint": "Retry up to five pending embedding submissions.",
+  "admin_alerts.embedding_backfill_limit": "Retry count (1–500)",
+  "admin_alerts.embedding_backfill_hint": "Retry pending embedding submissions up to the selected count."
   "admin_alerts.embedding_backfill_queued": "Retry requested for {count} posts. Wait a little, then check the posts.",
   "admin_alerts.embedding_backfill_error": "Retry failed. Check Crowd settings and admin access.",
   "admin_alerts.empty": "No alerts",
