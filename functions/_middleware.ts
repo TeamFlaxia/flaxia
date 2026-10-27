@@ -12,17 +12,10 @@ export async function onRequest(context: {
   env: Record<string, unknown>;
   next: () => Promise<Response>;
 }): Promise<Response> {
-  // Cloudflare Pages の自動生成ドメイン (*.pages.dev) は通常拒否する。
-  // CI の Arcade 計測専用プレビューだけ候補ブランチの確認に使う。
+  // Cloudflare Pages の自動生成ドメイン (*.pages.dev) 経由では動作させない
   const url = new URL(context.request.url);
   const hostname = url.hostname;
-  const [subdomain, projectDomain, pagesSuffix, extra] = hostname.split('.');
-  const isArcadeBenchmarkPreview =
-    /^bench-pr-\d+$/.test(subdomain ?? '') &&
-    /^flaxia(?:-[a-z0-9-]+)?$/.test(projectDomain ?? '') &&
-    pagesSuffix === 'pages' &&
-    extra === 'dev';
-  if (hostname.endsWith('.pages.dev') && !isArcadeBenchmarkPreview) {
+  if (hostname.endsWith('.pages.dev')) {
     return applySecurityHeaders(renderNotFoundPage(), url.pathname);
   }
 
