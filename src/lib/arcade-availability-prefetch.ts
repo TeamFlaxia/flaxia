@@ -16,8 +16,11 @@ const MAX_PROBE_AGE_MS = 10_000;
 export class ArcadeAvailabilityPrefetch {
   private readonly probes = new Map<string, { startedAt: number; promise: Promise<boolean> }>();
   private readonly controller = new AbortController();
+  private readonly sandboxOrigin: string;
 
-  constructor(private readonly sandboxOrigin: string) {}
+  constructor(sandboxOrigin: string) {
+    this.sandboxOrigin = sandboxOrigin;
+  }
 
   prefetch(game: Game): Promise<boolean> {
     const key = `${game.type}:${game.postId}:${game.id}`;
