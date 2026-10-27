@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
+import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { Hono } from 'hono';
 import type { Bindings, Variables } from '../functions/api/types.ts';
@@ -48,6 +50,23 @@ class MemoryKV {
   }
 }
 
+class TestD1 {
+  private db = new DatabaseSync(':memory:');
+
+  constructor() {
+    this.db.exec(readFileSync(new URL('../migrations/0113_bug_report_submissions.sql', import.meta.url), 'utf8'));
+  }
+
+  prepare(sql: string) {
+    return {
+      bind: (...args: (string | number | null)[]) => ({
+        run: async () => ({ meta: { changes: Number(this.db.prepare(sql).run(...args).changes) } }),
+        first: async () => this.db.prepare(sql).get(...args) ?? null,
+      }),
+    };
+  }
+}
+
 function makeApp(authenticated = true) {
   const app = new Hono<{ Bindings: Bindings; Variables: Variables }>();
   app.use('*', async (c, next) => {
@@ -66,6 +85,7 @@ function makeApp(authenticated = true) {
   const env = {
     BASE_URL: 'https://flaxia.app',
     CACHE: new MemoryKV(),
+    DB: new TestD1(),
     BUCKET: {
       async put(key: string, value: ArrayBufferView | ArrayBuffer | string) {
         uploaded.set(key, new Uint8Array(typeof value === 'string' ? Buffer.from(value) : value));
@@ -272,4 +292,54 @@ test('rate limiting caps submissions at three per user per day and identical ret
     assert.equal(limited.status, 429);
     assert.equal(calls.filter((call) => call.url.endsWith('/issues')).length, 3);
   });
+});
+
+test('concurrent identical and distinct reports reserve quota atomically', async () => {
+  const { app, env } = makeApp();
+  await withGitHubMock(async (calls) => {
+    const identical = await Promise.all(
+      Array.from({ length: 8 }, () => app.request('/api/bug-reports', { method: 'POST', body: makeForm() }, env)),
+    );
+    assert.equal(identical.filter((r) => r.status === 201).length, 1);
+    assert.ok(identical.every((r) => [200, 201, 409].includes(r.status)));
+    const distinct = await Promise.all(
+      Array.from({ length: 8 }, (_, i) =>
+        app.request('/api/bug-reports', { method: 'POST', body: makeForm({ summary: `Concurrent ${i}` }) }, env),
+      ),
+    );
+    assert.equal(distinct.filter((r) => r.status === 201).length, 2);
+    assert.equal(distinct.filter((r) => r.status === 429).length, 6);
+    assert.equal(calls.filter((call) => call.url.endsWith('/issues')).length, 3);
+  });
+});
+
+test('definite token failures release quota for retries', async () => {
+  const { app, env } = makeApp();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response('unavailable', { status: 503 })) as typeof fetch;
+  try {
+    for (let i = 0; i < 4; i++) {
+      const response = await app.request('/api/bug-reports', { method: 'POST', body: makeForm() }, env);
+      assert.equal(response.status, 502);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  await withGitHubMock(async () => {
+    const response = await app.request('/api/bug-reports', { method: 'POST', body: makeForm() }, env);
+    assert.equal(response.status, 201);
+  });
+});
+
+test('rejects oversized streamed multipart bodies without Content-Length', async () => {
+  const { app, env } = makeApp();
+  const bytes = new Uint8Array(5 * 1024 * 1024 + 32769);
+  const request = new Request('http://localhost/api/bug-reports', {
+    method: 'POST',
+    headers: { 'Content-Type': 'multipart/form-data; boundary=test' },
+    body: new Blob([bytes]),
+  });
+  assert.equal(request.headers.get('content-length'), null);
+  const response = await app.fetch(request, env);
+  assert.equal(response.status, 413);
 });

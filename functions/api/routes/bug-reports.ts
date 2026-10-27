@@ -10,7 +10,6 @@ import {
 } from '../../lib/bug-report';
 import { createGitHubInstallationToken } from '../../lib/github-app';
 import { validateImageDimensions } from '../../lib/image-dimensions';
-import { checkRateLimit } from '../../lib/rate-limit';
 import { checkDeclaredType, detectMimeType, isAllowedImageMime } from '../../lib/scan/mime';
 import { requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
@@ -22,12 +21,6 @@ const MAX_REQUEST_SIZE = MAX_SCREENSHOT_SIZE + 32 * 1024;
 const GITHUB_REPOSITORY = 'TeamFlaxia/flaxia';
 const GITHUB_API = 'https://api.github.com';
 const ISSUE_LABELS = ['bug', 'user-report'];
-
-interface CachedSubmission {
-  state: 'processing' | 'created';
-  issueNumber?: number;
-  issueUrl?: string;
-}
 
 interface GitHubIssueResponse {
   number?: unknown;
@@ -141,13 +134,45 @@ async function deleteUploadedImage(bucket: R2Bucket, key: string | undefined): P
   }
 }
 
-async function releaseReservation(cache: KVNamespace, key: string | undefined): Promise<void> {
-  if (!key) return;
+async function releaseReservation(
+  db: D1Database,
+  userId: string,
+  fingerprint: string,
+  reservationId: string,
+): Promise<void> {
   try {
-    await cache.delete(key);
+    await db
+      .prepare('DELETE FROM bug_report_submissions WHERE user_id = ? AND fingerprint = ? AND reservation_id = ?')
+      .bind(userId, fingerprint, reservationId)
+      .run();
   } catch {
-    // Expiration clears a stale reservation if KV is temporarily unavailable.
+    // A failed cleanup is eventually cleared by the reservation expiration.
   }
+}
+
+// Enforce the limit on actual bytes, including extra multipart fields, before parsing.
+async function readLimitedForm(request: Request): Promise<FormData | null> {
+  const reader = request.body?.getReader();
+  if (!reader) return null;
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_REQUEST_SIZE) {
+      await reader.cancel().catch(() => {});
+      throw new RangeError('request too large');
+    }
+    chunks.push(value);
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new Request(request.url, { method: 'POST', headers: request.headers, body }).formData();
 }
 
 bugReports.post('/bug-reports', requireAuth, async (c) => {
@@ -164,8 +189,11 @@ bugReports.post('/bug-reports', requireAuth, async (c) => {
 
   let form: FormData;
   try {
-    form = await c.req.formData();
-  } catch {
+    const parsed = await readLimitedForm(c.req.raw);
+    if (!parsed) return c.json({ error: 'invalid_request' }, 400);
+    form = parsed;
+  } catch (error) {
+    if (error instanceof RangeError) return c.json({ error: 'request_too_large' }, 413);
     return c.json({ error: 'invalid_request' }, 400);
   }
 
@@ -211,7 +239,7 @@ bugReports.post('/bug-reports', requireAuth, async (c) => {
   const installationId = c.env.GITHUB_APP_INSTALLATION_ID;
   const privateKey = c.env.GITHUB_APP_PRIVATE_KEY;
   if (!appId || !installationId || !privateKey) return c.json({ error: 'github_not_configured' }, 503);
-  if (!c.env.CACHE || !c.env.BUCKET) return c.json({ error: 'storage_unavailable' }, 503);
+  if (!c.env.DB || !c.env.BUCKET) return c.json({ error: 'storage_unavailable' }, 503);
 
   let screenshotBytes: Uint8Array | undefined;
   let screenshotBuffer: ArrayBuffer | undefined;
@@ -248,32 +276,37 @@ bugReports.post('/bug-reports', requireAuth, async (c) => {
     return c.json({ error: 'internal_error' }, 500);
   }
 
-  const reservationKey = `bug-report:submission:${user.id}:${fingerprint}`;
-  let cached: CachedSubmission | null = null;
+  const reservationId = crypto.randomUUID();
+  const now = Math.floor(Date.now() / 1000);
+  const windowId = Math.floor(now / 86400);
   try {
-    const raw = await c.env.CACHE.get(reservationKey);
-    cached = raw ? (JSON.parse(raw) as CachedSubmission) : null;
-  } catch {
-    return c.json({ error: 'storage_unavailable' }, 503);
-  }
-  if (cached?.state === 'created' && cached.issueNumber && cached.issueUrl) {
-    return c.json({ issueNumber: cached.issueNumber, issueUrl: cached.issueUrl, duplicate: true }, 200);
-  }
-  if (cached?.state === 'processing') return c.json({ error: 'submission_in_progress' }, 409);
-
-  try {
-    if (
-      !(await checkRateLimit(c.env.CACHE, `bug-report:${user.id}`, {
-        maxRequests: 3,
-        windowSeconds: 86400,
-        failureMode: 'closed',
-      }))
-    ) {
+    // Expired processing reservations and old deduplication entries no longer count.
+    await c.env.DB.prepare('DELETE FROM bug_report_submissions WHERE user_id = ? AND expires_at <= ?')
+      .bind(user.id, now)
+      .run();
+    // This single statement makes the quota check and reservation atomic in D1.
+    const inserted = await c.env.DB.prepare(`
+      INSERT INTO bug_report_submissions (user_id, fingerprint, reservation_id, window_id, state, expires_at)
+      SELECT ?, ?, ?, ?, 'processing', ?
+      WHERE (SELECT COUNT(*) FROM bug_report_submissions
+             WHERE user_id = ? AND window_id = ? AND expires_at > ?) < 3
+      ON CONFLICT(user_id, fingerprint) DO NOTHING
+    `)
+      .bind(user.id, fingerprint, reservationId, windowId, now + 300, user.id, windowId, now)
+      .run();
+    if (!inserted.meta.changes) {
+      const cached = await c.env.DB.prepare(`
+        SELECT state, issue_number, issue_url FROM bug_report_submissions
+        WHERE user_id = ? AND fingerprint = ? AND expires_at > ?
+      `)
+        .bind(user.id, fingerprint, now)
+        .first<{ state: string; issue_number: number | null; issue_url: string | null }>();
+      if (cached?.state === 'created' && cached.issue_number && cached.issue_url) {
+        return c.json({ issueNumber: cached.issue_number, issueUrl: cached.issue_url, duplicate: true }, 200);
+      }
+      if (cached?.state === 'processing') return c.json({ error: 'submission_in_progress' }, 409);
       return c.json({ error: 'rate_limited' }, 429);
     }
-    await c.env.CACHE.put(reservationKey, JSON.stringify({ state: 'processing' } satisfies CachedSubmission), {
-      expirationTtl: 300,
-    });
   } catch {
     return c.json({ error: 'storage_unavailable' }, 503);
   }
@@ -299,7 +332,7 @@ bugReports.post('/bug-reports', requireAuth, async (c) => {
     );
     if (!response.ok) {
       if (response.status < 500) {
-        await releaseReservation(c.env.CACHE, reservationKey);
+        await releaseReservation(c.env.DB, user.id, fingerprint, reservationId);
         await deleteUploadedImage(c.env.BUCKET, uploadedImageKey);
       }
       return c.json({ error: 'github_unavailable' }, 502);
@@ -318,11 +351,12 @@ bugReports.post('/bug-reports', requireAuth, async (c) => {
     }
 
     try {
-      await c.env.CACHE.put(
-        reservationKey,
-        JSON.stringify({ state: 'created', issueNumber: issue.number, issueUrl } satisfies CachedSubmission),
-        { expirationTtl: 86400 },
-      );
+      await c.env.DB.prepare(`
+        UPDATE bug_report_submissions SET state = 'created', issue_number = ?, issue_url = ?, expires_at = ?
+        WHERE user_id = ? AND fingerprint = ? AND reservation_id = ?
+      `)
+        .bind(issue.number, issueUrl, Math.floor(Date.now() / 1000) + 86400, user.id, fingerprint, reservationId)
+        .run();
     } catch {
       // The GitHub issue already exists; return the URL even if dedupe caching
       // is temporarily unavailable.
@@ -335,7 +369,7 @@ bugReports.post('/bug-reports', requireAuth, async (c) => {
       // accidental duplicate.
     } else {
       await deleteUploadedImage(c.env.BUCKET, uploadedImageKey);
-      await releaseReservation(c.env.CACHE, reservationKey);
+      await releaseReservation(c.env.DB, user.id, fingerprint, reservationId);
     }
     return c.json({ error: issueRequestStarted ? 'github_unavailable' : 'upload_failed' }, 502);
   }
