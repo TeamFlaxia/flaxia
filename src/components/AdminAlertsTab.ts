@@ -139,12 +139,31 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
     description.style.cssText = 'margin: 0 0 12px; color: #94a3b8; font-size: 14px;';
     panel.appendChild(description);
 
+    const form = document.createElement('form');
+    form.style.cssText = 'display: flex; align-items: center; gap: 8px; flex-wrap: wrap;';
+    const label = document.createElement('label');
+    label.textContent = t('admin_alerts.embedding_backfill_limit');
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.name = 'limit';
+    input.min = '1';
+    input.max = '500';
+    input.step = '1';
+    input.value = '5';
+    input.required = true;
+    input.inputMode = 'numeric';
+    input.style.cssText =
+      'width: 100px; padding: 8px; color: #f1f5f9; background: #1e293b; border: 1px solid #64748b; border-radius: 4px;';
+    label.appendChild(input);
+    form.appendChild(label);
+
     const button = document.createElement('button');
-    button.type = 'button';
+    button.type = 'submit';
     button.textContent = t('admin_alerts.embedding_backfill');
     button.style.cssText =
       'background: #334155; color: #f1f5f9; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;';
-    panel.appendChild(button);
+    form.appendChild(button);
+    panel.appendChild(form);
 
     const status = document.createElement('span');
     status.setAttribute('role', 'status');
@@ -152,12 +171,17 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
     status.style.cssText = 'display: block; margin-top: 8px; color: #94a3b8; font-size: 13px;';
     panel.appendChild(status);
 
-    button.addEventListener('click', async () => {
-      if (button.disabled) return;
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const limit = Number(input.value);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 500 || button.disabled) {
+        input.reportValidity();
+        return;
+      }
       button.disabled = true;
       status.textContent = t('common.loading');
       try {
-        const response = await fetch('/api/admin/backfill-embeddings?limit=5', {
+        const response = await fetch(`/api/admin/backfill-embeddings?limit=${limit}`, {
           method: 'POST',
           credentials: 'include',
         });
