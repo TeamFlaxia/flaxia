@@ -2,19 +2,26 @@ import type { Game } from '../types/game.js';
 import { isArcadeGameAvailable } from './arcade-availability.js';
 
 const MAX_PROBES = 8;
-const MAX_PROBE_AGE_MS = 10_000;
+const MAX_AVAILABLE_PROBE_AGE_MS = 120_000;
+const MAX_MISSING_PROBE_AGE_MS = 10_000;
+
+type AvailabilityProbe = {
+  checkedAt?: number;
+  available?: boolean;
+  promise: Promise<boolean>;
+};
 
 /**
  * Share bounded, asynchronous availability checks between the active game and
  * the next two Arcade items. A HEAD preflight can finish while the previous
  * game is being played instead of serially blocking every swipe.
  *
- * An invalidated/blocked game still receives the same live HEAD check. We do
- * not cache results beyond this ArcadePage instance or replace publication
- * checks with client-side assumptions.
+ * Successful checks are reused briefly to cover normal game sessions. Missing
+ * results are rechecked sooner, and the sandbox still enforces the current
+ * publication gate on every GET.
  */
 export class ArcadeAvailabilityPrefetch {
-  private readonly probes = new Map<string, { startedAt: number; promise: Promise<boolean> }>();
+  private readonly probes = new Map<string, AvailabilityProbe>();
   private readonly controller = new AbortController();
   private readonly sandboxOrigin: string;
 
@@ -25,10 +32,14 @@ export class ArcadeAvailabilityPrefetch {
   prefetch(game: Game): Promise<boolean> {
     const key = `${game.type}:${game.postId}:${game.id}`;
     const existing = this.probes.get(key);
-    // A long-running game must not reuse stale availability indefinitely.
-    // The sandbox still enforces a fresh scan/publication gate on each GET.
-    if (existing && Date.now() - existing.startedAt < MAX_PROBE_AGE_MS) return existing.promise;
-    this.probes.delete(key);
+    if (existing) {
+      const maxAge =
+        existing.available === false ? MAX_MISSING_PROBE_AGE_MS : MAX_AVAILABLE_PROBE_AGE_MS;
+      if (existing.checkedAt === undefined || Date.now() - existing.checkedAt < maxAge) {
+        return existing.promise;
+      }
+      this.probes.delete(key);
+    }
 
     if (this.probes.size >= MAX_PROBES) {
       const oldest = this.probes.keys().next().value;
@@ -37,11 +48,27 @@ export class ArcadeAvailabilityPrefetch {
 
     // A closed Arcade page must not leave a rejected speculative promise
     // unhandled. Network failures are already treated as retryable upstream.
-    const check = isArcadeGameAvailable(game, this.sandboxOrigin, this.controller.signal).catch((error: unknown) => {
-      if (this.controller.signal.aborted) return true;
-      throw error;
-    });
-    this.probes.set(key, { startedAt: Date.now(), promise: check });
+    let probe: AvailabilityProbe;
+    const check = isArcadeGameAvailable(game, this.sandboxOrigin, this.controller.signal)
+      .catch((error: unknown) => {
+        if (this.controller.signal.aborted) return true;
+        throw error;
+      })
+      .then(
+        (available) => {
+          if (this.probes.get(key) === probe) {
+            probe.checkedAt = Date.now();
+            probe.available = available;
+          }
+          return available;
+        },
+        (error: unknown) => {
+          if (this.probes.get(key) === probe) this.probes.delete(key);
+          throw error;
+        },
+      );
+    probe = { promise: check };
+    this.probes.set(key, probe);
     return check;
   }
 
