@@ -114,3 +114,40 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run build
+
+  arcade-cold-load:
+    # Advisory benchmark of the currently deployed public Arcade. This DOES NOT
+    # benchmark the PR's code until that code is deployed to ARCADE_BENCH_URL.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Install isolated Playwright tools
+        run: npm install --prefix "$RUNNER_TEMP/flaxia-browser-tools" --package-lock=false --ignore-scripts playwright@1.62.1
+      - name: Install Firefox engine
+        run: node "$RUNNER_TEMP/flaxia-browser-tools/node_modules/playwright/cli.js" install firefox
+      - name: Measure cold Chromium request waterfall
+        continue-on-error: true
+        run: node scripts/bench-arcade-cold.mjs
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
+          LOADER_CHROMIUM_EXECUTABLE: /usr/bin/google-chrome
+          ARCADE_BENCH_BROWSER: chromium
+          ARCADE_BENCH_TRIALS: 3
+      - name: Measure cold Firefox request waterfall
+        continue-on-error: true
+        run: node scripts/bench-arcade-cold.mjs
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
+          ARCADE_BENCH_BROWSER: firefox
+          ARCADE_BENCH_TRIALS: 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arcade-cold-load-waterfalls
+          path: artifacts/arcade-cold-*.json
+          if-no-files-found: warn
