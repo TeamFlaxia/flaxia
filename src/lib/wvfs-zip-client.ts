@@ -25,6 +25,7 @@ export async function executeWvfsZip(
   hideFullscreen: boolean = false,
   showLoading: boolean = true,
   versionId?: string,
+  preloadedStorage?: Promise<Record<string, string>>,
 ): Promise<WvfsZipExecutorHandle> {
   if (activeHandle) {
     activeHandle.destroy();
@@ -61,7 +62,7 @@ export async function executeWvfsZip(
 
     let storageSnapshot: Record<string, string> = {};
     try {
-      storageSnapshot = await loadLegacyGameStorage(sandboxOrigin, postId);
+      storageSnapshot = await (preloadedStorage ?? loadLegacyGameStorage(sandboxOrigin, postId));
     } catch (error) {
       console.warn('Legacy game storage is unavailable:', error);
     }
