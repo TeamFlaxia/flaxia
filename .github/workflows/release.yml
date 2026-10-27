@@ -3,11 +3,11 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - 'v*'
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Existing release tag to build (e.g. v0.1.101)"
+        description: 'Existing release tag to build (e.g. v0.1.101)'
         required: true
         type: string
 
@@ -299,5 +299,3 @@ jobs:
         run: |
           gh release upload "$RELEASE_TAG" android/app/build/outputs/bundle/release/app-release.aab --clobber
           gh release edit "$RELEASE_TAG" --draft=false
-
-
