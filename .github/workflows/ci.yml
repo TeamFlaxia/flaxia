@@ -170,19 +170,40 @@ jobs:
           done
           echo "Candidate preview did not become available: $ARCADE_BENCH_URL" >&2
           exit 1
-      - name: Measure PR candidate cold Chromium waterfall
+      - name: Measure production cold Chromium request waterfall
         continue-on-error: true
         run: node scripts/bench-arcade-cold.mjs
         env:
           PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
           LOADER_CHROMIUM_EXECUTABLE: /usr/bin/google-chrome
+          ARCADE_BENCH_URL: https://flaxia.app/arcade
+          ARCADE_BENCH_LABEL: production
           ARCADE_BENCH_BROWSER: chromium
           ARCADE_BENCH_TRIALS: 3
-      - name: Measure PR candidate cold Firefox waterfall
+      - name: Measure production cold Firefox request waterfall
         continue-on-error: true
         run: node scripts/bench-arcade-cold.mjs
         env:
           PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
+          ARCADE_BENCH_URL: https://flaxia.app/arcade
+          ARCADE_BENCH_LABEL: production
+          ARCADE_BENCH_BROWSER: firefox
+          ARCADE_BENCH_TRIALS: 3
+      - name: Measure PR candidate cold Chromium request waterfall
+        continue-on-error: true
+        run: node scripts/bench-arcade-cold.mjs
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
+          LOADER_CHROMIUM_EXECUTABLE: /usr/bin/google-chrome
+          ARCADE_BENCH_LABEL: candidate
+          ARCADE_BENCH_BROWSER: chromium
+          ARCADE_BENCH_TRIALS: 3
+      - name: Measure PR candidate cold Firefox request waterfall
+        continue-on-error: true
+        run: node scripts/bench-arcade-cold.mjs
+        env:
+          PLAYWRIGHT_MODULE: ${{ runner.temp }}/flaxia-browser-tools/node_modules/playwright/index.mjs
+          ARCADE_BENCH_LABEL: candidate
           ARCADE_BENCH_BROWSER: firefox
           ARCADE_BENCH_TRIALS: 3
       - uses: actions/upload-artifact@v4

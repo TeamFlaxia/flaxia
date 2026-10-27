@@ -21,6 +21,8 @@ if (!engine) throw new Error(`Unsupported browser: ${engineName}`);
 
 const target = process.env.ARCADE_BENCH_URL ?? 'https://flaxia.app/arcade';
 const trials = Math.min(5, Math.max(1, Number(process.env.ARCADE_BENCH_TRIALS ?? 3)));
+const label = process.env.ARCADE_BENCH_LABEL ?? '';
+if (label && !/^[a-z0-9-]+$/i.test(label)) throw new Error(`Unsupported benchmark label: ${label}`);
 const directory = process.env.ARCADE_BENCH_OUTPUT ?? 'artifacts';
 await mkdir(directory, { recursive: true });
 const results = [];
@@ -161,6 +163,7 @@ try {
     const resources = requests.filter((request) => request.url.includes('/api/wvfs-zip/'));
     const result = {
       browser: engineName,
+      benchmark: label || null,
       browserVersion: browser.version(),
       trial: trial + 1,
       target,
@@ -211,7 +214,8 @@ try {
   await browser.close();
 }
 
-const path = `${directory}/arcade-cold-${engineName}.json`;
+const labelSuffix = label ? `${label}-` : '';
+const path = `${directory}/arcade-cold-${labelSuffix}${engineName}.json`;
 await writeFile(path, JSON.stringify({ measuredAt: new Date().toISOString(), results }, null, 2) + '\n');
 console.log(`Saved browser waterfall measurements: ${path}`);
 const samples = results
@@ -220,6 +224,6 @@ const samples = results
   .sort((a, b) => a - b);
 if (samples.length)
   console.log(
-    `${engineName} cold iframe load median: ${samples[Math.floor(samples.length / 2)]} ms / ${samples.length} successful runs`,
+    `${label ? `${label} ` : ''}${engineName} cold iframe load median: ${samples[Math.floor(samples.length / 2)]} ms / ${samples.length} successful runs`,
   );
 if (samples.length !== trials) process.exitCode = 1;
