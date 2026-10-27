@@ -1,26 +1,26 @@
 version: 2
 updates:
-  - package-ecosystem: "npm"
-    directory: "/"
+  - package-ecosystem: 'npm'
+    directory: '/'
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: 'weekly'
+      day: 'monday'
     open-pull-requests-limit: 10
     groups:
       cloudflare:
         patterns:
-          - "wrangler"
-          - "@cloudflare/*"
+          - 'wrangler'
+          - '@cloudflare/*'
       tauri:
         patterns:
-          - "@tauri-apps/*"
+          - '@tauri-apps/*'
       hono:
         patterns:
-          - "hono"
-          - "@hono/*"
+          - 'hono'
+          - '@hono/*'
 
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  - package-ecosystem: 'github-actions'
+    directory: '/'
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: 'weekly'
+      day: 'monday'

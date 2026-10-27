@@ -3,7 +3,7 @@ name: Publish @flaxia/multiplayer
 on:
   push:
     tags:
-      - "multiplayer-v*"
+      - 'multiplayer-v*'
   workflow_dispatch:
 
 permissions:
@@ -22,7 +22,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
-          registry-url: "https://registry.npmjs.org"
+          registry-url: 'https://registry.npmjs.org'
       - run: npm ci
         working-directory: .
       - run: npm run build

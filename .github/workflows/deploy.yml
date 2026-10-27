@@ -6,7 +6,7 @@ name: Deploy
 # 手動実行 (workflow_dispatch) は従来どおり常に実行できる。
 on:
   workflow_run:
-    workflows: ["CI"]
+    workflows: ['CI']
     types: [completed]
     branches: [main]
   workflow_dispatch:
