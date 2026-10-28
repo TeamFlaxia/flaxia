@@ -8,9 +8,32 @@ import {
   revokeAuthGrant,
   startAuthReauth,
   verifyAuthReauth,
+  withPendingAuthGrant,
 } from '../functions/lib/flaxia-auth.ts';
 
 const token = 'A'.repeat(43);
+
+test('unclaimed exchange grants are revoked on rejection or failure', async () => {
+  let revocations = 0;
+  const service = {
+    fetch: async (request: Request) => {
+      assert.equal(new URL(request.url).pathname, '/api/flaxia/revoke');
+      assert.deepEqual(await request.json(), { grant: token });
+      revocations++;
+      return Response.json({ success: true });
+    },
+  } as unknown as Fetcher;
+  const env = { AUTH_SERVICE: service };
+  assert.equal(await withPendingAuthGrant(env, token, async () => 409), 409);
+  await assert.rejects(withPendingAuthGrant(env, token, async () => {
+    throw new Error('database failure');
+  }));
+  assert.equal(await withPendingAuthGrant(env, token, async (commit) => {
+    commit();
+    return 200;
+  }), 200);
+  assert.equal(revocations, 2);
+});
 const credentials = {
   password_hash: '',
   srp_salt: 'salt',

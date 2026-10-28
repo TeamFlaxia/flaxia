@@ -23,6 +23,7 @@ import {
   revokeAuthGrant,
   sessionGrant,
   startAuthReauth,
+  withPendingAuthGrant,
 } from '../../lib/flaxia-auth';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { getBaseOrigin, requireAuth } from '../helpers';
@@ -50,24 +51,27 @@ auth.post('/flaxia/exchange', async (c) => {
     return c.json({ error: 'Invalid request' }, 400);
   const identity = await exchangeAuthCode(c.env, body.code, body.verifier);
   if (!identity) return c.json({ error: 'Invalid authorization' }, 401);
-  const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ? AND frozen_at IS NULL')
-    .bind(identity.user_id)
-    .first<{ id: string }>();
-  if (!user) return c.json({ error: 'Account unavailable' }, 403);
-  const localStamp = await credentialStamp(c.env.DB, user.id);
-  if (!localStamp || localStamp.stamp !== (localStamp.legacy ? identity.legacy_stamp : identity.credential_stamp))
-    return c.json({ error: 'Account requires migration' }, 409);
-  const token = nanoid(32);
-  const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-  await c.env.DB.batch([
-    c.env.DB.prepare('INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)').bind(token, user.id, expires),
-    c.env.DB.prepare(
-      'INSERT INTO flaxia_auth_sessions (session_id, grant_token, auth_stamp, source_stamp) VALUES (?, ?, ?, ?)',
-    ).bind(token, identity.grant, identity.credential_stamp, localStamp.stamp),
-  ]);
-  const response = c.json({ success: true });
-  setSessionCookie(response, token);
-  return response;
+  return withPendingAuthGrant(c.env, identity.grant, async (commit) => {
+    const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ? AND frozen_at IS NULL')
+      .bind(identity.user_id)
+      .first<{ id: string }>();
+    if (!user) return c.json({ error: 'Account unavailable' }, 403);
+    const localStamp = await credentialStamp(c.env.DB, user.id);
+    if (!localStamp || localStamp.stamp !== (localStamp.legacy ? identity.legacy_stamp : identity.credential_stamp))
+      return c.json({ error: 'Account requires migration' }, 409);
+    const token = nanoid(32);
+    const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    await c.env.DB.batch([
+      c.env.DB.prepare('INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)').bind(token, user.id, expires),
+      c.env.DB.prepare(
+        'INSERT INTO flaxia_auth_sessions (session_id, grant_token, auth_stamp, source_stamp) VALUES (?, ?, ?, ?)',
+      ).bind(token, identity.grant, identity.credential_stamp, localStamp.stamp),
+    ]);
+    commit();
+    const response = c.json({ success: true });
+    setSessionCookie(response, token);
+    return response;
+  });
 });
 
 /**

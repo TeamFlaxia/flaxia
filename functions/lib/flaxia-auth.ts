@@ -59,6 +59,25 @@ export async function revokeAuthGrant(env: AuthEnv, grant: string): Promise<bool
   }
 }
 
+// A redeemed grant has no owner until the local session is committed. Revoke
+// it on rejection or an exception; expiry cleanup covers service outages.
+export async function withPendingAuthGrant<T>(
+  env: AuthEnv,
+  grant: string,
+  use: (commit: () => void) => Promise<T>,
+): Promise<T> {
+  let committed = false;
+  try {
+    return await use(() => {
+      committed = true;
+    });
+  } finally {
+    if (!committed && !(await revokeAuthGrant(env, grant))) {
+      console.error('Failed to revoke an unclaimed Auth grant');
+    }
+  }
+}
+
 export async function sessionGrant(db: D1Database, sessionId: string | null): Promise<string | null> {
   if (!sessionId) return null;
   const row = await db
@@ -82,8 +101,9 @@ export async function startAuthReauth(
       typeof body.salt !== 'string' ||
       typeof body.B !== 'string' ||
       typeof body.srp_kdf !== 'string'
-    )
+    ) {
       return null;
+    }
     return { challenge_id: body.challenge_id, salt: body.salt, B: body.B, srp_kdf: body.srp_kdf };
   } catch {
     return null;
@@ -130,8 +150,12 @@ export async function exchangeAuthCode(
       typeof body.credential_stamp !== 'string' ||
       !TOKEN.test(body.credential_stamp) ||
       (body.legacy_stamp !== null && (typeof body.legacy_stamp !== 'string' || !TOKEN.test(body.legacy_stamp)))
-    )
+    ) {
+      if (typeof body.grant === 'string' && TOKEN.test(body.grant) && !(await revokeAuthGrant(env, body.grant))) {
+        console.error('Failed to revoke an invalid Auth exchange grant');
+      }
       return null;
+    }
     return {
       user_id: body.user_id,
       grant: body.grant,
