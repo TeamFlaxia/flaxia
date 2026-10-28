@@ -15,6 +15,7 @@ import {
   stopCrowdNode,
 } from '../lib/crowd-node.js';
 import { getLocale, setLocale, t } from '../lib/i18n.js';
+import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
 import { getReplyStyle, getShowNsfw, ReplyStyle, setReplyStyle, setShowNsfw } from '../lib/settings.js';
@@ -39,6 +40,7 @@ interface SettingsPageProps {
     display_name?: string;
     avatar_key?: string;
     badge_type?: string | null;
+    name_color?: string | null;
     language?: string;
     email?: string;
   };
@@ -95,6 +97,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     displayNameEl.style.cssText =
       'font-size: 1.125rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
     displayNameEl.textContent = displayName;
+    applyNameColor(displayNameEl, currentUser.name_color, currentUser.badge_type);
     infoDiv.appendChild(displayNameEl);
 
     const usernameEl = document.createElement('div');

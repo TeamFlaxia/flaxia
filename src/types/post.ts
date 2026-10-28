@@ -20,6 +20,7 @@ export interface QuotedPost {
   display_name?: string | null;
   avatar_key?: string | null;
   badge_type?: string | null;
+  name_color?: string | null;
   text: string;
   hashtags: string;
   mentions?: string;
@@ -57,6 +58,7 @@ export interface Post {
   display_name?: string;
   avatar_key?: string;
   badge_type?: string | null;
+  name_color?: string | null;
   text: string;
   hashtags: string;
   mentions?: string;
@@ -129,6 +131,7 @@ export interface PostHeaderProps {
   display_name?: string;
   avatar_key?: string;
   badge_type?: string | null;
+  name_color?: string | null;
   createdAt: string;
   editedAt?: string;
 }

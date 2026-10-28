@@ -34,7 +34,7 @@ function fixture(authenticated = true) {
   sqlite.exec(`
     CREATE TABLE users (
       id TEXT PRIMARY KEY, username TEXT, display_name TEXT, avatar_key TEXT,
-      badge_type TEXT, language TEXT, trust_score REAL DEFAULT 1.0,
+      badge_type TEXT, name_color TEXT, language TEXT, trust_score REAL DEFAULT 1.0,
       repetition_score REAL DEFAULT 0.0, trust_updated_at TEXT
     );
     INSERT INTO users (id, username, display_name) VALUES ('owner', 'owner', 'Owner');

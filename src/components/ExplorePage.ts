@@ -4,6 +4,7 @@ import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { createSkeletonCards } from '../lib/loading-ui.js';
+import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { createPageHeader } from '../lib/page-header.js';
 import { openPostModal } from '../lib/post-modal.js';
@@ -47,6 +48,7 @@ export class ExplorePage {
     display_name?: string;
     avatar_key?: string;
     badge_type?: string | null;
+    name_color?: string | null;
     bio?: string;
   }> = [];
   private cursor?: string;
@@ -983,6 +985,7 @@ export class ExplorePage {
       const displayNameEl = document.createElement('div');
       displayNameEl.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);';
       displayNameEl.textContent = user.display_name || '';
+      applyNameColor(displayNameEl, user.name_color, user.badge_type);
 
       userInfo.appendChild(usernameEl);
       userInfo.appendChild(displayNameEl);

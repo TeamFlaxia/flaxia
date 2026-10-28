@@ -1,3 +1,5 @@
+import { resolveNameColor } from './name-color.ts';
+
 export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -14,6 +16,7 @@ export interface PostRow {
   display_name: string | null;
   avatar_key: string | null;
   badge_type?: string | null;
+  name_color?: string | null;
   text: string;
   hashtags: string;
   gif_key: string | null;
@@ -40,6 +43,7 @@ export interface UserRow {
   bio: string;
   avatar_key: string | null;
   badge_type?: string | null;
+  name_color?: string | null;
   created_at: string;
 }
 
@@ -543,6 +547,11 @@ function renderPostMedia(
   return parts.join('\n    ');
 }
 
+function renderNameColorStyle(nameColor?: string | null, badgeType?: string | null): string {
+  const color = resolveNameColor(nameColor, badgeType);
+  return color ? ` style="color:${color}"` : '';
+}
+
 export function renderAvatarBadge(badgeType?: string | null): string {
   if (badgeType !== 'flaxia_plus') return '';
   return `<span class="ssr-avatar-badge" title="Flaxia+" aria-label="Flaxia+"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg></span>`;
@@ -561,7 +570,7 @@ export function renderPostArticle(post: PostRow, baseUrl: string, isReply = fals
         <span class="ssr-avatar-wrap"><img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(post.display_name || post.username)}" class="ssr-avatar" width="40" height="40">${renderAvatarBadge(post.badge_type)}</span>
       </a>
       <div>
-        <a href="${escapeHtml(profileUrl)}" class="ssr-display-name">${escapeHtml(post.display_name || post.username)}</a>
+        <a href="${escapeHtml(profileUrl)}" class="ssr-display-name"${renderNameColorStyle(post.name_color, post.badge_type)}>${escapeHtml(post.display_name || post.username)}</a>
         <div class="ssr-username">@${escapeHtml(post.username)}</div>
       </div>
     </div>
@@ -593,7 +602,7 @@ export function renderProfileHeader(user: UserRow, baseUrl: string, postCount: n
 
   return `<header class="ssr-profile-header">
     <span class="ssr-avatar-wrap ssr-avatar-wrap--large"><img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(user.display_name)}" class="ssr-avatar-large" width="72" height="72">${renderAvatarBadge(user.badge_type)}</span>
-    <h1>${escapeHtml(user.display_name)}</h1>
+    <h1${renderNameColorStyle(user.name_color, user.badge_type)}>${escapeHtml(user.display_name)}</h1>
     <div class="ssr-username">@${escapeHtml(user.username)}</div>
     ${user.bio ? `<p class="ssr-bio">${escapeHtml(user.bio)}</p>` : ''}
     <div class="ssr-stats">

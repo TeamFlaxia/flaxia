@@ -3,6 +3,7 @@ import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { type IconName, icon } from '../lib/icons.js';
 import { isModalOpen } from '../lib/modal-state';
+import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 
 export interface LeftNavProps {
@@ -17,6 +18,7 @@ export interface LeftNavProps {
     display_name?: string;
     avatar_key?: string;
     badge_type?: string | null;
+    name_color?: string | null;
   } | null;
 }
 
@@ -188,6 +190,7 @@ export class LeftNav {
       const nameText = document.createElement('span');
       nameText.className = 'nav-user-name-text';
       nameText.textContent = this.props.currentUser.display_name || this.props.currentUser.username;
+      applyNameColor(nameText, this.props.currentUser.name_color, this.props.currentUser.badge_type);
 
       name.appendChild(nameText);
 
@@ -570,6 +573,7 @@ export function updateLeftNavUser(
     display_name?: string;
     avatar_key?: string;
     badge_type?: string | null;
+    name_color?: string | null;
   } | null,
 ): void {
   // Update the props
@@ -808,6 +812,7 @@ export function updateLeftNavUser(
     const nameText = document.createElement('span');
     nameText.className = 'nav-user-name-text';
     nameText.textContent = currentUser.display_name || currentUser.username;
+    applyNameColor(nameText, currentUser.name_color, currentUser.badge_type);
 
     name.appendChild(nameText);
 

@@ -1,6 +1,7 @@
 import { attachPlusBadge } from '../lib/avatar.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post, PostCardMode } from '../types/post.js';
@@ -15,6 +16,7 @@ interface SearchPageProps {
     display_name?: string;
     avatar_key?: string;
     badge_type?: string | null;
+    name_color?: string | null;
   } | null;
   sandboxOrigin: string;
 }
@@ -31,6 +33,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
     display_name?: string;
     avatar_key?: string;
     badge_type?: string | null;
+    name_color?: string | null;
     bio?: string;
     is_following?: boolean;
   }> = [];
@@ -399,6 +402,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
           display_name?: string;
           avatar_key?: string;
           badge_type?: string | null;
+          name_color?: string | null;
           bio?: string;
           is_following?: boolean;
         }>;
@@ -500,6 +504,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       display_name?: string;
       avatar_key?: string;
       badge_type?: string | null;
+      name_color?: string | null;
       bio?: string;
       is_following?: boolean;
     }>,
@@ -548,6 +553,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       const displayNameEl = document.createElement('div');
       displayNameEl.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);';
       displayNameEl.textContent = user.display_name || '';
+      applyNameColor(displayNameEl, user.name_color, user.badge_type);
 
       userInfo.appendChild(usernameEl);
       userInfo.appendChild(displayNameEl);

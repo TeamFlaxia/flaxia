@@ -1,6 +1,7 @@
 import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { showSignInPrompt } from './SignInPrompt.js';
 
@@ -10,6 +11,7 @@ interface UserListItem {
   display_name: string;
   avatar_key?: string;
   badge_type?: string | null;
+  name_color?: string | null;
   followers_count: number;
   following_count: number;
   is_following?: boolean;
@@ -365,6 +367,7 @@ export function createFollowerListModal({
       text-overflow: ellipsis;
     `;
     displayName.textContent = user.display_name;
+    applyNameColor(displayName, user.name_color, user.badge_type);
 
     const usernameElement = document.createElement('div');
     usernameElement.className = 'follower-list-username';

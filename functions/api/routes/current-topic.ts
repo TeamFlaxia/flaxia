@@ -29,7 +29,7 @@ topic.get('/current-topic', async (c) => {
     const pick = candidates.results[Math.floor(Math.random() * candidates.results.length)];
     const result = await c.env.DB.prepare(`
       SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.created_at,
-             u.display_name, u.avatar_key, u.badge_type, u.language as author_language,
+             u.display_name, u.avatar_key, u.badge_type, u.name_color, u.language as author_language,
              COALESCE(p.reply_count, 0) as reply_count,
              COALESCE(p.impressions, 0) as impressions,
              p.fresh_count, COALESCE(p.reload_count, 0) as reload_count,

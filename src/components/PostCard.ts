@@ -146,6 +146,7 @@ export class PostCard {
       display_name: this.props.post.display_name,
       avatar_key: this.props.post.avatar_key,
       badge_type: this.props.post.badge_type,
+      name_color: this.props.post.name_color,
       createdAt: this.props.post.created_at,
       editedAt: this.props.post.edited_at,
     });
@@ -914,6 +915,8 @@ export class PostCard {
       username: p.username,
       display_name: p.display_name,
       avatar_key: p.avatar_key,
+      badge_type: p.badge_type,
+      name_color: p.name_color,
       text: p.text,
       hashtags: p.hashtags,
       gif_key: p.gif_key,
