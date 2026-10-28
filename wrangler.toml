@@ -29,6 +29,8 @@ service = "flaxia-auth"
 entrypoint = "FlaxiaBridge"
 
 [vars]
+# Do not enable until the prerequisites in docs/auth-authority-transition.md are complete.
+# AUTH_AUTHORITY_MODE = "flaxia-auth"
 SANDBOX_ORIGIN = "https://sandbox.flaxia.app"
 BASE_URL = "https://flaxia.app"
 ENVIRONMENT = "production"
