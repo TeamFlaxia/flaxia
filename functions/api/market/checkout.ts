@@ -1,4 +1,5 @@
 import Stripe from 'stripe';
+import { isSessionAuthorized } from '../../lib/flaxia-auth.ts';
 
 type Env = {
   DB: D1Database;
@@ -6,6 +7,8 @@ type Env = {
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
   BASE_URL: string;
+  AUTH_SERVICE?: Fetcher;
+  AUTH_AUTHORITY_MODE?: string;
 };
 
 function marketJson(request: Request, body: unknown, status = 200, env?: Env): Response {
@@ -42,11 +45,12 @@ async function getUserId(env: Env, request: Request): Promise<string | null> {
   // Expiry is part of the session check: an expired or leaked token must not
   // keep creating checkout sessions forever.
   const session = await env.DB.prepare(
-    "SELECT user_id FROM sessions WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+    "SELECT s.user_id FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now') AND u.frozen_at IS NULL",
   )
     .bind(token)
     .first<{ user_id: string }>();
-  return session?.user_id ?? null;
+  if (!session || !(await isSessionAuthorized(env, token, session.user_id))) return null;
+  return session.user_id;
 }
 
 // This endpoint lives outside the Hono router, so it enforces the same origin

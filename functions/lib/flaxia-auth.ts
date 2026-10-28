@@ -169,7 +169,11 @@ export async function exchangeAuthCode(
 
 // Existing Flaxia sessions remain valid. Sessions issued from Auth are checked
 // against the Auth session on every request so revocation takes effect.
-export async function isSessionAuthorized(env: Env, sessionId: string, userId: string): Promise<boolean> {
+export async function isSessionAuthorized(
+  env: AuthEnv & { DB: D1Database },
+  sessionId: string,
+  userId: string,
+): Promise<boolean> {
   const row = await env.DB.prepare(
     'SELECT grant_token, auth_stamp, source_stamp FROM flaxia_auth_sessions WHERE session_id = ?',
   )
