@@ -20,6 +20,7 @@ import {
   authIsAuthoritative,
   credentialStamp,
   exchangeAuthCode,
+  provisionAuthAccount,
   revokeAuthGrant,
   sessionGrant,
   startAuthReauth,
@@ -32,6 +33,48 @@ import type { Bindings, SrpProofBody, Variables } from '../types';
 const auth = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 type AuthContext = Context<{ Bindings: Bindings; Variables: Variables }>;
+
+// A local SRP proof is required before copying credentials to Auth. Retrying
+// after an ambiguous service timeout is safe because Auth rejects conflicts.
+auth.post('/flaxia/provision', requireAuth, async (c) => {
+  const user = c.get('user');
+  const token = getSessionToken(c.req.raw);
+  if (!user || !token) return c.json({ error: 'Unauthorized' }, 401);
+  if (await sessionGrant(c.env.DB, token)) return c.json({ error: 'Already linked' }, 409);
+  const limited = await rateLimit(c, 'auth:flaxia-provision', user.id, 10, 60);
+  if (limited) return limited;
+  const body = (await c.req.json().catch(() => null)) as { challenge_id?: string; A?: string; M1?: string } | null;
+  if (!body?.challenge_id || !body.A || !body.M1) return c.json({ error: 'Current password proof is required' }, 400);
+  if (!(await verifySrpPassword(c.env, user.id, body.challenge_id, body.A, body.M1, token)))
+    return c.json({ error: 'Current password is incorrect' }, 401);
+  const account = await c.env.DB.prepare(
+    'SELECT id, username, display_name, srp_salt, srp_verifier, srp_group, srp_kdf FROM users WHERE id = ? AND frozen_at IS NULL',
+  )
+    .bind(user.id)
+    .first<{
+      id: string;
+      username: string;
+      display_name: string;
+      srp_salt: string | null;
+      srp_verifier: string | null;
+      srp_group: string | null;
+      srp_kdf: string | null;
+    }>();
+  if (!account?.srp_salt || !account.srp_verifier || !account.srp_group || !account.srp_kdf)
+    return c.json({ error: 'SRP migration required' }, 409);
+  const result = await provisionAuthAccount(c.env, {
+    user_id: account.id,
+    username: account.username,
+    display_name: account.display_name,
+    srp_salt: account.srp_salt,
+    srp_verifier: account.srp_verifier,
+    srp_group: account.srp_group,
+    srp_kdf: account.srp_kdf,
+  });
+  if (result === 'conflict') return c.json({ error: 'Auth account conflict' }, 409);
+  if (result !== 'ok') return c.json({ error: 'Auth unavailable' }, 503);
+  return c.json({ success: true });
+});
 
 // Activate only after account migration and all clients have switched to Auth.
 // Existing local sessions are rejected by isSessionAuthorized in this mode.

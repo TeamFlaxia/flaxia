@@ -131,3 +131,55 @@ test('real Workers exchange and revoke a session through the service binding', {
   assert.equal(loggedOut.status, 200);
   assert.equal((await fetch(`${appBase}/api/me`, { headers: { Cookie: session } })).status, 401);
 });
+
+test('local SRP account can provision Auth idempotently with password proof', {
+  skip: !authBase || !appBase,
+  timeout: 60000,
+}, async () => {
+  assert.ok(authBase && appBase);
+  const username = `pr${randomBytes(6).toString('hex')}`;
+  const password = 'provision test password';
+  const salt = generateSalt();
+  const verifier = await computeVerifier(password, salt);
+  const post = (base: string, path: string, body: unknown, cookie?: string, origin = appBase) =>
+    fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: {
+        Origin: origin,
+        'CF-Connecting-IP': '192.0.2.231',
+        'Content-Type': 'application/json',
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  const registration = await post(appBase, '/api/auth/register', {
+    email: `${username}@example.test`,
+    username,
+    display_name: username,
+    srp_salt: enc(salt),
+    srp_verifier: enc(verifier),
+    srp_group: '2048',
+    srp_kdf: 'pbkdf2-600k-v2',
+  });
+  assert.equal(registration.status, 201, await registration.clone().text());
+  const cookie = registration.headers.get('set-cookie')?.split(';')[0];
+  assert.ok(cookie);
+  assert.equal((await post(appBase, '/api/auth/flaxia/provision', {}, cookie)).status, 400);
+  const makeProof = async (guess: string) => {
+    const start = await post(appBase, '/api/auth/reauth/start', {}, cookie);
+    assert.equal(start.status, 200);
+    const hs = (await start.json()) as { challenge_id: string; salt: string; B: string; srp_kdf: 'pbkdf2-600k-v2' };
+    const first = await clientStep1(guess, dec(hs.salt));
+    const proof = await clientStep2(guess, dec(hs.salt), first.a, dec(hs.B), hs.srp_kdf);
+    return { challenge_id: hs.challenge_id, A: enc(proof.A), M1: enc(proof.M1) };
+  };
+  assert.equal(
+    (await post(appBase, '/api/auth/flaxia/provision', await makeProof('wrong password'), cookie)).status,
+    401,
+  );
+  const first = await post(appBase, '/api/auth/flaxia/provision', await makeProof(password), cookie);
+  assert.equal(first.status, 200, await first.clone().text());
+  assert.equal((await post(appBase, '/api/auth/flaxia/provision', await makeProof(password), cookie)).status, 200);
+  const authLogin = await post(authBase, '/api/auth/login/start', { username }, undefined, 'https://flaxia.app');
+  assert.equal(authLogin.status, 200, await authLogin.clone().text());
+});

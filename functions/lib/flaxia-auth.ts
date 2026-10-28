@@ -49,6 +49,29 @@ async function postAuth(env: AuthEnv, path: string, body: object): Promise<Respo
   return env.AUTH_SERVICE.fetch(request);
 }
 
+export async function provisionAuthAccount(
+  env: AuthEnv,
+  account: {
+    user_id: string;
+    username: string;
+    display_name: string;
+    srp_salt: string;
+    srp_verifier: string;
+    srp_group: string;
+    srp_kdf: string;
+  },
+): Promise<'ok' | 'conflict' | 'unavailable'> {
+  try {
+    const response = await postAuth(env, '/api/flaxia/provision', account);
+    if (response.status === 409) return 'conflict';
+    if (!response.ok) return 'unavailable';
+    const body = (await response.json()) as { success?: unknown };
+    return body.success === true ? 'ok' : 'unavailable';
+  } catch {
+    return 'unavailable';
+  }
+}
+
 export async function revokeAuthGrant(env: AuthEnv, grant: string): Promise<boolean> {
   if (!TOKEN.test(grant)) return false;
   try {
