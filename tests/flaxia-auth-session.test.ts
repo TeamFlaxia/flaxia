@@ -25,13 +25,18 @@ test('unclaimed exchange grants are revoked on rejection or failure', async () =
   } as unknown as Fetcher;
   const env = { AUTH_SERVICE: service };
   assert.equal(await withPendingAuthGrant(env, token, async () => 409), 409);
-  await assert.rejects(withPendingAuthGrant(env, token, async () => {
-    throw new Error('database failure');
-  }));
-  assert.equal(await withPendingAuthGrant(env, token, async (commit) => {
-    commit();
-    return 200;
-  }), 200);
+  await assert.rejects(
+    withPendingAuthGrant(env, token, async () => {
+      throw new Error('database failure');
+    }),
+  );
+  assert.equal(
+    await withPendingAuthGrant(env, token, async (commit) => {
+      commit();
+      return 200;
+    }),
+    200,
+  );
   assert.equal(revocations, 2);
 });
 const credentials = {
