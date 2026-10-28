@@ -461,6 +461,8 @@
   "edit_profile.header_change": "ヘッダー画像を変更",
   "edit_profile.header_size_error": "画像サイズが大きすぎます。5MB以下の画像を選択してください。",
   "edit_profile.header_type_error": "JPEG、PNG、GIF、WebP形式の画像のみ選択できます。",
+  "edit_profile.name_color": "表示名の色（Flaxia+）",
+  "edit_profile.name_color_default": "デフォルトの色",
   "follower_list.followers": "フォロワー",
   "follower_list.following": "フォロー中",
   "follower_list.loading": "読み込み中...",

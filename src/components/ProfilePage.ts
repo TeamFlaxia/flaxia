@@ -5,6 +5,7 @@ import { safeRemoveFromBody } from '../lib/dom-utils.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { Post } from '../types/post.js';
@@ -31,6 +32,7 @@ interface ProfileUserData {
   bio?: string;
   avatar_key?: string | null;
   badge_type?: string | null;
+  name_color?: string | null;
   header_key?: string | null;
   created_at?: string;
   pinned_post_id?: string | null;
@@ -458,6 +460,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
         if (data.user.frozen) {
           userData = data.user;
           displayName.textContent = data.user.display_name || data.user.username;
+          applyNameColor(displayName, data.user.name_color, data.user.badge_type);
 
           if (data.user.avatar_key) {
             avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${data.user.avatar_key}`)})`;
@@ -507,6 +510,7 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
 
         // Update UI
         displayName.textContent = userData.display_name ?? null;
+        applyNameColor(displayName, userData.name_color, userData.badge_type);
 
         // Process bio with Markdown and links
         if (userData.bio) {
@@ -616,6 +620,8 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
         display_name?: string;
         bio?: string;
         avatar_key?: string;
+        badge_type?: string | null;
+        name_color?: string | null;
         header_key?: string | null;
       },
       onSave: async () => {

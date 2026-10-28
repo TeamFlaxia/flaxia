@@ -31,7 +31,7 @@ const app = new Hono<{ Bindings: Bindings }>();
 app.use('/*', cors());
 
 const POST_SELECT = `
-  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type,
+  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color,
     p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key,
     p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
     COALESCE(p.reply_count, 0) as reply_count,
@@ -51,6 +51,7 @@ type RawUser = {
   avatar_key: string | null;
   header_key?: string | null;
   badge_type?: string | null;
+  name_color?: string | null;
   created_at: string;
   frozen_at?: string | null;
   frozen_reason?: string | null;
@@ -66,6 +67,7 @@ function toPost(row: RawPost): PostRow {
     display_name: row.display_name ? String(row.display_name) : null,
     avatar_key: row.avatar_key ? String(row.avatar_key) : null,
     badge_type: row.badge_type ? String(row.badge_type) : null,
+    name_color: row.name_color ? String(row.name_color) : null,
     text: String(row.text),
     hashtags: String(row.hashtags),
     gif_key: row.gif_key ? String(row.gif_key) : null,
@@ -117,7 +119,7 @@ app.get('*', async (c) => {
     }
 
     const user = (await c.env.DB.prepare(`
-      SELECT id, username, display_name, bio, avatar_key, header_key, badge_type, created_at, frozen_at, frozen_reason
+      SELECT id, username, display_name, bio, avatar_key, header_key, badge_type, name_color, created_at, frozen_at, frozen_reason
       FROM users
       WHERE username = ? COLLATE NOCASE
     `)

@@ -3,6 +3,7 @@ import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { NAME_COLOR_PALETTE, normalizeNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { showToast } from '../lib/toast.js';
 
@@ -13,6 +14,7 @@ interface EditProfileModalProps {
     bio?: string;
     avatar_key?: string;
     badge_type?: string | null;
+    name_color?: string | null;
     header_key?: string | null;
   };
   onSave: () => void;
@@ -20,6 +22,14 @@ interface EditProfileModalProps {
 
 export function createEditProfileModal({ currentUser, onSave }: EditProfileModalProps) {
   const unregister = registerModal();
+  // Display-name colors are a Flaxia+ entitlement. The server enforces this
+  // too; hiding the control here keeps non-members from discovering a dead end.
+  const canCustomizeNameColor = currentUser.badge_type === 'flaxia_plus';
+  const originalNameColor = canCustomizeNameColor ? normalizeNameColor(currentUser.name_color) : null;
+  let selectedNameColor: string | null = originalNameColor;
+  let hasNameColorChange = false;
+  let nameColorPopover: HTMLElement | null = null;
+  let cleanupNameColorPopover: (() => void) | null = null;
   const container = document.createElement('div');
   container.className = 'modal-overlay';
   container.style.cssText = `
@@ -267,27 +277,161 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
     font-weight: 500;
   `;
 
+  const displayNameField = document.createElement('div');
+  displayNameField.className = 'edit-profile-name-field';
+  displayNameField.style.cssText = 'position: relative;';
+
   const displayNameInput = document.createElement('input');
   displayNameInput.type = 'text';
   displayNameInput.value = currentUser.display_name || '';
   displayNameInput.style.cssText = `
     width: 100%;
     padding: 0.75rem;
+    padding-right: ${canCustomizeNameColor ? '2.75rem' : '0.75rem'};
     border: 1px solid var(--border-color);
     border-radius: 8px;
     background: var(--bg-secondary);
     color: var(--text-primary);
     font-size: 1rem;
-    margin-bottom: 1rem;
     box-sizing: border-box;
   `;
+  if (selectedNameColor) displayNameInput.style.color = selectedNameColor;
+
+  displayNameField.appendChild(displayNameInput);
+
+  if (canCustomizeNameColor) {
+    const colorButton = document.createElement('button');
+    colorButton.type = 'button';
+    colorButton.className = 'name-color-button';
+    colorButton.title = t('edit_profile.name_color');
+    colorButton.setAttribute('aria-label', t('edit_profile.name_color'));
+    colorButton.setAttribute('aria-haspopup', 'true');
+    colorButton.style.cssText = `
+      position: absolute;
+      top: 50%;
+      right: 0.4rem;
+      transform: translateY(-50%);
+      width: 2rem;
+      height: 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border: none;
+      border-radius: 50%;
+      background: transparent;
+      color: ${selectedNameColor || 'var(--text-muted)'};
+      cursor: pointer;
+    `;
+    colorButton.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="13.5" cy="6.5" r=".5" fill="currentColor"></circle>
+        <circle cx="17.5" cy="10.5" r=".5" fill="currentColor"></circle>
+        <circle cx="8.5" cy="7.5" r=".5" fill="currentColor"></circle>
+        <circle cx="6.5" cy="12.5" r=".5" fill="currentColor"></circle>
+        <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path>
+      </svg>
+    `;
+    displayNameField.appendChild(colorButton);
+
+    nameColorPopover = document.createElement('div');
+    nameColorPopover.className = 'name-color-popover';
+    nameColorPopover.setAttribute('role', 'listbox');
+    nameColorPopover.setAttribute('aria-label', t('edit_profile.name_color'));
+    nameColorPopover.style.cssText = `
+      position: absolute;
+      top: calc(100% + 0.5rem);
+      right: 0;
+      z-index: 5;
+      display: none;
+      grid-template-columns: repeat(6, 1.75rem);
+      gap: 0.5rem;
+      padding: 0.75rem;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    `;
+
+    const swatches: HTMLButtonElement[] = [];
+    const updateSwatchSelection = () => {
+      for (const swatch of swatches) {
+        const swatchColor = swatch.dataset.color || null;
+        const selected = swatchColor === selectedNameColor;
+        swatch.style.outline = selected ? '2px solid var(--text-primary)' : 'none';
+        swatch.style.outlineOffset = '2px';
+        swatch.setAttribute('aria-selected', selected ? 'true' : 'false');
+      }
+      colorButton.style.color = selectedNameColor || 'var(--text-muted)';
+    };
+
+    const makeSwatch = (color: string | null) => {
+      const swatch = document.createElement('button');
+      swatch.type = 'button';
+      swatch.className = 'name-color-swatch';
+      swatch.dataset.color = color ?? '';
+      swatch.setAttribute('role', 'option');
+      swatch.title = color ?? t('edit_profile.name_color_default');
+      swatch.setAttribute('aria-label', color ?? t('edit_profile.name_color_default'));
+      swatch.style.cssText = `
+        width: 1.75rem;
+        height: 1.75rem;
+        padding: 0;
+        border: ${color ? 'none' : '1px solid var(--border-color)'};
+        border-radius: 50%;
+        background: ${color ?? 'var(--bg-primary)'};
+        color: var(--text-muted);
+        font-size: 1rem;
+        line-height: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+      `;
+      if (!color) swatch.textContent = '×';
+      swatch.addEventListener('click', () => {
+        selectedNameColor = color;
+        hasNameColorChange = selectedNameColor !== originalNameColor;
+        displayNameInput.style.color = selectedNameColor ?? '';
+        updateSwatchSelection();
+        if (nameColorPopover) nameColorPopover.style.display = 'none';
+        validateForm();
+      });
+      swatches.push(swatch);
+      return swatch;
+    };
+
+    nameColorPopover.appendChild(makeSwatch(null));
+    for (const color of NAME_COLOR_PALETTE) {
+      nameColorPopover.appendChild(makeSwatch(color));
+    }
+    displayNameField.appendChild(nameColorPopover);
+    updateSwatchSelection();
+
+    colorButton.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!nameColorPopover) return;
+      const opening = nameColorPopover.style.display === 'none';
+      nameColorPopover.style.display = opening ? 'grid' : 'none';
+      if (opening) updateSwatchSelection();
+    });
+
+    const handleDocumentClick = (e: MouseEvent) => {
+      if (!nameColorPopover || nameColorPopover.style.display === 'none') return;
+      if (!displayNameField.contains(e.target as Node)) {
+        nameColorPopover.style.display = 'none';
+      }
+    };
+    document.addEventListener('click', handleDocumentClick);
+    cleanupNameColorPopover = () => document.removeEventListener('click', handleDocumentClick);
+  }
 
   const displayNameError = document.createElement('div');
   displayNameError.className = 'field-error';
   displayNameError.style.cssText = `
     color: var(--danger);
     font-size: 0.875rem;
-    margin-top: -0.75rem;
+    margin-top: 0.25rem;
     margin-bottom: 1rem;
     min-height: 1.25rem;
   `;
@@ -357,7 +501,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   `;
 
   form.appendChild(displayNameLabel);
-  form.appendChild(displayNameInput);
+  form.appendChild(displayNameField);
   form.appendChild(displayNameError);
   form.appendChild(bioLabel);
   form.appendChild(bioTextarea);
@@ -422,7 +566,8 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
       displayNameInput.value.trim() !== originalDisplayName ||
       bioTextarea.value !== originalBio ||
       hasAvatarChange ||
-      hasHeaderChange;
+      hasHeaderChange ||
+      hasNameColorChange;
 
     hasChanges = hasFieldChanges;
 
@@ -507,6 +652,10 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
       const formData = new FormData();
       formData.append('display_name', displayNameInput.value.trim());
       formData.append('bio', bioTextarea.value);
+      if (hasNameColorChange) {
+        // Empty string asks the server to reset to the default theme color.
+        formData.append('name_color', selectedNameColor ?? '');
+      }
 
       if (selectedFile) {
         formData.append('avatar', selectedFile);
@@ -574,6 +723,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
 
   function destroy() {
     unregister();
+    cleanupNameColorPopover?.();
     if (avatarPreviewUrl) {
       URL.revokeObjectURL(avatarPreviewUrl);
     }
