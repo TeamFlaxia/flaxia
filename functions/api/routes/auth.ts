@@ -15,6 +15,7 @@ import {
   verifySrpLogin,
   verifySrpPassword,
 } from '../../lib/auth';
+import { syncLegacySrp } from '../../lib/auth-migration';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { requireAuth } from '../helpers';
 import type { Bindings, SrpProofBody, Variables } from '../types';
@@ -240,6 +241,11 @@ auth.post('/login/verify', async (c) => {
       return c.json({ error: 'account_frozen', username: result.user.username, M2: result.M2 }, 403);
     }
 
+    try {
+      await syncLegacySrp(c.env, result.user.id);
+    } catch {
+      /* Retry after a later successful login. */
+    }
     const response = c.json({ user: result.user, M2: result.M2 });
     setSessionCookie(response, result.session.id);
     return response;
@@ -355,6 +361,11 @@ auth.post('/upgrade-srp', requireAuth, async (c) => {
     const token = getSessionToken(c.req.raw);
     if (token) {
       await c.env.DB.prepare('UPDATE sessions SET srp_upgrade_allowed = 0 WHERE id = ?').bind(token).run();
+    }
+    try {
+      await syncLegacySrp(c.env, userId);
+    } catch {
+      /* Retry after a later successful login. */
     }
     return c.json({ success: true });
   } catch (error: unknown) {

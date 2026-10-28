@@ -15,6 +15,7 @@ export type Bindings = {
   CROWD_API_KEY: string;
   /** Optional dedicated secret for signing orchestrator callbacks and scan-file tickets. */
   CROWD_WEBHOOK_SECRET?: string;
+  LEGACY_SYNC_SECRET?: string;
   /** Comma-separated page origins permitted to fetch signed Crowd scan-file responses. */
   CROWD_NODE_ORIGINS: string;
   /** Enable R2-backed file references for scans after Crowd and nodes are deployed. */
