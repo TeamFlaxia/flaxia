@@ -1,4 +1,4 @@
-import { resolveNameColor } from './name-color';
+import { resolveNameColor } from './name-color.ts';
 
 export function escapeHtml(text: string): string {
   return text
