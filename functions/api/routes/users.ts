@@ -4,6 +4,7 @@ import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../s
 import { deleteAccount } from '../../lib/account-deletion';
 import { enrichPostsWithAttachments } from '../../lib/attachments';
 import { deleteSession, getMeWithSession, getSessionToken, verifySrpPassword } from '../../lib/auth';
+import { sessionGrant } from '../../lib/flaxia-auth';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { clampLimit } from '../../lib/pagination';
 import { checkRateLimit } from '../../lib/rate-limit';
@@ -1178,7 +1179,14 @@ users.patch('/users/me/email', requireAuth, async (c) => {
       return c.json({ error: 'Too many requests. Please try again later.' }, 429);
     }
 
-    const isValid = await verifySrpPassword(c.env, userId, proof.challenge_id, proof.A, proof.M1);
+    const isValid = await verifySrpPassword(
+      c.env,
+      userId,
+      proof.challenge_id,
+      proof.A,
+      proof.M1,
+      getSessionToken(c.req.raw),
+    );
     if (!isValid) {
       return c.json({ error: 'Current password is incorrect' }, 401);
     }
@@ -1218,6 +1226,8 @@ users.patch('/users/me/password', requireAuth, async (c) => {
     if (!user) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
+    if (await sessionGrant(c.env.DB, getSessionToken(c.req.raw)))
+      return c.json({ error: 'Credential changes unavailable for Auth sessions' }, 409);
 
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);
@@ -1242,7 +1252,14 @@ users.patch('/users/me/password', requireAuth, async (c) => {
 
     const userId = user.id;
 
-    const verified = await verifySrpPassword(c.env, userId, proof.challenge_id, proof.A, proof.M1);
+    const verified = await verifySrpPassword(
+      c.env,
+      userId,
+      proof.challenge_id,
+      proof.A,
+      proof.M1,
+      getSessionToken(c.req.raw),
+    );
     if (!verified) {
       return c.json({ error: 'Current password is incorrect' }, 401);
     }
@@ -1345,6 +1362,8 @@ users.delete('/users/me', requireAuth, async (c) => {
     if (!user) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
+    if (await sessionGrant(c.env.DB, getSessionToken(c.req.raw)))
+      return c.json({ error: 'Account deletion unavailable for Auth sessions' }, 409);
 
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);
@@ -1358,7 +1377,16 @@ users.delete('/users/me', requireAuth, async (c) => {
       return c.json({ error: 'Current password proof is required' }, 400);
     }
     const userId = user.id;
-    if (!(await verifySrpPassword(c.env, userId, current_srp.challenge_id, current_srp.A, current_srp.M1))) {
+    if (
+      !(await verifySrpPassword(
+        c.env,
+        userId,
+        current_srp.challenge_id,
+        current_srp.A,
+        current_srp.M1,
+        getSessionToken(c.req.raw),
+      ))
+    ) {
       return c.json({ error: 'Current password is incorrect' }, 401);
     }
 

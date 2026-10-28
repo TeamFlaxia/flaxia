@@ -1,4 +1,5 @@
 import { loginWithSrp } from '../lib/auth-srp.js';
+import { loginWithFlaxiaAuth } from '../lib/flaxia-auth-login.js';
 import { t } from '../lib/i18n.js';
 
 interface LoginProps {
@@ -6,6 +7,9 @@ interface LoginProps {
 }
 
 export function createLoginPage({ onSuccess }: LoginProps) {
+  // An explicit opt-in keeps the existing login available during migration.
+  const useFlaxiaAuth =
+    window.location.origin === 'https://flaxia.app' && new URLSearchParams(window.location.search).get('auth') === '1';
   // Create main container
   const container = document.createElement('div');
   container.className = 'auth-page';
@@ -42,8 +46,8 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   emailGroup.className = 'form-group';
 
   const emailInput = document.createElement('input');
-  emailInput.type = 'email';
-  emailInput.placeholder = t('login.email_placeholder');
+  emailInput.type = useFlaxiaAuth ? 'text' : 'email';
+  emailInput.placeholder = useFlaxiaAuth ? t('login.username_placeholder') : t('login.email_placeholder');
   emailInput.className = 'auth-input';
   emailInput.required = true;
 
@@ -81,7 +85,9 @@ export function createLoginPage({ onSuccess }: LoginProps) {
 
   // Validation
   const validateForm = () => {
-    const emailValid = emailInput.value.trim() !== '' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailInput.value);
+    const emailValid = useFlaxiaAuth
+      ? /^[a-zA-Z0-9_]{1,20}$/.test(emailInput.value.trim())
+      : emailInput.value.trim() !== '' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailInput.value);
     const passwordValid = passwordInput.value.trim() !== '';
     submitButton.disabled = !(emailValid && passwordValid);
   };
@@ -103,8 +109,8 @@ export function createLoginPage({ onSuccess }: LoginProps) {
     }
 
     // Validate email format
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      errorDiv.textContent = t('login.error_email_invalid');
+    if (useFlaxiaAuth ? !/^[a-zA-Z0-9_]{1,20}$/.test(email) : !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      errorDiv.textContent = t(useFlaxiaAuth ? 'login.error_username_invalid' : 'login.error_email_invalid');
       errorDiv.style.display = 'block';
       return;
     }
@@ -113,7 +119,7 @@ export function createLoginPage({ onSuccess }: LoginProps) {
     submitButton.textContent = t('login.submitting');
 
     try {
-      const result = await loginWithSrp(email, password);
+      const result = await (useFlaxiaAuth ? loginWithFlaxiaAuth(email, password) : loginWithSrp(email, password));
 
       if (result === true) {
         onSuccess();
@@ -121,7 +127,7 @@ export function createLoginPage({ onSuccess }: LoginProps) {
         window.history.pushState({}, '', `/users/${encodeURIComponent(result.username)}`);
         window.dispatchEvent(new PopStateEvent('popstate'));
       } else {
-        errorDiv.textContent = t('login.error_invalid');
+        errorDiv.textContent = t(useFlaxiaAuth ? 'login.error_username_or_password' : 'login.error_invalid');
         errorDiv.style.display = 'block';
       }
     } catch (error) {

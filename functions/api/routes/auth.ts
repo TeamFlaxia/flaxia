@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { Hono } from 'hono';
+import { nanoid } from 'nanoid';
 import {
   clearSessionCookie,
   createSession,
@@ -15,13 +16,43 @@ import {
   verifySrpLogin,
   verifySrpPassword,
 } from '../../lib/auth';
+import { credentialStamp, exchangeAuthCode, sessionGrant, startAuthReauth } from '../../lib/flaxia-auth';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
-import { requireAuth } from '../helpers';
+import { getBaseOrigin, requireAuth } from '../helpers';
 import type { Bindings, SrpProofBody, Variables } from '../types';
 
 const auth = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 type AuthContext = Context<{ Bindings: Bindings; Variables: Variables }>;
+
+auth.post('/flaxia/exchange', async (c) => {
+  if (c.req.header('Origin') !== getBaseOrigin(c)) return c.json({ error: 'Invalid origin' }, 403);
+  const limited = await rateLimit(c, 'auth:flaxia-exchange:ip', getClientIp(c.req.raw), 10, 60);
+  if (limited) return limited;
+  const body = (await c.req.json().catch(() => null)) as { code?: unknown; verifier?: unknown } | null;
+  if (!body || typeof body.code !== 'string' || typeof body.verifier !== 'string')
+    return c.json({ error: 'Invalid request' }, 400);
+  const identity = await exchangeAuthCode(c.env, body.code, body.verifier);
+  if (!identity) return c.json({ error: 'Invalid authorization' }, 401);
+  const user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ? AND frozen_at IS NULL')
+    .bind(identity.user_id)
+    .first<{ id: string }>();
+  if (!user) return c.json({ error: 'Account unavailable' }, 403);
+  const localStamp = await credentialStamp(c.env.DB, user.id);
+  if (!localStamp || localStamp.stamp !== (localStamp.legacy ? identity.legacy_stamp : identity.credential_stamp))
+    return c.json({ error: 'Account requires migration' }, 409);
+  const token = nanoid(32);
+  const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  await c.env.DB.batch([
+    c.env.DB.prepare('INSERT INTO sessions (id, user_id, expires_at) VALUES (?, ?, ?)').bind(token, user.id, expires),
+    c.env.DB.prepare(
+      'INSERT INTO flaxia_auth_sessions (session_id, grant_token, auth_stamp, source_stamp) VALUES (?, ?, ?, ?)',
+    ).bind(token, identity.grant, identity.credential_stamp, localStamp.stamp),
+  ]);
+  const response = c.json({ success: true });
+  setSessionCookie(response, token);
+  return response;
+});
 
 /**
  * Local development and the test dev server must not be rate-limited: the
@@ -253,11 +284,17 @@ auth.post('/login/verify', async (c) => {
 auth.post('/reauth/start', requireAuth, async (c) => {
   try {
     const user = c.get('user');
-    if (!user?.email) return c.json({ error: 'Unauthorized' }, 401);
+    if (!user?.id) return c.json({ error: 'Unauthorized' }, 401);
     // Same throttle as login/start: each call mints a handshake row holding
     // server secrets, and expired rows are never reaped.
     const limited = await rateLimit(c, 'auth:reauth-start', user.id, 10, 60);
     if (limited) return limited;
+    const grant = await sessionGrant(c.env.DB, getSessionToken(c.req.raw));
+    if (grant) {
+      const challenge = await startAuthReauth(c.env, grant, user.id);
+      return challenge ? c.json(challenge) : c.json({ error: 'Re-auth failed' }, 503);
+    }
+    if (!user.email) return c.json({ error: 'Unauthorized' }, 401);
     const hs = await startSrpLogin(c.env, user.email);
     if (!hs) return c.json({ error: 'SRP not available' }, 400);
     return c.json({ challenge_id: hs.challengeId, salt: hs.salt, B: hs.B, srp_kdf: hs.kdf });
@@ -280,7 +317,7 @@ auth.post('/reauth/verify', requireAuth, async (c) => {
       M1?: string;
     };
     if (!challenge_id || !A || !M1) return c.json({ error: 'Missing SRP parameters' }, 400);
-    const ok = await verifySrpPassword(c.env, user.id, challenge_id, A, M1);
+    const ok = await verifySrpPassword(c.env, user.id, challenge_id, A, M1, getSessionToken(c.req.raw));
     return c.json({ valid: ok });
   } catch (error: unknown) {
     console.error('SRP reauth/verify error:', error);
@@ -307,6 +344,8 @@ auth.post('/upgrade-srp', requireAuth, async (c) => {
     }
     const userId = c.get('user')?.id;
     if (!userId) return c.json({ error: 'Unauthorized' }, 401);
+    if (await sessionGrant(c.env.DB, getSessionToken(c.req.raw)))
+      return c.json({ error: 'Credential changes unavailable for Auth sessions' }, 409);
     const existing = (await c.env.DB.prepare('SELECT srp_verifier, srp_salt, password_hash FROM users WHERE id = ?')
       .bind(userId)
       .first()) as {

@@ -1,4 +1,5 @@
 import { nanoid } from 'nanoid';
+import { isSessionAuthorized, sessionGrant, verifyAuthReauth } from './flaxia-auth.ts';
 // Extension kept explicit: this module is also imported by Node-run tests
 // (tests/security-guards.test.ts reaches it through routes/tests.ts), and Node
 // ESM does not resolve extensionless relative specifiers.
@@ -144,6 +145,7 @@ export async function getSession(env: Env, token: string): Promise<{ user: User;
     .first()) as User | undefined;
 
   if (!user) return null;
+  if (!(await isSessionAuthorized(env, token, user.id))) return null;
 
   return { user, session };
 }
@@ -168,6 +170,7 @@ export async function getMeWithSession(env: Env, token: string): Promise<{ user:
     .first()) as User | undefined;
 
   if (!result) return null;
+  if (!(await isSessionAuthorized(env, token, result.id))) return null;
   return { user: result };
 }
 
@@ -422,7 +425,11 @@ export async function verifySrpPassword(
   challengeId: string,
   A: string,
   M1: string,
+  sessionToken?: string | null,
 ): Promise<boolean> {
+  const grant = await sessionGrant(env.DB, sessionToken ?? null);
+  if (grant)
+    return verifyAuthReauth(env as { AUTH_SERVICE?: Fetcher }, grant, userId, { challenge_id: challengeId, A, M1 });
   const hs = (await env.DB.prepare(
     "SELECT * FROM srp_handshakes WHERE id = ? AND user_id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
   )
