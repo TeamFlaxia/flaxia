@@ -122,4 +122,3 @@ export type ActorData = {
   inbox?: string;
   publicKey?: { publicKeyPem?: string };
 };
-

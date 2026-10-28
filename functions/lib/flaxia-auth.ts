@@ -167,4 +167,3 @@ export async function isSessionAuthorized(env: Env, sessionId: string, userId: s
     return false;
   }
 }
-

@@ -16,7 +16,14 @@ import {
   verifySrpLogin,
   verifySrpPassword,
 } from '../../lib/auth';
-import { authIsAuthoritative, credentialStamp, exchangeAuthCode, revokeAuthGrant, sessionGrant, startAuthReauth } from '../../lib/flaxia-auth';
+import {
+  authIsAuthoritative,
+  credentialStamp,
+  exchangeAuthCode,
+  revokeAuthGrant,
+  sessionGrant,
+  startAuthReauth,
+} from '../../lib/flaxia-auth';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { getBaseOrigin, requireAuth } from '../helpers';
 import type { Bindings, SrpProofBody, Variables } from '../types';
@@ -420,7 +427,7 @@ auth.post('/logout', async (c) => {
     const token = getSessionToken(c.req.raw);
     if (token) {
       const grant = await sessionGrant(c.env.DB, token);
-      const revoked = !grant || await revokeAuthGrant(c.env, grant);
+      const revoked = !grant || (await revokeAuthGrant(c.env, grant));
       if (!revoked) {
         // Keep the cookie and grant mapping so the caller can safely retry.
         return c.json({ error: 'auth_revocation_unavailable' }, 503);
@@ -439,4 +446,3 @@ auth.post('/logout', async (c) => {
 });
 
 export default auth;
-
