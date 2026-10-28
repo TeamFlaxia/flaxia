@@ -2,7 +2,11 @@ const AUTH_ORIGIN = 'https://auth.flaxia.app';
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
 type AuthFetcher = Pick<Fetcher, 'fetch'>;
-type AuthEnv = { AUTH_SERVICE?: AuthFetcher };
+type AuthEnv = { AUTH_SERVICE?: AuthFetcher; AUTH_AUTHORITY_MODE?: string };
+
+export function authIsAuthoritative(env: AuthEnv): boolean {
+  return env.AUTH_AUTHORITY_MODE === 'flaxia-auth';
+}
 
 export async function credentialStamp(
   db: D1Database,
@@ -43,6 +47,16 @@ async function postAuth(env: AuthEnv, path: string, body: object): Promise<Respo
     signal: AbortSignal.timeout(3000),
   });
   return env.AUTH_SERVICE.fetch(request);
+}
+
+export async function revokeAuthGrant(env: AuthEnv, grant: string): Promise<boolean> {
+  if (!TOKEN.test(grant)) return false;
+  try {
+    const response = await postAuth(env, '/api/flaxia/revoke', { grant });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 export async function sessionGrant(db: D1Database, sessionId: string | null): Promise<string | null> {
@@ -137,7 +151,7 @@ export async function isSessionAuthorized(env: Env, sessionId: string, userId: s
   )
     .bind(sessionId)
     .first<{ grant_token: string; auth_stamp: string; source_stamp: string }>();
-  if (!row) return true;
+  if (!row) return !authIsAuthoritative(env as AuthEnv);
   try {
     const response = await postAuth(env as AuthEnv, '/api/flaxia/introspect', { grant: row.grant_token });
     if (!response.ok) return false;
@@ -153,3 +167,4 @@ export async function isSessionAuthorized(env: Env, sessionId: string, userId: s
     return false;
   }
 }
+

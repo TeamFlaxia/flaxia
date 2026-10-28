@@ -7,6 +7,7 @@ import {
   isSessionAuthorized,
   startAuthReauth,
   verifyAuthReauth,
+  revokeAuthGrant,
 } from '../functions/lib/flaxia-auth.ts';
 
 const token = 'A'.repeat(43);
@@ -106,3 +107,27 @@ test('reauthentication uses the grant and binds proof to the local user', async 
     true,
   );
 });
+
+test('Flaxia logout can revoke its Auth grant and reports service failures', async () => {
+  const ok = { fetch: async (request: Request) => {
+    assert.equal(new URL(request.url).pathname, '/api/flaxia/revoke');
+    assert.deepEqual(await request.json(), { grant: token });
+    return Response.json({ success: true });
+  } } as unknown as Fetcher;
+  const bad = { fetch: async () => new Response('', { status: 503 }) } as unknown as Fetcher;
+  assert.equal(await revokeAuthGrant({ AUTH_SERVICE: ok }, token), true);
+  assert.equal(await revokeAuthGrant({ AUTH_SERVICE: bad }, token), false);
+  assert.equal(await revokeAuthGrant({}, token), false);
+  assert.equal(await revokeAuthGrant({ AUTH_SERVICE: ok }, 'invalid'), false);
+});
+
+test('Auth-only mode rejects old sessions and requires the Auth service', async () => {
+  const ok = { fetch: async () => Response.json({ user_id: 'alice', credential_stamp: token }) } as unknown as Fetcher;
+  const legacy = sessionEnv(null, ok) as Env & { AUTH_AUTHORITY_MODE?: string };
+  legacy.AUTH_AUTHORITY_MODE = 'flaxia-auth';
+  assert.equal(await isSessionAuthorized(legacy, 'old-session', 'alice'), false);
+  const migrated = sessionEnv(token, ok) as Env & { AUTH_AUTHORITY_MODE?: string };
+  migrated.AUTH_AUTHORITY_MODE = 'flaxia-auth';
+  assert.equal(await isSessionAuthorized(migrated, 'auth-session', 'alice'), true);
+});
+

@@ -16,7 +16,7 @@ import {
   verifySrpLogin,
   verifySrpPassword,
 } from '../../lib/auth';
-import { credentialStamp, exchangeAuthCode, sessionGrant, startAuthReauth } from '../../lib/flaxia-auth';
+import { authIsAuthoritative, credentialStamp, exchangeAuthCode, revokeAuthGrant, sessionGrant, startAuthReauth } from '../../lib/flaxia-auth';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { getBaseOrigin, requireAuth } from '../helpers';
 import type { Bindings, SrpProofBody, Variables } from '../types';
@@ -24,6 +24,15 @@ import type { Bindings, SrpProofBody, Variables } from '../types';
 const auth = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 type AuthContext = Context<{ Bindings: Bindings; Variables: Variables }>;
+
+// Activate only after account migration and all clients have switched to Auth.
+// Existing local sessions are rejected by isSessionAuthorized in this mode.
+for (const path of ['/register', '/login', '/login/start', '/login/verify', '/upgrade-srp']) {
+  auth.use(path, async (c, next) => {
+    if (authIsAuthoritative(c.env)) return c.json({ error: 'authentication_moved' }, 410);
+    return next();
+  });
+}
 
 auth.post('/flaxia/exchange', async (c) => {
   if (c.req.header('Origin') !== getBaseOrigin(c)) return c.json({ error: 'Invalid origin' }, 403);
@@ -410,6 +419,12 @@ auth.post('/logout', async (c) => {
   try {
     const token = getSessionToken(c.req.raw);
     if (token) {
+      const grant = await sessionGrant(c.env.DB, token);
+      const revoked = !grant || await revokeAuthGrant(c.env, grant);
+      if (!revoked) {
+        // Keep the cookie and grant mapping so the caller can safely retry.
+        return c.json({ error: 'auth_revocation_unavailable' }, 503);
+      }
       await deleteSession(c.env, token);
     }
 
@@ -419,10 +434,9 @@ auth.post('/logout', async (c) => {
     return response;
   } catch (error: unknown) {
     console.error('Logout error:', error);
-    const response = c.json({ success: true });
-    clearSessionCookie(response);
-    return response;
+    return c.json({ error: 'logout_unavailable' }, 503);
   }
 });
 
 export default auth;
+
