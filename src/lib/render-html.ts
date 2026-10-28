@@ -14,6 +14,10 @@ export interface PostRow {
   display_name: string | null;
   avatar_key: string | null;
   badge_type?: string | null;
+  equipped_title_id?: string | null;
+  title_name?: string | null;
+  title_name_ja?: string | null;
+  title_icon?: string | null;
   text: string;
   hashtags: string;
   gif_key: string | null;
@@ -40,6 +44,12 @@ export interface UserRow {
   bio: string;
   avatar_key: string | null;
   badge_type?: string | null;
+  equipped_title_id?: string | null;
+  title_name?: string | null;
+  title_name_ja?: string | null;
+  title_description?: string | null;
+  title_description_ja?: string | null;
+  title_icon?: string | null;
   created_at: string;
 }
 
@@ -336,6 +346,18 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       color: var(--text-muted);
       font-size: 14px;
     }
+    .ssr-user-title {
+      display: inline-block;
+      margin-left: 4px;
+      padding: 1px 7px;
+      border: 1px solid var(--border);
+      border-radius: 9999px;
+      background: var(--bg-secondary);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
     .ssr-post-body {
       font-size: 15px;
       line-height: 1.6;
@@ -548,6 +570,19 @@ export function renderAvatarBadge(badgeType?: string | null): string {
   return `<span class="ssr-avatar-badge" title="Flaxia+" aria-label="Flaxia+"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg></span>`;
 }
 
+/** Small badge shown after a username (icon + title name). */
+export function renderUserTitle(
+  titleName?: string | null,
+  titleIcon?: string | null,
+  description?: string | null,
+): string {
+  if (!titleName) return '';
+  const tooltip = description ? ` title="${escapeHtml(description)}"` : '';
+  return `<span class="ssr-user-title"${tooltip}>${
+    titleIcon ? `<span aria-hidden="true">${escapeHtml(titleIcon)}</span> ` : ''
+  }${escapeHtml(titleName)}</span>`;
+}
+
 export function renderPostArticle(post: PostRow, baseUrl: string, isReply = false): string {
   const postUrl = `${baseUrl}/thread/${post.id}`;
   const profileUrl = `${baseUrl}/users/${post.username}`;
@@ -562,7 +597,7 @@ export function renderPostArticle(post: PostRow, baseUrl: string, isReply = fals
       </a>
       <div>
         <a href="${escapeHtml(profileUrl)}" class="ssr-display-name">${escapeHtml(post.display_name || post.username)}</a>
-        <div class="ssr-username">@${escapeHtml(post.username)}</div>
+        <div class="ssr-username">@${escapeHtml(post.username)} ${renderUserTitle(post.title_name, post.title_icon)}</div>
       </div>
     </div>
     <div class="ssr-post-body">
@@ -594,7 +629,7 @@ export function renderProfileHeader(user: UserRow, baseUrl: string, postCount: n
   return `<header class="ssr-profile-header">
     <span class="ssr-avatar-wrap ssr-avatar-wrap--large"><img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(user.display_name)}" class="ssr-avatar-large" width="72" height="72">${renderAvatarBadge(user.badge_type)}</span>
     <h1>${escapeHtml(user.display_name)}</h1>
-    <div class="ssr-username">@${escapeHtml(user.username)}</div>
+    <div class="ssr-username">@${escapeHtml(user.username)} ${renderUserTitle(user.title_name, user.title_icon, user.title_description)}</div>
     ${user.bio ? `<p class="ssr-bio">${escapeHtml(user.bio)}</p>` : ''}
     <div class="ssr-stats">
       <span>📝 ${postCount} posts</span>

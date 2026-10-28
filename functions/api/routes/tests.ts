@@ -93,6 +93,7 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
       'vault_items',
       'device_keys',
       'vault_keys',
+      'user_titles',
       'user_profiles',
       'push_subscriptions',
       'device_tokens',
@@ -259,6 +260,29 @@ app.post('/api/test/subscription', requireTestEnvironment, async (c) => {
   }
 
   return c.json({ id, userId: user.id });
+});
+
+// POST /api/test/grant-title - grant a title to a test account. Achievement
+// systems are not implemented yet, so tests (and local demos) use this hook.
+// Gated like /api/test/reset: only reachable from the test dev server.
+app.post('/api/test/grant-title', requireTestEnvironment, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { username?: string; titleId?: string };
+  if (!body.username || !body.titleId) {
+    return c.json({ error: 'username and titleId are required' }, 400);
+  }
+
+  const db = c.env.DB;
+  const user = await db.prepare('SELECT id FROM users WHERE username = ?').bind(body.username).first<{ id: string }>();
+  if (!user) return c.json({ error: 'User not found' }, 404);
+
+  const title = await db.prepare('SELECT 1 FROM titles WHERE id = ?').bind(body.titleId).first();
+  if (!title) return c.json({ error: 'Title not found' }, 404);
+
+  await db
+    .prepare('INSERT OR IGNORE INTO user_titles (user_id, title_id) VALUES (?, ?)')
+    .bind(user.id, body.titleId)
+    .run();
+  return c.json({ ok: true }, 201);
 });
 
 // POST /api/test/seed-srp-v1-user - simulate an account created before KDF v2.

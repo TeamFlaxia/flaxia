@@ -453,9 +453,13 @@ users.get('/users/:username', async (c) => {
     }
 
     const user = await c.env.DB.prepare(`
-      SELECT id, username, display_name, bio, avatar_key, badge_type, header_key, created_at, pinned_post_id, frozen_at, frozen_reason
-      FROM users 
-      WHERE username = ? COLLATE NOCASE
+      SELECT u.id, u.username, u.display_name, u.bio, u.avatar_key, u.badge_type, u.header_key,
+             u.created_at, u.pinned_post_id, u.frozen_at, u.frozen_reason, u.equipped_title_id,
+             t.name AS title_name, t.name_ja AS title_name_ja,
+             t.description AS title_description, t.description_ja AS title_description_ja, t.icon AS title_icon
+      FROM users u
+      LEFT JOIN titles t ON t.id = u.equipped_title_id
+      WHERE u.username = ? COLLATE NOCASE
     `)
       .bind(username)
       .first();
@@ -879,6 +883,7 @@ users.patch('/users/me', requireAuth, async (c) => {
     let bio: string | undefined;
     let language: string | undefined;
     let ng_words: string[] | undefined;
+    let equippedTitleId: string | null | undefined;
     let avatarFile: File | undefined;
     let headerFile: File | undefined;
     let removeHeader = false;
@@ -892,6 +897,14 @@ users.patch('/users/me', requireAuth, async (c) => {
       avatarFile = (formData.get('avatar') as File | null) || undefined;
       headerFile = (formData.get('header') as File | null) || undefined;
       removeHeader = formData.get('remove_header') === '1' || formData.get('remove_header') === 'true';
+
+      const rawTitleId = formData.get('equipped_title_id');
+      if (rawTitleId !== null) {
+        if (typeof rawTitleId !== 'string') {
+          return c.json({ error: 'equipped_title_id must be a string' }, 400);
+        }
+        equippedTitleId = rawTitleId.trim() === '' ? null : rawTitleId;
+      }
 
       if (avatarFile && avatarFile.size > 0) {
         const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
@@ -1022,6 +1035,12 @@ users.patch('/users/me', requireAuth, async (c) => {
       bio = body.bio;
       language = body.language;
       ng_words = body.ng_words;
+      if (Object.hasOwn(body, 'equipped_title_id')) {
+        if (body.equipped_title_id !== null && typeof body.equipped_title_id !== 'string') {
+          return c.json({ error: 'equipped_title_id must be a string or null' }, 400);
+        }
+        equippedTitleId = body.equipped_title_id === null ? null : body.equipped_title_id.trim() || null;
+      }
     }
 
     if (display_name !== undefined && display_name.length > 50) {
@@ -1053,6 +1072,15 @@ users.patch('/users/me', requireAuth, async (c) => {
       }
     }
 
+    if (equippedTitleId !== undefined && equippedTitleId !== null) {
+      const owned = await c.env.DB.prepare('SELECT 1 FROM user_titles WHERE user_id = ? AND title_id = ?')
+        .bind(userId, equippedTitleId)
+        .first();
+      if (!owned) {
+        return c.json({ error: 'Title not owned' }, 403);
+      }
+    }
+
     const updates: string[] = [];
     const values: (string | null)[] = [];
 
@@ -1074,6 +1102,11 @@ users.patch('/users/me', requireAuth, async (c) => {
     if (ng_words !== undefined) {
       updates.push('ng_words = ?');
       values.push(JSON.stringify(ng_words));
+    }
+
+    if (equippedTitleId !== undefined) {
+      updates.push('equipped_title_id = ?');
+      values.push(equippedTitleId);
     }
 
     if (updates.length > 0) {
@@ -1101,13 +1134,22 @@ users.patch('/users/me', requireAuth, async (c) => {
       header_key: string | null;
       language: string | null;
       ng_words: string | null;
+      equipped_title_id: string | null;
+      title_name: string | null;
+      title_name_ja: string | null;
+      title_description: string | null;
+      title_description_ja: string | null;
+      title_icon: string | null;
       created_at: string;
     };
 
     const updatedUser = await c.env.DB.prepare(`
-      SELECT id, email, username, display_name, bio, avatar_key, badge_type, header_key, language, ng_words, created_at 
-      FROM users 
-      WHERE id = ?
+      SELECT u.id, u.email, u.username, u.display_name, u.bio, u.avatar_key, u.badge_type, u.header_key, u.language, u.ng_words, u.created_at,
+             u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja,
+             t.description AS title_description, t.description_ja AS title_description_ja, t.icon AS title_icon
+      FROM users u
+      LEFT JOIN titles t ON t.id = u.equipped_title_id
+      WHERE u.id = ?
     `)
       .bind(userId)
       .first<UpdatedUserRow>();

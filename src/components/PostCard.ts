@@ -146,6 +146,12 @@ export class PostCard {
       display_name: this.props.post.display_name,
       avatar_key: this.props.post.avatar_key,
       badge_type: this.props.post.badge_type,
+      equipped_title_id: this.props.post.equipped_title_id,
+      title_name: this.props.post.title_name,
+      title_name_ja: this.props.post.title_name_ja,
+      title_description: this.props.post.title_description,
+      title_description_ja: this.props.post.title_description_ja,
+      title_icon: this.props.post.title_icon,
       createdAt: this.props.post.created_at,
       editedAt: this.props.post.edited_at,
     });

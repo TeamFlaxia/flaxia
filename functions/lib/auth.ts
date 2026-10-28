@@ -15,6 +15,7 @@ export interface User {
   language?: string;
   ng_words?: string;
   badge_type?: string | null;
+  equipped_title_id?: string | null;
   created_at: string;
 }
 
@@ -157,7 +158,7 @@ export async function getMeWithSession(env: Env, token: string): Promise<{ user:
   const result = (await env.DB.prepare(`
     SELECT 
       u.id, u.email, u.username, u.display_name, 
-      u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.created_at, u.role
+      u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.equipped_title_id, u.created_at, u.role
     FROM sessions s
     JOIN users u ON s.user_id = u.id
     WHERE s.id = ?

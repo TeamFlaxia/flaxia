@@ -21,6 +21,7 @@ import { getReplyStyle, getShowNsfw, ReplyStyle, setReplyStyle, setShowNsfw } fr
 import { createSettingsNavigation } from '../lib/settings-navigation.js';
 import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
 import { getTheme, setTheme, Theme } from '../lib/theme.js';
+import { titleDescription, titleName } from '../lib/user-title.js';
 import { prepareVaultRewrap } from '../lib/vault/client.js';
 import { createAddStampModal } from './AddStampModal.js';
 import { createVaultSection } from './VaultSection.js';
@@ -49,6 +50,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   const container = navigation.getElement();
   let accountSection: HTMLDivElement | undefined;
   let emojiSection: HTMLDivElement | undefined;
+  let titlesSection: HTMLDivElement | undefined;
   let billingSection: HTMLDivElement | undefined;
 
   // Account Section
@@ -941,6 +943,112 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   // and timers to clean up, which would drown the settings page otherwise.
   const vaultSection = currentUser ? createVaultSection() : null;
 
+  // ─── Titles Section ───────────────────────────────────────────────────────
+  // Titles are awarded by other systems (for example Arcade achievements).
+  // Settings only lists what the user owns; equipping happens in the profile
+  // editor.
+  if (currentUser) {
+    titlesSection = document.createElement('div');
+    titlesSection.className = 'settings-section';
+
+    const titlesTitle = document.createElement('h2');
+    titlesTitle.textContent = t('settings.titles') || 'Titles';
+
+    const titlesDesc = document.createElement('p');
+    titlesDesc.textContent =
+      t('settings.titles_desc') || 'Titles you have earned. Choose one to show after your username from Edit profile.';
+    titlesDesc.style.cssText = 'color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;';
+
+    const titlesGrid = document.createElement('div');
+    titlesGrid.style.cssText = 'display: flex; flex-direction: column; gap: 0.75rem;';
+
+    titlesSection.appendChild(titlesTitle);
+    titlesSection.appendChild(titlesDesc);
+    titlesSection.appendChild(titlesGrid);
+
+    fetch('/api/titles/me', { credentials: 'include' })
+      .then((response) =>
+        response.ok
+          ? (response.json() as Promise<{
+              titles?: Array<{
+                id: string;
+                icon: string;
+                name: string;
+                name_ja?: string | null;
+                description: string;
+                description_ja?: string | null;
+                equipped?: boolean;
+              }>;
+            }>)
+          : Promise.reject(new Error(String(response.status))),
+      )
+      .then((data) => {
+        const titles = data.titles ?? [];
+        titlesGrid.replaceChildren();
+        if (titles.length === 0) {
+          const empty = document.createElement('p');
+          empty.textContent = t('settings.titles_empty') || 'You have not earned any titles yet.';
+          empty.style.cssText = 'color: var(--text-muted); font-size: 0.875rem;';
+          titlesGrid.appendChild(empty);
+          return;
+        }
+
+        for (const title of titles) {
+          const card = document.createElement('div');
+          card.style.cssText = `
+            display: flex;
+            align-items: flex-start;
+            gap: 0.875rem;
+            padding: 0.875rem 1rem;
+            border: 1px solid ${title.equipped ? 'var(--accent)' : 'var(--border)'};
+            border-radius: 8px;
+            background: var(--bg-secondary);
+          `;
+
+          const icon = document.createElement('span');
+          icon.textContent = title.icon;
+          icon.setAttribute('aria-hidden', 'true');
+          icon.style.cssText = 'font-size: 1.75rem; line-height: 1; flex-shrink: 0;';
+
+          const text = document.createElement('div');
+          text.style.cssText = 'min-width: 0; flex: 1;';
+
+          const nameRow = document.createElement('div');
+          nameRow.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;';
+
+          const name = document.createElement('strong');
+          name.textContent = titleName(title);
+          name.style.cssText = 'color: var(--text-primary);';
+          nameRow.appendChild(name);
+
+          if (title.equipped) {
+            const equipped = document.createElement('span');
+            equipped.textContent = t('settings.titles_equipped') || 'Equipped';
+            equipped.style.cssText =
+              'font-size: 0.6875rem; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 9999px; padding: 0.0625rem 0.5rem;';
+            nameRow.appendChild(equipped);
+          }
+
+          const description = document.createElement('div');
+          description.textContent = titleDescription(title);
+          description.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem; margin-top: 0.25rem;';
+
+          text.appendChild(nameRow);
+          text.appendChild(description);
+          card.appendChild(icon);
+          card.appendChild(text);
+          titlesGrid.appendChild(card);
+        }
+      })
+      .catch(() => {
+        titlesGrid.replaceChildren();
+        const failed = document.createElement('p');
+        failed.textContent = t('settings.titles_load_failed') || 'Failed to load titles.';
+        failed.style.cssText = 'color: var(--text-muted); font-size: 0.875rem;';
+        titlesGrid.appendChild(failed);
+      });
+  }
+
   // Shared billing state: populated by `loadBilling`, read by the stamp counter.
   let currentPlan: {
     plan: string | null;
@@ -1386,6 +1494,16 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
       descriptionKey: 'settings.emoji_description',
       iconName: 'emoji',
       sections: [emojiSection],
+    });
+  }
+  if (titlesSection) {
+    navigation.addCategory({
+      id: 'titles',
+      groupKey: 'settings.group_preferences',
+      titleKey: 'settings.titles',
+      descriptionKey: 'settings.titles_description',
+      iconName: 'game',
+      sections: [titlesSection],
     });
   }
   if (billingSection) {

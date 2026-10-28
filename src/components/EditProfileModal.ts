@@ -1,7 +1,7 @@
 import { updateMeCache } from '../lib/auth-cache';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
-import { t } from '../lib/i18n.js';
+import { getLocale, t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { showToast } from '../lib/toast.js';
@@ -13,6 +13,7 @@ interface EditProfileModalProps {
     bio?: string;
     avatar_key?: string;
     badge_type?: string | null;
+    equipped_title_id?: string | null;
     header_key?: string | null;
   };
   onSave: () => void;
@@ -336,6 +337,71 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
     min-height: 1.25rem;
   `;
 
+  // Equipped title selector. Titles are earned elsewhere (for example Arcade
+  // achievements); the profile editor only chooses one of the owned titles.
+  const titleLabel = document.createElement('label');
+  titleLabel.textContent = t('edit_profile.title_badge');
+  titleLabel.style.cssText = `
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+  `;
+
+  const titleSelect = document.createElement('select');
+  titleSelect.style.cssText = `
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+    box-sizing: border-box;
+  `;
+  titleSelect.disabled = true;
+  const noTitleOption = document.createElement('option');
+  noTitleOption.value = '';
+  noTitleOption.textContent = t('edit_profile.title_none');
+  titleSelect.appendChild(noTitleOption);
+
+  const titleHint = document.createElement('div');
+  titleHint.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem; margin-bottom: 1rem;';
+  titleHint.textContent = t('edit_profile.title_loading');
+
+  let selectedTitleId = currentUser.equipped_title_id ?? '';
+
+  fetch('/api/titles/me', { credentials: 'include' })
+    .then((response) =>
+      response.ok
+        ? (response.json() as Promise<{
+            titles?: Array<{ id: string; icon: string; name: string; name_ja?: string | null }>;
+          }>)
+        : Promise.reject(new Error(String(response.status))),
+    )
+    .then((data) => {
+      const titles = data.titles ?? [];
+      for (const title of titles) {
+        const option = document.createElement('option');
+        option.value = title.id;
+        const name = getLocale() === 'ja' ? title.name_ja || title.name : title.name;
+        option.textContent = title.icon ? `${title.icon} ${name}` : name;
+        titleSelect.appendChild(option);
+      }
+      titleSelect.value = selectedTitleId;
+      titleSelect.disabled = titles.length === 0;
+      titleHint.textContent = titles.length === 0 ? t('edit_profile.title_empty') : t('edit_profile.title_hint');
+      validateForm();
+    })
+    .catch(() => {
+      titleHint.textContent = t('edit_profile.title_load_failed');
+    });
+
+  titleSelect.addEventListener('change', () => {
+    selectedTitleId = titleSelect.value;
+    validateForm();
+  });
+
   const hiddenFileInput = document.createElement('input');
   hiddenFileInput.type = 'file';
   hiddenFileInput.accept = 'image/jpeg,image/png,image/gif,image/webp,.jpg,.jpeg,.png,.gif,.webp';
@@ -363,6 +429,9 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   form.appendChild(bioTextarea);
   form.appendChild(bioCharCounter);
   form.appendChild(bioError);
+  form.appendChild(titleLabel);
+  form.appendChild(titleSelect);
+  form.appendChild(titleHint);
   form.appendChild(hiddenFileInput);
   form.appendChild(saveButton);
 
@@ -421,6 +490,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
     const hasFieldChanges =
       displayNameInput.value.trim() !== originalDisplayName ||
       bioTextarea.value !== originalBio ||
+      selectedTitleId !== (currentUser.equipped_title_id ?? '') ||
       hasAvatarChange ||
       hasHeaderChange;
 
@@ -507,6 +577,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
       const formData = new FormData();
       formData.append('display_name', displayNameInput.value.trim());
       formData.append('bio', bioTextarea.value);
+      formData.append('equipped_title_id', selectedTitleId);
 
       if (selectedFile) {
         formData.append('avatar', selectedFile);

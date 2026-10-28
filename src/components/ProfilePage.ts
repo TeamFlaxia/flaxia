@@ -7,6 +7,7 @@ import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { openPostModal } from '../lib/post-modal.js';
+import { createUserTitleBadge } from '../lib/user-title.js';
 import { Post } from '../types/post.js';
 import { createBlockedUsersModal } from './BlockedUsersModal.js';
 import { createEditProfileModal } from './EditProfileModal.js';
@@ -31,6 +32,12 @@ interface ProfileUserData {
   bio?: string;
   avatar_key?: string | null;
   badge_type?: string | null;
+  equipped_title_id?: string | null;
+  title_name?: string | null;
+  title_name_ja?: string | null;
+  title_description?: string | null;
+  title_description_ja?: string | null;
+  title_icon?: string | null;
   header_key?: string | null;
   created_at?: string;
   pinned_post_id?: string | null;
@@ -508,6 +515,11 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
         // Update UI
         displayName.textContent = userData.display_name ?? null;
 
+        // Username + equipped title (icon and name) on the same line.
+        const titleBadge = createUserTitleBadge(userData);
+        usernameElement.replaceChildren(document.createTextNode(`@${userData.username}`));
+        if (titleBadge) usernameElement.appendChild(titleBadge);
+
         // Process bio with Markdown and links
         if (userData.bio) {
           processText(userData.bio)
@@ -616,6 +628,8 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
         display_name?: string;
         bio?: string;
         avatar_key?: string;
+        badge_type?: string | null;
+        equipped_title_id?: string | null;
         header_key?: string | null;
       },
       onSave: async () => {

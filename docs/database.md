@@ -23,7 +23,32 @@ Flaxia uses Cloudflare D1 (SQLite-compatible) with migrations in `migrations/`.
 | trust_score | REAL | 0.1–1.0; authors below 0.6 are excluded from For You |
 | repetition_score | REAL | Share of recent posts in near-duplicate clusters |
 | trust_updated_at | TEXT | Last trust recalculation |
+| equipped_title_id | TEXT | FK → titles(id); title shown after the username |
 | created_at | TEXT | ISO 8601 |
+
+### `titles`
+| Column | Type | Notes |
+|---|---|---|
+| id | TEXT | PK, stable identifier used by award code |
+| icon | TEXT | Short glyph/emoji shown before the name |
+| name | TEXT | English display name |
+| name_ja | TEXT | Japanese display name |
+| description | TEXT | English description |
+| description_ja | TEXT | Japanese description |
+| sort_order | INTEGER | Catalog ordering |
+| created_at | TEXT | ISO 8601 |
+
+### `user_titles`
+| Column | Type | Notes |
+|---|---|---|
+| user_id | TEXT | FK → users(id), PK part |
+| title_id | TEXT | FK → titles(id), PK part |
+| awarded_at | TEXT | When the title was earned |
+
+Titles are granted by achievement systems (for example Arcade clears) via
+`awardTitle()` in `functions/lib/titles.ts`. `users.equipped_title_id` stores
+at most one title per user; it must be owned in `user_titles` before it can be
+equipped.
 
 ### `sessions`
 | Column | Type | Notes |
