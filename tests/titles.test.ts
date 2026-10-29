@@ -1,6 +1,7 @@
 import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
-import { BASE_URL, resetDb, seedUserAndLogin } from './helpers/setup.ts';
+import { computeVerifier, generateSalt } from '../src/lib/srp.ts';
+import { BASE_URL, resetDb, seedUserAndLogin, seedV1SrpUser, srpLogin } from './helpers/setup.ts';
 
 type Title = {
   id: string;
@@ -87,6 +88,24 @@ describe('user titles', () => {
     const data = (await res.json()) as { titles: Title[]; equipped_title_id: string | null };
     assert.deepEqual(data.titles.map((title) => title.id).sort(), [NEWCOMER_TITLE.id, FIRST_CLEAR.id].sort());
     assert.equal(data.equipped_title_id, null);
+  });
+
+  it('grants the newcomer title to an existing account on login', async () => {
+    const salt = generateSalt();
+    const verifier = await computeVerifier('password123', salt, 'sha256-v1');
+    const seeded = await seedV1SrpUser('existing@test.com', 'existinguser', salt, verifier);
+    assert.equal(seeded.status, 201);
+
+    const { res, cookie } = await srpLogin('existing@test.com', 'password123', 'sha256-v1');
+    assert.equal(res.status, 200);
+
+    const titlesRes = await fetch(`${BASE_URL}/api/titles/me`, { headers: { Cookie: cookie } });
+    assert.equal(titlesRes.status, 200);
+    const data = (await titlesRes.json()) as { titles: Title[] };
+    assert.deepEqual(
+      data.titles.map((title) => title.id),
+      [NEWCOMER_TITLE.id],
+    );
   });
 
   it('equips an owned title and exposes it on the profile', async () => {

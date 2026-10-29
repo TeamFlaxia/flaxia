@@ -207,6 +207,17 @@ export interface SrpRegistration {
   kdf: string; // 'sha256-v1' | 'pbkdf2-600k-v2' — how the client derived x
 }
 
+// Registration and login both reconcile the newcomer title. Keep it
+// best-effort: a missing catalog row must not block authentication.
+async function ensureNewcomerTitle(env: Env, userId: string): Promise<void> {
+  try {
+    const awarded = await awardTitle(env.DB, userId, NEWCOMER_TITLE_ID);
+    if (!awarded) console.warn(`Newcomer title ${NEWCOMER_TITLE_ID} is not seeded`);
+  } catch (error) {
+    console.error('Failed to award newcomer title:', error);
+  }
+}
+
 // Register a new account. SRP-only: the server never receives the password, so
 // there is no legacy plaintext branch to fall back to. Password policy
 // (8-128 chars) is enforced client-side because there is nothing to check
@@ -263,14 +274,8 @@ export async function registerUser(
     throw new Error('Failed to create user');
   }
 
-  // Registration itself is the first achievement. Keep this best-effort so a
-  // title-catalog problem cannot strand an account that was just created.
-  try {
-    const awarded = await awardTitle(env.DB, userId, NEWCOMER_TITLE_ID);
-    if (!awarded) console.warn(`Newcomer title ${NEWCOMER_TITLE_ID} is not seeded`);
-  } catch (error) {
-    console.error('Failed to award newcomer title:', error);
-  }
+  // Registration itself is the first achievement.
+  await ensureNewcomerTitle(env, userId);
 
   // Return user without password hash
   const user = (await env.DB.prepare(`
@@ -396,6 +401,9 @@ export async function verifySrpLogin(
   const M2 = uint8ArrayToBase64(result.M2);
   if (user.frozen_at) return { frozen: true, user: safeUser, M2 };
 
+  // Accounts created before the title existed receive it on their next login.
+  await ensureNewcomerTitle(env, user.id);
+
   const session = await createSession(env, user.id);
   return { frozen: false, user: safeUser, session, M2 };
 }
@@ -515,6 +523,9 @@ export async function loginUser(env: Env, email: string, password: string): Prom
   };
 
   if (userWithPassword.frozen_at) return { frozen: true, user };
+
+  // Legacy accounts also receive the newcomer title on their next login.
+  await ensureNewcomerTitle(env, userWithPassword.id);
 
   // Create session
   const session = await createSession(env, userWithPassword.id, { srpUpgradeAllowed: true });
