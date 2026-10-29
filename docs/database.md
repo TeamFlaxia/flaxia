@@ -30,7 +30,7 @@ Flaxia uses Cloudflare D1 (SQLite-compatible) with migrations in `migrations/`.
 | Column | Type | Notes |
 |---|---|---|
 | id | TEXT | PK, stable identifier used by award code |
-| icon | TEXT | Short glyph/emoji shown before the name |
+| icon | TEXT | Emoji glyph or image URL shown before the name |
 | name | TEXT | English display name |
 | name_ja | TEXT | Japanese display name |
 | description | TEXT | English description |
@@ -46,8 +46,9 @@ Flaxia uses Cloudflare D1 (SQLite-compatible) with migrations in `migrations/`.
 | awarded_at | TEXT | When the title was earned |
 
 Titles are granted by achievement systems (for example Arcade clears) via
-`awardTitle()` in `functions/lib/titles.ts`. `users.equipped_title_id` stores
-at most one title per user; it must be owned in `user_titles` before it can be
+`awardTitle()` in `functions/lib/titles.ts`. New accounts receive
+`flaxian_newcomer` from `registerUser()`. `users.equipped_title_id` stores at
+most one title per user; it must be owned in `user_titles` before it can be
 equipped.
 
 ### `sessions`

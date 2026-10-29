@@ -229,6 +229,8 @@ already be owned by the user; send an empty value or `null` to remove it.
 | GET | `/api/titles/me` | Titles owned by the signed-in user |
 | PUT | `/api/titles/me/equipped` | Equip an owned title, or `{ "titleId": null }` to clear |
 
+New accounts are automatically granted `flaxian_newcomer` when registration completes.
+
 ---
 
 ## Search

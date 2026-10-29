@@ -1,4 +1,5 @@
 import { getLocale } from './i18n.js';
+import { isTitleIconImage } from './title-icon.js';
 
 /** A title definition plus (optionally) ownership metadata from the API. */
 export interface UserTitle {
@@ -43,6 +44,24 @@ export function titleFromFields(row: UserTitleFields): UserTitle | null {
   };
 }
 
+/** Creates the icon node for a title, using an image for URL icons. */
+export function createTitleIcon(icon: string, className: string): HTMLElement {
+  if (isTitleIconImage(icon)) {
+    const image = document.createElement('img');
+    image.src = icon;
+    image.alt = '';
+    image.className = className;
+    image.setAttribute('aria-hidden', 'true');
+    return image;
+  }
+
+  const glyph = document.createElement('span');
+  glyph.textContent = icon;
+  glyph.className = className;
+  glyph.setAttribute('aria-hidden', 'true');
+  return glyph;
+}
+
 /**
  * Renders a compact icon + name badge. Callers append this after the username;
  * returns null when the user has no equipped title.
@@ -56,7 +75,12 @@ export function createUserTitleBadge(row: UserTitleFields): HTMLElement | null {
 
   const badge = document.createElement('span');
   badge.className = 'user-title-badge';
-  badge.textContent = title.icon ? `${title.icon} ${name}` : name;
+  if (title.icon) {
+    badge.appendChild(createTitleIcon(title.icon, 'user-title-icon'));
+    badge.appendChild(document.createTextNode(` ${name}`));
+  } else {
+    badge.textContent = name;
+  }
   badge.title = description || name;
   badge.setAttribute('aria-label', description ? `${name}: ${description}` : name);
   return badge;

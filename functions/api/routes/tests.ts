@@ -262,9 +262,44 @@ app.post('/api/test/subscription', requireTestEnvironment, async (c) => {
   return c.json({ id, userId: user.id });
 });
 
+// POST /api/test/title - create a title definition for tests and local demos.
+// Production titles are inserted by the systems that award them; the catalog
+// starts empty. Gated like /api/test/reset: only reachable from the test server.
+app.post('/api/test/title', requireTestEnvironment, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    id?: unknown;
+    icon?: unknown;
+    name?: unknown;
+    name_ja?: unknown;
+    description?: unknown;
+    description_ja?: unknown;
+    sort_order?: unknown;
+  };
+  if (
+    typeof body.id !== 'string' ||
+    typeof body.icon !== 'string' ||
+    typeof body.name !== 'string' ||
+    typeof body.name_ja !== 'string' ||
+    typeof body.description !== 'string' ||
+    typeof body.description_ja !== 'string'
+  ) {
+    return c.json({ error: 'id, icon, name, name_ja, description and description_ja are required' }, 400);
+  }
+  const sortOrder = typeof body.sort_order === 'number' ? body.sort_order : 0;
+
+  await c.env.DB.prepare(
+    `INSERT OR REPLACE INTO titles (id, icon, name, name_ja, description, description_ja, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(body.id, body.icon, body.name, body.name_ja, body.description, body.description_ja, sortOrder)
+    .run();
+  return c.json({ ok: true }, 201);
+});
+
 // POST /api/test/grant-title - grant a title to a test account. Achievement
 // systems are not implemented yet, so tests (and local demos) use this hook.
-// Gated like /api/test/reset: only reachable from the test dev server.
+// Create the title first with POST /api/test/title. Gated like /api/test/reset:
+// only reachable from the test dev server.
 app.post('/api/test/grant-title', requireTestEnvironment, async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { username?: string; titleId?: string };
   if (!body.username || !body.titleId) {

@@ -25,8 +25,4 @@ CREATE INDEX idx_user_titles_user ON user_titles(user_id);
 ALTER TABLE users ADD COLUMN equipped_title_id TEXT REFERENCES titles(id) ON DELETE SET NULL;
 
 INSERT INTO titles (id, icon, name, name_ja, description, description_ja, sort_order) VALUES
-  ('arcade_first_clear', '🎮', 'First Clear', '初クリア', 'Cleared an Arcade game for the first time.', 'アーケードゲームを初めてクリアしました。', 10),
-  ('arcade_perfect', '🌟', 'Perfect Run', 'パーフェクトラン', 'Cleared an Arcade game without taking damage.', 'ノーダメージでアーケードゲームをクリアしました。', 20),
-  ('arcade_speedster', '⚡', 'Speedster', 'スピードスター', 'Finished an Arcade game under its target time.', 'アーケードゲームを目標タイム以内にクリアしました。', 30),
-  ('arcade_collector', '🏆', 'Collector', 'コレクター', 'Earned every achievement in a single Arcade game.', 'ひとつのアーケードゲームの実績をすべて解除しました。', 40),
-  ('arcade_legend', '👑', 'Arcade Legend', 'アーケードの伝説', 'Cleared a large collection of Arcade games.', '数多くのアーケードゲームをクリアしました。', 50);
+  ('flaxian_newcomer', '/icons/flaxian.png', 'Budding Flaxian', '駆け出しのFlaxian', 'Created a Flaxia account.', 'Flaxiaにアカウント作成をした。', 10);

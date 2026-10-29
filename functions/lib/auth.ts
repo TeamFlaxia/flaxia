@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid';
 // (tests/security-guards.test.ts reaches it through routes/tests.ts), and Node
 // ESM does not resolve extensionless relative specifiers.
 import { isCreatableSrpKdf, serverStep1, serverStep2 } from './srp.ts';
+import { awardTitle, NEWCOMER_TITLE_ID } from './titles.ts';
 
 export interface User {
   id: string;
@@ -260,6 +261,15 @@ export async function registerUser(
 
   if (!result.success) {
     throw new Error('Failed to create user');
+  }
+
+  // Registration itself is the first achievement. Keep this best-effort so a
+  // title-catalog problem cannot strand an account that was just created.
+  try {
+    const awarded = await awardTitle(env.DB, userId, NEWCOMER_TITLE_ID);
+    if (!awarded) console.warn(`Newcomer title ${NEWCOMER_TITLE_ID} is not seeded`);
+  } catch (error) {
+    console.error('Failed to award newcomer title:', error);
   }
 
   // Return user without password hash

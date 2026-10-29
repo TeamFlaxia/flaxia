@@ -21,7 +21,7 @@ import { getReplyStyle, getShowNsfw, ReplyStyle, setReplyStyle, setShowNsfw } fr
 import { createSettingsNavigation } from '../lib/settings-navigation.js';
 import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
 import { getTheme, setTheme, Theme } from '../lib/theme.js';
-import { titleDescription, titleName } from '../lib/user-title.js';
+import { createTitleIcon, titleDescription, titleName } from '../lib/user-title.js';
 import { prepareVaultRewrap } from '../lib/vault/client.js';
 import { createAddStampModal } from './AddStampModal.js';
 import { createVaultSection } from './VaultSection.js';
@@ -1005,10 +1005,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
             background: var(--bg-secondary);
           `;
 
-          const icon = document.createElement('span');
-          icon.textContent = title.icon;
-          icon.setAttribute('aria-hidden', 'true');
-          icon.style.cssText = 'font-size: 1.75rem; line-height: 1; flex-shrink: 0;';
+          const icon = createTitleIcon(title.icon, 'settings-title-icon');
 
           const text = document.createElement('div');
           text.style.cssText = 'min-width: 0; flex: 1;';

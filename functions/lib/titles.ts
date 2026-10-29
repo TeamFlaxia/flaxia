@@ -1,5 +1,8 @@
 import type { D1Database } from '@cloudflare/workers-types';
 
+/** Awarded by `registerUser()` to every new account. */
+export const NEWCOMER_TITLE_ID = 'flaxian_newcomer';
+
 export interface TitleRow {
   id: string;
   icon: string;

@@ -1,3 +1,5 @@
+import { isTitleIconImage } from './title-icon.ts';
+
 export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -347,7 +349,8 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       font-size: 14px;
     }
     .ssr-user-title {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
       margin-left: 4px;
       padding: 1px 7px;
       border: 1px solid var(--border);
@@ -357,6 +360,13 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       font-size: 12px;
       font-weight: 600;
       white-space: nowrap;
+    }
+    .ssr-user-title-icon {
+      width: 14px;
+      height: 14px;
+      margin-right: 3px;
+      border-radius: 50%;
+      object-fit: cover;
     }
     .ssr-post-body {
       font-size: 15px;
@@ -578,9 +588,12 @@ export function renderUserTitle(
 ): string {
   if (!titleName) return '';
   const tooltip = description ? ` title="${escapeHtml(description)}"` : '';
-  return `<span class="ssr-user-title"${tooltip}>${
-    titleIcon ? `<span aria-hidden="true">${escapeHtml(titleIcon)}</span> ` : ''
-  }${escapeHtml(titleName)}</span>`;
+  const icon = titleIcon
+    ? isTitleIconImage(titleIcon)
+      ? `<img class="ssr-user-title-icon" src="${escapeHtml(titleIcon)}" alt="" aria-hidden="true">`
+      : `<span aria-hidden="true">${escapeHtml(titleIcon)}</span>`
+    : '';
+  return `<span class="ssr-user-title"${tooltip}>${icon}${icon ? ' ' : ''}${escapeHtml(titleName)}</span>`;
 }
 
 export function renderPostArticle(post: PostRow, baseUrl: string, isReply = false): string {
