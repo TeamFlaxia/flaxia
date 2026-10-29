@@ -607,7 +607,7 @@ test('admin can delete a linked Auth user', { skip: !enabled, timeout: 60000 }, 
     assert.equal(exchange.status, 200, await exchange.clone().text());
     const cookie = exchange.headers.get('set-cookie')?.split(';')[0];
     assert.ok(cookie);
-    return { id: user.id, cookie };
+    return { id: user.id, cookie, authCookie, username };
   }
   const admin = await createLinkedUser();
   const target = await createLinkedUser();
@@ -632,6 +632,10 @@ test('admin can delete a linked Auth user', { skip: !enabled, timeout: 60000 }, 
   assert.equal(deletion.status, 200, await deletion.clone().text());
   const targetMe = await fetch(`${app}/api/me`, { headers: { Cookie: target.cookie } });
   assert.equal(targetMe.status, 401);
+  const authMe = await fetch(`${auth}/api/auth/me`, { headers: { Cookie: target.authCookie } });
+  assert.equal(authMe.status, 401, 'Deleting a linked user must revoke the Auth session');
+  const login = await post(auth!, '/api/auth/login/start', { username: target.username }, undefined, 'https://flaxia.app');
+  assert.equal(login.status, 401, 'Deleting a linked user must delete the Auth account');
 });
 
 test('authorization started before a freeze cannot create a session after unfreeze', {
@@ -681,7 +685,7 @@ test('authorization started before a freeze cannot create a session after unfree
     assert.equal(exchange.status, 200, await exchange.clone().text());
     const cookie = exchange.headers.get('set-cookie')?.split(';')[0];
     assert.ok(cookie);
-    return { id: user.id, cookie, authCookie };
+    return { id: user.id, cookie, authCookie, username };
   }
   const admin = await createLinkedUser();
   const target = await createLinkedUser();
@@ -712,6 +716,18 @@ test('authorization started before a freeze cannot create a session after unfree
 
   const freeze = await post(app!, `/api/admin/users/${target.id}/freeze`, { reason: 'test freeze' }, admin.cookie);
   assert.equal(freeze.status, 200, await freeze.clone().text());
+  const authMe = await fetch(`${auth}/api/auth/me`, { headers: { Cookie: target.authCookie } });
+  assert.equal(authMe.status, 401, 'Freeze must revoke the Auth session');
+  const loginStart = await post(auth!, '/api/auth/login/start', { username: target.username }, undefined, 'https://flaxia.app');
+  assert.equal(loginStart.status, 200, await loginStart.clone().text());
+  const hs = (await loginStart.json()) as { challenge_id: string; salt: string; B: string; srp_kdf: string };
+  const password = 'admin deletion integration password';
+  const client = await clientStep1(password, dec(hs.salt));
+  const proof = await clientStep2(password, dec(hs.salt), client.a, dec(hs.B), hs.srp_kdf);
+  const frozenLogin = await post(auth!, '/api/auth/login/verify',
+    { challenge_id: hs.challenge_id, A: enc(proof.A), M1: enc(proof.M1) }, undefined, 'https://flaxia.app');
+  assert.equal(frozenLogin.status, 403, 'Frozen Auth account must reject a valid login');
+  assert.equal(frozenLogin.headers.get('set-cookie'), null);
   const unfreeze = await post(app!, `/api/admin/users/${target.id}/unfreeze`, {}, admin.cookie);
   assert.equal(unfreeze.status, 200, await unfreeze.clone().text());
 
