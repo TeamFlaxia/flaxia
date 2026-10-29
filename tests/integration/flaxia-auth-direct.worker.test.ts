@@ -562,3 +562,48 @@ test('direct Auth mode migrates credentials, changes Vault password and deletes 
     { object_key: privateHeader },
   ]);
 });
+
+test('admin can delete a linked Auth user', { skip: !enabled, timeout: 60000 }, async () => {
+  assert.ok(auth && app);
+  const post = (base: string, path: string, body: unknown, cookie?: string, origin = base) =>
+    fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) },
+      body: JSON.stringify(body),
+    });
+  async function createLinkedUser() {
+    const username = `ad${randomBytes(6).toString('hex')}`;
+    const salt = generateSalt();
+    const verifier = await computeVerifier('admin deletion integration password', salt);
+    const registration = await post(auth!, '/api/auth/register', {
+      username, email: `${username}@example.test`, srp_salt: enc(salt), srp_verifier: enc(verifier),
+      srp_group: '2048', srp_kdf: 'pbkdf2-600k-v2',
+    }, undefined, 'https://flaxia.app');
+    assert.equal(registration.status, 201, await registration.clone().text());
+    const { user } = (await registration.json()) as { user: { id: string } };
+    const authCookie = registration.headers.get('set-cookie')?.split(';')[0];
+    assert.ok(authCookie);
+    const pkce = random();
+    const authorization = await post(auth!, '/api/auth/flaxia/authorize', { challenge: digest(pkce) }, authCookie, 'https://flaxia.app');
+    assert.equal(authorization.status, 200, await authorization.clone().text());
+    const { code } = (await authorization.json()) as { code: string };
+    const exchange = await post(app!, '/api/auth/flaxia/exchange', { code, verifier: pkce });
+    assert.equal(exchange.status, 200, await exchange.clone().text());
+    const cookie = exchange.headers.get('set-cookie')?.split(';')[0];
+    assert.ok(cookie);
+    return { id: user.id, cookie };
+  }
+  const admin = await createLinkedUser();
+  const target = await createLinkedUser();
+  const update = spawnSync(process.execPath, [
+    'node_modules/wrangler/bin/wrangler.js', 'd1', 'execute', 'flaxia', '--local',
+    '--command', `UPDATE users SET role = 'admin' WHERE id = '${admin.id}'`,
+  ], { encoding: 'utf8' });
+  assert.equal(update.status, 0, update.stderr);
+  const deletion = await fetch(`${app}/api/admin/users/${target.id}`, {
+    method: 'DELETE', headers: { Origin: app!, Cookie: admin.cookie },
+  });
+  assert.equal(deletion.status, 200, await deletion.clone().text());
+  const targetMe = await fetch(`${app}/api/me`, { headers: { Cookie: target.cookie } });
+  assert.equal(targetMe.status, 401);
+});
