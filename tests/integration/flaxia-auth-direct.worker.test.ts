@@ -633,3 +633,86 @@ test('admin can delete a linked Auth user', { skip: !enabled, timeout: 60000 }, 
   const targetMe = await fetch(`${app}/api/me`, { headers: { Cookie: target.cookie } });
   assert.equal(targetMe.status, 401);
 });
+
+test('authorization started before a freeze cannot create a session after unfreeze', { skip: !enabled, timeout: 60000 }, async () => {
+  assert.ok(auth && app);
+  const post = (base: string, path: string, body: unknown, cookie?: string, origin = base) =>
+    fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) },
+      body: JSON.stringify(body),
+    });
+  async function createLinkedUser() {
+    const username = `ad${randomBytes(6).toString('hex')}`;
+    const salt = generateSalt();
+    const verifier = await computeVerifier('admin deletion integration password', salt);
+    const registration = await post(
+      auth!,
+      '/api/auth/register',
+      {
+        username,
+        email: `${username}@example.test`,
+        srp_salt: enc(salt),
+        srp_verifier: enc(verifier),
+        srp_group: '2048',
+        srp_kdf: 'pbkdf2-600k-v2',
+      },
+      undefined,
+      'https://flaxia.app',
+    );
+    assert.equal(registration.status, 201, await registration.clone().text());
+    const { user } = (await registration.json()) as { user: { id: string } };
+    const authCookie = registration.headers.get('set-cookie')?.split(';')[0];
+    assert.ok(authCookie);
+    const pkce = random();
+    const authorization = await post(
+      auth!,
+      '/api/auth/flaxia/authorize',
+      { challenge: digest(pkce) },
+      authCookie,
+      'https://flaxia.app',
+    );
+    assert.equal(authorization.status, 200, await authorization.clone().text());
+    const { code } = (await authorization.json()) as { code: string };
+    const exchange = await post(app!, '/api/auth/flaxia/exchange', { code, verifier: pkce });
+    assert.equal(exchange.status, 200, await exchange.clone().text());
+    const cookie = exchange.headers.get('set-cookie')?.split(';')[0];
+    assert.ok(cookie);
+    return { id: user.id, cookie, authCookie };
+  }
+  const admin = await createLinkedUser();
+  const target = await createLinkedUser();
+  const update = spawnSync(
+    process.execPath,
+    [
+      'node_modules/wrangler/bin/wrangler.js',
+      'd1',
+      'execute',
+      'flaxia',
+      '--local',
+      '--command',
+      `UPDATE users SET role = 'admin' WHERE id = '${admin.id}'`,
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.equal(update.status, 0, update.stderr);
+  const verifier = random();
+  const authorization = await post(
+    auth!,
+    '/api/auth/flaxia/authorize',
+    { challenge: digest(verifier) },
+    target.authCookie,
+    'https://flaxia.app',
+  );
+  assert.equal(authorization.status, 200, await authorization.clone().text());
+  const { code } = (await authorization.json()) as { code: string };
+
+  const freeze = await post(app!, `/api/admin/users/${target.id}/freeze`, { reason: 'test freeze' }, admin.cookie);
+  assert.equal(freeze.status, 200, await freeze.clone().text());
+  const unfreeze = await post(app!, `/api/admin/users/${target.id}/unfreeze`, {}, admin.cookie);
+  assert.equal(unfreeze.status, 200, await unfreeze.clone().text());
+
+  const exchange = await post(app!, '/api/auth/flaxia/exchange', { code, verifier });
+  assert.notEqual(exchange.status, 200, 'A pre-freeze authorization must not issue a post-unfreeze session');
+  assert.equal(exchange.headers.get('set-cookie'), null);
+});
