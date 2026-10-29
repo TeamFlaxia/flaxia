@@ -104,6 +104,9 @@ test('exchange validates the response and fails closed', async () => {
     grant: token,
     credential_stamp: token,
     legacy_stamp: null,
+    username: null,
+    display_name: null,
+    email: null,
   });
   assert.equal(await exchangeAuthCode({ AUTH_SERVICE: invalid }, token, token), null);
   assert.equal(await exchangeAuthCode({ AUTH_SERVICE: valid }, 'bad', token), null);

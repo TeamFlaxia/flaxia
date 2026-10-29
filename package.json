@@ -117,6 +117,11 @@
     "vite-plugin-static-copy": "^4.1.1",
     "wrangler": "^4.151.3"
   },
+  "overrides": {
+    "sharp": "^0.35.5",
+    "tar": "^7.5.22",
+    "uuid": "^11.1.1"
+  },
   "packageManager": "pnpm@8.0.0",
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,html,css,md}": [

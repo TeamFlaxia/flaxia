@@ -11,6 +11,7 @@ import {
   ensureNsfwScansTable,
   submitDetectNsfw,
 } from '../../lib/crowd';
+import { revokeAuthUserGrants } from '../../lib/flaxia-auth';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import {
   addBlocklistEntry,
@@ -343,6 +344,15 @@ async function setAccountFrozen(c: Context<{ Bindings: Bindings; Variables: Vari
     }
     reason = body.reason.trim();
   }
+
+  // The app cannot revoke Auth grants by deleting its old local sessions.
+  // Revoke on both freeze and unfreeze so grants minted while frozen cannot
+  // become usable when the local profile is restored.
+  const linked = await c.env.DB.prepare('SELECT 1 FROM flaxia_auth_links WHERE user_id = ?')
+    .bind(targetUser.id)
+    .first();
+  if (linked && !(await revokeAuthUserGrants(c.env, targetUser.id)))
+    return c.json({ error: 'Auth revocation unavailable' }, 503);
 
   const frozenAt = frozen ? new Date().toISOString() : null;
   const statements = frozen

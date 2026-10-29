@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { loginWithFlaxiaAuth } from '../src/lib/flaxia-auth-login.ts';
+import {
+  loginWithFlaxiaAuth,
+  loginWithFlaxiaAuthRecovery,
+  registerWithFlaxiaAuth,
+} from '../src/lib/flaxia-auth-login.ts';
 import { computeVerifier, generateSalt, serverStep1, serverStep2 } from '../src/lib/srp.ts';
 
 const enc = (bytes: Uint8Array) => Buffer.from(bytes).toString('base64');
@@ -90,4 +94,74 @@ test('does not create a Flaxia session when Auth denies login', async (t) => {
   };
   assert.equal(await loginWithFlaxiaAuth('example', 'wrong'), false);
   assert.equal(calls, 1);
+});
+
+test('recovery code is proven with SRP and never placed in a request', async (t) => {
+  const recoveryCode = 'R'.repeat(43);
+  const salt = generateSalt(),
+    stored = await computeVerifier(recoveryCode, salt);
+  const server = await serverStep1(salt, stored);
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  globalThis.fetch = async (input, init) => {
+    const path = String(input),
+      bodyText = init?.body === undefined ? '{}' : String(init.body),
+      body = JSON.parse(bodyText);
+    assert.equal(bodyText.includes(recoveryCode), false);
+    if (path.endsWith('/api/auth/recovery/start'))
+      return Response.json({ challenge_id: 'c', salt: enc(salt), B: enc(server.B), srp_kdf: 'pbkdf2-600k-v2' });
+    if (path.endsWith('/api/auth/recovery/verify')) {
+      const proof = await serverStep2(dec(body.A), server.B, server.b, stored, dec(body.M1));
+      assert.ok(proof);
+      return Response.json({ M2: enc(proof.M2) });
+    }
+    if (path.endsWith('/api/auth/flaxia/authorize')) return Response.json({ code: token });
+    if (path === '/api/auth/flaxia/exchange') return Response.json({ success: true });
+    throw new Error('unexpected request');
+  };
+  assert.equal(await loginWithFlaxiaAuthRecovery('example', recoveryCode), true);
+});
+
+test('registration enrolls the recovery verifier without sending the code or password', async (t) => {
+  const password = 'registration password',
+    recoveryCode = 'R'.repeat(43);
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  let passwordSalt = new Uint8Array(),
+    passwordVerifier = new Uint8Array();
+  let server: Awaited<ReturnType<typeof serverStep1>> | null = null;
+  globalThis.fetch = async (input, init) => {
+    const path = String(input),
+      bodyText = init?.body === undefined ? '{}' : String(init.body),
+      body = JSON.parse(bodyText);
+    assert.equal(bodyText.includes(password), false);
+    assert.equal(bodyText.includes(recoveryCode), false);
+    if (path.endsWith('/api/auth/register')) {
+      passwordSalt = dec(body.srp_salt);
+      passwordVerifier = dec(body.srp_verifier);
+      return Response.json({ user: { id: 'u' } });
+    }
+    if (path.endsWith('/api/auth/flaxia/authorize')) return Response.json({ code: token });
+    if (path === '/api/auth/flaxia/exchange') return Response.json({ success: true });
+    if (path === '/api/auth/reauth/start') {
+      server = await serverStep1(passwordSalt, passwordVerifier);
+      return Response.json({ challenge_id: 'c', salt: enc(passwordSalt), B: enc(server.B), srp_kdf: 'pbkdf2-600k-v2' });
+    }
+    if (path === '/api/auth/recovery/enroll') {
+      assert.ok(server);
+      assert.ok(
+        await serverStep2(dec(body.current_srp.A), server.B, server.b, passwordVerifier, dec(body.current_srp.M1)),
+      );
+      assert.equal(body.verifier, enc(await computeVerifier(recoveryCode, dec(body.salt))));
+      return Response.json({ success: true });
+    }
+    throw new Error('unexpected request');
+  };
+  assert.deepEqual(await registerWithFlaxiaAuth('user@example.test', 'user', 'User', password, recoveryCode), {
+    ok: true,
+  });
 });

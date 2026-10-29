@@ -34,6 +34,8 @@ export function createConfirmDialog(message: string): Promise<boolean> {
       font-size: 1rem;
       color: var(--text-primary);
       line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
     `;
     dialog.appendChild(messageEl);
 

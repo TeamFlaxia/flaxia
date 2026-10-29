@@ -1,4 +1,5 @@
 import Stripe from 'stripe';
+import { getMeWithSession } from '../../lib/auth.ts';
 import { isSessionAuthorized } from '../../lib/flaxia-auth.ts';
 
 type Env = {
@@ -42,6 +43,9 @@ function getSessionToken(request: Request): string | null {
 async function getUserId(env: Env, request: Request): Promise<string | null> {
   const token = getSessionToken(request);
   if (!token) return null;
+  if (/^[A-Za-z0-9_-]{43}$/.test(token)) {
+    return (await getMeWithSession(env as unknown as Parameters<typeof getMeWithSession>[0], token))?.user.id ?? null;
+  }
   // Expiry is part of the session check: an expired or leaked token must not
   // keep creating checkout sessions forever.
   const session = await env.DB.prepare(

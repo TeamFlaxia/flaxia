@@ -1,4 +1,10 @@
 import { clearMeCache } from '../lib/auth-cache';
+import {
+  clearCredentialOperation,
+  credentialOperationFor,
+  retryPendingCredentialChange,
+} from '../lib/auth-credential-operation';
+import { clearDeletionOperation, deletionOperationFor } from '../lib/auth-deletion';
 import { createSrpProof, storeSrpSalt } from '../lib/auth-srp.js';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
@@ -14,6 +20,7 @@ import {
   startCrowdNode,
   stopCrowdNode,
 } from '../lib/crowd-node.js';
+import { flaxiaAuthIsAuthoritative } from '../lib/flaxia-auth-login.js';
 import { getLocale, setLocale, t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
@@ -21,7 +28,7 @@ import { getReplyStyle, getShowNsfw, ReplyStyle, setReplyStyle, setShowNsfw } fr
 import { createSettingsNavigation } from '../lib/settings-navigation.js';
 import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
 import { getTheme, setTheme, Theme } from '../lib/theme.js';
-import { prepareVaultRewrap } from '../lib/vault/client.js';
+import { fetchVaultKeys, prepareVaultRewrap } from '../lib/vault/client.js';
 import { createAddStampModal } from './AddStampModal.js';
 import { createVaultSection } from './VaultSection.js';
 
@@ -184,17 +191,21 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
           alert(t('settings.password_proof_failed') || 'Could not verify your password');
           return;
         }
+        const operation = deletionOperationFor(currentUser.id);
         const response = await fetch('/api/users/me', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify({ current_srp }),
+          body: JSON.stringify({ current_srp, operation }),
         });
 
         if (response.ok) {
+          clearDeletionOperation();
           clearMeCache();
           window.location.href = '/';
         } else {
+          const data = (await response.json().catch(() => ({}))) as { cancelled?: boolean };
+          if (data.cancelled) clearDeletionOperation();
           alert(t('settings.delete_account_failed'));
         }
       } catch (error) {
@@ -678,6 +689,10 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   currentPasswordLabel2.htmlFor = currentPasswordInput2.id;
   currentPasswordInput2.autocomplete = 'current-password';
   currentPasswordInput2.placeholder = t('settings.password_current_placeholder');
+  if (sessionStorage.getItem('flaxia.recovery-login') === '1') {
+    currentPasswordLabel2.textContent = t('settings.recovery_code_label');
+    currentPasswordInput2.placeholder = t('login.recovery_code_placeholder');
+  }
   currentPasswordInput2.className = 'settings-input';
 
   const newPasswordLabel = document.createElement('label');
@@ -735,6 +750,43 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   passwordSection.appendChild(confirmPasswordInput);
   passwordSection.appendChild(passwordSaveButton);
   passwordSection.appendChild(passwordMessage);
+
+  const recoveryButton = document.createElement('button');
+  recoveryButton.type = 'button';
+  recoveryButton.className = 'settings-save';
+  recoveryButton.textContent = t('settings.recovery_create');
+  recoveryButton.hidden = true;
+  void flaxiaAuthIsAuthoritative()
+    .then((enabled) => {
+      recoveryButton.hidden = !enabled;
+    })
+    .catch(() => {});
+  passwordSection.appendChild(recoveryButton);
+  recoveryButton.addEventListener('click', async () => {
+    const password = window.prompt(t('settings.recovery_current_password'));
+    if (!password) return;
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    const code = b64(bytes).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+    if (!(await createConfirmDialog(`${t('settings.recovery_save_code')}\n\n${code}`))) return;
+    recoveryButton.disabled = true;
+    try {
+      const salt = generateSalt();
+      const verifier = await computeVerifier(code, salt, DEFAULT_SRP_KDF);
+      const proof = await createSrpProof(password);
+      if (!proof) throw new Error('Recovery proof unavailable');
+      const response = await fetch('/api/auth/recovery/enroll', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ salt: b64(salt), verifier: b64(verifier), kdf: DEFAULT_SRP_KDF, current_srp: proof }),
+      });
+      window.alert(t(response.ok ? 'settings.recovery_enabled' : 'settings.recovery_failed'));
+    } catch {
+      window.alert(t('settings.recovery_failed'));
+    } finally {
+      recoveryButton.disabled = false;
+    }
+  });
 
   // Event handlers
   languageSaveButton.addEventListener('click', async () => {
@@ -850,6 +902,18 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     passwordSaveButton.style.opacity = '0.6';
 
     try {
+      if (!currentUser) return;
+      const previous = await retryPendingCredentialChange();
+      if (previous === 'committed') {
+        passwordMessage.textContent = t('settings.password_saved');
+        passwordMessage.style.color = 'var(--success, #10b981)';
+        return;
+      }
+      if (previous === 'pending') {
+        passwordMessage.textContent = t('settings.password_change_pending');
+        passwordMessage.style.color = 'var(--danger)';
+        return;
+      }
       // Derive a fresh SRP verifier from the new password so the account
       // continues to authenticate via SRP after the change. Neither the
       // current nor the new password is sent to the server: the current one is
@@ -857,7 +921,8 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
       const salt = generateSalt();
       const verifier = await computeVerifier(newPassword, salt, DEFAULT_SRP_KDF);
 
-      const currentSrp = await createSrpProof(currentPassword);
+      const recovering = sessionStorage.getItem('flaxia.recovery-login') === '1';
+      const currentSrp = await createSrpProof(currentPassword, recovering);
       if (!currentSrp) {
         passwordMessage.textContent = t('settings.current_password_incorrect');
         passwordMessage.style.color = 'var(--danger)';
@@ -867,7 +932,17 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
       // Carry the vault across: VK is wrapped under a KEK derived from the OLD
       // password, so it must be re-wrapped inside this very request. Refusing
       // to proceed beats storing an envelope the new password cannot open.
-      const vaultRewrap = await prepareVaultRewrap(currentPassword, newPassword);
+      let vaultSecret = currentPassword;
+      if (recovering) {
+        const keys = await fetchVaultKeys();
+        if (!keys) throw new Error('Vault unavailable');
+        if (keys.enabled) {
+          const phrase = window.prompt(t('settings.recovery_vault_phrase'));
+          if (!phrase) return;
+          vaultSecret = phrase;
+        }
+      }
+      const vaultRewrap = await prepareVaultRewrap(vaultSecret, newPassword, recovering);
       if (vaultRewrap.status === 'unlock_failed') {
         passwordMessage.textContent = t('settings.current_password_incorrect');
         passwordMessage.style.color = 'var(--danger)';
@@ -878,6 +953,8 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
         passwordMessage.style.color = 'var(--danger)';
         return;
       }
+
+      const operation = credentialOperationFor(currentUser.id);
 
       const response = await fetch('/api/users/me/password', {
         method: 'PATCH',
@@ -890,11 +967,15 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
           srp_group: '2048',
           srp_kdf: DEFAULT_SRP_KDF,
           current_srp: currentSrp,
+          operation,
+          ...(recovering ? { recovery: true } : {}),
           ...(vaultRewrap.status === 'ok' ? { vault_kek: vaultRewrap.fields } : {}),
         }),
       });
 
       if (response.ok) {
+        clearCredentialOperation();
+        if (recovering) sessionStorage.removeItem('flaxia.recovery-login');
         storeSrpSalt(salt);
         passwordMessage.textContent = t('settings.password_saved');
         passwordMessage.style.color = 'var(--success, #10b981)';
@@ -902,7 +983,8 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
         newPasswordInput.value = '';
         confirmPasswordInput.value = '';
       } else {
-        const errorData = (await response.json()) as { error?: string };
+        const errorData = (await response.json()) as { error?: string; cancelled?: boolean };
+        if (errorData.cancelled) clearCredentialOperation();
         const message =
           errorData.error === 'vault_rewrap_required'
             ? t('settings.vault_rewrap_required')

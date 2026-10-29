@@ -55,6 +55,15 @@ jobs:
           curl -fsS "$FLAXIA_APP_TEST_URL/" >/dev/null
           grep -q 'env.AUTH_SERVICE .*local \[connected\]' /tmp/auth-it-app.log
           node --experimental-strip-types --test tests/integration/flaxia-auth.worker.test.ts
+          npx wrangler pages dev dist --port 8794 --inspector-port 0 --binding ENVIRONMENT=test --binding BASE_URL=http://localhost:8794 --binding AUTH_AUTHORITY_MODE=flaxia-auth --do NOTIFICATION_STREAM=NotificationStream@notif-stream --do MULTIPLAYER_ROOM=MultiplayerRoom@multiplayer-worker --do MATCHMAKER=Matchmaker@multiplayer-worker > /tmp/auth-it-direct.log 2>&1 &
+          export FLAXIA_APP_TEST_URL=http://localhost:8794 FLAXIA_DIRECT_AUTH_TEST=1
+          for i in $(seq 1 90); do
+            if curl -fsS "$FLAXIA_APP_TEST_URL/" >/dev/null && grep -q 'env.AUTH_SERVICE .*local \[connected\]' /tmp/auth-it-direct.log; then break; fi
+            sleep 1
+          done
+          curl -fsS "$FLAXIA_APP_TEST_URL/" >/dev/null
+          grep -q 'env.AUTH_SERVICE .*local \[connected\]' /tmp/auth-it-direct.log
+          node --experimental-strip-types --test tests/integration/flaxia-auth-direct.worker.test.ts
 
   game-loader-prototype:
     runs-on: ubuntu-latest

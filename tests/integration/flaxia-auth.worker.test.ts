@@ -3,6 +3,13 @@ import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { test } from 'node:test';
 import { clientStep1, clientStep2, computeVerifier, generateSalt, verifyServerProof } from '../../src/lib/srp.ts';
+import {
+  createVaultEnvelope,
+  generateVaultSalt,
+  rewrapVaultKeyForPassword,
+  unlockVaultWithPassword,
+  unlockVaultWithRecovery,
+} from '../../src/lib/vault/primitives.ts';
 
 const authBase = process.env.FLAXIA_AUTH_TEST_URL;
 const appBase = process.env.FLAXIA_APP_TEST_URL;
@@ -179,7 +186,183 @@ test('local SRP account can provision Auth idempotently with password proof', {
   );
   const first = await post(appBase, '/api/auth/flaxia/provision', await makeProof(password), cookie);
   assert.equal(first.status, 200, await first.clone().text());
+  const guardedChange = await fetch(`${appBase}/api/users/me/password`, {
+    method: 'PATCH',
+    headers: { Origin: appBase, Cookie: cookie, 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  assert.equal(guardedChange.status, 409);
+  const guardedDelete = await fetch(`${appBase}/api/users/me`, {
+    method: 'DELETE',
+    headers: { Origin: appBase, Cookie: cookie, 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  assert.equal(guardedDelete.status, 409);
   assert.equal((await post(appBase, '/api/auth/flaxia/provision', await makeProof(password), cookie)).status, 200);
   const authLogin = await post(authBase, '/api/auth/login/start', { username }, undefined, 'https://flaxia.app');
   assert.equal(authLogin.status, 200, await authLogin.clone().text());
+  const authHs = (await authLogin.json()) as {
+    challenge_id: string;
+    salt: string;
+    B: string;
+    srp_kdf: 'pbkdf2-600k-v2';
+  };
+  const authFirst = await clientStep1(password, dec(authHs.salt));
+  const authProof = await clientStep2(password, dec(authHs.salt), authFirst.a, dec(authHs.B), authHs.srp_kdf);
+  const loggedIn = await post(
+    authBase,
+    '/api/auth/login/verify',
+    { challenge_id: authHs.challenge_id, A: enc(authProof.A), M1: enc(authProof.M1) },
+    undefined,
+    'https://flaxia.app',
+  );
+  assert.equal(loggedIn.status, 200);
+  const authCookie = loggedIn.headers.get('set-cookie')?.split(';')[0];
+  assert.ok(authCookie);
+  const pkce = randomBytes(32).toString('base64url');
+  const authorized = await post(
+    authBase,
+    '/api/auth/flaxia/authorize',
+    { challenge: digest(pkce) },
+    authCookie,
+    'https://flaxia.app',
+  );
+  assert.equal(authorized.status, 200);
+  const code = ((await authorized.json()) as { code: string }).code;
+  const exchanged = await post(appBase, '/api/auth/flaxia/exchange', { code, verifier: pkce }, undefined, appBase);
+  assert.equal(exchanged.status, 200, await exchanged.clone().text());
+  const linkedCookie = exchanged.headers.get('set-cookie')?.split(';')[0];
+  assert.ok(linkedCookie);
+  const linkedProof = async (guess: string) => {
+    const response = await post(appBase, '/api/auth/reauth/start', {}, linkedCookie, appBase);
+    assert.equal(response.status, 200);
+    const hs = (await response.json()) as { challenge_id: string; salt: string; B: string; srp_kdf: 'pbkdf2-600k-v2' };
+    const first = await clientStep1(guess, dec(hs.salt));
+    const proof = await clientStep2(guess, dec(hs.salt), first.a, dec(hs.B), hs.srp_kdf);
+    return { challenge_id: hs.challenge_id, A: enc(proof.A), M1: enc(proof.M1) };
+  };
+  const phrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+  const vault = await createVaultEnvelope(password, phrase);
+  const vaultCreated = await post(
+    appBase,
+    '/api/vault/keys',
+    { ...vault.envelope, current_srp: await linkedProof(password) },
+    linkedCookie,
+    appBase,
+  );
+  assert.equal(vaultCreated.status, 201, await vaultCreated.clone().text());
+  const newPassword = 'replacement integration password';
+  const newSrpSalt = generateSalt(),
+    newSrpVerifier = await computeVerifier(newPassword, newSrpSalt);
+  const newVaultSalt = generateVaultSalt();
+  const newWrappedVk = await rewrapVaultKeyForPassword(vault.vk, newPassword, newVaultSalt, vault.envelope.kdf_params);
+  const credentialOperation = randomBytes(32).toString('base64url');
+  const changeBody = {
+    operation: credentialOperation,
+    srp_salt: enc(newSrpSalt),
+    srp_verifier: enc(newSrpVerifier),
+    srp_group: '2048',
+    srp_kdf: 'pbkdf2-600k-v2',
+    vault_kek: {
+      salt: enc(newVaultSalt),
+      wrapped_vk: newWrappedVk,
+      kdf_params: vault.envelope.kdf_params,
+      vk_version: 1,
+    },
+    current_srp: await linkedProof(password),
+  };
+  const wrongCredentialOperation = randomBytes(32).toString('base64url');
+  const wrongChange = await fetch(`${appBase}/api/users/me/password`, {
+    method: 'PATCH',
+    headers: { Origin: appBase, Cookie: linkedCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...changeBody,
+      operation: wrongCredentialOperation,
+      current_srp: await linkedProof('incorrect password'),
+    }),
+  });
+  assert.equal(wrongChange.status, 401, await wrongChange.clone().text());
+  assert.equal(((await wrongChange.json()) as { cancelled?: boolean }).cancelled, true);
+  const change = await fetch(`${appBase}/api/users/me/password`, {
+    method: 'PATCH',
+    headers: { Origin: appBase, Cookie: linkedCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify(changeBody),
+  });
+  assert.equal(change.status, 200, await change.clone().text());
+  assert.equal(
+    (await post(appBase, '/api/users/me/credentials/retry', { operation: credentialOperation })).status,
+    200,
+  );
+  const vaultAfter = await fetch(`${appBase}/api/vault/keys`, { headers: { Cookie: linkedCookie } });
+  assert.equal(vaultAfter.status, 200);
+  const savedVault = (await vaultAfter.json()) as typeof vault.envelope;
+  assert.deepEqual(await unlockVaultWithPassword(newPassword, savedVault), vault.vk);
+  assert.deepEqual(await unlockVaultWithRecovery(phrase, savedVault), vault.vk);
+  await assert.rejects(unlockVaultWithPassword(password, savedVault));
+  assert.equal((await fetch(`${appBase}/api/me`, { headers: { Cookie: linkedCookie } })).status, 200);
+  const operation = randomBytes(32).toString('base64url');
+  const wrongStart = await post(appBase, '/api/auth/reauth/start', {}, linkedCookie, appBase);
+  const wrongHs = (await wrongStart.json()) as {
+    challenge_id: string;
+    salt: string;
+    B: string;
+    srp_kdf: 'pbkdf2-600k-v2';
+  };
+  const wrongFirst = await clientStep1('wrong password', dec(wrongHs.salt));
+  const wrongProof = await clientStep2(
+    'wrong password',
+    dec(wrongHs.salt),
+    wrongFirst.a,
+    dec(wrongHs.B),
+    wrongHs.srp_kdf,
+  );
+  const wrongDeletion = await fetch(`${appBase}/api/users/me`, {
+    method: 'DELETE',
+    headers: { Origin: appBase, Cookie: linkedCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      operation,
+      current_srp: { challenge_id: wrongHs.challenge_id, A: enc(wrongProof.A), M1: enc(wrongProof.M1) },
+    }),
+  });
+  assert.equal(wrongDeletion.status, 401);
+  assert.equal((await post(appBase, '/api/users/me/deletion/retry', { operation })).status, 401);
+  const deleteStart = await post(appBase, '/api/auth/reauth/start', {}, linkedCookie, appBase);
+  assert.equal(deleteStart.status, 200);
+  const deleteHs = (await deleteStart.json()) as {
+    challenge_id: string;
+    salt: string;
+    B: string;
+    srp_kdf: 'pbkdf2-600k-v2';
+  };
+  const deleteFirst = await clientStep1(newPassword, dec(deleteHs.salt));
+  const deleteProof = await clientStep2(
+    newPassword,
+    dec(deleteHs.salt),
+    deleteFirst.a,
+    dec(deleteHs.B),
+    deleteHs.srp_kdf,
+  );
+  const deletion = await fetch(`${appBase}/api/users/me`, {
+    method: 'DELETE',
+    headers: { Origin: appBase, Cookie: linkedCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      operation,
+      current_srp: { challenge_id: deleteHs.challenge_id, A: enc(deleteProof.A), M1: enc(deleteProof.M1) },
+    }),
+  });
+  assert.equal(deletion.status, 200, await deletion.clone().text());
+  assert.equal((await post(appBase, '/api/users/me/deletion/retry', { operation })).status, 200);
+  assert.equal(
+    (await post(appBase, '/api/users/me/deletion/retry', { operation: randomBytes(32).toString('base64url') })).status,
+    404,
+  );
+  assert.equal((await fetch(`${appBase}/api/me`, { headers: { Cookie: linkedCookie } })).status, 401);
+  assert.equal(
+    (
+      await fetch(`${authBase}/api/auth/me`, {
+        headers: { Origin: 'https://flaxia.app', Cookie: authCookie, 'CF-Connecting-IP': '192.0.2.231' },
+      })
+    ).status,
+    401,
+  );
 });
