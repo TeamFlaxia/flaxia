@@ -634,7 +634,10 @@ test('admin can delete a linked Auth user', { skip: !enabled, timeout: 60000 }, 
   assert.equal(targetMe.status, 401);
 });
 
-test('authorization started before a freeze cannot create a session after unfreeze', { skip: !enabled, timeout: 60000 }, async () => {
+test('authorization started before a freeze cannot create a session after unfreeze', {
+  skip: !enabled,
+  timeout: 60000,
+}, async () => {
   assert.ok(auth && app);
   const post = (base: string, path: string, body: unknown, cookie?: string, origin = base) =>
     fetch(`${base}${path}`, {
