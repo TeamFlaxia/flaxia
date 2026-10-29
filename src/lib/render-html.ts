@@ -362,9 +362,9 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       white-space: nowrap;
     }
     .ssr-user-title-icon {
-      width: 14px;
-      height: 14px;
-      margin-right: 3px;
+      width: 17px;
+      height: 17px;
+      margin-right: 4px;
       border-radius: 50%;
       object-fit: cover;
     }
