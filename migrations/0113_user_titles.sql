@@ -1,6 +1,7 @@
--- User titles (称号): small badges shown after a username. Titles are awarded
--- by future systems (for example Arcade achievements); this migration only
--- defines the catalog, ownership, and the single equipped title per user.
+-- User titles (称号): small badges shown after a username. Icons are image
+-- URLs, not text glyphs. Titles are awarded by future systems (for example
+-- Arcade achievements); this migration only defines the catalog, ownership,
+-- and the single equipped title per user.
 
 CREATE TABLE titles (
   id TEXT PRIMARY KEY,

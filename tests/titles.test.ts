@@ -24,7 +24,7 @@ const NEWCOMER_TITLE = {
 
 const FIRST_CLEAR = {
   id: 'test_first_clear',
-  icon: '🧪',
+  icon: '/icons/badge-96.png',
   name: 'Test Clear',
   name_ja: 'テストクリア',
   description: 'Test fixture title.',
@@ -34,7 +34,7 @@ const FIRST_CLEAR = {
 
 const OTHER_TITLE = {
   id: 'test_other',
-  icon: '🧪',
+  icon: '/icons/badge-96.png',
   name: 'Other Title',
   name_ja: '別の称号',
   description: 'Another test fixture title.',
@@ -88,6 +88,15 @@ describe('user titles', () => {
     const data = (await res.json()) as { titles: Title[]; equipped_title_id: string | null };
     assert.deepEqual(data.titles.map((title) => title.id).sort(), [NEWCOMER_TITLE.id, FIRST_CLEAR.id].sort());
     assert.equal(data.equipped_title_id, null);
+  });
+
+  it('rejects non-image title icons', async () => {
+    const res = await fetch(`${BASE_URL}/api/test/title`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...NEWCOMER_TITLE, id: 'test_emoji', icon: '🧪' }),
+    });
+    assert.equal(res.status, 400);
   });
 
   it('grants the newcomer title to an existing account on login', async () => {

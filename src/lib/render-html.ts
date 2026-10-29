@@ -588,11 +588,10 @@ export function renderUserTitle(
 ): string {
   if (!titleName) return '';
   const tooltip = description ? ` title="${escapeHtml(description)}"` : '';
-  const icon = titleIcon
-    ? isTitleIconImage(titleIcon)
+  const icon =
+    titleIcon && isTitleIconImage(titleIcon)
       ? `<img class="ssr-user-title-icon" src="${escapeHtml(titleIcon)}" alt="" aria-hidden="true">`
-      : `<span aria-hidden="true">${escapeHtml(titleIcon)}</span>`
-    : '';
+      : '';
   return `<span class="ssr-user-title"${tooltip}>${icon}${icon ? ' ' : ''}${escapeHtml(titleName)}</span>`;
 }
 

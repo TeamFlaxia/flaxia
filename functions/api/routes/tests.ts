@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { Hono } from 'hono';
+import { isTitleIconImage } from '../../../src/lib/title-icon.ts';
 import { getMeWithSession, getSessionToken, hashPassword } from '../../lib/auth.ts';
 import { badgeTypeForPlan } from '../../lib/billing.ts';
 import { ensureNsfwScansTable, ensurePendingEmbedsTable } from '../../lib/crowd.ts';
@@ -275,9 +276,11 @@ app.post('/api/test/title', requireTestEnvironment, async (c) => {
     description_ja?: unknown;
     sort_order?: unknown;
   };
+  if (typeof body.icon !== 'string' || !isTitleIconImage(body.icon)) {
+    return c.json({ error: 'icon must be an image URL' }, 400);
+  }
   if (
     typeof body.id !== 'string' ||
-    typeof body.icon !== 'string' ||
     typeof body.name !== 'string' ||
     typeof body.name_ja !== 'string' ||
     typeof body.description !== 'string' ||

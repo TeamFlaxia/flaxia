@@ -17,8 +17,8 @@ describe('title icons', () => {
     assert.match(html, /Budding Flaxian/);
   });
 
-  it('renders a textual icon in SSR', () => {
+  it('omits non-image icons in SSR', () => {
     const html = renderUserTitle('Test Title', '🧪');
-    assert.match(html, /<span aria-hidden="true">🧪<\/span>/);
+    assert.equal(html, '<span class="ssr-user-title">Test Title</span>');
   });
 });

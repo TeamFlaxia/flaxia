@@ -44,22 +44,16 @@ export function titleFromFields(row: UserTitleFields): UserTitle | null {
   };
 }
 
-/** Creates the icon node for a title, using an image for URL icons. */
-export function createTitleIcon(icon: string, className: string): HTMLElement {
-  if (isTitleIconImage(icon)) {
-    const image = document.createElement('img');
-    image.src = icon;
-    image.alt = '';
-    image.className = className;
-    image.setAttribute('aria-hidden', 'true');
-    return image;
-  }
+/** Creates the image node for a title. Non-image icons fall back to no icon. */
+export function createTitleIcon(icon: string, className: string): HTMLImageElement | null {
+  if (!isTitleIconImage(icon)) return null;
 
-  const glyph = document.createElement('span');
-  glyph.textContent = icon;
-  glyph.className = className;
-  glyph.setAttribute('aria-hidden', 'true');
-  return glyph;
+  const image = document.createElement('img');
+  image.src = icon;
+  image.alt = '';
+  image.className = className;
+  image.setAttribute('aria-hidden', 'true');
+  return image;
 }
 
 /**
@@ -75,8 +69,9 @@ export function createUserTitleBadge(row: UserTitleFields): HTMLElement | null {
 
   const badge = document.createElement('span');
   badge.className = 'user-title-badge';
-  if (title.icon) {
-    badge.appendChild(createTitleIcon(title.icon, 'user-title-icon'));
+  const icon = title.icon ? createTitleIcon(title.icon, 'user-title-icon') : null;
+  if (icon) {
+    badge.appendChild(icon);
     badge.appendChild(document.createTextNode(` ${name}`));
   } else {
     badge.textContent = name;

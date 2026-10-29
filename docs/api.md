@@ -231,7 +231,8 @@ already be owned by the user; send an empty value or `null` to remove it.
 
 New accounts are automatically granted `flaxian_newcomer` when registration
 completes. Accounts created before the title existed receive it on their next
-successful login.
+successful login. Title `icon` values are image URLs; non-image legacy values
+are rendered as a name-only badge.
 
 ---
 

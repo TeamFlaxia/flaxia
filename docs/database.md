@@ -30,7 +30,7 @@ Flaxia uses Cloudflare D1 (SQLite-compatible) with migrations in `migrations/`.
 | Column | Type | Notes |
 |---|---|---|
 | id | TEXT | PK, stable identifier used by award code |
-| icon | TEXT | Emoji glyph or image URL shown before the name |
+| icon | TEXT | Image URL shown before the name (emoji glyphs are not rendered) |
 | name | TEXT | English display name |
 | name_ja | TEXT | Japanese display name |
 | description | TEXT | English description |

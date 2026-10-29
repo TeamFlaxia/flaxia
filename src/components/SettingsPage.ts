@@ -1032,7 +1032,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
           text.appendChild(nameRow);
           text.appendChild(description);
-          card.appendChild(icon);
+          if (icon) card.appendChild(icon);
           card.appendChild(text);
           titlesGrid.appendChild(card);
         }

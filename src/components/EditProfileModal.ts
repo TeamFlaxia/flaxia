@@ -4,7 +4,6 @@ import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { getLocale, t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
-import { isTitleIconImage } from '../lib/title-icon.js';
 import { showToast } from '../lib/toast.js';
 
 interface EditProfileModalProps {
@@ -386,7 +385,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
         const option = document.createElement('option');
         option.value = title.id;
         const name = getLocale() === 'ja' ? title.name_ja || title.name : title.name;
-        option.textContent = title.icon && !isTitleIconImage(title.icon) ? `${title.icon} ${name}` : name;
+        option.textContent = name;
         titleSelect.appendChild(option);
       }
       titleSelect.value = selectedTitleId;
