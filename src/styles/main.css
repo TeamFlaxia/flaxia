@@ -425,8 +425,8 @@ body {
 }
 
 .user-title-icon {
-  width: 1.4em;
-  height: 1.4em;
+  width: 2em;
+  height: 2em;
   border-radius: 50%;
   object-fit: cover;
   flex-shrink: 0;
