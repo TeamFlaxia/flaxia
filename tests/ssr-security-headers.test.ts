@@ -13,7 +13,7 @@ import { renderHtmlShell } from '../src/lib/render-html.ts';
 test('Pages middleware adds security headers to dynamic responses', async () => {
   const response = await onRequest({
     request: new Request('https://flaxia.app/thread/example'),
-    env: { ENVIRONMENT: 'test' },
+    env: {},
     next: async () => new Response('html', { headers: { 'Content-Type': 'text/html; charset=utf-8' } }),
   });
 
@@ -28,7 +28,7 @@ test('Pages middleware adds security headers to dynamic responses', async () => 
 test('Pages middleware preserves an existing security header', async () => {
   const response = await onRequest({
     request: new Request('https://flaxia.app/'),
-    env: { ENVIRONMENT: 'test' },
+    env: {},
     next: async () =>
       new Response('ok', {
         headers: { 'Content-Security-Policy': "default-src 'none'", 'X-Frame-Options': 'SAMEORIGIN' },
@@ -43,7 +43,7 @@ test('Pages middleware preserves an existing security header', async () => {
 test('Pages middleware adds security headers to unsupported-domain 404s', async () => {
   const response = await onRequest({
     request: new Request('https://preview.pages.dev/'),
-    env: { ENVIRONMENT: 'test' },
+    env: {},
     next: async () => {
       throw new Error('next must not run for pages.dev hosts');
     },
@@ -72,7 +72,7 @@ test('OGP game player responses allow same-origin arcade embedding', async () =>
     } as unknown as Parameters<typeof onOgpPlayerRequest>[0]['env'];
     const request = new Request('https://flaxia.app/api/ogp-player/game-1');
     const playerResponse = await onOgpPlayerRequest({ request, env, params: { id: 'game-1' } });
-    const response = await onRequest({ request, env: { ENVIRONMENT: 'test' }, next: async () => playerResponse });
+    const response = await onRequest({ request, env: {}, next: async () => playerResponse });
 
     assert.equal(response.headers.get('x-frame-options'), 'SAMEORIGIN');
     assert.equal(response.headers.get('content-security-policy')?.includes("frame-ancestors 'self'"), true);
