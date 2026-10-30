@@ -203,6 +203,7 @@ export class PostCard {
               mentions: this.props.post.mentions,
               enablePostRefs: this.props.enablePostRefs,
               authorId: this.props.post.user_id,
+              badgeType: this.props.post.badge_type,
             });
             textElement.replaceWith(richText);
           } catch (error) {
@@ -219,6 +220,7 @@ export class PostCard {
             mentions: this.props.post.mentions,
             enablePostRefs: this.props.enablePostRefs,
             authorId: this.props.post.user_id,
+            badgeType: this.props.post.badge_type,
           });
           textElement.replaceWith(richText);
         } catch (error) {

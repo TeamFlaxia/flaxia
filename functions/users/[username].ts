@@ -2,6 +2,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { isCrawler } from '../../src/lib/is-crawler';
+import { stripPostColors } from '../../src/lib/post-colors.ts';
 import {
   escapeHtml,
   type PostRow,
@@ -207,7 +208,7 @@ app.get('*', async (c) => {
             {
               title: `Latest posts by ${user.display_name || user.username}`,
               links: posts.slice(0, 5).map((p) => ({
-                label: p.text.split('\n')[0].slice(0, 40) || `Post ${p.id}`,
+                label: stripPostColors(p.text).split('\n')[0].slice(0, 40) || `Post ${p.id}`,
                 url: `${baseUrl}/thread/${p.id}`,
               })),
             },

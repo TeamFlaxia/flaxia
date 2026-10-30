@@ -1,4 +1,6 @@
+import { canUsePostColors } from './entitlements.ts';
 import { resolveNameColor } from './name-color.ts';
+import { parsePostColors, postTextStyleClass, stripPostColors } from './post-colors.ts';
 
 export function escapeHtml(text: string): string {
   return text
@@ -89,7 +91,7 @@ export function renderBlogPostingJsonLd(
     '@context': 'https://schema.org',
     '@type': 'BlogPosting',
     headline: `${authorName} on Flaxia`,
-    description: description || post.game_description || post.text.slice(0, 200),
+    description: description || post.game_description || stripPostColors(post.text).slice(0, 200),
     image: image || undefined,
     url: postUrl,
     datePublished: post.created_at,
@@ -206,6 +208,17 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       --accent-dark:   #16a34a;
       --danger:        #ef4444;
       --link:          #3b82f6;
+      --post-color-red:    #b91c1c;
+      --post-color-orange: #c2410c;
+      --post-color-yellow: #a16207;
+      --post-color-green:  #15803d;
+      --post-color-blue:   #1d4ed8;
+      --post-color-purple: #7e22ce;
+      --post-color-pink:   #be185d;
+      --post-color-gray:   #475569;
+      --post-color-mikan:  #b45309;
+      --post-color-kimwaipu: #047857;
+      --post-rainbow: linear-gradient(90deg, #dc2626, #ea580c, #ca8a04, #16a34a, #2563eb, #7c3aed, #db2777);
     }
     :root[data-theme='dark'] {
       color-scheme: dark;
@@ -221,6 +234,17 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       --accent-dark:   #16a34a;
       --danger:        #ef4444;
       --link:          #60a5fa;
+      --post-color-red:    #f87171;
+      --post-color-orange: #fb923c;
+      --post-color-yellow: #facc15;
+      --post-color-green:  #4ade80;
+      --post-color-blue:   #60a5fa;
+      --post-color-purple: #c084fc;
+      --post-color-pink:   #f472b6;
+      --post-color-gray:   #94a3b8;
+      --post-color-mikan:  #f59e0b;
+      --post-color-kimwaipu: #6ee7b7;
+      --post-rainbow: linear-gradient(90deg, #f87171, #fb923c, #facc15, #4ade80, #60a5fa, #c084fc, #f472b6);
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -347,6 +371,41 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       word-break: break-word;
     }
     .ssr-post-body p { margin: 0 0 8px 0; }
+    .post-color--red    { color: var(--post-color-red); }
+    .post-color--orange { color: var(--post-color-orange); }
+    .post-color--yellow { color: var(--post-color-yellow); }
+    .post-color--green  { color: var(--post-color-green); }
+    .post-color--blue   { color: var(--post-color-blue); }
+    .post-color--purple { color: var(--post-color-purple); }
+    .post-color--pink   { color: var(--post-color-pink); }
+    .post-color--gray   { color: var(--post-color-gray); }
+    .post-color--mikan  { color: var(--post-color-mikan); }
+    .post-color--kimwaipu { color: var(--post-color-kimwaipu); }
+    .post-color--rainbow { color: var(--post-color-purple); }
+    @supports ((-webkit-background-clip: text) or (background-clip: text)) {
+      .post-color--rainbow {
+        background-image: var(--post-rainbow);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        -webkit-text-fill-color: transparent;
+      }
+    }
+    .post-dinnerborn {
+      display: inline-block;
+      transform: rotate(180deg);
+      transform-origin: center;
+      vertical-align: middle;
+    }
+    @media (forced-colors: active) {
+      .post-color--red, .post-color--orange, .post-color--yellow, .post-color--green,
+      .post-color--blue, .post-color--purple, .post-color--pink, .post-color--gray,
+      .post-color--mikan, .post-color--kimwaipu, .post-color--rainbow {
+        color: inherit;
+        background-image: none;
+        -webkit-text-fill-color: currentColor;
+      }
+    }
     .ssr-post-body img,
     .ssr-post-body video {
       width: 100%;
@@ -501,14 +560,59 @@ function formatDate(iso: string): string {
   }
 }
 
-function renderPostContent(text: string, hashtags: string): string {
-  let html = escapeHtml(text);
+function renderTextWithHashtags(text: string): string {
+  const plain = text.replace(/\\\{/g, '{');
+  const hashtagRegex = /#([\w\u3000-\u9fff\-_]+)/g;
+  let html = '';
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
 
-  // Link hashtags
-  html = html.replace(/#([\w\u3000-\u9fff\-_]+)/g, (_m, tag: string) => {
+  while ((match = hashtagRegex.exec(plain)) !== null) {
+    html += escapeHtml(plain.slice(lastIndex, match.index));
+    const tag = match[1];
     const encoded = encodeURIComponent(tag);
-    return `<a href="/explore?tag=${encoded}" class="ssr-hashtag">#${escapeHtml(tag)}</a>`;
+    html += `<a href="/explore?tag=${encoded}" class="ssr-hashtag">#${escapeHtml(tag)}</a>`;
+    lastIndex = match.index + match[0].length;
+  }
+  html += escapeHtml(plain.slice(lastIndex));
+  return html;
+}
+
+function renderColorHtml(text: string, spans: ReturnType<typeof parsePostColors>['spans']): string {
+  // Empty spans were already stripped from `text`; emitting their tags would
+  // produce an unmatched closing tag.
+  const visible = spans.filter((span) => span.end > span.start);
+  if (visible.length === 0) return renderTextWithHashtags(text);
+
+  const events: Array<{ offset: number; kind: 'open' | 'close'; style: string; depth: number }> = [];
+  for (const span of visible) {
+    events.push({ offset: span.start, kind: 'open', style: postTextStyleClass(span.style), depth: span.depth });
+    events.push({ offset: span.end, kind: 'close', style: postTextStyleClass(span.style), depth: span.depth });
+  }
+  events.sort((a, b) => {
+    if (a.offset !== b.offset) return a.offset - b.offset;
+    if (a.kind !== b.kind) return a.kind === 'close' ? -1 : 1;
+    return a.kind === 'close' ? b.depth - a.depth : a.depth - b.depth;
   });
+
+  let html = '';
+  let position = 0;
+  for (const event of events) {
+    html += renderTextWithHashtags(text.slice(position, event.offset));
+    html += event.kind === 'open' ? `<span class="${event.style}">` : '</span>';
+    position = event.offset;
+  }
+  html += renderTextWithHashtags(text.slice(position));
+  return html;
+}
+
+function renderPostContent(text: string, hashtags: string, badgeType?: string | null): string {
+  // Parse before unescaping so `\{red}` stays a literal brace. The renderer
+  // unescapes per text segment without disturbing span offsets.
+  const parsed = parsePostColors(text);
+  const html = canUsePostColors({ badge_type: badgeType })
+    ? renderColorHtml(parsed.plain, parsed.spans)
+    : renderTextWithHashtags(text);
 
   return `<p>${html.replace(/\n/g, '<br>')}</p>`;
 }
@@ -522,7 +626,8 @@ function renderPostMedia(
   text?: string,
 ): string {
   const parts: string[] = [];
-  const alt = text ? text.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
+  const plainText = text ? stripPostColors(text).replace(/\\\{/g, '{') : '';
+  const alt = plainText ? plainText.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
 
   if (gifKey?.startsWith('video/')) {
     const videoUrl = `${baseUrl}/api/video/${escapeHtml(gifKey)}`;
@@ -575,7 +680,7 @@ export function renderPostArticle(post: PostRow, baseUrl: string, isReply = fals
       </div>
     </div>
     <div class="ssr-post-body">
-      ${renderPostContent(post.text, post.hashtags)}
+      ${renderPostContent(post.text, post.hashtags, post.badge_type)}
       ${renderPostMedia(post.gif_key, post.thumbnail_key, post.payload_key, post.swf_key, baseUrl, post.text)}
     </div>
     <div class="ssr-post-meta">

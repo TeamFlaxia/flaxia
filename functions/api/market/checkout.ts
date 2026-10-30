@@ -1,4 +1,5 @@
 import Stripe from 'stripe';
+import { stripPostColors } from '../../../src/lib/post-colors.ts';
 
 type Env = {
   DB: D1Database;
@@ -177,7 +178,7 @@ async function handleMarketCheckout(request: Request, env: Env): Promise<Respons
   const stripe = getStripe(env);
   const baseUrl = env.BASE_URL || 'https://flaxia.app';
   // Product name is always server-derived: client `title` is ignored (#67).
-  const contentTitle = post.text.slice(0, 50) || 'Flaxia Content';
+  const contentTitle = stripPostColors(post.text).slice(0, 50) || 'Flaxia Content';
 
   const session = await stripe.checkout.sessions.create({
     customer: customerId,

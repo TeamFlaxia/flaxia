@@ -1,5 +1,6 @@
 import { buildGameTitle } from '../../src/lib/game-seo';
 import { isCrawler } from '../../src/lib/is-crawler';
+import { stripPostColors } from '../../src/lib/post-colors.ts';
 import { escapeHtml, renderAvatarBadge, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import { renderBreadcrumbJsonLd, renderSsrFooter, renderSsrHeader, renderSsrLayoutCss } from '../lib/ssr-layout';
@@ -67,7 +68,7 @@ function renderGameCard(game: GameRow, baseUrl: string): string {
       : `${baseUrl}/og-default-v2.png`;
   const avatarSrc = game.avatar_key ? assetUrl(baseUrl, game.avatar_key) : `${baseUrl}/default-avatar.png`;
   const gameType = detectGameType(game);
-  const title = buildGameTitle(game.text);
+  const title = buildGameTitle(stripPostColors(game.text));
 
   const typeLabels: Record<string, string> = {
     flash: 'Flash',
@@ -165,7 +166,7 @@ export async function onRequest(context: {
           {
             title: 'New games',
             links: recentGames.map((g) => ({
-              label: buildGameTitle(g.text),
+              label: buildGameTitle(stripPostColors(g.text)),
               url: `${baseUrl}/arcade/${g.id}`,
             })),
           },

@@ -5,6 +5,7 @@ import { createSkeletonCards } from '../lib/loading-ui.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { isNativeApp } from '../lib/native-api.ts';
 import { createPageHeader } from '../lib/page-header.js';
+import { stripPostColors } from '../lib/post-colors.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
@@ -293,7 +294,7 @@ export class BookmarksPage {
       info.style.cssText = 'padding: 0.4rem 0.35rem 0.35rem;';
 
       const cardTitle = document.createElement('div');
-      cardTitle.textContent = post.text?.slice(0, 60) || '(no text)';
+      cardTitle.textContent = stripPostColors(post.text || '').slice(0, 60) || '(no text)';
       cardTitle.style.cssText = `
         font-weight: 600; color: var(--text-primary);
         font-size: 0.8rem; line-height: 1.3;

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { stripPostColors } from '../../../src/lib/post-colors.ts';
 import { batchGetFreshAndBookmarkStatus } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
@@ -64,7 +65,7 @@ topic.get('/current-topic', async (c) => {
       display_name: result.display_name,
       avatar_key: result.avatar_key,
       badge_type: (result.badge_type as string | null) ?? null,
-      text: result.text,
+      text: stripPostColors(String(result.text || '')),
       hashtags,
       gif_key: result.gif_key,
       payload_key: result.payload_key,

@@ -141,6 +141,8 @@ export interface PostTextProps {
   mentions?: string;
   enablePostRefs?: boolean;
   authorId?: string;
+  /** Author's current badge; text colors are a Flaxia+ entitlement. */
+  badgeType?: string | null;
 }
 
 export interface PostStageProps {

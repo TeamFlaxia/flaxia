@@ -17,6 +17,7 @@ import {
   parseCrowdWebhook,
   resolveNsfwTags,
 } from '@flaxia/sdk';
+import { stripPostColors } from '../../src/lib/post-colors.ts';
 import { postTextSha } from './ai-index.ts';
 import { createProjection, parseBanditConfig, projConfigKey, project } from './linucb.ts';
 import { loadBlocklist, matchBlocklist, matchSignatureEntry } from './scan/blocklist.ts';
@@ -554,15 +555,17 @@ async function submitEmbedTask(config: CrowdConfig, postId: string, text: string
   const client = getCrowdClient(config);
   if (!client) return false;
 
+  // Embed the human-readable body, not the color markup.
+  const embeddingText = stripPostColors(text);
   const callbackUrl = await signedCallbackUrl(config, {
     baseUrl: config.baseUrl,
     type: 'vector-embed',
-    params: { postId, sha: await postTextSha(text) },
+    params: { postId, sha: await postTextSha(embeddingText) },
   });
   try {
     await client.submit({
       workload: 'vector-embed',
-      payload: { text },
+      payload: { text: embeddingText },
       callbackUrl,
       timeoutMs: DEFAULT_WORKLOAD_TIMEOUT_MS['vector-embed'],
     });
@@ -638,17 +641,18 @@ export async function embedPost(
 ): Promise<void> {
   if (embeddingPosts.has(postId)) return;
   embeddingPosts.add(postId);
+  const embeddingText = stripPostColors(text);
   try {
     const config = crowdConfig(env);
     if (!db) {
-      if (config.configured && !config.screeningDisabled) await submitEmbedTask(config, postId, text);
+      if (config.configured && !config.screeningDisabled) await submitEmbedTask(config, postId, embeddingText);
       return;
     }
 
     // Persist to the outbox before the network call. The submit happens after
     // the response (waitUntil); if the isolate is evicted mid-flight, the row
     // is still queued for the next drain instead of being lost.
-    await enqueuePendingEmbed(db, postId, text);
+    await enqueuePendingEmbed(db, postId, embeddingText);
     if (!config.configured || config.screeningDisabled) return;
 
     // This drain skips `postId` (the in-flight guard), so backfilled rows are
@@ -657,11 +661,11 @@ export async function embedPost(
     await drainPendingEmbeds(db, env).catch((e) => console.error('Pending embed drain failed:', e));
 
     if (Date.now() - lastEmbedTime < EMBED_RATE_LIMIT_MS) return;
-    const ok = await submitEmbedTask(config, postId, text);
+    const ok = await submitEmbedTask(config, postId, embeddingText);
     if (ok) {
       await db.prepare('DELETE FROM pending_embeddings WHERE post_id = ?').bind(postId).run();
     } else {
-      await enqueuePendingEmbed(db, postId, text, 1, 'submission failed');
+      await enqueuePendingEmbed(db, postId, embeddingText, 1, 'submission failed');
     }
   } finally {
     embeddingPosts.delete(postId);
@@ -761,7 +765,7 @@ async function handleVectorEmbedResult(
   const sourceSha = url.searchParams.get('sha');
   if (sourceSha) {
     const current = await db.prepare('SELECT text FROM posts WHERE id = ?').bind(postId).first<{ text: string }>();
-    if (!current || sourceSha !== (await postTextSha(current.text))) return;
+    if (!current || sourceSha !== (await postTextSha(stripPostColors(current.text)))) return;
   }
   await ensureEmbeddingSourceColumn(db);
 

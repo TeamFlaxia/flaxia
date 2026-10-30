@@ -1,7 +1,9 @@
 import { attachPlusBadge } from '../lib/avatar.js';
+import { canUsePostColors } from '../lib/entitlements.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
 import { applyNameColor } from '../lib/name-color.js';
+import { stripPostColors } from '../lib/post-colors.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post } from '../types/post.js';
 
@@ -236,7 +238,9 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
         font-family: inherit;
         font-size: 0.875rem;
       `;
-      postText.textContent = post.text;
+      postText.textContent = canUsePostColors({ badge_type: post.badge_type })
+        ? stripPostColors(post.text)
+        : post.text.replace(/\\\{/g, '{');
 
       // If arcade, show a small badge
       if (props.type === 'arcade' || post.payload_key) {

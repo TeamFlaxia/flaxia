@@ -14,7 +14,7 @@ export interface PostComposerProps {
 }
 
 import { attachPlusBadge } from '../lib/avatar.js';
-import { maxMediaAttachmentsForUser } from '../lib/entitlements.js';
+import { canUsePostColors, maxMediaAttachmentsForUser } from '../lib/entitlements.js';
 import { attachmentMimeType, GAME_FILE_EXTENSIONS, getMimeType } from '../lib/file-extensions.js';
 import { AttachPreviewHandle, checkImageSizeLimit, detectAttachKind, renderFilePreview } from '../lib/file-preview.js';
 import { formatCount } from '../lib/format.js';
@@ -22,6 +22,7 @@ import { t } from '../lib/i18n.js';
 import { attachIcons, icon } from '../lib/icons.js';
 import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { stripPostColors } from '../lib/post-colors.js';
 import { showToast } from '../lib/toast.js';
 import {
   deleteVaultItem,
@@ -369,7 +370,9 @@ export class PostComposer {
 
     const text = document.createElement('div');
     text.className = 'quoted-post-text';
-    text.textContent = quoted.text || '';
+    text.textContent = canUsePostColors({ badge_type: quoted.badge_type })
+      ? stripPostColors(quoted.text || '')
+      : (quoted.text || '').replace(/\\\{/g, '{');
 
     body.appendChild(nameRow);
     body.appendChild(text);

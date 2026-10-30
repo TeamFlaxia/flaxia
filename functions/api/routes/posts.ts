@@ -1,6 +1,8 @@
 import { type Context, Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { isAdmin } from '../../../src/lib/admin';
+import { canUsePostColors } from '../../../src/lib/entitlements.ts';
+import { hasPostColors, stripPostColors } from '../../../src/lib/post-colors.ts';
 import { copyHtmlToWvfs, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
 import type { ReportCategory } from '../../../src/types/post';
 import { buildCreateActivity, buildDeleteActivity, buildNoteObject } from '../../lib/activitypub/note';
@@ -70,6 +72,15 @@ async function resolveAttachmentLimit(env: Bindings, userId: string): Promise<nu
   return plan.isActive ? MAX_ATTACHMENTS_PLUS : MAX_ATTACHMENTS;
 }
 
+/** Text colors are a Flaxia+ (or reviewer) entitlement. */
+function colorEntitlementError(
+  c: Context<{ Bindings: Bindings; Variables: Variables }>,
+  text: string,
+): Response | null {
+  if (canUsePostColors(c.get('user')) || !hasPostColors(text)) return null;
+  return c.json({ error: 'flaxia_plus_required', message: 'Text colors and styles require Flaxia+' }, 403);
+}
+
 async function ensureReactionsTable(db: D1Database): Promise<void> {
   try {
     await db
@@ -115,6 +126,8 @@ posts.post('/posts', requireAuth, async (c) => {
     if (typeof text !== 'string' || text.length < 1 || text.length > 200) {
       return c.json({ error: 'Text must be 1-200 characters' }, 400);
     }
+    const colorError = colorEntitlementError(c, text);
+    if (colorError) return colorError;
 
     const userId = c.get('user')?.id || '';
     const username = c.get('user')?.username || 'anonymous';
@@ -432,7 +445,11 @@ posts.get('/posts/trending', async (c) => {
 
     // Compute adjusted score with quality, type weights, and author quality
     const scored = rawPosts.map((p) => {
-      const qualityScore = computeQualityScore(String(p.text || ''), !!(p.payload_key || p.swf_key), 0);
+      const qualityScore = computeQualityScore(
+        stripPostColors(String(p.text || '')),
+        !!(p.payload_key || p.swf_key),
+        0,
+      );
       const typeFactor = (() => {
         const w = getTypeWeights(p.payload_key as string | null, p.swf_key as string | null);
         return (w.fresh + w.reply + w.impression) / 4.5;
@@ -785,7 +802,7 @@ posts.get('/posts/recommended', async (c) => {
       const ageHours = Math.max(0, (asOfMs - new Date(String(post.created_at)).getTime()) / 3600000);
       const freshness = Math.exp(-ageHours / 168);
       const contentQuality = computeQualityScore(
-        String(post.text || ''),
+        stripPostColors(String(post.text || '')),
         !!(post.payload_key || post.swf_key || post.gif_key || post.thumbnail_key),
         0,
       );
@@ -1582,6 +1599,8 @@ posts.post('/posts/commit', requireAuth, async (c) => {
     if (text.length > 200 || (!hasQuote && text.length < 1)) {
       return c.json({ error: 'Text must be 1-200 characters' }, 422);
     }
+    const colorError = colorEntitlementError(c, text);
+    if (colorError) return colorError;
 
     // Validate hashtags
     if (!Array.isArray(requestHashtags) || requestHashtags.length > 5) {
@@ -3078,6 +3097,8 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
     if (!text || text.length < 1 || text.length > 200) {
       return c.json({ error: 'Text must be 1-200 characters' }, 422);
     }
+    const colorError = colorEntitlementError(c, text);
+    if (colorError) return colorError;
 
     // Validate hashtags
     if (!Array.isArray(hashtags) || hashtags.length > 5) {
@@ -3864,6 +3885,12 @@ posts.put('/posts/:id', async (c) => {
       trimmed = body.text.trim();
       if (trimmed.length < 1 || trimmed.length > 200) {
         return c.json({ error: 'Text must be between 1 and 200 characters' }, 422);
+      }
+      // Keep an already-colored post editable after a lapse, but do not let a
+      // non-member add or keep color markers in a *changed* body.
+      if (body.text !== post.text && trimmed !== post.text) {
+        const colorError = colorEntitlementError(c, trimmed);
+        if (colorError) return colorError;
       }
       textChanged = true;
 
