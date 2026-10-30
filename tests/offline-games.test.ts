@@ -153,7 +153,7 @@ test('a successful bookmark toggle starts a download; removing it deletes the sa
 });
 
 test('logout, 401 and account changes remove all downloaded files', async () => {
-  for (const action of ['logout', '401', 'switch']) {
+  for (const action of ['logout', 'exchange', '401', 'switch']) {
     const f = fixture();
     const games = f.make();
     await games.account('alice');
@@ -161,7 +161,10 @@ test('logout, 401 and account changes remove all downloaded files', async () => 
     if (action === 'switch') await games.account('bob');
     else {
       const fetch = games.wrap(async () => new Response(null, { status: action === '401' ? 401 : 200 }));
-      await fetch(action === '401' ? '/api/me' : '/api/auth/logout', { method: action === '401' ? 'GET' : 'POST' });
+      await fetch(
+        action === '401' ? '/api/me' : action === 'exchange' ? '/api/auth/flaxia/exchange' : '/api/auth/logout',
+        { method: action === '401' ? 'GET' : 'POST' },
+      );
     }
     await games.account('alice');
     assert.equal((await games.list()).length, 0, action);

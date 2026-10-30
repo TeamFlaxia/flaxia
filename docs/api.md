@@ -219,6 +219,21 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 ### Update Profile
 `PATCH /api/users/me`
 
+Profile updates accept `equipped_title_id` (multipart or JSON). The title must
+already be owned by the user; send an empty value or `null` to remove it.
+
+### Titles
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/titles` | Full title catalog |
+| GET | `/api/titles/me` | Titles owned by the signed-in user |
+| PUT | `/api/titles/me/equipped` | Equip an owned title, or `{ "titleId": null }` to clear |
+
+New accounts are automatically granted `flaxian_newcomer` when their profile
+is created, including through the Flaxia Auth exchange. Accounts created before
+the title existed receive it on their next successful login. Title `icon` values
+are image URLs; non-image legacy values are rendered as a name-only badge.
+
 ---
 
 ## Search

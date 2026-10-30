@@ -131,6 +131,7 @@ test('every env binding used in code exists in wrangler.toml (prod parity)', asy
     ['EXPORT_BUCKET', 'dataset export artifact falls back when unset'],
     ['EXPORT_KV', 'dataset export artifact falls back when unset'],
     ['CROWD_NODE_ORIGINS', 'file-source CORS origins are optional for same-origin nodes'],
+    ['AUTH_AUTHORITY_MODE', 'opt-in only after the documented authentication migration'],
   ]);
 
   async function walk(dir: string): Promise<string[]> {
@@ -166,4 +167,14 @@ test('every env binding used in code exists in wrangler.toml (prod parity)', asy
   // DB_TEST must stay confined to the test-reset helper.
   const dbTestUsers = [...used].filter(([, keys]) => keys.has('DB_TEST')).map(([f]) => f);
   assert.deepEqual(dbTestUsers, ['functions/api/routes/tests.ts'], 'DB_TEST leaked outside the test helper');
+});
+
+test('cutover enables Auth authority in production and disables it for local dev/test', async () => {
+  const root = new URL('..', import.meta.url).pathname;
+  const wrangler = await readFile(join(root, 'wrangler.toml'), 'utf8');
+  assert.match(wrangler, /^\s*AUTH_AUTHORITY_MODE\s*=\s*"flaxia-auth"\s*$/m);
+
+  const pkg = JSON.parse(await readFile(PKG_URL, 'utf8')) as { scripts: Record<string, string> };
+  for (const name of ['dev', 'dev:hot', 'dev:api', 'dev:all', 'dev:test'])
+    assert.match(pkg.scripts[name], /AUTH_AUTHORITY_MODE=off/, `${name} must stay in legacy mode locally`);
 });

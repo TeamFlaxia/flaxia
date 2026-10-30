@@ -13,7 +13,7 @@ import {
   isValidWrappedKey,
   PAIRING_ID_PATTERN,
 } from '../../../src/lib/vault/primitives';
-import { verifySrpPassword } from '../../lib/auth';
+import { getSessionToken, verifySrpPassword } from '../../lib/auth';
 import { requireAuth } from '../helpers';
 import type { Bindings, SrpProofBody, Variables } from '../types';
 
@@ -108,9 +108,14 @@ function pairingExpiry(ttlSeconds: unknown): string {
 // Replacing the envelope is what recovery-phrase rotation does. It requires an
 // SRP proof: a stolen session must not be able to burn the user's recovery
 // path by overwriting the blob with one the attacker chose.
-async function verifyProof(env: Bindings, userId: string, proof: SrpProofBody | undefined): Promise<boolean> {
+async function verifyProof(
+  env: Bindings,
+  userId: string,
+  proof: SrpProofBody | undefined,
+  sessionToken: string | null,
+): Promise<boolean> {
   if (!proof?.challenge_id || !proof.A || !proof.M1) return false;
-  return verifySrpPassword(env, userId, proof.challenge_id, proof.A, proof.M1);
+  return verifySrpPassword(env, userId, proof.challenge_id, proof.A, proof.M1, sessionToken);
 }
 
 /** Shape check only: separates a malformed request (400) from a bad proof (401). */
@@ -158,7 +163,7 @@ vault.post('/vault/keys', requireAuth, async (c) => {
   if (!hasProofShape(body.current_srp)) {
     return c.json({ error: 'Current password proof is required' }, 400);
   }
-  if (!(await verifyProof(c.env, user.id, body.current_srp))) {
+  if (!(await verifyProof(c.env, user.id, body.current_srp, getSessionToken(c.req.raw)))) {
     return c.json({ error: 'Current password is incorrect' }, 401);
   }
 
@@ -227,7 +232,7 @@ vault.put('/vault/keys', requireAuth, async (c) => {
   if (!hasProofShape(body.current_srp)) {
     return c.json({ error: 'Current password proof is required' }, 400);
   }
-  if (!(await verifyProof(c.env, user.id, body.current_srp))) {
+  if (!(await verifyProof(c.env, user.id, body.current_srp, getSessionToken(c.req.raw)))) {
     return c.json({ error: 'Current password is incorrect' }, 401);
   }
 
@@ -505,7 +510,7 @@ vault.post('/vault/keys/revoke-device', requireAuth, async (c) => {
   ) {
     return c.json({ error: 'Vault item key inventory is incomplete' }, 409);
   }
-  if (!(await verifyProof(c.env, user.id, body.current_srp))) {
+  if (!(await verifyProof(c.env, user.id, body.current_srp, getSessionToken(c.req.raw)))) {
     return c.json({ error: 'Current password is incorrect' }, 401);
   }
 

@@ -263,7 +263,10 @@ export function createOfflineGames(options: Options) {
       const noStore = (init?.cache ?? (input instanceof Request ? input.cache : undefined)) === 'no-store';
       const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
       if (signal?.aborted) throw new DOMException('The request was aborted', 'AbortError');
-      if (method === 'POST' && /^\/api\/auth\/(?:register|login(?:\/(?:start|verify))?|logout)$/.test(url.pathname))
+      if (
+        method === 'POST' &&
+        /^\/api\/auth\/(?:register|login(?:\/(?:start|verify))?|flaxia\/exchange|logout)$/.test(url.pathname)
+      )
         await account(null);
       const savedGeneration = generation;
       let response: Response;

@@ -28,6 +28,8 @@ export type Bindings = {
   CF_ACCESS_AUD: string;
   CF_TEAM_DOMAIN: string;
   CROWD_ORCHESTRATOR?: Fetcher;
+  AUTH_SERVICE?: Fetcher;
+  AUTH_AUTHORITY_MODE?: string;
   NOTIFICATION_STREAM?: DurableObjectNamespace;
   MULTIPLAYER_ROOM?: DurableObjectNamespace;
   MATCHMAKER?: DurableObjectNamespace;
@@ -58,6 +60,10 @@ export type PostRow = {
   avatar_key?: string | null;
   badge_type?: string | null;
   name_color?: string | null;
+  equipped_title_id?: string | null;
+  title_name?: string | null;
+  title_name_ja?: string | null;
+  title_icon?: string | null;
   text: string;
   hashtags: string;
   mentions: string;

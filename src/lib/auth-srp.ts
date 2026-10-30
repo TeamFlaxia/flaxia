@@ -185,9 +185,9 @@ export interface SrpProof {
 // that must re-authenticate a sensitive action (password change, email change,
 // vault unlock). The proof is single-use: the server deletes the handshake when
 // it verifies it, so it cannot be replayed against another request.
-export async function createSrpProof(password: string): Promise<SrpProof | null> {
+export async function createSrpProof(password: string, recovery = false): Promise<SrpProof | null> {
   try {
-    const reauth = await fetch('/api/auth/reauth/start', {
+    const reauth = await fetch(recovery ? '/api/auth/recovery/reauth/start' : '/api/auth/reauth/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',

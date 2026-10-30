@@ -32,7 +32,7 @@ const app = new Hono<{ Bindings: Bindings }>();
 app.use('/*', cors());
 
 const POST_SELECT = `
-  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color,
+  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon,
     p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key,
     p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
     COALESCE(p.reply_count, 0) as reply_count,
@@ -42,6 +42,7 @@ const POST_SELECT = `
     COALESCE(p.hidden, 0) as hidden, p.created_at
   FROM posts p
   LEFT JOIN users u ON p.user_id = u.id
+  LEFT JOIN titles t ON t.id = u.equipped_title_id
 `;
 
 type RawUser = {
@@ -53,6 +54,12 @@ type RawUser = {
   header_key?: string | null;
   badge_type?: string | null;
   name_color?: string | null;
+  equipped_title_id?: string | null;
+  title_name?: string | null;
+  title_name_ja?: string | null;
+  title_description?: string | null;
+  title_description_ja?: string | null;
+  title_icon?: string | null;
   created_at: string;
   frozen_at?: string | null;
   frozen_reason?: string | null;
@@ -69,6 +76,10 @@ function toPost(row: RawPost): PostRow {
     avatar_key: row.avatar_key ? String(row.avatar_key) : null,
     badge_type: row.badge_type ? String(row.badge_type) : null,
     name_color: row.name_color ? String(row.name_color) : null,
+    equipped_title_id: row.equipped_title_id ? String(row.equipped_title_id) : null,
+    title_name: row.title_name ? String(row.title_name) : null,
+    title_name_ja: row.title_name_ja ? String(row.title_name_ja) : null,
+    title_icon: row.title_icon ? String(row.title_icon) : null,
     text: String(row.text),
     hashtags: String(row.hashtags),
     gif_key: row.gif_key ? String(row.gif_key) : null,
@@ -120,9 +131,13 @@ app.get('*', async (c) => {
     }
 
     const user = (await c.env.DB.prepare(`
-      SELECT id, username, display_name, bio, avatar_key, header_key, badge_type, name_color, created_at, frozen_at, frozen_reason
-      FROM users
-      WHERE username = ? COLLATE NOCASE
+      SELECT u.id, u.username, u.display_name, u.bio, u.avatar_key, u.header_key, u.badge_type, u.name_color,
+             u.created_at, u.frozen_at, u.frozen_reason, u.equipped_title_id,
+             t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon,
+             t.description AS title_description, t.description_ja AS title_description_ja
+      FROM users u
+      LEFT JOIN titles t ON t.id = u.equipped_title_id
+      WHERE u.username = ? COLLATE NOCASE
     `)
       .bind(username)
       .first()) as RawUser | null;
