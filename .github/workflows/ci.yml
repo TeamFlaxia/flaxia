@@ -108,6 +108,13 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each group gets its own server, D1 database and Durable Object
+        # workers, so the reset-based suites never share state across jobs.
+        group: [auth-vault, posts-feeds, media-games, platform-ui]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -119,6 +126,8 @@ jobs:
       - name: Apply migrations before starting the readiness timeout
         run: npm run migrate:local
       - name: Start dev server and run tests
+        env:
+          TEST_GROUP: ${{ matrix.group }}
         run: |
           set -o pipefail
           # The pages dev server binds Durable Objects hosted by these two
@@ -145,13 +154,13 @@ jobs:
           fi
           mkdir -p coverage
           EXIT_CODE=0
-          npm test -- --experimental-test-coverage 2>&1 | tee coverage/test-output.log || EXIT_CODE=$?
+          npm run test:group -- "$TEST_GROUP" 2>&1 | tee coverage/test-output.log || EXIT_CODE=$?
           kill $SERVER_PID $MP_PID $DO_PID 2>/dev/null || true
           exit "$EXIT_CODE"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: coverage
+          name: coverage-${{ matrix.group }}
           path: coverage/
 
   build:
