@@ -104,11 +104,14 @@ npm run typecheck
 # 全テスト
 npm test
 
+# CI と同じ分割実行（1/4 〜 4/4）
+TEST_SHARD=1/4 npm run test:shard
+
 # 必要に応じてビルド
 npm run build
 ```
 
-CI（[.github/workflows/ci.yml](./.github/workflows/ci.yml)）では lint・typecheck・test・build のすべてが実行されます。
+CI（[.github/workflows/ci.yml](./.github/workflows/ci.yml)）では lint・typecheck・test・build のすべてが実行されます。テストは 4 つの shard に分かれ、それぞれ独立したサーバーと D1 で並列実行されます。
 
 ## コミットメッセージ
 
