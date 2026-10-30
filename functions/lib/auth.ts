@@ -1,4 +1,12 @@
 import { nanoid } from 'nanoid';
+import {
+  authIsAuthoritative,
+  introspectAuthGrant,
+  isSessionAuthorized,
+  pendingAuthCredentialOperation,
+  sessionGrant,
+  verifyAuthReauth,
+} from './flaxia-auth.ts';
 // Extension kept explicit: this module is also imported by Node-run tests
 // (tests/security-guards.test.ts reaches it through routes/tests.ts), and Node
 // ESM does not resolve extensionless relative specifiers.
@@ -30,6 +38,26 @@ export type LoginResult = { frozen: false; user: User; session: Session } | { fr
 export type SrpLoginResult =
   | { frozen: false; user: User; session: Session; M2: string }
   | { frozen: true; user: User; M2: string };
+
+async function recoverDirectCredentialChange(env: Env, token: string, userId: string): Promise<boolean> {
+  const operation = await pendingAuthCredentialOperation(env as { AUTH_SERVICE?: Fetcher }, token, userId);
+  if (operation === 'unavailable') return false;
+  const { resumeDirectCredentialChange, cancelStaleDirectCredentialChange } = await import(
+    './flaxia-direct-credentials.ts'
+  );
+  if (!operation) return cancelStaleDirectCredentialChange(env, token, userId);
+  const result = await resumeDirectCredentialChange(env, operation, token, userId);
+  return result === 'ok' || result === 'cancelled';
+}
+
+async function recoverDirectEmail(
+  env: Env,
+  token: string,
+  userId: string,
+): Promise<'ok' | 'none' | 'cancelled' | 'pending' | 'unavailable'> {
+  const { resumeDirectEmailChange } = await import('./flaxia-direct-email.ts');
+  return resumeDirectEmailChange(env, token, userId);
+}
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -127,6 +155,23 @@ export async function createSession(
 export async function getSession(env: Env, token: string): Promise<{ user: User; session: Session } | null> {
   if (!token) return null;
 
+  // Auth grants are 256-bit capabilities; old Flaxia session IDs are 32
+  // characters. Resolve grants at their issuer, never in the local sessions DB.
+  if (/^[A-Za-z0-9_-]{43}$/.test(token)) {
+    if (!authIsAuthoritative(env as { AUTH_AUTHORITY_MODE?: string })) return null;
+    const identity = await introspectAuthGrant(env as { AUTH_SERVICE?: Fetcher }, token);
+    if (!identity) return null;
+    const user = await env.DB.prepare(`
+      SELECT u.id, u.email, u.username, u.display_name, u.bio, u.avatar_key, u.badge_type, u.created_at, u.role
+      FROM users u JOIN flaxia_auth_links l ON l.user_id = u.id WHERE u.id = ? AND u.frozen_at IS NULL
+    `)
+      .bind(identity.user_id)
+      .first<User>();
+    if (!user || !(await recoverDirectCredentialChange(env, token, identity.user_id))) return null;
+    if ((await recoverDirectEmail(env, token, identity.user_id)) === 'unavailable') return null;
+    return user ? { user, session: { id: token, user_id: user.id, expires_at: identity.expires_at } } : null;
+  }
+
   // Get session from database
   const session = (await env.DB.prepare(`
     SELECT * FROM sessions WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -145,6 +190,7 @@ export async function getSession(env: Env, token: string): Promise<{ user: User;
     .first()) as User | undefined;
 
   if (!user) return null;
+  if (!(await isSessionAuthorized(env, token, user.id))) return null;
 
   return { user, session };
 }
@@ -153,6 +199,31 @@ export async function getSession(env: Env, token: string): Promise<{ user: User;
 // D1 so logout and other session revocations take effect immediately.
 export async function getMeWithSession(env: Env, token: string): Promise<{ user: User } | null> {
   if (!token) return null;
+
+  if (/^[A-Za-z0-9_-]{43}$/.test(token)) {
+    if (!authIsAuthoritative(env as { AUTH_AUTHORITY_MODE?: string })) return null;
+    const identity = await introspectAuthGrant(env as { AUTH_SERVICE?: Fetcher }, token);
+    if (!identity) return null;
+    let user = await env.DB.prepare(`
+      SELECT u.id, u.email, u.username, u.display_name, u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.created_at, u.role
+      FROM users u JOIN flaxia_auth_links l ON l.user_id = u.id WHERE u.id = ? AND u.frozen_at IS NULL
+    `)
+      .bind(identity.user_id)
+      .first<User>();
+    if (!user || !(await recoverDirectCredentialChange(env, token, identity.user_id))) return null;
+    const emailState = await recoverDirectEmail(env, token, identity.user_id);
+    if (emailState === 'unavailable') return null;
+    if (emailState === 'ok') {
+      user = await env.DB.prepare(`
+        SELECT u.id, u.email, u.username, u.display_name, u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.created_at, u.role
+        FROM users u JOIN flaxia_auth_links l ON l.user_id = u.id WHERE u.id = ? AND u.frozen_at IS NULL
+      `)
+        .bind(identity.user_id)
+        .first<User>();
+      if (!user) return null;
+    }
+    return user ? { user } : null;
+  }
 
   // Get user and session with single JOIN query
   const result = (await env.DB.prepare(`
@@ -169,12 +240,17 @@ export async function getMeWithSession(env: Env, token: string): Promise<{ user:
     .first()) as User | undefined;
 
   if (!result) return null;
+  if (!(await isSessionAuthorized(env, token, result.id))) return null;
   return { user: result };
 }
 
 // Extend session (sliding window)
 export async function extendSession(env: Env, token: string): Promise<boolean> {
   if (!token) return false;
+
+  // The lifetime of an Auth grant is controlled exclusively by Auth.
+  if (/^[A-Za-z0-9_-]{43}$/.test(token))
+    return (await introspectAuthGrant(env as { AUTH_SERVICE?: Fetcher }, token)) !== null;
 
   // Update session expiration to 7 days from now
   const newExpiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -195,6 +271,7 @@ export async function extendSession(env: Env, token: string): Promise<boolean> {
 
 // Delete session
 export async function deleteSession(env: Env, token: string): Promise<boolean> {
+  if (/^[A-Za-z0-9_-]{43}$/.test(token)) return true; // Caller revokes the Auth grant.
   const result = await env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(token).run();
   return result.success;
 }
@@ -423,7 +500,11 @@ export async function verifySrpPassword(
   challengeId: string,
   A: string,
   M1: string,
+  sessionToken?: string | null,
 ): Promise<boolean> {
+  const grant = await sessionGrant(env.DB, sessionToken ?? null);
+  if (grant)
+    return verifyAuthReauth(env as { AUTH_SERVICE?: Fetcher }, grant, userId, { challenge_id: challengeId, A, M1 });
   const hs = (await env.DB.prepare(
     "SELECT * FROM srp_handshakes WHERE id = ? AND user_id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
   )

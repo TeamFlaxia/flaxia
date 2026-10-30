@@ -58,6 +58,19 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
     await ensureFileScansTable(db);
 
     const resetOrder = [
+      // Remove transition guards first; otherwise their triggers correctly
+      // prevent deleting Vault keys and users in the isolated test database.
+      'flaxia_direct_deletion_jobs',
+      'flaxia_direct_email_changes',
+      'flaxia_direct_vault_changes',
+      'flaxia_auth_deletion_jobs',
+      'flaxia_auth_credential_jobs',
+      'flaxia_auth_provisioning',
+      'flaxia_auth_links',
+      'flaxia_auth_purge_in_progress',
+      'flaxia_auth_deletion_receipts',
+      'flaxia_auth_transition_assertions',
+      'profile_media_deletion_outbox',
       'poll_votes',
       'poll_options',
       'polls',

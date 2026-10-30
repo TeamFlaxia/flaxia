@@ -131,6 +131,7 @@ test('every env binding used in code exists in wrangler.toml (prod parity)', asy
     ['EXPORT_BUCKET', 'dataset export artifact falls back when unset'],
     ['EXPORT_KV', 'dataset export artifact falls back when unset'],
     ['CROWD_NODE_ORIGINS', 'file-source CORS origins are optional for same-origin nodes'],
+    ['AUTH_AUTHORITY_MODE', 'opt-in only after the documented authentication migration'],
   ]);
 
   async function walk(dir: string): Promise<string[]> {

@@ -1,7 +1,7 @@
 // Immutable asset proxy for the browser node bundle. Webhook handling lives in
 // ./webhook.ts; this route only serves pinned `@flaxia/node` build artifacts
 // from upstream so the SPA can import them with long-lived caching.
-import { CROWD_NODE_VERSION } from '../../../src/lib/crowd-node';
+import { CROWD_NODE_VERSION } from '../../../src/lib/crowd-node.ts';
 
 const UPSTREAM = `https://unpkg.com/@flaxia/node@${CROWD_NODE_VERSION}/dist`;
 const MIME: Record<string, string> = {

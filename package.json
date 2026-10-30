@@ -29,7 +29,7 @@
     "setup": "npm install && npm run migrate:local",
     "migrate:local": "wrangler d1 migrations apply flaxia --local",
     "migrate:prod": "wrangler d1 migrations apply flaxia --remote",
-    "test": "node --test --experimental-strip-types --test-concurrency=1 tests/**/*.test.ts",
+    "test": "node --test --experimental-strip-types --test-concurrency=1 \"tests/**/*.test.ts\"",
     "test:auth": "node --test --experimental-strip-types tests/auth.test.ts",
     "test:posts": "node --test --experimental-strip-types tests/posts.test.ts",
     "test:users": "node --test --experimental-strip-types tests/users.test.ts",
@@ -116,6 +116,11 @@
     "vite": "^8.3.2",
     "vite-plugin-static-copy": "^4.1.1",
     "wrangler": "^4.151.3"
+  },
+  "overrides": {
+    "sharp": "^0.35.5",
+    "tar": "^7.5.22",
+    "uuid": "^11.1.1"
   },
   "packageManager": "pnpm@8.0.0",
   "lint-staged": {

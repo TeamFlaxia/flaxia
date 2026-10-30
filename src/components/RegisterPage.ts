@@ -1,4 +1,6 @@
 import { registerWithSrp } from '../lib/auth-srp.js';
+import { createConfirmDialog } from '../lib/confirm-dialog.js';
+import { flaxiaAuthIsAuthoritative, registerWithFlaxiaAuth } from '../lib/flaxia-auth-login.js';
 import { t } from '../lib/i18n.js';
 import { passwordLengthError } from '../lib/password-policy.js';
 
@@ -239,12 +241,27 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
     submitButton.textContent = t('register.submitting');
 
     try {
-      const result = await registerWithSrp(email, username, displayName, password);
+      const authoritative = await flaxiaAuthIsAuthoritative();
+      let recoveryCode = '';
+      if (authoritative) {
+        const bytes = crypto.getRandomValues(new Uint8Array(32));
+        recoveryCode = btoa(String.fromCharCode(...bytes))
+          .replaceAll('+', '-')
+          .replaceAll('/', '_')
+          .replaceAll('=', '');
+        if (!(await createConfirmDialog(`${t('settings.recovery_save_code')}\n\n${recoveryCode}`))) return;
+      }
+      const result = await (authoritative
+        ? registerWithFlaxiaAuth(email, username, displayName, password, recoveryCode)
+        : registerWithSrp(email, username, displayName, password));
 
       if (result.ok) {
         onSuccess();
       } else {
-        const msg = result.error || t('register.error_general');
+        const msg =
+          result.error === 'recovery_setup_incomplete'
+            ? t('register.recovery_setup_incomplete')
+            : result.error || t('register.error_general');
         if (msg.toLowerCase().includes('email')) {
           emailError.textContent = msg;
           emailError.style.display = 'block';
