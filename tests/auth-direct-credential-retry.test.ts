@@ -11,7 +11,7 @@ test('direct credential change keeps only encrypted Vault data and resumes a los
     CREATE TABLE vault_keys (user_id TEXT PRIMARY KEY, salt TEXT, kdf_params TEXT, wrapped_vk TEXT, vk_version INTEGER, updated_at TEXT);
     INSERT INTO vault_keys VALUES ('u', 'old', '{}', 'old-wrap', 1, '');
     CREATE TABLE flaxia_auth_transition_assertions (valid INTEGER NOT NULL CHECK (valid = 1));`);
-  db.exec(readFileSync(new URL('../migrations/0119_direct_auth_vault_changes.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../migrations/0120_direct_auth_vault_changes.sql', import.meta.url), 'utf8'));
   const operation = 'A'.repeat(43),
     grant = 'B'.repeat(43),
     target = 'target-stamp';

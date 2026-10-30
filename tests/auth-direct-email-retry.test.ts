@@ -10,7 +10,7 @@ test('an Auth email change survives a local transaction rollback and lost acknow
   db.exec(
     "PRAGMA foreign_keys=ON; CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT UNIQUE, frozen_at TEXT); INSERT INTO users VALUES ('u', 'old@example.test', NULL); CREATE TABLE flaxia_direct_deletion_jobs (user_id TEXT); CREATE TABLE flaxia_auth_transition_assertions (valid INTEGER NOT NULL CHECK(valid = 1));",
   );
-  db.exec(readFileSync(new URL('../migrations/0123_direct_email_changes.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../migrations/0124_direct_email_changes.sql', import.meta.url), 'utf8'));
   const hash = 'A'.repeat(43),
     grant = 'B'.repeat(43),
     target = 'new@example.test';
@@ -73,7 +73,7 @@ test('email reservations prevent conflicting registration, changes and deletion 
   db.exec(
     "PRAGMA foreign_keys=ON; CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT UNIQUE, frozen_at TEXT); INSERT INTO users VALUES ('u', 'old@example.test', NULL), ('v', 'other@example.test', NULL); CREATE TABLE flaxia_direct_deletion_jobs (user_id TEXT);",
   );
-  db.exec(readFileSync(new URL('../migrations/0123_direct_email_changes.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../migrations/0124_direct_email_changes.sql', import.meta.url), 'utf8'));
   db.exec(
     "INSERT INTO flaxia_direct_email_changes VALUES ('op', 'u', 'reserved@example.test', 'pending', '2026-01-01T00:00:00Z')",
   );

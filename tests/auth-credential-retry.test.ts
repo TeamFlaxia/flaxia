@@ -18,11 +18,11 @@ test('credential and Vault transition resumes after remote response loss and loc
     INSERT INTO flaxia_auth_sessions VALUES ('session', '${'B'.repeat(43)}', 'old-stamp', 'old-stamp');
     INSERT INTO vault_keys VALUES ('u', 'old-vault-salt', '{}', 'old-wrapped', 1, '');`);
   for (const migration of [
-    '0114_auth_provision_guard.sql',
-    '0115_auth_deletion_jobs.sql',
-    '0116_auth_link_guard.sql',
-    '0117_auth_credential_jobs.sql',
-    '0118_auth_credential_recovery.sql',
+    '0115_auth_provision_guard.sql',
+    '0116_auth_deletion_jobs.sql',
+    '0117_auth_link_guard.sql',
+    '0118_auth_credential_jobs.sql',
+    '0119_auth_credential_recovery.sql',
   ]) {
     db.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   }

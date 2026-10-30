@@ -15,14 +15,14 @@ test('linked migration atomically removes local credentials, copied verifiers, s
     INSERT INTO users VALUES ('u', 'name', 'Name', 'legacy', 'salt', 'verifier', '2048', 'pbkdf2-600k-v2', NULL);
     INSERT INTO sessions VALUES ('s', 'u'); INSERT INTO srp_handshakes VALUES ('h', 'u');`);
   for (const migration of [
-    '0114_auth_provision_guard.sql',
-    '0115_auth_deletion_jobs.sql',
-    '0116_auth_link_guard.sql',
-    '0117_auth_credential_jobs.sql',
-    '0118_auth_credential_recovery.sql',
-    '0119_direct_auth_vault_changes.sql',
-    '0120_auth_credential_purge.sql',
-    '0121_direct_auth_deletion.sql',
+    '0115_auth_provision_guard.sql',
+    '0116_auth_deletion_jobs.sql',
+    '0117_auth_link_guard.sql',
+    '0118_auth_credential_jobs.sql',
+    '0119_auth_credential_recovery.sql',
+    '0120_direct_auth_vault_changes.sql',
+    '0121_auth_credential_purge.sql',
+    '0122_direct_auth_deletion.sql',
   ])
     db.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
   db.exec(

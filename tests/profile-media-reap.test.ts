@@ -7,7 +7,7 @@ import { reapProfileMedia } from '../functions/lib/profile-media-reap.ts';
 test('profile media cleanup retries failed R2 deletion and prevents reusing a pending key', async () => {
   const db = new DatabaseSync(':memory:');
   db.exec('CREATE TABLE users (id TEXT PRIMARY KEY, avatar_key TEXT, header_key TEXT);');
-  db.exec(readFileSync(new URL('../migrations/0124_profile_media_deletion_outbox.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../migrations/0125_profile_media_deletion_outbox.sql', import.meta.url), 'utf8'));
   db.exec("INSERT INTO profile_media_deletion_outbox (object_key) VALUES ('avatar/hash');");
   assert.throws(() => db.exec("INSERT INTO users VALUES ('u', 'avatar/hash', NULL)"), /profile_media_deletion_pending/);
   type Bound = { run: () => { success: boolean; meta: { changes: number } }; all: () => { results: unknown[] } };
@@ -39,7 +39,7 @@ test('profile media cleanup retries failed R2 deletion and prevents reusing a pe
 test('concurrent cleanup workers cannot delete a reused key after releasing the outbox guard', async () => {
   const db = new DatabaseSync(':memory:');
   db.exec('CREATE TABLE users (id TEXT PRIMARY KEY, avatar_key TEXT, header_key TEXT);');
-  db.exec(readFileSync(new URL('../migrations/0124_profile_media_deletion_outbox.sql', import.meta.url), 'utf8'));
+  db.exec(readFileSync(new URL('../migrations/0125_profile_media_deletion_outbox.sql', import.meta.url), 'utf8'));
   db.exec("INSERT INTO profile_media_deletion_outbox (object_key) VALUES ('avatar/hash');");
   type Bound = { run: () => { success: boolean; meta: { changes: number } }; all: () => { results: unknown[] } };
   const d1 = {
