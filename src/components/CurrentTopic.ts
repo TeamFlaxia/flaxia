@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js';
+import { stripPostColors } from '../lib/post-colors.js';
 import { Post, PostCardMode } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
@@ -185,7 +186,7 @@ export function createCurrentTopic(props: CurrentTopicProps): {
         content.appendChild(topicElement);
 
         // Update topic content
-        topicText.textContent = state.topic.text;
+        topicText.textContent = stripPostColors(state.topic.text);
 
         const typeIcon = state.topic.type === 'flash' ? '⚡' : '🚀';
         const displayName = state.topic.display_name || state.topic.username;

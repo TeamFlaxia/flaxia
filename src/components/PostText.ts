@@ -130,8 +130,8 @@ export {
 /**
  * Unified text processing pipeline:
  * 1. Escape math notation → placeholders
- * 2. Escape post references → placeholders
- * 3. Escape color markers → placeholders (Flaxia+ authors only)
+ * 2. Escape color markers → placeholders (Flaxia+ authors only)
+ * 3. Escape post references → placeholders
  * 4. Parse Markdown
  * 5. Sanitize HTML
  * 6. Expand KaTeX placeholders
@@ -146,17 +146,10 @@ async function processTextInternal(
   // Step 1: Escape math notation with placeholders
   const { textWithPlaceholders, mathPlaceholders } = escapeMathNotation(text);
 
-  // Step 2: Escape post references (>>N) to prevent markdown blockquote parsing
-  const refPlaceholders: { id: string; index: string }[] = [];
-  const textWithRefPlaceholders = textWithPlaceholders.replace(/>>(\d+)/g, (match, index) => {
-    const id = `ref-${refPlaceholders.length}`;
-    refPlaceholders.push({ id, index });
-    return `⚡${id}⚡`;
-  });
-
-  // Step 3: Color markers. Parse after math/post-ref placeholders so LaTeX and
-  // `>>N` references cannot be mistaken for color syntax.
-  let textForMarkdown = textWithRefPlaceholders;
+  // Step 2: Color markers. Parse before the `>>N` substitution so a line that
+  // starts with a post reference is treated as a block boundary here, matching
+  // the API/SSR parser (which sees the raw body).
+  let textForMarkdown = textWithPlaceholders;
   let colorEntries: ColorPlaceholderEntry[] = [];
   if (enableColors) {
     const parsed = parsePostColors(textForMarkdown);
@@ -164,6 +157,14 @@ async function processTextInternal(
     textForMarkdown = inserted.text;
     colorEntries = inserted.entries;
   }
+
+  // Step 3: Escape post references (>>N) to prevent markdown blockquote parsing
+  const refPlaceholders: { id: string; index: string }[] = [];
+  textForMarkdown = textForMarkdown.replace(/>>(\d+)/g, (_match, index) => {
+    const id = `ref-${refPlaceholders.length}`;
+    refPlaceholders.push({ id, index });
+    return `⚡${id}⚡`;
+  });
 
   // Step 4: Parse Markdown (dynamically import markdown-it)
   const md = await getMarkdownIt();

@@ -126,6 +126,13 @@ describe('post text colors', () => {
     }
   });
 
+  it('rejects spans crossing a table without a leading pipe', () => {
+    const text = '{red}a | b\n--- | ---\nc | d{/red}';
+    const result = parsePostColors(text);
+    assert.equal(result.plain, text);
+    assert.equal(result.spans.length, 0);
+  });
+
   it('allows spans across a soft line break and within a list item', () => {
     const soft = parsePostColors('{red}a\nb{/red}');
     assert.equal(soft.plain, 'a\nb');

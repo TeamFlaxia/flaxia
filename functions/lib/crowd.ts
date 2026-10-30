@@ -641,18 +641,19 @@ export async function embedPost(
 ): Promise<void> {
   if (embeddingPosts.has(postId)) return;
   embeddingPosts.add(postId);
-  const embeddingText = stripPostColors(text);
   try {
     const config = crowdConfig(env);
     if (!db) {
-      if (config.configured && !config.screeningDisabled) await submitEmbedTask(config, postId, embeddingText);
+      if (config.configured && !config.screeningDisabled) await submitEmbedTask(config, postId, text);
       return;
     }
 
     // Persist to the outbox before the network call. The submit happens after
     // the response (waitUntil); if the isolate is evicted mid-flight, the row
-    // is still queued for the next drain instead of being lost.
-    await enqueuePendingEmbed(db, postId, embeddingText);
+    // is still queued for the next drain instead of being lost. Both the outbox
+    // and `submitEmbedTask` keep the raw body so stripping happens exactly once
+    // (it is not idempotent for escaped markers such as `\{red}`).
+    await enqueuePendingEmbed(db, postId, text);
     if (!config.configured || config.screeningDisabled) return;
 
     // This drain skips `postId` (the in-flight guard), so backfilled rows are
@@ -661,11 +662,11 @@ export async function embedPost(
     await drainPendingEmbeds(db, env).catch((e) => console.error('Pending embed drain failed:', e));
 
     if (Date.now() - lastEmbedTime < EMBED_RATE_LIMIT_MS) return;
-    const ok = await submitEmbedTask(config, postId, embeddingText);
+    const ok = await submitEmbedTask(config, postId, text);
     if (ok) {
       await db.prepare('DELETE FROM pending_embeddings WHERE post_id = ?').bind(postId).run();
     } else {
-      await enqueuePendingEmbed(db, postId, embeddingText, 1, 'submission failed');
+      await enqueuePendingEmbed(db, postId, text, 1, 'submission failed');
     }
   } finally {
     embeddingPosts.delete(postId);

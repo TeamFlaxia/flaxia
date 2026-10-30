@@ -125,6 +125,13 @@ function readMarker(text: string, index: number): Marker | null {
   return { kind, style, end: closeBrace + 1 };
 }
 
+function isTableDelimiterLine(line: string): boolean {
+  // GFM delimiter row: `:?-+:?` cells separated by `|`. The leading and
+  // trailing pipes are optional, so `--- | ---` opens a table just like
+  // `| --- | --- |` does; only the leading-pipe form is caught below.
+  return /^ {0,3}\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/.test(line);
+}
+
 /**
  * Lines that start a new Markdown block. A color span must not cross one: the
  * client renders a span into the DOM, and wrapping across block elements would
@@ -136,6 +143,7 @@ function isBlockBoundaryLine(line: string): boolean {
   if (/^ {0,3}(?:[-*+]|\d{1,9}[.)])\s+/.test(line)) return true;
   if (/^ {0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) return true;
   if (/^ {0,3}\|/.test(line)) return true;
+  if (isTableDelimiterLine(line)) return true;
   return false;
 }
 
