@@ -1,5 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 
+import { stripPostColors } from '../../../src/lib/post-colors.ts';
+
 interface Post {
   id: string;
   text: string;
@@ -48,7 +50,8 @@ function isValidUrl(url: string): boolean {
 }
 
 function textToHtml(text: string, baseUrl: string): string {
-  const escaped = escapeHtml(text);
+  // Remote servers cannot render our color markers; federate plain text.
+  const escaped = escapeHtml(stripPostColors(text).replace(/\\\{/g, '{'));
   // Convert URLs to links
   const withLinks = escaped.replace(/(https?:\/\/[^\s<]+)/g, (match) => {
     if (!isValidUrl(match)) return match;

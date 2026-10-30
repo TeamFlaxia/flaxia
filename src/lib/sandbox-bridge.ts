@@ -1,5 +1,7 @@
 import { isParentMessage, SandboxMessage } from '../lib/bridge.js';
+import { canUsePostColors } from '../lib/entitlements.js';
 import { t } from '../lib/i18n.js';
+import { stripPostColors } from '../lib/post-colors.js';
 import type { Post } from '../types/post.js';
 import { registerModal } from './modal-state.js';
 
@@ -79,7 +81,10 @@ export class SandboxBridge {
     const overlay = document.createElement('div');
     overlay.className = 'fullscreen-overlay';
 
-    const postText = this.post.text.length > 40 ? this.post.text.slice(0, 40) + '…' : this.post.text;
+    const plainText = canUsePostColors({ badge_type: this.post.badge_type })
+      ? stripPostColors(this.post.text)
+      : this.post.text.replace(/\\\{/g, '{');
+    const postText = plainText.length > 40 ? plainText.slice(0, 40) + '…' : plainText;
 
     overlay.innerHTML = `
       <div class="fullscreen-modal">

@@ -1,9 +1,10 @@
-import { maxMediaAttachmentsForUser } from '../lib/entitlements.js';
+import { canUsePostColors, maxMediaAttachmentsForUser } from '../lib/entitlements.js';
 import { attachmentMimeType } from '../lib/file-extensions.js';
 import { t } from '../lib/i18n.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { loadLinkPreview } from '../lib/link-preview.js';
 import { createModalOverlay } from '../lib/modal-overlay.js';
+import { stripPostColors } from '../lib/post-colors.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { useSandboxBridge } from '../lib/sandbox-bridge.js';
 import { getShowNsfw } from '../lib/settings.js';
@@ -195,7 +196,12 @@ export class PostCard {
       white-space: pre-wrap;
       word-break: break-word;
     `;
-    textElement.textContent = displayText;
+    // Show the marker-free body immediately for entitled authors; the rich
+    // renderer replaces this node on idle and would otherwise briefly expose
+    // raw `{red}` markers. `originalText` stays raw for editing.
+    textElement.textContent = canUsePostColors({ badge_type: this.props.post.badge_type })
+      ? stripPostColors(displayText)
+      : displayText;
     this.postTextContainer.appendChild(textElement);
 
     container.appendChild(this.postTextContainer);
@@ -209,6 +215,7 @@ export class PostCard {
               mentions: this.props.post.mentions,
               enablePostRefs: this.props.enablePostRefs,
               authorId: this.props.post.user_id,
+              badgeType: this.props.post.badge_type,
             });
             textElement.replaceWith(richText);
           } catch (error) {
@@ -225,6 +232,7 @@ export class PostCard {
             mentions: this.props.post.mentions,
             enablePostRefs: this.props.enablePostRefs,
             authorId: this.props.post.user_id,
+            badgeType: this.props.post.badge_type,
           });
           textElement.replaceWith(richText);
         } catch (error) {

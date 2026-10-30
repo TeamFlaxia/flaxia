@@ -1,3 +1,5 @@
+import { stripPostColors } from '../../src/lib/post-colors.ts';
+
 /** SHA-256 of the exact text sent for embedding, also signed into the callback URL. */
 export async function postTextSha(text: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
@@ -20,7 +22,11 @@ export async function enrichPostsWithAiIndex<T extends { id: string }>(posts: T[
     const indexed = new Set<string>();
     await Promise.all(
       (result.results ?? []).map(async (row) => {
-        if (typeof row.text === 'string' && row.source_sha && row.source_sha === (await postTextSha(row.text))) {
+        if (
+          typeof row.text === 'string' &&
+          row.source_sha &&
+          row.source_sha === (await postTextSha(stripPostColors(row.text)))
+        ) {
           indexed.add(row.id);
         }
       }),

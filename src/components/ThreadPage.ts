@@ -1,6 +1,7 @@
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { stripPostColors } from '../lib/post-colors.js';
 import { updateMetaTags } from '../lib/seo-meta.js';
 import { getReplyStyle } from '../lib/settings.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
@@ -703,7 +704,7 @@ export class ThreadPage {
 
     updateMetaTags({
       title: `Flaxia - ${name}`,
-      description: post.text.slice(0, 200),
+      description: stripPostColors(post.text).slice(0, 200),
       url: `${window.location.origin}/thread/${post.id}`,
       image: ogImage,
     });

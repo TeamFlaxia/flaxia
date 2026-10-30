@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
+import { stripPostColors } from '../../../src/lib/post-colors.ts';
 import { getVapidPublicKey } from '../../lib/push';
 import { requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
@@ -167,7 +168,7 @@ push.get('/notifications', requireAuth, async (c) => {
         n.created_at,
         n.actor_id,
         n.actor_data,
-        SUBSTR(p.text, 1, 50) as post_text_preview,
+        p.text as post_text_preview,
         u.username as actor_username,
         u.display_name as actor_display_name,
         u.avatar_key as actor_avatar_key, u.badge_type as actor_badge_type
@@ -224,7 +225,9 @@ push.get('/notifications', requireAuth, async (c) => {
         id: row.id,
         type: row.type,
         post_id: row.post_id,
-        post_text_preview: row.post_text_preview,
+        post_text_preview: row.post_text_preview
+          ? stripPostColors(String(row.post_text_preview)).slice(0, 50)
+          : row.post_text_preview,
         actor: row.actor_username
           ? {
               username: row.actor_username,

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { stripPostColors } from '../../../src/lib/post-colors.ts';
 import { getMeWithSession, getSessionToken } from '../../lib/auth';
 import { computeScore as banditComputeScore, project as banditProject, projConfigKey } from '../../lib/linucb';
 import { clampLimit } from '../../lib/pagination';
@@ -218,7 +219,7 @@ games.get('/games', async (c) => {
             const game: Record<string, unknown> = {
               id: row.postId,
               postId: row.postId,
-              title: row.text?.substring(0, 100) || `Game by @${row.username}`,
+              title: stripPostColors(row.text || '').substring(0, 100) || `Game by @${row.username}`,
               username: row.username,
               displayName: row.display_name || undefined,
               avatarKey: row.avatar_key || undefined,
@@ -455,7 +456,7 @@ games.get('/games', async (c) => {
         return {
           id: row.postId,
           postId: row.postId,
-          title: row.text?.substring(0, 100) || `Game by @${row.username}`,
+          title: stripPostColors(row.text || '').substring(0, 100) || `Game by @${row.username}`,
           username: row.username,
           displayName: row.display_name || undefined,
           avatarKey: row.avatar_key || undefined,
@@ -550,7 +551,7 @@ games.get('/games', async (c) => {
       return {
         id: row.postId,
         postId: row.postId,
-        title: row.text?.substring(0, 100) || `Game by @${row.username}`,
+        title: stripPostColors(row.text || '').substring(0, 100) || `Game by @${row.username}`,
         username: row.username,
         displayName: row.display_name || undefined,
         avatarKey: row.avatar_key || undefined,

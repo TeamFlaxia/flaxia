@@ -17,6 +17,7 @@ import {
   parseCrowdWebhook,
   resolveNsfwTags,
 } from '@flaxia/sdk';
+import { stripPostColors } from '../../src/lib/post-colors.ts';
 import { postTextSha } from './ai-index.ts';
 import { createProjection, parseBanditConfig, projConfigKey, project } from './linucb.ts';
 import { loadBlocklist, matchBlocklist, matchSignatureEntry } from './scan/blocklist.ts';
@@ -554,15 +555,17 @@ async function submitEmbedTask(config: CrowdConfig, postId: string, text: string
   const client = getCrowdClient(config);
   if (!client) return false;
 
+  // Embed the human-readable body, not the color markup.
+  const embeddingText = stripPostColors(text);
   const callbackUrl = await signedCallbackUrl(config, {
     baseUrl: config.baseUrl,
     type: 'vector-embed',
-    params: { postId, sha: await postTextSha(text) },
+    params: { postId, sha: await postTextSha(embeddingText) },
   });
   try {
     await client.submit({
       workload: 'vector-embed',
-      payload: { text },
+      payload: { text: embeddingText },
       callbackUrl,
       timeoutMs: DEFAULT_WORKLOAD_TIMEOUT_MS['vector-embed'],
     });
@@ -647,7 +650,9 @@ export async function embedPost(
 
     // Persist to the outbox before the network call. The submit happens after
     // the response (waitUntil); if the isolate is evicted mid-flight, the row
-    // is still queued for the next drain instead of being lost.
+    // is still queued for the next drain instead of being lost. Both the outbox
+    // and `submitEmbedTask` keep the raw body so stripping happens exactly once
+    // (it is not idempotent for escaped markers such as `\{red}`).
     await enqueuePendingEmbed(db, postId, text);
     if (!config.configured || config.screeningDisabled) return;
 
@@ -761,7 +766,7 @@ async function handleVectorEmbedResult(
   const sourceSha = url.searchParams.get('sha');
   if (sourceSha) {
     const current = await db.prepare('SELECT text FROM posts WHERE id = ?').bind(postId).first<{ text: string }>();
-    if (!current || sourceSha !== (await postTextSha(current.text))) return;
+    if (!current || sourceSha !== (await postTextSha(stripPostColors(current.text)))) return;
   }
   await ensureEmbeddingSourceColumn(db);
 

@@ -1,5 +1,6 @@
 import { buildGameDescription, buildGameTitle } from '../../src/lib/game-seo';
 import { isCrawler } from '../../src/lib/is-crawler';
+import { stripPostColors } from '../../src/lib/post-colors.ts';
 import { type PostRow, renderBlogPostingJsonLd, renderHtmlShell, renderPostArticle } from '../../src/lib/render-html';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import { renderBreadcrumbJsonLd, renderSsrFooter, renderSsrHeader, renderSsrLayoutCss } from '../lib/ssr-layout';
@@ -147,20 +148,21 @@ export async function onRequest(context: {
     }
 
     // Build description: prefer game SEO description for game posts
-    let description = post.game_description || post.text.slice(0, 200);
+    const plainText = stripPostColors(post.text).replace(/\\\{/g, '{');
+    let description = post.game_description || plainText.slice(0, 200);
     let jsonLdExtra = '';
     let breadcrumb: Array<{ label: string; url: string }> = [];
     let footerSections: Array<{ title: string; links: Array<{ label: string; url: string }> }> = [];
 
     if (isGame) {
-      const title = buildGameTitle(post.text);
+      const title = buildGameTitle(plainText);
       const typeLabel = detectGameType(post);
       description = buildGameDescription({
         gameDescription: post.game_description,
         title,
         typeLabel,
         authorName,
-        text: post.text,
+        text: plainText,
       });
       const gameUrl = `${baseUrl}/arcade/${post.id}`;
       breadcrumb = [

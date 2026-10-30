@@ -51,6 +51,8 @@ const groups = {
     'notifications-api',
     'pagination',
     'poll-state',
+    'post-colors',
+    'post-colors-api',
     'posts',
     'recommended',
     'stamp-entitlement',

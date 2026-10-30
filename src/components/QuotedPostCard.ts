@@ -1,7 +1,10 @@
 import { attachPlusBadge } from '../lib/avatar.js';
+import { canUsePostColors } from '../lib/entitlements.js';
 import { t } from '../lib/i18n.js';
 import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { parsePostColors } from '../lib/post-colors.js';
+import { renderColorizedText } from '../lib/post-colors-dom.js';
 import { createUserTitleBadge } from '../lib/user-title.js';
 import type { QuotedPost } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
@@ -210,7 +213,12 @@ export function createQuotedPostCard(props: QuotedPostCardProps): HTMLElement {
     white-space: pre-wrap;
     word-break: break-word;
   `;
-  body.textContent = quoted.text || '';
+  if (canUsePostColors({ badge_type: quoted.badge_type })) {
+    const parsed = parsePostColors(quoted.text || '');
+    body.appendChild(renderColorizedText(parsed.plain, parsed.spans));
+  } else {
+    body.textContent = (quoted.text || '').replace(/\\\{/g, '{');
+  }
   card.appendChild(body);
 
   const attachment = createQuotedPostAttachment(quoted);

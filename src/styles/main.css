@@ -12,6 +12,17 @@
   --accent-dark: #16a34a;
   --danger: #ef4444;
   --link: #3b82f6;
+  --post-color-red: #b91c1c;
+  --post-color-orange: #c2410c;
+  --post-color-yellow: #a16207;
+  --post-color-green: #15803d;
+  --post-color-blue: #1d4ed8;
+  --post-color-purple: #7e22ce;
+  --post-color-pink: #be185d;
+  --post-color-gray: #475569;
+  --post-color-mikan: #b45309;
+  --post-color-kimwaipu: #047857;
+  --post-rainbow: linear-gradient(90deg, #dc2626, #ea580c, #ca8a04, #16a34a, #2563eb, #7c3aed, #db2777);
 }
 
 :root[data-theme="dark"] {
@@ -28,6 +39,17 @@
   --accent-dark: #16a34a;
   --danger: #ef4444;
   --link: #60a5fa;
+  --post-color-red: #f87171;
+  --post-color-orange: #fb923c;
+  --post-color-yellow: #facc15;
+  --post-color-green: #4ade80;
+  --post-color-blue: #60a5fa;
+  --post-color-purple: #c084fc;
+  --post-color-pink: #f472b6;
+  --post-color-gray: #94a3b8;
+  --post-color-mikan: #f59e0b;
+  --post-color-kimwaipu: #6ee7b7;
+  --post-rainbow: linear-gradient(90deg, #f87171, #fb923c, #facc15, #4ade80, #60a5fa, #c084fc, #f472b6);
   /* Occupied height of the fixed mobile bottom nav (3.5rem bar + safe area). */
   --bottom-nav-h: 0px;
 }
@@ -1926,6 +1948,74 @@ h1 {
   line-height: 1.5;
   font-family: "Noto Sans", monospace, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   color: var(--text-primary);
+}
+
+/* Flaxia+ post text colors. The palette is theme-aware and contrast-checked. */
+.post-color--red {
+  color: var(--post-color-red);
+}
+.post-color--orange {
+  color: var(--post-color-orange);
+}
+.post-color--yellow {
+  color: var(--post-color-yellow);
+}
+.post-color--green {
+  color: var(--post-color-green);
+}
+.post-color--blue {
+  color: var(--post-color-blue);
+}
+.post-color--purple {
+  color: var(--post-color-purple);
+}
+.post-color--pink {
+  color: var(--post-color-pink);
+}
+.post-color--gray {
+  color: var(--post-color-gray);
+}
+.post-color--mikan {
+  color: var(--post-color-mikan);
+}
+.post-color--kimwaipu {
+  color: var(--post-color-kimwaipu);
+}
+.post-color--rainbow {
+  color: var(--post-color-purple);
+}
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .post-color--rainbow {
+    background-image: var(--post-rainbow);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
+}
+.post-dinnerborn {
+  display: inline-block;
+  transform: rotate(180deg);
+  transform-origin: center;
+  vertical-align: middle;
+}
+
+@media (forced-colors: active) {
+  .post-color--red,
+  .post-color--orange,
+  .post-color--yellow,
+  .post-color--green,
+  .post-color--blue,
+  .post-color--purple,
+  .post-color--pink,
+  .post-color--gray,
+  .post-color--mikan,
+  .post-color--kimwaipu,
+  .post-color--rainbow {
+    color: inherit;
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
+  }
 }
 
 .math-inline {
