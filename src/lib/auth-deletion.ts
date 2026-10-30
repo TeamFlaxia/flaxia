@@ -45,6 +45,12 @@ export async function retryPendingDeletion(): Promise<boolean> {
       body: JSON.stringify({ operation: pending.operation }),
       signal: AbortSignal.timeout(5000),
     });
+    if (response.status === 404) {
+      // No job exists for this capability anymore; do not let it block a
+      // different account using the same browser.
+      clearDeletionOperation();
+      return false;
+    }
     if (!response.ok) return false;
     clearDeletionOperation();
     return true;

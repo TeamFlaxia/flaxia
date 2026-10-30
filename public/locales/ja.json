@@ -412,6 +412,7 @@
   "settings.password_mismatch": "パスワードが一致しません",
   "settings.password_length": "パスワードは8〜128文字で入力してください",
   "settings.password_change_pending": "前回のパスワード変更を再開しています。しばらくしてからもう一度お試しください。",
+  "settings.password_previous_completed": "前回のパスワード変更が完了しました。もう一度変更する場合はパスワードを入力し直してください。",
   "settings.password_saved": "✓ パスワードを更新しました",
   "settings.password_save_failed": "パスワードの更新に失敗しました",
   "settings.password_network_error": "ネットワークエラー",

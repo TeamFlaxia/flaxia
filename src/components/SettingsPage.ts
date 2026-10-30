@@ -20,7 +20,6 @@ import {
   startCrowdNode,
   stopCrowdNode,
 } from '../lib/crowd-node.js';
-import { flaxiaAuthIsAuthoritative } from '../lib/flaxia-auth-login.js';
 import { getLocale, setLocale, t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
@@ -756,9 +755,11 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   recoveryButton.className = 'settings-save';
   recoveryButton.textContent = t('settings.recovery_create');
   recoveryButton.hidden = true;
-  void flaxiaAuthIsAuthoritative()
-    .then((enabled) => {
-      recoveryButton.hidden = !enabled;
+  // Enrollment is available for every Auth-linked session, including the
+  // opt-in linking phase before AUTH_AUTHORITY_MODE is enabled.
+  void fetch('/api/auth/recovery/status', { credentials: 'include', cache: 'no-store' })
+    .then((response) => {
+      recoveryButton.hidden = !response.ok;
     })
     .catch(() => {});
   passwordSection.appendChild(recoveryButton);
@@ -905,8 +906,13 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
       if (!currentUser) return;
       const previous = await retryPendingCredentialChange();
       if (previous === 'committed') {
-        passwordMessage.textContent = t('settings.password_saved');
+        // A different, earlier submission was completed. The password in this
+        // form was never sent, so do not claim it was saved.
+        passwordMessage.textContent = t('settings.password_previous_completed');
         passwordMessage.style.color = 'var(--success, #10b981)';
+        currentPasswordInput2.value = '';
+        newPasswordInput.value = '';
+        confirmPasswordInput.value = '';
         return;
       }
       if (previous === 'pending') {

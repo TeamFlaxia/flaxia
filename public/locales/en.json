@@ -412,6 +412,7 @@
   "settings.password_mismatch": "Passwords do not match",
   "settings.password_length": "Password must be between 8 and 128 characters",
   "settings.password_change_pending": "Your previous password change is still being resumed. Please try again shortly.",
+  "settings.password_previous_completed": "Your previous password change was completed. Enter your password again to make another change.",
   "settings.password_saved": "✓ Password updated",
   "settings.password_save_failed": "Failed to update password",
   "settings.password_network_error": "Network error",

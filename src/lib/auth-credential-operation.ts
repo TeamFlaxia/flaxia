@@ -45,7 +45,12 @@ export async function retryPendingCredentialChange(): Promise<
       clearCredentialOperation();
       return 'committed';
     }
-    if (response.status === 404) return 'not_found';
+    if (response.status === 404) {
+      // The server has no job for this capability (already purged, or it was
+      // created for another account). Keeping it would block this account.
+      clearCredentialOperation();
+      return 'not_found';
+    }
     const result = (await response.json().catch(() => null)) as { cancelled?: unknown } | null;
     if (result?.cancelled === true) {
       clearCredentialOperation();
