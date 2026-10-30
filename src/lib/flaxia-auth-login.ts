@@ -150,7 +150,18 @@ export async function loginWithFlaxiaAuth(username: string, password: string): P
     srp_kdf?: unknown;
   };
   if (handshake.srp === false) {
-    const legacy = await post(AUTH_ORIGIN, '/api/auth/login/legacy', { username, password });
+    // The Worker cannot derive the PBKDF2-600k verifier (Workers WebCrypto
+    // caps PBKDF2 at 100k iterations), so the browser supplies it.
+    const legacySalt = generateSalt();
+    const legacyVerifier = await computeVerifier(password, legacySalt, DEFAULT_SRP_KDF);
+    const legacy = await post(AUTH_ORIGIN, '/api/auth/login/legacy', {
+      username,
+      password,
+      srp_salt: encode(legacySalt),
+      srp_verifier: encode(legacyVerifier),
+      srp_group: '2048',
+      srp_kdf: DEFAULT_SRP_KDF,
+    });
     const data = (await legacy.json().catch(() => ({}))) as { error?: string; username?: string };
     if (legacy.status === 403 && data.error === 'account_frozen' && data.username)
       return { frozen: true, username: data.username };

@@ -71,6 +71,9 @@ test('only the legacy endpoint receives the old password', async (t) => {
     if (path.endsWith('/api/auth/login/start')) return Response.json({ srp: false });
     if (path.endsWith('/api/auth/login/legacy')) {
       assert.equal(body.password, 'old-password');
+      assert.equal(body.srp_group, '2048');
+      assert.equal(body.srp_kdf, 'pbkdf2-600k-v2');
+      assert.equal(body.srp_verifier, enc(await computeVerifier('old-password', dec(body.srp_salt))));
       return Response.json({ user: { id: 'u' } });
     }
     assert.equal('password' in body, false);
