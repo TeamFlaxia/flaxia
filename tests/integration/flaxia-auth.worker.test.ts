@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { clientStep1, clientStep2, computeVerifier, generateSalt, verifyServerProof } from '../../src/lib/srp.ts';
 import {
@@ -372,4 +373,162 @@ test('local SRP account can provision Auth idempotently with password proof', {
     ).status,
     401,
   );
+});
+
+test('linking refuses a local profile whose copied credentials changed', {
+  skip: !authBase || !appBase,
+  timeout: 60000,
+}, async () => {
+  assert.ok(authBase && appBase);
+  const username = `mm${randomBytes(6).toString('hex')}`;
+  const password = 'Auth copy password';
+  const salt = generateSalt();
+  const verifier = await computeVerifier(password, salt);
+  const post = (base: string, path: string, body: unknown, cookie?: string, origin = 'https://flaxia.app') =>
+    fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: {
+        Origin: origin,
+        'CF-Connecting-IP': '192.0.2.241',
+        'Content-Type': 'application/json',
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  const registration = await post(authBase, '/api/auth/register', {
+    username,
+    srp_salt: enc(salt),
+    srp_verifier: enc(verifier),
+    srp_group: '2048',
+    srp_kdf: 'pbkdf2-600k-v2',
+  });
+  assert.equal(registration.status, 201, await registration.clone().text());
+  const { user } = (await registration.json()) as { user: { id: string } };
+  const authCookie = registration.headers.get('set-cookie')?.split(';')[0];
+  assert.ok(authCookie);
+
+  // The local copy still opens a different password, so copying must not link.
+  const localSalt = generateSalt();
+  const localVerifier = await computeVerifier('different local password', localSalt);
+  const seed = `INSERT INTO users (id, email, username, display_name, password_hash, srp_salt, srp_verifier, srp_group, srp_kdf) VALUES ('${user.id}', '${username}@example.test', '${username}', '${username}', '', '${enc(localSalt)}', '${enc(localVerifier)}', '2048', 'pbkdf2-600k-v2')`;
+  const db = spawnSync(
+    process.execPath,
+    ['node_modules/wrangler/bin/wrangler.js', 'd1', 'execute', 'flaxia', '--local', '--command', seed],
+    { encoding: 'utf8' },
+  );
+  assert.equal(db.status, 0, db.stderr);
+
+  const pkce = randomBytes(32).toString('base64url');
+  const authorize = await post(
+    authBase,
+    '/api/auth/flaxia/authorize',
+    { challenge: digest(pkce) },
+    authCookie,
+    'https://flaxia.app',
+  );
+  assert.equal(authorize.status, 200, await authorize.clone().text());
+  const { code } = (await authorize.json()) as { code: string };
+  const exchange = await post(appBase, '/api/auth/flaxia/exchange', { code, verifier: pkce }, undefined, appBase);
+  assert.equal(exchange.status, 409, await exchange.clone().text());
+  assert.equal(exchange.headers.get('set-cookie'), null, 'a failed credential comparison must not issue a session');
+});
+
+test('an opt-in linked session updates the authoritative Auth email', {
+  skip: !authBase || !appBase,
+  timeout: 60000,
+}, async () => {
+  assert.ok(authBase && appBase);
+  const username = `em${randomBytes(6).toString('hex')}`;
+  const password = 'email authority password';
+  const originalEmail = `${username}@example.test`;
+  const updatedEmail = `${username}@updated.test`;
+  const salt = generateSalt();
+  const verifier = await computeVerifier(password, salt);
+  const post = (base: string, path: string, body: unknown, cookie?: string, origin = base) =>
+    fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: {
+        Origin: origin,
+        'CF-Connecting-IP': '192.0.2.242',
+        'Content-Type': 'application/json',
+        ...(cookie ? { Cookie: cookie } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  const registration = await post(
+    authBase,
+    '/api/auth/register',
+    {
+      email: originalEmail,
+      username,
+      srp_salt: enc(salt),
+      srp_verifier: enc(verifier),
+      srp_group: '2048',
+      srp_kdf: 'pbkdf2-600k-v2',
+    },
+    undefined,
+    'https://flaxia.app',
+  );
+  assert.equal(registration.status, 201, await registration.clone().text());
+  const { user } = (await registration.json()) as { user: { id: string } };
+  const authCookie = registration.headers.get('set-cookie')?.split(';')[0];
+  assert.ok(authCookie);
+  const seed = `INSERT INTO users (id, email, username, display_name, password_hash, srp_salt, srp_verifier, srp_group, srp_kdf) VALUES ('${user.id}', '${originalEmail}', '${username}', '${username}', '', '${enc(salt)}', '${enc(verifier)}', '2048', 'pbkdf2-600k-v2')`;
+  const seedResult = spawnSync(
+    process.execPath,
+    ['node_modules/wrangler/bin/wrangler.js', 'd1', 'execute', 'flaxia', '--local', '--command', seed],
+    { encoding: 'utf8' },
+  );
+  assert.equal(seedResult.status, 0, seedResult.stderr);
+  const pkce = randomBytes(32).toString('base64url');
+  const authorize = await post(
+    authBase,
+    '/api/auth/flaxia/authorize',
+    { challenge: digest(pkce) },
+    authCookie,
+    'https://flaxia.app',
+  );
+  assert.equal(authorize.status, 200, await authorize.clone().text());
+  const { code } = (await authorize.json()) as { code: string };
+  const exchange = await post(appBase, '/api/auth/flaxia/exchange', { code, verifier: pkce }, undefined, appBase);
+  assert.equal(exchange.status, 200, await exchange.clone().text());
+  const linkedCookie = exchange.headers.get('set-cookie')?.split(';')[0];
+  assert.ok(linkedCookie);
+  assert.match(linkedCookie, /^session=[A-Za-z0-9_-]{32}$/, 'opt-in linking keeps a local session mapped to the grant');
+
+  const proof = async () => {
+    const start = await post(appBase, '/api/auth/reauth/start', {}, linkedCookie, appBase);
+    assert.equal(start.status, 200, await start.clone().text());
+    const hs = (await start.json()) as { challenge_id: string; salt: string; B: string; srp_kdf: 'pbkdf2-600k-v2' };
+    const first = await clientStep1(password, dec(hs.salt));
+    const value = await clientStep2(password, dec(hs.salt), first.a, dec(hs.B), hs.srp_kdf);
+    return { challenge_id: hs.challenge_id, A: enc(value.A), M1: enc(value.M1) };
+  };
+  const changed = await fetch(`${appBase}/api/users/me/email`, {
+    method: 'PATCH',
+    headers: { Origin: appBase, Cookie: linkedCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ new_email: updatedEmail, current_srp: await proof() }),
+  });
+  assert.equal(changed.status, 200, await changed.clone().text());
+  const me = await fetch(`${appBase}/api/me`, { headers: { Cookie: linkedCookie } });
+  assert.equal(((await me.json()) as { user: { email: string } }).user.email, updatedEmail);
+
+  const authDir = join(process.cwd(), '.integration/flaxia-auth');
+  const authQuery = spawnSync(
+    process.execPath,
+    [
+      'node_modules/wrangler/bin/wrangler.js',
+      'd1',
+      'execute',
+      'flaxia-auth-prod',
+      '--local',
+      '--json',
+      '--command',
+      `SELECT email FROM users WHERE id = '${user.id}'`,
+    ],
+    { cwd: authDir, encoding: 'utf8' },
+  );
+  assert.equal(authQuery.status, 0, authQuery.stderr);
+  const rows = (JSON.parse(authQuery.stdout) as { results: { email: string | null }[] }[])[0].results;
+  assert.equal(rows[0]?.email, updatedEmail, 'Flaxia must update the Auth email authority');
 });

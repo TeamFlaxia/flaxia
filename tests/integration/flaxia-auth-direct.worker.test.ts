@@ -752,3 +752,57 @@ test('authorization started before a freeze cannot create a session after unfree
   assert.notEqual(exchange.status, 200, 'A pre-freeze authorization must not issue a post-unfreeze session');
   assert.equal(exchange.headers.get('set-cookie'), null);
 });
+
+test('new Auth identity cannot take over an existing Flaxia profile with the same email', {
+  skip: !enabled,
+  timeout: 60000,
+}, async () => {
+  assert.ok(auth && app);
+  const username = `mail${randomBytes(4).toString('hex')}`;
+  const email = `${username}@existing.test`;
+  const existingId = random();
+  const sql = `INSERT INTO users (id, email, username, display_name, password_hash) VALUES ('${existingId}', '${email}', '${username}old', 'Existing', '')`;
+  const seed = spawnSync(
+    process.execPath,
+    ['node_modules/wrangler/bin/wrangler.js', 'd1', 'execute', 'flaxia', '--local', '--command', sql],
+    { encoding: 'utf8' },
+  );
+  assert.equal(seed.status, 0, seed.stderr);
+  const salt = generateSalt(),
+    verifier = await computeVerifier('email collision password', salt);
+  const post = (base: string, path: string, body: unknown, cookie?: string, origin = base) =>
+    fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { Origin: origin, 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}) },
+      body: JSON.stringify(body),
+    });
+  const registered = await post(
+    auth,
+    '/api/auth/register',
+    {
+      email: email.toUpperCase(),
+      username,
+      srp_salt: enc(salt),
+      srp_verifier: enc(verifier),
+      srp_group: '2048',
+      srp_kdf: 'pbkdf2-600k-v2',
+    },
+    undefined,
+    'https://flaxia.app',
+  );
+  assert.equal(registered.status, 201, await registered.clone().text());
+  const authCookie = registered.headers.get('set-cookie')?.split(';')[0];
+  assert.ok(authCookie);
+  const pkce = random();
+  const authorize = await post(
+    auth,
+    '/api/auth/flaxia/authorize',
+    { challenge: digest(pkce) },
+    authCookie,
+    'https://flaxia.app',
+  );
+  const { code } = (await authorize.json()) as { code: string };
+  const exchange = await post(app, '/api/auth/flaxia/exchange', { code, verifier: pkce });
+  assert.equal(exchange.status, 409, await exchange.clone().text());
+  assert.equal(exchange.headers.get('set-cookie'), null);
+});

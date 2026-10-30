@@ -96,6 +96,73 @@ test('does not create a Flaxia session when Auth denies login', async (t) => {
   assert.equal(calls, 1);
 });
 
+test('a frozen SRP account reports its username without exchanging a grant', async (t) => {
+  const password = 'frozen account password';
+  const salt = generateSalt();
+  const stored = await computeVerifier(password, salt);
+  const server = await serverStep1(salt, stored);
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  const paths: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const path = String(input);
+    paths.push(path);
+    const body = JSON.parse(String(init?.body));
+    if (path.endsWith('/api/auth/login/start'))
+      return Response.json({
+        srp: true,
+        challenge_id: 'challenge',
+        salt: enc(salt),
+        B: enc(server.B),
+        srp_kdf: 'pbkdf2-600k-v2',
+      });
+    if (path.endsWith('/api/auth/login/verify')) {
+      const proof = await serverStep2(dec(body.A), server.B, server.b, stored, dec(body.M1));
+      assert.ok(proof);
+      return Response.json({ error: 'account_frozen', username: 'frozen_user', M2: enc(proof.M2) }, { status: 403 });
+    }
+    throw new Error(`unexpected request: ${path}`);
+  };
+  assert.deepEqual(await loginWithFlaxiaAuth('frozen_user', password), {
+    frozen: true,
+    username: 'frozen_user',
+  });
+  assert.equal(
+    paths.some((path) => path.includes('/flaxia/authorize')),
+    false,
+  );
+  assert.equal(
+    paths.some((path) => path.includes('/flaxia/exchange')),
+    false,
+  );
+});
+
+test('a frozen legacy account reports its username without exposing the password again', async (t) => {
+  const original = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = original;
+  });
+  const paths: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const path = String(input);
+    paths.push(path);
+    const body = JSON.parse(String(init?.body));
+    if (path.endsWith('/api/auth/login/start')) return Response.json({ srp: false });
+    if (path.endsWith('/api/auth/login/legacy')) {
+      assert.equal(body.password, 'legacy frozen password');
+      return Response.json({ error: 'account_frozen', username: 'legacy_frozen' }, { status: 403 });
+    }
+    throw new Error(`unexpected request: ${path}`);
+  };
+  assert.deepEqual(await loginWithFlaxiaAuth('legacy_frozen', 'legacy frozen password'), {
+    frozen: true,
+    username: 'legacy_frozen',
+  });
+  assert.equal(paths.length, 2);
+});
+
 test('recovery code is proven with SRP and never placed in a request', async (t) => {
   const recoveryCode = 'R'.repeat(43);
   const salt = generateSalt(),
