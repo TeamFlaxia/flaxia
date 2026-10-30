@@ -23,6 +23,7 @@ export interface User {
   language?: string;
   ng_words?: string;
   badge_type?: string | null;
+  name_color?: string | null;
   created_at: string;
 }
 
@@ -182,7 +183,7 @@ export async function getSession(env: Env, token: string): Promise<{ user: User;
 
   // Get user from database
   const user = (await env.DB.prepare(`
-    SELECT id, email, username, display_name, bio, avatar_key, badge_type, created_at, role
+    SELECT id, email, username, display_name, bio, avatar_key, badge_type, name_color, created_at, role
     FROM users WHERE id = ? AND frozen_at IS NULL
   `)
     .bind(session.user_id)
@@ -228,7 +229,7 @@ export async function getMeWithSession(env: Env, token: string): Promise<{ user:
   const result = (await env.DB.prepare(`
     SELECT 
       u.id, u.email, u.username, u.display_name, 
-      u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.created_at, u.role
+      u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.name_color, u.created_at, u.role
     FROM sessions s
     JOIN users u ON s.user_id = u.id
     WHERE s.id = ?
@@ -340,7 +341,7 @@ export async function registerUser(
 
   // Return user without password hash
   const user = (await env.DB.prepare(`
-    SELECT id, email, username, display_name, bio, avatar_key, badge_type, created_at
+    SELECT id, email, username, display_name, bio, avatar_key, badge_type, name_color, created_at
     FROM users WHERE id = ?
   `)
     .bind(userId)

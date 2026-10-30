@@ -147,6 +147,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       display_name?: string;
       avatar_key?: string;
       badge_type?: string | null;
+      name_color?: string | null;
     } | null = null;
     let unreadNotificationCount = 0;
 
@@ -266,6 +267,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             display_name?: string;
             avatar_key?: string;
             badge_type?: string | null;
+            name_color?: string | null;
           };
           currentUser = {
             id: userData.id,
@@ -273,6 +275,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             display_name: userData.display_name,
             avatar_key: userData.avatar_key,
             badge_type: userData.badge_type,
+            name_color: userData.name_color,
           };
 
           // Update all existing LeftNav instances with new user data

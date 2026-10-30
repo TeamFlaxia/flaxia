@@ -46,7 +46,7 @@ function displayIdentity(
     id: user.id,
     username: user.username,
   };
-  for (const field of ['display_name', 'avatar_key', 'badge_type']) {
+  for (const field of ['display_name', 'avatar_key', 'badge_type', 'name_color']) {
     const value = (user as Record<string, unknown>)[field];
     if (typeof value === 'string' || value === null) result[field] = value;
   }

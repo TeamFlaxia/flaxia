@@ -2,6 +2,7 @@ import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 
 interface BlockedUsersModalOptions {
@@ -99,6 +100,7 @@ export function createBlockedUsersModal(options: BlockedUsersModalOptions = {}):
     display_name?: string;
     avatar_key?: string;
     badge_type?: string | null;
+    name_color?: string | null;
   }) => {
     const row = document.createElement('div');
     row.style.cssText = `
@@ -130,6 +132,7 @@ export function createBlockedUsersModal(options: BlockedUsersModalOptions = {}):
     name.style.cssText =
       'font-weight: 600; color: var(--text-primary); font-size: 0.9375rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
     name.textContent = u.display_name || u.username;
+    applyNameColor(name, u.name_color, u.badge_type);
     const uname = document.createElement('div');
     uname.style.cssText =
       'color: var(--text-muted); font-size: 0.8125rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
@@ -212,6 +215,7 @@ export function createBlockedUsersModal(options: BlockedUsersModalOptions = {}):
           display_name?: string;
           avatar_key?: string;
           badge_type?: string | null;
+          name_color?: string | null;
         }>;
       };
       if (data.users.length === 0) {

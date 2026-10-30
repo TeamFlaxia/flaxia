@@ -58,6 +58,8 @@ export type PostRow = {
   username: string;
   display_name?: string | null;
   avatar_key?: string | null;
+  badge_type?: string | null;
+  name_color?: string | null;
   text: string;
   hashtags: string;
   mentions: string;
