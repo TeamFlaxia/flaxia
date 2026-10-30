@@ -1163,6 +1163,11 @@ users.patch('/users/me/email', requireAuth, async (c) => {
       return c.json({ error: 'Database not available' }, 500);
     }
 
+    // A linked opt-in session is a local session id mapped to an Auth grant.
+    // Direct authority sessions are already 43-character grants. Resolve both
+    // before deciding whether the Auth email authority must be updated.
+    const authGrant = await sessionGrant(c.env.DB, sessionToken);
+
     const { current_srp, new_email } = await c.req.json();
 
     if (typeof new_email !== 'string') {
@@ -1199,30 +1204,42 @@ users.patch('/users/me/email', requireAuth, async (c) => {
       return c.json({ error: 'Too many requests. Please try again later.' }, 429);
     }
 
-    if (sessionToken && /^[A-Za-z0-9_-]{43}$/.test(sessionToken)) {
-      const operationHash = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
-        .replaceAll('+', '-')
-        .replaceAll('/', '_')
-        .replaceAll('=', '');
-      await c.env.DB.prepare(`INSERT OR IGNORE INTO flaxia_direct_email_changes (operation_hash, user_id, target_email, state, created_at)
-        SELECT ?, u.id, ?, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM users u WHERE u.id = ? AND u.frozen_at IS NULL AND NOT EXISTS (SELECT 1 FROM users other WHERE lower(other.email) = ? AND other.id != u.id)`)
-        .bind(operationHash, normalizedEmail, userId, normalizedEmail)
-        .run();
-      const job = await c.env.DB.prepare('SELECT operation_hash FROM flaxia_direct_email_changes WHERE user_id = ?')
+    if (authGrant) {
+      const existing = await c.env.DB.prepare(
+        'SELECT operation_hash, target_email FROM flaxia_direct_email_changes WHERE user_id = ?',
+      )
         .bind(userId)
-        .first<{ operation_hash: string }>();
-      if (!job || job.operation_hash !== operationHash)
-        return c.json({ error: 'Email is already taken or a change is pending' }, 409);
+        .first<{ operation_hash: string; target_email: string }>();
+      let operationHash: string;
+      if (existing) {
+        if (existing.target_email.toLowerCase() !== normalizedEmail)
+          return c.json({ error: 'Email is already taken or a change is pending' }, 409);
+        operationHash = existing.operation_hash;
+      } else {
+        operationHash = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
+          .replaceAll('+', '-')
+          .replaceAll('/', '_')
+          .replaceAll('=', '');
+        await c.env.DB.prepare(`INSERT OR IGNORE INTO flaxia_direct_email_changes (operation_hash, user_id, target_email, state, created_at)
+          SELECT ?, u.id, ?, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM users u WHERE u.id = ? AND u.frozen_at IS NULL AND NOT EXISTS (SELECT 1 FROM users other WHERE lower(other.email) = ? AND other.id != u.id)`)
+          .bind(operationHash, normalizedEmail, userId, normalizedEmail)
+          .run();
+        const job = await c.env.DB.prepare('SELECT operation_hash FROM flaxia_direct_email_changes WHERE user_id = ?')
+          .bind(userId)
+          .first<{ operation_hash: string }>();
+        if (!job || job.operation_hash !== operationHash)
+          return c.json({ error: 'Email is already taken or a change is pending' }, 409);
+      }
       const remote = await authEmailAction(c.env, 'change', {
         operation_hash: operationHash,
-        grant: sessionToken,
+        grant: authGrant,
         user_id: userId,
         email: normalizedEmail,
         current_srp: proof,
       });
       if (remote.status === 'unavailable') return c.json({ error: 'Email change temporarily unavailable' }, 503);
       if (remote.status === 'denied') {
-        const result = await resumeDirectEmailChange(c.env, sessionToken, userId, true);
+        const result = await resumeDirectEmailChange(c.env, authGrant, userId, true);
         if (result === 'ok') return c.json({ ok: true });
         if (result === 'none') {
           const current = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?')
@@ -1235,7 +1252,7 @@ users.patch('/users/me/email', requireAuth, async (c) => {
         if (result === 'cancelled') return c.json({ error: 'Email change rejected' }, 409);
         return c.json({ error: 'Email change temporarily unavailable' }, 503);
       }
-      const result = await resumeDirectEmailChange(c.env, sessionToken, userId);
+      const result = await resumeDirectEmailChange(c.env, authGrant, userId);
       if (result === 'ok') return c.json({ ok: true });
       if (result === 'none') {
         const current = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?')
