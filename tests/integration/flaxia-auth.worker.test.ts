@@ -233,6 +233,13 @@ test('local SRP account can provision Auth idempotently with password proof', {
   assert.equal(exchanged.status, 200, await exchanged.clone().text());
   const linkedCookie = exchanged.headers.get('set-cookie')?.split(';')[0];
   assert.ok(linkedCookie);
+  // Recovery enrollment must be available while the account is only linked,
+  // before AUTH_AUTHORITY_MODE is enabled (a documented rollout prerequisite).
+  const recoveryStatus = await fetch(`${appBase}/api/auth/recovery/status`, {
+    headers: { Cookie: linkedCookie },
+  });
+  assert.equal(recoveryStatus.status, 200, await recoveryStatus.clone().text());
+  assert.equal(((await recoveryStatus.json()) as { enrolled: boolean }).enrolled, false);
   const linkedProof = async (guess: string) => {
     const response = await post(appBase, '/api/auth/reauth/start', {}, linkedCookie, appBase);
     assert.equal(response.status, 200);

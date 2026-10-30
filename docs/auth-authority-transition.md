@@ -29,13 +29,19 @@ the SRP proof nor an Auth grant in Flaxia's database. An independent random
 account recovery code can authenticate with SRP and reset the password; the
 Vault recovery phrase separately decrypts and rewraps the Vault key in the
 browser. Neither secret is sent to a server. Existing users must enroll an
-account recovery code while they still have their password. Accounts whose
-old credentials do not match remain blocked pending a verified linking path.
+account recovery code while they still have their password. Enrollment is
+available from Settings and after an Auth login as soon as the profile is
+linked, including the opt-in phase before `AUTH_AUTHORITY_MODE` is enabled.
+Accounts whose old credentials do not match remain blocked pending a verified
+linking path.
 
 Account deletion records only an operation hash and user ID in the application
 database. Auth records a hashed receipt, and browser retries or the scheduled
 backend worker complete application-data deletion after an interrupted call.
-The backend Worker must have the `FlaxiaBridge` service binding before rollout.
+Admin moderation uses the bridge's `/api/flaxia/admin/account` action: freeze,
+unfreeze and delete land at Auth first, and a linked profile is removed locally
+only after Auth has deleted the identity. The backend Worker must have the
+`FlaxiaBridge` service binding before rollout.
 Legacy credential fingerprints are discarded when linking completes, on
 credential change or deletion, and no later than 90 days after creation; see
 `flaxia-auth/docs/flaxia-migration.md` for backup expiry and purge procedures.

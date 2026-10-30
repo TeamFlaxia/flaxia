@@ -47,19 +47,17 @@ auth.get('/mode', (c) => c.json({ authority: authIsAuthoritative(c.env) ? 'flaxi
 
 auth.get('/recovery/status', requireAuth, async (c) => {
   c.header('Cache-Control', 'no-store');
-  const user = c.get('user'),
-    grant = getSessionToken(c.req.raw);
-  if (!user || !grant || !authIsAuthoritative(c.env) || !/^[A-Za-z0-9_-]{43}$/.test(grant))
-    return c.json({ error: 'Recovery unavailable' }, 403);
+  const user = c.get('user');
+  const grant = await sessionGrant(c.env.DB, getSessionToken(c.req.raw));
+  if (!user || !grant) return c.json({ error: 'Recovery unavailable' }, 403);
   const enrolled = await authRecoveryEnrolled(c.env, grant, user.id);
   return enrolled === null ? c.json({ error: 'Auth unavailable' }, 503) : c.json({ enrolled });
 });
 
 auth.post('/recovery/enroll', requireAuth, async (c) => {
   const user = c.get('user');
-  const grant = getSessionToken(c.req.raw);
-  if (!user || !grant || !authIsAuthoritative(c.env) || !/^[A-Za-z0-9_-]{43}$/.test(grant))
-    return c.json({ error: 'Recovery unavailable' }, 403);
+  const grant = await sessionGrant(c.env.DB, getSessionToken(c.req.raw));
+  if (!user || !grant) return c.json({ error: 'Recovery unavailable' }, 403);
   const limited = await rateLimit(c, 'auth:recovery-enroll', user.id, 10, 60);
   if (limited) return limited;
   const body = (await c.req.json().catch(() => null)) as {
@@ -85,9 +83,8 @@ auth.post('/recovery/enroll', requireAuth, async (c) => {
 
 auth.post('/recovery/reauth/start', requireAuth, async (c) => {
   const user = c.get('user');
-  const grant = getSessionToken(c.req.raw);
-  if (!user || !grant || !authIsAuthoritative(c.env) || !/^[A-Za-z0-9_-]{43}$/.test(grant))
-    return c.json({ error: 'Recovery unavailable' }, 403);
+  const grant = await sessionGrant(c.env.DB, getSessionToken(c.req.raw));
+  if (!user || !grant) return c.json({ error: 'Recovery unavailable' }, 403);
   const limited = await rateLimit(c, 'auth:recovery-reauth', user.id, 10, 60);
   if (limited) return limited;
   const challenge = await startAuthRecoveryReauth(c.env, grant, user.id);

@@ -116,7 +116,9 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   void flaxiaAuthIsAuthoritative()
     .then((authoritative) => {
       useFlaxiaAuth ||= authoritative;
-      recoveryAvailable = authoritative;
+      // Auth-backed logins can enroll a recovery code before the authority
+      // cutover, so the opt-in flow exposes recovery too.
+      recoveryAvailable = useFlaxiaAuth;
       recoveryLabel.hidden = !recoveryAvailable;
       modeReady = true;
       emailInput.type = useFlaxiaAuth ? 'text' : 'email';
