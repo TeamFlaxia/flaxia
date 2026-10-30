@@ -15,6 +15,7 @@ Issue は GitHub の [Issues](https://github.com/RemydreScarlet/flaxia/issues) �
 - バグ報告では、再現手順・期待される動作・実際の動作・環境（ブラウザ、OS など）を明記してください。
 - 機能提案では、その機能が解決する問題と、ユースケースを説明してください。
 - 重複を避けるため、投稿前に既存の Issue を検索してください。
+- セキュリティ上の問題は公開Issueに投稿せず、[SECURITY.md](./SECURITY.md)の手順で非公開に報告してください。
 
 ## 開発環境のセットアップ
 
