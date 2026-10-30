@@ -36,6 +36,7 @@ import {
 import { resumeAuthCredentialChange } from '../../lib/flaxia-auth-credentials';
 import { cancelStaleDirectCredentialChange, resumeDirectCredentialChange } from '../../lib/flaxia-direct-credentials';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
+import { ensureNewcomerTitle } from '../../lib/titles';
 import { getBaseOrigin, requireAuth } from '../helpers';
 import type { Bindings, SrpProofBody, Variables } from '../types';
 
@@ -249,6 +250,9 @@ auth.post('/flaxia/exchange', async (c) => {
       }
     }
     if (!user) return c.json({ error: 'Account unavailable' }, 403);
+    // New Auth profiles and accounts linked before titles existed receive the
+    // account-creation title on sign-in. Best-effort, like the local flows.
+    await ensureNewcomerTitle(c.env.DB, user.id);
     if (authIsAuthoritative(c.env)) {
       const linked = await c.env.DB.prepare('SELECT 1 FROM flaxia_auth_links WHERE user_id = ?').bind(user.id).first();
       if (linked) {

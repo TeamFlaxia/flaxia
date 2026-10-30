@@ -53,7 +53,7 @@ async function fetchRemoteJson(url: string, accept: string): Promise<{ url: stri
   return { url: parsed.toString(), response };
 }
 
-const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
   COALESCE(p.reply_count, 0) as reply_count, 
   COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at`;
 
@@ -475,9 +475,13 @@ users.get('/users/:username', async (c) => {
     }
 
     const user = await c.env.DB.prepare(`
-      SELECT id, username, display_name, bio, avatar_key, badge_type, name_color, header_key, created_at, pinned_post_id, frozen_at, frozen_reason
-      FROM users 
-      WHERE username = ? COLLATE NOCASE
+      SELECT u.id, u.username, u.display_name, u.bio, u.avatar_key, u.badge_type, u.name_color, u.header_key,
+             u.created_at, u.pinned_post_id, u.frozen_at, u.frozen_reason, u.equipped_title_id,
+             t.name AS title_name, t.name_ja AS title_name_ja,
+             t.description AS title_description, t.description_ja AS title_description_ja, t.icon AS title_icon
+      FROM users u
+      LEFT JOIN titles t ON t.id = u.equipped_title_id
+      WHERE u.username = ? COLLATE NOCASE
     `)
       .bind(username)
       .first();
@@ -573,7 +577,7 @@ users.get('/users/:username/pinned', async (c) => {
     const currentUserId = sessionData?.user.id ?? null;
 
     const row = await c.env.DB.prepare(
-      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0`,
+      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0`,
     )
       .bind(user.pinned_post_id)
       .first();
@@ -904,6 +908,7 @@ users.patch('/users/me', requireAuth, async (c) => {
     let language: string | undefined;
     let ng_words: string[] | undefined;
     let name_color: string | null | undefined;
+    let equippedTitleId: string | null | undefined;
     let avatarFile: File | undefined;
     let headerFile: File | undefined;
     let removeHeader = false;
@@ -917,6 +922,15 @@ users.patch('/users/me', requireAuth, async (c) => {
       avatarFile = (formData.get('avatar') as File | null) || undefined;
       headerFile = (formData.get('header') as File | null) || undefined;
       removeHeader = formData.get('remove_header') === '1' || formData.get('remove_header') === 'true';
+
+      const rawTitleId = formData.get('equipped_title_id');
+      if (rawTitleId !== null) {
+        if (typeof rawTitleId !== 'string') {
+          return c.json({ error: 'equipped_title_id must be a string' }, 400);
+        }
+        const trimmed = rawTitleId.trim();
+        equippedTitleId = trimmed === '' ? null : trimmed;
+      }
 
       // Absent means "leave unchanged"; an empty string resets to the default.
       const rawNameColor = formData.get('name_color');
@@ -1053,6 +1067,13 @@ users.patch('/users/me', requireAuth, async (c) => {
       bio = body.bio;
       language = body.language;
       ng_words = body.ng_words;
+      if (Object.hasOwn(body, 'equipped_title_id')) {
+        if (body.equipped_title_id !== null && typeof body.equipped_title_id !== 'string') {
+          return c.json({ error: 'equipped_title_id must be a string or null' }, 400);
+        }
+        equippedTitleId = body.equipped_title_id === null ? null : body.equipped_title_id.trim() || null;
+      }
+
       if (Object.hasOwn(body, 'name_color')) {
         name_color = body.name_color ?? null;
       }
@@ -1103,6 +1124,15 @@ users.patch('/users/me', requireAuth, async (c) => {
       }
     }
 
+    if (equippedTitleId !== undefined && equippedTitleId !== null) {
+      const owned = await c.env.DB.prepare('SELECT 1 FROM user_titles WHERE user_id = ? AND title_id = ?')
+        .bind(userId, equippedTitleId)
+        .first();
+      if (!owned) {
+        return c.json({ error: 'Title not owned' }, 403);
+      }
+    }
+
     const updates: string[] = [];
     const values: (string | null)[] = [];
 
@@ -1131,6 +1161,11 @@ users.patch('/users/me', requireAuth, async (c) => {
       values.push(name_color);
     }
 
+    if (equippedTitleId !== undefined) {
+      updates.push('equipped_title_id = ?');
+      values.push(equippedTitleId);
+    }
+
     if (updates.length > 0) {
       values.push(userId);
 
@@ -1157,13 +1192,22 @@ users.patch('/users/me', requireAuth, async (c) => {
       header_key: string | null;
       language: string | null;
       ng_words: string | null;
+      equipped_title_id: string | null;
+      title_name: string | null;
+      title_name_ja: string | null;
+      title_description: string | null;
+      title_description_ja: string | null;
+      title_icon: string | null;
       created_at: string;
     };
 
     const updatedUser = await c.env.DB.prepare(`
-      SELECT id, email, username, display_name, bio, avatar_key, badge_type, name_color, header_key, language, ng_words, created_at
-      FROM users 
-      WHERE id = ?
+      SELECT u.id, u.email, u.username, u.display_name, u.bio, u.avatar_key, u.badge_type, u.name_color, u.header_key, u.language, u.ng_words, u.created_at,
+             u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja,
+             t.description AS title_description, t.description_ja AS title_description_ja, t.icon AS title_icon
+      FROM users u
+      LEFT JOIN titles t ON t.id = u.equipped_title_id
+      WHERE u.id = ?
     `)
       .bind(userId)
       .first<UpdatedUserRow>();

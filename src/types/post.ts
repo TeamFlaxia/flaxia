@@ -21,6 +21,12 @@ export interface QuotedPost {
   avatar_key?: string | null;
   badge_type?: string | null;
   name_color?: string | null;
+  equipped_title_id?: string | null;
+  title_name?: string | null;
+  title_name_ja?: string | null;
+  title_description?: string | null;
+  title_description_ja?: string | null;
+  title_icon?: string | null;
   text: string;
   hashtags: string;
   mentions?: string;
@@ -59,6 +65,12 @@ export interface Post {
   avatar_key?: string;
   badge_type?: string | null;
   name_color?: string | null;
+  equipped_title_id?: string | null;
+  title_name?: string | null;
+  title_name_ja?: string | null;
+  title_description?: string | null;
+  title_description_ja?: string | null;
+  title_icon?: string | null;
   text: string;
   hashtags: string;
   mentions?: string;
@@ -132,6 +144,12 @@ export interface PostHeaderProps {
   avatar_key?: string;
   badge_type?: string | null;
   name_color?: string | null;
+  equipped_title_id?: string | null;
+  title_name?: string | null;
+  title_name_ja?: string | null;
+  title_description?: string | null;
+  title_description_ja?: string | null;
+  title_icon?: string | null;
   createdAt: string;
   editedAt?: string;
 }

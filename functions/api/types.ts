@@ -60,6 +60,10 @@ export type PostRow = {
   avatar_key?: string | null;
   badge_type?: string | null;
   name_color?: string | null;
+  equipped_title_id?: string | null;
+  title_name?: string | null;
+  title_name_ja?: string | null;
+  title_icon?: string | null;
   text: string;
   hashtags: string;
   mentions: string;

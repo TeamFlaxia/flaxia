@@ -2,6 +2,7 @@ import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
 import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { createUserTitleBadge } from '../lib/user-title.js';
 import type { QuotedPost } from '../types/post.js';
 import { createAudioPlayer } from './AudioPlayer.js';
 import { createImagePreview } from './ImagePreview.js';
@@ -196,6 +197,8 @@ export function createQuotedPostCard(props: QuotedPostCardProps): HTMLElement {
   nameRow.appendChild(avatar);
   nameRow.appendChild(name);
   nameRow.appendChild(username);
+  const titleBadge = createUserTitleBadge(quoted);
+  if (titleBadge) nameRow.appendChild(titleBadge);
   card.appendChild(nameRow);
 
   const body = document.createElement('div');

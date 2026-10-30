@@ -21,6 +21,7 @@ import reportRouter from './routes/report';
 import stampsRouter from './routes/stamps';
 import tagsRouter from './routes/tags';
 import testsRouter from './routes/tests';
+import titlesRouter from './routes/titles';
 import usersRouter from './routes/users';
 import vaultRouter from './routes/vault';
 
@@ -90,6 +91,9 @@ app.route('/api', mediaRouter);
 
 // User routes (extracted to routes/users.ts)
 app.route('/api', usersRouter);
+
+// User title routes (extracted to routes/titles.ts)
+app.route('/api', titlesRouter);
 
 // Poll routes (extracted to routes/polls.ts)
 app.route('/api', pollsRouter);

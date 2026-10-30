@@ -102,6 +102,10 @@ test('real Workers exchange and revoke a session through the service binding', {
     401,
   );
   assert.equal((await fetch(`${appBase}/api/me`, { headers: { Cookie: session } })).status, 200);
+  const titlesResponse = await fetch(`${appBase}/api/titles/me`, { headers: { Cookie: session } });
+  assert.equal(titlesResponse.status, 200);
+  const titles = (await titlesResponse.json()) as { titles: Array<{ id: string }> };
+  assert.ok(titles.titles.some((title) => title.id === 'flaxian_newcomer'));
   const challengeResponse = await post(appBase, '/api/auth/reauth/start', {}, session, appBase);
   assert.equal(challengeResponse.status, 200, await challengeResponse.clone().text());
   const challenge = (await challengeResponse.json()) as {

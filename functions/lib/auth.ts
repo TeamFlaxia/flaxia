@@ -11,6 +11,7 @@ import {
 // (tests/security-guards.test.ts reaches it through routes/tests.ts), and Node
 // ESM does not resolve extensionless relative specifiers.
 import { isCreatableSrpKdf, serverStep1, serverStep2 } from './srp.ts';
+import { ensureNewcomerTitle } from './titles.ts';
 
 export interface User {
   id: string;
@@ -24,6 +25,7 @@ export interface User {
   ng_words?: string;
   badge_type?: string | null;
   name_color?: string | null;
+  equipped_title_id?: string | null;
   created_at: string;
 }
 
@@ -205,7 +207,7 @@ export async function getMeWithSession(env: Env, token: string): Promise<{ user:
     const identity = await introspectAuthGrant(env as { AUTH_SERVICE?: Fetcher }, token);
     if (!identity) return null;
     let user = await env.DB.prepare(`
-      SELECT u.id, u.email, u.username, u.display_name, u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.created_at, u.role
+      SELECT u.id, u.email, u.username, u.display_name, u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.equipped_title_id, u.created_at, u.role
       FROM users u JOIN flaxia_auth_links l ON l.user_id = u.id WHERE u.id = ? AND u.frozen_at IS NULL
     `)
       .bind(identity.user_id)
@@ -215,7 +217,7 @@ export async function getMeWithSession(env: Env, token: string): Promise<{ user:
     if (emailState === 'unavailable') return null;
     if (emailState === 'ok') {
       user = await env.DB.prepare(`
-        SELECT u.id, u.email, u.username, u.display_name, u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.created_at, u.role
+        SELECT u.id, u.email, u.username, u.display_name, u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.equipped_title_id, u.created_at, u.role
         FROM users u JOIN flaxia_auth_links l ON l.user_id = u.id WHERE u.id = ? AND u.frozen_at IS NULL
       `)
         .bind(identity.user_id)
@@ -229,7 +231,7 @@ export async function getMeWithSession(env: Env, token: string): Promise<{ user:
   const result = (await env.DB.prepare(`
     SELECT 
       u.id, u.email, u.username, u.display_name, 
-      u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.name_color, u.created_at, u.role
+      u.bio, u.avatar_key, u.language, u.ng_words, u.badge_type, u.name_color, u.equipped_title_id, u.created_at, u.role
     FROM sessions s
     JOIN users u ON s.user_id = u.id
     WHERE s.id = ?
@@ -338,6 +340,9 @@ export async function registerUser(
   if (!result.success) {
     throw new Error('Failed to create user');
   }
+
+  // Registration itself is the first achievement.
+  await ensureNewcomerTitle(env.DB, userId);
 
   // Return user without password hash
   const user = (await env.DB.prepare(`
@@ -463,6 +468,9 @@ export async function verifySrpLogin(
   const M2 = uint8ArrayToBase64(result.M2);
   if (user.frozen_at) return { frozen: true, user: safeUser, M2 };
 
+  // Accounts created before the title existed receive it on their next login.
+  await ensureNewcomerTitle(env.DB, user.id);
+
   const session = await createSession(env, user.id);
   return { frozen: false, user: safeUser, session, M2 };
 }
@@ -586,6 +594,9 @@ export async function loginUser(env: Env, email: string, password: string): Prom
   };
 
   if (userWithPassword.frozen_at) return { frozen: true, user };
+
+  // Legacy accounts also receive the newcomer title on their next login.
+  await ensureNewcomerTitle(env.DB, userWithPassword.id);
 
   // Create session
   const session = await createSession(env, userWithPassword.id, { srpUpgradeAllowed: true });
