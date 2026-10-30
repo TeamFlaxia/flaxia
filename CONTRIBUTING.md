@@ -104,11 +104,14 @@ npm run typecheck
 # 全テスト
 npm test
 
+# CI と同じ種類別グループ実行（auth-vault / posts-feeds / media-games / platform-ui）
+npm run test:group -- auth-vault
+
 # 必要に応じてビルド
 npm run build
 ```
 
-CI（[.github/workflows/ci.yml](./.github/workflows/ci.yml)）では lint・typecheck・test・build のすべてが実行されます。
+CI（[.github/workflows/ci.yml](./.github/workflows/ci.yml)）では lint・typecheck・test・build のすべてが実行されます。テストは種類別に 4 つのグループへ分かれ、それぞれ独立したサーバーと D1 で並列実行されます。
 
 ## コミットメッセージ
 
