@@ -30,7 +30,7 @@
     "migrate:local": "wrangler d1 migrations apply flaxia --local",
     "migrate:prod": "wrangler d1 migrations apply flaxia --remote",
     "test": "node --test --experimental-strip-types --test-concurrency=1 \"tests/**/*.test.ts\"",
-    "test:shard": "node --test --experimental-strip-types --test-concurrency=1 --test-shard=\"${TEST_SHARD:-1/1}\" \"tests/**/*.test.ts\"",
+    "test:group": "node scripts/test-group.mjs",
     "test:auth": "node --test --experimental-strip-types tests/auth.test.ts",
     "test:posts": "node --test --experimental-strip-types tests/posts.test.ts",
     "test:users": "node --test --experimental-strip-types tests/users.test.ts",
