@@ -175,7 +175,7 @@ games.get('/games', async (c) => {
             COALESCE(p.reply_count, 0) as reply_count,
             COALESCE(p.bookmark_count, 0) as bookmark_count,
             p.impressions, p.created_at,
-            u.username, u.display_name, u.avatar_key, u.badge_type
+            u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color
           FROM posts p
           JOIN users u ON p.user_id = u.id
           WHERE p.id IN (${placeholders})
@@ -275,7 +275,7 @@ games.get('/games', async (c) => {
                p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count,
                COALESCE(p.bookmark_count, 0) as bookmark_count,
                p.impressions, p.created_at,
-               u.username, u.display_name, u.avatar_key, u.badge_type
+               u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color
         FROM posts p
         JOIN users u ON p.user_id = u.id
         WHERE p.payload_key IS NOT NULL AND p.swf_key IS NULL
@@ -295,7 +295,7 @@ games.get('/games', async (c) => {
                  p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count,
                  COALESCE(p.bookmark_count, 0) as bookmark_count,
                  p.impressions, p.created_at,
-                 u.username, u.display_name, u.avatar_key, u.badge_type
+                 u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color
           FROM posts p
           JOIN users u ON p.user_id = u.id
           WHERE p.id = ? AND p.payload_key IS NOT NULL AND p.swf_key IS NULL
@@ -491,7 +491,7 @@ games.get('/games', async (c) => {
         p.created_at,
         u.username,
         u.display_name,
-        u.avatar_key, u.badge_type
+        u.avatar_key, u.badge_type, u.name_color
       FROM posts p
       JOIN users u ON p.user_id = u.id
       WHERE p.payload_key IS NOT NULL AND p.swf_key IS NULL

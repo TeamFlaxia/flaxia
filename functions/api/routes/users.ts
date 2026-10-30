@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
+import { normalizeNameColor } from '../../../src/lib/name-color';
 import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../src/lib/vault/primitives';
 import { deleteAccount } from '../../lib/account-deletion';
 import { enrichPostsWithAttachments } from '../../lib/attachments';
@@ -32,7 +33,7 @@ async function fetchRemoteJson(url: string, accept: string): Promise<{ url: stri
   return { url: parsed.toString(), response };
 }
 
-const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
   COALESCE(p.reply_count, 0) as reply_count, 
   COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at`;
 
@@ -119,7 +120,7 @@ users.get('/users/suggestions', async (c) => {
     const currentUserId = sessionData.user.id;
 
     const pool = await c.env.DB.prepare(`
-      SELECT id, username, display_name, avatar_key, badge_type
+      SELECT id, username, display_name, avatar_key, badge_type, name_color
       FROM users
       WHERE id != ? AND frozen_at IS NULL
       AND id NOT IN (
@@ -410,7 +411,7 @@ users.get('/users/suggest', async (c) => {
     const prefix = q.toLowerCase();
 
     const result = await c.env.DB.prepare(`
-      SELECT id, username, display_name, avatar_key, badge_type
+      SELECT id, username, display_name, avatar_key, badge_type, name_color
       FROM users
       WHERE frozen_at IS NULL AND (LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?)
       ORDER BY
@@ -427,6 +428,7 @@ users.get('/users/suggest', async (c) => {
       display_name: u.display_name || '',
       avatar_key: u.avatar_key || '',
       badge_type: (u.badge_type as string | null) ?? null,
+      name_color: (u.name_color as string | null) ?? null,
     }));
 
     return c.json({ users: usersList }, 200, {
@@ -453,7 +455,7 @@ users.get('/users/:username', async (c) => {
     }
 
     const user = await c.env.DB.prepare(`
-      SELECT u.id, u.username, u.display_name, u.bio, u.avatar_key, u.badge_type, u.header_key,
+      SELECT u.id, u.username, u.display_name, u.bio, u.avatar_key, u.badge_type, u.name_color, u.header_key,
              u.created_at, u.pinned_post_id, u.frozen_at, u.frozen_reason, u.equipped_title_id,
              t.name AS title_name, t.name_ja AS title_name_ja,
              t.description AS title_description, t.description_ja AS title_description_ja, t.icon AS title_icon
@@ -476,6 +478,8 @@ users.get('/users/:username', async (c) => {
           username: user.username,
           display_name: user.display_name,
           avatar_key: user.avatar_key,
+          badge_type: user.badge_type,
+          name_color: user.name_color,
           header_key: user.header_key,
         },
       });
@@ -553,7 +557,7 @@ users.get('/users/:username/pinned', async (c) => {
     const currentUserId = sessionData?.user.id ?? null;
 
     const row = await c.env.DB.prepare(
-      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0`,
+      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0`,
     )
       .bind(user.pinned_post_id)
       .first();
@@ -675,7 +679,7 @@ users.get('/users/:username/followers', async (c) => {
 
     let query = `
       SELECT 
-        u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language,
+        u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.language as author_language,
         u.created_at
       FROM follows f
       JOIN users u ON f.follower_id = u.id
@@ -789,7 +793,7 @@ users.get('/users/:username/following', async (c) => {
 
     let query = `
       SELECT 
-        u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language,
+        u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.language as author_language,
         u.created_at
       FROM follows f
       JOIN users u ON f.followee_id = u.id
@@ -883,6 +887,7 @@ users.patch('/users/me', requireAuth, async (c) => {
     let bio: string | undefined;
     let language: string | undefined;
     let ng_words: string[] | undefined;
+    let name_color: string | null | undefined;
     let equippedTitleId: string | null | undefined;
     let avatarFile: File | undefined;
     let headerFile: File | undefined;
@@ -904,6 +909,12 @@ users.patch('/users/me', requireAuth, async (c) => {
           return c.json({ error: 'equipped_title_id must be a string' }, 400);
         }
         equippedTitleId = rawTitleId.trim() === '' ? null : rawTitleId;
+      }
+
+      // Absent means "leave unchanged"; an empty string resets to the default.
+      const rawNameColor = formData.get('name_color');
+      if (typeof rawNameColor === 'string') {
+        name_color = rawNameColor.trim() === '' ? null : rawNameColor;
       }
 
       if (avatarFile && avatarFile.size > 0) {
@@ -1041,6 +1052,10 @@ users.patch('/users/me', requireAuth, async (c) => {
         }
         equippedTitleId = body.equipped_title_id === null ? null : body.equipped_title_id.trim() || null;
       }
+
+      if (Object.hasOwn(body, 'name_color')) {
+        name_color = body.name_color ?? null;
+      }
     }
 
     if (display_name !== undefined && display_name.length > 50) {
@@ -1053,6 +1068,22 @@ users.patch('/users/me', requireAuth, async (c) => {
 
     if (language !== undefined && !['en', 'ja'].includes(language)) {
       return c.json({ error: 'Language must be either "en" or "ja"' }, 400);
+    }
+
+    if (name_color !== undefined) {
+      // Reviewers get the Flaxia+ badge through /api/me, but a session created
+      // before that sync still carries role=reviewer — accept either proof.
+      const entitled = user.badge_type === 'flaxia_plus' || user.role === 'reviewer';
+      if (!entitled) {
+        return c.json({ error: 'Flaxia+ subscription required', code: 'plus_required' }, 403);
+      }
+      if (name_color !== null) {
+        const normalized = normalizeNameColor(name_color);
+        if (!normalized) {
+          return c.json({ error: 'Invalid name color' }, 400);
+        }
+        name_color = normalized;
+      }
     }
 
     if (ng_words !== undefined) {
@@ -1104,6 +1135,11 @@ users.patch('/users/me', requireAuth, async (c) => {
       values.push(JSON.stringify(ng_words));
     }
 
+    if (name_color !== undefined) {
+      updates.push('name_color = ?');
+      values.push(name_color);
+    }
+
     if (equippedTitleId !== undefined) {
       updates.push('equipped_title_id = ?');
       values.push(equippedTitleId);
@@ -1131,6 +1167,7 @@ users.patch('/users/me', requireAuth, async (c) => {
       bio: string | null;
       avatar_key: string | null;
       badge_type: string | null;
+      name_color: string | null;
       header_key: string | null;
       language: string | null;
       ng_words: string | null;
@@ -1144,7 +1181,7 @@ users.patch('/users/me', requireAuth, async (c) => {
     };
 
     const updatedUser = await c.env.DB.prepare(`
-      SELECT u.id, u.email, u.username, u.display_name, u.bio, u.avatar_key, u.badge_type, u.header_key, u.language, u.ng_words, u.created_at,
+      SELECT u.id, u.email, u.username, u.display_name, u.bio, u.avatar_key, u.badge_type, u.name_color, u.header_key, u.language, u.ng_words, u.created_at,
              u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja,
              t.description AS title_description, t.description_ja AS title_description_ja, t.icon AS title_icon
       FROM users u
@@ -1708,7 +1745,7 @@ users.get('/users/me/blocked', requireAuth, async (c) => {
     }
 
     const result = await c.env.DB.prepare(
-      `SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type
+      `SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color
        FROM blocks b
        JOIN users u ON u.id = b.blocked_id
        WHERE b.blocker_id = ?

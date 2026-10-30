@@ -25,6 +25,7 @@ interface PostRow {
   display_name: string | null;
   avatar_key: string | null;
   badge_type: string | null;
+  name_color: string | null;
   text: string;
   payload_key: string | null;
   swf_key: string | null;
@@ -54,6 +55,7 @@ function toPost(row: RawPost): PostRow {
     display_name: row.display_name ? String(row.display_name) : null,
     avatar_key: row.avatar_key ? String(row.avatar_key) : null,
     badge_type: row.badge_type ? String(row.badge_type) : null,
+    name_color: row.name_color ? String(row.name_color) : null,
     text: String(row.text),
     payload_key: row.payload_key ? String(row.payload_key) : null,
     swf_key: row.swf_key ? String(row.swf_key) : null,
@@ -126,7 +128,7 @@ export async function onRequest(context: {
 
   try {
     const mainRow = (await env.DB.prepare(`
-      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type,
+      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color,
         p.text, p.payload_key, p.swf_key, p.thumbnail_key, p.gif_key,
         p.game_description,
         p.fresh_count, COALESCE(p.reply_count, 0) as reply_count,

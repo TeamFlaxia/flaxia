@@ -57,6 +57,7 @@ export type PostRow = {
   display_name?: string | null;
   avatar_key?: string | null;
   badge_type?: string | null;
+  name_color?: string | null;
   equipped_title_id?: string | null;
   title_name?: string | null;
   title_name_ja?: string | null;

@@ -18,6 +18,7 @@ function toPost(row: RawPost): PostRow {
     display_name: row.display_name ? String(row.display_name) : null,
     avatar_key: row.avatar_key ? String(row.avatar_key) : null,
     badge_type: row.badge_type ? String(row.badge_type) : null,
+    name_color: row.name_color ? String(row.name_color) : null,
     equipped_title_id: row.equipped_title_id ? String(row.equipped_title_id) : null,
     title_name: row.title_name ? String(row.title_name) : null,
     title_name_ja: row.title_name_ja ? String(row.title_name_ja) : null,
@@ -42,7 +43,7 @@ function toPost(row: RawPost): PostRow {
 }
 
 const POST_SELECT = `
-  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon,
+  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon,
     p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key,
     p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
     COALESCE(p.reply_count, 0) as reply_count,

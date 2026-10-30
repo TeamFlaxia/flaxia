@@ -34,10 +34,14 @@ function fixture(authenticated = true) {
   sqlite.exec(`
     CREATE TABLE users (
       id TEXT PRIMARY KEY, username TEXT, display_name TEXT, avatar_key TEXT,
-      badge_type TEXT, language TEXT, trust_score REAL DEFAULT 1.0,
-      repetition_score REAL DEFAULT 0.0, trust_updated_at TEXT
+      badge_type TEXT, name_color TEXT, language TEXT, trust_score REAL DEFAULT 1.0,
+      repetition_score REAL DEFAULT 0.0, trust_updated_at TEXT, equipped_title_id TEXT
     );
     INSERT INTO users (id, username, display_name) VALUES ('owner', 'owner', 'Owner');
+    CREATE TABLE titles (
+      id TEXT PRIMARY KEY, icon TEXT, name TEXT, name_ja TEXT,
+      description TEXT, description_ja TEXT
+    );
     CREATE TABLE posts (
       id TEXT PRIMARY KEY, user_id TEXT, username TEXT, text TEXT DEFAULT '',
       hashtags TEXT DEFAULT '[]', mentions TEXT DEFAULT '[]', gif_key TEXT,

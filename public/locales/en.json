@@ -473,6 +473,8 @@
   "edit_profile.header_change": "Change header image",
   "edit_profile.header_size_error": "Image is too large. Please select an image under 5MB.",
   "edit_profile.header_type_error": "Only JPEG, PNG, GIF, and WebP images are allowed.",
+  "edit_profile.name_color": "Display name color (Flaxia+)",
+  "edit_profile.name_color_default": "Default color",
   "follower_list.followers": "Followers",
   "follower_list.following": "Following",
   "follower_list.loading": "Loading...",

@@ -1,5 +1,6 @@
 import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
+import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { createUserTitleBadge } from '../lib/user-title.js';
 import type { QuotedPost } from '../types/post.js';
@@ -183,6 +184,7 @@ export function createQuotedPostCard(props: QuotedPostCardProps): HTMLElement {
     color: var(--text-primary);
   `;
   name.textContent = quoted.display_name || quoted.username || '';
+  applyNameColor(name, quoted.name_color, quoted.badge_type);
 
   const username = document.createElement('span');
   username.className = 'quoted-post-username';
