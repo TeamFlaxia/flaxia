@@ -11,7 +11,7 @@ import {
   ensureNsfwScansTable,
   submitDetectNsfw,
 } from '../../lib/crowd';
-import { revokeAuthUserGrants } from '../../lib/flaxia-auth';
+import { adminAuthAccount, revokeAuthUserGrants } from '../../lib/flaxia-auth';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import {
   addBlocklistEntry,
@@ -346,13 +346,21 @@ async function setAccountFrozen(c: Context<{ Bindings: Bindings; Variables: Vari
   }
 
   // The app cannot revoke Auth grants by deleting its old local sessions.
-  // Revoke on both freeze and unfreeze so grants minted while frozen cannot
-  // become usable when the local profile is restored.
-  const linked = await c.env.DB.prepare('SELECT 1 FROM flaxia_auth_links WHERE user_id = ?')
-    .bind(targetUser.id)
+  // Freeze/unfreeze at Auth first so the identity authority agrees with the
+  // local moderation state, then revoke both sides. The Auth freeze also drops
+  // its sessions, which invalidates every previously minted grant.
+  // Provisioned accounts already exist at Auth even before they are linked.
+  const linked = await c.env.DB.prepare(
+    'SELECT 1 FROM flaxia_auth_links WHERE user_id = ? UNION ALL SELECT 1 FROM flaxia_auth_provisioning WHERE user_id = ? LIMIT 1',
+  )
+    .bind(targetUser.id, targetUser.id)
     .first();
-  if (linked && !(await revokeAuthUserGrants(c.env, targetUser.id)))
-    return c.json({ error: 'Auth revocation unavailable' }, 503);
+  if (linked) {
+    const result = await adminAuthAccount(c.env, frozen ? 'freeze' : 'unfreeze', targetUser.id, reason ?? undefined);
+    if (result === 'unavailable') return c.json({ error: 'Auth account update unavailable' }, 503);
+    if (!(await revokeAuthUserGrants(c.env, targetUser.id)))
+      return c.json({ error: 'Auth revocation unavailable' }, 503);
+  }
 
   const frozenAt = frozen ? new Date().toISOString() : null;
   const statements = frozen
@@ -417,8 +425,21 @@ admin.delete('/users/:id', requireAuth, requireAdmin, async (c) => {
       return c.json({ error: 'Cannot delete admin accounts' }, 403);
     }
 
+    // A linked identity must be deleted at Auth first. Deleting only the local
+    // profile would leave the Auth account able to create a new profile with
+    // the same username/email, and the link guard would abort the batch.
+    const linked = await c.env.DB.prepare(
+      'SELECT 1 FROM flaxia_auth_links WHERE user_id = ? UNION ALL SELECT 1 FROM flaxia_auth_provisioning WHERE user_id = ? LIMIT 1',
+    )
+      .bind(targetUser.id, targetUser.id)
+      .first();
+    if (linked) {
+      const result = await adminAuthAccount(c.env, 'delete', targetUser.id);
+      if (result === 'unavailable') return c.json({ error: 'Auth account deletion unavailable' }, 503);
+    }
+
     // Delete the user along with their posts, related data, and R2 files
-    await deleteAccount(c.env, targetUser.id);
+    await deleteAccount(c.env, targetUser.id, undefined, false, Boolean(linked));
 
     return c.json({ success: true });
   } catch (error: unknown) {

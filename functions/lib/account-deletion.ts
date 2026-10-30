@@ -30,6 +30,7 @@ export async function deleteAccount(
   userId: string,
   authOperationHash?: string,
   direct = false,
+  forceLinked = false,
 ): Promise<void> {
   const db = env.DB;
   const deletionJobs = direct ? 'flaxia_direct_deletion_jobs' : 'flaxia_auth_deletion_jobs';
@@ -73,6 +74,27 @@ export async function deleteAccount(
           `INSERT INTO flaxia_auth_deletion_receipts (operation_hash, completed_at) VALUES ((SELECT operation_hash FROM ${deletionJobs} WHERE operation_hash = ? AND user_id = ? AND state = 'approved'), strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(operation_hash) DO NOTHING`,
         )
         .bind(authOperationHash, userId),
+    );
+  }
+
+  // An unfinished email change reserves the address and its guard would abort
+  // the user delete. The Auth identity is already gone in coordinated flows,
+  // so the reservation cannot be completed and must be released here.
+  statements.push(db.prepare('DELETE FROM flaxia_direct_email_changes WHERE user_id = ?').bind(userId));
+
+  // Admin deletion happens after the Auth account is gone, so every local
+  // transition row is meaningless and its guard must be cleared before the
+  // user or vault rows are touched. Coordinated (self-service) deletion keeps
+  // its receipt protocol and is expected to be free of active transition rows.
+  if (forceLinked) {
+    statements.push(
+      db.prepare('DELETE FROM flaxia_auth_purge_in_progress WHERE user_id = ?').bind(userId),
+      db.prepare('DELETE FROM flaxia_auth_provisioning WHERE user_id = ?').bind(userId),
+      db.prepare('DELETE FROM flaxia_auth_credential_jobs WHERE user_id = ?').bind(userId),
+      db.prepare('DELETE FROM flaxia_direct_vault_changes WHERE user_id = ?').bind(userId),
+      db.prepare('DELETE FROM flaxia_auth_deletion_jobs WHERE user_id = ?').bind(userId),
+      db.prepare('DELETE FROM flaxia_direct_deletion_jobs WHERE user_id = ?').bind(userId),
+      db.prepare('DELETE FROM flaxia_auth_links WHERE user_id = ?').bind(userId),
     );
   }
 

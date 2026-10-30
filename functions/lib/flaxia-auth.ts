@@ -143,6 +143,30 @@ export async function revokeAuthUserGrants(env: AuthEnv, userId: string): Promis
   }
 }
 
+// Moderation actions must land at Auth first: deleting only the local profile
+// would leave the identity able to create a new profile, and freezing only
+// locally would leave the Auth account usable elsewhere.
+export async function adminAuthAccount(
+  env: AuthEnv,
+  action: 'freeze' | 'unfreeze' | 'delete',
+  userId: string,
+  reason?: string,
+): Promise<'ok' | 'not_found' | 'unavailable'> {
+  try {
+    const response = await postAuth(env, '/api/flaxia/admin/account', {
+      user_id: userId,
+      action,
+      ...(action === 'freeze' ? { reason: reason ?? '' } : {}),
+    });
+    if (response.status === 404) return 'not_found';
+    if (!response.ok) return 'unavailable';
+    const body = (await response.json()) as { success?: unknown };
+    return body.success === true ? 'ok' : 'unavailable';
+  } catch {
+    return 'unavailable';
+  }
+}
+
 export async function completeAuthLink(env: AuthEnv, grant: string, userId: string): Promise<boolean> {
   try {
     return (await postAuth(env, '/api/flaxia/link-complete', { grant, user_id: userId })).ok;
