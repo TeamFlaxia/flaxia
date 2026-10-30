@@ -168,3 +168,13 @@ test('every env binding used in code exists in wrangler.toml (prod parity)', asy
   const dbTestUsers = [...used].filter(([, keys]) => keys.has('DB_TEST')).map(([f]) => f);
   assert.deepEqual(dbTestUsers, ['functions/api/routes/tests.ts'], 'DB_TEST leaked outside the test helper');
 });
+
+test('cutover enables Auth authority in production and disables it for local dev/test', async () => {
+  const root = new URL('..', import.meta.url).pathname;
+  const wrangler = await readFile(join(root, 'wrangler.toml'), 'utf8');
+  assert.match(wrangler, /^\s*AUTH_AUTHORITY_MODE\s*=\s*"flaxia-auth"\s*$/m);
+
+  const pkg = JSON.parse(await readFile(PKG_URL, 'utf8')) as { scripts: Record<string, string> };
+  for (const name of ['dev', 'dev:hot', 'dev:api', 'dev:all', 'dev:test'])
+    assert.match(pkg.scripts[name], /AUTH_AUTHORITY_MODE=off/, `${name} must stay in legacy mode locally`);
+});

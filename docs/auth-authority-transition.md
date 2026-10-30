@@ -1,3 +1,9 @@
+> Cutover status: production enabled `AUTH_AUTHORITY_MODE=flaxia-auth` on
+> 2026-10-30 after replacing Auth D1 with a verified full copy of the Flaxia
+> users and bulk-linking every profile. Recovery-code enrollment is collected
+> on first Auth login. A rollback must preserve Auth as the credential
+> authority; do not restore a Worker that accepts linked local credentials.
+
 # Authentication authority transition
 
 Flaxia Auth is the target authority for credentials, authentication and
@@ -15,10 +21,9 @@ can create a profile only if the chosen username and email are available.
 The optional `AUTH_AUTHORITY_MODE=flaxia-auth` setting rejects legacy Flaxia
 sessions and disables local registration, login and verifier upgrades. It enables
 the Auth login and registration UI and
-migrates a linked account at its next Auth exchange. Keep it unset until all
-existing users have a working link and an enrolled recovery factor, supported
-clients use Auth, and the rollback plan and independent security review
-are complete. Purging local verifiers cannot be rolled back simply by disabling
+migrates a linked account at its next Auth exchange. Keep it unset in any environment until all existing users have a working
+link, supported clients use Auth, and the rollback plan and independent
+security review are complete. Purging local verifiers cannot be rolled back simply by disabling
 the setting.
 
 Password changes use an Auth-side prepared verifier and an application-side
