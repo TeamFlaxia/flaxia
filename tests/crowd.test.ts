@@ -1,6 +1,8 @@
 import assert from 'node:assert';
 import { createHmac } from 'node:crypto';
 import { describe, it } from 'node:test';
+import { onRequest as crowdAsset } from '../functions/api/crowd/[[route]].ts';
+import { CROWD_NODE_VERSION } from '../src/lib/crowd-node.ts';
 import { BASE_URL, loginUser, registerUser, resetDb } from './helpers/setup.ts';
 
 // Crowd integration tests.
@@ -105,22 +107,39 @@ async function getNsfwScans(postId: string): Promise<Array<Record<string, string
 }
 
 describe('GET /api/crowd/* — asset proxy', () => {
-  it('proxies /api/crowd/index.js with JS content type and CORS headers', async () => {
-    const res = await fetch(`${BASE_URL}/api/crowd/index.js`);
+  it('proxies /api/crowd/index.js with JS content type and CORS headers', async (t) => {
+    t.mock.method(globalThis, 'fetch', async (url) => {
+      assert.equal(String(url), `https://unpkg.com/@flaxia/node@${CROWD_NODE_VERSION}/dist/index.js`);
+      return new Response('export {};');
+    });
+    const res = await crowdAsset({ request: new Request(`${BASE_URL}/api/crowd/index.js`), env: {}, waitUntil() {} });
     assert.equal(res.status, 200);
     assert.match(res.headers.get('content-type') ?? '', /^application\/javascript/);
     assert.equal(res.headers.get('access-control-allow-origin'), 'https://flaxia.app');
     assert.match(res.headers.get('cache-control') ?? '', /max-age=\d+.*immutable/);
   });
 
-  it('serves assets under a versioned path (version segment stripped)', async () => {
-    const res = await fetch(`${BASE_URL}/api/crowd/v0.3.1-0/index.js`);
+  it('serves assets under a versioned path (version segment stripped)', async (t) => {
+    t.mock.method(globalThis, 'fetch', async (url) => {
+      assert.equal(String(url), `https://unpkg.com/@flaxia/node@${CROWD_NODE_VERSION}/dist/index.js`);
+      return new Response('export {};');
+    });
+    const res = await crowdAsset({
+      request: new Request(`${BASE_URL}/api/crowd/v0.3.1-0/index.js`),
+      env: {},
+      waitUntil() {},
+    });
     assert.equal(res.status, 200);
     assert.match(res.headers.get('content-type') ?? '', /^application\/javascript/);
   });
 
-  it('returns 404 for missing assets but still sets nosniff', async () => {
-    const res = await fetch(`${BASE_URL}/api/crowd/crowd-does-not-exist-xyz.js`);
+  it('returns 404 for missing assets but still sets nosniff', async (t) => {
+    t.mock.method(globalThis, 'fetch', async () => new Response('Not found', { status: 404 }));
+    const res = await crowdAsset({
+      request: new Request(`${BASE_URL}/api/crowd/crowd-does-not-exist-xyz.js`),
+      env: {},
+      waitUntil() {},
+    });
     assert.equal(res.status, 404);
     assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
   });

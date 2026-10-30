@@ -1,8 +1,8 @@
--- The first revision of 0113 seeded five Arcade titles with emoji icons. The
--- catalog is now image-based and only the account-creation title is seeded.
--- Remove the old rows (ownership cascades; equipped references become NULL) so
--- databases that already applied the original migration converge with fresh
--- installs.
+-- An earlier revision of the user-titles migration seeded five Arcade titles
+-- with emoji icons. The catalog is now image-based and only the
+-- account-creation title is seeded. Remove the old rows (ownership cascades;
+-- equipped references become NULL) so databases that already applied the
+-- original migration converge with fresh installs.
 DELETE FROM user_titles
 WHERE title_id IN (
   'arcade_first_clear',

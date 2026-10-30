@@ -28,6 +28,8 @@ export type Bindings = {
   CF_ACCESS_AUD: string;
   CF_TEAM_DOMAIN: string;
   CROWD_ORCHESTRATOR?: Fetcher;
+  AUTH_SERVICE?: Fetcher;
+  AUTH_AUTHORITY_MODE?: string;
   NOTIFICATION_STREAM?: DurableObjectNamespace;
   MULTIPLAYER_ROOM?: DurableObjectNamespace;
   MATCHMAKER?: DurableObjectNamespace;

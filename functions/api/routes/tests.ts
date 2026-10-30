@@ -59,6 +59,19 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
     await ensureFileScansTable(db);
 
     const resetOrder = [
+      // Remove transition guards first; otherwise their triggers correctly
+      // prevent deleting Vault keys and users in the isolated test database.
+      'flaxia_direct_deletion_jobs',
+      'flaxia_direct_email_changes',
+      'flaxia_direct_vault_changes',
+      'flaxia_auth_deletion_jobs',
+      'flaxia_auth_credential_jobs',
+      'flaxia_auth_provisioning',
+      'flaxia_auth_links',
+      'flaxia_auth_purge_in_progress',
+      'flaxia_auth_deletion_receipts',
+      'flaxia_auth_transition_assertions',
+      'profile_media_deletion_outbox',
       'poll_votes',
       'poll_options',
       'polls',
@@ -291,8 +304,15 @@ app.post('/api/test/title', requireTestEnvironment, async (c) => {
   const sortOrder = typeof body.sort_order === 'number' ? body.sort_order : 0;
 
   await c.env.DB.prepare(
-    `INSERT OR REPLACE INTO titles (id, icon, name, name_ja, description, description_ja, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO titles (id, icon, name, name_ja, description, description_ja, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       icon = excluded.icon,
+       name = excluded.name,
+       name_ja = excluded.name_ja,
+       description = excluded.description,
+       description_ja = excluded.description_ja,
+       sort_order = excluded.sort_order`,
   )
     .bind(body.id, body.icon, body.name, body.name_ja, body.description, body.description_ja, sortOrder)
     .run();

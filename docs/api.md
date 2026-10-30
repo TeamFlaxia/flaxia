@@ -229,10 +229,10 @@ already be owned by the user; send an empty value or `null` to remove it.
 | GET | `/api/titles/me` | Titles owned by the signed-in user |
 | PUT | `/api/titles/me/equipped` | Equip an owned title, or `{ "titleId": null }` to clear |
 
-New accounts are automatically granted `flaxian_newcomer` when registration
-completes. Accounts created before the title existed receive it on their next
-successful login. Title `icon` values are image URLs; non-image legacy values
-are rendered as a name-only badge.
+New accounts are automatically granted `flaxian_newcomer` when their profile
+is created, including through the Flaxia Auth exchange. Accounts created before
+the title existed receive it on their next successful login. Title `icon` values
+are image URLs; non-image legacy values are rendered as a name-only badge.
 
 ---
 

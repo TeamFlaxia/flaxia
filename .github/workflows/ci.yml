@@ -15,6 +15,56 @@ env:
   ONNXRUNTIME_NODE_DISABLE_DOWNLOAD: 1
 
 jobs:
+  auth-service-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: TeamFlaxia/flaxia-auth
+          ref: 1c035b165abb8d19c04aef6973468de18a276815
+          path: .integration/flaxia-auth
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm ci
+        working-directory: .integration/flaxia-auth
+      - run: npm run build
+      - run: npm run migrate:local
+      - run: npx wrangler d1 migrations apply flaxia-auth-prod --local
+        working-directory: .integration/flaxia-auth
+      - name: Test the actual Workers and service binding
+        env:
+          FLAXIA_AUTH_TEST_URL: http://127.0.0.1:8792
+          FLAXIA_APP_TEST_URL: http://localhost:8788
+        run: |
+          set -euo pipefail
+          npm run dev:do > /tmp/auth-it-do.log 2>&1 &
+          npm run dev:multiplayer > /tmp/auth-it-multiplayer.log 2>&1 &
+          (cd .integration/flaxia-auth && npx wrangler dev --local --ip 127.0.0.1 --port 8792) > /tmp/auth-it-auth.log 2>&1 &
+          npm run dev:test > /tmp/auth-it-app.log 2>&1 &
+          trap 'jobs -pr | xargs -r kill; cat /tmp/auth-it-{auth,app}.log' EXIT
+          for i in $(seq 1 90); do
+            if curl -fsS "$FLAXIA_AUTH_TEST_URL/health" >/dev/null && curl -fsS "$FLAXIA_APP_TEST_URL/" >/dev/null && grep -q 'env.AUTH_SERVICE .*local \[connected\]' /tmp/auth-it-app.log; then break; fi
+            sleep 1
+          done
+          curl -fsS "$FLAXIA_AUTH_TEST_URL/health" >/dev/null
+          curl -fsS "$FLAXIA_APP_TEST_URL/" >/dev/null
+          grep -q 'env.AUTH_SERVICE .*local \[connected\]' /tmp/auth-it-app.log
+          node --experimental-strip-types --test tests/integration/flaxia-auth.worker.test.ts
+          npx wrangler pages dev dist --port 8794 --inspector-port 0 --binding ENVIRONMENT=test --binding BASE_URL=http://localhost:8794 --binding AUTH_AUTHORITY_MODE=flaxia-auth --do NOTIFICATION_STREAM=NotificationStream@notif-stream --do MULTIPLAYER_ROOM=MultiplayerRoom@multiplayer-worker --do MATCHMAKER=Matchmaker@multiplayer-worker > /tmp/auth-it-direct.log 2>&1 &
+          export FLAXIA_APP_TEST_URL=http://localhost:8794 FLAXIA_DIRECT_AUTH_TEST=1
+          for i in $(seq 1 90); do
+            if curl -fsS "$FLAXIA_APP_TEST_URL/" >/dev/null && grep -q 'env.AUTH_SERVICE .*local \[connected\]' /tmp/auth-it-direct.log; then break; fi
+            sleep 1
+          done
+          curl -fsS "$FLAXIA_APP_TEST_URL/" >/dev/null
+          grep -q 'env.AUTH_SERVICE .*local \[connected\]' /tmp/auth-it-direct.log
+          node --experimental-strip-types --test tests/integration/flaxia-auth-direct.worker.test.ts
+
   game-loader-prototype:
     runs-on: ubuntu-latest
     timeout-minutes: 10

@@ -525,9 +525,12 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   titleHint.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem; margin-bottom: 1rem;';
   titleHint.textContent = t('edit_profile.title_loading');
 
-  let selectedTitleId = currentUser.equipped_title_id ?? '';
+  let originalTitleId = currentUser.equipped_title_id ?? '';
+  let selectedTitleId = originalTitleId;
   let titleOptions: TitleOption[] = [];
   let titleMenu: HTMLDivElement | null = null;
+  let titleLoaded = false;
+  let titleTouched = false;
 
   function createEmptyTitleIcon(className: string): HTMLSpanElement {
     const placeholder = document.createElement('span');
@@ -664,6 +667,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
 
     item.addEventListener('click', () => {
       selectedTitleId = option.id;
+      titleTouched = true;
       renderTitleTrigger();
       validateForm();
       closeTitleMenu(true);
@@ -729,6 +733,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
       response.ok
         ? (response.json() as Promise<{
             titles?: Array<{ id: string; icon: string; name: string; name_ja?: string | null }>;
+            equipped_title_id?: string | null;
           }>)
         : Promise.reject(new Error(String(response.status))),
     )
@@ -738,9 +743,16 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
         icon: title.icon,
         name: titleName(title),
       }));
+      // The API is authoritative; a stale cached current user must not make
+      // the next profile save clear the equipped title.
+      if (!titleTouched) {
+        originalTitleId = data.equipped_title_id ?? '';
+        selectedTitleId = originalTitleId;
+      }
       if (selectedTitleId && !titleOptions.some((title) => title.id === selectedTitleId)) {
         selectedTitleId = '';
       }
+      titleLoaded = true;
       titleTrigger.disabled = titleOptions.length === 0;
       renderTitleTrigger();
       titleHint.textContent = titleOptions.length === 0 ? t('edit_profile.title_empty') : t('edit_profile.title_hint');
@@ -839,7 +851,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
     const hasFieldChanges =
       displayNameInput.value.trim() !== originalDisplayName ||
       bioTextarea.value !== originalBio ||
-      selectedTitleId !== (currentUser.equipped_title_id ?? '') ||
+      selectedTitleId !== originalTitleId ||
       hasAvatarChange ||
       hasHeaderChange ||
       hasNameColorChange;
@@ -927,7 +939,11 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
       const formData = new FormData();
       formData.append('display_name', displayNameInput.value.trim());
       formData.append('bio', bioTextarea.value);
-      formData.append('equipped_title_id', selectedTitleId);
+      // Only send the title once the owned-title list loaded. If it failed,
+      // leave the equipped title untouched instead of clearing it.
+      if (titleLoaded) {
+        formData.append('equipped_title_id', selectedTitleId);
+      }
       if (hasNameColorChange) {
         // Empty string asks the server to reset to the default theme color.
         formData.append('name_color', selectedNameColor ?? '');

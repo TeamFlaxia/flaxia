@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 
-/** Awarded by `registerUser()` to every new account. */
+/** Awarded to every account on registration and on later logins. */
 export const NEWCOMER_TITLE_ID = 'flaxian_newcomer';
 
 export interface TitleRow {
@@ -28,6 +28,20 @@ export async function awardTitle(db: D1Database, userId: string, titleId: string
 
   await db.prepare('INSERT OR IGNORE INTO user_titles (user_id, title_id) VALUES (?, ?)').bind(userId, titleId).run();
   return true;
+}
+
+/**
+ * Reconciles the account-creation title. Registration and login both call it so
+ * accounts created before the title existed receive it on their next sign-in.
+ * Best-effort: a missing catalog row must never block authentication.
+ */
+export async function ensureNewcomerTitle(db: D1Database, userId: string): Promise<void> {
+  try {
+    const awarded = await awardTitle(db, userId, NEWCOMER_TITLE_ID);
+    if (!awarded) console.warn(`Newcomer title ${NEWCOMER_TITLE_ID} is not seeded`);
+  } catch (error) {
+    console.error('Failed to award newcomer title:', error);
+  }
 }
 
 /**

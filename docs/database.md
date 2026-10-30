@@ -47,9 +47,10 @@ Flaxia uses Cloudflare D1 (SQLite-compatible) with migrations in `migrations/`.
 
 Titles are granted by achievement systems (for example Arcade clears) via
 `awardTitle()` in `functions/lib/titles.ts`. New accounts receive
-`flaxian_newcomer` from `registerUser()`, and existing accounts receive it on
-their next successful login. `users.equipped_title_id` stores at most one title
-per user; it must be owned in `user_titles` before it can be equipped.
+`flaxian_newcomer` when their profile is created (local registration or the
+Flaxia Auth exchange), and existing accounts receive it on their next successful
+login. `users.equipped_title_id` stores at most one title per user; it must be
+owned in `user_titles` before it can be equipped.
 
 ### `sessions`
 | Column | Type | Notes |

@@ -23,6 +23,8 @@ interface Env {
   BASE_URL: string;
   EXPORT_KV?: KVNamespace;
   EXPORT_BUCKET?: R2Bucket;
+  BUCKET?: R2Bucket;
+  AUTH_SERVICE?: Fetcher;
   HF_TOKEN?: string;
   HF_REPO?: string;
 }
@@ -44,6 +46,20 @@ export default {
       if (reaped > 0) console.log(`Reaped ${reaped} stale pending posts`);
     } catch (error) {
       console.error('Pending reap failed:', (error as Error).message);
+    }
+    try {
+      const { reapDirectDeletions } = await import('./lib/flaxia-direct-deletion');
+      const reaped = await reapDirectDeletions(env);
+      if (reaped > 0) console.log(`Completed ${reaped} pending account deletions`);
+    } catch (error) {
+      console.error('Account deletion recovery failed:', (error as Error).message);
+    }
+    try {
+      const { reapProfileMedia } = await import('./lib/profile-media-reap');
+      const reaped = await reapProfileMedia(env);
+      if (reaped > 0) console.log(`Deleted ${reaped} unreferenced profile images`);
+    } catch (error) {
+      console.error('Profile media cleanup failed:', (error as Error).message);
     }
     try {
       const { recomputeStaleTrustScores } = await import('./lib/trust');
