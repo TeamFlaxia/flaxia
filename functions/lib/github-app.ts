@@ -1,3 +1,6 @@
+/** GitHub rejects API requests that do not identify the calling application. */
+export const GITHUB_USER_AGENT = 'Flaxia-Bug-Report/1.0 (+https://flaxia.app)';
+
 const RSA_ALGORITHM_IDENTIFIER = Uint8Array.from([
   0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00,
 ]);
@@ -89,6 +92,7 @@ export async function createGitHubInstallationToken(
       Accept: 'application/vnd.github+json',
       Authorization: `Bearer ${jwt}`,
       'Content-Type': 'application/json',
+      'User-Agent': GITHUB_USER_AGENT,
       'X-GitHub-Api-Version': '2022-11-28',
     },
     body: '{}',

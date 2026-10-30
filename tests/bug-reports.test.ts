@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
@@ -54,15 +54,31 @@ class TestD1 {
   private db = new DatabaseSync(':memory:');
 
   constructor() {
-    this.db.exec(readFileSync(new URL('../migrations/0113_bug_report_submissions.sql', import.meta.url), 'utf8'));
+    for (const migration of ['0097_file_scans_blocklist.sql', '0128_bug_report_submissions.sql']) {
+      this.db.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
+    }
+  }
+
+  /** Test hook: make the synchronous upload scan reject these exact bytes. */
+  blockSha256(sha256: string): void {
+    this.db.prepare("INSERT INTO file_blocklist (kind, value, reason) VALUES ('sha256', ?, 'test')").run(sha256);
   }
 
   prepare(sql: string) {
+    const run = (...args: (string | number | null)[]) => ({
+      meta: { changes: Number(this.db.prepare(sql).run(...args).changes) },
+    });
+    const first = (...args: (string | number | null)[]) => this.db.prepare(sql).get(...args) ?? null;
+    const all = (...args: (string | number | null)[]) => ({ results: this.db.prepare(sql).all(...args) });
     return {
       bind: (...args: (string | number | null)[]) => ({
-        run: async () => ({ meta: { changes: Number(this.db.prepare(sql).run(...args).changes) } }),
-        first: async () => this.db.prepare(sql).get(...args) ?? null,
+        run: async () => run(...args),
+        first: async () => first(...args),
+        all: async () => all(...args),
       }),
+      run: async () => run(),
+      first: async () => first(),
+      all: async () => all(),
     };
   }
 }
@@ -137,14 +153,26 @@ function makeForm(
   return form;
 }
 
-async function withGitHubMock<T>(fn: (calls: Array<{ url: string; body: string; auth: string | null }>) => Promise<T>) {
+interface GitHubCall {
+  url: string;
+  body: string;
+  auth: string | null;
+  userAgent: string | null;
+}
+
+async function withGitHubMock<T>(fn: (calls: GitHubCall[]) => Promise<T>) {
   const originalFetch = globalThis.fetch;
-  const calls: Array<{ url: string; body: string; auth: string | null }> = [];
+  const calls: GitHubCall[] = [];
   let issueNumber = 40;
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     const headers = new Headers(init?.headers);
-    calls.push({ url, body: typeof init?.body === 'string' ? init.body : '', auth: headers.get('Authorization') });
+    calls.push({
+      url,
+      body: typeof init?.body === 'string' ? init.body : '',
+      auth: headers.get('Authorization'),
+      userAgent: headers.get('User-Agent'),
+    });
     if (url.includes('/access_tokens')) {
       return new Response(JSON.stringify({ token: 'installation-token' }), { status: 201 });
     }
@@ -172,6 +200,7 @@ test('bug reports require an authenticated session and pass CSRF validation', as
     anonymous.env,
   );
   assert.equal(unauthorized.status, 401);
+  assert.deepEqual(await unauthorized.json(), { error: 'unauthorized' });
 
   const authenticated = makeApp(true);
   const csrf = await authenticated.app.request(
@@ -209,7 +238,9 @@ test('valid reports create one public issue without account or unconsented diagn
     const issueRequest = calls.find((call) => call.url.endsWith('/issues'));
     assert.ok(tokenRequest?.auth?.startsWith('Bearer '));
     assert.equal(tokenRequest?.auth?.split('.').length, 3);
+    assert.match(tokenRequest?.userAgent ?? '', /^Flaxia-Bug-Report\//);
     assert.ok(issueRequest);
+    assert.match(issueRequest.userAgent ?? '', /^Flaxia-Bug-Report\//);
     const issue = JSON.parse(issueRequest.body) as { title: string; body: string; labels: string[] };
     assert.equal(issue.title, '[Bug][timeline] Timeline shows an error');
     assert.deepEqual(issue.labels, ['bug', 'user-report']);
@@ -266,6 +297,29 @@ test('screenshots require public-sharing consent and are validated before upload
     assert.match(issue.body, /Screenshot \(user consented to public sharing\)/);
     assert.match(issue.body, /https:\/\/flaxia\.app\/api\/images\/bug-reports\//);
     assert.doesNotMatch(issue.body, /private-name\.png/);
+  });
+});
+
+test('blocklisted screenshot bytes are rejected before any R2 upload', async () => {
+  const { app, env, uploaded } = makeApp();
+  const sha256 = createHash('sha256').update(pngBytes).digest('hex');
+  (env.DB as TestD1).blockSha256(sha256);
+
+  await withGitHubMock(async (calls) => {
+    const response = await app.request(
+      '/api/bug-reports',
+      {
+        method: 'POST',
+        body: makeForm({
+          screenshot: new Blob([pngBytes], { type: 'image/png' }),
+          screenshotConsent: true,
+        }),
+      },
+      env,
+    );
+    assert.equal(response.status, 400);
+    assert.equal(uploaded.size, 0);
+    assert.equal(calls.filter((call) => call.url.endsWith('/issues')).length, 0);
   });
 });
 

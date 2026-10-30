@@ -36,7 +36,7 @@ The build output is in `dist/`.
 
 ## GitHub bug reports (#263)
 
-Apply D1 migrations before deploying this feature; migration `0113_bug_report_submissions.sql` provides submission reservations and rate limits.
+Apply D1 migrations before deploying this feature; migration `0128_bug_report_submissions.sql` provides submission reservations and rate limits.
 
 The Settings → Other → Report a bug form creates public issues in
 `TeamFlaxia/flaxia`. Configure a GitHub App installed on that repository with

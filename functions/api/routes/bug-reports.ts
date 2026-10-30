@@ -8,10 +8,11 @@ import {
   parseBugReportDiagnostics,
   validateBugReportContent,
 } from '../../lib/bug-report';
-import { createGitHubInstallationToken } from '../../lib/github-app';
+import { createGitHubInstallationToken, GITHUB_USER_AGENT } from '../../lib/github-app';
 import { validateImageDimensions } from '../../lib/image-dimensions';
+import { submitFileScans } from '../../lib/scan/clamav';
+import { runInBackground, scanUploadSync } from '../../lib/scan/index';
 import { checkDeclaredType, detectMimeType, isAllowedImageMime } from '../../lib/scan/mime';
-import { requireAuth } from '../helpers';
 import type { Bindings, Variables } from '../types';
 
 const bugReports = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -51,6 +52,7 @@ async function createIssueRequest(
       Accept: 'application/vnd.github+json',
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
+      'User-Agent': GITHUB_USER_AGENT,
       'X-GitHub-Api-Version': '2022-11-28',
     },
     body: JSON.stringify(body),
@@ -175,7 +177,7 @@ async function readLimitedForm(request: Request): Promise<FormData | null> {
   return new Request(request.url, { method: 'POST', headers: request.headers, body }).formData();
 }
 
-bugReports.post('/bug-reports', requireAuth, async (c) => {
+bugReports.post('/bug-reports', async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'unauthorized' }, 401);
 
@@ -317,9 +319,27 @@ bugReports.post('/bug-reports', requireAuth, async (c) => {
     let imageUrl: string | undefined;
     if (screenshot && screenshotBytes && screenshotMime) {
       uploadedImageKey = `bug-reports/${crypto.randomUUID()}.${imageExtension(screenshotMime)}`;
-      await c.env.BUCKET.put(uploadedImageKey, screenshotBytes, {
+
+      // Same upload gate as every other R2 sink: masquerade checks, feature
+      // extraction and the synchronous blocklist match before the bytes land.
+      const verdict = await scanUploadSync(c.env.DB, {
+        bytes: screenshotBytes,
+        declaredType: screenshot.type,
+        name: uploadedImageKey,
+        r2Key: uploadedImageKey,
+        detectedMime: screenshotMime,
+      });
+      if (!verdict.ok) {
+        await releaseReservation(c.env.DB, user.id, fingerprint, reservationId);
+        return c.json({ error: 'invalid_screenshot' }, verdict.status);
+      }
+
+      const imageKey = uploadedImageKey;
+      await c.env.BUCKET.put(imageKey, screenshotBytes, {
         httpMetadata: { contentType: screenshotMime, cacheControl: 'public, max-age=31536000, immutable' },
       });
+      // ClamAV runs after the response; a later hit blocks serving the image.
+      runInBackground(c, () => submitFileScans(c.env.DB, c.env, imageKey, screenshotMime, screenshotBytes));
       imageUrl = screenshotUrl(c.env.BASE_URL, uploadedImageKey);
     }
 
