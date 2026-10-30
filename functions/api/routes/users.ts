@@ -1,9 +1,30 @@
 import { Hono } from 'hono';
 import { nanoid } from 'nanoid';
+import { normalizeNameColor } from '../../../src/lib/name-color';
 import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../src/lib/vault/primitives';
 import { deleteAccount } from '../../lib/account-deletion';
 import { enrichPostsWithAttachments } from '../../lib/attachments';
-import { deleteSession, getMeWithSession, getSessionToken, verifySrpPassword } from '../../lib/auth';
+import {
+  clearSessionCookie,
+  deleteSession,
+  getMeWithSession,
+  getSessionToken,
+  verifySrpPassword,
+} from '../../lib/auth';
+import {
+  authCredentialOperation,
+  authEmailAction,
+  cancelAuthDeletion,
+  credentialStampFor,
+  deleteAuthAccount,
+  hasPendingAuthProvision,
+  sessionGrant,
+} from '../../lib/flaxia-auth';
+import { cancelAuthCredentialChange, resumeAuthCredentialChange } from '../../lib/flaxia-auth-credentials';
+import { deletionOperationHash, resumeAuthDeletion } from '../../lib/flaxia-auth-deletion';
+import { resumeDirectCredentialChange } from '../../lib/flaxia-direct-credentials';
+import { resumeDirectDeletion } from '../../lib/flaxia-direct-deletion';
+import { resumeDirectEmailChange } from '../../lib/flaxia-direct-email';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { clampLimit } from '../../lib/pagination';
 import { checkRateLimit } from '../../lib/rate-limit';
@@ -32,7 +53,7 @@ async function fetchRemoteJson(url: string, accept: string): Promise<{ url: stri
   return { url: parsed.toString(), response };
 }
 
-const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
   COALESCE(p.reply_count, 0) as reply_count, 
   COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at`;
 
@@ -119,7 +140,7 @@ users.get('/users/suggestions', async (c) => {
     const currentUserId = sessionData.user.id;
 
     const pool = await c.env.DB.prepare(`
-      SELECT id, username, display_name, avatar_key, badge_type
+      SELECT id, username, display_name, avatar_key, badge_type, name_color
       FROM users
       WHERE id != ? AND frozen_at IS NULL
       AND id NOT IN (
@@ -410,7 +431,7 @@ users.get('/users/suggest', async (c) => {
     const prefix = q.toLowerCase();
 
     const result = await c.env.DB.prepare(`
-      SELECT id, username, display_name, avatar_key, badge_type
+      SELECT id, username, display_name, avatar_key, badge_type, name_color
       FROM users
       WHERE frozen_at IS NULL AND (LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?)
       ORDER BY
@@ -427,6 +448,7 @@ users.get('/users/suggest', async (c) => {
       display_name: u.display_name || '',
       avatar_key: u.avatar_key || '',
       badge_type: (u.badge_type as string | null) ?? null,
+      name_color: (u.name_color as string | null) ?? null,
     }));
 
     return c.json({ users: usersList }, 200, {
@@ -453,9 +475,13 @@ users.get('/users/:username', async (c) => {
     }
 
     const user = await c.env.DB.prepare(`
-      SELECT id, username, display_name, bio, avatar_key, badge_type, header_key, created_at, pinned_post_id, frozen_at, frozen_reason
-      FROM users 
-      WHERE username = ? COLLATE NOCASE
+      SELECT u.id, u.username, u.display_name, u.bio, u.avatar_key, u.badge_type, u.name_color, u.header_key,
+             u.created_at, u.pinned_post_id, u.frozen_at, u.frozen_reason, u.equipped_title_id,
+             t.name AS title_name, t.name_ja AS title_name_ja,
+             t.description AS title_description, t.description_ja AS title_description_ja, t.icon AS title_icon
+      FROM users u
+      LEFT JOIN titles t ON t.id = u.equipped_title_id
+      WHERE u.username = ? COLLATE NOCASE
     `)
       .bind(username)
       .first();
@@ -472,6 +498,8 @@ users.get('/users/:username', async (c) => {
           username: user.username,
           display_name: user.display_name,
           avatar_key: user.avatar_key,
+          badge_type: user.badge_type,
+          name_color: user.name_color,
           header_key: user.header_key,
         },
       });
@@ -549,7 +577,7 @@ users.get('/users/:username/pinned', async (c) => {
     const currentUserId = sessionData?.user.id ?? null;
 
     const row = await c.env.DB.prepare(
-      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0`,
+      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0`,
     )
       .bind(user.pinned_post_id)
       .first();
@@ -671,7 +699,7 @@ users.get('/users/:username/followers', async (c) => {
 
     let query = `
       SELECT 
-        u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language,
+        u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.language as author_language,
         u.created_at
       FROM follows f
       JOIN users u ON f.follower_id = u.id
@@ -785,7 +813,7 @@ users.get('/users/:username/following', async (c) => {
 
     let query = `
       SELECT 
-        u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language,
+        u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.language as author_language,
         u.created_at
       FROM follows f
       JOIN users u ON f.followee_id = u.id
@@ -879,6 +907,8 @@ users.patch('/users/me', requireAuth, async (c) => {
     let bio: string | undefined;
     let language: string | undefined;
     let ng_words: string[] | undefined;
+    let name_color: string | null | undefined;
+    let equippedTitleId: string | null | undefined;
     let avatarFile: File | undefined;
     let headerFile: File | undefined;
     let removeHeader = false;
@@ -892,6 +922,21 @@ users.patch('/users/me', requireAuth, async (c) => {
       avatarFile = (formData.get('avatar') as File | null) || undefined;
       headerFile = (formData.get('header') as File | null) || undefined;
       removeHeader = formData.get('remove_header') === '1' || formData.get('remove_header') === 'true';
+
+      const rawTitleId = formData.get('equipped_title_id');
+      if (rawTitleId !== null) {
+        if (typeof rawTitleId !== 'string') {
+          return c.json({ error: 'equipped_title_id must be a string' }, 400);
+        }
+        const trimmed = rawTitleId.trim();
+        equippedTitleId = trimmed === '' ? null : trimmed;
+      }
+
+      // Absent means "leave unchanged"; an empty string resets to the default.
+      const rawNameColor = formData.get('name_color');
+      if (typeof rawNameColor === 'string') {
+        name_color = rawNameColor.trim() === '' ? null : rawNameColor;
+      }
 
       if (avatarFile && avatarFile.size > 0) {
         const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
@@ -1022,6 +1067,16 @@ users.patch('/users/me', requireAuth, async (c) => {
       bio = body.bio;
       language = body.language;
       ng_words = body.ng_words;
+      if (Object.hasOwn(body, 'equipped_title_id')) {
+        if (body.equipped_title_id !== null && typeof body.equipped_title_id !== 'string') {
+          return c.json({ error: 'equipped_title_id must be a string or null' }, 400);
+        }
+        equippedTitleId = body.equipped_title_id === null ? null : body.equipped_title_id.trim() || null;
+      }
+
+      if (Object.hasOwn(body, 'name_color')) {
+        name_color = body.name_color ?? null;
+      }
     }
 
     if (display_name !== undefined && display_name.length > 50) {
@@ -1034,6 +1089,22 @@ users.patch('/users/me', requireAuth, async (c) => {
 
     if (language !== undefined && !['en', 'ja'].includes(language)) {
       return c.json({ error: 'Language must be either "en" or "ja"' }, 400);
+    }
+
+    if (name_color !== undefined) {
+      // Reviewers get the Flaxia+ badge through /api/me, but a session created
+      // before that sync still carries role=reviewer — accept either proof.
+      const entitled = user.badge_type === 'flaxia_plus' || user.role === 'reviewer';
+      if (!entitled) {
+        return c.json({ error: 'Flaxia+ subscription required', code: 'plus_required' }, 403);
+      }
+      if (name_color !== null) {
+        const normalized = normalizeNameColor(name_color);
+        if (!normalized) {
+          return c.json({ error: 'Invalid name color' }, 400);
+        }
+        name_color = normalized;
+      }
     }
 
     if (ng_words !== undefined) {
@@ -1050,6 +1121,15 @@ users.patch('/users/me', requireAuth, async (c) => {
         if (word.length > 50) {
           return c.json({ error: 'Each NG word must be ≤50 characters' }, 400);
         }
+      }
+    }
+
+    if (equippedTitleId !== undefined && equippedTitleId !== null) {
+      const owned = await c.env.DB.prepare('SELECT 1 FROM user_titles WHERE user_id = ? AND title_id = ?')
+        .bind(userId, equippedTitleId)
+        .first();
+      if (!owned) {
+        return c.json({ error: 'Title not owned' }, 403);
       }
     }
 
@@ -1076,6 +1156,16 @@ users.patch('/users/me', requireAuth, async (c) => {
       values.push(JSON.stringify(ng_words));
     }
 
+    if (name_color !== undefined) {
+      updates.push('name_color = ?');
+      values.push(name_color);
+    }
+
+    if (equippedTitleId !== undefined) {
+      updates.push('equipped_title_id = ?');
+      values.push(equippedTitleId);
+    }
+
     if (updates.length > 0) {
       values.push(userId);
 
@@ -1098,16 +1188,26 @@ users.patch('/users/me', requireAuth, async (c) => {
       bio: string | null;
       avatar_key: string | null;
       badge_type: string | null;
+      name_color: string | null;
       header_key: string | null;
       language: string | null;
       ng_words: string | null;
+      equipped_title_id: string | null;
+      title_name: string | null;
+      title_name_ja: string | null;
+      title_description: string | null;
+      title_description_ja: string | null;
+      title_icon: string | null;
       created_at: string;
     };
 
     const updatedUser = await c.env.DB.prepare(`
-      SELECT id, email, username, display_name, bio, avatar_key, badge_type, header_key, language, ng_words, created_at 
-      FROM users 
-      WHERE id = ?
+      SELECT u.id, u.email, u.username, u.display_name, u.bio, u.avatar_key, u.badge_type, u.name_color, u.header_key, u.language, u.ng_words, u.created_at,
+             u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja,
+             t.description AS title_description, t.description_ja AS title_description_ja, t.icon AS title_icon
+      FROM users u
+      LEFT JOIN titles t ON t.id = u.equipped_title_id
+      WHERE u.id = ?
     `)
       .bind(userId)
       .first<UpdatedUserRow>();
@@ -1137,10 +1237,16 @@ users.patch('/users/me/email', requireAuth, async (c) => {
     if (!user) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
+    const sessionToken = getSessionToken(c.req.raw);
 
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);
     }
+
+    // A linked opt-in session is a local session id mapped to an Auth grant.
+    // Direct authority sessions are already 43-character grants. Resolve both
+    // before deciding whether the Auth email authority must be updated.
+    const authGrant = await sessionGrant(c.env.DB, sessionToken);
 
     const { current_srp, new_email } = await c.req.json();
 
@@ -1178,7 +1284,73 @@ users.patch('/users/me/email', requireAuth, async (c) => {
       return c.json({ error: 'Too many requests. Please try again later.' }, 429);
     }
 
-    const isValid = await verifySrpPassword(c.env, userId, proof.challenge_id, proof.A, proof.M1);
+    if (authGrant) {
+      const existing = await c.env.DB.prepare(
+        'SELECT operation_hash, target_email FROM flaxia_direct_email_changes WHERE user_id = ?',
+      )
+        .bind(userId)
+        .first<{ operation_hash: string; target_email: string }>();
+      let operationHash: string;
+      if (existing) {
+        if (existing.target_email.toLowerCase() !== normalizedEmail)
+          return c.json({ error: 'Email is already taken or a change is pending' }, 409);
+        operationHash = existing.operation_hash;
+      } else {
+        operationHash = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))))
+          .replaceAll('+', '-')
+          .replaceAll('/', '_')
+          .replaceAll('=', '');
+        await c.env.DB.prepare(`INSERT OR IGNORE INTO flaxia_direct_email_changes (operation_hash, user_id, target_email, state, created_at)
+          SELECT ?, u.id, ?, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM users u WHERE u.id = ? AND u.frozen_at IS NULL AND NOT EXISTS (SELECT 1 FROM users other WHERE lower(other.email) = ? AND other.id != u.id)`)
+          .bind(operationHash, normalizedEmail, userId, normalizedEmail)
+          .run();
+        const job = await c.env.DB.prepare('SELECT operation_hash FROM flaxia_direct_email_changes WHERE user_id = ?')
+          .bind(userId)
+          .first<{ operation_hash: string }>();
+        if (!job || job.operation_hash !== operationHash)
+          return c.json({ error: 'Email is already taken or a change is pending' }, 409);
+      }
+      const remote = await authEmailAction(c.env, 'change', {
+        operation_hash: operationHash,
+        grant: authGrant,
+        user_id: userId,
+        email: normalizedEmail,
+        current_srp: proof,
+      });
+      if (remote.status === 'unavailable') return c.json({ error: 'Email change temporarily unavailable' }, 503);
+      if (remote.status === 'denied') {
+        const result = await resumeDirectEmailChange(c.env, authGrant, userId, true);
+        if (result === 'ok') return c.json({ ok: true });
+        if (result === 'none') {
+          const current = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?')
+            .bind(userId)
+            .first<{ email: string }>();
+          return current?.email === normalizedEmail
+            ? c.json({ ok: true })
+            : c.json({ error: 'Email change rejected' }, 409);
+        }
+        if (result === 'cancelled') return c.json({ error: 'Email change rejected' }, 409);
+        return c.json({ error: 'Email change temporarily unavailable' }, 503);
+      }
+      const result = await resumeDirectEmailChange(c.env, authGrant, userId);
+      if (result === 'ok') return c.json({ ok: true });
+      if (result === 'none') {
+        const current = await c.env.DB.prepare('SELECT email FROM users WHERE id = ?')
+          .bind(userId)
+          .first<{ email: string }>();
+        if (current?.email === normalizedEmail) return c.json({ ok: true });
+      }
+      return c.json({ error: 'Email change temporarily unavailable' }, 503);
+    }
+
+    const isValid = await verifySrpPassword(
+      c.env,
+      userId,
+      proof.challenge_id,
+      proof.A,
+      proof.M1,
+      getSessionToken(c.req.raw),
+    );
     if (!isValid) {
       return c.json({ error: 'Current password is incorrect' }, 401);
     }
@@ -1205,6 +1377,37 @@ users.patch('/users/me/email', requireAuth, async (c) => {
   }
 });
 
+users.post('/users/me/credentials/retry', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { operation?: unknown } | null;
+  if (!body || typeof body.operation !== 'string') return c.json({ error: 'Invalid operation' }, 400);
+  const token = getSessionToken(c.req.raw);
+  if (token && /^[A-Za-z0-9_-]{43}$/.test(token)) {
+    const identity = await getMeWithSession(c.env, token);
+    if (!identity) return c.json({ error: 'Unauthorized' }, 401);
+    const result = await resumeDirectCredentialChange(c.env, body.operation, token, identity.user.id);
+    if (result === 'ok') return c.json({ ok: true });
+    if (result === 'cancelled') return c.json({ error: 'Credential change cancelled', cancelled: true }, 409);
+    if (result === 'not_found') return c.json({ error: 'Operation not found' }, 404);
+    return c.json({ error: 'Credential change temporarily unavailable' }, 503);
+  }
+  const result = await resumeAuthCredentialChange(c.env, body.operation);
+  if (result === 'ok') return c.json({ ok: true });
+  if (result === 'cancelled') return c.json({ error: 'Credential change cancelled', cancelled: true }, 409);
+  if (result === 'not_found') return c.json({ error: 'Operation not found' }, 404);
+  if (result === 'denied' || result === 'conflict') {
+    const cancelled = await cancelAuthCredentialChange(c.env, body.operation);
+    if (cancelled === 'cancelled')
+      return c.json(
+        {
+          error: result === 'denied' ? 'Current password is incorrect' : 'vault_key_version_conflict',
+          cancelled: true,
+        },
+        result === 'denied' ? 401 : 409,
+      );
+  }
+  return c.json({ error: 'Credential change temporarily unavailable' }, 503);
+});
+
 // PATCH /users/me/password - update password (protected)
 //
 // Neither the current nor the new password is ever sent: the current one is
@@ -1218,12 +1421,17 @@ users.patch('/users/me/password', requireAuth, async (c) => {
     if (!user) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
+    const sessionToken = getSessionToken(c.req.raw);
+    const grant = await sessionGrant(c.env.DB, sessionToken);
+    if (!grant && (await hasPendingAuthProvision(c.env.DB, user.id)))
+      return c.json({ error: 'Credential changes unavailable during Auth migration' }, 409);
 
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);
     }
 
-    const { srp_salt, srp_verifier, srp_group, srp_kdf, current_srp, vault_kek } = await c.req.json();
+    const { srp_salt, srp_verifier, srp_group, srp_kdf, current_srp, vault_kek, operation, recovery } =
+      await c.req.json();
 
     if (!srp_salt || !srp_verifier || !srp_group || !srp_kdf) {
       return c.json({ error: 'New SRP verifier required' }, 400);
@@ -1242,8 +1450,7 @@ users.patch('/users/me/password', requireAuth, async (c) => {
 
     const userId = user.id;
 
-    const verified = await verifySrpPassword(c.env, userId, proof.challenge_id, proof.A, proof.M1);
-    if (!verified) {
+    if (!grant && !(await verifySrpPassword(c.env, userId, proof.challenge_id, proof.A, proof.M1, sessionToken))) {
       return c.json({ error: 'Current password is incorrect' }, 401);
     }
 
@@ -1287,6 +1494,155 @@ users.patch('/users/me/password', requireAuth, async (c) => {
       const status =
         vaultUpdate.error === 'vault_rewrap_required' || vaultUpdate.error === 'vault_key_version_conflict' ? 409 : 400;
       return c.json({ error: vaultUpdate.error }, status);
+    }
+
+    if (sessionToken && /^[A-Za-z0-9_-]{43}$/.test(sessionToken)) {
+      if (typeof operation !== 'string') return c.json({ error: 'Credential operation required' }, 400);
+      const hash = await deletionOperationHash(operation);
+      if (
+        !hash ||
+        typeof proof.challenge_id !== 'string' ||
+        proof.challenge_id.length > 64 ||
+        typeof proof.A !== 'string' ||
+        proof.A.length > 400 ||
+        typeof proof.M1 !== 'string' ||
+        proof.M1.length > 64
+      )
+        return c.json({ error: 'Invalid credential operation' }, 400);
+      const target = await credentialStampFor({ password_hash: '', srp_salt, srp_verifier, srp_group, srp_kdf });
+      if (!target) return c.json({ error: 'Invalid credential operation' }, 400);
+      const vaultJson = vaultUpdate
+        ? JSON.stringify({
+            salt: vaultUpdate.binds[0],
+            kdf_params: JSON.parse(vaultUpdate.binds[1]),
+            wrapped_vk: vaultUpdate.binds[2],
+            vk_version: vaultUpdate.version,
+          })
+        : null;
+      await c.env.DB.prepare(
+        "INSERT OR IGNORE INTO flaxia_direct_vault_changes (operation_hash, user_id, target_stamp, vault_json, state, created_at) SELECT ?, id, ?, ?, 'pending', strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM users WHERE id = ? AND frozen_at IS NULL",
+      )
+        .bind(hash, target.stamp, vaultJson, userId)
+        .run();
+      const job = await c.env.DB.prepare(
+        'SELECT user_id, target_stamp, vault_json, state FROM flaxia_direct_vault_changes WHERE operation_hash = ?',
+      )
+        .bind(hash)
+        .first<{ user_id: string; target_stamp: string; vault_json: string | null; state: string }>();
+      if (!job || job.user_id !== userId || job.target_stamp !== target.stamp || job.vault_json !== vaultJson)
+        return c.json({ error: 'Credential change already pending' }, 409);
+      if (job.state === 'pending') {
+        const prepared = await authCredentialOperation(
+          c.env,
+          'prepare',
+          {
+            operation,
+            grant: sessionToken,
+            user_id: userId,
+            current_srp: proof,
+            srp_salt,
+            srp_verifier,
+            srp_group,
+            srp_kdf,
+            recoverable: true,
+            recovery: recovery === true,
+          },
+          target.stamp,
+        );
+        if (prepared === 'unavailable') return c.json({ error: 'Credential change temporarily unavailable' }, 503);
+        if (prepared === 'denied') {
+          const cancelled = await resumeDirectCredentialChange(c.env, operation, sessionToken, userId);
+          if (cancelled === 'cancelled')
+            return c.json({ error: 'Current password is incorrect', cancelled: true }, 401);
+          if (cancelled === 'ok') return c.json({ ok: true });
+          return c.json({ error: 'Credential change temporarily unavailable' }, 503);
+        }
+      }
+      const result = await resumeDirectCredentialChange(c.env, operation, sessionToken, userId);
+      if (result === 'ok') return c.json({ ok: true });
+      if (result === 'cancelled') return c.json({ error: 'Credential change cancelled', cancelled: true }, 409);
+      return c.json({ error: 'Credential change temporarily unavailable' }, 503);
+    }
+
+    if (grant) {
+      if (!sessionToken || typeof operation !== 'string')
+        return c.json({ error: 'Credential operation required' }, 400);
+      const hash = await deletionOperationHash(operation);
+      if (
+        !hash ||
+        typeof proof.challenge_id !== 'string' ||
+        proof.challenge_id.length > 64 ||
+        typeof proof.A !== 'string' ||
+        proof.A.length > 400 ||
+        typeof proof.M1 !== 'string' ||
+        proof.M1.length > 64
+      )
+        return c.json({ error: 'Invalid credential operation' }, 400);
+      const target = await credentialStampFor({ password_hash: '', srp_salt, srp_verifier, srp_group, srp_kdf });
+      if (!target) return c.json({ error: 'Invalid credential operation' }, 400);
+      const vaultJson = vaultUpdate
+        ? JSON.stringify({
+            salt: vaultUpdate.binds[0],
+            kdf_params: JSON.parse(vaultUpdate.binds[1]),
+            wrapped_vk: vaultUpdate.binds[2],
+            vk_version: vaultUpdate.version,
+          })
+        : null;
+      await c.env.DB.prepare(`INSERT OR IGNORE INTO flaxia_auth_credential_jobs
+        (operation_hash, operation_token, user_id, session_id, grant_token, proof_json, old_password_hash, old_salt, old_verifier, old_group, old_kdf, new_salt, new_verifier, new_group, new_kdf, target_stamp, vault_json, state)
+        SELECT ?, ?, u.id, s.id, a.grant_token, ?, u.password_hash, u.srp_salt, u.srp_verifier, u.srp_group, u.srp_kdf, ?, ?, ?, ?, ?, ?, 'pending'
+        FROM users u JOIN sessions s ON s.user_id = u.id JOIN flaxia_auth_sessions a ON a.session_id = s.id
+        WHERE u.id = ? AND u.frozen_at IS NULL AND s.id = ? AND a.grant_token = ?
+          AND NOT EXISTS (SELECT 1 FROM flaxia_auth_deletion_jobs WHERE user_id = u.id)`)
+        .bind(
+          hash,
+          operation,
+          JSON.stringify(proof),
+          srp_salt,
+          srp_verifier,
+          srp_group,
+          srp_kdf,
+          target.stamp,
+          vaultJson,
+          userId,
+          sessionToken,
+          grant,
+        )
+        .run();
+      const job = await c.env.DB.prepare(
+        'SELECT user_id, session_id, grant_token, target_stamp, vault_json FROM flaxia_auth_credential_jobs WHERE operation_hash = ?',
+      )
+        .bind(hash)
+        .first<{
+          user_id: string;
+          session_id: string | null;
+          grant_token: string | null;
+          target_stamp: string;
+          vault_json: string | null;
+        }>();
+      if (
+        !job ||
+        job.user_id !== userId ||
+        job.session_id !== sessionToken ||
+        job.grant_token !== grant ||
+        job.target_stamp !== target.stamp ||
+        job.vault_json !== vaultJson
+      )
+        return c.json({ error: 'Credential change already pending' }, 409);
+      const result = await resumeAuthCredentialChange(c.env, operation);
+      if (result === 'ok') return c.json({ ok: true });
+      if (result === 'denied' || result === 'conflict') {
+        const cancelled = await cancelAuthCredentialChange(c.env, operation);
+        if (cancelled === 'cancelled')
+          return c.json(
+            {
+              error: result === 'denied' ? 'Current password is incorrect' : 'vault_key_version_conflict',
+              cancelled: true,
+            },
+            result === 'denied' ? 401 : 409,
+          );
+      }
+      return c.json({ error: 'Credential change temporarily unavailable' }, 503);
     }
 
     // password_hash is blanked unconditionally: the account must stop carrying
@@ -1338,6 +1694,27 @@ users.patch('/users/me/password', requireAuth, async (c) => {
   }
 });
 
+// The browser keeps the operation capability before deletion begins, so a
+// lost response can be retried even after Auth has revoked the session.
+users.post('/users/me/deletion/retry', async (c) => {
+  const body = (await c.req.json().catch(() => null)) as { operation?: unknown } | null;
+  if (!body || typeof body.operation !== 'string') return c.json({ error: 'Invalid operation' }, 400);
+  const direct = await resumeDirectDeletion(c.env, body.operation);
+  if (direct === 'ok') {
+    const response = c.json({ success: true });
+    clearSessionCookie(response);
+    return response;
+  }
+  if (direct !== 'not_found') return c.json({ error: 'Deletion temporarily unavailable' }, 503);
+  const result = await resumeAuthDeletion(c.env, body.operation);
+  if (result === 'not_found') return c.json({ error: 'Operation not found' }, 404);
+  if (result === 'denied') return c.json({ error: 'Current password proof rejected' }, 401);
+  if (result !== 'ok') return c.json({ error: 'Deletion temporarily unavailable' }, 503);
+  const response = c.json({ success: true });
+  clearSessionCookie(response);
+  return response;
+});
+
 // DELETE /users/me - delete current user account (protected)
 users.delete('/users/me', requireAuth, async (c) => {
   try {
@@ -1345,6 +1722,10 @@ users.delete('/users/me', requireAuth, async (c) => {
     if (!user) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
+    const sessionToken = getSessionToken(c.req.raw);
+    const grant = await sessionGrant(c.env.DB, sessionToken);
+    if (!grant && (await hasPendingAuthProvision(c.env.DB, user.id)))
+      return c.json({ error: 'Auth login required for account deletion' }, 409);
 
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);
@@ -1353,12 +1734,112 @@ users.delete('/users/me', requireAuth, async (c) => {
     // Irreversible and session-cookie-sufficient otherwise: require the same
     // SRP proof of the current password as email/password changes, so a
     // stolen session alone cannot destroy the account.
-    const { current_srp } = (await c.req.json().catch(() => ({}))) as { current_srp?: SrpProofBody };
+    const { current_srp, operation } = (await c.req.json().catch(() => ({}))) as {
+      current_srp?: SrpProofBody;
+      operation?: unknown;
+    };
     if (!current_srp?.challenge_id || !current_srp.A || !current_srp.M1) {
       return c.json({ error: 'Current password proof is required' }, 400);
     }
     const userId = user.id;
-    if (!(await verifySrpPassword(c.env, userId, current_srp.challenge_id, current_srp.A, current_srp.M1))) {
+    if (sessionToken && /^[A-Za-z0-9_-]{43}$/.test(sessionToken)) {
+      if (typeof operation !== 'string') return c.json({ error: 'Deletion operation required' }, 400);
+      const hash = await deletionOperationHash(operation);
+      if (
+        !hash ||
+        typeof current_srp.challenge_id !== 'string' ||
+        current_srp.challenge_id.length > 64 ||
+        typeof current_srp.A !== 'string' ||
+        current_srp.A.length > 400 ||
+        typeof current_srp.M1 !== 'string' ||
+        current_srp.M1.length > 64
+      )
+        return c.json({ error: 'Invalid password proof' }, 400);
+      await c.env.DB.prepare(
+        "INSERT OR IGNORE INTO flaxia_direct_deletion_jobs (operation_hash, user_id, state) VALUES (?, ?, 'pending')",
+      )
+        .bind(hash, userId)
+        .run();
+      const job = await c.env.DB.prepare('SELECT user_id FROM flaxia_direct_deletion_jobs WHERE operation_hash = ?')
+        .bind(hash)
+        .first<{ user_id: string }>();
+      if (!job || job.user_id !== userId) return c.json({ error: 'Deletion already pending' }, 409);
+      const remote = await deleteAuthAccount(c.env, operation, sessionToken, userId, {
+        challenge_id: current_srp.challenge_id,
+        A: current_srp.A,
+        M1: current_srp.M1,
+      });
+      if (remote === 'denied') {
+        if (await cancelAuthDeletion(c.env, hash, sessionToken, userId)) {
+          await c.env.DB.prepare(
+            "DELETE FROM flaxia_direct_deletion_jobs WHERE operation_hash = ? AND user_id = ? AND state = 'pending'",
+          )
+            .bind(hash, userId)
+            .run();
+          return c.json({ error: 'Current password proof rejected', cancelled: true }, 401);
+        }
+        if ((await resumeDirectDeletion(c.env, operation)) === 'ok') {
+          const response = c.json({ success: true });
+          clearSessionCookie(response);
+          return response;
+        }
+        return c.json({ error: 'Deletion temporarily unavailable' }, 503);
+      }
+      if (remote !== 'ok') return c.json({ error: 'Deletion temporarily unavailable' }, 503);
+      if ((await resumeDirectDeletion(c.env, operation)) !== 'ok')
+        return c.json({ error: 'Deletion temporarily unavailable' }, 503);
+      const response = c.json({ success: true });
+      clearSessionCookie(response);
+      return response;
+    }
+    if (grant) {
+      if (typeof operation !== 'string') return c.json({ error: 'Deletion operation required' }, 400);
+      const hash = await deletionOperationHash(operation);
+      if (!hash) return c.json({ error: 'Invalid deletion operation' }, 400);
+      if (
+        typeof current_srp.challenge_id !== 'string' ||
+        current_srp.challenge_id.length > 64 ||
+        typeof current_srp.A !== 'string' ||
+        current_srp.A.length > 400 ||
+        typeof current_srp.M1 !== 'string' ||
+        current_srp.M1.length > 64
+      )
+        return c.json({ error: 'Invalid password proof' }, 400);
+      await c.env.DB.prepare(
+        "INSERT OR IGNORE INTO flaxia_auth_deletion_jobs (operation_hash, user_id, grant_token, proof_json, state) SELECT ?, ?, ?, ?, 'pending' WHERE NOT EXISTS (SELECT 1 FROM flaxia_auth_credential_jobs WHERE user_id = ? AND state NOT IN ('committed', 'cancelled'))",
+      )
+        .bind(hash, userId, grant, JSON.stringify(current_srp), userId)
+        .run();
+      const job = await c.env.DB.prepare(
+        'SELECT user_id, grant_token, state FROM flaxia_auth_deletion_jobs WHERE operation_hash = ?',
+      )
+        .bind(hash)
+        .first<{ user_id: string; grant_token: string; state: string }>();
+      if (!job || job.user_id !== userId || job.grant_token !== grant)
+        return c.json({ error: 'Deletion already pending' }, 409);
+      if (job.state === 'pending')
+        await c.env.DB.prepare(
+          "UPDATE flaxia_auth_deletion_jobs SET proof_json = ? WHERE operation_hash = ? AND user_id = ? AND state = 'pending'",
+        )
+          .bind(JSON.stringify(current_srp), hash, userId)
+          .run();
+      const result = await resumeAuthDeletion(c.env, operation);
+      if (result === 'denied') return c.json({ error: 'Current password proof rejected' }, 401);
+      if (result !== 'ok') return c.json({ error: 'Deletion temporarily unavailable' }, 503);
+      const response = c.json({ success: true });
+      clearSessionCookie(response);
+      return response;
+    }
+    if (
+      !(await verifySrpPassword(
+        c.env,
+        userId,
+        current_srp.challenge_id,
+        current_srp.A,
+        current_srp.M1,
+        getSessionToken(c.req.raw),
+      ))
+    ) {
       return c.json({ error: 'Current password is incorrect' }, 401);
     }
 
@@ -1666,7 +2147,7 @@ users.get('/users/me/blocked', requireAuth, async (c) => {
     }
 
     const result = await c.env.DB.prepare(
-      `SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type
+      `SELECT u.id, u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color
        FROM blocks b
        JOIN users u ON u.id = b.blocked_id
        WHERE b.blocker_id = ?

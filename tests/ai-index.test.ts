@@ -4,6 +4,7 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { enrichPostsWithAiIndex, postTextSha } from '../functions/lib/ai-index.ts';
 import { embedPost, handleCrowdWebhook } from '../functions/lib/crowd.ts';
+import { stripPostColors } from '../src/lib/post-colors.ts';
 
 function fixture() {
   const sqlite = new DatabaseSync(':memory:');
@@ -123,6 +124,30 @@ test('embedding submissions sign the source text hash into the callback', async 
     );
     assert.ok(submitted?.callbackUrl);
     assert.equal(new URL(submitted.callbackUrl).searchParams.get('sha'), await postTextSha('hello text'));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('embedding signs escaped color markers after a single strip', async () => {
+  // `\{red}` is only idempotent for the first strip, so a double strip would
+  // hash `literal` here and the callback would be rejected against the DB text.
+  const text = '\\{red}literal{/red}';
+  let submitted: { callbackUrl?: string } | undefined;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url, init) => {
+    submitted = JSON.parse(init?.body as string);
+    return new Response(JSON.stringify({ taskId: 'task-escaped' }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    await embedPost(
+      undefined,
+      { BASE_URL: 'http://localhost', CROWD_ORCHESTRATOR_URL: 'https://crowd.example', CROWD_API_KEY: 'test-key' },
+      'escaped',
+      text,
+    );
+    assert.ok(submitted?.callbackUrl);
+    assert.equal(new URL(submitted.callbackUrl).searchParams.get('sha'), await postTextSha(stripPostColors(text)));
   } finally {
     globalThis.fetch = originalFetch;
   }

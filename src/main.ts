@@ -8,6 +8,8 @@ import type { NotificationsPage } from './components/NotificationsPage.js';
 import type { ThreadPage } from './components/ThreadPage.js';
 import type { Timeline } from './components/Timeline.js';
 import { clearMeCache, getMe } from './lib/auth-cache.js';
+import { retryPendingCredentialChange } from './lib/auth-credential-operation.js';
+import { retryPendingDeletion } from './lib/auth-deletion.js';
 import { resolveAuthRedirect } from './lib/auth-guard.js';
 import type { BottomNavDeps } from './lib/bottom-nav-setup.js';
 import { ensureBottomNav, getBottomNav } from './lib/bottom-nav-setup.js';
@@ -75,6 +77,8 @@ initI18n();
 
 // Basic app initialization
 document.addEventListener('DOMContentLoaded', async () => {
+  if (await retryPendingDeletion()) clearMeCache();
+  if ((await retryPendingCredentialChange()) === 'committed') clearMeCache();
   const app = document.getElementById('app');
   if (app) {
     history.scrollRestoration = 'manual';
@@ -143,6 +147,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       display_name?: string;
       avatar_key?: string;
       badge_type?: string | null;
+      name_color?: string | null;
     } | null = null;
     let unreadNotificationCount = 0;
 
@@ -262,6 +267,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             display_name?: string;
             avatar_key?: string;
             badge_type?: string | null;
+            name_color?: string | null;
           };
           currentUser = {
             id: userData.id,
@@ -269,6 +275,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             display_name: userData.display_name,
             avatar_key: userData.avatar_key,
             badge_type: userData.badge_type,
+            name_color: userData.name_color,
           };
 
           // Update all existing LeftNav instances with new user data

@@ -1,7 +1,9 @@
 import { attachPlusBadge } from '../lib/avatar.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
+import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { stripPostColors } from '../lib/post-colors.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post, PostCardMode } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
@@ -15,6 +17,7 @@ interface SearchPageProps {
     display_name?: string;
     avatar_key?: string;
     badge_type?: string | null;
+    name_color?: string | null;
   } | null;
   sandboxOrigin: string;
 }
@@ -31,6 +34,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
     display_name?: string;
     avatar_key?: string;
     badge_type?: string | null;
+    name_color?: string | null;
     bio?: string;
     is_following?: boolean;
   }> = [];
@@ -399,6 +403,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
           display_name?: string;
           avatar_key?: string;
           badge_type?: string | null;
+          name_color?: string | null;
           bio?: string;
           is_following?: boolean;
         }>;
@@ -500,6 +505,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       display_name?: string;
       avatar_key?: string;
       badge_type?: string | null;
+      name_color?: string | null;
       bio?: string;
       is_following?: boolean;
     }>,
@@ -548,6 +554,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       const displayNameEl = document.createElement('div');
       displayNameEl.style.cssText = 'font-size: 0.875rem; color: var(--text-muted);';
       displayNameEl.textContent = user.display_name || '';
+      applyNameColor(displayNameEl, user.name_color, user.badge_type);
 
       userInfo.appendChild(usernameEl);
       userInfo.appendChild(displayNameEl);
@@ -639,7 +646,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         details.style.cssText = 'display: flex; flex-direction: column; justify-content: center; min-width: 0;';
 
         const title = document.createElement('div');
-        title.textContent = post.text || '(no title)';
+        title.textContent = stripPostColors(post.text || '') || '(no title)';
         title.style.cssText = `
           font-weight: 600; color: var(--text-primary);
           font-size: 0.95rem; line-height: 1.4;
@@ -772,7 +779,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         info.style.cssText = 'padding: 0.4rem 0.35rem 0.35rem;';
 
         const title = document.createElement('div');
-        title.textContent = post.text?.slice(0, 60) || '(no text)';
+        title.textContent = stripPostColors(post.text || '').slice(0, 60) || '(no text)';
         title.style.cssText = `
           font-weight: 600; color: var(--text-primary);
           font-size: 0.8rem; line-height: 1.3;

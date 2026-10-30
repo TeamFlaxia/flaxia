@@ -1,4 +1,11 @@
 import type { MarkdownIt } from 'markdown-it';
+import { canUsePostColors } from '../lib/entitlements.js';
+import { parsePostColors } from '../lib/post-colors.js';
+import {
+  type ColorPlaceholderEntry,
+  insertColorPlaceholders,
+  restoreColorPlaceholders,
+} from '../lib/post-colors-dom.js';
 import { PostTextProps } from '../types/post.js';
 
 // Configure markdown-it with security settings
@@ -83,9 +90,15 @@ export async function createPostText(props: PostTextProps): Promise<HTMLElement>
   const container = document.createElement('div');
   container.className = 'post-text';
 
-  // Process the text through the unified pipeline
-  const processedHtml = await processText(props.text, props.enablePostRefs);
-  container.innerHTML = processedHtml;
+  // Process the text through the unified pipeline. Colors are an author-side
+  // Flaxia+ entitlement; non-members' markers stay literal.
+  const { html, colorEntries } = await processTextInternal(
+    props.text,
+    props.enablePostRefs,
+    canUsePostColors({ badge_type: props.badgeType }),
+  );
+  container.innerHTML = html;
+  restoreColorPlaceholders(container, colorEntries);
 
   // Render math elements after HTML is inserted
   renderMathElements(container);
@@ -117,30 +130,50 @@ export {
 /**
  * Unified text processing pipeline:
  * 1. Escape math notation → placeholders
- * 2. Parse Markdown
- * 3. Sanitize HTML
- * 4. Expand KaTeX placeholders
+ * 2. Escape color markers → placeholders (Flaxia+ authors only)
+ * 3. Escape post references → placeholders
+ * 4. Parse Markdown
+ * 5. Sanitize HTML
+ * 6. Expand KaTeX placeholders
+ * 7. Restore post references
+ * 8. Restore color placeholders (in the DOM, see createPostText)
  */
-async function processText(text: string, enablePostRefs?: boolean): Promise<string> {
+async function processTextInternal(
+  text: string,
+  enablePostRefs: boolean | undefined,
+  enableColors: boolean,
+): Promise<{ html: string; colorEntries: ColorPlaceholderEntry[] }> {
   // Step 1: Escape math notation with placeholders
   const { textWithPlaceholders, mathPlaceholders } = escapeMathNotation(text);
 
-  // Step 1.5: Escape post references (>>N) to prevent markdown blockquote parsing
+  // Step 2: Color markers. Parse before the `>>N` substitution so a line that
+  // starts with a post reference is treated as a block boundary here, matching
+  // the API/SSR parser (which sees the raw body).
+  let textForMarkdown = textWithPlaceholders;
+  let colorEntries: ColorPlaceholderEntry[] = [];
+  if (enableColors) {
+    const parsed = parsePostColors(textForMarkdown);
+    const inserted = insertColorPlaceholders(parsed.plain, parsed.spans);
+    textForMarkdown = inserted.text;
+    colorEntries = inserted.entries;
+  }
+
+  // Step 3: Escape post references (>>N) to prevent markdown blockquote parsing
   const refPlaceholders: { id: string; index: string }[] = [];
-  const textWithRefPlaceholders = textWithPlaceholders.replace(/>>(\d+)/g, (match, index) => {
+  textForMarkdown = textForMarkdown.replace(/>>(\d+)/g, (_match, index) => {
     const id = `ref-${refPlaceholders.length}`;
     refPlaceholders.push({ id, index });
     return `⚡${id}⚡`;
   });
 
-  // Step 2: Parse Markdown (dynamically import markdown-it)
+  // Step 4: Parse Markdown (dynamically import markdown-it)
   const md = await getMarkdownIt();
-  let html = md.render(textWithRefPlaceholders);
+  let html = md.render(textForMarkdown);
 
-  // Step 3: Restore math placeholders BEFORE sanitization
+  // Step 5: Restore math placeholders BEFORE sanitization
   html = restoreMathPlaceholders(html, mathPlaceholders);
 
-  // Step 4: Sanitize HTML (now with proper math placeholders)
+  // Step 6: Sanitize HTML (now with proper math placeholders)
   const DOMPurify = await getDOMPurify();
   html = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: [
@@ -184,7 +217,7 @@ async function processText(text: string, enablePostRefs?: boolean): Promise<stri
     ALLOW_DATA_ATTR: true,
   });
 
-  // Step 4.5: Restore post reference placeholders as clickable links (or plain text)
+  // Step 7: Restore post reference placeholders as clickable links (or plain text)
   for (const ref of refPlaceholders) {
     const placeholderRegex = new RegExp(`⚡${ref.id}⚡`, 'g');
     const replacement = enablePostRefs
@@ -193,7 +226,12 @@ async function processText(text: string, enablePostRefs?: boolean): Promise<stri
     html = html.replace(placeholderRegex, replacement);
   }
 
-  return html;
+  return { html, colorEntries };
+}
+
+/** HTML with colors disabled, for profile bios and legacy callers. */
+async function processText(text: string, enablePostRefs?: boolean): Promise<string> {
+  return (await processTextInternal(text, enablePostRefs, false)).html;
 }
 
 /**

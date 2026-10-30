@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { stripPostColors } from '../../../src/lib/post-colors.ts';
 import { getMeWithSession, getSessionToken } from '../../lib/auth';
 import { computeScore as banditComputeScore, project as banditProject, projConfigKey } from '../../lib/linucb';
 import { clampLimit } from '../../lib/pagination';
@@ -175,7 +176,7 @@ games.get('/games', async (c) => {
             COALESCE(p.reply_count, 0) as reply_count,
             COALESCE(p.bookmark_count, 0) as bookmark_count,
             p.impressions, p.created_at,
-            u.username, u.display_name, u.avatar_key, u.badge_type
+            u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color
           FROM posts p
           JOIN users u ON p.user_id = u.id
           WHERE p.id IN (${placeholders})
@@ -218,7 +219,7 @@ games.get('/games', async (c) => {
             const game: Record<string, unknown> = {
               id: row.postId,
               postId: row.postId,
-              title: row.text?.substring(0, 100) || `Game by @${row.username}`,
+              title: stripPostColors(row.text || '').substring(0, 100) || `Game by @${row.username}`,
               username: row.username,
               displayName: row.display_name || undefined,
               avatarKey: row.avatar_key || undefined,
@@ -275,7 +276,7 @@ games.get('/games', async (c) => {
                p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count,
                COALESCE(p.bookmark_count, 0) as bookmark_count,
                p.impressions, p.created_at,
-               u.username, u.display_name, u.avatar_key, u.badge_type
+               u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color
         FROM posts p
         JOIN users u ON p.user_id = u.id
         WHERE p.payload_key IS NOT NULL AND p.swf_key IS NULL
@@ -295,7 +296,7 @@ games.get('/games', async (c) => {
                  p.thumbnail_key, p.fresh_count, COALESCE(p.reply_count, 0) as reply_count,
                  COALESCE(p.bookmark_count, 0) as bookmark_count,
                  p.impressions, p.created_at,
-                 u.username, u.display_name, u.avatar_key, u.badge_type
+                 u.username, u.display_name, u.avatar_key, u.badge_type, u.name_color
           FROM posts p
           JOIN users u ON p.user_id = u.id
           WHERE p.id = ? AND p.payload_key IS NOT NULL AND p.swf_key IS NULL
@@ -455,7 +456,7 @@ games.get('/games', async (c) => {
         return {
           id: row.postId,
           postId: row.postId,
-          title: row.text?.substring(0, 100) || `Game by @${row.username}`,
+          title: stripPostColors(row.text || '').substring(0, 100) || `Game by @${row.username}`,
           username: row.username,
           displayName: row.display_name || undefined,
           avatarKey: row.avatar_key || undefined,
@@ -491,7 +492,7 @@ games.get('/games', async (c) => {
         p.created_at,
         u.username,
         u.display_name,
-        u.avatar_key, u.badge_type
+        u.avatar_key, u.badge_type, u.name_color
       FROM posts p
       JOIN users u ON p.user_id = u.id
       WHERE p.payload_key IS NOT NULL AND p.swf_key IS NULL
@@ -550,7 +551,7 @@ games.get('/games', async (c) => {
       return {
         id: row.postId,
         postId: row.postId,
-        title: row.text?.substring(0, 100) || `Game by @${row.username}`,
+        title: stripPostColors(row.text || '').substring(0, 100) || `Game by @${row.username}`,
         username: row.username,
         displayName: row.display_name || undefined,
         avatarKey: row.avatar_key || undefined,

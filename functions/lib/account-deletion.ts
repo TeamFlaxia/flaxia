@@ -25,8 +25,15 @@ function chunkIds(ids: string[], size: number): string[][] {
  * The deletes run in a single D1 batch so they succeed atomically, and child
  * rows are removed before their FK parents to avoid constraint violations.
  */
-export async function deleteAccount(env: Env, userId: string): Promise<void> {
+export async function deleteAccount(
+  env: Env,
+  userId: string,
+  authOperationHash?: string,
+  direct = false,
+  forceLinked = false,
+): Promise<void> {
   const db = env.DB;
+  const deletionJobs = direct ? 'flaxia_direct_deletion_jobs' : 'flaxia_auth_deletion_jobs';
 
   // Collect the user's own posts plus every post in their reply trees. Deleting
   // the whole tree avoids orphaned parent_id/root_id references.
@@ -46,18 +53,50 @@ export async function deleteAccount(env: Env, userId: string): Promise<void> {
 
   const postIds = (treeRows.results || []).map((r: PostRowWithKeys) => r.id);
 
-  // Collect R2 keys for deferred deletion after the DB transaction commits.
-  // Posts (and their attachments) are intentionally kept so public content
-  // survives account deletion; only the avatar is removed.
-  const fileKeys = new Set<string>();
-
-  const userRow = await db.prepare('SELECT avatar_key FROM users WHERE id = ?').bind(userId).first<{
-    avatar_key: string | null;
-  }>();
-  if (userRow?.avatar_key) fileKeys.add(userRow.avatar_key);
-
   // Pre-built statements for the atomic batch
   const statements: D1PreparedStatement[] = [];
+  // Read profile keys inside the write transaction so concurrent profile
+  // updates cannot leave a newly attached object behind.
+  for (const column of ['avatar_key', 'header_key'] as const) {
+    statements.push(
+      db
+        .prepare(`INSERT OR IGNORE INTO profile_media_deletion_outbox (object_key)
+      SELECT u.${column} FROM users u WHERE u.id = ? AND u.${column} IS NOT NULL AND u.${column} <> ''
+      AND NOT EXISTS (SELECT 1 FROM users other WHERE other.id != u.id AND (other.avatar_key = u.${column} OR other.header_key = u.${column}))`)
+        .bind(userId),
+    );
+  }
+  if (authOperationHash) {
+    // A missing approved job produces NULL and aborts the entire transaction.
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO flaxia_auth_deletion_receipts (operation_hash, completed_at) VALUES ((SELECT operation_hash FROM ${deletionJobs} WHERE operation_hash = ? AND user_id = ? AND state = 'approved'), strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(operation_hash) DO NOTHING`,
+        )
+        .bind(authOperationHash, userId),
+    );
+  }
+
+  // An unfinished email change reserves the address and its guard would abort
+  // the user delete. The Auth identity is already gone in coordinated flows,
+  // so the reservation cannot be completed and must be released here.
+  statements.push(db.prepare('DELETE FROM flaxia_direct_email_changes WHERE user_id = ?').bind(userId));
+
+  // Admin deletion happens after the Auth account is gone, so every local
+  // transition row is meaningless and its guard must be cleared before the
+  // user or vault rows are touched. Coordinated (self-service) deletion keeps
+  // its receipt protocol and is expected to be free of active transition rows.
+  if (forceLinked) {
+    statements.push(
+      db.prepare('DELETE FROM flaxia_auth_purge_in_progress WHERE user_id = ?').bind(userId),
+      db.prepare('DELETE FROM flaxia_auth_provisioning WHERE user_id = ?').bind(userId),
+      db.prepare('DELETE FROM flaxia_auth_credential_jobs WHERE user_id = ?').bind(userId),
+      db.prepare('DELETE FROM flaxia_direct_vault_changes WHERE user_id = ?').bind(userId),
+      db.prepare('DELETE FROM flaxia_auth_deletion_jobs WHERE user_id = ?').bind(userId),
+      db.prepare('DELETE FROM flaxia_direct_deletion_jobs WHERE user_id = ?').bind(userId),
+      db.prepare('DELETE FROM flaxia_auth_links WHERE user_id = ?').bind(userId),
+    );
+  }
 
   // --- Row-level data that directly references the user ---
   statements.push(db.prepare('DELETE FROM ap_following WHERE local_user_id = ?').bind(userId));
@@ -118,20 +157,42 @@ export async function deleteAccount(env: Env, userId: string): Promise<void> {
   // --- The user's posts are intentionally PRESERVED (public content survives
   // account deletion). Only the user row and personal data are removed. ---
 
-  // --- The user row itself (last: everything above references it) ---
-  statements.push(db.prepare('DELETE FROM users WHERE id = ?').bind(userId));
+  // The receipt, guard removal and final deletion commit together. If the
+  // response is lost, the opaque operation token can safely be retried.
+  if (authOperationHash) {
+    statements.push(
+      db
+        .prepare(
+          `DELETE FROM flaxia_auth_provisioning WHERE user_id = ? AND EXISTS (SELECT 1 FROM ${deletionJobs} WHERE operation_hash = ? AND user_id = ? AND state = 'approved')`,
+        )
+        .bind(userId, authOperationHash, userId),
+    );
+    statements.push(
+      db
+        .prepare(
+          `DELETE FROM flaxia_auth_links WHERE user_id = ? AND EXISTS (SELECT 1 FROM ${deletionJobs} WHERE operation_hash = ? AND user_id = ? AND state = 'approved')`,
+        )
+        .bind(userId, authOperationHash, userId),
+    );
+    statements.push(
+      db
+        .prepare(`DELETE FROM ${deletionJobs} WHERE operation_hash = ? AND user_id = ? AND state = 'approved'`)
+        .bind(authOperationHash, userId),
+    );
+    statements.push(
+      db
+        .prepare(
+          'DELETE FROM users WHERE id = ? AND EXISTS (SELECT 1 FROM flaxia_auth_deletion_receipts WHERE operation_hash = ?)',
+        )
+        .bind(userId, authOperationHash),
+    );
+  } else {
+    statements.push(db.prepare('DELETE FROM users WHERE id = ?').bind(userId));
+  }
 
   await db.batch(statements);
 
-  // Best-effort R2 cleanup after the DB transaction has committed
-  if (env.BUCKET && fileKeys.size > 0) {
-    const keys = Array.from(fileKeys);
-    for (const key of keys) {
-      try {
-        await env.BUCKET.delete(key);
-      } catch (error: unknown) {
-        console.error(`Failed to delete R2 object ${key}:`, error);
-      }
-    }
-  }
+  // The durable outbox is drained by the scheduled worker. A single claimed
+  // deletion at a time prevents a late duplicate R2 delete from removing a
+  // newly reused content-addressed key.
 }

@@ -1,5 +1,6 @@
 import { buildGameDescription, buildGameTitle } from '../../src/lib/game-seo';
 import { isCrawler } from '../../src/lib/is-crawler';
+import { stripPostColors } from '../../src/lib/post-colors.ts';
 import { type PostRow, renderBlogPostingJsonLd, renderHtmlShell, renderPostArticle } from '../../src/lib/render-html';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import { renderBreadcrumbJsonLd, renderSsrFooter, renderSsrHeader, renderSsrLayoutCss } from '../lib/ssr-layout';
@@ -21,6 +22,11 @@ function toPost(row: RawPost): PostRow {
     display_name: row.display_name ? String(row.display_name) : null,
     avatar_key: row.avatar_key ? String(row.avatar_key) : null,
     badge_type: row.badge_type ? String(row.badge_type) : null,
+    name_color: row.name_color ? String(row.name_color) : null,
+    equipped_title_id: row.equipped_title_id ? String(row.equipped_title_id) : null,
+    title_name: row.title_name ? String(row.title_name) : null,
+    title_name_ja: row.title_name_ja ? String(row.title_name_ja) : null,
+    title_icon: row.title_icon ? String(row.title_icon) : null,
     text: String(row.text),
     hashtags: String(row.hashtags),
     gif_key: row.gif_key ? String(row.gif_key) : null,
@@ -42,7 +48,7 @@ function toPost(row: RawPost): PostRow {
 }
 
 const POST_SELECT = `
-  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type,
+  SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon,
     p.text, p.hashtags, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key,
     p.game_description,
     p.fresh_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
@@ -53,6 +59,7 @@ const POST_SELECT = `
     COALESCE(p.hidden, 0) as hidden, p.created_at
   FROM posts p
   LEFT JOIN users u ON p.user_id = u.id
+  LEFT JOIN titles t ON t.id = u.equipped_title_id
 `;
 
 function detectGameType(post: PostRow): string {
@@ -141,20 +148,21 @@ export async function onRequest(context: {
     }
 
     // Build description: prefer game SEO description for game posts
-    let description = post.game_description || post.text.slice(0, 200);
+    const plainText = stripPostColors(post.text).replace(/\\\{/g, '{');
+    let description = post.game_description || plainText.slice(0, 200);
     let jsonLdExtra = '';
     let breadcrumb: Array<{ label: string; url: string }> = [];
     let footerSections: Array<{ title: string; links: Array<{ label: string; url: string }> }> = [];
 
     if (isGame) {
-      const title = buildGameTitle(post.text);
+      const title = buildGameTitle(plainText);
       const typeLabel = detectGameType(post);
       description = buildGameDescription({
         gameDescription: post.game_description,
         title,
         typeLabel,
         authorName,
-        text: post.text,
+        text: plainText,
       });
       const gameUrl = `${baseUrl}/arcade/${post.id}`;
       breadcrumb = [

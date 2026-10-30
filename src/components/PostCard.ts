@@ -1,9 +1,10 @@
-import { maxMediaAttachmentsForUser } from '../lib/entitlements.js';
+import { canUsePostColors, maxMediaAttachmentsForUser } from '../lib/entitlements.js';
 import { attachmentMimeType } from '../lib/file-extensions.js';
 import { t } from '../lib/i18n.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { loadLinkPreview } from '../lib/link-preview.js';
 import { createModalOverlay } from '../lib/modal-overlay.js';
+import { stripPostColors } from '../lib/post-colors.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { useSandboxBridge } from '../lib/sandbox-bridge.js';
 import { getShowNsfw } from '../lib/settings.js';
@@ -146,6 +147,13 @@ export class PostCard {
       display_name: this.props.post.display_name,
       avatar_key: this.props.post.avatar_key,
       badge_type: this.props.post.badge_type,
+      name_color: this.props.post.name_color,
+      equipped_title_id: this.props.post.equipped_title_id,
+      title_name: this.props.post.title_name,
+      title_name_ja: this.props.post.title_name_ja,
+      title_description: this.props.post.title_description,
+      title_description_ja: this.props.post.title_description_ja,
+      title_icon: this.props.post.title_icon,
       createdAt: this.props.post.created_at,
       editedAt: this.props.post.edited_at,
     });
@@ -188,7 +196,12 @@ export class PostCard {
       white-space: pre-wrap;
       word-break: break-word;
     `;
-    textElement.textContent = displayText;
+    // Show the marker-free body immediately for entitled authors; the rich
+    // renderer replaces this node on idle and would otherwise briefly expose
+    // raw `{red}` markers. `originalText` stays raw for editing.
+    textElement.textContent = canUsePostColors({ badge_type: this.props.post.badge_type })
+      ? stripPostColors(displayText)
+      : displayText;
     this.postTextContainer.appendChild(textElement);
 
     container.appendChild(this.postTextContainer);
@@ -202,6 +215,7 @@ export class PostCard {
               mentions: this.props.post.mentions,
               enablePostRefs: this.props.enablePostRefs,
               authorId: this.props.post.user_id,
+              badgeType: this.props.post.badge_type,
             });
             textElement.replaceWith(richText);
           } catch (error) {
@@ -218,6 +232,7 @@ export class PostCard {
             mentions: this.props.post.mentions,
             enablePostRefs: this.props.enablePostRefs,
             authorId: this.props.post.user_id,
+            badgeType: this.props.post.badge_type,
           });
           textElement.replaceWith(richText);
         } catch (error) {
@@ -914,6 +929,8 @@ export class PostCard {
       username: p.username,
       display_name: p.display_name,
       avatar_key: p.avatar_key,
+      badge_type: p.badge_type,
+      name_color: p.name_color,
       text: p.text,
       hashtags: p.hashtags,
       gif_key: p.gif_key,

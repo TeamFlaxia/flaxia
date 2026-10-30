@@ -148,6 +148,17 @@ test('account switching and session expiration clear previous account data', asy
   c.setOnline(false);
   assert.equal((await c.restart()('/api/me')).status, 503);
 });
+test('Auth exchange clears the previous account offline data', async () => {
+  const c = client(async (input) =>
+    (input as Request).url.endsWith('/api/me') ? me('alice') : json({ posts: ['alice'] }),
+  );
+  await c.fetch('/api/me');
+  await c.fetch('/api/posts');
+  await c.fetch('/api/auth/flaxia/exchange', { method: 'POST' });
+  c.setOnline(false);
+  assert.equal((await c.fetch('/api/posts')).status, 503);
+  assert.equal((await c.restart()('/api/me')).status, 503);
+});
 test('offline mutations fail and are never replayed', async () => {
   const calls: string[] = [];
   const c = client(async (input) => {
