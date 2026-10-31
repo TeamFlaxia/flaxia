@@ -232,7 +232,12 @@ test('direct Auth mode migrates credentials, changes Vault password and deletes 
       srp_group: '2048',
       srp_kdf: 'pbkdf2-600k-v2',
       current_srp: await proof(password),
-      vault_kek: { salt: enc(vaultSalt), wrapped_vk: wrapped, kdf_params: vault.envelope.kdf_params, vk_version: 1 },
+      vault_kek: {
+        salt: enc(vaultSalt),
+        wrapped_vk: wrapped,
+        kdf_params: vault.envelope.kdf_params,
+        vk_version: vault.envelope.vk_version,
+      },
     }),
   });
   assert.equal(changed.status, 200, await changed.clone().text());
@@ -493,7 +498,7 @@ test('direct Auth mode migrates credentials, changes Vault password and deletes 
         salt: enc(finalVaultSalt),
         wrapped_vk: finalWrapped,
         kdf_params: vault.envelope.kdf_params,
-        vk_version: 1,
+        vk_version: envelope.vk_version,
       },
     }),
   });
