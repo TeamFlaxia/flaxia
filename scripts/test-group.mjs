@@ -65,6 +65,7 @@ const groups = {
     'arcade-availability',
     'arcade-events',
     'attachments',
+    'bug-reports',
     'clamav-payload',
     'container-result',
     'content-protection-security',

@@ -1063,7 +1063,7 @@ h1 {
   background: var(--bg-hover);
 }
 
-.settings-page :is(button, input, select, a):focus-visible {
+.settings-page :is(button, input, select, textarea, a):focus-visible {
   outline: 2px solid var(--accent-dark);
   outline-offset: 3px;
 }
@@ -1103,6 +1103,152 @@ h1 {
   color: var(--text-primary);
   font: inherit;
   font-size: 1rem;
+}
+
+.settings-bug-report-public-notice {
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 10px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.settings-bug-report-fields {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.settings-bug-report-field {
+  display: block;
+  margin-top: 1rem;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.settings-bug-report-field > span:first-child {
+  display: block;
+  margin-bottom: 0.45rem;
+}
+
+.settings-bug-report-field textarea.settings-input {
+  min-height: auto;
+  resize: vertical;
+}
+
+.settings-bug-report-hint {
+  display: block;
+  margin: -0.65rem 0 0.85rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.settings-bug-report-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.settings-bug-report-consent input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 0.1rem 0 0;
+  accent-color: var(--accent);
+}
+
+.settings-bug-report-image-preview {
+  margin: 0.75rem 0 1rem;
+  color: var(--text-muted);
+}
+
+.settings-bug-report-diagnostics {
+  margin-top: 0.75rem;
+}
+
+.settings-bug-report-diagnostics textarea {
+  min-height: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem;
+}
+
+.settings-bug-report-confirmation {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: var(--bg-primary);
+}
+
+.settings-bug-report-confirmation h3 {
+  margin: 0 0 0.5rem;
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+
+.settings-bug-report-confirmation p {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.settings-bug-report-confirmation-summary {
+  overflow-wrap: anywhere;
+}
+
+.settings-bug-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.settings-bug-report-secondary {
+  min-height: 44px;
+  padding: 0.625rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-bug-report-status {
+  min-height: 1.4rem;
+  margin: 0.75rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+.settings-bug-report-result {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+}
+
+.settings-bug-report-result a {
+  color: var(--accent-dark);
+  font-weight: 600;
 }
 
 .settings-save {
