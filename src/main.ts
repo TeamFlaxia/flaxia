@@ -7,6 +7,7 @@ import type { LeftNav } from './components/LeftNav.js';
 import type { NotificationsPage } from './components/NotificationsPage.js';
 import type { ThreadPage } from './components/ThreadPage.js';
 import type { Timeline } from './components/Timeline.js';
+import { maybePromptAppUpdate } from './lib/app-update.js';
 import { clearMeCache, getMe } from './lib/auth-cache.js';
 import { retryPendingCredentialChange } from './lib/auth-credential-operation.js';
 import { retryPendingDeletion } from './lib/auth-deletion.js';
@@ -1472,6 +1473,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     initializeWebPush(isCapacitorNative).catch(() => {});
 
     deferInit(async () => {
+      // Desktop Windows/Linux only: recommend a newer GitHub release once.
+      maybePromptAppUpdate().catch(() => {});
+
       // Defer platform-specific notification init (not critical for first paint)
       initNativeNotify().catch(() => {});
       // Only register for FCM after notification access has already been granted.

@@ -5660,6 +5660,94 @@ audio.audio-player-element {
   text-align: center;
 }
 
+/* Desktop app update prompt (Tauri Windows/Linux only) */
+.app-update-notice {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 2500;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.75rem;
+  width: min(360px, calc(100vw - 2rem));
+  padding: 1rem;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: var(--bg-primary);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+
+.app-update-notice-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.65rem;
+  background: var(--bg-secondary);
+  color: var(--accent);
+}
+
+.app-update-notice-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.app-update-notice-title {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.app-update-notice-message {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.app-update-notice-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.15rem;
+}
+
+.app-update-notice-action,
+.app-update-notice-dismiss {
+  padding: 0.45rem 0.8rem;
+  border-radius: 9999px;
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.app-update-notice-action {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #000;
+  text-decoration: none;
+}
+
+.app-update-notice-action:hover {
+  border-color: var(--accent-dark);
+  background: var(--accent-dark);
+}
+
+.app-update-notice-dismiss {
+  border: 1px solid var(--border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.app-update-notice-dismiss:hover {
+  border-color: var(--accent);
+}
+
 /* Print protection — hide media when printing */
 @media print {
   .post-card,

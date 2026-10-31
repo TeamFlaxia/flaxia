@@ -154,6 +154,7 @@ jobs:
       - run: npm run tauri:build
         env:
           TAURI_TARGET_PLATFORM: linux
+          RELEASE_TAG: ${{ needs.release-context.outputs.tag_name }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Upload Release Artifacts
@@ -183,6 +184,7 @@ jobs:
       - run: npm run tauri:build
         env:
           TAURI_TARGET_PLATFORM: windows
+          RELEASE_TAG: ${{ needs.release-context.outputs.tag_name }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       - name: Upload Release Artifacts
