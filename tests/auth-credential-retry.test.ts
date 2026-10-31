@@ -106,3 +106,88 @@ test('credential and Vault transition resumes after remote response loss and loc
   assert.equal(db.prepare('SELECT count(*) AS n FROM flaxia_auth_transition_assertions').get()?.n, 0);
   db.close();
 });
+
+test('authority mode sends the Vault rewrap with the verifier and leaves local storage alone', async () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`PRAGMA foreign_keys=ON;
+    CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT, display_name TEXT, password_hash TEXT, srp_salt TEXT, srp_verifier TEXT, srp_group TEXT, srp_kdf TEXT, frozen_at TEXT);
+    CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id) ON DELETE CASCADE);
+    CREATE TABLE flaxia_auth_sessions (session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, grant_token TEXT, auth_stamp TEXT, source_stamp TEXT);
+    CREATE TABLE vault_keys (user_id TEXT PRIMARY KEY REFERENCES users(id), salt TEXT, kdf_params TEXT, wrapped_vk TEXT, vk_version INTEGER, updated_at TEXT);
+    INSERT INTO users VALUES ('u', 'name', 'Name', '', 'old-salt', 'old-verifier', '2048', 'pbkdf2-600k-v2', NULL);
+    INSERT INTO sessions VALUES ('session', 'u');
+    INSERT INTO flaxia_auth_sessions VALUES ('session', '${'B'.repeat(43)}', 'old-stamp', 'old-stamp');`);
+  for (const migration of [
+    '0115_auth_provision_guard.sql',
+    '0116_auth_deletion_jobs.sql',
+    '0117_auth_link_guard.sql',
+    '0118_auth_credential_jobs.sql',
+    '0119_auth_credential_recovery.sql',
+  ]) {
+    db.exec(readFileSync(new URL(`../migrations/${migration}`, import.meta.url), 'utf8'));
+  }
+  const operation = 'A'.repeat(43),
+    grant = 'B'.repeat(43);
+  const hash = await deletionOperationHash(operation);
+  assert.ok(hash);
+  const target = await credentialStampFor({
+    password_hash: '',
+    srp_salt: 'new-salt',
+    srp_verifier: 'new-verifier',
+    srp_group: '2048',
+    srp_kdf: 'pbkdf2-600k-v2',
+  });
+  assert.ok(target);
+  const vault = { salt: 'new-vault-salt', kdf_params: {}, wrapped_vk: 'new-wrapped', vk_version: 4 };
+  db.prepare(
+    `INSERT INTO flaxia_auth_credential_jobs (operation_hash, user_id, session_id, grant_token, proof_json, old_password_hash, old_salt, old_verifier, old_group, old_kdf, new_salt, new_verifier, new_group, new_kdf, target_stamp, vault_json, state) VALUES (?, 'u', 'session', ?, '{}', '', 'old-salt', 'old-verifier', '2048', 'pbkdf2-600k-v2', 'new-salt', 'new-verifier', '2048', 'pbkdf2-600k-v2', ?, ?, 'pending')`,
+  ).run(hash, grant, target.stamp, JSON.stringify(vault));
+  type Bound = {
+    sql: string;
+    args: unknown[];
+    run: () => { success: boolean; meta: { changes: number } };
+    first: () => unknown;
+  };
+  const d1 = {
+    prepare(sql: string) {
+      const make = (...args: unknown[]): Bound => ({
+        sql,
+        args,
+        run: () => ({
+          success: true,
+          meta: { changes: Number(db.prepare(sql).run(...(args as never[])).changes) },
+        }),
+        first: () => db.prepare(sql).get(...(args as never[])) ?? null,
+      });
+      return { ...make(), bind: make };
+    },
+    async batch(statements: Bound[]) {
+      db.exec('BEGIN');
+      try {
+        for (const statement of statements) statement.run();
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    },
+  };
+  let prepareBody: Record<string, unknown> | null = null;
+  const service = {
+    async fetch(request: Request) {
+      const body = (await request.json()) as Record<string, unknown>;
+      if (new URL(request.url).pathname.endsWith('/prepare')) prepareBody = body;
+      return Response.json({ success: true, target_stamp: target.stamp });
+    },
+  };
+  const env = { DB: d1, AUTH_SERVICE: service, AUTH_AUTHORITY_MODE: 'flaxia-auth' } as unknown as Env;
+  assert.equal(await resumeAuthCredentialChange(env, operation), 'ok');
+  assert.deepEqual(prepareBody?.vault_kek, vault, 'Auth must receive the rewrap in the same operation');
+  assert.equal(
+    db.prepare("SELECT 1 FROM vault_keys WHERE user_id = 'u'").get(),
+    undefined,
+    'authority mode must not rewrite the transitional local envelope',
+  );
+  assert.equal(db.prepare("SELECT srp_salt FROM users WHERE id = 'u'").get()?.srp_salt, 'new-salt');
+  db.close();
+});
