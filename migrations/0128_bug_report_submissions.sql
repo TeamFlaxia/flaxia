@@ -1,3 +1,6 @@
+-- Reservation metadata only (content fingerprint, issue URL, expiry). Report
+-- text, diagnostics and screenshots never enter D1. The scheduled backend
+-- worker deletes expired rows; per-user cleanup also runs before each insert.
 -- D1 serializes the reservation insert and its per-user quota check.
 CREATE TABLE IF NOT EXISTS bug_report_submissions (
   user_id TEXT NOT NULL,
@@ -12,3 +15,5 @@ CREATE TABLE IF NOT EXISTS bug_report_submissions (
 );
 CREATE INDEX IF NOT EXISTS idx_bug_report_submissions_quota
   ON bug_report_submissions (user_id, window_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_bug_report_submissions_expiry
+  ON bug_report_submissions (expires_at);

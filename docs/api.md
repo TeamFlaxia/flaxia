@@ -363,6 +363,22 @@ are image URLs; non-image legacy values are rendered as a name-only badge.
 
 ---
 
+## Bug Reports
+
+### Create Public Bug Report
+
+`POST /api/bug-reports` (authenticated, `multipart/form-data`)
+
+- Fields: `feature` (optional), `summary` (required, ≤100 chars), `details` (required, ≤5,000 chars), `reproduction` (optional, ≤2,000 chars), `language` (`ja` or `en`), `publicConfirmation=true`.
+- Optional screenshot: one PNG/JPEG/WebP/GIF image, ≤5 MB, requires `screenshotConsent=true`. The image is uploaded to R2 and linked from the issue.
+- Optional diagnostics: `diagnosticsConsent=true` plus a small JSON object with `appVersion`, `commit`, `os`, `browser`, and `occurredAt`.
+- Creates a public GitHub Issue in `TeamFlaxia/flaxia` through the GitHub App and returns `{ issueNumber, issueUrl }`.
+- Per-user limit: 3 reports per UTC day. Identical retries return the existing issue with `duplicate: true`; a report still processing returns 409.
+- D1 stores only reservation metadata (a content fingerprint, issue URL, and expiry). Report text, diagnostics, and screenshots are never written to D1; expired rows are removed by the scheduled backend worker.
+- Requires `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, and `GITHUB_APP_PRIVATE_KEY` (see `docs/deployment.md`). Returns 503 when the integration is not configured.
+
+---
+
 ## Misc
 
 ### Sitemap

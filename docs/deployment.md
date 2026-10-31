@@ -36,7 +36,7 @@ The build output is in `dist/`.
 
 ## GitHub bug reports (#263)
 
-Apply D1 migrations before deploying this feature; migration `0128_bug_report_submissions.sql` provides submission reservations and rate limits.
+Apply D1 migrations before deploying this feature; migration `0128_bug_report_submissions.sql` provides submission reservations and rate limits. The table stores only reservation metadata (a content fingerprint, issue URL, and expiry), never report text, diagnostics, or screenshots; the scheduled backend worker removes expired rows daily.
 
 The Settings → Other → Report a bug form creates public issues in
 `TeamFlaxia/flaxia`. Configure a GitHub App installed on that repository with
@@ -52,6 +52,8 @@ npx wrangler pages secret put GITHUB_APP_PRIVATE_KEY --project-name flaxia
 The private key may be the PEM downloaded from GitHub. The installation token
 is created server-side for each submission and is never sent to the browser.
 If credentials are missing, the form reports that submission is unavailable.
+Redeploy the backend worker (below) to enable its daily cleanup of expired
+reservation rows.
 
 ## Backend Worker (flaxia-backend)
 

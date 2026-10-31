@@ -27,6 +27,7 @@ registerHooks({
 
 const { csrfProtection } = await import('../functions/api/helpers.ts');
 const { default: bugReports } = await import('../functions/api/routes/bug-reports.ts');
+const { cleanupExpiredBugReportSubmissions } = await import('../functions/lib/bug-report-store.ts');
 const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048, publicExponent: 0x10001 });
 const privateKeyPem = privateKey.export({ type: 'pkcs1', format: 'pem' }).toString();
 const pngBytes = Buffer.from(
@@ -192,6 +193,53 @@ async function withGitHubMock<T>(fn: (calls: GitHubCall[]) => Promise<T>) {
   }
 }
 
+/** Model a repository where `user-report` does not exist yet. */
+async function withMissingLabelMock<T>(fn: (calls: GitHubCall[]) => Promise<T>) {
+  const originalFetch = globalThis.fetch;
+  const calls: GitHubCall[] = [];
+  let labelsCreated = false;
+  let issueNumber = 60;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    const headers = new Headers(init?.headers);
+    calls.push({
+      url,
+      body: typeof init?.body === 'string' ? init.body : '',
+      auth: headers.get('Authorization'),
+      userAgent: headers.get('User-Agent'),
+    });
+    if (url.includes('/access_tokens')) {
+      return new Response(JSON.stringify({ token: 'installation-token' }), { status: 201 });
+    }
+    if (url.endsWith('/labels')) {
+      // GitHub rejects requests without an identifying User-Agent.
+      if (!headers.get('User-Agent')) return new Response('User agent required', { status: 403 });
+      labelsCreated = true;
+      return new Response('{}', { status: 201 });
+    }
+    if (url.endsWith('/issues')) {
+      const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as { labels?: unknown }) : {};
+      if (Array.isArray(body.labels) && body.labels.length > 0 && !labelsCreated) {
+        return new Response(
+          JSON.stringify({ message: 'Validation Failed', errors: [{ resource: 'Issue', field: 'labels' }] }),
+          { status: 422 },
+        );
+      }
+      issueNumber++;
+      return new Response(
+        JSON.stringify({ number: issueNumber, html_url: `https://github.com/TeamFlaxia/flaxia/issues/${issueNumber}` }),
+        { status: 201 },
+      );
+    }
+    return new Response('Unexpected endpoint', { status: 404 });
+  }) as typeof fetch;
+  try {
+    return await fn(calls);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 test('bug reports require an authenticated session and pass CSRF validation', async () => {
   const anonymous = makeApp(false);
   const unauthorized = await anonymous.app.request(
@@ -270,6 +318,69 @@ test('diagnostics are included only after consent and are escaped in the public 
     assert.match(issue.body, /Diagnostics \(user consented\)/);
     assert.match(issue.body, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
     assert.doesNotMatch(issue.body, /must-not-be-included/);
+  });
+});
+
+test('diagnostics sent without consent are ignored', async () => {
+  const { app, env } = makeApp();
+  await withGitHubMock(async (calls) => {
+    const form = makeForm();
+    form.set(
+      'diagnostics',
+      JSON.stringify({
+        appVersion: 'unconsented-marker',
+        commit: 'abc123',
+        os: 'Linux',
+        browser: 'Chrome 140',
+        occurredAt: '2026-10-27T00:00:00.000Z',
+      }),
+    );
+    const response = await app.request('/api/bug-reports', { method: 'POST', body: form }, env);
+    assert.equal(response.status, 201);
+    const issueRequest = calls.find((call) => call.url.endsWith('/issues'));
+    const issue = JSON.parse(issueRequest?.body ?? '{}') as { body: string };
+    assert.doesNotMatch(issue.body, /unconsented-marker|Diagnostics \(user consented\)/);
+  });
+});
+
+test('oversized diagnostics payloads are rejected before contacting GitHub', async () => {
+  const { app, env } = makeApp();
+  await withGitHubMock(async (calls) => {
+    const form = makeForm({ diagnosticsConsent: true });
+    form.set(
+      'diagnostics',
+      JSON.stringify({
+        appVersion: 'x'.repeat(5000),
+        commit: 'abc123',
+        os: 'Linux',
+        browser: 'Chrome 140',
+        occurredAt: '2026-10-27T00:00:00.000Z',
+      }),
+    );
+    const response = await app.request('/api/bug-reports', { method: 'POST', body: form }, env);
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: 'invalid_diagnostics' });
+    assert.deepEqual(calls, []);
+  });
+});
+
+test('missing labels are created with an identifying User-Agent and the issue retries with them', async () => {
+  const { app, env } = makeApp();
+  await withMissingLabelMock(async (calls) => {
+    const response = await app.request('/api/bug-reports', { method: 'POST', body: makeForm() }, env);
+    assert.equal(response.status, 201);
+
+    const labelRequests = calls.filter((call) => call.url.endsWith('/labels'));
+    assert.deepEqual(
+      labelRequests.map((call) => (JSON.parse(call.body) as { name: string }).name),
+      ['bug', 'user-report'],
+    );
+    assert.ok(labelRequests.every((call) => call.userAgent?.startsWith('Flaxia-Bug-Report/')));
+
+    const issueRequests = calls.filter((call) => call.url.endsWith('/issues'));
+    assert.equal(issueRequests.length, 2);
+    const issue = JSON.parse(issueRequests[1].body) as { labels: string[] };
+    assert.deepEqual(issue.labels, ['bug', 'user-report']);
   });
 });
 
@@ -383,6 +494,26 @@ test('definite token failures release quota for retries', async () => {
     const response = await app.request('/api/bug-reports', { method: 'POST', body: makeForm() }, env);
     assert.equal(response.status, 201);
   });
+});
+
+test('expired reservations are deleted by the scheduled cleanup', async () => {
+  const { env } = makeApp();
+  const db = env.DB as TestD1;
+  const now = Math.floor(Date.now() / 1000);
+  const insert = db.prepare(`
+    INSERT INTO bug_report_submissions (user_id, fingerprint, reservation_id, window_id, state, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  await insert.bind('expired-user', 'a'.repeat(64), 'expired-reservation', 1, 'created', now - 1).run();
+  await insert.bind('active-user', 'b'.repeat(64), 'active-reservation', 1, 'created', now + 60).run();
+
+  const removed = await cleanupExpiredBugReportSubmissions(db as unknown as D1Database, now);
+  assert.equal(removed, 1);
+  const remaining = await db.prepare('SELECT user_id FROM bug_report_submissions').all<{ user_id: string }>();
+  assert.deepEqual(
+    remaining.results.map((row) => row.user_id),
+    ['active-user'],
+  );
 });
 
 test('rejects oversized streamed multipart bodies without Content-Length', async () => {

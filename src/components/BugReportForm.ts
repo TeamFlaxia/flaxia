@@ -338,6 +338,8 @@ export function createBugReportForm() {
     event.preventDefault();
     if (isSubmitting) return;
     if (!form.reportValidity()) return;
+    status.textContent = '';
+    result.hidden = true;
     updateConfirmationSummary();
     confirmation.hidden = false;
     confirmButton.focus();
@@ -412,6 +414,7 @@ export function createBugReportForm() {
         return;
       }
 
+      hideConfirmation();
       status.textContent = t('settings.bug_report_success', { number: data.issueNumber });
       resultLink.href = data.issueUrl;
       resultLink.textContent = t('settings.bug_report_open_issue');

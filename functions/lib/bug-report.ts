@@ -45,7 +45,11 @@ export function validateBugReportContent(content: {
   return null;
 }
 
+/** Diagnostics are small by construction; cap the raw JSON before parsing it. */
+export const MAX_DIAGNOSTICS_JSON_LENGTH = 4096;
+
 export function parseBugReportDiagnostics(raw: string): BugReportDiagnostics | null {
+  if (raw.length > MAX_DIAGNOSTICS_JSON_LENGTH) return null;
   let value: unknown;
   try {
     value = JSON.parse(raw);
