@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
-import { afterEach, test } from 'node:test';
+import { afterEach, mock, test } from 'node:test';
 import type { Game } from '../src/types/game.ts';
 
 registerHooks({
@@ -157,4 +157,104 @@ test('cancelled selection never removes a game or renders a stale result', async
   resolveCheck(false);
   await assert.rejects(selected, { name: 'AbortError' });
   assert.equal(items.length, 1);
+});
+
+const { ArcadeAvailabilityPrefetch } = await import('../src/lib/arcade-availability-prefetch.ts');
+
+test('preflights the next game and reuses its HEAD response on navigation', async () => {
+  let checked = 0;
+  globalThis.fetch = async () => {
+    checked++;
+    return new Response(null, { status: 200 });
+  };
+
+  const prefetch = new ArcadeAvailabilityPrefetch('https://sandbox.flaxia.app');
+  const next = game('next');
+  await prefetch.prefetch(next);
+  assert.equal(await prefetch.isAvailable(next, new AbortController().signal), true);
+  assert.equal(checked, 1, 'do not issue a second serialized HEAD on swipe');
+  prefetch.destroy();
+});
+
+test('aborting an old selection does not cancel or poison the prefetched next game', async () => {
+  let release: (response: Response) => void = () => {};
+  let checked = 0;
+  globalThis.fetch = async () => {
+    checked++;
+    return new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+  };
+  const prefetch = new ArcadeAvailabilityPrefetch('https://sandbox.flaxia.app');
+  const next = game('next');
+  const firstRender = new AbortController();
+  const oldSelection = prefetch.isAvailable(next, firstRender.signal);
+  firstRender.abort();
+  await assert.rejects(oldSelection, { name: 'AbortError' });
+
+  const nextRender = prefetch.isAvailable(next, new AbortController().signal);
+  release(new Response(null, { status: 200 }));
+  assert.equal(await nextRender, true);
+  assert.equal(checked, 1);
+  prefetch.destroy();
+});
+
+test('a prefetched missing game is still omitted by the normal Arcade selection logic', async () => {
+  globalThis.fetch = async (url) =>
+    new Response(null, {
+      status: String(url).includes('/missing?') ? 404 : 200,
+    });
+  const prefetch = new ArcadeAvailabilityPrefetch('https://sandbox.flaxia.app');
+  const games = [game('missing'), game('available')];
+  await Promise.all(games.map((item) => prefetch.prefetch(item)));
+  const missing: string[] = [];
+  const controller = new AbortController();
+  const selection = await findAvailableArcadeGame(games, 0, {
+    isAvailable: (item) => prefetch.isAvailable(item, controller.signal),
+    loadMore: async () => false,
+    onMissing: (item) => missing.push(item.id),
+    signal: controller.signal,
+  });
+  assert.equal(selection?.game.id, 'available');
+  assert.deepEqual(missing, ['missing']);
+  prefetch.destroy();
+});
+
+test('reuses a successful preflight briefly and rechecks it once stale', async () => {
+  mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+  try {
+    let status = 200;
+    let checked = 0;
+    globalThis.fetch = async () => {
+      checked++;
+      return new Response(null, { status });
+    };
+    const prefetch = new ArcadeAvailabilityPrefetch('https://sandbox.flaxia.app');
+    const next = game('next');
+    assert.equal(await prefetch.prefetch(next), true);
+
+    mock.timers.tick(30_000);
+    assert.equal(await prefetch.prefetch(next), true);
+    assert.equal(checked, 1, 'a recent successful check survives a short game session');
+
+    status = 404;
+    mock.timers.tick(91_000);
+    assert.equal(await prefetch.prefetch(next), false);
+    assert.equal(checked, 2, 'a stale check is revalidated before the game is selected');
+    prefetch.destroy();
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test('does not start speculative work after the Arcade page is destroyed', async () => {
+  let checked = 0;
+  globalThis.fetch = async () => {
+    checked++;
+    return new Response(null, { status: 200 });
+  };
+  const prefetch = new ArcadeAvailabilityPrefetch('https://sandbox.flaxia.app');
+  prefetch.destroy();
+  assert.equal(await prefetch.prefetch(game('next')), true);
+  assert.equal(checked, 0);
 });

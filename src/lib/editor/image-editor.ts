@@ -165,7 +165,7 @@ function applyBrightnessContrast(imageData: ImageData, brightness: number, contr
     for (let c = i; c < i + 3; c++) {
       let v = data[c] * bFactor;
       v = (v - 127.5) * cFactor + 127.5;
-      data[c] = v < 0 ? 0 : v > 255 ? 255 : v;
+      data[c] = v < 0 ? 0 : Math.min(v, 255);
     }
   }
 }

@@ -231,7 +231,7 @@ try {
     const state = await current.page
       .evaluate(() => ({
         url: location.href,
-        text: document.body.innerText,
+        text: document.body.textContent,
         native: Boolean(window.Capacitor),
         online: navigator.onLine,
       }))
