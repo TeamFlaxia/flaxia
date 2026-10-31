@@ -119,6 +119,7 @@ const groups = {
     'android-version-code',
     'app-download',
     'api-origins',
+    'app-update',
     'billing',
     'capacitor-security-config',
     'dataset-export',
