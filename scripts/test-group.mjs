@@ -21,6 +21,7 @@ const groups = {
     'auth-logout-revocation',
     'auth-provision-guard',
     'auth-rate-limit-fail-closed',
+    'auth-vault',
     'email-normalization',
     'flaxia-auth-login',
     'flaxia-auth-session',
