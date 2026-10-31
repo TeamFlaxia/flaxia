@@ -63,7 +63,9 @@ async function readLocalVault(db: D1Database, userId: string): Promise<LocalVaul
   const devices = await db
     .prepare(
       `SELECT id, label, state, peer_pub, approved_pub, wrapped_vk, created_at, expires_at, last_seen_at
-       FROM device_keys WHERE user_id = ? ORDER BY created_at`,
+       FROM device_keys WHERE user_id = ?
+         AND NOT (state = 'pending' AND expires_at <> '' AND expires_at < strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+       ORDER BY created_at`,
     )
     .bind(userId)
     .all();
@@ -85,7 +87,9 @@ function envelopeMatches(envelope: Record<string, unknown>, local: LocalEnvelope
   return (
     envelope.enabled === true &&
     envelope.salt === local.salt &&
+    envelope.recovery_salt === local.recovery_salt &&
     envelope.wrapped_vk === local.wrapped_vk &&
+    envelope.recovery_blob === local.recovery_blob &&
     envelope.vk_version === local.vk_version
   );
 }
@@ -101,18 +105,23 @@ async function deleteLocalVault(db: D1Database, userId: string, keys: LocalEnvel
       db
         .prepare(
           `DELETE FROM vault_items WHERE user_id = ?
-           AND EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ? AND salt = ? AND wrapped_vk = ? AND vk_version = ?)`,
+           AND EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ? AND salt = ? AND recovery_salt = ?
+             AND wrapped_vk = ? AND recovery_blob = ? AND vk_version = ?)`,
         )
-        .bind(userId, userId, keys.salt, keys.wrapped_vk, keys.vk_version),
+        .bind(userId, userId, keys.salt, keys.recovery_salt, keys.wrapped_vk, keys.recovery_blob, keys.vk_version),
       db
         .prepare(
           `DELETE FROM device_keys WHERE user_id = ?
-           AND EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ? AND salt = ? AND wrapped_vk = ? AND vk_version = ?)`,
+           AND EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ? AND salt = ? AND recovery_salt = ?
+             AND wrapped_vk = ? AND recovery_blob = ? AND vk_version = ?)`,
         )
-        .bind(userId, userId, keys.salt, keys.wrapped_vk, keys.vk_version),
+        .bind(userId, userId, keys.salt, keys.recovery_salt, keys.wrapped_vk, keys.recovery_blob, keys.vk_version),
       db
-        .prepare('DELETE FROM vault_keys WHERE user_id = ? AND salt = ? AND wrapped_vk = ? AND vk_version = ?')
-        .bind(userId, keys.salt, keys.wrapped_vk, keys.vk_version),
+        .prepare(
+          `DELETE FROM vault_keys WHERE user_id = ? AND salt = ? AND recovery_salt = ?
+             AND wrapped_vk = ? AND recovery_blob = ? AND vk_version = ?`,
+        )
+        .bind(userId, keys.salt, keys.recovery_salt, keys.wrapped_vk, keys.recovery_blob, keys.vk_version),
     ]);
   } catch {
     // A credential-change guard can hold the row briefly; the next vault
@@ -140,7 +149,10 @@ export async function ensureAuthVault(env: VaultEnv, grant: string, userId: stri
   const local = await readLocalVault(env.DB, userId);
   if (!local) return { enabled: false, vk_version: 0 };
   const imported = await authVaultImport(env, grant, userId, local);
-  if (imported === 'unavailable' || imported === 'conflict') return null;
+  if (imported === 'unavailable' || imported === 'conflict') {
+    console.error('Auth vault import failed', { userId, reason: imported });
+    return null;
+  }
   await deleteLocalVault(env.DB, userId, local.keys);
 
   // Re-read after import: another device may have advanced the envelope while
