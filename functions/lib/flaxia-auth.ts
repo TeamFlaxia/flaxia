@@ -119,13 +119,20 @@ export async function authVaultRequest(
   if (!['GET', 'POST', 'PUT', 'DELETE'].includes(method)) return null;
   if (typeof path !== 'string' || !path.startsWith('/api/vault') || path.length > 128) return null;
   try {
-    const response = await postAuth(env, '/api/flaxia/vault', {
-      grant,
-      user_id: userId,
-      method,
-      path,
-      ...(body === undefined ? {} : { body }),
-    });
+    // Vault payloads reach the item storage ceiling, so the credential
+    // path's short deadline is not enough for a cold Auth or a large item.
+    const response = await postAuth(
+      env,
+      '/api/flaxia/vault',
+      {
+        grant,
+        user_id: userId,
+        method,
+        path,
+        ...(body === undefined ? {} : { body }),
+      },
+      15_000,
+    );
     if (response.status >= 500) return null;
     const result = (await response.json()) as Record<string, unknown>;
     if (!result || typeof result !== 'object' || Array.isArray(result)) return null;

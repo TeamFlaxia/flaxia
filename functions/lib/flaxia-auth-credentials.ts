@@ -1,4 +1,4 @@
-import { authCredentialOperation } from './flaxia-auth.ts';
+import { authCredentialOperation, authIsAuthoritative } from './flaxia-auth.ts';
 import { deletionOperationHash } from './flaxia-auth-deletion.ts';
 
 type Job = {
@@ -74,6 +74,14 @@ export async function resumeAuthCredentialChange(env: Env, operation: string): P
       !job.proof_json
     )
       return 'unavailable';
+    // In authority mode Auth owns the envelope even for a local session id that
+    // is still mapped to an Auth grant. The rewrap has to travel with the
+    // verifier in the same Auth transaction; the transitional local row is
+    // never touched.
+    const authOwnsVault = authIsAuthoritative(env as { AUTH_AUTHORITY_MODE?: string });
+    const storedVault = job.vault_json
+      ? (JSON.parse(job.vault_json) as { salt: string; kdf_params: unknown; wrapped_vk: string; vk_version: number })
+      : null;
     if (job.state === 'pending') {
       const result = await authCredentialOperation(
         env as { AUTH_SERVICE?: Fetcher },
@@ -87,6 +95,7 @@ export async function resumeAuthCredentialChange(env: Env, operation: string): P
           srp_verifier: job.new_verifier,
           srp_group: job.new_group,
           srp_kdf: job.new_kdf,
+          ...(authOwnsVault && storedVault ? { vault_kek: storedVault } : {}),
         },
         job.target_stamp,
       );
@@ -102,25 +111,25 @@ export async function resumeAuthCredentialChange(env: Env, operation: string): P
       if (job.state === 'cancelled') return 'cancelled';
     }
     if (job.state === 'prepared') {
-      const vault = job.vault_json
-        ? (JSON.parse(job.vault_json) as { salt: string; kdf_params: unknown; wrapped_vk: string; vk_version: number })
-        : null;
+      // Auth applies the rewrap for preserved accounts, so the local envelope
+      // is only rewritten while Flaxia still owns it. Once Auth is
+      // authoritative a leftover transitional row is inert and must not make
+      // the credential change depend on its version.
+      const vault = authOwnsVault ? null : storedVault;
+      const vaultGuard = authOwnsVault
+        ? '1 = 1'
+        : '((? IS NULL AND NOT EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ?)) OR EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ? AND vk_version = ?))';
       const assertion = () =>
         env.DB.prepare(
           'INSERT INTO flaxia_auth_transition_assertions (valid) VALUES (CASE WHEN changes() = 1 THEN 1 ELSE NULL END)',
         );
       const clearAssertion = () => env.DB.prepare('DELETE FROM flaxia_auth_transition_assertions');
-      const statements = [
-        env.DB.prepare(
-          "UPDATE flaxia_auth_credential_jobs SET state = 'applying' WHERE operation_hash = ? AND state = 'prepared'",
-        ).bind(hash),
-        assertion(),
-        clearAssertion(),
+      const userUpdate =
         env.DB.prepare(`UPDATE users SET password_hash = '', srp_salt = ?, srp_verifier = ?, srp_group = ?, srp_kdf = ?
           WHERE id = ? AND frozen_at IS NULL AND password_hash IS ? AND srp_salt IS ? AND srp_verifier IS ? AND srp_group IS ? AND srp_kdf IS ?
           AND EXISTS (SELECT 1 FROM flaxia_auth_credential_jobs WHERE operation_hash = ? AND state = 'applying')
           AND EXISTS (SELECT 1 FROM flaxia_auth_sessions WHERE session_id = ? AND grant_token = ?)
-          AND ((? IS NULL AND NOT EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ?)) OR EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ? AND vk_version = ?))`).bind(
+          AND ${vaultGuard}`).bind(
           job.new_salt,
           job.new_verifier,
           job.new_group,
@@ -134,11 +143,15 @@ export async function resumeAuthCredentialChange(env: Env, operation: string): P
           hash,
           job.session_id,
           job.grant_token,
-          vault?.vk_version ?? null,
-          job.user_id,
-          job.user_id,
-          vault?.vk_version ?? null,
-        ),
+          ...(authOwnsVault ? [] : [vault?.vk_version ?? null, job.user_id, job.user_id, vault?.vk_version ?? null]),
+        );
+      const statements = [
+        env.DB.prepare(
+          "UPDATE flaxia_auth_credential_jobs SET state = 'applying' WHERE operation_hash = ? AND state = 'prepared'",
+        ).bind(hash),
+        assertion(),
+        clearAssertion(),
+        userUpdate,
         assertion(),
         clearAssertion(),
       ];

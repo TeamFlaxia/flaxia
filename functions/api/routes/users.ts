@@ -14,6 +14,7 @@ import {
 import {
   authCredentialOperation,
   authEmailAction,
+  authIsAuthoritative,
   cancelAuthDeletion,
   credentialStampFor,
   deleteAuthAccount,
@@ -1459,19 +1460,20 @@ users.patch('/users/me/password', requireAuth, async (c) => {
     // The client holds that password right now, so it must re-wrap VK in the
     // same request; otherwise the vault is orphaned the moment this lands.
     //
-    // With a direct Auth grant, Auth owns the envelope. The transitional Flaxia
+    // In authority mode Auth owns the envelope for every session, including a
+    // local session id still mapped to an Auth grant. The transitional Flaxia
     // rows (if any) are copied to Auth first, and the rewrap travels in the
     // credential operation so Auth can apply verifier and envelope together.
-    const authGrant = sessionToken && /^[A-Za-z0-9_-]{43}$/.test(sessionToken) ? sessionToken : null;
-    const vaultState = authGrant
-      ? await ensureAuthVault(c.env, authGrant, userId)
+    const authOwnsVault = Boolean(grant && authIsAuthoritative(c.env));
+    const vaultState = authOwnsVault
+      ? await ensureAuthVault(c.env, grant as string, userId)
       : await (async () => {
           const row = (await c.env.DB.prepare('SELECT vk_version FROM vault_keys WHERE user_id = ?')
             .bind(userId)
             .first()) as { vk_version: number } | null;
           return row ? { enabled: true, vk_version: row.vk_version } : { enabled: false, vk_version: 0 };
         })();
-    if (authGrant && !vaultState) return c.json({ error: 'Vault temporarily unavailable' }, 503);
+    if (authOwnsVault && !vaultState) return c.json({ error: 'Vault temporarily unavailable' }, 503);
 
     const vaultUpdate = await (async () => {
       if (!vaultState?.enabled) {
@@ -1490,7 +1492,7 @@ users.patch('/users/me/password', requireAuth, async (c) => {
       }
       if (rewrap.vk_version !== vaultState.vk_version) return { error: 'vault_key_version_conflict' } as const;
       return {
-        sql: authGrant
+        sql: authOwnsVault
           ? null
           : `UPDATE vault_keys SET salt = ?, kdf_params = ?, wrapped_vk = ?,
                      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')

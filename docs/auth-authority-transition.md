@@ -3,6 +3,9 @@
 > users and bulk-linking every profile. Recovery-code enrollment is collected
 > on first Auth login. A rollback must preserve Auth as the credential
 > authority; do not restore a Worker that accepts linked local credentials.
+> Vault rows imported to Auth are deleted from Flaxia D1, so disabling
+> `AUTH_AUTHORITY_MODE` does not restore them; rollback needs a copy back from
+> Auth.
 
 # Authentication authority transition
 

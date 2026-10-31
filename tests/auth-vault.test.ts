@@ -111,7 +111,14 @@ test('transitional rows are imported once and only deleted after Auth confirms t
 test('a matching Auth envelope cleans up local rows without importing', async () => {
   const { db, batches } = database();
   const auth = authService(() =>
-    Response.json({ enabled: true, salt: localKeys.salt, wrapped_vk: localKeys.wrapped_vk, vk_version: 1 }),
+    Response.json({
+      enabled: true,
+      salt: localKeys.salt,
+      recovery_salt: localKeys.recovery_salt,
+      wrapped_vk: localKeys.wrapped_vk,
+      recovery_blob: localKeys.recovery_blob,
+      vk_version: 1,
+    }),
   );
   const state = await ensureAuthVault(environment(db, auth.service), grant, userId);
   assert.deepEqual(state, { enabled: true, vk_version: 1 });
@@ -157,4 +164,28 @@ test('the proxy sends the browser method, path and query through the grant bridg
 
   assert.equal(await authVaultRequest(environment({}, auth.service), grant, userId, 'PATCH', '/api/vault/keys'), null);
   assert.equal(await authVaultRequest(environment({}, auth.service), grant, userId, 'GET', '/api/other'), null);
+});
+
+test('an unlocked tab adopts the version Auth advances during a credential rewrap', async () => {
+  const { getVaultKeyVersion, setVaultKey, syncVaultVersionAfterRewrap } = await import('../src/lib/vault/session.ts');
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return Response.json({ enabled: true, vk_version: 7 });
+  }) as typeof fetch;
+  try {
+    setVaultKey(new Uint8Array(32), 1);
+    await syncVaultVersionAfterRewrap();
+    assert.equal(calls, 1);
+    assert.equal(getVaultKeyVersion(), 7, 'writes after the rewrap must use the new version');
+
+    setVaultKey(null, null);
+    await syncVaultVersionAfterRewrap();
+    assert.equal(calls, 1, 'a locked tab fetches the fresh version on unlock instead');
+    assert.equal(getVaultKeyVersion(), null);
+  } finally {
+    setVaultKey(null, null);
+    globalThis.fetch = originalFetch;
+  }
 });
