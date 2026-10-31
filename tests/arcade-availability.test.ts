@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
-import { afterEach, test } from 'node:test';
+import { afterEach, mock, test } from 'node:test';
 import type { Game } from '../src/types/game.ts';
 
 registerHooks({
@@ -218,4 +218,43 @@ test('a prefetched missing game is still omitted by the normal Arcade selection 
   assert.equal(selection?.game.id, 'available');
   assert.deepEqual(missing, ['missing']);
   prefetch.destroy();
+});
+
+test('reuses a successful preflight briefly and rechecks it once stale', async () => {
+  mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+  try {
+    let status = 200;
+    let checked = 0;
+    globalThis.fetch = async () => {
+      checked++;
+      return new Response(null, { status });
+    };
+    const prefetch = new ArcadeAvailabilityPrefetch('https://sandbox.flaxia.app');
+    const next = game('next');
+    assert.equal(await prefetch.prefetch(next), true);
+
+    mock.timers.tick(30_000);
+    assert.equal(await prefetch.prefetch(next), true);
+    assert.equal(checked, 1, 'a recent successful check survives a short game session');
+
+    status = 404;
+    mock.timers.tick(91_000);
+    assert.equal(await prefetch.prefetch(next), false);
+    assert.equal(checked, 2, 'a stale check is revalidated before the game is selected');
+    prefetch.destroy();
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test('does not start speculative work after the Arcade page is destroyed', async () => {
+  let checked = 0;
+  globalThis.fetch = async () => {
+    checked++;
+    return new Response(null, { status: 200 });
+  };
+  const prefetch = new ArcadeAvailabilityPrefetch('https://sandbox.flaxia.app');
+  prefetch.destroy();
+  assert.equal(await prefetch.prefetch(game('next')), true);
+  assert.equal(checked, 0);
 });

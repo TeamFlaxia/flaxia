@@ -744,10 +744,7 @@ export class ArcadePage {
       this.currentIndex = selection.index;
       const emptyState = this.element.querySelector('.arcade-empty') as HTMLElement;
       emptyState.style.display = 'none';
-      this.renderAvailableGame(
-        selection.game,
-        candidate?.postId === selection.game.postId ? storageSnapshot : undefined,
-      );
+      this.renderAvailableGame(selection.game, candidate === selection.game ? storageSnapshot : undefined);
     } catch (error) {
       if (this.destroyed || controller.signal.aborted) return;
       console.error('Failed to select an Arcade game:', error);
@@ -2023,7 +2020,9 @@ export class ArcadePage {
     // which must revalidate and compete with the active game's assets.
     for (let i = 1; i <= 2; i++) {
       const game = this.games[this.currentIndex + i];
-      if (game) void this.availability.prefetch(game);
+      // Speculative checks are best-effort; a failed probe must never surface
+      // as an unhandled rejection or block the active game.
+      if (game) void this.availability.prefetch(game).catch(() => {});
     }
   }
 

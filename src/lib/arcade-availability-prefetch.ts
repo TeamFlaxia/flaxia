@@ -24,12 +24,14 @@ export class ArcadeAvailabilityPrefetch {
   private readonly probes = new Map<string, AvailabilityProbe>();
   private readonly controller = new AbortController();
   private readonly sandboxOrigin: string;
+  private destroyed = false;
 
   constructor(sandboxOrigin: string) {
     this.sandboxOrigin = sandboxOrigin;
   }
 
   prefetch(game: Game): Promise<boolean> {
+    if (this.destroyed) return Promise.resolve(true);
     const key = `${game.type}:${game.postId}:${game.id}`;
     const existing = this.probes.get(key);
     if (existing) {
@@ -94,6 +96,7 @@ export class ArcadeAvailabilityPrefetch {
   }
 
   destroy(): void {
+    this.destroyed = true;
     this.controller.abort();
     this.probes.clear();
   }
