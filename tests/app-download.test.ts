@@ -3,9 +3,12 @@ import { describe, it } from 'node:test';
 import {
   APP_ANDROID_APK_URL,
   APP_PLAY_STORE_URL,
+  APP_RELEASES_API,
   APP_RELEASES_URL,
+  findWindowsMsiUrl,
   orderAppPlatforms,
   recommendedAppPlatform,
+  resolveWindowsMsiUrl,
 } from '../src/lib/app-download.ts';
 
 describe('recommendedAppPlatform', () => {
@@ -37,5 +40,53 @@ describe('app download URLs', () => {
     assert.equal(APP_RELEASES_URL, 'https://github.com/TeamFlaxia/flaxia/releases/latest');
     assert.equal(APP_ANDROID_APK_URL, `${APP_RELEASES_URL}/download/app-release.apk`);
     assert.equal(APP_PLAY_STORE_URL, 'https://play.google.com/store/apps/details?id=app.flaxia.app');
+  });
+});
+
+describe('Windows installer lookup', () => {
+  const msiUrl = 'https://github.com/TeamFlaxia/flaxia/releases/download/v0.1.200/Flaxia_0.1.0_x64_en-US.msi';
+
+  it('finds the x64 MSI asset in a release', () => {
+    assert.equal(
+      findWindowsMsiUrl({
+        assets: [
+          { name: 'app-release.apk', browser_download_url: 'https://example.com/app-release.apk' },
+          { name: 'Flaxia_0.1.0_x64_en-US.msi', browser_download_url: msiUrl },
+        ],
+      }),
+      msiUrl,
+    );
+  });
+
+  it('ignores non-MSI and untrusted assets', () => {
+    assert.equal(findWindowsMsiUrl({ assets: [{ name: 'Flaxia_0.1.0_x64_en-US.zip' }] }), null);
+    assert.equal(
+      findWindowsMsiUrl({
+        assets: [{ name: 'Flaxia_0.1.0_x64_en-US.msi', browser_download_url: 'https://example.com/evil.msi' }],
+      }),
+      null,
+    );
+    assert.equal(findWindowsMsiUrl(null), null);
+  });
+
+  it('resolves the latest release MSI URL', async () => {
+    let requestedUrl = '';
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      requestedUrl = input.toString();
+      return new Response(
+        JSON.stringify({
+          assets: [{ name: 'Flaxia_0.1.0_x64_en-US.msi', browser_download_url: msiUrl }],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }) as typeof fetch;
+
+    assert.equal(await resolveWindowsMsiUrl(fetchImpl), msiUrl);
+    assert.equal(requestedUrl, APP_RELEASES_API);
+  });
+
+  it('returns null when the release API is unavailable', async () => {
+    const fetchImpl = (async () => new Response('rate limited', { status: 403 })) as typeof fetch;
+    assert.equal(await resolveWindowsMsiUrl(fetchImpl), null);
   });
 });

@@ -5,6 +5,7 @@ import {
   type AppPlatform,
   orderAppPlatforms,
   recommendedAppPlatform,
+  resolveWindowsMsiUrl,
 } from '../lib/app-download.js';
 import { type DevicePlatform, detectDevicePlatform } from '../lib/device-platform.js';
 import { t } from '../lib/i18n.js';
@@ -118,6 +119,18 @@ function createPlatformCard(platform: AppPlatform, recommended: boolean): HTMLEl
         iconName: 'download',
       }),
     );
+  } else if (platform === 'windows') {
+    const windowsChip = createChip({
+      href: APP_RELEASES_URL,
+      label: t('app_download.download_for', { platform: t(PLATFORM_LABEL_KEYS[platform]) }),
+      note: t('app_download.github_note'),
+      iconName: 'download',
+      primary: recommended,
+    });
+    actions.appendChild(windowsChip);
+    void resolveWindowsMsiUrl().then((url) => {
+      if (url) windowsChip.href = url;
+    });
   } else {
     actions.appendChild(
       createChip({

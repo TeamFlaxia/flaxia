@@ -1,7 +1,8 @@
+import { APP_RELEASES_API, APP_RELEASES_URL, findWindowsMsiUrl, isTrustedWindowsMsiUrl } from './app-download.ts';
 import { isTauriNativePlatform } from './native-api.ts';
 
-export const APP_UPDATE_RELEASES_API = 'https://api.github.com/repos/TeamFlaxia/flaxia/releases/latest';
-export const APP_UPDATE_RELEASES_URL = 'https://github.com/TeamFlaxia/flaxia/releases/latest';
+export const APP_UPDATE_RELEASES_API = APP_RELEASES_API;
+export const APP_UPDATE_RELEASES_URL = APP_RELEASES_URL;
 
 const DISMISSED_KEY = 'flaxia:app-update:dismissed';
 const CACHE_KEY = 'flaxia:app-update:latest-release';
@@ -10,6 +11,7 @@ const CACHE_TTL_MS = 60 * 60 * 1000;
 export interface AppReleaseInfo {
   tagName: string;
   releaseUrl: string;
+  windowsMsiUrl: string | null;
 }
 
 export interface AppUpdateInfo {
@@ -17,6 +19,7 @@ export interface AppUpdateInfo {
   latestVersion: string;
   latestTag: string;
   releaseUrl: string;
+  windowsMsiUrl: string | null;
 }
 
 /** Normalize "v1.2.3" to "1.2.3"; null for non-semver tags. */
@@ -45,15 +48,21 @@ export function isNewerAppVersion(currentVersion: string, latestVersion: string)
   return false;
 }
 
+export type AppUpdatePlatform = 'windows' | 'linux';
+
+export function detectAppUpdatePlatform(userAgent?: string): AppUpdatePlatform | null {
+  const ua = (userAgent ?? (typeof navigator === 'undefined' ? '' : navigator.userAgent)).toLowerCase();
+  if (ua.includes('android')) return null;
+  if (ua.includes('windows')) return 'windows';
+  if (ua.includes('linux')) return 'linux';
+  return null;
+}
+
 /** Update prompts only apply to Tauri desktop builds for Windows and Linux. */
 export function supportsAppUpdatePrompt(options: { userAgent?: string; isTauri?: boolean } = {}): boolean {
   const isTauri = options.isTauri ?? isTauriNativePlatform();
   if (!isTauri) return false;
-
-  const userAgent = options.userAgent ?? (typeof navigator === 'undefined' ? '' : navigator.userAgent);
-  const ua = userAgent.toLowerCase();
-  if (ua.includes('android')) return false;
-  return ua.includes('windows') || ua.includes('linux');
+  return detectAppUpdatePlatform(options.userAgent) !== null;
 }
 
 function isTrustedReleaseUrl(url: string): boolean {
@@ -79,7 +88,7 @@ export function parseLatestAppRelease(data: unknown): AppReleaseInfo | null {
       ? release.html_url
       : APP_UPDATE_RELEASES_URL;
 
-  return { tagName: release.tag_name.trim(), releaseUrl };
+  return { tagName: release.tag_name.trim(), releaseUrl, windowsMsiUrl: findWindowsMsiUrl(data) };
 }
 
 function readCachedRelease(now: number): AppReleaseInfo | null {
@@ -87,7 +96,12 @@ function readCachedRelease(now: number): AppReleaseInfo | null {
     const raw = localStorage.getItem(CACHE_KEY);
     if (!raw) return null;
 
-    const cached = JSON.parse(raw) as { fetchedAt?: unknown; tagName?: unknown; releaseUrl?: unknown };
+    const cached = JSON.parse(raw) as {
+      fetchedAt?: unknown;
+      tagName?: unknown;
+      releaseUrl?: unknown;
+      windowsMsiUrl?: unknown;
+    };
     if (
       typeof cached.fetchedAt !== 'number' ||
       cached.fetchedAt > now ||
@@ -100,7 +114,14 @@ function readCachedRelease(now: number): AppReleaseInfo | null {
       return null;
     }
 
-    return { tagName: cached.tagName, releaseUrl: cached.releaseUrl };
+    return {
+      tagName: cached.tagName,
+      releaseUrl: cached.releaseUrl,
+      windowsMsiUrl:
+        typeof cached.windowsMsiUrl === 'string' && isTrustedWindowsMsiUrl(cached.windowsMsiUrl)
+          ? cached.windowsMsiUrl
+          : null,
+    };
   } catch {
     return null;
   }
@@ -183,6 +204,7 @@ export async function checkForAppUpdate(
     latestVersion: latest,
     latestTag: release.tagName,
     releaseUrl: release.releaseUrl,
+    windowsMsiUrl: release.windowsMsiUrl,
   };
 }
 

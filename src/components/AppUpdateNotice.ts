@@ -1,4 +1,4 @@
-import type { AppUpdateInfo } from '../lib/app-update.js';
+import { type AppUpdateInfo, detectAppUpdatePlatform } from '../lib/app-update.js';
 import { t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
 
@@ -45,7 +45,8 @@ export function showAppUpdateNotice(update: AppUpdateInfo, onDismiss: () => void
 
   const action = document.createElement('a');
   action.className = 'app-update-notice-action';
-  action.href = update.releaseUrl;
+  action.href =
+    detectAppUpdatePlatform() === 'windows' && update.windowsMsiUrl ? update.windowsMsiUrl : update.releaseUrl;
   action.target = '_blank';
   action.rel = 'noopener noreferrer';
   action.textContent = t('app_update.action');

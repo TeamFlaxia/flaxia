@@ -4,6 +4,7 @@ import {
   APP_UPDATE_RELEASES_API,
   APP_UPDATE_RELEASES_URL,
   checkForAppUpdate,
+  detectAppUpdatePlatform,
   dismissAppUpdate,
   isAppUpdateDismissed,
   isNewerAppVersion,
@@ -31,6 +32,13 @@ describe('app version comparison', () => {
 });
 
 describe('supportsAppUpdatePrompt', () => {
+  it('detects supported desktop platforms', () => {
+    assert.equal(detectAppUpdatePlatform('Mozilla/5.0 (Windows NT 10.0)'), 'windows');
+    assert.equal(detectAppUpdatePlatform('Mozilla/5.0 (X11; Linux x86_64)'), 'linux');
+    assert.equal(detectAppUpdatePlatform('Mozilla/5.0 (Macintosh; Intel Mac OS X)'), null);
+    assert.equal(detectAppUpdatePlatform('Mozilla/5.0 (Linux; Android 14)'), null);
+  });
+
   it('only targets Tauri Windows and Linux', () => {
     assert.equal(supportsAppUpdatePrompt({ isTauri: true, userAgent: 'Mozilla/5.0 (Windows NT 10.0)' }), true);
     assert.equal(supportsAppUpdatePrompt({ isTauri: true, userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' }), true);
@@ -53,6 +61,23 @@ describe('latest release parsing', () => {
       {
         tagName: 'v0.1.101',
         releaseUrl: 'https://github.com/TeamFlaxia/flaxia/releases/tag/v0.1.101',
+        windowsMsiUrl: null,
+      },
+    );
+  });
+
+  it('finds the Windows MSI asset for direct download', () => {
+    const msiUrl = 'https://github.com/TeamFlaxia/flaxia/releases/download/v0.1.200/Flaxia_0.1.0_x64_en-US.msi';
+    assert.deepEqual(
+      parseLatestAppRelease({
+        tag_name: 'v0.1.200',
+        html_url: 'https://github.com/TeamFlaxia/flaxia/releases/tag/v0.1.200',
+        assets: [{ name: 'Flaxia_0.1.0_x64_en-US.msi', browser_download_url: msiUrl }],
+      }),
+      {
+        tagName: 'v0.1.200',
+        releaseUrl: 'https://github.com/TeamFlaxia/flaxia/releases/tag/v0.1.200',
+        windowsMsiUrl: msiUrl,
       },
     );
   });
@@ -108,6 +133,13 @@ describe('checkForAppUpdate', () => {
         JSON.stringify({
           tag_name: 'v0.1.101',
           html_url: 'https://github.com/TeamFlaxia/flaxia/releases/tag/v0.1.101',
+          assets: [
+            {
+              name: 'Flaxia_0.1.101_x64_en-US.msi',
+              browser_download_url:
+                'https://github.com/TeamFlaxia/flaxia/releases/download/v0.1.101/Flaxia_0.1.101_x64_en-US.msi',
+            },
+          ],
         }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
@@ -120,6 +152,7 @@ describe('checkForAppUpdate', () => {
       latestVersion: '0.1.101',
       latestTag: 'v0.1.101',
       releaseUrl: 'https://github.com/TeamFlaxia/flaxia/releases/tag/v0.1.101',
+      windowsMsiUrl: 'https://github.com/TeamFlaxia/flaxia/releases/download/v0.1.101/Flaxia_0.1.101_x64_en-US.msi',
     });
   });
 
