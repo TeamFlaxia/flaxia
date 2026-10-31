@@ -27,9 +27,13 @@ security review are complete. Purging local verifiers cannot be rolled back simp
 the setting.
 
 Password changes use an Auth-side prepared verifier and an application-side
-record containing only the encrypted Vault rewrap and an operation hash. Email
-changes reserve the application profile address, update Auth after SRP proof,
-and reconcile the profile from Auth's receipt. Recovery retries retain neither
+operation record. The encrypted Vault rewrap travels with that operation and is
+applied by Auth in the same transaction as the new verifier. Flaxia's
+`/api/vault/*` routes proxy to Auth in authority mode; existing local Vault rows
+are imported once through `/api/flaxia/vault/import` and deleted only after Auth
+confirms the same envelope. Email changes reserve the application profile
+address, update Auth after SRP proof, and reconcile the profile from Auth's
+receipt. Recovery retries retain neither
 the SRP proof nor an Auth grant in Flaxia's database. An independent random
 account recovery code can authenticate with SRP and reset the password; the
 Vault recovery phrase separately decrypts and rewraps the Vault key in the
