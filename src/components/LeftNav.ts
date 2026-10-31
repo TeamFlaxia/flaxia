@@ -1,10 +1,33 @@
+import { recommendedAppPlatform } from '../lib/app-download.js';
 import { attachPlusBadge } from '../lib/avatar.js';
+import { detectDevicePlatform } from '../lib/device-platform.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { type IconName, icon } from '../lib/icons.js';
 import { isModalOpen } from '../lib/modal-state';
 import { applyNameColor } from '../lib/name-color.js';
-import { nativeApiHref } from '../lib/native-api.js';
+import { isNativeApp, nativeApiHref } from '../lib/native-api.js';
+
+function createAppDownloadPromo(): HTMLAnchorElement | null {
+  if (isNativeApp() || !recommendedAppPlatform(detectDevicePlatform())) return null;
+
+  const promo = document.createElement('a');
+  promo.className = 'nav-app-promo';
+  promo.href = '/download';
+  promo.appendChild(icon('download', { width: '18', height: '18' }));
+
+  const text = document.createElement('span');
+  text.textContent = t('app_download.left_nav_promo');
+  promo.appendChild(text);
+
+  promo.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.history.pushState({}, '', '/download');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+
+  return promo;
+}
 
 export interface LeftNavProps {
   activeItem?: string;
@@ -247,6 +270,9 @@ export class LeftNav {
 
       nav.appendChild(userArea);
     }
+
+    const appPromo = createAppDownloadPromo();
+    if (appPromo) nav.appendChild(appPromo);
 
     // Add legal links (privacy policy and terms)
     const legalLinks = document.createElement('div');
