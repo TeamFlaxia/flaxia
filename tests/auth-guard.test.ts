@@ -19,6 +19,8 @@ describe('isPublicRoute', () => {
       '/terms',
       '/privacy',
       '/about',
+      '/download',
+      '/download/',
       '/docs',
       '/docs/hello',
       '/login',

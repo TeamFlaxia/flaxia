@@ -5675,3 +5675,219 @@ audio.audio-player-element {
     display: none !important;
   }
 }
+
+/* ==========================================
+   APP DOWNLOAD PAGE
+   ========================================== */
+
+.download-page {
+  flex: 1;
+  width: 100%;
+  max-width: 600px;
+  min-width: 0;
+  align-self: flex-start;
+  border-inline: 1px solid var(--border);
+  padding-bottom: calc(2rem + var(--bottom-nav-h, 0px));
+}
+
+.download-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.25rem;
+}
+
+.download-hero {
+  padding: 1.1rem 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+}
+
+.download-hero--recommended {
+  border-color: var(--accent);
+}
+
+.download-hero-title {
+  margin-bottom: 0.35rem;
+  color: var(--text-primary);
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.download-hero-body {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
+.download-card {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-primary);
+}
+
+.download-card--recommended {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.download-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.download-card-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 0.75rem;
+  background: var(--bg-secondary);
+  color: var(--accent);
+}
+
+.download-card-title-wrap {
+  flex: 1;
+  min-width: 9rem;
+}
+
+.download-card-title {
+  margin-bottom: 0.15rem;
+  color: var(--text-primary);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.download-card-description {
+  color: var(--text-muted);
+  font-size: 0.825rem;
+  line-height: 1.5;
+}
+
+.download-card-badge {
+  flex-shrink: 0;
+  padding: 0.2rem 0.55rem;
+  border-radius: 9999px;
+  background: var(--accent);
+  color: #000;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.download-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+}
+
+.download-chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  text-decoration: none;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.download-chip:hover {
+  border-color: var(--accent);
+  background: var(--bg-hover);
+}
+
+.download-chip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.download-chip-note {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+.download-chip--primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #000;
+}
+
+.download-chip--primary:hover {
+  border-color: var(--accent-dark);
+  background: var(--accent-dark);
+}
+
+.download-chip--primary .download-chip-note {
+  color: rgba(0, 0, 0, 0.7);
+}
+
+.download-footnote {
+  margin-top: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.download-all-releases {
+  align-self: flex-start;
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.download-all-releases:hover {
+  text-decoration: underline;
+}
+
+.nav-app-promo {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  text-decoration: none;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.nav-app-promo:hover {
+  border-color: var(--accent-dark);
+  background: var(--bg-hover);
+}
+
+.left-nav .nav-app-promo svg {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+  color: var(--accent);
+}
+
+@media (max-width: 768px) {
+  .download-content {
+    padding: 1rem;
+  }
+}

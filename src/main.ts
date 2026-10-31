@@ -106,7 +106,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'settings'
       | 'arcade'
       | 'billing-success'
-      | 'billing-canceled' = 'timeline';
+      | 'billing-canceled'
+      | 'download' = 'timeline';
     let currentPostId: string | null = null;
     let _currentUsername: string | null = null;
     let currentTag: string | null = null;
@@ -125,6 +126,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let arcadePage: ArcadePageHandle | null = null;
     let searchPage: PageComponent | null = null;
     let bookmarksPage: BookmarksPage | null = null;
+    let downloadPage: PageComponent | null = null;
     let cachedContentComponent: { view: string; component: unknown; scrollY: number } | null = null;
     let adminLayout:
       | (PageComponent & { updateMainContent: (el: HTMLElement) => void; setAccessDenied: () => void })
@@ -434,6 +436,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           bookmarksPage.destroy();
           bookmarksPage = null;
         }
+        if (downloadPage) {
+          downloadPage.destroy();
+          downloadPage = null;
+        }
       } else {
         // Auth guard for protected routes
         const isAuthenticated = await requireAuth();
@@ -514,6 +520,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (searchPage) {
           searchPage.destroy();
           searchPage = null;
+        }
+        if (downloadPage) {
+          downloadPage.destroy();
+          downloadPage = null;
         }
       }
       showPageLoader();
@@ -608,6 +618,49 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           app.appendChild(billingPage.getElement());
           hidePageLoader();
+          return;
+        }
+
+        // Handle app download page (public, within the standard 3-column layout)
+        if (view === 'download') {
+          currentView = 'download';
+          currentPostId = null;
+          _currentUsername = null;
+          currentTag = null;
+
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          const leftNav = await lazyCreateLeftNav({
+            activeItem: 'download',
+            unreadCount: unreadNotificationCount,
+            currentUser: currentUser || undefined,
+            ...leftNavHandlers(),
+          });
+
+          leftNavInstances.add(leftNav);
+
+          const { createDownloadPage } = await import('./components/DownloadPage.js');
+          downloadPage = createDownloadPage();
+
+          const rightPanel = await lazyCreateRightPanel({
+            onSearch: (query) => {
+              console.log('Search:', query);
+            },
+            onFollowUser: (userId) => {
+              console.log('Follow user:', userId);
+            },
+          });
+
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(downloadPage.getElement());
+          mainContainer.appendChild(rightPanel.getElement());
+
+          app.appendChild(mainContainer);
+          hidePageLoader();
+
+          setupMobileLeftNav(leftNav.getElement());
+
           return;
         }
 

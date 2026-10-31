@@ -5,6 +5,7 @@ import {
   Bookmark,
   Copy,
   createElement,
+  Download,
   Eye,
   FileText,
   Flag,
@@ -16,6 +17,7 @@ import {
   Leaf,
   Maximize,
   MessageCircle,
+  Monitor,
   Music2,
   Pencil,
   Quote,
@@ -25,9 +27,11 @@ import {
   Send,
   Settings,
   Share2,
+  Smartphone,
   Smile,
   SmilePlus,
   StickyNote,
+  Terminal,
   Upload,
   User,
   X,
@@ -67,7 +71,11 @@ export type IconName =
   | 'maximize'
   | 'flag'
   | 'warning'
-  | 'edit';
+  | 'edit'
+  | 'download'
+  | 'monitor'
+  | 'smartphone'
+  | 'terminal';
 
 const ICON_NODES: Record<IconName, IconNode> = {
   fresh: Leaf,
@@ -104,6 +112,10 @@ const ICON_NODES: Record<IconName, IconNode> = {
   flag: Flag,
   warning: AlertTriangle,
   edit: Pencil,
+  download: Download,
+  monitor: Monitor,
+  smartphone: Smartphone,
+  terminal: Terminal,
 };
 
 export function icon(name: IconName, attrs: Record<string, string> = {}): SVGElement {

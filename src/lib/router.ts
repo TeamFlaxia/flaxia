@@ -21,7 +21,8 @@ export type RouteView =
   | 'settings'
   | 'arcade'
   | 'billing-success'
-  | 'billing-canceled';
+  | 'billing-canceled'
+  | 'download';
 
 export interface RouteInfo {
   view: RouteView;
@@ -169,6 +170,11 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
   if (cleanPath === '/billing/canceled') {
     console.log('Billing canceled route detected');
     return { view: 'billing-canceled', postId: null, username: null, tag: null };
+  }
+
+  // App download page - public, no auth required
+  if (cleanPath === '/download') {
+    return { view: 'download', postId: null, username: null, tag: null };
   }
 
   // Sandbox route - public, no auth required

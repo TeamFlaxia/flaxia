@@ -21,6 +21,7 @@ export function isPublicRoute(pathname: string): boolean {
     cleanPath === '/terms' ||
     cleanPath === '/privacy' ||
     cleanPath === '/about' ||
+    cleanPath === '/download' ||
     cleanPath === '/docs' ||
     cleanPath.startsWith('/docs/') ||
     cleanPath.startsWith('/users/') ||
