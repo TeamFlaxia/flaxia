@@ -90,15 +90,73 @@ export async function credentialStampFor(user: CredentialFields): Promise<{ stam
   return { stamp, legacy };
 }
 
-async function postAuth(env: AuthEnv, path: string, body: object): Promise<Response> {
+async function postAuth(env: AuthEnv, path: string, body: object, timeout = 3000): Promise<Response> {
   if (!env.AUTH_SERVICE) throw new Error('Auth service binding unavailable');
   const request = new Request(`${AUTH_ORIGIN}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(3000),
+    signal: AbortSignal.timeout(timeout),
   });
   return env.AUTH_SERVICE.fetch(request);
+}
+
+/**
+ * Proxy one Vault request through Auth. The grant is the only credential: no
+ * wrapped key or password material is interpreted here, and nothing is written
+ * to Flaxia's D1. Returns null when Auth is unavailable so callers can fail
+ * closed instead of silently falling back to the transitional local store.
+ */
+export async function authVaultRequest(
+  env: AuthEnv,
+  grant: string,
+  userId: string,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<{ status: number; body: Record<string, unknown> } | null> {
+  if (!TOKEN.test(grant)) return null;
+  if (!['GET', 'POST', 'PUT', 'DELETE'].includes(method)) return null;
+  if (typeof path !== 'string' || !path.startsWith('/api/vault') || path.length > 128) return null;
+  try {
+    const response = await postAuth(env, '/api/flaxia/vault', {
+      grant,
+      user_id: userId,
+      method,
+      path,
+      ...(body === undefined ? {} : { body }),
+    });
+    if (response.status >= 500) return null;
+    const result = (await response.json()) as Record<string, unknown>;
+    if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+    return { status: response.status, body: result };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Copy the transitional Flaxia-owned rows into Auth. The body is opaque
+ * ciphertext only; Auth validates shapes and refuses to replace an envelope it
+ * already owns, which makes retries safe.
+ */
+export async function authVaultImport(
+  env: AuthEnv,
+  grant: string,
+  userId: string,
+  payload: { keys: unknown; devices: unknown[]; items: unknown[] },
+): Promise<'imported' | 'reused' | 'conflict' | 'unavailable'> {
+  if (!TOKEN.test(grant)) return 'unavailable';
+  try {
+    const response = await postAuth(env, '/api/flaxia/vault/import', { grant, user_id: userId, ...payload }, 15_000);
+    if (response.status === 409) return 'conflict';
+    if (!response.ok) return 'unavailable';
+    const result = (await response.json()) as { success?: unknown; imported?: unknown };
+    if (result.success !== true) return 'unavailable';
+    return result.imported === true ? 'imported' : 'reused';
+  } catch {
+    return 'unavailable';
+  }
 }
 
 export async function provisionAuthAccount(

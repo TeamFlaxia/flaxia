@@ -104,6 +104,17 @@ vault_items(user_id+id PK, item_key_wrapped, payload,         -- AES-GCM output
 Migrations `0091_add_vault.sql` (tables) and `0092_pairing_devices.sql`
 (pairing columns).
 
+### Auth-owned storage
+
+When `AUTH_AUTHORITY_MODE=flaxia-auth`, Flaxia's `/api/vault/*` routes are a
+thin proxy to Flaxia Auth's `/api/flaxia/vault` bridge; the browser keeps the
+same URLs and session cookie. Auth stores the envelope, devices and items, and
+applies a `vault_kek` rewrap in the same transaction as a password change.
+Rows still present in Flaxia D1 are copied once through
+`/api/flaxia/vault/import` on the first Vault request and removed only after
+Auth confirms the identical envelope. The import carries only wrapped
+ciphertext, and a conflicting envelope is rejected instead of overwritten.
+
 - `salt` and `recovery_salt` are independent, so a user who picks their
   password as their recovery phrase still gets two separate paths rather than
   one duplicated envelope.
