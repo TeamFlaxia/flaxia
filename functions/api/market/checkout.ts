@@ -1,4 +1,7 @@
 import Stripe from 'stripe';
+import { stripPostColors } from '../../../src/lib/post-colors.ts';
+import { getMeWithSession } from '../../lib/auth.ts';
+import { isSessionAuthorized } from '../../lib/flaxia-auth.ts';
 
 type Env = {
   DB: D1Database;
@@ -6,6 +9,8 @@ type Env = {
   STRIPE_SECRET_KEY: string;
   STRIPE_WEBHOOK_SECRET: string;
   BASE_URL: string;
+  AUTH_SERVICE?: Fetcher;
+  AUTH_AUTHORITY_MODE?: string;
 };
 
 function marketJson(request: Request, body: unknown, status = 200, env?: Env): Response {
@@ -39,14 +44,18 @@ function getSessionToken(request: Request): string | null {
 async function getUserId(env: Env, request: Request): Promise<string | null> {
   const token = getSessionToken(request);
   if (!token) return null;
+  if (/^[A-Za-z0-9_-]{43}$/.test(token)) {
+    return (await getMeWithSession(env as unknown as Parameters<typeof getMeWithSession>[0], token))?.user.id ?? null;
+  }
   // Expiry is part of the session check: an expired or leaked token must not
   // keep creating checkout sessions forever.
   const session = await env.DB.prepare(
-    "SELECT user_id FROM sessions WHERE id = ? AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+    "SELECT s.user_id FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.id = ? AND s.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now') AND u.frozen_at IS NULL",
   )
     .bind(token)
     .first<{ user_id: string }>();
-  return session?.user_id ?? null;
+  if (!session || !(await isSessionAuthorized(env, token, session.user_id))) return null;
+  return session.user_id;
 }
 
 // This endpoint lives outside the Hono router, so it enforces the same origin
@@ -177,7 +186,7 @@ async function handleMarketCheckout(request: Request, env: Env): Promise<Respons
   const stripe = getStripe(env);
   const baseUrl = env.BASE_URL || 'https://flaxia.app';
   // Product name is always server-derived: client `title` is ignored (#67).
-  const contentTitle = post.text.slice(0, 50) || 'Flaxia Content';
+  const contentTitle = stripPostColors(post.text).slice(0, 50) || 'Flaxia Content';
 
   const session = await stripe.checkout.sessions.create({
     customer: customerId,

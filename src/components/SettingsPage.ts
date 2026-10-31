@@ -1,4 +1,10 @@
 import { clearMeCache } from '../lib/auth-cache';
+import {
+  clearCredentialOperation,
+  credentialOperationFor,
+  retryPendingCredentialChange,
+} from '../lib/auth-credential-operation';
+import { clearDeletionOperation, deletionOperationFor } from '../lib/auth-deletion';
 import { createSrpProof, storeSrpSalt } from '../lib/auth-srp.js';
 import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
@@ -15,13 +21,15 @@ import {
   stopCrowdNode,
 } from '../lib/crowd-node.js';
 import { getLocale, setLocale, t } from '../lib/i18n.js';
+import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
 import { getReplyStyle, getShowNsfw, ReplyStyle, setReplyStyle, setShowNsfw } from '../lib/settings.js';
 import { createSettingsNavigation } from '../lib/settings-navigation.js';
 import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
 import { getTheme, setTheme, Theme } from '../lib/theme.js';
-import { prepareVaultRewrap } from '../lib/vault/client.js';
+import { createTitleIcon, titleDescription, titleName } from '../lib/user-title.js';
+import { fetchVaultKeys, prepareVaultRewrap } from '../lib/vault/client.js';
 import { createAddStampModal } from './AddStampModal.js';
 import { createVaultSection } from './VaultSection.js';
 
@@ -39,6 +47,7 @@ interface SettingsPageProps {
     display_name?: string;
     avatar_key?: string;
     badge_type?: string | null;
+    name_color?: string | null;
     language?: string;
     email?: string;
   };
@@ -49,6 +58,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   const container = navigation.getElement();
   let accountSection: HTMLDivElement | undefined;
   let emojiSection: HTMLDivElement | undefined;
+  let titlesSection: HTMLDivElement | undefined;
   let billingSection: HTMLDivElement | undefined;
 
   // Account Section
@@ -95,6 +105,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     displayNameEl.style.cssText =
       'font-size: 1.125rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
     displayNameEl.textContent = displayName;
+    applyNameColor(displayNameEl, currentUser.name_color, currentUser.badge_type);
     infoDiv.appendChild(displayNameEl);
 
     const usernameEl = document.createElement('div');
@@ -184,17 +195,21 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
           alert(t('settings.password_proof_failed') || 'Could not verify your password');
           return;
         }
+        const operation = deletionOperationFor(currentUser.id);
         const response = await fetch('/api/users/me', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify({ current_srp }),
+          body: JSON.stringify({ current_srp, operation }),
         });
 
         if (response.ok) {
+          clearDeletionOperation();
           clearMeCache();
           window.location.href = '/';
         } else {
+          const data = (await response.json().catch(() => ({}))) as { cancelled?: boolean };
+          if (data.cancelled) clearDeletionOperation();
           alert(t('settings.delete_account_failed'));
         }
       } catch (error) {
@@ -678,6 +693,10 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   currentPasswordLabel2.htmlFor = currentPasswordInput2.id;
   currentPasswordInput2.autocomplete = 'current-password';
   currentPasswordInput2.placeholder = t('settings.password_current_placeholder');
+  if (sessionStorage.getItem('flaxia.recovery-login') === '1') {
+    currentPasswordLabel2.textContent = t('settings.recovery_code_label');
+    currentPasswordInput2.placeholder = t('login.recovery_code_placeholder');
+  }
   currentPasswordInput2.className = 'settings-input';
 
   const newPasswordLabel = document.createElement('label');
@@ -735,6 +754,45 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   passwordSection.appendChild(confirmPasswordInput);
   passwordSection.appendChild(passwordSaveButton);
   passwordSection.appendChild(passwordMessage);
+
+  const recoveryButton = document.createElement('button');
+  recoveryButton.type = 'button';
+  recoveryButton.className = 'settings-save';
+  recoveryButton.textContent = t('settings.recovery_create');
+  recoveryButton.hidden = true;
+  // Enrollment is available for every Auth-linked session, including the
+  // opt-in linking phase before AUTH_AUTHORITY_MODE is enabled.
+  void fetch('/api/auth/recovery/status', { credentials: 'include', cache: 'no-store' })
+    .then((response) => {
+      recoveryButton.hidden = !response.ok;
+    })
+    .catch(() => {});
+  passwordSection.appendChild(recoveryButton);
+  recoveryButton.addEventListener('click', async () => {
+    const password = window.prompt(t('settings.recovery_current_password'));
+    if (!password) return;
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    const code = b64(bytes).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+    if (!(await createConfirmDialog(`${t('settings.recovery_save_code')}\n\n${code}`))) return;
+    recoveryButton.disabled = true;
+    try {
+      const salt = generateSalt();
+      const verifier = await computeVerifier(code, salt, DEFAULT_SRP_KDF);
+      const proof = await createSrpProof(password);
+      if (!proof) throw new Error('Recovery proof unavailable');
+      const response = await fetch('/api/auth/recovery/enroll', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ salt: b64(salt), verifier: b64(verifier), kdf: DEFAULT_SRP_KDF, current_srp: proof }),
+      });
+      window.alert(t(response.ok ? 'settings.recovery_enabled' : 'settings.recovery_failed'));
+    } catch {
+      window.alert(t('settings.recovery_failed'));
+    } finally {
+      recoveryButton.disabled = false;
+    }
+  });
 
   // Event handlers
   languageSaveButton.addEventListener('click', async () => {
@@ -850,6 +908,23 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     passwordSaveButton.style.opacity = '0.6';
 
     try {
+      if (!currentUser) return;
+      const previous = await retryPendingCredentialChange();
+      if (previous === 'committed') {
+        // A different, earlier submission was completed. The password in this
+        // form was never sent, so do not claim it was saved.
+        passwordMessage.textContent = t('settings.password_previous_completed');
+        passwordMessage.style.color = 'var(--success, #10b981)';
+        currentPasswordInput2.value = '';
+        newPasswordInput.value = '';
+        confirmPasswordInput.value = '';
+        return;
+      }
+      if (previous === 'pending') {
+        passwordMessage.textContent = t('settings.password_change_pending');
+        passwordMessage.style.color = 'var(--danger)';
+        return;
+      }
       // Derive a fresh SRP verifier from the new password so the account
       // continues to authenticate via SRP after the change. Neither the
       // current nor the new password is sent to the server: the current one is
@@ -857,7 +932,8 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
       const salt = generateSalt();
       const verifier = await computeVerifier(newPassword, salt, DEFAULT_SRP_KDF);
 
-      const currentSrp = await createSrpProof(currentPassword);
+      const recovering = sessionStorage.getItem('flaxia.recovery-login') === '1';
+      const currentSrp = await createSrpProof(currentPassword, recovering);
       if (!currentSrp) {
         passwordMessage.textContent = t('settings.current_password_incorrect');
         passwordMessage.style.color = 'var(--danger)';
@@ -867,7 +943,17 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
       // Carry the vault across: VK is wrapped under a KEK derived from the OLD
       // password, so it must be re-wrapped inside this very request. Refusing
       // to proceed beats storing an envelope the new password cannot open.
-      const vaultRewrap = await prepareVaultRewrap(currentPassword, newPassword);
+      let vaultSecret = currentPassword;
+      if (recovering) {
+        const keys = await fetchVaultKeys();
+        if (!keys) throw new Error('Vault unavailable');
+        if (keys.enabled) {
+          const phrase = window.prompt(t('settings.recovery_vault_phrase'));
+          if (!phrase) return;
+          vaultSecret = phrase;
+        }
+      }
+      const vaultRewrap = await prepareVaultRewrap(vaultSecret, newPassword, recovering);
       if (vaultRewrap.status === 'unlock_failed') {
         passwordMessage.textContent = t('settings.current_password_incorrect');
         passwordMessage.style.color = 'var(--danger)';
@@ -878,6 +964,8 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
         passwordMessage.style.color = 'var(--danger)';
         return;
       }
+
+      const operation = credentialOperationFor(currentUser.id);
 
       const response = await fetch('/api/users/me/password', {
         method: 'PATCH',
@@ -890,11 +978,15 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
           srp_group: '2048',
           srp_kdf: DEFAULT_SRP_KDF,
           current_srp: currentSrp,
+          operation,
+          ...(recovering ? { recovery: true } : {}),
           ...(vaultRewrap.status === 'ok' ? { vault_kek: vaultRewrap.fields } : {}),
         }),
       });
 
       if (response.ok) {
+        clearCredentialOperation();
+        if (recovering) sessionStorage.removeItem('flaxia.recovery-login');
         storeSrpSalt(salt);
         passwordMessage.textContent = t('settings.password_saved');
         passwordMessage.style.color = 'var(--success, #10b981)';
@@ -902,7 +994,8 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
         newPasswordInput.value = '';
         confirmPasswordInput.value = '';
       } else {
-        const errorData = (await response.json()) as { error?: string };
+        const errorData = (await response.json()) as { error?: string; cancelled?: boolean };
+        if (errorData.cancelled) clearCredentialOperation();
         const message =
           errorData.error === 'vault_rewrap_required'
             ? t('settings.vault_rewrap_required')
@@ -940,6 +1033,109 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   // Own component: it has three states of its own (setup / locked / unlocked)
   // and timers to clean up, which would drown the settings page otherwise.
   const vaultSection = currentUser ? createVaultSection() : null;
+
+  // ─── Titles Section ───────────────────────────────────────────────────────
+  // Titles are awarded by other systems (for example Arcade achievements).
+  // Settings only lists what the user owns; equipping happens in the profile
+  // editor.
+  if (currentUser) {
+    titlesSection = document.createElement('div');
+    titlesSection.className = 'settings-section';
+
+    const titlesTitle = document.createElement('h2');
+    titlesTitle.textContent = t('settings.titles') || 'Titles';
+
+    const titlesDesc = document.createElement('p');
+    titlesDesc.textContent =
+      t('settings.titles_desc') || 'Titles you have earned. Choose one to show after your username from Edit profile.';
+    titlesDesc.style.cssText = 'color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem;';
+
+    const titlesGrid = document.createElement('div');
+    titlesGrid.style.cssText = 'display: flex; flex-direction: column; gap: 0.75rem;';
+
+    titlesSection.appendChild(titlesTitle);
+    titlesSection.appendChild(titlesDesc);
+    titlesSection.appendChild(titlesGrid);
+
+    fetch('/api/titles/me', { credentials: 'include' })
+      .then((response) =>
+        response.ok
+          ? (response.json() as Promise<{
+              titles?: Array<{
+                id: string;
+                icon: string;
+                name: string;
+                name_ja?: string | null;
+                description: string;
+                description_ja?: string | null;
+                equipped?: boolean;
+              }>;
+            }>)
+          : Promise.reject(new Error(String(response.status))),
+      )
+      .then((data) => {
+        const titles = data.titles ?? [];
+        titlesGrid.replaceChildren();
+        if (titles.length === 0) {
+          const empty = document.createElement('p');
+          empty.textContent = t('settings.titles_empty') || 'You have not earned any titles yet.';
+          empty.style.cssText = 'color: var(--text-muted); font-size: 0.875rem;';
+          titlesGrid.appendChild(empty);
+          return;
+        }
+
+        for (const title of titles) {
+          const card = document.createElement('div');
+          card.style.cssText = `
+            display: flex;
+            align-items: flex-start;
+            gap: 0.875rem;
+            padding: 0.875rem 1rem;
+            border: 1px solid ${title.equipped ? 'var(--accent)' : 'var(--border)'};
+            border-radius: 8px;
+            background: var(--bg-secondary);
+          `;
+
+          const icon = createTitleIcon(title.icon, 'settings-title-icon');
+
+          const text = document.createElement('div');
+          text.style.cssText = 'min-width: 0; flex: 1;';
+
+          const nameRow = document.createElement('div');
+          nameRow.style.cssText = 'display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;';
+
+          const name = document.createElement('strong');
+          name.textContent = titleName(title);
+          name.style.cssText = 'color: var(--text-primary);';
+          nameRow.appendChild(name);
+
+          if (title.equipped) {
+            const equipped = document.createElement('span');
+            equipped.textContent = t('settings.titles_equipped') || 'Equipped';
+            equipped.style.cssText =
+              'font-size: 0.6875rem; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 9999px; padding: 0.0625rem 0.5rem;';
+            nameRow.appendChild(equipped);
+          }
+
+          const description = document.createElement('div');
+          description.textContent = titleDescription(title);
+          description.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem; margin-top: 0.25rem;';
+
+          text.appendChild(nameRow);
+          text.appendChild(description);
+          if (icon) card.appendChild(icon);
+          card.appendChild(text);
+          titlesGrid.appendChild(card);
+        }
+      })
+      .catch(() => {
+        titlesGrid.replaceChildren();
+        const failed = document.createElement('p');
+        failed.textContent = t('settings.titles_load_failed') || 'Failed to load titles.';
+        failed.style.cssText = 'color: var(--text-muted); font-size: 0.875rem;';
+        titlesGrid.appendChild(failed);
+      });
+  }
 
   // Shared billing state: populated by `loadBilling`, read by the stamp counter.
   let currentPlan: {
@@ -1386,6 +1582,16 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
       descriptionKey: 'settings.emoji_description',
       iconName: 'emoji',
       sections: [emojiSection],
+    });
+  }
+  if (titlesSection) {
+    navigation.addCategory({
+      id: 'titles',
+      groupKey: 'settings.group_preferences',
+      titleKey: 'settings.titles',
+      descriptionKey: 'settings.titles_description',
+      iconName: 'game',
+      sections: [titlesSection],
     });
   }
   if (billingSection) {

@@ -11,6 +11,7 @@ import {
   rewrapItemKeyForVaultKey,
   rewrapVaultKeyForPassword,
   unlockVaultWithPassword,
+  unlockVaultWithRecovery,
   type VaultKdfParams,
 } from './primitives.ts';
 
@@ -57,7 +58,11 @@ export async function fetchVaultKeys(): Promise<VaultKeysResponse | null> {
  * the verifier and the vault envelope are swapped in a single atomic step —
  * a vault whose wrapped_vk still expects the old password is unreachable.
  */
-export async function prepareVaultRewrap(currentPassword: string, newPassword: string): Promise<VaultRewrap> {
+export async function prepareVaultRewrap(
+  currentPassword: string,
+  newPassword: string,
+  recovery = false,
+): Promise<VaultRewrap> {
   const keys = await fetchVaultKeys();
   if (keys === null) return { status: 'error' };
   if (!keys.enabled) return { status: 'none' };
@@ -74,11 +79,20 @@ export async function prepareVaultRewrap(currentPassword: string, newPassword: s
 
   let vk: Uint8Array;
   try {
-    vk = await unlockVaultWithPassword(currentPassword, {
-      salt: keys.salt,
-      kdf_params: keys.kdf_params,
-      wrapped_vk: keys.wrapped_vk,
-    });
+    if (recovery) {
+      if (!keys.recovery_salt || !keys.recovery_blob) return { status: 'error' };
+      vk = await unlockVaultWithRecovery(currentPassword, {
+        recovery_salt: keys.recovery_salt,
+        kdf_params: keys.kdf_params,
+        recovery_blob: keys.recovery_blob,
+      });
+    } else {
+      vk = await unlockVaultWithPassword(currentPassword, {
+        salt: keys.salt,
+        kdf_params: keys.kdf_params,
+        wrapped_vk: keys.wrapped_vk,
+      });
+    }
   } catch (error) {
     // Shape failure (never openable) is NOT a wrong password: refuse with
     // 'error' instead of inviting endless retypes of a correct password.

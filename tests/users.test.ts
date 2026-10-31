@@ -2,6 +2,15 @@ import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
 import { BASE_URL, createSrpProof, loginUser, resetDb, seedUserAndLogin, srpVerifierPayload } from './helpers/setup.ts';
 
+async function seedPlus(username: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/api/test/subscription`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, planId: 'flaxia_plus', status: 'active' }),
+  });
+  assert.ok(res.ok, `seed subscription failed: ${res.status}`);
+}
+
 describe('GET /api/users/:username', () => {
   beforeEach(resetDb);
 
@@ -260,6 +269,110 @@ describe('PATCH /api/users/me', () => {
       body: JSON.stringify({ ng_words: Array.from({ length: 100 }, (_, i) => `word${i}`) }),
     });
     assert.equal(res.status, 200);
+  });
+
+  it('rejects name_color for non-Flaxia+ users → 403', async () => {
+    const { cookie } = await seedUserAndLogin('1');
+    const res = await fetch(`${BASE_URL}/api/users/me`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+      },
+      body: JSON.stringify({ name_color: '#3b82f6' }),
+    });
+    assert.equal(res.status, 403);
+    const data = (await res.json()) as { code?: string };
+    assert.equal(data.code, 'plus_required');
+  });
+
+  it('lets Flaxia+ users set a palette name color → 200', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedPlus(username);
+
+    const res = await fetch(`${BASE_URL}/api/users/me`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+      },
+      body: JSON.stringify({ name_color: '#3b82f6' }),
+    });
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as { user: { name_color?: string | null } };
+    assert.equal(data.user.name_color, '#3b82f6');
+
+    const profile = await fetch(`${BASE_URL}/api/users/${username}`);
+    const profileData = (await profile.json()) as { user: { name_color?: string | null } };
+    assert.equal(profileData.user.name_color, '#3b82f6');
+  });
+
+  it('rejects colors outside the palette → 400', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedPlus(username);
+
+    const res = await fetch(`${BASE_URL}/api/users/me`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+      },
+      body: JSON.stringify({ name_color: 'red' }),
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it('resets name_color with null → 200', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedPlus(username);
+
+    await fetch(`${BASE_URL}/api/users/me`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+      },
+      body: JSON.stringify({ name_color: '#3b82f6' }),
+    });
+
+    const res = await fetch(`${BASE_URL}/api/users/me`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: cookie,
+      },
+      body: JSON.stringify({ name_color: null }),
+    });
+    assert.equal(res.status, 200);
+    const data = (await res.json()) as { user: { name_color?: string | null } };
+    assert.equal(data.user.name_color, null);
+  });
+
+  it('sets and resets name_color via multipart (profile editor path)', async () => {
+    const { cookie, username } = await seedUserAndLogin('1');
+    await seedPlus(username);
+
+    const setForm = new FormData();
+    setForm.append('name_color', '#ec4899');
+    const setRes = await fetch(`${BASE_URL}/api/users/me`, {
+      method: 'PATCH',
+      headers: { Cookie: cookie },
+      body: setForm,
+    });
+    assert.equal(setRes.status, 200);
+    const setData = (await setRes.json()) as { user: { name_color?: string | null } };
+    assert.equal(setData.user.name_color, '#ec4899');
+
+    const resetForm = new FormData();
+    resetForm.append('name_color', '');
+    const resetRes = await fetch(`${BASE_URL}/api/users/me`, {
+      method: 'PATCH',
+      headers: { Cookie: cookie },
+      body: resetForm,
+    });
+    assert.equal(resetRes.status, 200);
+    const resetData = (await resetRes.json()) as { user: { name_color?: string | null } };
+    assert.equal(resetData.user.name_color, null);
   });
 
   it('rejects unauthenticated request → 401', async () => {

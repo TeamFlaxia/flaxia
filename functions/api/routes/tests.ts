@@ -1,5 +1,6 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { Hono } from 'hono';
+import { isTitleIconImage } from '../../../src/lib/title-icon.ts';
 import { getMeWithSession, getSessionToken, hashPassword } from '../../lib/auth.ts';
 import { badgeTypeForPlan } from '../../lib/billing.ts';
 import { ensureNsfwScansTable, ensurePendingEmbedsTable } from '../../lib/crowd.ts';
@@ -58,6 +59,19 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
     await ensureFileScansTable(db);
 
     const resetOrder = [
+      // Remove transition guards first; otherwise their triggers correctly
+      // prevent deleting Vault keys and users in the isolated test database.
+      'flaxia_direct_deletion_jobs',
+      'flaxia_direct_email_changes',
+      'flaxia_direct_vault_changes',
+      'flaxia_auth_deletion_jobs',
+      'flaxia_auth_credential_jobs',
+      'flaxia_auth_provisioning',
+      'flaxia_auth_links',
+      'flaxia_auth_purge_in_progress',
+      'flaxia_auth_deletion_receipts',
+      'flaxia_auth_transition_assertions',
+      'profile_media_deletion_outbox',
       'poll_votes',
       'poll_options',
       'polls',
@@ -93,6 +107,7 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
       'vault_items',
       'device_keys',
       'vault_keys',
+      'user_titles',
       'user_profiles',
       'push_subscriptions',
       'device_tokens',
@@ -259,6 +274,73 @@ app.post('/api/test/subscription', requireTestEnvironment, async (c) => {
   }
 
   return c.json({ id, userId: user.id });
+});
+
+// POST /api/test/title - create a title definition for tests and local demos.
+// Production titles are inserted by the systems that award them; the catalog
+// starts empty. Gated like /api/test/reset: only reachable from the test server.
+app.post('/api/test/title', requireTestEnvironment, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    id?: unknown;
+    icon?: unknown;
+    name?: unknown;
+    name_ja?: unknown;
+    description?: unknown;
+    description_ja?: unknown;
+    sort_order?: unknown;
+  };
+  if (typeof body.icon !== 'string' || !isTitleIconImage(body.icon)) {
+    return c.json({ error: 'icon must be an image URL' }, 400);
+  }
+  if (
+    typeof body.id !== 'string' ||
+    typeof body.name !== 'string' ||
+    typeof body.name_ja !== 'string' ||
+    typeof body.description !== 'string' ||
+    typeof body.description_ja !== 'string'
+  ) {
+    return c.json({ error: 'id, icon, name, name_ja, description and description_ja are required' }, 400);
+  }
+  const sortOrder = typeof body.sort_order === 'number' ? body.sort_order : 0;
+
+  await c.env.DB.prepare(
+    `INSERT INTO titles (id, icon, name, name_ja, description, description_ja, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       icon = excluded.icon,
+       name = excluded.name,
+       name_ja = excluded.name_ja,
+       description = excluded.description,
+       description_ja = excluded.description_ja,
+       sort_order = excluded.sort_order`,
+  )
+    .bind(body.id, body.icon, body.name, body.name_ja, body.description, body.description_ja, sortOrder)
+    .run();
+  return c.json({ ok: true }, 201);
+});
+
+// POST /api/test/grant-title - grant a title to a test account. Achievement
+// systems are not implemented yet, so tests (and local demos) use this hook.
+// Create the title first with POST /api/test/title. Gated like /api/test/reset:
+// only reachable from the test dev server.
+app.post('/api/test/grant-title', requireTestEnvironment, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { username?: string; titleId?: string };
+  if (!body.username || !body.titleId) {
+    return c.json({ error: 'username and titleId are required' }, 400);
+  }
+
+  const db = c.env.DB;
+  const user = await db.prepare('SELECT id FROM users WHERE username = ?').bind(body.username).first<{ id: string }>();
+  if (!user) return c.json({ error: 'User not found' }, 404);
+
+  const title = await db.prepare('SELECT 1 FROM titles WHERE id = ?').bind(body.titleId).first();
+  if (!title) return c.json({ error: 'Title not found' }, 404);
+
+  await db
+    .prepare('INSERT OR IGNORE INTO user_titles (user_id, title_id) VALUES (?, ?)')
+    .bind(user.id, body.titleId)
+    .run();
+  return c.json({ ok: true }, 201);
 });
 
 // POST /api/test/seed-srp-v1-user - simulate an account created before KDF v2.

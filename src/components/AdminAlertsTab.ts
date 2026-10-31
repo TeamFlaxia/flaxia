@@ -129,6 +129,82 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
     return form;
   };
 
+  const createEmbeddingBackfillControl = () => {
+    const panel = document.createElement('section');
+    panel.style.cssText =
+      'margin-bottom: 24px; padding: 16px; background: #0f172a; border: 1px solid #334155; border-radius: 8px;';
+
+    const description = document.createElement('p');
+    description.textContent = t('admin_alerts.embedding_backfill_hint');
+    description.style.cssText = 'margin: 0 0 12px; color: #94a3b8; font-size: 14px;';
+    panel.appendChild(description);
+
+    const form = document.createElement('form');
+    form.style.cssText = 'display: flex; align-items: center; gap: 8px; flex-wrap: wrap;';
+    const label = document.createElement('label');
+    label.textContent = t('admin_alerts.embedding_backfill_limit');
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.name = 'limit';
+    input.min = '1';
+    input.max = '2147483647';
+    input.step = '1';
+    input.value = '5';
+    input.required = true;
+    input.inputMode = 'numeric';
+    input.style.cssText =
+      'width: 100px; padding: 8px; color: #f1f5f9; background: #1e293b; border: 1px solid #64748b; border-radius: 4px;';
+    label.appendChild(input);
+    form.appendChild(label);
+
+    const button = document.createElement('button');
+    button.type = 'submit';
+    button.textContent = t('admin_alerts.embedding_backfill');
+    button.style.cssText =
+      'background: #334155; color: #f1f5f9; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;';
+    form.appendChild(button);
+    panel.appendChild(form);
+
+    const status = document.createElement('span');
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    status.style.cssText = 'display: block; margin-top: 8px; color: #94a3b8; font-size: 13px;';
+    panel.appendChild(status);
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const limit = Number(input.value);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 2147483647 || button.disabled) {
+        input.reportValidity();
+        return;
+      }
+      button.disabled = true;
+      status.textContent = t('common.loading');
+      try {
+        const response = await fetch(`/api/admin/backfill-embeddings?limit=${limit}`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        const data = (await response.json().catch(() => ({}))) as {
+          success?: boolean;
+          error?: string;
+          enqueued?: number;
+        };
+        if (!response.ok || data.success !== true) {
+          status.textContent = data.error || t('admin_alerts.embedding_backfill_error');
+          return;
+        }
+        status.textContent = t('admin_alerts.embedding_backfill_queued', { count: data.enqueued ?? 0 });
+      } catch {
+        status.textContent = t('admin_alerts.embedding_backfill_error');
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    return panel;
+  };
+
   const formatTimeAgo = (dateStr: string): string => {
     const date = new Date(dateStr);
     const now = new Date();
@@ -349,6 +425,7 @@ export function createAdminAlertsTab({ onNavigateToTab }: AdminAlertsTabProps) {
     `;
     element.appendChild(title);
     element.appendChild(createNsfwForm());
+    element.appendChild(createEmbeddingBackfillControl());
 
     if (alerts.length === 0) {
       const empty = document.createElement('div');

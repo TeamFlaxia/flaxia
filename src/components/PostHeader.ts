@@ -1,7 +1,9 @@
 import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
+import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { setOfflineImage } from '../lib/offline-image.js';
+import { createUserTitleBadge } from '../lib/user-title.js';
 import { PostHeaderProps } from '../types/post.js';
 
 export function createPostHeader(props: PostHeaderProps & { editedAt?: string }): HTMLElement {
@@ -53,6 +55,7 @@ export function createPostHeader(props: PostHeaderProps & { editedAt?: string })
   displayName.textContent = props.display_name || props.username;
   displayName.style.cursor = 'pointer';
   displayName.style.fontWeight = 'bold';
+  applyNameColor(displayName, props.name_color, props.badge_type);
 
   const username = document.createElement('span');
   username.className = 'post-username';
@@ -79,6 +82,8 @@ export function createPostHeader(props: PostHeaderProps & { editedAt?: string })
   header.appendChild(avatar);
   header.appendChild(displayName);
   header.appendChild(username);
+  const titleBadge = createUserTitleBadge(props);
+  if (titleBadge) header.appendChild(titleBadge);
   header.appendChild(timestamp);
 
   // Make avatar and names clickable to navigate to profile

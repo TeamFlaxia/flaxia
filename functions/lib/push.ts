@@ -1,4 +1,5 @@
 import webpush from 'web-push';
+import { stripPostColors } from '../../src/lib/post-colors.ts';
 import { sendPushToDevice } from './fcm';
 
 export type PushSubscription = {
@@ -131,7 +132,8 @@ export function getPushPayload(
       ? `@${actorUsername} (${actorDisplayName})`
       : `@${actorUsername}`
     : 'Someone';
-  const preview = postPreview ? `: ${postPreview.slice(0, 50)}` : '';
+  const plainPreview = postPreview ? stripPostColors(postPreview) : '';
+  const preview = plainPreview ? `: ${plainPreview.slice(0, 50)}` : '';
   const url = postId ? `/thread/${postId}` : '/notifications';
 
   switch (type) {

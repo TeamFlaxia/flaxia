@@ -1,6 +1,7 @@
 import type { Game } from '../types/game.ts';
 import type { Post } from '../types/post.ts';
 import type { DownloadedGame, GameFile, OfflineGameStore } from './offline-game-store.ts';
+import { stripPostColors } from './post-colors.ts';
 
 const MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const MAX_ZIP_BYTES = 25 * 1024 * 1024;
@@ -262,7 +263,10 @@ export function createOfflineGames(options: Options) {
       const noStore = (init?.cache ?? (input instanceof Request ? input.cache : undefined)) === 'no-store';
       const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
       if (signal?.aborted) throw new DOMException('The request was aborted', 'AbortError');
-      if (method === 'POST' && /^\/api\/auth\/(?:register|login(?:\/(?:start|verify))?|logout)$/.test(url.pathname))
+      if (
+        method === 'POST' &&
+        /^\/api\/auth\/(?:register|login(?:\/(?:start|verify))?|flaxia\/exchange|logout)$/.test(url.pathname)
+      )
         await account(null);
       const savedGeneration = generation;
       let response: Response;
@@ -344,7 +348,7 @@ export function createOfflineGames(options: Options) {
         const games: Game[] = saved.map(({ post }) => ({
           id: post.id,
           postId: post.id,
-          title: post.text,
+          title: stripPostColors(post.text),
           username: post.username,
           displayName: post.display_name,
           avatarKey: post.avatar_key,

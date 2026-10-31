@@ -3,8 +3,18 @@ import { attachPlusBadge } from '../lib/avatar.js';
 import { createConfirmDialog } from '../lib/confirm-dialog.js';
 import { t } from '../lib/i18n.js';
 import { registerModal } from '../lib/modal-state.js';
+import { NAME_COLOR_PALETTE, normalizeNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { showToast } from '../lib/toast.js';
+import { createTitleIcon, titleName } from '../lib/user-title.js';
+
+let nextTitlePickerId = 0;
+
+interface TitleOption {
+  id: string;
+  icon: string;
+  name: string;
+}
 
 interface EditProfileModalProps {
   currentUser: {
@@ -13,6 +23,8 @@ interface EditProfileModalProps {
     bio?: string;
     avatar_key?: string;
     badge_type?: string | null;
+    name_color?: string | null;
+    equipped_title_id?: string | null;
     header_key?: string | null;
   };
   onSave: () => void;
@@ -20,6 +32,14 @@ interface EditProfileModalProps {
 
 export function createEditProfileModal({ currentUser, onSave }: EditProfileModalProps) {
   const unregister = registerModal();
+  // Display-name colors are a Flaxia+ entitlement. The server enforces this
+  // too; hiding the control here keeps non-members from discovering a dead end.
+  const canCustomizeNameColor = currentUser.badge_type === 'flaxia_plus';
+  const originalNameColor = canCustomizeNameColor ? normalizeNameColor(currentUser.name_color) : null;
+  let selectedNameColor: string | null = originalNameColor;
+  let hasNameColorChange = false;
+  let nameColorPopover: HTMLElement | null = null;
+  let cleanupNameColorPopover: (() => void) | null = null;
   const container = document.createElement('div');
   container.className = 'modal-overlay';
   container.style.cssText = `
@@ -267,27 +287,161 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
     font-weight: 500;
   `;
 
+  const displayNameField = document.createElement('div');
+  displayNameField.className = 'edit-profile-name-field';
+  displayNameField.style.cssText = 'position: relative;';
+
   const displayNameInput = document.createElement('input');
   displayNameInput.type = 'text';
   displayNameInput.value = currentUser.display_name || '';
   displayNameInput.style.cssText = `
     width: 100%;
     padding: 0.75rem;
+    padding-right: ${canCustomizeNameColor ? '2.75rem' : '0.75rem'};
     border: 1px solid var(--border-color);
     border-radius: 8px;
     background: var(--bg-secondary);
     color: var(--text-primary);
     font-size: 1rem;
-    margin-bottom: 1rem;
     box-sizing: border-box;
   `;
+  if (selectedNameColor) displayNameInput.style.color = selectedNameColor;
+
+  displayNameField.appendChild(displayNameInput);
+
+  if (canCustomizeNameColor) {
+    const colorButton = document.createElement('button');
+    colorButton.type = 'button';
+    colorButton.className = 'name-color-button';
+    colorButton.title = t('edit_profile.name_color');
+    colorButton.setAttribute('aria-label', t('edit_profile.name_color'));
+    colorButton.setAttribute('aria-haspopup', 'true');
+    colorButton.style.cssText = `
+      position: absolute;
+      top: 50%;
+      right: 0.4rem;
+      transform: translateY(-50%);
+      width: 2rem;
+      height: 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border: none;
+      border-radius: 50%;
+      background: transparent;
+      color: ${selectedNameColor || 'var(--text-muted)'};
+      cursor: pointer;
+    `;
+    colorButton.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="13.5" cy="6.5" r=".5" fill="currentColor"></circle>
+        <circle cx="17.5" cy="10.5" r=".5" fill="currentColor"></circle>
+        <circle cx="8.5" cy="7.5" r=".5" fill="currentColor"></circle>
+        <circle cx="6.5" cy="12.5" r=".5" fill="currentColor"></circle>
+        <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"></path>
+      </svg>
+    `;
+    displayNameField.appendChild(colorButton);
+
+    nameColorPopover = document.createElement('div');
+    nameColorPopover.className = 'name-color-popover';
+    nameColorPopover.setAttribute('role', 'listbox');
+    nameColorPopover.setAttribute('aria-label', t('edit_profile.name_color'));
+    nameColorPopover.style.cssText = `
+      position: absolute;
+      top: calc(100% + 0.5rem);
+      right: 0;
+      z-index: 5;
+      display: none;
+      grid-template-columns: repeat(6, 1.75rem);
+      gap: 0.5rem;
+      padding: 0.75rem;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    `;
+
+    const swatches: HTMLButtonElement[] = [];
+    const updateSwatchSelection = () => {
+      for (const swatch of swatches) {
+        const swatchColor = swatch.dataset.color || null;
+        const selected = swatchColor === selectedNameColor;
+        swatch.style.outline = selected ? '2px solid var(--text-primary)' : 'none';
+        swatch.style.outlineOffset = '2px';
+        swatch.setAttribute('aria-selected', selected ? 'true' : 'false');
+      }
+      colorButton.style.color = selectedNameColor || 'var(--text-muted)';
+    };
+
+    const makeSwatch = (color: string | null) => {
+      const swatch = document.createElement('button');
+      swatch.type = 'button';
+      swatch.className = 'name-color-swatch';
+      swatch.dataset.color = color ?? '';
+      swatch.setAttribute('role', 'option');
+      swatch.title = color ?? t('edit_profile.name_color_default');
+      swatch.setAttribute('aria-label', color ?? t('edit_profile.name_color_default'));
+      swatch.style.cssText = `
+        width: 1.75rem;
+        height: 1.75rem;
+        padding: 0;
+        border: ${color ? 'none' : '1px solid var(--border-color)'};
+        border-radius: 50%;
+        background: ${color ?? 'var(--bg-primary)'};
+        color: var(--text-muted);
+        font-size: 1rem;
+        line-height: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+      `;
+      if (!color) swatch.textContent = '×';
+      swatch.addEventListener('click', () => {
+        selectedNameColor = color;
+        hasNameColorChange = selectedNameColor !== originalNameColor;
+        displayNameInput.style.color = selectedNameColor ?? '';
+        updateSwatchSelection();
+        if (nameColorPopover) nameColorPopover.style.display = 'none';
+        validateForm();
+      });
+      swatches.push(swatch);
+      return swatch;
+    };
+
+    nameColorPopover.appendChild(makeSwatch(null));
+    for (const color of NAME_COLOR_PALETTE) {
+      nameColorPopover.appendChild(makeSwatch(color));
+    }
+    displayNameField.appendChild(nameColorPopover);
+    updateSwatchSelection();
+
+    colorButton.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!nameColorPopover) return;
+      const opening = nameColorPopover.style.display === 'none';
+      nameColorPopover.style.display = opening ? 'grid' : 'none';
+      if (opening) updateSwatchSelection();
+    });
+
+    const handleDocumentClick = (e: MouseEvent) => {
+      if (!nameColorPopover || nameColorPopover.style.display === 'none') return;
+      if (!displayNameField.contains(e.target as Node)) {
+        nameColorPopover.style.display = 'none';
+      }
+    };
+    document.addEventListener('click', handleDocumentClick);
+    cleanupNameColorPopover = () => document.removeEventListener('click', handleDocumentClick);
+  }
 
   const displayNameError = document.createElement('div');
   displayNameError.className = 'field-error';
   displayNameError.style.cssText = `
     color: var(--danger);
     font-size: 0.875rem;
-    margin-top: -0.75rem;
+    margin-top: 0.25rem;
     margin-bottom: 1rem;
     min-height: 1.25rem;
   `;
@@ -336,6 +490,279 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
     min-height: 1.25rem;
   `;
 
+  // Equipped title selector. Titles are earned elsewhere; the profile editor
+  // only chooses one of the owned titles. A custom listbox is used so every
+  // option can show its title icon.
+  const titlePickerId = ++nextTitlePickerId;
+  const titleLabelId = `title-picker-label-${titlePickerId}`;
+  const titleTriggerId = `title-picker-trigger-${titlePickerId}`;
+  const titleMenuId = `title-picker-menu-${titlePickerId}`;
+
+  const titleLabel = document.createElement('label');
+  titleLabel.id = titleLabelId;
+  titleLabel.htmlFor = titleTriggerId;
+  titleLabel.textContent = t('edit_profile.title_badge');
+  titleLabel.style.cssText = `
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 500;
+  `;
+
+  const titlePicker = document.createElement('div');
+  titlePicker.className = 'title-picker';
+
+  const titleTrigger = document.createElement('button');
+  titleTrigger.id = titleTriggerId;
+  titleTrigger.type = 'button';
+  titleTrigger.className = 'title-picker-trigger';
+  titleTrigger.disabled = true;
+  titleTrigger.setAttribute('aria-haspopup', 'listbox');
+  titleTrigger.setAttribute('aria-expanded', 'false');
+  titleTrigger.setAttribute('aria-controls', titleMenuId);
+  titlePicker.appendChild(titleTrigger);
+
+  const titleHint = document.createElement('div');
+  titleHint.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem; margin-bottom: 1rem;';
+  titleHint.textContent = t('edit_profile.title_loading');
+
+  let originalTitleId = currentUser.equipped_title_id ?? '';
+  let selectedTitleId = originalTitleId;
+  let titleOptions: TitleOption[] = [];
+  let titleMenu: HTMLDivElement | null = null;
+  let titleLoaded = false;
+  let titleTouched = false;
+
+  function createEmptyTitleIcon(className: string): HTMLSpanElement {
+    const placeholder = document.createElement('span');
+    placeholder.className = `${className} title-picker-icon-empty`;
+    placeholder.setAttribute('aria-hidden', 'true');
+    return placeholder;
+  }
+
+  function renderTitleTrigger() {
+    const selected = titleOptions.find((title) => title.id === selectedTitleId);
+    titleTrigger.replaceChildren();
+
+    const icon = selected ? createTitleIcon(selected.icon, 'title-picker-icon') : null;
+    titleTrigger.appendChild(icon ?? createEmptyTitleIcon('title-picker-icon'));
+
+    const label = document.createElement('span');
+    label.className = 'title-picker-label';
+    label.textContent = selected ? selected.name : t('edit_profile.title_none');
+    titleTrigger.appendChild(label);
+
+    const chevron = document.createElement('span');
+    chevron.className = 'title-picker-chevron';
+    chevron.textContent = '▾';
+    chevron.setAttribute('aria-hidden', 'true');
+    titleTrigger.appendChild(chevron);
+  }
+
+  function positionTitleMenu() {
+    if (!titleMenu) return;
+
+    const triggerRect = titleTrigger.getBoundingClientRect();
+    titleMenu.style.width = `${triggerRect.width}px`;
+    const menuHeight = titleMenu.offsetHeight;
+    const margin = 8;
+    const spaceBelow = window.innerHeight - triggerRect.bottom - margin;
+    const spaceAbove = triggerRect.top - margin;
+    const openAbove = spaceBelow < menuHeight && spaceAbove > spaceBelow;
+    const maxLeft = Math.max(margin, window.innerWidth - triggerRect.width - margin);
+    const left = Math.min(Math.max(margin, triggerRect.left), maxLeft);
+    const top = openAbove
+      ? Math.max(margin, triggerRect.top - menuHeight - 4)
+      : Math.min(Math.max(margin, triggerRect.bottom + 4), window.innerHeight - menuHeight - margin);
+
+    titleMenu.style.left = `${left}px`;
+    titleMenu.style.top = `${top}px`;
+  }
+
+  function closeTitleMenu(restoreFocus = false) {
+    if (!titleMenu) return;
+
+    titleMenu.remove();
+    titleMenu = null;
+    titleTrigger.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', handleDocumentPointerDown, true);
+    document.removeEventListener('keydown', handleDocumentKeyDown);
+    document.removeEventListener('focusin', handleDocumentFocusIn, true);
+    window.removeEventListener('resize', positionTitleMenu);
+    window.removeEventListener('scroll', positionTitleMenu, true);
+
+    if (restoreFocus) {
+      titleTrigger.focus();
+    }
+  }
+
+  function handleDocumentPointerDown(event: PointerEvent) {
+    if (!titleMenu) return;
+    const target = event.target as Node | null;
+    if (!target || (!titleTrigger.contains(target) && !titleMenu.contains(target))) {
+      closeTitleMenu();
+    }
+  }
+
+  function handleDocumentFocusIn(event: FocusEvent) {
+    if (!titleMenu) return;
+    const target = event.target as Node | null;
+    if (!target || (!titleTrigger.contains(target) && !titleMenu.contains(target))) {
+      closeTitleMenu();
+    }
+  }
+
+  function handleDocumentKeyDown(event: KeyboardEvent) {
+    if (!titleMenu) return;
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      closeTitleMenu(true);
+      return;
+    }
+
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Home' && event.key !== 'End') {
+      return;
+    }
+
+    const options = Array.from(titleMenu.querySelectorAll<HTMLButtonElement>('.title-picker-option'));
+    if (options.length === 0) return;
+
+    const activeIndex = options.indexOf(document.activeElement as HTMLButtonElement);
+    let nextIndex = activeIndex;
+    if (event.key === 'ArrowDown') {
+      nextIndex = activeIndex < 0 ? 0 : (activeIndex + 1) % options.length;
+    } else if (event.key === 'ArrowUp') {
+      nextIndex = activeIndex < 0 ? options.length - 1 : (activeIndex - 1 + options.length) % options.length;
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else {
+      nextIndex = options.length - 1;
+    }
+
+    event.preventDefault();
+    options[nextIndex]?.focus();
+  }
+
+  function createTitleOption(option: TitleOption): HTMLButtonElement {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'title-picker-option';
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', String(option.id === selectedTitleId));
+
+    const icon = option.icon ? createTitleIcon(option.icon, 'title-picker-option-icon') : null;
+    item.appendChild(icon ?? createEmptyTitleIcon('title-picker-option-icon'));
+
+    const label = document.createElement('span');
+    label.className = 'title-picker-option-label';
+    label.textContent = option.name;
+    item.appendChild(label);
+
+    const check = document.createElement('span');
+    check.className = 'title-picker-check';
+    check.textContent = '✓';
+    check.setAttribute('aria-hidden', 'true');
+    item.appendChild(check);
+
+    item.addEventListener('click', () => {
+      selectedTitleId = option.id;
+      titleTouched = true;
+      renderTitleTrigger();
+      validateForm();
+      closeTitleMenu(true);
+    });
+
+    return item;
+  }
+
+  function renderTitleMenu() {
+    if (!titleMenu) return;
+
+    titleMenu.replaceChildren();
+    const choices: TitleOption[] = [{ id: '', icon: '', name: t('edit_profile.title_none') }, ...titleOptions];
+    for (const choice of choices) {
+      titleMenu.appendChild(createTitleOption(choice));
+    }
+  }
+
+  function openTitleMenu() {
+    if (titleMenu || titleTrigger.disabled) return;
+
+    const menu = document.createElement('div');
+    menu.id = titleMenuId;
+    menu.className = 'title-picker-menu';
+    menu.setAttribute('role', 'listbox');
+    menu.setAttribute('aria-labelledby', titleLabelId);
+    titleMenu = menu;
+
+    renderTitleMenu();
+    document.body.appendChild(menu);
+    positionTitleMenu();
+    titleTrigger.setAttribute('aria-expanded', 'true');
+    document.addEventListener('pointerdown', handleDocumentPointerDown, true);
+    document.addEventListener('keydown', handleDocumentKeyDown);
+    document.addEventListener('focusin', handleDocumentFocusIn, true);
+    window.addEventListener('resize', positionTitleMenu);
+    window.addEventListener('scroll', positionTitleMenu, true);
+
+    const selectedOption = menu.querySelector<HTMLButtonElement>('[aria-selected="true"]');
+    const firstOption = menu.querySelector<HTMLButtonElement>('.title-picker-option');
+    (selectedOption ?? firstOption)?.focus({ preventScroll: true });
+  }
+
+  renderTitleTrigger();
+
+  titleTrigger.addEventListener('click', () => {
+    if (titleMenu) {
+      closeTitleMenu();
+    } else {
+      openTitleMenu();
+    }
+  });
+
+  titleTrigger.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      openTitleMenu();
+    }
+  });
+
+  fetch('/api/titles/me', { credentials: 'include' })
+    .then((response) =>
+      response.ok
+        ? (response.json() as Promise<{
+            titles?: Array<{ id: string; icon: string; name: string; name_ja?: string | null }>;
+            equipped_title_id?: string | null;
+          }>)
+        : Promise.reject(new Error(String(response.status))),
+    )
+    .then((data) => {
+      titleOptions = (data.titles ?? []).map((title) => ({
+        id: title.id,
+        icon: title.icon,
+        name: titleName(title),
+      }));
+      // The API is authoritative; a stale cached current user must not make
+      // the next profile save clear the equipped title.
+      if (!titleTouched) {
+        originalTitleId = data.equipped_title_id ?? '';
+        selectedTitleId = originalTitleId;
+      }
+      if (selectedTitleId && !titleOptions.some((title) => title.id === selectedTitleId)) {
+        selectedTitleId = '';
+      }
+      titleLoaded = true;
+      titleTrigger.disabled = titleOptions.length === 0;
+      renderTitleTrigger();
+      titleHint.textContent = titleOptions.length === 0 ? t('edit_profile.title_empty') : t('edit_profile.title_hint');
+      validateForm();
+    })
+    .catch(() => {
+      titleTrigger.disabled = true;
+      titleHint.textContent = t('edit_profile.title_load_failed');
+    });
+
   const hiddenFileInput = document.createElement('input');
   hiddenFileInput.type = 'file';
   hiddenFileInput.accept = 'image/jpeg,image/png,image/gif,image/webp,.jpg,.jpeg,.png,.gif,.webp';
@@ -357,12 +784,15 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   `;
 
   form.appendChild(displayNameLabel);
-  form.appendChild(displayNameInput);
+  form.appendChild(displayNameField);
   form.appendChild(displayNameError);
   form.appendChild(bioLabel);
   form.appendChild(bioTextarea);
   form.appendChild(bioCharCounter);
   form.appendChild(bioError);
+  form.appendChild(titleLabel);
+  form.appendChild(titlePicker);
+  form.appendChild(titleHint);
   form.appendChild(hiddenFileInput);
   form.appendChild(saveButton);
 
@@ -421,8 +851,10 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
     const hasFieldChanges =
       displayNameInput.value.trim() !== originalDisplayName ||
       bioTextarea.value !== originalBio ||
+      selectedTitleId !== originalTitleId ||
       hasAvatarChange ||
-      hasHeaderChange;
+      hasHeaderChange ||
+      hasNameColorChange;
 
     hasChanges = hasFieldChanges;
 
@@ -507,6 +939,15 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
       const formData = new FormData();
       formData.append('display_name', displayNameInput.value.trim());
       formData.append('bio', bioTextarea.value);
+      // Only send the title once the owned-title list loaded. If it failed,
+      // leave the equipped title untouched instead of clearing it.
+      if (titleLoaded) {
+        formData.append('equipped_title_id', selectedTitleId);
+      }
+      if (hasNameColorChange) {
+        // Empty string asks the server to reset to the default theme color.
+        formData.append('name_color', selectedNameColor ?? '');
+      }
 
       if (selectedFile) {
         formData.append('avatar', selectedFile);
@@ -573,7 +1014,9 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   });
 
   function destroy() {
+    closeTitleMenu();
     unregister();
+    cleanupNameColorPopover?.();
     if (avatarPreviewUrl) {
       URL.revokeObjectURL(avatarPreviewUrl);
     }

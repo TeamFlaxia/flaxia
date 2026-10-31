@@ -60,5 +60,17 @@ if (existsSync(osPath)) {
   deepMerge(merged, osConfig);
 }
 
+const releaseTag =
+  process.env.RELEASE_TAG ?? (process.env.GITHUB_REF_TYPE === 'tag' ? process.env.GITHUB_REF_NAME : undefined);
+if (releaseTag) {
+  const version = releaseTag.replace(/^v/, '');
+  if (!/^\d+\.\d+\.\d+$/.test(version)) {
+    console.error(`Invalid release tag for Tauri version: ${releaseTag}`);
+    process.exit(1);
+  }
+  merged.version = version;
+  console.log(`Set Tauri version ${version}`);
+}
+
 writeFileSync(outPath, JSON.stringify(merged, null, 2) + '\n');
 console.log(`Generated tauri.conf.json for ${target}`);

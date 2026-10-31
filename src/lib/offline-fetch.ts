@@ -46,7 +46,7 @@ function displayIdentity(
     id: user.id,
     username: user.username,
   };
-  for (const field of ['display_name', 'avatar_key', 'badge_type']) {
+  for (const field of ['display_name', 'avatar_key', 'badge_type', 'name_color']) {
     const value = (user as Record<string, unknown>)[field];
     if (typeof value === 'string' || value === null) result[field] = value;
   }
@@ -99,7 +99,8 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
     const isMe = url.pathname === '/api/me';
     // Reauthentication and SRP upgrades do not change the active account.
     const authMutation =
-      request.method === 'POST' && /^\/api\/auth\/(?:register|login(?:\/(?:start|verify))?|logout)$/.test(url.pathname);
+      request.method === 'POST' &&
+      /^\/api\/auth\/(?:register|login(?:\/(?:start|verify))?|flaxia\/exchange|logout)$/.test(url.pathname);
     if (authMutation) await reset();
     const currentGeneration = generation;
     const key = isMe ? 'identity' : owner + ':' + url.pathname + url.search;

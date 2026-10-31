@@ -1,9 +1,33 @@
+import { recommendedAppPlatform } from '../lib/app-download.js';
 import { attachPlusBadge } from '../lib/avatar.js';
+import { detectDevicePlatform } from '../lib/device-platform.js';
 import { formatCount } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { type IconName, icon } from '../lib/icons.js';
 import { isModalOpen } from '../lib/modal-state';
-import { nativeApiHref } from '../lib/native-api.js';
+import { applyNameColor } from '../lib/name-color.js';
+import { isNativeApp, nativeApiHref } from '../lib/native-api.js';
+
+function createAppDownloadPromo(): HTMLAnchorElement | null {
+  if (isNativeApp() || !recommendedAppPlatform(detectDevicePlatform())) return null;
+
+  const promo = document.createElement('a');
+  promo.className = 'nav-app-promo';
+  promo.href = '/download';
+  promo.appendChild(icon('download', { width: '18', height: '18' }));
+
+  const text = document.createElement('span');
+  text.textContent = t('app_download.left_nav_promo');
+  promo.appendChild(text);
+
+  promo.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.history.pushState({}, '', '/download');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+
+  return promo;
+}
 
 export interface LeftNavProps {
   activeItem?: string;
@@ -17,6 +41,7 @@ export interface LeftNavProps {
     display_name?: string;
     avatar_key?: string;
     badge_type?: string | null;
+    name_color?: string | null;
   } | null;
 }
 
@@ -188,6 +213,7 @@ export class LeftNav {
       const nameText = document.createElement('span');
       nameText.className = 'nav-user-name-text';
       nameText.textContent = this.props.currentUser.display_name || this.props.currentUser.username;
+      applyNameColor(nameText, this.props.currentUser.name_color, this.props.currentUser.badge_type);
 
       name.appendChild(nameText);
 
@@ -244,6 +270,9 @@ export class LeftNav {
 
       nav.appendChild(userArea);
     }
+
+    const appPromo = createAppDownloadPromo();
+    if (appPromo) nav.appendChild(appPromo);
 
     // Add legal links (privacy policy and terms)
     const legalLinks = document.createElement('div');
@@ -570,6 +599,7 @@ export function updateLeftNavUser(
     display_name?: string;
     avatar_key?: string;
     badge_type?: string | null;
+    name_color?: string | null;
   } | null,
 ): void {
   // Update the props
@@ -808,6 +838,7 @@ export function updateLeftNavUser(
     const nameText = document.createElement('span');
     nameText.className = 'nav-user-name-text';
     nameText.textContent = currentUser.display_name || currentUser.username;
+    applyNameColor(nameText, currentUser.name_color, currentUser.badge_type);
 
     name.appendChild(nameText);
 

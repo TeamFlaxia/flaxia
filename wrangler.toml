@@ -23,7 +23,14 @@ binding = "DB"
 database_name = "flaxia"
 database_id = "7c99f35f-69a0-4644-96a1-34c716a3e82d"
 
+[[services]]
+binding = "AUTH_SERVICE"
+service = "flaxia-auth"
+entrypoint = "FlaxiaBridge"
+
 [vars]
+# Auth is the credential authority after the 2026-10-30 cutover.
+AUTH_AUTHORITY_MODE = "flaxia-auth"
 SANDBOX_ORIGIN = "https://sandbox.flaxia.app"
 BASE_URL = "https://flaxia.app"
 ENVIRONMENT = "production"

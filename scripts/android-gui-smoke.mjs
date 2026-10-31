@@ -82,79 +82,126 @@ async function waitForNetwork(page) {
   }
   throw new Error('Device cannot reach the production API: ' + JSON.stringify(last));
 }
-try {
-  adb('install', '-r', 'android/app/build/outputs/apk/debug/app-debug.apk');
-  adb('shell', 'svc', 'wifi', 'enable');
-  adb('shell', 'svc', 'data', 'enable');
-  start();
+// The emulator occasionally drops the WebView DevTools target while the app
+// keeps rendering. Reconnect and retry the phase instead of failing the job.
+function targetClosed(error) {
+  return /Target page, context or browser has been closed|Target closed|Session closed|Browser has been closed/i.test(
+    String(error),
+  );
+}
+async function disconnect() {
+  await current?.browser.close().catch(() => {});
+  current = undefined;
+}
+const probe = () =>
+  current.page.evaluate(async () => {
+    const result = [];
+    for (const path of ['/api/me', '/api/posts?limit=20', '/api/posts/recommended?limit=20']) {
+      try {
+        result.push(
+          await Promise.race([
+            (async () => {
+              const response = await fetch(path);
+              return { path, status: response.status, text: (await response.text()).slice(0, 500) };
+            })(),
+            new Promise((resolve) => setTimeout(() => resolve({ path, timeout: true }), 5000)),
+          ]),
+        );
+      } catch (error) {
+        result.push({ path, error: String(error) });
+      }
+    }
+    let direct;
+    try {
+      direct = await Promise.race([
+        window.Capacitor.nativePromise('CapacitorHttp', 'request', {
+          url: 'https://flaxia.app/api/posts?limit=1',
+          method: 'GET',
+          responseType: 'json',
+          headers: { Accept: 'application/json' },
+          connectTimeout: 5000,
+          readTimeout: 5000,
+        }).then((r) => ({ status: r.status, data: JSON.stringify(r.data).slice(0, 500) })),
+        new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 5000)),
+      ]);
+    } catch (error) {
+      direct = { error: String(error) };
+    }
+    return {
+      url: location.href,
+      online: navigator.onLine,
+      platform: window.Capacitor?.getPlatform?.(),
+      native: window.Capacitor?.isNativePlatform?.(),
+      result,
+      direct,
+    };
+  });
+async function onlinePhase() {
   current = await connect();
   await waitForNetwork(current.page);
   await current.page.evaluate(() => localStorage.setItem('flaxia_locale', 'ja'));
   await current.page.reload();
   await current.page.locator('.timeline').waitFor({ timeout: 60000 });
-  console.log(
-    'API probe:',
-    JSON.stringify(
-      await current.page.evaluate(async () => {
-        const result = [];
-        for (const path of ['/api/me', '/api/posts?limit=20', '/api/posts/recommended?limit=20']) {
-          try {
-            result.push(
-              await Promise.race([
-                (async () => {
-                  const response = await fetch(path);
-                  return { path, status: response.status, text: (await response.text()).slice(0, 500) };
-                })(),
-                new Promise((resolve) => setTimeout(() => resolve({ path, timeout: true }), 12000)),
-              ]),
-            );
-          } catch (error) {
-            result.push({ path, error: String(error) });
-          }
-        }
-        let direct;
-        try {
-          direct = await Promise.race([
-            window.Capacitor.nativePromise('CapacitorHttp', 'request', {
-              url: 'https://flaxia.app/api/posts?limit=1',
-              method: 'GET',
-              responseType: 'json',
-              headers: { Accept: 'application/json' },
-              connectTimeout: 5000,
-              readTimeout: 5000,
-            }).then((r) => ({ status: r.status, data: JSON.stringify(r.data).slice(0, 500) })),
-            new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), 12000)),
-          ]);
-        } catch (error) {
-          direct = { error: String(error) };
-        }
-        return {
-          url: location.href,
-          online: navigator.onLine,
-          platform: window.Capacitor?.getPlatform?.(),
-          native: window.Capacitor?.isNativePlatform?.(),
-          result,
-          direct,
-        };
-      }),
-    ),
-  );
+  console.log('API probe:', JSON.stringify(await probe()));
   await current.page.locator('.post-card').first().waitFor({ timeout: 90000 });
-  const online = await current.page.locator('.post-card').count();
+  const count = await current.page.locator('.post-card').count();
   await current.page.screenshot({ path: 'android-gui-artifacts/timeline-online.png' });
+  return count;
+}
+async function offlinePhase() {
+  current = await connect();
+  await current.page.locator('.post-card').first().waitFor({ timeout: 90000 });
+  await current.page.locator('.offline-banner:not([hidden])').waitFor({ timeout: 90000 });
+  return current.page.locator('.post-card').count();
+}
+try {
+  adb('install', '-r', 'android/app/build/outputs/apk/debug/app-debug.apk');
+  adb('shell', 'svc', 'wifi', 'enable');
+  adb('shell', 'svc', 'data', 'enable');
+  start();
+  let online;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      online = await onlinePhase();
+      break;
+    } catch (error) {
+      if (attempt >= 3 || !targetClosed(error)) throw error;
+      console.log(`WebView target closed during online phase (attempt ${attempt}); reconnecting`);
+      await disconnect();
+      start();
+    }
+  }
   await current.browser.close();
+  current = undefined;
   adb('shell', 'svc', 'wifi', 'disable');
   adb('shell', 'svc', 'data', 'disable');
   adb('shell', 'am', 'force-stop', app);
   start();
-  current = await connect();
-  await current.page.locator('.post-card').first().waitFor({ timeout: 90000 });
-  await current.page.locator('.offline-banner:not([hidden])').waitFor({ timeout: 90000 });
-  const offline = await current.page.locator('.post-card').count();
+  let offline;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      offline = await offlinePhase();
+      break;
+    } catch (error) {
+      if (attempt >= 3 || !targetClosed(error)) throw error;
+      console.log(`WebView target closed during offline phase (attempt ${attempt}); reconnecting`);
+      await disconnect();
+    }
+  }
   assert.ok(online > 0 && offline > 0);
   await current.page.screenshot({ path: 'android-gui-artifacts/timeline-offline-cold-start.png' });
   adb('shell', 'svc', 'wifi', 'enable');
-  await current.page.waitForFunction(() => navigator.onLine, null, { timeout: 60000 });
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await current.page.waitForFunction(() => navigator.onLine, null, { timeout: 60000 });
+      break;
+    } catch (error) {
+      if (attempt >= 3 || !targetClosed(error)) throw error;
+      console.log(`WebView target closed while restoring connectivity (attempt ${attempt}); reconnecting`);
+      await disconnect();
+      current = await connect();
+    }
+  }
   await current.browser.close();
   current = undefined;
   execFileSync('node', ['--experimental-strip-types', '--test', 'tests/offline-games.browser.mjs'], {

@@ -56,5 +56,7 @@ describe('parseRoute', () => {
     assert.equal(parseRoute('/docs/hello', '')?.postId, 'hello');
     assert.equal(parseRoute('/billing/success', '')?.view, 'billing-success');
     assert.equal(parseRoute('/billing/canceled', '')?.view, 'billing-canceled');
+    assert.equal(parseRoute('/download', '')?.view, 'download');
+    assert.equal(parseRoute('/download/', '')?.view, 'download');
   });
 });

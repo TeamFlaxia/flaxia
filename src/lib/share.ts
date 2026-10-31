@@ -1,3 +1,5 @@
+import { stripPostColors } from './post-colors.js';
+
 export interface ShareData {
   url: string;
   title: string;
@@ -34,7 +36,7 @@ export function createShareData(post: {
   return {
     url: getPostUrl(post.id),
     title: `${post.display_name || post.username} on Flaxia`,
-    text: generateShareText(post.text),
+    text: generateShareText(stripPostColors(post.text)),
   };
 }
 

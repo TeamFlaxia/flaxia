@@ -1,3 +1,8 @@
+import { canUsePostColors } from './entitlements.ts';
+import { resolveNameColor } from './name-color.ts';
+import { parsePostColors, postTextStyleClass, stripPostColors } from './post-colors.ts';
+import { isTitleIconImage } from './title-icon.ts';
+
 export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -14,6 +19,11 @@ export interface PostRow {
   display_name: string | null;
   avatar_key: string | null;
   badge_type?: string | null;
+  name_color?: string | null;
+  equipped_title_id?: string | null;
+  title_name?: string | null;
+  title_name_ja?: string | null;
+  title_icon?: string | null;
   text: string;
   hashtags: string;
   gif_key: string | null;
@@ -40,6 +50,13 @@ export interface UserRow {
   bio: string;
   avatar_key: string | null;
   badge_type?: string | null;
+  name_color?: string | null;
+  equipped_title_id?: string | null;
+  title_name?: string | null;
+  title_name_ja?: string | null;
+  title_description?: string | null;
+  title_description_ja?: string | null;
+  title_icon?: string | null;
   created_at: string;
 }
 
@@ -85,7 +102,7 @@ export function renderBlogPostingJsonLd(
     '@context': 'https://schema.org',
     '@type': 'BlogPosting',
     headline: `${authorName} on Flaxia`,
-    description: description || post.game_description || post.text.slice(0, 200),
+    description: description || post.game_description || stripPostColors(post.text).slice(0, 200),
     image: image || undefined,
     url: postUrl,
     datePublished: post.created_at,
@@ -202,6 +219,17 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       --accent-dark:   #16a34a;
       --danger:        #ef4444;
       --link:          #3b82f6;
+      --post-color-red:    #b91c1c;
+      --post-color-orange: #c2410c;
+      --post-color-yellow: #a16207;
+      --post-color-green:  #15803d;
+      --post-color-blue:   #1d4ed8;
+      --post-color-purple: #7e22ce;
+      --post-color-pink:   #be185d;
+      --post-color-gray:   #475569;
+      --post-color-mikan:  #b45309;
+      --post-color-kimwaipu: #047857;
+      --post-rainbow: linear-gradient(90deg, #dc2626, #ea580c, #ca8a04, #16a34a, #2563eb, #7c3aed, #db2777);
     }
     :root[data-theme='dark'] {
       color-scheme: dark;
@@ -217,6 +245,17 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       --accent-dark:   #16a34a;
       --danger:        #ef4444;
       --link:          #60a5fa;
+      --post-color-red:    #f87171;
+      --post-color-orange: #fb923c;
+      --post-color-yellow: #facc15;
+      --post-color-green:  #4ade80;
+      --post-color-blue:   #60a5fa;
+      --post-color-purple: #c084fc;
+      --post-color-pink:   #f472b6;
+      --post-color-gray:   #94a3b8;
+      --post-color-mikan:  #f59e0b;
+      --post-color-kimwaipu: #6ee7b7;
+      --post-rainbow: linear-gradient(90deg, #f87171, #fb923c, #facc15, #4ade80, #60a5fa, #c084fc, #f472b6);
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -336,6 +375,26 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       color: var(--text-muted);
       font-size: 14px;
     }
+    .ssr-user-title {
+      display: inline-flex;
+      align-items: center;
+      margin-left: 4px;
+      padding: 1px 7px;
+      border: 1px solid var(--border);
+      border-radius: 9999px;
+      background: var(--bg-secondary);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .ssr-user-title-icon {
+      width: 17px;
+      height: 17px;
+      margin-right: 4px;
+      border-radius: 50%;
+      object-fit: cover;
+    }
     .ssr-post-body {
       font-size: 15px;
       line-height: 1.6;
@@ -343,6 +402,41 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       word-break: break-word;
     }
     .ssr-post-body p { margin: 0 0 8px 0; }
+    .post-color--red    { color: var(--post-color-red); }
+    .post-color--orange { color: var(--post-color-orange); }
+    .post-color--yellow { color: var(--post-color-yellow); }
+    .post-color--green  { color: var(--post-color-green); }
+    .post-color--blue   { color: var(--post-color-blue); }
+    .post-color--purple { color: var(--post-color-purple); }
+    .post-color--pink   { color: var(--post-color-pink); }
+    .post-color--gray   { color: var(--post-color-gray); }
+    .post-color--mikan  { color: var(--post-color-mikan); }
+    .post-color--kimwaipu { color: var(--post-color-kimwaipu); }
+    .post-color--rainbow { color: var(--post-color-purple); }
+    @supports ((-webkit-background-clip: text) or (background-clip: text)) {
+      .post-color--rainbow {
+        background-image: var(--post-rainbow);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        -webkit-text-fill-color: transparent;
+      }
+    }
+    .post-dinnerborn {
+      display: inline-block;
+      transform: rotate(180deg);
+      transform-origin: center;
+      vertical-align: middle;
+    }
+    @media (forced-colors: active) {
+      .post-color--red, .post-color--orange, .post-color--yellow, .post-color--green,
+      .post-color--blue, .post-color--purple, .post-color--pink, .post-color--gray,
+      .post-color--mikan, .post-color--kimwaipu, .post-color--rainbow {
+        color: inherit;
+        background-image: none;
+        -webkit-text-fill-color: currentColor;
+      }
+    }
     .ssr-post-body img,
     .ssr-post-body video {
       width: 100%;
@@ -497,14 +591,59 @@ function formatDate(iso: string): string {
   }
 }
 
-function renderPostContent(text: string, hashtags: string): string {
-  let html = escapeHtml(text);
+function renderTextWithHashtags(text: string): string {
+  const plain = text.replace(/\\\{/g, '{');
+  const hashtagRegex = /#([\w\u3000-\u9fff\-_]+)/g;
+  let html = '';
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
 
-  // Link hashtags
-  html = html.replace(/#([\w\u3000-\u9fff\-_]+)/g, (_m, tag: string) => {
+  while ((match = hashtagRegex.exec(plain)) !== null) {
+    html += escapeHtml(plain.slice(lastIndex, match.index));
+    const tag = match[1];
     const encoded = encodeURIComponent(tag);
-    return `<a href="/explore?tag=${encoded}" class="ssr-hashtag">#${escapeHtml(tag)}</a>`;
+    html += `<a href="/explore?tag=${encoded}" class="ssr-hashtag">#${escapeHtml(tag)}</a>`;
+    lastIndex = match.index + match[0].length;
+  }
+  html += escapeHtml(plain.slice(lastIndex));
+  return html;
+}
+
+function renderColorHtml(text: string, spans: ReturnType<typeof parsePostColors>['spans']): string {
+  // Empty spans were already stripped from `text`; emitting their tags would
+  // produce an unmatched closing tag.
+  const visible = spans.filter((span) => span.end > span.start);
+  if (visible.length === 0) return renderTextWithHashtags(text);
+
+  const events: Array<{ offset: number; kind: 'open' | 'close'; style: string; depth: number }> = [];
+  for (const span of visible) {
+    events.push({ offset: span.start, kind: 'open', style: postTextStyleClass(span.style), depth: span.depth });
+    events.push({ offset: span.end, kind: 'close', style: postTextStyleClass(span.style), depth: span.depth });
+  }
+  events.sort((a, b) => {
+    if (a.offset !== b.offset) return a.offset - b.offset;
+    if (a.kind !== b.kind) return a.kind === 'close' ? -1 : 1;
+    return a.kind === 'close' ? b.depth - a.depth : a.depth - b.depth;
   });
+
+  let html = '';
+  let position = 0;
+  for (const event of events) {
+    html += renderTextWithHashtags(text.slice(position, event.offset));
+    html += event.kind === 'open' ? `<span class="${event.style}">` : '</span>';
+    position = event.offset;
+  }
+  html += renderTextWithHashtags(text.slice(position));
+  return html;
+}
+
+function renderPostContent(text: string, hashtags: string, badgeType?: string | null): string {
+  // Parse before unescaping so `\{red}` stays a literal brace. The renderer
+  // unescapes per text segment without disturbing span offsets.
+  const parsed = parsePostColors(text);
+  const html = canUsePostColors({ badge_type: badgeType })
+    ? renderColorHtml(parsed.plain, parsed.spans)
+    : renderTextWithHashtags(text);
 
   return `<p>${html.replace(/\n/g, '<br>')}</p>`;
 }
@@ -518,7 +657,8 @@ function renderPostMedia(
   text?: string,
 ): string {
   const parts: string[] = [];
-  const alt = text ? text.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
+  const plainText = text ? stripPostColors(text).replace(/\\\{/g, '{') : '';
+  const alt = plainText ? plainText.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
 
   if (gifKey?.startsWith('video/')) {
     const videoUrl = `${baseUrl}/api/video/${escapeHtml(gifKey)}`;
@@ -543,9 +683,29 @@ function renderPostMedia(
   return parts.join('\n    ');
 }
 
+function renderNameColorStyle(nameColor?: string | null, badgeType?: string | null): string {
+  const color = resolveNameColor(nameColor, badgeType);
+  return color ? ` style="color:${color}"` : '';
+}
+
 export function renderAvatarBadge(badgeType?: string | null): string {
   if (badgeType !== 'flaxia_plus') return '';
   return `<span class="ssr-avatar-badge" title="Flaxia+" aria-label="Flaxia+"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg></span>`;
+}
+
+/** Small badge shown after a username (icon + title name). */
+export function renderUserTitle(
+  titleName?: string | null,
+  titleIcon?: string | null,
+  description?: string | null,
+): string {
+  if (!titleName) return '';
+  const tooltip = description ? ` title="${escapeHtml(description)}"` : '';
+  const icon =
+    titleIcon && isTitleIconImage(titleIcon)
+      ? `<img class="ssr-user-title-icon" src="${escapeHtml(titleIcon)}" alt="" aria-hidden="true">`
+      : '';
+  return `<span class="ssr-user-title"${tooltip}>${icon}${icon ? ' ' : ''}${escapeHtml(titleName)}</span>`;
 }
 
 export function renderPostArticle(post: PostRow, baseUrl: string, isReply = false): string {
@@ -561,12 +721,12 @@ export function renderPostArticle(post: PostRow, baseUrl: string, isReply = fals
         <span class="ssr-avatar-wrap"><img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(post.display_name || post.username)}" class="ssr-avatar" width="40" height="40">${renderAvatarBadge(post.badge_type)}</span>
       </a>
       <div>
-        <a href="${escapeHtml(profileUrl)}" class="ssr-display-name">${escapeHtml(post.display_name || post.username)}</a>
-        <div class="ssr-username">@${escapeHtml(post.username)}</div>
+        <a href="${escapeHtml(profileUrl)}" class="ssr-display-name"${renderNameColorStyle(post.name_color, post.badge_type)}>${escapeHtml(post.display_name || post.username)}</a>
+        <div class="ssr-username">@${escapeHtml(post.username)} ${renderUserTitle(post.title_name, post.title_icon)}</div>
       </div>
     </div>
     <div class="ssr-post-body">
-      ${renderPostContent(post.text, post.hashtags)}
+      ${renderPostContent(post.text, post.hashtags, post.badge_type)}
       ${renderPostMedia(post.gif_key, post.thumbnail_key, post.payload_key, post.swf_key, baseUrl, post.text)}
     </div>
     <div class="ssr-post-meta">
@@ -593,8 +753,8 @@ export function renderProfileHeader(user: UserRow, baseUrl: string, postCount: n
 
   return `<header class="ssr-profile-header">
     <span class="ssr-avatar-wrap ssr-avatar-wrap--large"><img src="${escapeHtml(avatarSrc)}" alt="${escapeHtml(user.display_name)}" class="ssr-avatar-large" width="72" height="72">${renderAvatarBadge(user.badge_type)}</span>
-    <h1>${escapeHtml(user.display_name)}</h1>
-    <div class="ssr-username">@${escapeHtml(user.username)}</div>
+    <h1${renderNameColorStyle(user.name_color, user.badge_type)}>${escapeHtml(user.display_name)}</h1>
+    <div class="ssr-username">@${escapeHtml(user.username)} ${renderUserTitle(user.title_name, user.title_icon, user.title_description)}</div>
     ${user.bio ? `<p class="ssr-bio">${escapeHtml(user.bio)}</p>` : ''}
     <div class="ssr-stats">
       <span>📝 ${postCount} posts</span>

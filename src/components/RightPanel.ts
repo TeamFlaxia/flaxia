@@ -1,5 +1,6 @@
 import { attachPlusBadge } from '../lib/avatar.js';
 import { t } from '../lib/i18n.js';
+import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 
 export interface RightPanelProps {
@@ -13,6 +14,7 @@ export interface UserSuggestion {
   display_name: string;
   avatar_key?: string;
   badge_type?: string | null;
+  name_color?: string | null;
 }
 
 export class RightPanel {
@@ -302,6 +304,7 @@ export class RightPanel {
         text-overflow: ellipsis;
       `;
       name.textContent = user.display_name;
+      applyNameColor(name, user.name_color, user.badge_type);
       name.addEventListener('click', () => {
         window.location.href = `/profile/${user.username}`;
       });

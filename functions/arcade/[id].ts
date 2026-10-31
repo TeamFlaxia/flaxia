@@ -1,5 +1,6 @@
 import { buildGameDescription, buildGameTitle } from '../../src/lib/game-seo';
 import { isCrawler } from '../../src/lib/is-crawler';
+import { stripPostColors } from '../../src/lib/post-colors.ts';
 import { escapeHtml, renderAvatarBadge, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import {
@@ -25,6 +26,7 @@ interface PostRow {
   display_name: string | null;
   avatar_key: string | null;
   badge_type: string | null;
+  name_color: string | null;
   text: string;
   payload_key: string | null;
   swf_key: string | null;
@@ -54,6 +56,7 @@ function toPost(row: RawPost): PostRow {
     display_name: row.display_name ? String(row.display_name) : null,
     avatar_key: row.avatar_key ? String(row.avatar_key) : null,
     badge_type: row.badge_type ? String(row.badge_type) : null,
+    name_color: row.name_color ? String(row.name_color) : null,
     text: String(row.text),
     payload_key: row.payload_key ? String(row.payload_key) : null,
     swf_key: row.swf_key ? String(row.swf_key) : null,
@@ -126,7 +129,7 @@ export async function onRequest(context: {
 
   try {
     const mainRow = (await env.DB.prepare(`
-      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type,
+      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color,
         p.text, p.payload_key, p.swf_key, p.thumbnail_key, p.gif_key,
         p.game_description,
         p.fresh_count, COALESCE(p.reply_count, 0) as reply_count,
@@ -157,7 +160,8 @@ export async function onRequest(context: {
     }
 
     const post = toPost(mainRow);
-    const title = buildGameTitle(post.text);
+    const plainText = stripPostColors(post.text).replace(/\\\{/g, '{');
+    const title = buildGameTitle(plainText);
     const gameType = detectGameType(post);
     const typeLabels: Record<string, string> = { flash: 'Flash', zip: 'ZIP', html5: 'HTML5' };
     const typeLabel = typeLabels[gameType] || 'Game';
@@ -175,7 +179,7 @@ export async function onRequest(context: {
       title,
       typeLabel,
       authorName,
-      text: post.text,
+      text: plainText,
     });
 
     // Fetch related games: same author + same type
@@ -219,7 +223,7 @@ export async function onRequest(context: {
         ? {
             title: sectionTitle,
             links: games.map((game) => ({
-              label: buildGameTitle(game.text),
+              label: buildGameTitle(stripPostColors(game.text)),
               url: `${baseUrl}/arcade/${game.id}`,
             })),
           }
@@ -287,7 +291,7 @@ export async function onRequest(context: {
             <span>🏷️ ${typeLabel}</span>
             <span>📅 ${formatDate(post.created_at)}</span>
           </div>
-          <div class="ssr-game-text">${escapeHtml(post.text)}</div>
+          <div class="ssr-game-text">${escapeHtml(plainText)}</div>
           <a href="${escapeHtml(canonicalUrl)}" class="ssr-game-play-btn">Play this game</a>
         </main>
         ${footer}

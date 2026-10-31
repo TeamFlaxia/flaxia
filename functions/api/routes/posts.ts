@@ -1,6 +1,8 @@
 import { type Context, Hono } from 'hono';
 import { nanoid } from 'nanoid';
 import { isAdmin } from '../../../src/lib/admin';
+import { canUsePostColors } from '../../../src/lib/entitlements.ts';
+import { hasPostColors, stripPostColors } from '../../../src/lib/post-colors.ts';
 import { copyHtmlToWvfs, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
 import type { ReportCategory } from '../../../src/types/post';
 import { buildCreateActivity, buildDeleteActivity, buildNoteObject } from '../../lib/activitypub/note';
@@ -70,6 +72,15 @@ async function resolveAttachmentLimit(env: Bindings, userId: string): Promise<nu
   return plan.isActive ? MAX_ATTACHMENTS_PLUS : MAX_ATTACHMENTS;
 }
 
+/** Text colors are a Flaxia+ (or reviewer) entitlement. */
+function colorEntitlementError(
+  c: Context<{ Bindings: Bindings; Variables: Variables }>,
+  text: string,
+): Response | null {
+  if (canUsePostColors(c.get('user')) || !hasPostColors(text)) return null;
+  return c.json({ error: 'flaxia_plus_required', message: 'Text colors and styles require Flaxia+' }, 403);
+}
+
 async function ensureReactionsTable(db: D1Database): Promise<void> {
   try {
     await db
@@ -115,6 +126,8 @@ posts.post('/posts', requireAuth, async (c) => {
     if (typeof text !== 'string' || text.length < 1 || text.length > 200) {
       return c.json({ error: 'Text must be 1-200 characters' }, 400);
     }
+    const colorError = colorEntitlementError(c, text);
+    if (colorError) return colorError;
 
     const userId = c.get('user')?.id || '';
     const username = c.get('user')?.username || 'anonymous';
@@ -196,20 +209,23 @@ posts.get('/posts', async (c) => {
     if (hashtag) {
       // Filter by hashtag using json_each
       if (cursor) {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) AND p.created_at < ? ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [hashtag, cursor, ...blockParam, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND EXISTS (SELECT 1 FROM json_each(p.hashtags) WHERE value = ?) ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [hashtag, ...blockParam, limit];
       }
     } else if (following && currentUserId) {
       // Following tab - show posts from followed users and current user's own posts
       if (cursor) {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
           COALESCE(p.reply_count, 0) as reply_count, 
           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at 
           FROM posts p 
-          LEFT JOIN users u ON p.user_id = u.id 
+          LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
           WHERE (
             p.user_id IN (
               SELECT followee_id FROM follows WHERE follower_id = ?
@@ -220,11 +236,12 @@ posts.get('/posts', async (c) => {
           ORDER BY p.created_at DESC LIMIT ?`;
         params = [currentUserId, currentUserId, cursor, ...blockParam, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
           COALESCE(p.reply_count, 0) as reply_count, 
           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at 
           FROM posts p 
-          LEFT JOIN users u ON p.user_id = u.id 
+          LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
           WHERE (
             p.user_id IN (
               SELECT followee_id FROM follows WHERE follower_id = ?
@@ -238,19 +255,23 @@ posts.get('/posts', async (c) => {
     } else if (username) {
       // Username filter - show posts from specific user
       if (cursor) {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ${EXACT_DUPLICATE_FILTER} AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ${EXACT_DUPLICATE_FILTER} AND p.created_at < ? ORDER BY p.created_at DESC LIMIT ?`;
         params = [username, cursor, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ${EXACT_DUPLICATE_FILTER} ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.username = ? AND p.hidden = 0 AND p.status = 'published' ${EXACT_DUPLICATE_FILTER} ORDER BY p.created_at DESC LIMIT ?`;
         params = [username, limit];
       }
     } else {
       // Global timeline
       if (cursor) {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL AND p.created_at < ? ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [cursor, ...blockParam, limit];
       } else {
-        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, p.status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
+        query = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count,           COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, p.status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${feedFilter} ORDER BY p.created_at DESC LIMIT ?`;
         params = [...blockParam, limit];
       }
     }
@@ -368,13 +389,14 @@ posts.get('/posts/trending', async (c) => {
     //   adjusted by content type weights and quality score
     const trendingFetchLimit = limit * 5;
     const query = `
-      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
       COALESCE(p.reply_count, 0) as reply_count,
       COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
       ((p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + p.impressions * 0.1 + 1.0) /
       EXP(1.5 * LN((unixepoch('now') - unixepoch(p.created_at)) / 3600.0 + 2.0))) as score
       FROM posts p
       LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
       WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER} AND p.created_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')
       ORDER BY score DESC, p.created_at DESC
       LIMIT ?
@@ -391,7 +413,7 @@ posts.get('/posts/trending', async (c) => {
     const userIds = [...new Set(rawPosts.map((p) => p.user_id as string))].filter(Boolean);
     if (userIds.length > 0) {
       const authorRows = await c.env.DB.prepare(
-        `SELECT u.id, u.display_name, u.bio, u.avatar_key, u.badge_type, u.created_at,
+        `SELECT u.id, u.display_name, u.bio, u.avatar_key, u.badge_type, u.name_color, u.created_at,
           COALESCE(SUM(p.fresh_count), 0) as total_fresh,
           COALESCE(SUM(p.reply_count), 0) as total_reply,
           COALESCE(SUM(p.impressions), 0) as total_impressions,
@@ -432,7 +454,11 @@ posts.get('/posts/trending', async (c) => {
 
     // Compute adjusted score with quality, type weights, and author quality
     const scored = rawPosts.map((p) => {
-      const qualityScore = computeQualityScore(String(p.text || ''), !!(p.payload_key || p.swf_key), 0);
+      const qualityScore = computeQualityScore(
+        stripPostColors(String(p.text || '')),
+        !!(p.payload_key || p.swf_key),
+        0,
+      );
       const typeFactor = (() => {
         const w = getTypeWeights(p.payload_key as string | null, p.swf_key as string | null);
         return (w.fresh + w.reply + w.impression) / 4.5;
@@ -560,7 +586,7 @@ function decayingRecommendationPenalty(
   return maxPenalty * 2 ** (-ageMs / (halfLifeDays * 86400_000));
 }
 
-const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
   COALESCE(p.reply_count, 0) as reply_count, 
   COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at`;
 
@@ -677,6 +703,7 @@ posts.get('/posts/recommended', async (c) => {
       db
         .prepare(
           `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
            WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
              ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
            ORDER BY p.created_at DESC LIMIT ?`,
@@ -686,6 +713,7 @@ posts.get('/posts/recommended', async (c) => {
       db
         .prepare(
           `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
            WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
              ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
            ORDER BY eng_score DESC, p.created_at DESC LIMIT ?`,
@@ -696,6 +724,7 @@ posts.get('/posts/recommended', async (c) => {
         ? db
             .prepare(
               `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
                WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
                  AND p.created_at >= ? AND p.created_at <= ?
                  AND EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.followee_id = p.user_id)
@@ -728,6 +757,7 @@ posts.get('/posts/recommended', async (c) => {
     const serializedCandidateIds = JSON.stringify(candidateIds);
     const candidateQuery = `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score
       FROM posts p LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
       WHERE p.id IN (SELECT value FROM json_each(?))
         AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER} ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
         AND p.created_at >= ? AND p.created_at <= ?`;
@@ -785,7 +815,7 @@ posts.get('/posts/recommended', async (c) => {
       const ageHours = Math.max(0, (asOfMs - new Date(String(post.created_at)).getTime()) / 3600000);
       const freshness = Math.exp(-ageHours / 168);
       const contentQuality = computeQualityScore(
-        String(post.text || ''),
+        stripPostColors(String(post.text || '')),
         !!(post.payload_key || post.swf_key || post.gif_key || post.thumbnail_key),
         0,
       );
@@ -865,6 +895,7 @@ async function loadRecommendedArchivePage(
   const result = await db
     .prepare(
       `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
        WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
          AND ${cursorFilter} ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
          AND p.created_at <= ?
@@ -975,7 +1006,8 @@ posts.get('/posts/:id/similar', async (c) => {
     if (similarIds.length === 0) return c.json({ posts: [] });
 
     const postsResult = await c.env.DB.prepare(
-      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id IN (${similarIds.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0 ${EXACT_DUPLICATE_FILTER}`,
+      `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id IN (${similarIds.map(() => '?').join(',')}) AND p.status = 'published' AND p.hidden = 0 ${EXACT_DUPLICATE_FILTER}`,
     )
       .bind(...similarIds)
       .all();
@@ -1582,6 +1614,8 @@ posts.post('/posts/commit', requireAuth, async (c) => {
     if (text.length > 200 || (!hasQuote && text.length < 1)) {
       return c.json({ error: 'Text must be 1-200 characters' }, 422);
     }
+    const colorError = colorEntitlementError(c, text);
+    if (colorError) return colorError;
 
     // Validate hashtags
     if (!Array.isArray(requestHashtags) || requestHashtags.length > 5) {
@@ -1888,7 +1922,7 @@ posts.post('/posts/commit', requireAuth, async (c) => {
 
     // Fetch the created post for enrichment
     const fullPost = (await c.env.DB.prepare(
-      "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key as payloadKey, p.swf_key as swfKey, p.thumbnail_key as thumbnailKey, p.game_description, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?",
+      "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key as payloadKey, p.swf_key as swfKey, p.thumbnail_key as thumbnailKey, p.game_description, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id = ?",
     )
       .bind(postId)
       .first()) as PostRow;
@@ -2205,11 +2239,12 @@ posts.get('/bookmarks', requireAuth, async (c) => {
     if (cursor) {
       params.push(cursor);
       query = `
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
         COALESCE(p.reply_count, 0) as reply_count,
         COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
         FROM posts p
         LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
         INNER JOIN bookmarks b ON b.post_id = p.id AND b.user_id = ?
         WHERE p.status = 'published' AND p.hidden = 0 AND p.created_at < ?
         ORDER BY p.created_at DESC
@@ -2218,11 +2253,12 @@ posts.get('/bookmarks', requireAuth, async (c) => {
       params.push(limit);
     } else {
       query = `
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
         COALESCE(p.reply_count, 0) as reply_count,
         COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
         FROM posts p
         LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
         INNER JOIN bookmarks b ON b.post_id = p.id AND b.user_id = ?
         WHERE p.status = 'published' AND p.hidden = 0
         ORDER BY p.created_at DESC
@@ -2280,11 +2316,12 @@ posts.get('/freshs', requireAuth, async (c) => {
     if (cursor) {
       params.push(cursor);
       query = `
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
         COALESCE(p.reply_count, 0) as reply_count,
         COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
         FROM posts p
         LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
         INNER JOIN freshs f ON f.post_id = p.id AND f.user_id = ?
         WHERE p.status = 'published' AND p.hidden = 0 AND p.created_at < ?
         ORDER BY p.created_at DESC
@@ -2293,11 +2330,12 @@ posts.get('/freshs', requireAuth, async (c) => {
       params.push(limit);
     } else {
       query = `
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count,
         COALESCE(p.reply_count, 0) as reply_count,
         COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
         FROM posts p
         LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
         INNER JOIN freshs f ON f.post_id = p.id AND f.user_id = ?
         WHERE p.status = 'published' AND p.hidden = 0
         ORDER BY p.created_at DESC
@@ -2744,18 +2782,20 @@ posts.get('/posts/:id/replies', async (c) => {
     }
 
     let query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
-       u.display_name, u.avatar_key, u.badge_type, u.language as author_language
+       u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
        WHERE p.parent_id = ? AND p.status = 'published' AND p.hidden = 0 ${EXACT_DUPLICATE_FILTER}
        ORDER BY p.created_at ASC LIMIT ?`;
     const params: Array<unknown> = [postId, limit];
 
     if (cursor) {
       query = `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
-       u.display_name, u.avatar_key, u.badge_type, u.language as author_language
+       u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
        WHERE p.parent_id = ? AND p.status = 'published' AND p.hidden = 0 ${EXACT_DUPLICATE_FILTER} AND p.created_at < ?
        ORDER BY p.created_at ASC LIMIT ?`;
       params.splice(1, 0, cursor);
@@ -2854,9 +2894,10 @@ posts.get('/posts/:id/thread', async (c) => {
 
     const rootPost = await c.env.DB.prepare(
       `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
-       u.display_name, u.avatar_key, u.badge_type, u.language as author_language
+       u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
        WHERE p.id = ? AND p.status = 'published' AND p.hidden = 0`,
     )
       .bind(rootId)
@@ -2868,9 +2909,10 @@ posts.get('/posts/:id/thread', async (c) => {
 
     const repliesResult = await c.env.DB.prepare(
       `SELECT p.id, p.user_id, p.username, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at,
-       u.display_name, u.avatar_key, u.badge_type, u.language as author_language
+       u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
        WHERE p.root_id = ? AND p.status = 'published' AND p.hidden = 0 AND p.id != ? ${EXACT_DUPLICATE_FILTER}
        ORDER BY p.created_at ASC LIMIT 200`,
     )
@@ -3078,6 +3120,8 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
     if (!text || text.length < 1 || text.length > 200) {
       return c.json({ error: 'Text must be 1-200 characters' }, 422);
     }
+    const colorError = colorEntitlementError(c, text);
+    if (colorError) return colorError;
 
     // Validate hashtags
     if (!Array.isArray(hashtags) || hashtags.length > 5) {
@@ -3172,7 +3216,8 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
       // Return the updated reply
       reply =
         (await c.env.DB.prepare(`
-        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
+        SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id = ?
       `)
           .bind(replyId)
           .first()) ?? undefined;
@@ -3214,7 +3259,8 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
         // Return the created reply
         reply =
           (await c.env.DB.prepare(`
-          SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?
+          SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.hidden, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at FROM posts p LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id = ?
         `)
             .bind(replyId)
             .first()) ?? undefined;
@@ -3452,7 +3498,7 @@ posts.get('/search', async (c) => {
       const cleanQuery = query.trim().replace(/^@/, '');
       const searchTerm = `%${cleanQuery}%`;
       const users = await c.env.DB.prepare(`
-        SELECT id, username, display_name, bio, avatar_key, badge_type, created_at
+        SELECT id, username, display_name, bio, avatar_key, badge_type, name_color, created_at
         FROM users
         WHERE username LIKE ? OR display_name LIKE ?
         ORDER BY created_at DESC
@@ -3498,7 +3544,7 @@ posts.get('/search', async (c) => {
       // No specific tokens, but still search users by the raw query
       if (type === 'posts') {
         const users = await c.env.DB.prepare(`
-          SELECT username, display_name, avatar_key, badge_type
+          SELECT username, display_name, avatar_key, badge_type, name_color
           FROM users
           WHERE LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?
           ORDER BY created_at DESC LIMIT ?
@@ -3510,6 +3556,7 @@ posts.get('/search', async (c) => {
           display_name: u.display_name || '',
           avatar_key: u.avatar_key || '',
           badge_type: (u.badge_type as string | null) ?? null,
+          name_color: (u.name_color as string | null) ?? null,
         }));
       }
       return c.json({ type, query, results: [], users: usersResult });
@@ -3518,9 +3565,10 @@ posts.get('/search', async (c) => {
     const whereClause = `WHERE p.status = 'published' AND p.hidden = 0 AND (${conditions.join(' AND ')}) ${EXACT_DUPLICATE_FILTER}`;
 
     const selectColumns = `
-      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
+      SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key, p.thumbnail_key, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at
       FROM posts p
       LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
     `;
 
     const posts = await c.env.DB.prepare(`${selectColumns} ${whereClause} ORDER BY p.created_at DESC LIMIT ?`)
@@ -3534,7 +3582,7 @@ posts.get('/search', async (c) => {
     // Also fetch matching users for posts search (type=posts)
     if (type === 'posts') {
       const users = await c.env.DB.prepare(`
-        SELECT username, display_name, avatar_key, badge_type
+        SELECT username, display_name, avatar_key, badge_type, name_color
         FROM users
         WHERE LOWER(username) LIKE ? OR LOWER(display_name) LIKE ?
         ORDER BY created_at DESC LIMIT ?
@@ -3546,6 +3594,7 @@ posts.get('/search', async (c) => {
         display_name: u.display_name || '',
         avatar_key: u.avatar_key || '',
         badge_type: (u.badge_type as string | null) ?? null,
+        name_color: (u.name_color as string | null) ?? null,
       }));
     }
 
@@ -3863,6 +3912,12 @@ posts.put('/posts/:id', async (c) => {
       if (trimmed.length < 1 || trimmed.length > 200) {
         return c.json({ error: 'Text must be between 1 and 200 characters' }, 422);
       }
+      // Keep an already-colored post editable after a lapse, but do not let a
+      // non-member add or keep color markers in a *changed* body.
+      if (body.text !== post.text && trimmed !== post.text) {
+        const colorError = colorEntitlementError(c, trimmed);
+        if (colorError) return colorError;
+      }
       textChanged = true;
 
       // Extract hashtags from text
@@ -4018,7 +4073,7 @@ posts.put('/posts/:id', async (c) => {
 
     // Fetch updated post
     const updated = (await c.env.DB.prepare(
-      "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key as payloadKey, p.swf_key as swfKey, p.thumbnail_key as thumbnailKey, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.edited_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?",
+      "SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key as payloadKey, p.swf_key as swfKey, p.thumbnail_key as thumbnailKey, p.fresh_count, COALESCE(p.reload_count, 0) as reload_count, COALESCE(p.bookmark_count, 0) as bookmark_count, COALESCE(p.reply_count, 0) as reply_count, COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at, p.edited_at FROM posts p LEFT JOIN users u ON p.user_id = u.id LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id = ?",
     )
       .bind(postId)
       .first()) as Record<string, unknown> | null;
@@ -4059,7 +4114,7 @@ posts.get('/posts/:id', async (c) => {
     }
 
     const post = (await c.env.DB.prepare(
-      'SELECT p.*, u.language as author_language, u.frozen_at as author_frozen_at FROM posts p LEFT JOIN users u ON p.user_id = u.id WHERE p.id = ?',
+      'SELECT p.*, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language, u.frozen_at as author_frozen_at FROM posts p LEFT JOIN users u ON p.user_id = u.id LEFT JOIN titles t ON t.id = u.equipped_title_id WHERE p.id = ?',
     )
       .bind(postId)
       .first()) as Record<string, unknown> | null;
@@ -4274,12 +4329,13 @@ async function enrichPostsWithQuotes(posts: PostRow[], db: D1Database): Promise<
     const placeholders = quotedIds.map(() => '?').join(',');
     const result = await db
       .prepare(
-        `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.language as author_language,
+        `SELECT p.id, p.user_id, p.username, u.display_name, u.avatar_key, u.badge_type, u.name_color, u.equipped_title_id, t.name AS title_name, t.name_ja AS title_name_ja, t.icon AS title_icon, u.language as author_language,
               p.text, p.hashtags, p.mentions, p.gif_key, p.payload_key, p.swf_key,
               p.thumbnail_key, p.parent_id, p.root_id, COALESCE(p.depth, 0) AS depth,
               COALESCE(p.status, 'published') AS status, p.hidden, p.created_at
        FROM posts p
        LEFT JOIN users u ON p.user_id = u.id
+          LEFT JOIN titles t ON t.id = u.equipped_title_id
        WHERE p.id IN (${placeholders})`,
       )
       .bind(...quotedIds)
