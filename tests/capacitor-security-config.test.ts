@@ -10,7 +10,7 @@ test('all Capacitor platforms boot bundled assets with cookie-aware native HTTP'
   assert.match(config, /CapacitorHttp:\s*\{\s*enabled:\s*true/);
 });
 
-test('desktop apps boot local assets with first-party-only HTTP permissions', () => {
+test('desktop apps boot local assets with Flaxia-only HTTP permissions', () => {
   for (const os of ['windows', 'macos', 'linux']) {
     const desktop = JSON.parse(
       readFileSync(new URL('../src-tauri/tauri.conf.' + os + '.json', import.meta.url), 'utf8'),
@@ -27,7 +27,7 @@ test('desktop apps boot local assets with first-party-only HTTP permissions', ()
       'identifier' in permission &&
       permission.identifier === 'http:default',
   );
-  assert.deepEqual(http.allow, [{ url: 'https://flaxia.app/api/*' }]);
+  assert.deepEqual(http.allow, [{ url: 'https://flaxia.app/api/*' }, { url: 'https://*.flaxia.app/api/*' }]);
   assert.equal(capabilities.remote, undefined);
 });
 

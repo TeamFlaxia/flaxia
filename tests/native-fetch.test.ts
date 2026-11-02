@@ -100,6 +100,29 @@ test('Tauri uses its scoped native transport without exposing session cookies to
   assert.equal(response.clone().headers.has('Set-Cookie'), false);
   assert.deepEqual(await response.json(), { ok: true });
 });
+test('Tauri routes Flaxia service APIs through the native transport', async () => {
+  platform('tauri');
+  let actual: Request | undefined;
+  const native = createNativeFetch(
+    async () => assert.fail('Flaxia service APIs must not use browser fetch'),
+    async () => async (input, init) => {
+      actual = input as Request;
+      assert.equal(init?.maxRedirections, 0);
+      return Response.json({ ok: true });
+    },
+  );
+  const response = await native('https://auth.flaxia.app/api/auth/login/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+  assert.ok(actual);
+  assert.equal(actual.url, 'https://auth.flaxia.app/api/auth/login/start');
+  assert.equal(actual.method, 'POST');
+  assert.equal(await actual.text(), '{}');
+  assert.deepEqual(await response.json(), { ok: true });
+});
+
 test('static assets and third-party APIs keep the browser transport', async () => {
   platform('tauri');
   const received: Array<RequestInfo | URL> = [];

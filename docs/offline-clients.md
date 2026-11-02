@@ -14,9 +14,11 @@ After an online visit, native clients can read the saved timeline, previously
 opened threads and replies, game listings, and saved image previews/avatars.
 Reads try the network first; on a network failure or an eight-second read
 deadline they fall back to IndexedDB. HTTP denials and deletions are
-authoritative, not reasons to restore old content. The offline banner makes
-staleness explicit and provides a reconnect action. Returning online refreshes
-the session and timeline without recreating the composer.
+authoritative, not reasons to restore old content. Connectivity is surfaced
+through the existing offline/online toasts rather than a persistent banner. A
+false `navigator.onLine` value is corrected by a background probe that retries
+with bounded backoff. Returning online refreshes the session and timeline
+without recreating the composer.
 
 ## Storage and authentication
 
@@ -35,9 +37,12 @@ the session and timeline without recreating the composer.
 
 CapacitorHttp and the Tauri HTTP plugin retain HttpOnly sessions in native
 cookie jars. No session token is copied to application storage. Tauri HTTP is
-scoped to https://flaxia.app/api/*, disables redirects, and exposes no remote
-WebView capability. The API trusts only the exact native origins through the
-existing CSRF allowlist; the sandbox remains excluded. SameSite=Strict remains.
+scoped to https://flaxia.app/api/* and https://*.flaxia.app/api/*, disables
+redirects, and exposes no remote WebView capability. Flaxia service APIs
+(such as auth.flaxia.app) use the same native jar so desktop sign-in does not
+depend on browser CORS. The API trusts only the exact native origins through
+the existing CSRF allowlist; the sandbox remains excluded. SameSite=Strict
+remains.
 
 Tauri's browser WebSocket cannot share the native HTTP cookie jar. Native
 clients poll notification badges every 60 seconds while connected; Tauri also
@@ -47,11 +52,14 @@ HTTP before opening a browser WebSocket. Tickets expire after 60 seconds; the
 server checks the session and room membership again on every socket upgrade.
 Session cookies are never returned to JavaScript.
 
-A successful image or notification request does not dismiss the offline banner
-while another read still uses saved content; refreshing that read clears its
-stale state. A fresh first page also clears saved pagination warnings for the
-same feed and filters. Uncached failures do not retain a stale-content warning
-after connectivity recovers.
+Any response that reaches the network restores normal online reads even if
+saved content is still being shown. Individual saved responses remain marked
+with `X-Flaxia-Offline` so stale data is still discoverable. While the client
+believes it is offline it keeps probing connectivity in the background (1s to
+30s backoff); one successful probe restores online behavior. The timeline
+reload button requests an immediate probe, and only one probe runs at a time.
+`/api/auth/*` requests always attempt the network so a false offline hint can
+never disable sign-in.
 
 ## Bookmarked game downloads
 

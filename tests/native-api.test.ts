@@ -34,6 +34,35 @@ test('custom-scheme Capacitor calls target the first-party API origin', async ()
   delete (globalThis as { window?: unknown }).window;
 });
 
+test('Tauri keeps Flaxia service API origins for the native transport', () => {
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      location: { protocol: 'tauri:', href: 'tauri://localhost/', origin: 'tauri://localhost' },
+      __TAURI_INTERNALS__: {},
+    },
+  });
+  assert.equal(
+    nativeApiHref('https://auth.flaxia.app/api/auth/login/start'),
+    'https://auth.flaxia.app/api/auth/login/start',
+  );
+  assert.equal(
+    nativeApiUrl('https://auth.flaxia.app/api/auth/login/start'),
+    'https://auth.flaxia.app/api/auth/login/start',
+  );
+  const request = new Request('https://auth.flaxia.app/api/auth/login/start', {
+    method: 'POST',
+    body: '{}',
+  });
+  const rewritten = nativeApiUrl(request);
+  assert.ok(rewritten instanceof Request);
+  assert.equal(rewritten.url, 'https://auth.flaxia.app/api/auth/login/start');
+  assert.equal(nativeApiHref('/api/me'), 'https://flaxia.app/api/me');
+  assert.equal(nativeApiHref('https://notflaxia.app/api/me'), 'https://notflaxia.app/api/me');
+  assert.equal(nativeApiHref('https://flaxia.app.evil.test/api/me'), 'https://flaxia.app.evil.test/api/me');
+  delete (globalThis as { window?: unknown }).window;
+});
+
 // Android's Capacitor HTTPS scheme uses localhost for bundled assets and
 // rewrites API requests to the real first-party app origin.
 test('native API URL treats https Capacitor Android as a native app', async () => {
