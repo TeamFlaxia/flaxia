@@ -123,6 +123,22 @@ test('Tauri routes Flaxia service APIs through the native transport', async () =
   assert.deepEqual(await response.json(), { ok: true });
 });
 
+test('Tauri keeps non-allowlisted Flaxia subdomains on the browser transport', async () => {
+  platform('tauri');
+  const received: Array<RequestInfo | URL> = [];
+  const native = createNativeFetch(
+    async (input) => {
+      received.push(input);
+      return new Response('sandbox');
+    },
+    async () => {
+      throw new Error('sandbox APIs must not use the native transport');
+    },
+  );
+  await native('https://sandbox.flaxia.app/api/wvfs-zip/game-1');
+  assert.equal(received.length, 1);
+});
+
 test('static assets and third-party APIs keep the browser transport', async () => {
   platform('tauri');
   const received: Array<RequestInfo | URL> = [];

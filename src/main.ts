@@ -33,7 +33,7 @@ import {
 import { initOfflineGames } from './lib/native-offline-games.js';
 import { fetchNotifications, invalidateNotificationsCache } from './lib/notifications-api.js';
 import { createOfflineFetch } from './lib/offline-fetch.js';
-import { setOffline } from './lib/offline-status.js';
+import { isOffline, setOffline } from './lib/offline-status.js';
 import { createOfflineStore } from './lib/offline-store.js';
 import { hidePageLoader, showPageLoader, showPageLoaderFailure } from './lib/page-loader.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
@@ -60,7 +60,12 @@ const nativeFetch = createNativeFetch(window.fetch.bind(window));
 // navigator.onLine value cannot latch the app offline.
 const probeConnectivity = async (): Promise<boolean> => {
   try {
-    const response = await nativeFetch('/api/me', { cache: 'no-store', credentials: 'include' });
+    const response = await nativeFetch('/api/me', {
+      cache: 'no-store',
+      credentials: 'include',
+      // A connected socket with a stalled response must not pin `probing`.
+      signal: AbortSignal.timeout(8000),
+    });
     try {
       await response.body?.cancel();
     } catch {
@@ -230,9 +235,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
 
-    // Offline / online をトーストで統一表示する
-    window.addEventListener('offline', () => showToast(t('common.offline'), true));
-    window.addEventListener('online', () => showToast(t('common.online')));
+    // Offline / online をトーストで統一表示する。ブラウザのイベントだけでなく、
+    // 誤った navigator.onLine を補正するバックグラウンド probe の結果も反映する。
+    window.addEventListener('flaxiaConnectivityChange', (event) => {
+      const { offline } = (event as CustomEvent<{ offline: boolean }>).detail;
+      if (offline) showToast(t('common.offline'), true);
+      else showToast(t('common.online'));
+    });
 
     const updateBadgeUI = () => {
       leftNavInstances.forEach((leftNav) => {
@@ -361,14 +370,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (nativeClient) {
       window.setInterval(() => {
-        if (currentUser && navigator.onLine !== false) void refreshNotificationBadges();
+        if (currentUser && !isOffline()) void refreshNotificationBadges();
       }, 60000);
+      // A probe can recover connectivity without the browser firing `online`,
+      // so both signals refresh the session and timeline. The cooldown keeps a
+      // browser online event and a probe success from refreshing twice.
+      let lastReconnectAt = 0;
       const reconnect = async () => {
+        const now = Date.now();
+        if (now - lastReconnectAt < 1000) return;
+        lastReconnectAt = now;
         clearMeCache();
         await checkAuth();
         timeline?.refresh();
       };
       window.addEventListener('online', () => void reconnect());
+      window.addEventListener('flaxiaConnectivityChange', (event) => {
+        if (!(event as CustomEvent<{ offline: boolean }>).detail.offline) void reconnect();
+      });
     }
 
     // Fetch notifications (see src/lib/notifications-api.ts)

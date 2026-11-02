@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import { API_ORIGIN, NATIVE_SERVICE_API_ORIGINS } from '../src/lib/native-api.ts';
 
 const config = readFileSync(new URL('../capacitor.config.ts', import.meta.url), 'utf8');
 
@@ -10,7 +11,7 @@ test('all Capacitor platforms boot bundled assets with cookie-aware native HTTP'
   assert.match(config, /CapacitorHttp:\s*\{\s*enabled:\s*true/);
 });
 
-test('desktop apps boot local assets with Flaxia-only HTTP permissions', () => {
+test('desktop apps boot local assets with an explicit Flaxia service allowlist', () => {
   for (const os of ['windows', 'macos', 'linux']) {
     const desktop = JSON.parse(
       readFileSync(new URL('../src-tauri/tauri.conf.' + os + '.json', import.meta.url), 'utf8'),
@@ -27,7 +28,10 @@ test('desktop apps boot local assets with Flaxia-only HTTP permissions', () => {
       'identifier' in permission &&
       permission.identifier === 'http:default',
   );
-  assert.deepEqual(http.allow, [{ url: 'https://flaxia.app/api/*' }, { url: 'https://*.flaxia.app/api/*' }]);
+  assert.deepEqual(http.allow, [
+    { url: `${API_ORIGIN}/api/*` },
+    ...NATIVE_SERVICE_API_ORIGINS.map((origin) => ({ url: `${origin}/api/*` })),
+  ]);
   assert.equal(capabilities.remote, undefined);
 });
 

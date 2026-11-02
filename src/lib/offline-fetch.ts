@@ -4,6 +4,7 @@ const MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const READ_TIMEOUT_MS = 8000;
 const RETRY_DELAYS_MS = [1000, 2000, 5000, 10000, 20000, 30000];
+const PROBE_TIMEOUT_MS = 15000;
 
 interface OfflineFetchOptions {
   store: OfflineStore;
@@ -11,7 +12,10 @@ interface OfflineFetchOptions {
   apiOrigin: string;
   isOnline: () => boolean;
   setOffline: (offline: boolean) => void;
-  /** A raw network request used to recover from a stale offline state. */
+  /**
+   * A raw network request used to recover from a stale offline state. It must
+   * bound its own duration; the offline layer also races it against a deadline.
+   */
   probe?: () => Promise<boolean>;
   now?: () => number;
 }
@@ -116,11 +120,18 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
     probing = true;
     const epoch = connectivityEpoch;
     let reconnected = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      reconnected = await options.probe();
+      reconnected = await Promise.race([
+        options.probe(),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), PROBE_TIMEOUT_MS);
+        }),
+      ]);
     } catch {
       reconnected = false;
     } finally {
+      clearTimeout(timer);
       probing = false;
     }
     // A real request may have proven connectivity while the probe was in flight.
@@ -131,20 +142,32 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
       options.setOffline(false);
       return;
     }
+    // A failed probe invalidates any earlier proof of reachability.
+    reachable = false;
     retryIndex++;
     options.setOffline(true);
     scheduleRetry();
   };
   if (!options.isOnline()) scheduleRetry();
   const retryNow = () => {
-    if (!options.probe || probing) return;
+    if (!options.probe) return;
+    // An explicit retry (online event or reload) should let the next request
+    // try the network even while another probe is still in flight. A failed
+    // probe clears this again.
+    reachable = true;
+    if (probing) return;
     clearRetry();
     void runProbe();
   };
   if (typeof window !== 'undefined') {
     // Keep retrying even when the app is idle or the browser reports a false
     // negative. A successful probe is the only thing that trusts the network.
-    window.addEventListener('offline', scheduleRetry);
+    window.addEventListener('offline', () => {
+      // The browser's offline signal is positive evidence, so honour it for
+      // reads; auth requests still bypass it and the probe can recover.
+      reachable = false;
+      scheduleRetry();
+    });
     window.addEventListener('online', retryNow);
     // The timeline reload button requests an immediate probe. runProbe ignores
     // the call while another probe is pending.
