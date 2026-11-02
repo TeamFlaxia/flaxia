@@ -386,7 +386,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       tag?: string,
       adminTab?: 'analytics' | 'alerts' | 'hidden' | 'users' | 'ads' | 'counter',
       searchQuery?: string,
-      searchType?: 'posts' | 'users' | 'arcade',
+      searchType?: 'posts' | 'users' | 'arcade' | 'web',
     ) => {
       console.log('Navigate to:', view, postId, username, tag, 'Current view:', currentView, 'adminTab:', adminTab);
 

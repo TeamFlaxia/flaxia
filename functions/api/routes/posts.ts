@@ -29,6 +29,7 @@ import { embedPost, isImageKey, screenPostImages } from '../../lib/crowd';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { sendPushToAll } from '../../lib/notify';
 import { clampLimit } from '../../lib/pagination';
+import { EXACT_DUPLICATE_FILTER } from '../../lib/post-visibility';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
@@ -49,18 +50,6 @@ import { extractGameDescription } from './post-versions';
 import { cosineSimilarity, loadOrComputeInterestVector } from './recommender';
 
 const posts = new Hono<{ Bindings: Bindings; Variables: Variables }>();
-
-const EXACT_DUPLICATE_FILTER = `AND (
-  trim(p.text) = '' OR NOT EXISTS (
-    SELECT 1 FROM posts dup
-    WHERE dup.user_id = p.user_id
-      AND dup.text = p.text
-      AND dup.status = 'published'
-      AND dup.hidden = 0
-      AND dup.parent_id IS p.parent_id
-      AND (dup.created_at > p.created_at OR (dup.created_at = p.created_at AND dup.rowid > p.rowid))
-  )
-)`;
 
 /**
  * Per-post attachment ceiling for a user: Flaxia+ subscribers get the larger

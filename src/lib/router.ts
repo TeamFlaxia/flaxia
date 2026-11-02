@@ -31,7 +31,7 @@ export interface RouteInfo {
   tag: string | null;
   adminTab?: 'analytics' | 'alerts' | 'hidden' | 'users' | 'ads' | 'counter';
   searchQuery?: string;
-  searchType?: 'posts' | 'users' | 'arcade';
+  searchType?: 'posts' | 'users' | 'arcade' | 'web';
 }
 
 export function parseRoute(path: string, search: string): RouteInfo | null {
@@ -105,7 +105,7 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
       username: null,
       tag: null,
       searchQuery: q,
-      searchType: type as 'posts' | 'users' | 'arcade',
+      searchType: type as 'posts' | 'users' | 'arcade' | 'web',
     };
   }
 

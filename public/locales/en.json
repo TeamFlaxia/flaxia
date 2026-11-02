@@ -793,6 +793,8 @@
   "search.media_game": "GAME",
   "search.no_results": "No results found for \"{query}\"",
   "search.filter_all": "All",
+  "search.filter_web": "Web",
+  "search.web_results": "Web results",
   "register.title": "Flaxia",
   "register.heading": "Create your account",
   "register.email_placeholder": "Email",

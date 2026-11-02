@@ -793,6 +793,8 @@
   "search.media_game": "GAME",
   "search.no_results": "「{query}」に一致する結果はありません",
   "search.filter_all": "すべて",
+  "search.filter_web": "Web",
+  "search.web_results": "Webの結果",
   "register.title": "Flaxia",
   "register.heading": "アカウントを作成",
   "register.email_placeholder": "メールアドレス",
