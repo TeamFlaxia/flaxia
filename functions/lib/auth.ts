@@ -496,7 +496,7 @@ export async function upgradeSrp(
   )
     .bind(srp.salt, srp.verifier, srp.group, srp.kdf, userId)
     .run();
-  if (!result.success || result.meta.changes !== 1) throw new Error('Failed to upgrade SRP');
+  if (!result.success || result.meta.changes === 0) throw new Error('Failed to upgrade SRP');
 }
 
 // Verify an SRP proof of the CURRENT password without creating a session. Used by
