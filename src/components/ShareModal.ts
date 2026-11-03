@@ -1,6 +1,6 @@
 import { t } from '../lib/i18n.js';
 import { attachIcons } from '../lib/icons.js';
-import { closeWithAnimation } from '../lib/modal-overlay.js';
+import { closeWithAnimation, getTabbableElements } from '../lib/modal-overlay.js';
 import { registerModal } from '../lib/modal-state.js';
 import {
   canUseWebShare,
@@ -43,6 +43,7 @@ export function createShareModal({ post, url: customUrl, media, onClose, onQuote
   const unregister = registerModal();
   shareModalId += 1;
   const titleId = 'share-modal-title-' + String(shareModalId);
+  const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   let closing = false;
   let objectUrl: string | null = null;
 
@@ -142,6 +143,7 @@ export function createShareModal({ post, url: customUrl, media, onClose, onQuote
 
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
+  (getTabbableElements(modal)[0] ?? modal).focus({ preventScroll: true });
 
   const closeButton = modal.querySelector('.fx-share__close') as HTMLButtonElement;
   const nativeShareButton = modal.querySelector('.share-button--native') as HTMLButtonElement | null;
@@ -173,15 +175,40 @@ export function createShareModal({ post, url: customUrl, media, onClose, onQuote
         URL.revokeObjectURL(objectUrl);
         objectUrl = null;
       }
-      if (after) after();
-      else onClose();
+      if (after) {
+        after();
+      } else {
+        if (previouslyFocused?.isConnected) previouslyFocused.focus({ preventScroll: true });
+        onClose();
+      }
     });
   };
 
   const onKeyDown = (event: KeyboardEvent) => {
-    if (event.key !== 'Escape') return;
-    event.preventDefault();
-    dismiss();
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      dismiss();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+
+    const tabbables = getTabbableElements(modal);
+    if (tabbables.length === 0) {
+      event.preventDefault();
+      modal.focus({ preventScroll: true });
+      return;
+    }
+    const first = tabbables[0];
+    const last = tabbables[tabbables.length - 1];
+    const active = document.activeElement;
+    const activeIndex = active instanceof HTMLElement ? tabbables.indexOf(active) : -1;
+    if (!event.shiftKey && activeIndex === tabbables.length - 1) {
+      event.preventDefault();
+      first.focus();
+    } else if (event.shiftKey && activeIndex <= 0) {
+      event.preventDefault();
+      last.focus();
+    }
   };
   document.addEventListener('keydown', onKeyDown);
 

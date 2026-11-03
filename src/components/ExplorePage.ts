@@ -780,6 +780,7 @@ export class ExplorePage {
       `;
       item.addEventListener('click', (ev) => {
         ev.preventDefault();
+        window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`);
         window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore', tag } }));
       });
       container.appendChild(item);

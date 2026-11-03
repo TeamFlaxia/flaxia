@@ -4,6 +4,10 @@
  * stays free of routing/auth imports.
  */
 
+import { t } from '../lib/i18n.js';
+import { registerModal } from '../lib/modal-state.js';
+import { isApplePlatform } from '../lib/shortcut-label.js';
+
 export interface CommandAction {
   id: string;
   label: string;
@@ -24,8 +28,8 @@ let actions: CommandAction[] = [];
 let filtered: CommandAction[] = [];
 let selected = 0;
 let previouslyFocused: HTMLElement | null = null;
-
-const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+let unregisterModal: (() => void) | null = null;
+let closeTimer: number | undefined;
 
 export function registerCommandActions(next: ActionProvider): void {
   provider = next;
@@ -39,10 +43,17 @@ export function initCommandPalette(): void {
   initialized = true;
 
   window.addEventListener('keydown', (event) => {
+    if (event.isComposing) return;
+
     if (overlay && overlay.hidden === false) {
       if (event.key === 'Escape') {
         event.preventDefault();
         closeCommandPalette();
+      } else if (event.key === 'Tab') {
+        // Focus stays in the search field; the list is driven with the arrow
+        // keys and aria-activedescendant so the dialog cannot leak focus.
+        event.preventDefault();
+        input?.focus();
       } else if (event.key === 'ArrowDown') {
         event.preventDefault();
         selected = Math.min(filtered.length - 1, selected + 1);
@@ -58,7 +69,7 @@ export function initCommandPalette(): void {
       return;
     }
 
-    const modifier = isMac ? event.metaKey : event.ctrlKey;
+    const modifier = isApplePlatform() ? event.metaKey : event.ctrlKey;
     if (modifier && event.key.toLowerCase() === 'k') {
       event.preventDefault();
       openCommandPalette();
@@ -88,8 +99,9 @@ function render(): void {
   if (filtered.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'cmd-empty';
-    empty.textContent = 'コマンドが見つかりません';
+    empty.textContent = t('command.empty');
     list.appendChild(empty);
+    updateActiveDescendant();
     return;
   }
 
@@ -105,6 +117,8 @@ function render(): void {
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'cmd-item';
+    item.id = `cmd-item-${index}`;
+    item.tabIndex = -1;
     item.setAttribute('role', 'option');
     item.setAttribute('aria-selected', String(index === selected));
     item.dataset.index = String(index);
@@ -130,6 +144,7 @@ function render(): void {
     list?.appendChild(item);
   });
 
+  updateActiveDescendant();
   scrollSelectedIntoView();
 }
 
@@ -141,7 +156,17 @@ function updateSelection(): void {
     item.classList.toggle('is-selected', active);
     item.setAttribute('aria-selected', String(active));
   });
+  updateActiveDescendant();
   scrollSelectedIntoView();
+}
+
+function updateActiveDescendant(): void {
+  if (!input) return;
+  if (filtered.length === 0) {
+    input.removeAttribute('aria-activedescendant');
+    return;
+  }
+  input.setAttribute('aria-activedescendant', `cmd-item-${selected}`);
 }
 
 function scrollSelectedIntoView(): void {
@@ -153,7 +178,7 @@ function scrollSelectedIntoView(): void {
 function runSelected(index = selected): void {
   const action = filtered[index];
   if (!action) return;
-  close();
+  closeCommandPalette();
   action.run();
 }
 
@@ -162,16 +187,27 @@ export function openCommandPalette(): void {
   if (!overlay) build();
   if (!overlay || !dialog || !input) return;
 
+  if (overlay.hidden === false) {
+    input.focus({ preventScroll: true });
+    return;
+  }
+
+  if (closeTimer !== undefined) {
+    window.clearTimeout(closeTimer);
+    closeTimer = undefined;
+  }
+
+  if (!unregisterModal) unregisterModal = registerModal();
   previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   actions = provider();
   selected = 0;
-  if (input) input.value = '';
+  input.value = '';
   render();
   overlay.hidden = false;
   requestAnimationFrame(() => {
     overlay?.classList.add('is-open');
     dialog?.classList.add('is-open');
-    input?.focus();
+    input?.focus({ preventScroll: true });
   });
 }
 
@@ -179,11 +215,15 @@ export function closeCommandPalette(): void {
   if (!overlay || overlay.hidden) return;
   overlay.classList.remove('is-open');
   dialog?.classList.remove('is-open');
-  window.setTimeout(() => {
+  unregisterModal?.();
+  unregisterModal = null;
+  if (closeTimer !== undefined) window.clearTimeout(closeTimer);
+  closeTimer = window.setTimeout(() => {
+    closeTimer = undefined;
     if (overlay) overlay.hidden = true;
     previouslyFocused?.focus?.({ preventScroll: true });
     previouslyFocused = null;
-  }, 120);
+  }, 140);
 }
 
 function build(): void {
@@ -196,7 +236,7 @@ function build(): void {
   dialog.className = 'cmd-dialog';
   dialog.setAttribute('role', 'dialog');
   dialog.setAttribute('aria-modal', 'true');
-  dialog.setAttribute('aria-label', 'コマンドパレット');
+  dialog.setAttribute('aria-label', t('command.title'));
 
   const searchRow = document.createElement('div');
   searchRow.className = 'cmd-search';
@@ -210,8 +250,13 @@ function build(): void {
   input = document.createElement('input');
   input.className = 'cmd-input';
   input.type = 'text';
-  input.placeholder = 'コマンドを検索…';
-  input.setAttribute('aria-label', 'コマンドを検索');
+  input.placeholder = t('command.search_placeholder');
+  input.setAttribute('aria-label', t('command.search_placeholder'));
+  input.setAttribute('role', 'combobox');
+  input.setAttribute('aria-expanded', 'true');
+  input.setAttribute('aria-controls', 'cmd-list');
+  input.setAttribute('aria-autocomplete', 'list');
+  input.setAttribute('aria-haspopup', 'listbox');
   input.autocomplete = 'off';
   input.spellcheck = false;
 
@@ -224,15 +269,16 @@ function build(): void {
   searchRow.appendChild(esc);
 
   list = document.createElement('div');
+  list.id = 'cmd-list';
   list.className = 'cmd-list';
   list.setAttribute('role', 'listbox');
 
   const footer = document.createElement('div');
   footer.className = 'cmd-footer';
   footer.innerHTML =
-    '<span><kbd class="cmd-kbd">↑</kbd><kbd class="cmd-kbd">↓</kbd> 移動</span>' +
-    '<span><kbd class="cmd-kbd">↵</kbd> 実行</span>' +
-    '<span><kbd class="cmd-kbd">esc</kbd> 閉じる</span>';
+    `<span><kbd class="cmd-kbd">↑</kbd><kbd class="cmd-kbd">↓</kbd> ${t('command.move')}</span>` +
+    `<span><kbd class="cmd-kbd">↵</kbd> ${t('command.run')}</span>` +
+    `<span><kbd class="cmd-kbd">esc</kbd> ${t('command.close')}</span>`;
 
   dialog.appendChild(searchRow);
   dialog.appendChild(list);

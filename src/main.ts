@@ -32,6 +32,7 @@ import { lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from '
 import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
 import type { LeftNavHandlers } from './lib/left-nav-handlers.js';
 import { createLeftNavHandlers } from './lib/left-nav-handlers.js';
+import { isModalOpen } from './lib/modal-state.js';
 import { API_ORIGIN, isCapacitorNativePlatform, isNativeApp, isTauriNativePlatform } from './lib/native-api.js';
 import { createNativeFetch } from './lib/native-fetch.js';
 import {
@@ -1492,7 +1493,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Command palette (⌘K / Ctrl+K) — Obsidian-style quick switcher.
     initCommandPalette();
+    const openComposerFromShell = () => {
+      const nav = leftNavInstances.values().next().value as { openComposer?: () => void } | undefined;
+      if (nav?.openComposer) nav.openComposer();
+      else document.querySelector<HTMLTextAreaElement>('.composer-textarea')?.focus();
+    };
     registerCommandActions(() => {
+      const navigationGroup = t('command.group_navigation');
+      const actionGroup = t('command.group_actions');
       const actions: Array<{
         id: string;
         label: string;
@@ -1503,8 +1511,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       }> = [
         {
           id: 'home',
-          label: 'ホーム',
-          group: '移動',
+          label: t('nav.home'),
+          group: navigationGroup,
           keywords: 'home timeline',
           run: () => {
             pushSpaHistory('/home');
@@ -1513,8 +1521,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         },
         {
           id: 'explore',
-          label: '探す',
-          group: '移動',
+          label: t('nav.explore'),
+          group: navigationGroup,
           keywords: 'explore search',
           run: () => {
             pushSpaHistory('/explore');
@@ -1523,8 +1531,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         },
         {
           id: 'arcade',
-          label: 'アーケード',
-          group: '移動',
+          label: t('nav.arcade'),
+          group: navigationGroup,
           keywords: 'arcade games',
           run: () => {
             pushSpaHistory('/arcade');
@@ -1533,8 +1541,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         },
         {
           id: 'notifications',
-          label: '通知',
-          group: '移動',
+          label: t('nav.notifications'),
+          group: navigationGroup,
           run: () => {
             pushSpaHistory('/notifications');
             void navigateTo('notifications');
@@ -1542,8 +1550,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         },
         {
           id: 'bookmarks',
-          label: 'ブックマーク',
-          group: '移動',
+          label: t('nav.bookmarks'),
+          group: navigationGroup,
           run: () => {
             pushSpaHistory('/bookmarks');
             void navigateTo('bookmarks');
@@ -1551,8 +1559,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         },
         {
           id: 'settings',
-          label: '設定',
-          group: '移動',
+          label: t('nav.settings'),
+          group: navigationGroup,
           run: () => {
             pushSpaHistory('/settings');
             void navigateTo('settings');
@@ -1560,29 +1568,25 @@ document.addEventListener('DOMContentLoaded', async () => {
         },
         {
           id: 'theme',
-          label: getResolvedTheme() === 'dark' ? 'ライトテーマに切り替え' : 'ダークテーマに切り替え',
-          group: 'アクション',
+          label: getResolvedTheme() === 'dark' ? t('command.theme_light') : t('command.theme_dark'),
+          group: actionGroup,
           hint: 'T',
           run: () => setTheme(getResolvedTheme() === 'dark' ? 'light' : 'dark'),
         },
         {
           id: 'focus-composer',
-          label: '投稿を書く',
-          group: 'アクション',
+          label: t('command.new_post'),
+          group: actionGroup,
           hint: 'N',
           keywords: 'compose post write',
-          run: () => {
-            const nav = leftNavInstances.values().next().value as { openComposer?: () => void } | undefined;
-            if (nav?.openComposer) nav.openComposer();
-            else document.querySelector<HTMLTextAreaElement>('.composer-textarea')?.focus();
-          },
+          run: openComposerFromShell,
         },
       ];
       if (currentUser) {
         actions.push({
           id: 'profile',
-          label: 'プロフィール',
-          group: '移動',
+          label: t('nav.profile'),
+          group: navigationGroup,
           run: () => {
             if (!currentUser) return;
             pushSpaHistory(`/profile/${currentUser.username}`);
@@ -1591,6 +1595,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
       }
       return actions;
+    });
+
+    // N / T quick actions from the shell cheat sheet. Skip while typing,
+    // while a dialog owns the keyboard, or when a modifier is held.
+    window.addEventListener('keydown', (event) => {
+      if (event.defaultPrevented || event.isComposing) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (document.querySelector('.cmd-overlay:not([hidden])') || isModalOpen()) return;
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        if (target.isContentEditable) return;
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      }
+      const key = event.key.toLowerCase();
+      if (key === 'n') {
+        event.preventDefault();
+        openComposerFromShell();
+      } else if (key === 't') {
+        event.preventDefault();
+        setTheme(getResolvedTheme() === 'dark' ? 'light' : 'dark');
+      }
     });
 
     // Register Service Worker for Web Push (browser) — non-blocking

@@ -8,6 +8,7 @@ import { closeLeftNav } from '../lib/left-nav-drawer.js';
 import { isModalOpen } from '../lib/modal-state';
 import { applyNameColor } from '../lib/name-color.js';
 import { isNativeApp, nativeApiHref } from '../lib/native-api.js';
+import { commandShortcutLabel } from '../lib/shortcut-label.js';
 
 function createAppDownloadPromo(): HTMLAnchorElement | null {
   if (isNativeApp() || !recommendedAppPlatform(detectDevicePlatform())) return null;
@@ -133,7 +134,7 @@ export class LeftNav {
 
     const kbd = document.createElement('kbd');
     kbd.className = 'nav-kbd';
-    kbd.textContent = '⌘K';
+    kbd.textContent = commandShortcutLabel();
 
     trigger.appendChild(icon('search', { width: '15', height: '15' }));
     trigger.appendChild(text);
@@ -245,6 +246,7 @@ export class LeftNav {
         row.href = `/explore?tag=${encodeURIComponent(tag)}`;
         row.addEventListener('click', (e) => {
           e.preventDefault();
+          window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`);
           window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore', tag } }));
         });
 

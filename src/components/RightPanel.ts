@@ -3,6 +3,7 @@ import { getLocale, t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
 import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { commandShortcutLabel } from '../lib/shortcut-label.js';
 
 export interface RightPanelProps {
   onSearch?: (query: string) => void;
@@ -129,7 +130,7 @@ export class RightPanel {
     const { section, list } = this.createCard(label('ショートカット', 'Shortcuts'), 'shortcuts-section');
 
     const rows: Array<[string, string]> = [
-      ['⌘K', label('検索・コマンド', 'Search or command')],
+      [commandShortcutLabel(), label('検索・コマンド', 'Search or command')],
       ['N', label('投稿', 'New post')],
       ['T', label('テーマ切替', 'Toggle theme')],
     ];
@@ -233,6 +234,7 @@ export class RightPanel {
 
       item.addEventListener('click', (e) => {
         e.preventDefault();
+        window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`);
         window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore', tag } }));
       });
 

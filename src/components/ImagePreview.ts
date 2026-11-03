@@ -1,7 +1,7 @@
 import { safeRemoveFromBody } from '../lib/dom-utils.js';
 import { t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
-import { closeWithAnimation } from '../lib/modal-overlay.js';
+import { closeWithAnimation, getTabbableElements } from '../lib/modal-overlay.js';
 import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { setOfflineImage } from '../lib/offline-image.js';
@@ -539,6 +539,7 @@ function createImageOverlay(imageUrl: string, postId: string, gallery?: string[]
     document.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseup', onMouseUp);
     document.removeEventListener('keydown', handleEsc);
+    document.removeEventListener('keydown', handleTab);
     if (navKeyHandler) document.removeEventListener('keydown', navKeyHandler);
     closeWithAnimation(overlay, () => {
       safeRemoveFromBody(overlay);
@@ -563,6 +564,31 @@ function createImageOverlay(imageUrl: string, postId: string, gallery?: string[]
     }
   };
   document.addEventListener('keydown', handleEsc);
+
+  const handleTab = (e: KeyboardEvent) => {
+    if (e.key !== 'Tab') return;
+    const tabbables = getTabbableElements(overlay);
+    if (tabbables.length === 0) {
+      e.preventDefault();
+      overlay.focus({ preventScroll: true });
+      return;
+    }
+    const first = tabbables[0];
+    const last = tabbables[tabbables.length - 1];
+    const active = document.activeElement;
+    const activeIndex = active instanceof HTMLElement ? tabbables.indexOf(active) : -1;
+    if (activeIndex === -1) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+    } else if (!e.shiftKey && activeIndex === tabbables.length - 1) {
+      e.preventDefault();
+      first.focus();
+    } else if (e.shiftKey && activeIndex === 0) {
+      e.preventDefault();
+      last.focus();
+    }
+  };
+  document.addEventListener('keydown', handleTab);
 
   // Gallery navigation (multiple image attachments)
   const hasGallery = !!gallery && gallery.length > 1;

@@ -2,7 +2,7 @@ export type Theme = 'light' | 'dark' | 'system';
 
 const THEME_KEY = 'flaxia_theme';
 const LIGHT_COLOR = '#ffffff';
-const DARK_COLOR = '#09090b';
+const DARK_COLOR = '#181d28';
 
 let mediaListenerAttached = false;
 

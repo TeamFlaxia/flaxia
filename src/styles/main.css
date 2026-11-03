@@ -6252,6 +6252,9 @@ audio.audio-player-element {
 @media (max-width: 768px) {
   .download-content {
     padding: 1rem;
+  }
+}
+
 /* ============================================================
    Accessibility hardening — WCAG 2.1 AA
    - readable accent/danger text (tokens live at :root / dark theme)
@@ -6342,5 +6345,6 @@ audio.audio-player-element {
     align-items: center;
     min-height: 44px;
     padding-top: 0;
-    padding-bottom: 0;  }
+    padding-bottom: 0;
+  }
 }

@@ -110,6 +110,12 @@
   margin-bottom: 8px;
 }
 
+.post-avatar,
+.post-display-name,
+.post-username {
+  cursor: pointer;
+}
+
 .post-avatar {
   position: relative;
   display: inline-flex;
