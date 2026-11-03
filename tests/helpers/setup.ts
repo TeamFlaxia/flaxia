@@ -30,7 +30,7 @@ function unb64(s: string): Uint8Array {
 }
 
 export async function registerUser(data: {
-  email: string;
+  email?: string;
   password: string;
   username: string;
   display_name: string;
@@ -41,7 +41,7 @@ export async function registerUser(data: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      email: data.email,
+      ...(data.email !== undefined ? { email: data.email } : {}),
       username: data.username,
       display_name: data.display_name,
       srp_salt: b64(salt),

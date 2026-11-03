@@ -223,18 +223,23 @@ auth.post('/flaxia/exchange', async (c) => {
       identity.username &&
       /^[A-Za-z0-9_]{1,20}$/.test(identity.username) &&
       identity.display_name &&
-      identity.display_name.length <= 50 &&
-      identity.email &&
-      identity.email.length <= 254 &&
-      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identity.email)
+      identity.display_name.length <= 50
     ) {
+      // Registration is username-first: Auth accounts may have no email, but
+      // the local profile still needs a unique, non-routable placeholder.
+      const identityEmail =
+        typeof identity.email === 'string' &&
+        identity.email.length <= 254 &&
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(identity.email)
+          ? identity.email.toLowerCase()
+          : `${identity.username.toLowerCase()}@users.flaxia.invalid`;
       try {
         // Never link by a matching username or email. A new profile and its
         // link are created together only for this authenticated Auth ID.
         await c.env.DB.batch([
           c.env.DB.prepare(
             "INSERT INTO users (id, email, username, display_name, password_hash, srp_group) VALUES (?, ?, ?, ?, '', NULL)",
-          ).bind(identity.user_id, identity.email.toLowerCase(), identity.username, identity.display_name),
+          ).bind(identity.user_id, identityEmail, identity.username, identity.display_name),
           c.env.DB.prepare('INSERT INTO flaxia_auth_links (user_id) VALUES (?)').bind(identity.user_id),
         ]);
         user = { id: identity.user_id };
@@ -404,23 +409,8 @@ auth.post('/register', async (c) => {
 
     const { email, username, display_name, srp_salt, srp_verifier, srp_group, srp_kdf } = await c.req.json();
 
-    if (!email || !username || !display_name) {
+    if (!username || !display_name) {
       return c.json({ error: 'Missing required fields' }, 400);
-    }
-
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    // Bound the string before it reaches the regex: overlapping `[^\s@]+`
-    // classes backtrack quadratically on long dot-heavy input. Normalize
-    // first: email is a case-insensitive identifier, not a display string.
-    if (typeof email !== 'string') {
-      return c.json({ error: 'Invalid email format' }, 400);
-    }
-    const normalizedEmail = email.trim().toLowerCase();
-    if (normalizedEmail.length === 0 || normalizedEmail.length > 254) {
-      return c.json({ error: 'Invalid email format' }, 400);
-    }
-    if (!emailRegex.test(normalizedEmail)) {
-      return c.json({ error: 'Invalid email format' }, 400);
     }
 
     const usernameRegex = /^[a-zA-Z0-9_]{1,20}$/;
@@ -430,6 +420,28 @@ auth.post('/register', async (c) => {
 
     if (display_name.length > 50) {
       return c.json({ error: 'Display name must be ≤50 characters' }, 400);
+    }
+
+    // Accounts are username-first. Email is optional, so local databases still
+    // satisfy the NOT NULL column with a reserved, non-routable address.
+    let normalizedEmail: string;
+    if (email === undefined) {
+      normalizedEmail = `${username.toLowerCase()}@users.flaxia.invalid`;
+    } else {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      // Bound the string before it reaches the regex: overlapping `[^\s@]+`
+      // classes backtrack quadratically on long dot-heavy input. Normalize
+      // first: email is a case-insensitive identifier, not a display string.
+      if (typeof email !== 'string') {
+        return c.json({ error: 'Invalid email format' }, 400);
+      }
+      normalizedEmail = email.trim().toLowerCase();
+      if (normalizedEmail.length === 0 || normalizedEmail.length > 254) {
+        return c.json({ error: 'Invalid email format' }, 400);
+      }
+      if (!emailRegex.test(normalizedEmail)) {
+        return c.json({ error: 'Invalid email format' }, 400);
+      }
     }
 
     if (!srp_salt || !srp_verifier || !srp_group || !srp_kdf) {
@@ -477,19 +489,21 @@ auth.post('/register', async (c) => {
 // accounts would be locked out forever without it.
 auth.post('/login', async (c) => {
   try {
-    const { email, password } = await c.req.json();
+    const body = (await c.req.json()) as { email?: unknown; username?: unknown; password?: unknown };
+    const identifier = typeof body.username === 'string' ? body.username : body.email;
+    const { password } = body;
 
-    if (!email || !password) {
-      return c.json({ error: 'Email and password required' }, 400);
+    if (!identifier || !password) {
+      return c.json({ error: 'Username and password required' }, 400);
     }
 
     const ip = getClientIp(c.req.raw);
     const limitedIp = await rateLimit(c, 'auth:login:ip', ip, 10, 60);
     if (limitedIp) return limitedIp;
-    const limitedEmail = await rateLimit(c, 'auth:login:email', String(email).toLowerCase(), 5, 60);
+    const limitedEmail = await rateLimit(c, 'auth:login:email', String(identifier).toLowerCase(), 5, 60);
     if (limitedEmail) return limitedEmail;
 
-    const result = await loginUser(c.env, email, password);
+    const result = await loginUser(c.env, String(identifier), String(password));
 
     if (result.frozen) {
       return c.json({ error: 'account_frozen', username: result.user.username }, 403);
@@ -508,21 +522,22 @@ auth.post('/login', async (c) => {
 // POST /api/auth/login/start
 auth.post('/login/start', async (c) => {
   try {
-    const { email } = await c.req.json();
-    if (!email) return c.json({ error: 'Email required' }, 400);
-    // #98: canonicalize before keying the per-email bucket — otherwise
-    // whitespace/case variants of one address each get a fresh bucket.
+    const body = (await c.req.json()) as { email?: unknown; username?: unknown };
+    const identifier = typeof body.username === 'string' ? body.username : body.email;
+    if (!identifier) return c.json({ error: 'Username required' }, 400);
+    // #98: canonicalize before keying the rate-limit bucket — otherwise
+    // whitespace/case variants of one identifier each get a fresh bucket.
     // The handshake itself is bound to the resolved user, not the string.
-    const canonicalEmail = typeof email === 'string' ? email.trim().toLowerCase().slice(0, 254) : '';
-    if (!canonicalEmail) return c.json({ error: 'Email required' }, 400);
+    const canonicalIdentifier = typeof identifier === 'string' ? identifier.trim().toLowerCase().slice(0, 254) : '';
+    if (!canonicalIdentifier) return c.json({ error: 'Username required' }, 400);
 
     const ip = getClientIp(c.req.raw);
     const limitedIp = await rateLimit(c, 'auth:srp-start:ip', ip, 10, 60);
     if (limitedIp) return limitedIp;
-    const limitedEmail = await rateLimit(c, 'auth:srp-start:email', canonicalEmail, 5, 60);
+    const limitedEmail = await rateLimit(c, 'auth:srp-start:email', canonicalIdentifier, 5, 60);
     if (limitedEmail) return limitedEmail;
 
-    const hs = await startSrpLogin(c.env, canonicalEmail);
+    const hs = await startSrpLogin(c.env, String(identifier));
     if (!hs) return c.json({ srp: false });
 
     return c.json({ srp: true, challenge_id: hs.challengeId, salt: hs.salt, B: hs.B, srp_kdf: hs.kdf });
@@ -535,8 +550,16 @@ auth.post('/login/start', async (c) => {
 // POST /api/auth/login/verify
 auth.post('/login/verify', async (c) => {
   try {
-    const { email, challenge_id, A, M1 } = await c.req.json();
-    if (!email || !challenge_id || !A || !M1) {
+    const body = (await c.req.json()) as {
+      email?: unknown;
+      username?: unknown;
+      challenge_id?: unknown;
+      A?: unknown;
+      M1?: unknown;
+    };
+    const identifier = typeof body.username === 'string' ? body.username : body.email;
+    const { challenge_id, A, M1 } = body as { challenge_id?: string; A?: string; M1?: string };
+    if (!identifier || !challenge_id || !A || !M1) {
       return c.json({ error: 'Missing SRP parameters' }, 400);
     }
 
@@ -546,13 +569,13 @@ auth.post('/login/verify', async (c) => {
     const limitedEmail = await rateLimit(
       c,
       'auth:srp-verify:email',
-      String(email).trim().toLowerCase().slice(0, 254),
+      String(identifier).trim().toLowerCase().slice(0, 254),
       5,
       60,
     );
     if (limitedEmail) return limitedEmail;
 
-    const result = await verifySrpLogin(c.env, email, challenge_id, A, M1);
+    const result = await verifySrpLogin(c.env, String(identifier), challenge_id, A, M1);
     if (!result) return c.json({ error: 'Invalid credentials' }, 401);
 
     if (result.frozen) {

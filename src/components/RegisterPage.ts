@@ -41,19 +41,6 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
   const form = document.createElement('form');
   form.className = 'auth-form';
 
-  // Email input
-  const emailGroup = document.createElement('div');
-  emailGroup.className = 'form-group';
-
-  const emailInput = document.createElement('input');
-  emailInput.type = 'email';
-  emailInput.placeholder = t('register.email_placeholder');
-  emailInput.className = 'auth-input';
-  emailInput.required = true;
-
-  const emailError = document.createElement('div');
-  emailError.className = 'field-error';
-
   // Username input
   const usernameGroup = document.createElement('div');
   usernameGroup.className = 'form-group';
@@ -143,33 +130,25 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
   loginLink.className = 'auth-link';
   loginLink.innerHTML = t('register.login_link');
 
+  // General form error
+  const formError = document.createElement('div');
+  formError.className = 'field-error';
+
   // Validation
   const validateForm = () => {
     // Clear all errors
-    emailError.style.display = 'none';
     usernameError.style.display = 'none';
     displayNameError.style.display = 'none';
     passwordError.style.display = 'none';
     confirmPasswordError.style.display = 'none';
+    formError.style.display = 'none';
 
-    const email = emailInput.value.trim();
     const username = usernameInput.value.trim();
     const displayName = displayNameInput.value.trim();
     const password = passwordInput.value.trim();
     const confirmPassword = confirmPasswordInput.value.trim();
 
     let isValid = true;
-
-    // Email validation
-    if (!email) {
-      emailError.textContent = t('register.error_email_required');
-      emailError.style.display = 'block';
-      isValid = false;
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      emailError.textContent = t('register.error_email_invalid');
-      emailError.style.display = 'block';
-      isValid = false;
-    }
 
     // Username validation
     if (!username) {
@@ -223,7 +202,6 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
     submitButton.disabled = !isValid;
   };
 
-  emailInput.addEventListener('input', validateForm);
   usernameInput.addEventListener('input', validateForm);
   displayNameInput.addEventListener('input', validateForm);
   passwordInput.addEventListener('input', validateForm);
@@ -234,7 +212,6 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
 
-    const email = emailInput.value.trim();
     const username = usernameInput.value.trim();
     const displayName = displayNameInput.value.trim();
     const password = passwordInput.value.trim();
@@ -254,8 +231,8 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
         if (!(await createConfirmDialog(`${t('settings.recovery_save_code')}\n\n${recoveryCode}`))) return;
       }
       const result = await (authoritative
-        ? registerWithFlaxiaAuth(email, username, displayName, password, recoveryCode)
-        : registerWithSrp(email, username, displayName, password));
+        ? registerWithFlaxiaAuth(username, displayName, password, recoveryCode)
+        : registerWithSrp(username, displayName, password));
 
       if (result.ok) {
         onSuccess();
@@ -264,21 +241,18 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
           result.error === 'recovery_setup_incomplete'
             ? t('register.recovery_setup_incomplete')
             : result.error || t('register.error_general');
-        if (msg.toLowerCase().includes('email')) {
-          emailError.textContent = msg;
-          emailError.style.display = 'block';
-        } else if (msg.toLowerCase().includes('username')) {
+        if (msg.toLowerCase().includes('username')) {
           usernameError.textContent = msg;
           usernameError.style.display = 'block';
         } else {
-          emailError.textContent = msg;
-          emailError.style.display = 'block';
+          formError.textContent = msg;
+          formError.style.display = 'block';
         }
       }
     } catch (error) {
       console.error('Registration error:', error);
-      emailError.textContent = t('register.error_network');
-      emailError.style.display = 'block';
+      formError.textContent = t('register.error_network');
+      formError.style.display = 'block';
     } finally {
       submitButton.disabled = false;
       submitButton.textContent = t('register.submit');
@@ -286,9 +260,6 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
   });
 
   // Assemble form
-  emailGroup.appendChild(emailInput);
-  emailGroup.appendChild(emailError);
-
   usernameGroup.appendChild(usernameInput);
   usernameGroup.appendChild(usernameHint);
   usernameGroup.appendChild(usernameError);
@@ -302,12 +273,12 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
   confirmPasswordGroup.appendChild(confirmPasswordInput);
   confirmPasswordGroup.appendChild(confirmPasswordError);
 
-  form.appendChild(emailGroup);
   form.appendChild(usernameGroup);
   form.appendChild(displayNameGroup);
   form.appendChild(passwordGroup);
   form.appendChild(confirmPasswordGroup);
   form.appendChild(consentGroup);
+  form.appendChild(formError);
   form.appendChild(submitButton);
 
   // Assemble card
