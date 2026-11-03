@@ -1,4 +1,4 @@
-import { isFirstPartyApiUrl, isNativeApp, isTauriNativePlatform, nativeApiUrl } from './native-api.ts';
+import { isNativeApiUrl, isNativeApp, isTauriNativePlatform, nativeApiUrl } from './native-api.ts';
 
 type TauriFetch = typeof import('@tauri-apps/plugin-http').fetch;
 type CapacitorRequest = typeof import('@capacitor/core').CapacitorHttp.request;
@@ -23,7 +23,7 @@ export function createNativeFetch(
 ): typeof fetch {
   return async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : input.toString(), window.location.href);
-    if (!isNativeApp() || !isFirstPartyApiUrl(url)) return browserFetch(input, init);
+    if (!isNativeApp() || !isNativeApiUrl(url)) return browserFetch(input, init);
     const request = new Request(nativeApiUrl(input), init);
     if (!isTauriNativePlatform()) {
       if (request.method === 'GET' || request.method === 'HEAD') {

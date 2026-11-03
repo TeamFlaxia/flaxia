@@ -44,7 +44,7 @@ def snapshot():
           native: Boolean(window.__TAURI_INTERNALS__),
           timeline: Boolean(document.querySelector('.timeline')),
           posts: document.querySelectorAll('.post-card').length,
-          offline: Boolean(document.querySelector('.offline-banner:not([hidden])')),
+          offline: document.documentElement.dataset.offline === 'true',
           text: document.body.innerText.slice(0, 12000)
         };
     """)

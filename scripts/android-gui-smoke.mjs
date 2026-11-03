@@ -151,7 +151,9 @@ async function onlinePhase() {
 async function offlinePhase() {
   current = await connect();
   await current.page.locator('.post-card').first().waitFor({ timeout: 90000 });
-  await current.page.locator('.offline-banner:not([hidden])').waitFor({ timeout: 90000 });
+  await current.page.waitForFunction(() => document.documentElement.dataset.offline === 'true', null, {
+    timeout: 90000,
+  });
   return current.page.locator('.post-card').count();
 }
 try {

@@ -2,6 +2,7 @@
 
 import { initOfflineGames } from '../src/lib/native-offline-games.ts';
 import { executeDownloadedGame } from '../src/lib/offline-game-player.ts';
+import { setOffline } from '../src/lib/offline-status.ts';
 import { executeWvfsZip } from '../src/lib/wvfs-zip-client.ts';
 import type { Post } from '../src/types/post.ts';
 
@@ -49,6 +50,7 @@ container.style.cssText = 'width:100vw;height:90vh;';
 document.body.appendChild(container);
 const harness = {
   async prepare() {
+    setOffline(false);
     await games.account('smoke-user');
     await games.sync();
     return games.states.get(post.id);
@@ -56,12 +58,14 @@ const harness = {
   async play() {
     await games.account('smoke-user');
     Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
+    setOffline(true);
     const before = requests;
     const player = await executeDownloadedGame(post.id, container);
     return { played: Boolean(player), networkRequests: requests - before, saved: (await games.list()).length };
   },
   async prepareUnsupported() {
     Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true });
+    setOffline(false);
     await games.account('smoke-user');
     await games.download(modulePost);
     // Avoid the unrelated legacy storage migration during the online fallback.
@@ -70,6 +74,7 @@ const harness = {
   },
   async launchUnsupported(online: boolean) {
     Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => online });
+    setOffline(!online);
     const capacitor = Object.getOwnPropertyDescriptor(window, 'Capacitor');
     Object.defineProperty(window, 'Capacitor', { configurable: true, value: { isNativePlatform: () => true } });
     try {

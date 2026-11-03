@@ -387,6 +387,8 @@ export class Timeline {
   }
 
   private reloadPosts(): void {
+    // Let the native offline client probe connectivity again in the background.
+    window.dispatchEvent(new Event('flaxiaRetryConnectivity'));
     this.resetAndLoadPosts();
   }
 
