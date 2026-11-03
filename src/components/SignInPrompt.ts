@@ -21,7 +21,7 @@ export function createSignInPrompt(props: SignInPromptProps = {}) {
   dialog.className = 'signin-prompt-dialog';
 
   dialog.innerHTML = `
-    <div class="signin-prompt-badge fx-display" aria-hidden="true">F</div>
+    <div class="signin-prompt-badge" aria-hidden="true"><img src="/favicon.ico" alt="" width="40" height="40"></div>
     <h3 class="signin-prompt-title fx-display">${t('auth.sign_up_title')}</h3>
     <p class="signin-prompt-subtitle">${subtitle}</p>
     <div class="signin-prompt-actions">
