@@ -50,15 +50,23 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   const form = document.createElement('form');
   form.className = 'auth-form';
 
-  // Email input
-  const emailGroup = document.createElement('div');
-  emailGroup.className = 'form-group';
+  // Username input — Flaxia accounts sign in by username, never by email.
+  const usernameGroup = document.createElement('div');
+  usernameGroup.className = 'form-group';
 
-  const emailInput = document.createElement('input');
-  emailInput.type = useFlaxiaAuth ? 'text' : 'email';
-  emailInput.placeholder = useFlaxiaAuth ? t('login.username_placeholder') : t('login.email_placeholder');
-  emailInput.className = 'auth-input';
-  emailInput.required = true;
+  const usernameInput = document.createElement('input');
+  usernameInput.type = 'text';
+  usernameInput.placeholder = t('login.username_placeholder');
+  usernameInput.className = 'auth-input';
+  usernameInput.autocomplete = 'username';
+  usernameInput.required = true;
+
+  const usernameHint = document.createElement('div');
+  usernameHint.className = 'field-hint';
+  usernameHint.textContent = t('login.username_hint');
+
+  const usernameError = document.createElement('div');
+  usernameError.className = 'field-error';
 
   // Password input
   const passwordGroup = document.createElement('div');
@@ -107,12 +115,19 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   legalNotice.innerHTML = t('login.agree_terms');
 
   // Validation
+  const identifierValue = () => usernameInput.value.trim();
+  const looksLikeEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
   const validateForm = () => {
-    const emailValid = useFlaxiaAuth
-      ? /^[a-zA-Z0-9_]{1,20}$/.test(emailInput.value.trim())
-      : emailInput.value.trim() !== '' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailInput.value);
+    const identifier = identifierValue();
+    if (looksLikeEmail(identifier)) {
+      usernameError.textContent = t('login.error_email_not_username');
+      usernameError.style.display = 'block';
+    } else {
+      usernameError.style.display = 'none';
+    }
+    const usernameValid = /^[a-zA-Z0-9_]{1,20}$/.test(identifier);
     const passwordValid = passwordInput.value.trim() !== '';
-    submitButton.disabled = !modeReady || !(emailValid && passwordValid);
+    submitButton.disabled = !modeReady || !(usernameValid && passwordValid);
   };
 
   let modeInFlight = false;
@@ -139,8 +154,6 @@ export function createLoginPage({ onSuccess }: LoginProps) {
         modeReady = true;
         clearModeRetry();
         errorDiv.style.display = 'none';
-        emailInput.type = useFlaxiaAuth ? 'text' : 'email';
-        emailInput.placeholder = useFlaxiaAuth ? t('login.username_placeholder') : t('login.email_placeholder');
         validateForm();
       })
       .catch(() => {
@@ -170,25 +183,30 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   window.addEventListener('flaxiaConnectivityChange', retryAuthModeNow);
   loadAuthMode();
 
-  emailInput.addEventListener('input', validateForm);
+  usernameInput.addEventListener('input', validateForm);
   passwordInput.addEventListener('input', validateForm);
 
   // Form submission
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
 
-    const email = emailInput.value.trim();
+    const username = identifierValue();
     const password = passwordInput.value.trim();
 
-    if (!email || !password) {
+    if (!username || !password) {
       errorDiv.textContent = t('login.error_fill_all');
       errorDiv.style.display = 'block';
       return;
     }
 
-    // Validate email format
-    if (useFlaxiaAuth ? !/^[a-zA-Z0-9_]{1,20}$/.test(email) : !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      errorDiv.textContent = t(useFlaxiaAuth ? 'login.error_username_invalid' : 'login.error_email_invalid');
+    if (looksLikeEmail(username)) {
+      usernameError.textContent = t('login.error_email_not_username');
+      usernameError.style.display = 'block';
+      return;
+    }
+
+    if (!/^[a-zA-Z0-9_]{1,20}$/.test(username)) {
+      errorDiv.textContent = t('login.error_username_invalid');
       errorDiv.style.display = 'block';
       return;
     }
@@ -198,10 +216,10 @@ export function createLoginPage({ onSuccess }: LoginProps) {
 
     try {
       const result = await (recoveryAvailable && recoveryCheckbox.checked
-        ? loginWithFlaxiaAuthRecovery(email, password)
+        ? loginWithFlaxiaAuthRecovery(username, password)
         : useFlaxiaAuth
-          ? loginWithFlaxiaAuth(email, password)
-          : loginWithSrp(email, password));
+          ? loginWithFlaxiaAuth(username, password)
+          : loginWithSrp(username, password));
 
       if (result === true) {
         if (recoveryAvailable && !recoveryCheckbox.checked) {
@@ -229,9 +247,7 @@ export function createLoginPage({ onSuccess }: LoginProps) {
         errorDiv.textContent = t(
           recoveryAvailable && recoveryCheckbox.checked
             ? 'login.error_recovery_invalid'
-            : useFlaxiaAuth
-              ? 'login.error_username_or_password'
-              : 'login.error_invalid',
+            : 'login.error_username_or_password',
         );
         errorDiv.style.display = 'block';
       }
@@ -246,9 +262,11 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   });
 
   // Assemble form
-  emailGroup.appendChild(emailInput);
+  usernameGroup.appendChild(usernameInput);
+  usernameGroup.appendChild(usernameHint);
+  usernameGroup.appendChild(usernameError);
   passwordGroup.appendChild(passwordInput);
-  form.appendChild(emailGroup);
+  form.appendChild(usernameGroup);
   form.appendChild(passwordGroup);
   form.appendChild(recoveryLabel);
   form.appendChild(errorDiv);

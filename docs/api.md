@@ -11,12 +11,14 @@ never sees a password (see `docs/e2ee.md`).
 
 ### Register
 `POST /api/auth/register`
-- Body: `{ email, username, display_name, srp: { salt, verifier, group, kdf } }`
+- Body: `{ username, display_name, srp: { salt, verifier, group, kdf } }`
+- `email` is optional; accounts are username-first
 - SRP verifier is **required** — a plaintext `password` field is rejected with 400
 - Returns session cookie
 
 ### Login (SRP)
-1. `POST /api/auth/login/start` — `{ email }` → `{ challenge_id, salt, B, srp }`
+1. `POST /api/auth/login/start` — `{ username }` → `{ challenge_id, salt, B, srp }`
+   - `email` is still accepted for pre-username clients
    - `srp: false` means a pre-SRP account; only then may the client fall back
 2. `POST /api/auth/login/verify` — `{ challenge_id, A, M1 }` → session cookie
    - The client derives `M1` with the KDF id returned in step 1 (`srp_kdf`)
@@ -37,7 +39,7 @@ yes/no variant for callers that do not want to attach the proof to another
 request. It never creates a session.
 
 ### Legacy login (deprecated)
-`POST /api/auth/login` — `{ email, password }`
+`POST /api/auth/login` — `{ username, password }`
 - Exists **only** for accounts created before SRP (`srp_salt IS NULL`)
 - Deleted once `GET /api/admin/auth-migration` reports `cutoff_reached`
 

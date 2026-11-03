@@ -106,7 +106,6 @@ export async function enrollRecoveryCode(password: string, recoveryCode: string)
 }
 
 export async function registerWithFlaxiaAuth(
-  email: string,
   username: string,
   displayName: string,
   password: string,
@@ -119,7 +118,6 @@ export async function registerWithFlaxiaAuth(
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      email,
       username,
       display_name: displayName,
       srp_salt: encode(salt),

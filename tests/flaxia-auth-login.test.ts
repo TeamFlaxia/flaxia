@@ -211,6 +211,7 @@ test('registration enrolls the recovery verifier without sending the code or pas
     assert.equal(bodyText.includes(password), false);
     assert.equal(bodyText.includes(recoveryCode), false);
     if (path.endsWith('/api/auth/register')) {
+      assert.equal('email' in body, false);
       passwordSalt = dec(body.srp_salt);
       passwordVerifier = dec(body.srp_verifier);
       return Response.json({ user: { id: 'u' } });
@@ -231,7 +232,7 @@ test('registration enrolls the recovery verifier without sending the code or pas
     }
     throw new Error('unexpected request');
   };
-  assert.deepEqual(await registerWithFlaxiaAuth('user@example.test', 'user', 'User', password, recoveryCode), {
+  assert.deepEqual(await registerWithFlaxiaAuth('user', 'User', password, recoveryCode), {
     ok: true,
   });
 });

@@ -56,7 +56,6 @@ function kdfFrom(value: unknown): SrpKdfId {
 
 // Register a new account via SRP.
 export async function registerWithSrp(
-  email: string,
   username: string,
   displayName: string,
   password: string,
@@ -68,7 +67,6 @@ export async function registerWithSrp(
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
     body: JSON.stringify({
-      email,
       username,
       display_name: displayName,
       srp_salt: b64(salt),
@@ -88,14 +86,14 @@ export async function registerWithSrp(
 // Log in via SRP. Legacy (non-SRP) accounts transparently fall back to the
 // plaintext endpoint, then upgrade to SRP on first login.
 export async function loginWithSrp(
-  email: string,
+  username: string,
   password: string,
 ): Promise<boolean | { frozen: true; username: string }> {
   const start = await fetch('/api/auth/login/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ username }),
   });
   if (!start.ok) return false;
   const s = (await start.json()) as {
@@ -112,7 +110,7 @@ export async function loginWithSrp(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ username, password }),
     });
     if (!legacy.ok) {
       const data = (await legacy.json().catch(() => ({}))) as { error?: string; username?: string };
@@ -132,7 +130,7 @@ export async function loginWithSrp(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({ email, challenge_id: s.challenge_id, A: b64(A), M1: b64(finish.M1) }),
+    body: JSON.stringify({ username, challenge_id: s.challenge_id, A: b64(A), M1: b64(finish.M1) }),
   });
   const data = (await verify.json().catch(() => ({}))) as { M2?: string; error?: string; username?: string };
   if (!verify.ok && !(verify.status === 403 && data.error === 'account_frozen' && data.username)) return false;
