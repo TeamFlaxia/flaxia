@@ -1827,6 +1827,12 @@
   text-align: left;
 }
 
+.explore-trending-tags .trending-tag-name,
+.explore-trending-tags .trending-tag-meta {
+  width: 100%;
+  text-align: left;
+}
+
 .trending-item:first-of-type {
   border-top: 0;
 }
