@@ -11,7 +11,7 @@ export interface SearchResultsProps {
   query: string;
   posts: Post[];
   users: Array<Record<string, unknown>>;
-  type?: 'posts' | 'users' | 'arcade';
+  type?: 'posts' | 'users' | 'arcade' | 'web';
   onClose: () => void;
 }
 

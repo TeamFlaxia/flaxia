@@ -97,6 +97,7 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
       'post_embeddings',
       'post_translations',
       'freshs',
+      'search_documents',
       'custom_stamps',
       'transactions',
       'subscriptions',

@@ -97,6 +97,29 @@ include `document` by migration `0096_attachment_documents.sql`, which rebuilds 
 
 Index: `idx_post_attachments_post (post_id, position)`
 
+### `search_documents` / `search_fts`
+Search index for `/api/search/v2` (migration `0129_search_v2.sql`).
+
+| Column | Type | Notes |
+|---|---|---|
+| rowid | INTEGER | PK; also the FTS5 content rowid |
+| document_type | TEXT | 'post' or 'user' (CHECK) |
+| ref_id | TEXT | posts.id / users.id |
+| author_id | TEXT | Owner of the document |
+| author | TEXT | Username |
+| title | TEXT | Display name (users); empty for posts |
+| body | TEXT | Post text + game description, or user bio |
+| tags | TEXT | JSON hashtag array (posts) |
+| is_game | INTEGER | 1 when the post has a payload/swf key |
+| created_at | TEXT | ISO 8601 |
+| updated_at | TEXT | ISO 8601, refreshed by triggers |
+
+`search_fts` is an FTS5 external-content table (`content='search_documents'`,
+`content_rowid='rowid'`) using the `trigram` tokenizer so CJK substrings work.
+Triggers on `posts` and `users` keep both tables in sync; they only fire when an
+indexed column actually changes so counter bumps (impressions, fresh, reload,
+bookmark) do not rewrite the FTS row.
+
 ### `freshs` (Likes)
 | Column | Type | Notes |
 |---|---|---|

@@ -8,9 +8,19 @@ import { pushSpaHistory } from '../lib/spa-history.js';
 import { Post, PostCardMode } from '../types/post.js';
 import { createPostCard } from './PostCard.js';
 
+interface WebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+  source: string;
+  published_at?: string;
+}
+
+type SearchFilter = 'all' | 'web' | 'users' | 'posts' | 'arcade';
+
 interface SearchPageProps {
   query: string;
-  type?: 'posts' | 'users' | 'arcade';
+  type?: 'posts' | 'users' | 'arcade' | 'web';
   currentUser: {
     username: string;
     id: string;
@@ -23,10 +33,10 @@ interface SearchPageProps {
 }
 
 export function createSearchPage({ query, type = 'posts', currentUser, sandboxOrigin }: SearchPageProps) {
-  const initialFilter: 'all' | 'users' | 'posts' | 'arcade' =
-    type === 'users' ? 'users' : type === 'arcade' ? 'arcade' : 'all';
+  const initialFilter: SearchFilter =
+    type === 'users' ? 'users' : type === 'arcade' ? 'arcade' : type === 'web' ? 'web' : 'all';
 
-  let activeFilter: 'all' | 'users' | 'posts' | 'arcade' = initialFilter;
+  let activeFilter: SearchFilter = initialFilter;
 
   let allUsers: Array<{
     id: string;
@@ -40,6 +50,8 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   }> = [];
   let allPosts: Post[] = [];
   let allArcade: Post[] = [];
+  let allWeb: WebSearchResult[] = [];
+  let loadRequestId = 0;
 
   const container = document.createElement('div');
   container.className = 'search-page';
@@ -157,10 +169,11 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
     filterBar.style.top = `${header.offsetHeight}px`;
   });
 
-  const filters: { key: 'all' | 'users' | 'posts' | 'arcade'; label: string }[] = [
+  const filters: { key: SearchFilter; label: string }[] = [
     { key: 'all', label: t('search.filter_all') },
-    { key: 'users', label: t('explore.filter_users') },
+    { key: 'web', label: t('search.filter_web') },
     { key: 'posts', label: t('explore.filter_posts') },
+    { key: 'users', label: t('explore.filter_users') },
     { key: 'arcade', label: t('explore.filter_arcade') },
   ];
 
@@ -191,9 +204,12 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       transition: all 0.2s ease;
     `;
     btn.onclick = () => {
+      if (activeFilter === f.key) return;
       activeFilter = f.key;
       updateFilterUI(f.key);
-      renderResults();
+      const nextType = f.key === 'all' ? 'posts' : f.key;
+      window.history.replaceState({}, '', `/search?q=${encodeURIComponent(query)}&type=${nextType}`);
+      loadSearchResults(f.key);
     };
     filterBtns.push(btn);
     filterBar.appendChild(btn);
@@ -211,16 +227,6 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   `;
 
   container.appendChild(content);
-
-  // Loading state
-  const loadingEl = document.createElement('div');
-  loadingEl.style.cssText = `
-    text-align: center;
-    padding: 3rem;
-    color: var(--text-muted);
-  `;
-  loadingEl.textContent = t('common.loading');
-  content.appendChild(loadingEl);
 
   // ── Suggest helpers ──
   let suggestAbortController: AbortController | null = null;
@@ -336,10 +342,11 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
         }
       }
       if (q && q !== query) {
-        window.history.pushState({}, '', `/search?q=${encodeURIComponent(q)}&type=${type}`);
+        const nextType = activeFilter === 'all' ? 'posts' : activeFilter;
+        window.history.pushState({}, '', `/search?q=${encodeURIComponent(q)}&type=${nextType}`);
         window.dispatchEvent(
           new CustomEvent('spaNavigate', {
-            detail: { view: 'search', searchQuery: q, searchType: type },
+            detail: { view: 'search', searchQuery: q, searchType: nextType },
           }),
         );
       }
@@ -389,14 +396,38 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   });
 
   // ── Data fetching ──
-  const loadSearchResults = async () => {
+  const showLoading = () => {
+    content.innerHTML = '';
+    const el = document.createElement('div');
+    el.style.cssText = `
+      text-align: center;
+      padding: 3rem;
+      color: var(--text-muted);
+    `;
+    el.textContent = t('common.loading');
+    content.appendChild(el);
+  };
+
+  const showError = () => {
+    content.innerHTML = '';
+    const el = document.createElement('div');
+    el.style.cssText = 'text-align: center; padding: 3rem; color: var(--danger);';
+    el.textContent = t('common.error');
+    content.appendChild(el);
+  };
+
+  const tabForFilter = (filter: SearchFilter): string => (filter === 'arcade' ? 'games' : filter);
+
+  const loadSearchResults = async (filter: SearchFilter = activeFilter) => {
+    const requestId = ++loadRequestId;
+    showLoading();
     try {
-      const [postsRes, arcadeRes] = await Promise.all([
-        fetch(`/api/search?q=${encodeURIComponent(query)}&type=posts&limit=20`),
-        fetch(`/api/search?q=${encodeURIComponent(query)}&type=arcade&limit=20`),
-      ]);
-      const postsData = (await postsRes.json()) as {
-        results: Post[];
+      const response = await fetch(
+        `/api/search/v2?q=${encodeURIComponent(query)}&tab=${tabForFilter(filter)}&limit=20`,
+      );
+      if (!response.ok) throw new Error(`Search failed with ${response.status}`);
+      const data = (await response.json()) as {
+        posts?: Post[];
         users?: Array<{
           id: string;
           username: string;
@@ -407,22 +438,21 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
           bio?: string;
           is_following?: boolean;
         }>;
+        games?: Post[];
+        web?: WebSearchResult[];
       };
-      const arcadeData = (await arcadeRes.json()) as { results: Post[] };
+      if (requestId !== loadRequestId) return;
 
-      allUsers = postsData.users || [];
-      allPosts = postsData.results || [];
-      allArcade = arcadeData.results || [];
+      allUsers = data.users || [];
+      allPosts = data.posts || [];
+      allArcade = data.games || [];
+      allWeb = data.web || [];
 
-      content.removeChild(loadingEl);
       renderResults();
     } catch (error) {
+      if (requestId !== loadRequestId) return;
       console.error('Search error:', error);
-      if (loadingEl.parentNode === content) content.removeChild(loadingEl);
-      const errorEl = document.createElement('div');
-      errorEl.style.cssText = 'text-align: center; padding: 3rem; color: var(--danger);';
-      errorEl.textContent = t('common.error');
-      content.appendChild(errorEl);
+      showError();
     }
   };
 
@@ -489,12 +519,88 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       renderPosts(allPosts);
     }
 
+    // Web section
+    if ((showAll || activeFilter === 'web') && allWeb.length > 0) {
+      anyVisible = true;
+      if (showAll && (allUsers.length > 0 || allArcade.length > 0 || allPosts.length > 0)) {
+        const divider = document.createElement('div');
+        divider.style.cssText = 'height: 1px; background: var(--border); margin: 1rem 0;';
+        content.appendChild(divider);
+      }
+      const sectionTitle = document.createElement('div');
+      sectionTitle.textContent = t('search.web_results');
+      sectionTitle.style.cssText =
+        'font-weight: 600; font-size: 0.9rem; color: var(--text-muted); margin-bottom: 0.5rem; padding: 0 0.25rem;';
+      content.appendChild(sectionTitle);
+      renderWeb(allWeb);
+    }
+
     if (!anyVisible) {
       const empty = document.createElement('div');
       empty.style.cssText =
         "text-align: center; padding: 3rem; color: var(--text-muted); font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;";
       empty.textContent = t('search.no_results', { query });
       content.appendChild(empty);
+    }
+  };
+
+  const renderWeb = (results: WebSearchResult[]) => {
+    for (const result of results) {
+      let href: string;
+      try {
+        const parsed = new URL(result.url);
+        if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') continue;
+        href = parsed.toString();
+      } catch {
+        continue;
+      }
+
+      const item = document.createElement('a');
+      item.href = href;
+      item.target = '_blank';
+      item.rel = 'noopener noreferrer';
+      item.style.cssText = `
+        display: block;
+        padding: 0.75rem;
+        border-radius: 0.5rem;
+        text-decoration: none;
+        transition: background 0.2s ease;
+      `;
+      item.addEventListener('mouseenter', () => {
+        item.style.background = 'var(--bg-secondary)';
+      });
+      item.addEventListener('mouseleave', () => {
+        item.style.background = 'transparent';
+      });
+
+      const title = document.createElement('div');
+      title.textContent = result.title;
+      title.style.cssText = `
+        font-weight: 600;
+        color: var(--link, var(--accent));
+        font-size: 0.95rem;
+        line-height: 1.35;
+      `;
+
+      const meta = document.createElement('div');
+      let hostname = '';
+      try {
+        hostname = new URL(href).hostname;
+      } catch {
+        hostname = '';
+      }
+      meta.textContent = [result.source, hostname].filter(Boolean).join(' · ');
+      meta.style.cssText = 'font-size: 0.75rem; color: var(--text-muted); margin-top: 0.2rem;';
+
+      const snippet = document.createElement('div');
+      snippet.textContent = result.snippet;
+      snippet.style.cssText =
+        'font-size: 0.85rem; color: var(--text-secondary); margin-top: 0.3rem; line-height: 1.45;';
+
+      item.appendChild(title);
+      item.appendChild(meta);
+      if (result.snippet) item.appendChild(snippet);
+      content.appendChild(item);
     }
   };
 

@@ -55,6 +55,7 @@ const groups = {
     'post-colors-api',
     'posts',
     'recommended',
+    'search',
     'stamp-entitlement',
     'tags',
     'title-icon',
