@@ -150,7 +150,7 @@ export function renderSsrLayoutCss(): string {
       .ssr-nav-link:hover { color: var(--text-primary); background: var(--bg-input); }
       .ssr-nav-link.active {
         color: #fff;
-        background: #007bff;
+        background: var(--accent-dark);
         font-weight: 600;
       }
       .ssr-breadcrumb ol {
@@ -165,7 +165,7 @@ export function renderSsrLayoutCss(): string {
       }
       .ssr-breadcrumb li { display: inline-flex; align-items: center; }
       .ssr-breadcrumb li:not(:last-child)::after { content: '›'; margin-left: 6px; color: #bbb; }
-      .ssr-breadcrumb a { color: #007bff; text-decoration: none; }
+      .ssr-breadcrumb a { color: var(--accent); text-decoration: none; }
       .ssr-breadcrumb a:hover { text-decoration: underline; }
       .ssr-breadcrumb li[aria-current="page"] { color: var(--text-primary); font-weight: 600; }
       .ssr-footer-grid {
@@ -188,7 +188,7 @@ export function renderSsrLayoutCss(): string {
         padding: 0;
       }
       .ssr-footer-col li { margin-bottom: 4px; }
-      .ssr-footer-col a { color: #007bff; text-decoration: none; font-size: 13px; }
+      .ssr-footer-col a { color: var(--accent); text-decoration: none; font-size: 13px; }
       .ssr-footer-col a:hover { text-decoration: underline; }
       .ssr-footer-bottom { margin-top: 8px; }
     </style>`;

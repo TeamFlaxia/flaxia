@@ -1,4 +1,5 @@
 import { t } from '../lib/i18n.js';
+import { type IconName, icon } from '../lib/icons.js';
 import { createPageHeader } from '../lib/page-header.js';
 
 export interface Notification {
@@ -122,52 +123,56 @@ export class NotificationsPage {
     });
 
     // Icon
-    const icon = document.createElement('div');
-    icon.className = 'notification-icon';
+    const iconEl = document.createElement('div');
+    iconEl.className = 'notification-icon';
     // Vermilion is reserved for "live" moments: fresh/reload reactions.
     if (notification.type === 'fresh' || notification.type === 'ap_like') {
-      icon.classList.add('notification-icon--live');
+      iconEl.classList.add('notification-icon--live');
     }
-    icon.setAttribute('aria-hidden', 'true');
+    iconEl.setAttribute('aria-hidden', 'true');
+    let iconName: IconName | null = null;
     switch (notification.type) {
       case 'fresh':
       case 'ap_like':
-        icon.textContent = '🌿';
+        iconName = 'fresh';
         break;
       case 'reload':
-        icon.textContent = '🔁';
+        iconName = 'reload';
         break;
       case 'ap_follow':
-        icon.textContent = '👥';
+        iconName = 'users';
         break;
       case 'ap_announce':
-        icon.textContent = '📣';
+        iconName = 'megaphone';
         break;
       case 'reply':
-        icon.textContent = '💬';
+        iconName = 'reply';
         break;
       case 'quote':
-        icon.textContent = '🔁';
+        iconName = 'quote';
         break;
       case 'mention':
-        icon.textContent = '📢';
+        iconName = 'at-sign';
         break;
       case 'reported':
-        icon.textContent = '🚩';
+        iconName = 'flag';
         break;
       case 'warned':
-        icon.textContent = '⚠️';
+        iconName = 'warning';
         break;
       case 'hidden':
-        icon.textContent = '🙈';
+        iconName = 'eye-off';
         break;
       case 'poll_ended':
-        icon.textContent = '📊';
+        iconName = 'poll';
         break;
       default:
-        icon.textContent = '';
+        iconName = null;
     }
-    row.appendChild(icon);
+    if (iconName) {
+      iconEl.appendChild(icon(iconName, { width: '16', height: '16' }));
+    }
+    row.appendChild(iconEl);
 
     // Content
     const content = document.createElement('div');
