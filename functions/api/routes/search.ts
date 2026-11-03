@@ -1,5 +1,4 @@
 import { Hono } from 'hono';
-import { enrichPostsWithAttachments } from '../../lib/attachments';
 import { clampLimit } from '../../lib/pagination';
 import { EXACT_DUPLICATE_CONDITION } from '../../lib/post-visibility';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
@@ -13,7 +12,8 @@ import {
   searchTextTerms,
 } from '../../lib/search-query';
 import { searchWeb, type WebSearchResult } from '../../lib/search-web';
-import { kvCacheGet, kvCacheSet, makeCacheKey } from '../helpers';
+import { enrichPostsForFeed } from '../feed-enrichment';
+import { kvCacheGet, kvCacheSet } from '../helpers';
 import type { Bindings, PostRow, Variables } from '../types';
 
 const search = new Hono<{ Bindings: Bindings; Variables: Variables }>();
@@ -33,7 +33,7 @@ interface QueryParts {
   params: Array<string | number>;
 }
 
-function buildMatch(parsed: ParsedSearchQuery, fts: string | null): QueryParts {
+function buildMatch(parsed: ParsedSearchQuery, fts: string | null, includeAuthor = false): QueryParts {
   if (fts) {
     return { where: ['search_fts MATCH ?'], params: [fts] };
   }
@@ -41,16 +41,17 @@ function buildMatch(parsed: ParsedSearchQuery, fts: string | null): QueryParts {
   const terms = searchTextTerms(parsed);
   if (terms.length === 0) return { where: [], params: [] };
 
+  // The trigram tokenizer handles the author column, but the short-query
+  // fallback has to include it explicitly or short usernames become
+  // unsearchable.
+  const columns = includeAuthor ? ['d.title', 'd.body', 'd.tags', 'd.author'] : ['d.title', 'd.body', 'd.tags'];
+
   const where: string[] = [];
   const params: string[] = [];
   for (const term of terms) {
-    where.push(`(
-      d.title LIKE ? ESCAPE '\\'
-      OR d.body LIKE ? ESCAPE '\\'
-      OR d.tags LIKE ? ESCAPE '\\'
-    )`);
+    where.push(`(${columns.map((column) => `${column} LIKE ? ESCAPE '\\'`).join(' OR ')})`);
     const pattern = buildLikePattern(term);
-    params.push(pattern, pattern, pattern);
+    for (let index = 0; index < columns.length; index += 1) params.push(pattern);
   }
   return { where, params };
 }
@@ -132,7 +133,7 @@ async function searchPosts(
     .all<PostRow>();
 
   const posts = result.results || [];
-  await enrichPostsWithAttachments(posts, db);
+  await enrichPostsForFeed(posts, db, options.currentUserId);
   return posts;
 }
 
@@ -155,7 +156,7 @@ async function searchUsers(
   if (options.limit <= 0) return [];
 
   const fts = buildFtsMatch(parsed);
-  const match = buildMatch(parsed, fts);
+  const match = buildMatch(parsed, fts, true);
   const filters = buildUserFilters(parsed);
   const where: string[] = ['d.document_type = ?', 'u.frozen_at IS NULL', ...match.where, ...filters.where];
   const params: Array<string | number> = ['user', ...match.params, ...filters.params];
@@ -206,6 +207,24 @@ function tabLimits(tab: SearchTab, limit: number): { posts: number; users: numbe
   }
 }
 
+interface SearchPayload {
+  query: string;
+  tab: SearchTab;
+  posts: PostRow[];
+  users: SearchUser[];
+  games: PostRow[];
+  web: WebSearchResult[];
+}
+
+/**
+ * KV keys are capped at 512 bytes, and percent-encoded CJK queries blow past
+ * that. Hash the full cache identity instead of embedding the raw URL.
+ */
+async function hashCacheKey(parts: Array<string | number>): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(parts.join('\u0000')));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 search.get('/search/v2', async (c) => {
   const startedAt = Date.now();
 
@@ -223,23 +242,23 @@ search.get('/search/v2', async (c) => {
     if (!db) return c.json({ error: 'Database not available' }, 500);
 
     const currentUserId = c.get('user')?.id ?? null;
+    const language = c.req.header('Accept-Language')?.split(',')[0]?.trim() || '';
     const allowed = await checkRateLimit(c.env.CACHE, `searchv2:${currentUserId ?? getClientIp(c.req.raw)}`, {
       maxRequests: currentUserId ? 60 : 30,
       windowSeconds: 60,
     });
     if (!allowed) return c.json({ error: 'Too many requests' }, 429);
 
-    const cacheKey = makeCacheKey('searchv2', c, `${tab}:${limit}`, true);
-    const cached = await kvCacheGet<{
-      query: string;
-      tab: SearchTab;
-      posts: PostRow[];
-      users: SearchUser[];
-      games: PostRow[];
-      web: WebSearchResult[];
-      took_ms: number;
-    }>(c, cacheKey);
-    if (cached) return c.json(cached);
+    const cacheKey = `searchv2:${await hashCacheKey([
+      currentUserId ?? 'anon',
+      parsed.raw,
+      tab,
+      limit,
+      language,
+      parsed.sites.join(','),
+    ])}`;
+    const cached = await kvCacheGet<SearchPayload>(c, cacheKey);
+    if (cached) return c.json({ ...cached, took_ms: Date.now() - startedAt });
 
     const limits = tabLimits(tab, limit);
     const [posts, users, games] = await Promise.all([
@@ -251,28 +270,32 @@ search.get('/search/v2', async (c) => {
     let web: WebSearchResult[] = [];
     const webQuery = searchTextTerms(parsed).join(' ');
     if (limits.web > 0 && webQuery && c.env.ENVIRONMENT !== 'test') {
-      try {
-        web = await searchWeb(webQuery, {
-          limit: limits.web,
-          language: c.req.header('Accept-Language')?.split(',')[0]?.trim(),
-          sites: parsed.sites,
-        });
-      } catch (error) {
-        console.error('Web search failed:', error);
+      // Web results do not depend on the viewer, so share one cache entry
+      // across users instead of refetching the providers per user.
+      const webCacheKey = `searchweb:${await hashCacheKey([webQuery, language, parsed.sites.join(','), limits.web])}`;
+      const cachedWeb = await kvCacheGet<WebSearchResult[]>(c, webCacheKey);
+      if (cachedWeb) {
+        web = cachedWeb;
+      } else {
+        try {
+          web = await searchWeb(webQuery, { limit: limits.web, language, sites: parsed.sites });
+          await kvCacheSet(c, webCacheKey, web, 60);
+        } catch (error) {
+          console.error('Web search failed:', error);
+        }
       }
     }
 
-    const payload = {
+    const payload: SearchPayload = {
       query: parsed.raw,
       tab,
       posts,
       users,
       games,
       web,
-      took_ms: Date.now() - startedAt,
     };
     await kvCacheSet(c, cacheKey, payload, 60);
-    return c.json(payload);
+    return c.json({ ...payload, took_ms: Date.now() - startedAt });
   } catch (error) {
     console.error('Search v2 failed:', error);
     return c.json({ error: 'Search failed' }, 500);

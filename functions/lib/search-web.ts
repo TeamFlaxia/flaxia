@@ -17,7 +17,9 @@ interface ProviderResult {
   items: WebSearchResult[];
 }
 
-const PROVIDER_TIMEOUT_MS = 2500;
+// Providers run concurrently, so this is also the worst-case added latency for
+// an uncached search. Keep it short; the merged results are cached for 60s.
+const PROVIDER_TIMEOUT_MS = 1500;
 const SNIPPET_LIMIT = 260;
 
 function stripMarkup(value: string): string {

@@ -207,6 +207,8 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       if (activeFilter === f.key) return;
       activeFilter = f.key;
       updateFilterUI(f.key);
+      const nextType = f.key === 'all' ? 'posts' : f.key;
+      window.history.replaceState({}, '', `/search?q=${encodeURIComponent(query)}&type=${nextType}`);
       loadSearchResults(f.key);
     };
     filterBtns.push(btn);
@@ -225,16 +227,6 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   `;
 
   container.appendChild(content);
-
-  // Loading state
-  const loadingEl = document.createElement('div');
-  loadingEl.style.cssText = `
-    text-align: center;
-    padding: 3rem;
-    color: var(--text-muted);
-  `;
-  loadingEl.textContent = t('common.loading');
-  content.appendChild(loadingEl);
 
   // ── Suggest helpers ──
   let suggestAbortController: AbortController | null = null;

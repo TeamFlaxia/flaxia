@@ -7,7 +7,6 @@ export interface ParsedSearchQuery {
   hashtags: string[];
   from: string[];
   sites: string[];
-  hasFilters: boolean;
 }
 
 const FILTER_PATTERN = /^(from|site):(.+)$/i;
@@ -64,7 +63,6 @@ export function parseSearchQuery(raw: string): ParsedSearchQuery {
     hashtags,
     from,
     sites,
-    hasFilters: hashtags.length > 0 || from.length > 0 || sites.length > 0,
   };
 }
 

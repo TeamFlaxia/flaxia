@@ -1,9 +1,15 @@
 import assert from 'node:assert';
 import { beforeEach, describe, it } from 'node:test';
-import { BASE_URL, resetDb, seedUserAndLogin } from './helpers/setup.ts';
+import { BASE_URL, loginUser, registerUser, resetDb, seedUserAndLogin } from './helpers/setup.ts';
 
 interface SearchResponse {
-  posts: Array<{ id: string; text: string; username: string }>;
+  posts: Array<{
+    id: string;
+    text: string;
+    username: string;
+    reactions?: Array<{ emoji: string; count: number; reacted: boolean }>;
+    quoted_post?: { id: string } | null;
+  }>;
   users: Array<{ id: string; username: string; display_name: string }>;
   games: Array<{ id: string }>;
   web: Array<{ title: string; url: string }>;
@@ -69,6 +75,53 @@ describe('GET /api/search/v2', () => {
 
     const otherAuthor = await search('from:someone-else filtered', 'posts', cookie);
     assert.ok(!otherAuthor.posts.some((post) => post.id === tagged));
+  });
+
+  it('finds short usernames through the LIKE fallback', async () => {
+    await registerUser({
+      email: 'short@test.com',
+      password: 'password123',
+      username: 'ab',
+      display_name: 'Short Name',
+    });
+    await loginUser('short@test.com', 'password123');
+
+    const result = await search('ab', 'users');
+    assert.ok(result.users.some((user) => user.username === 'ab'));
+  });
+
+  it('enriches results with reactions and quoted posts', async () => {
+    const { cookie } = await seedUserAndLogin('search-enrich');
+    const target = crypto.randomUUID();
+    const targetCreate = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ postId: target, text: 'enrich-target-post', hashtags: [] }),
+    });
+    assert.equal(targetCreate.status, 200);
+
+    const quote = crypto.randomUUID();
+    const quoteCreate = await fetch(`${BASE_URL}/api/posts/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ postId: quote, text: 'enrich-quote-post', hashtags: [], quotedPostId: target }),
+    });
+    assert.equal(quoteCreate.status, 200);
+
+    const react = await fetch(`${BASE_URL}/api/posts/${target}/reactions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ emoji: '🔥' }),
+    });
+    assert.equal(react.status, 200);
+
+    const targetResults = await search('enrich-target-post', 'posts', cookie);
+    const targetPost = targetResults.posts.find((post) => post.id === target);
+    assert.ok(targetPost?.reactions?.some((reaction) => reaction.emoji === '🔥' && reaction.reacted));
+
+    const quoteResults = await search('enrich-quote-post', 'posts', cookie);
+    const quotePost = quoteResults.posts.find((post) => post.id === quote);
+    assert.equal(quotePost?.quoted_post?.id, target);
   });
 
   it('rejects an empty query', async () => {

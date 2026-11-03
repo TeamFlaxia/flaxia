@@ -238,7 +238,18 @@ are image URLs; non-image legacy values are rendered as a name-only badge.
 
 ## Search
 
+### Legacy (composers)
 `GET /api/search?q=<query>&type=<posts|users|hashtags>`
+
+### Federated search v2
+`GET /api/search/v2?q=<query>&tab=<all|web|posts|users|games>&limit=<n>`
+
+- `limit` defaults to 20 and is clamped to 50.
+- Supports quoted phrases, `#hashtag`, `@user`, `from:<user>`, and `site:<domain>`.
+- `all` returns posts, users (max 5), games (max 10), and web results (max 10).
+- Web results federate Wikipedia, Hacker News, Stack Overflow, GitHub, and npm.
+  They are disabled when `ENVIRONMENT=test`.
+- Responses are cached in KV for 60s with a hashed, per-viewer key.
 
 ---
 
