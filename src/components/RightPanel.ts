@@ -1,5 +1,6 @@
 import { attachPlusBadge } from '../lib/avatar.js';
-import { t } from '../lib/i18n.js';
+import { getLocale, t } from '../lib/i18n.js';
+import { icon } from '../lib/icons.js';
 import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 
@@ -17,6 +18,12 @@ export interface UserSuggestion {
   name_color?: string | null;
 }
 
+const label = (ja: string, en: string): string => (getLocale().startsWith('ja') ? ja : en);
+
+/**
+ * v5 "quiet craft" right column: search, trending ranks, who-to-follow and an
+ * Obsidian-style shortcuts card. Presentation lives in shell.css.
+ */
 export class RightPanel {
   private element: HTMLElement;
   private trendingTags: Array<{ tag: string; count: number; percentage: number }> = [];
@@ -32,29 +39,35 @@ export class RightPanel {
   private createElement(): HTMLElement {
     const container = document.createElement('aside');
     container.className = 'right-panel';
+    container.setAttribute('aria-label', 'Discover');
 
-    // Search box
-    const searchSection = this.createSearchSection();
-    container.appendChild(searchSection);
-
-    // Trending hashtags
-    const trendingSection = this.createTrendingSection();
-    container.appendChild(trendingSection);
-
-    // Who to follow
-    const followSection = this.createFollowSection();
-    container.appendChild(followSection);
-
-    // Admax ad section
-    //const adSection = this.createAdSection()
-    //container.appendChild(adSection)
+    container.appendChild(this.createSearchSection());
+    container.appendChild(this.createTrendingSection());
+    container.appendChild(this.createFollowSection());
+    container.appendChild(this.createShortcutsSection());
 
     return container;
   }
 
+  private createCard(titleText: string, extraClass = ''): { section: HTMLElement; list: HTMLElement } {
+    const section = document.createElement('section');
+    section.className = `right-card ${extraClass}`.trim();
+
+    const title = document.createElement('h3');
+    title.className = 'right-card-title fx-label';
+    title.textContent = titleText;
+    section.appendChild(title);
+
+    const list = document.createElement('div');
+    list.className = 'right-card-body';
+    section.appendChild(list);
+
+    return { section, list };
+  }
+
   private createSearchSection(): HTMLElement {
-    const section = document.createElement('div');
-    section.className = 'search-section';
+    const section = document.createElement('section');
+    section.className = 'right-card search-section';
 
     const searchBox = document.createElement('div');
     searchBox.className = 'search-box';
@@ -63,84 +76,96 @@ export class RightPanel {
     input.type = 'text';
     input.className = 'search-input';
     input.placeholder = t('right_panel.search_placeholder');
+    input.setAttribute('aria-label', t('right_panel.search_placeholder'));
 
-    const icon = document.createElement('span');
-    icon.className = 'search-icon';
-    icon.textContent = '🔍';
+    const iconWrap = document.createElement('span');
+    iconWrap.className = 'search-icon';
+    iconWrap.appendChild(icon('search', { width: '15', height: '15' }));
 
     searchBox.appendChild(input);
-    searchBox.appendChild(icon);
+    searchBox.appendChild(iconWrap);
     section.appendChild(searchBox);
 
     return section;
   }
 
+  private createStatusRow(text: string): HTMLElement {
+    const row = document.createElement('div');
+    row.className = 'right-card-status';
+    row.textContent = text;
+    return row;
+  }
+
   private createTrendingSection(): HTMLElement {
-    const section = document.createElement('div');
-    section.className = 'trending-section';
+    const { section, list } = this.createCard('', 'trending-section');
+    // The top tag is the headline of this card; a "Trending" caption above it
+    // only labels what the reader already sees.
+    const title = section.querySelector('.right-card-title') as HTMLElement;
+    title.remove();
 
-    const title = document.createElement('h3');
-    title.className = 'section-title';
-    title.textContent = t('right_panel.trending');
+    list.classList.add('trending-list');
 
-    const list = document.createElement('div');
-    list.className = 'trending-list';
-
-    const loading = document.createElement('div');
-    loading.className = 'trending-loading';
-    loading.style.cssText = 'text-align: center; padding: 20px; color: var(--text-muted);';
-    loading.textContent = t('common.loading');
+    const loading = this.createStatusRow(t('common.loading'));
+    loading.classList.add('trending-loading');
     list.appendChild(loading);
-
-    section.appendChild(title);
-    section.appendChild(list);
 
     return section;
   }
 
   private createFollowSection(): HTMLElement {
-    const section = document.createElement('div');
-    section.className = 'follow-section';
-    section.style.display = 'none'; // Hidden by default, shown when we have suggestions
+    const { section, list } = this.createCard(t('right_panel.who_to_follow'), 'follow-section');
+    section.style.display = 'none'; // shown when suggestions load
+    list.classList.add('follow-list');
 
-    const title = document.createElement('h3');
-    title.className = 'section-title';
-    title.textContent = t('right_panel.who_to_follow');
-
-    const list = document.createElement('div');
-    list.className = 'follow-list';
-
-    const loading = document.createElement('div');
-    loading.className = 'follow-loading';
-    loading.style.cssText = 'text-align: center; padding: 20px; color: var(--text-muted);';
-    loading.textContent = t('common.loading');
+    const loading = this.createStatusRow(t('common.loading'));
+    loading.classList.add('follow-loading');
     list.appendChild(loading);
 
-    section.appendChild(title);
-    section.appendChild(list);
+    return section;
+  }
+
+  /** Obsidian-like cheat sheet: ⌘K / N / T rows. */
+  private createShortcutsSection(): HTMLElement {
+    const { section, list } = this.createCard(label('ショートカット', 'Shortcuts'), 'shortcuts-section');
+
+    const rows: Array<[string, string]> = [
+      ['⌘K', label('検索・コマンド', 'Search or command')],
+      ['N', label('投稿', 'New post')],
+      ['T', label('テーマ切替', 'Toggle theme')],
+    ];
+
+    for (const [keys, text] of rows) {
+      const row = document.createElement('div');
+      row.className = 'shortcut-row';
+
+      const desc = document.createElement('span');
+      desc.className = 'shortcut-label';
+      desc.textContent = text;
+
+      const kbd = document.createElement('kbd');
+      kbd.className = 'shortcut-kbd';
+      kbd.textContent = keys;
+
+      row.appendChild(desc);
+      row.appendChild(kbd);
+      list.appendChild(row);
+    }
 
     return section;
   }
 
   private setupEventListeners(): void {
-    // Search functionality
-    const searchInput = this.element.querySelector('.search-input') as HTMLInputElement;
-    if (searchInput) {
-      searchInput.addEventListener('input', (e) => {
-        // Just update input value, no auto-search
-      });
+    const searchInput = this.element.querySelector('.search-input') as HTMLInputElement | null;
+    if (!searchInput) return;
 
-      searchInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-          const query = searchInput.value.trim();
-          if (query) {
-            this.performSearch(query);
-          }
+    searchInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        const query = searchInput.value.trim();
+        if (query) {
+          this.performSearch(query);
         }
-      });
-    }
-
-    // Follow buttons will be set up dynamically when user suggestions are loaded
+      }
+    });
   }
 
   private performSearch(query: string): void {
@@ -174,51 +199,41 @@ export class RightPanel {
     trendingList.innerHTML = '';
 
     if (this.trendingTags.length === 0) {
-      const emptyState = document.createElement('div');
-      emptyState.style.cssText = 'padding: 20px; color: var(--text-muted); text-align: center;';
-      emptyState.textContent = t('right_panel.no_trending');
-      trendingList.appendChild(emptyState);
+      trendingList.appendChild(this.createStatusRow(t('right_panel.no_trending')));
       return;
     }
 
-    this.trendingTags.forEach(({ tag, percentage }) => {
-      const item = document.createElement('div');
+    this.trendingTags.forEach(({ tag, count }, index) => {
+      // A row navigates, so it is a link, not a div with a role bolted on.
+      const item = document.createElement('a');
       item.className = 'trending-item';
-      item.style.cssText = `
-        padding: 12px 0;
-        cursor: pointer;
-        transition: background 0.2s ease;
-      `;
+      item.href = `/explore?tag=${encodeURIComponent(tag)}`;
+      item.dataset.count = String(count);
+
+      const rank = document.createElement('span');
+      rank.className = 'trending-rank';
+      rank.textContent = String(index + 1);
 
       const content = document.createElement('div');
       content.className = 'trending-content';
 
       const hashtag = document.createElement('div');
       hashtag.className = 'trending-hashtag';
-      hashtag.style.cssText =
-        "font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--accent); font-size: 15px; font-weight: 600;";
-      hashtag.textContent = t('right_panel.trending_tag', { tag });
+      // Rank 1 carries the weight; the rest are a readable list under it.
+      hashtag.textContent = index === 0 ? tag : `#${tag}`;
 
-      const count = document.createElement('div');
-      count.className = 'trending-count';
-      count.style.cssText =
-        "font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: var(--text-muted); font-size: 13px;";
-      count.textContent = t('right_panel.trending_percent', { percentage });
+      const countEl = document.createElement('div');
+      countEl.className = 'trending-count';
+      countEl.textContent = t('right_panel.trending_count', { count });
 
       content.appendChild(hashtag);
-      content.appendChild(count);
+      content.appendChild(countEl);
+      item.appendChild(rank);
       item.appendChild(content);
 
-      item.addEventListener('click', () => {
-        window.location.href = `/explore?tag=${encodeURIComponent(tag)}`;
-      });
-
-      item.addEventListener('mouseenter', () => {
-        item.style.background = 'var(--bg-secondary)';
-      });
-
-      item.addEventListener('mouseleave', () => {
-        item.style.background = 'transparent';
+      item.addEventListener('click', (e) => {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore', tag } }));
       });
 
       trendingList.appendChild(item);
@@ -241,18 +256,16 @@ export class RightPanel {
   }
 
   private renderUserSuggestions(): void {
-    const followSection = this.element.querySelector('.follow-section') as HTMLElement;
+    const followSection = this.element.querySelector('.follow-section') as HTMLElement | null;
     const followList = this.element.querySelector('.follow-list');
 
     if (!followSection || !followList) return;
 
-    // Hide section for guests or when no suggestions
     if (this.userSuggestions.length === 0) {
       followSection.style.display = 'none';
       return;
     }
 
-    // Show section and render suggestions
     followSection.style.display = 'block';
     followList.innerHTML = '';
 
@@ -261,48 +274,21 @@ export class RightPanel {
       item.className = 'follow-item';
       item.dataset.userId = user.id;
 
-      // Create avatar element
       const avatar = document.createElement('div');
       avatar.className = 'follow-avatar';
-      avatar.style.cssText = `
-        width: 32px;
-        height: 32px;
-        border-radius: 50%;
-        background: var(--bg-secondary);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: 600;
-        color: var(--text-primary);
-        background-image: ${user.avatar_key ? `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')` : 'none'};
-        background-size: cover;
-        background-position: center;
-      `;
-
+      if (user.avatar_key) {
+        avatar.style.backgroundImage = `url('${nativeApiHref(`/api/images/${user.avatar_key}`)}')`;
+      }
       if (!user.avatar_key) {
         avatar.textContent = user.display_name.charAt(0).toUpperCase();
-        avatar.style.background = `linear-gradient(135deg, #${Math.floor(Math.random() * 16777215).toString(16)} 0%, #${Math.floor(Math.random() * 16777215).toString(16)} 100%)`;
       }
       attachPlusBadge(avatar, user.badge_type);
 
-      // Create info container
       const info = document.createElement('div');
       info.className = 'follow-info';
-      info.style.cssText = `
-        flex: 1;
-        min-width: 0;
-      `;
 
       const name = document.createElement('div');
       name.className = 'follow-name';
-      name.style.cssText = `
-        font-weight: 600;
-        color: var(--text-primary);
-        cursor: pointer;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      `;
       name.textContent = user.display_name;
       applyNameColor(name, user.name_color, user.badge_type);
       name.addEventListener('click', () => {
@@ -311,57 +297,20 @@ export class RightPanel {
 
       const handle = document.createElement('div');
       handle.className = 'follow-handle';
-      handle.style.cssText = `
-        font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        color: var(--text-muted);
-        font-size: 13px;
-      `;
       handle.textContent = `@${user.username}`;
 
       info.appendChild(name);
       info.appendChild(handle);
 
-      // Create follow button
       const button = document.createElement('button');
+      button.type = 'button';
       button.className = 'follow-button';
-      button.style.cssText = `
-        padding: 6px 16px;
-        border-radius: 20px;
-        border: 1px solid var(--border);
-        background: var(--bg-primary);
-        color: var(--text-primary);
-        font-weight: 600;
-        cursor: pointer;
-        transition: all 0.2s ease;
-      `;
       button.textContent = t('right_panel.follow');
 
       button.addEventListener('click', async (e) => {
         e.preventDefault();
         await this.followUser(user.id, item);
       });
-
-      button.addEventListener('mouseenter', () => {
-        button.style.background = 'var(--accent)';
-        button.style.color = 'white';
-        button.style.borderColor = 'var(--accent)';
-      });
-
-      button.addEventListener('mouseleave', () => {
-        button.style.background = 'var(--bg-primary)';
-        button.style.color = 'var(--text-primary)';
-        button.style.borderColor = 'var(--border)';
-      });
-
-      // Assemble the item
-      item.style.cssText = `
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 12px 0;
-        border-bottom: 1px solid var(--border);
-        transition: opacity 0.3s ease, transform 0.3s ease;
-      `;
 
       item.appendChild(avatar);
       item.appendChild(info);
@@ -382,24 +331,21 @@ export class RightPanel {
         throw new Error('Failed to follow user');
       }
 
-      // Remove user from suggestions and fade out the item
       this.userSuggestions = this.userSuggestions.filter((user) => user.id !== userId);
 
-      // Fade out animation
       itemElement.style.opacity = '0';
-      itemElement.style.transform = 'translateX(20px)';
+      itemElement.style.transform = 'translateX(12px)';
 
       setTimeout(() => {
         itemElement.remove();
 
-        // If no more suggestions, hide the entire section
         if (this.userSuggestions.length === 0) {
-          const followSection = this.element.querySelector('.follow-section') as HTMLElement;
+          const followSection = this.element.querySelector('.follow-section') as HTMLElement | null;
           if (followSection) {
             followSection.style.display = 'none';
           }
         }
-      }, 300);
+      }, 200);
     } catch (error) {
       console.error('Failed to follow user:', error);
     }

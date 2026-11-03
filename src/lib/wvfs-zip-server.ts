@@ -644,7 +644,6 @@ export async function serveFileFromWvfs(
 
   const entry = wvfsStorage.get(memoryKey(postId, versionId, source));
   if (!entry) {
-    console.log(`WVFS: No file map found for postId: ${postId}`);
     return null;
   }
 
@@ -652,7 +651,6 @@ export async function serveFileFromWvfs(
 
   try {
     const normalizedPath = normalizePath(filePath);
-    console.log(`WVFS: Serving ${filePath} -> normalized to ${normalizedPath}`);
 
     let fileData = findFileInMap(fileMap, normalizedPath);
     let resolvedPath = normalizedPath;
@@ -672,9 +670,6 @@ export async function serveFileFromWvfs(
     }
 
     if (!fileData) {
-      console.log(`WVFS: File not found: ${normalizedPath} (original: ${filePath})`);
-      const availableFiles = Array.from(fileMap.keys()).slice(0, 10);
-      console.log(`WVFS: Available files: ${availableFiles.join(', ')}`);
       return null;
     }
 
@@ -884,9 +879,6 @@ export async function extractZipToR2(
       });
     }
 
-    console.log(
-      `extractZipToR2: Extracted ${newFiles.length} files for post ${postId} (${existing.size + newFiles.length}/${index.size})`,
-    );
     return newFiles.length;
   } catch (error) {
     console.error(`extractZipToR2: Failed for post ${postId}:`, error);
@@ -936,7 +928,6 @@ export async function copyHtmlToWvfs(
       httpMetadata: { contentType: 'application/json' },
       customMetadata: sourceMetadata(source),
     });
-    console.log(`copyHtmlToWvfs: Copied HTML to ${r2Key} for post ${postId}`);
   } catch (error) {
     console.error(`copyHtmlToWvfs: Failed for post ${postId}:`, error);
   }

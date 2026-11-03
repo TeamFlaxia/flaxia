@@ -42,7 +42,7 @@ async function initTauriNotifications(): Promise<void> {
       }
     };
   } catch {
-    console.log('[notif] Tauri notification plugin not available — OS notifications disabled');
+    // Optional Tauri notification plugin: OS notifications stay disabled.
   }
 }
 
@@ -50,10 +50,7 @@ async function initTauriNotifications(): Promise<void> {
 async function initTauriBadge(): Promise<void> {
   const isTauriEnv = typeof window !== 'undefined' && (window.__TAURI__ || window.__TAURI_INTERNALS__);
 
-  if (!isTauriEnv) {
-    console.log('[badge] Not in Tauri environment — skipping badge init');
-    return;
-  }
+  if (!isTauriEnv) return;
 
   // Dock/taskbar badge count (macOS, Windows, some Linux DEs)
   try {
@@ -61,12 +58,12 @@ async function initTauriBadge(): Promise<void> {
     tauriBadge = async (count: number) => {
       try {
         await getCurrentWindow().setBadgeCount(count);
-      } catch (err) {
-        console.log('[badge] setBadgeCount failed:', err);
+      } catch {
+        // Badge API unsupported by this desktop environment.
       }
     };
   } catch {
-    console.log('[badge] @tauri-apps/api/window not available');
+    // Optional Tauri window API: badge updates stay unavailable.
   }
 
   // Desktop tray icon: invoke Rust set_notification_count
@@ -76,12 +73,12 @@ async function initTauriBadge(): Promise<void> {
       tauriSetNotificationCount = async (count: number) => {
         try {
           await invoke('set_notification_count', { count });
-        } catch (err) {
-          console.log('[badge] invoke error:', err);
+        } catch {
+          // Tray counter unsupported on this platform.
         }
       };
     } catch {
-      console.log('[badge] @tauri-apps/api/core not available');
+      // Optional Tauri core API: tray counter stays unavailable.
     }
   }
 }
@@ -190,7 +187,7 @@ export async function initNativePushRegistration(): Promise<void> {
       }
     });
   } catch {
-    console.log('[push] @capacitor/push-notifications not available');
+    // Optional Capacitor push plugin: FCM registration unavailable.
   }
 }
 
@@ -210,9 +207,7 @@ export function setNativeBadge(count: number): void {
   }
 
   if (tauriSetNotificationCount) {
-    tauriSetNotificationCount(count).catch((err) => {
-      console.log('[badge] set_notification_count failed:', err);
-    });
+    void tauriSetNotificationCount(count);
   }
 }
 

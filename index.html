@@ -19,7 +19,7 @@
   <!-- Noto Sans Font -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <meta name="google-adsense-account" content="ca-pub-8703789531673358">
   
@@ -38,7 +38,7 @@
         if (theme === 'dark' || theme === 'light') {
           document.documentElement.dataset.theme = theme;
           meta = document.querySelector('meta[name="theme-color"]');
-          if (meta) meta.content = theme === 'dark' ? '#0f172a' : '#ffffff';
+          if (meta) meta.content = theme === 'dark' ? '#09090b' : '#ffffff';
         }
       } catch (_e) {}
     })();
@@ -48,41 +48,78 @@
   <style>
     :root {
       color-scheme: light;
+      --font-sans: "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-display: "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", system-ui, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
       --bg-primary: #ffffff;
-      --bg-secondary: #f0fdf4;
-      --bg-input: #f1f5f9;
-      --bg-tertiary: #f0f0f0;
-      --bg-hover: rgba(0, 0, 0, 0.04);
-      --border: #e2e8f0;
-      --text-primary: #0f172a;
-      --text-muted: #64748b;
-      --accent: #22c55e;
-      --accent-dark: #16a34a;
-      --danger: #ef4444;
-      --link: #3b82f6;
+      --bg-secondary: #f4f4f5;
+      --bg-input: #ffffff;
+      --bg-tertiary: #ececee;
+      --bg-hover: rgba(9, 9, 11, 0.045);
+      --border: #e4e4e7;
+      --border-strong: #d4d4d8;
+      --text-primary: #09090b;
+      --text-secondary: #3f3f46;
+      --text-muted: #6b6b74;
+      --primary: #18181b;
+      --primary-fg: #fafafa;
+      --accent: #15803d;
+      --accent-dark: #166534;
+      --accent-text: #15803d;
+      --accent-soft: #f0fdf4;
+      --on-accent: #ffffff;
+      --coral: #ef4444;
+      --coral-text: #dc2626;
+      --danger: #dc2626;
+      --danger-text: #b91c1c;
+      --link: #2563eb;
+      --ring: rgba(24, 24, 27, 0.22);
+      --gradient-accent: linear-gradient(0deg, #15803d 0%, #15803d 100%);
+      --shadow-xs: 0 1px 2px rgba(9, 9, 11, 0.05);
+      --shadow-sm: 0 1px 3px rgba(9, 9, 11, 0.08), 0 1px 2px rgba(9, 9, 11, 0.04);
+      --shadow-md: 0 8px 24px rgba(9, 9, 11, 0.1);
+      --radius-card: 12px;
     }
     :root[data-theme='dark'] {
       color-scheme: dark;
-      --bg-primary: #0f172a;
-      --bg-secondary: #1e293b;
-      --bg-input: #1e293b;
-      --bg-tertiary: #1f2937;
-      --bg-hover: rgba(255, 255, 255, 0.06);
-      --border: #334155;
-      --text-primary: #f1f5f9;
-      --text-muted: #94a3b8;
-      --accent: #22c55e;
-      --accent-dark: #16a34a;
-      --danger: #ef4444;
+      --bg-primary: #09090b;
+      --bg-secondary: #18181b;
+      --bg-input: #09090b;
+      --bg-tertiary: #27272a;
+      --bg-hover: rgba(250, 250, 250, 0.06);
+      --border: #27272a;
+      --border-strong: #3f3f46;
+      --text-primary: #fafafa;
+      --text-secondary: #d4d4d8;
+      --text-muted: #a1a1aa;
+      --primary: #fafafa;
+      --primary-fg: #18181b;
+      --accent: #166534;
+      --accent-dark: #14532d;
+      --accent-text: #4ade80;
+      --accent-soft: rgba(74, 222, 128, 0.12);
+      --on-accent: #ffffff;
+      --coral: #f87171;
+      --coral-text: #fca5a5;
+      --danger: #f87171;
+      --danger-text: #fca5a5;
       --link: #60a5fa;
+      --ring: rgba(250, 250, 250, 0.3);
+      --gradient-accent: linear-gradient(0deg, #166534 0%, #166534 100%);
+      --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
+      --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+      --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.55);
+      --radius-card: 12px;
       --bottom-nav-h: 0px;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: var(--font-sans);
       background: var(--bg-primary);
       color: var(--text-primary);
       line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
     }
     #app {
       display: flex;
@@ -174,7 +211,7 @@
       text-align: left; width: 100%;
     }
     .nav-item:hover { background: var(--bg-secondary); }
-    .nav-item--active { color: var(--accent); font-weight: 600; }
+    .nav-item--active { color: var(--accent-text); font-weight: 600; }
     .nav-post-button {
       width: 100%; padding: .75rem 1rem; background: var(--accent);
       color: #000; border: none; border-radius: 9999px;

@@ -173,7 +173,7 @@ export function createFollowerListModal({
     justify-content: center;
     align-items: center;
     padding: 3rem;
-    color: var(--danger);
+    color: var(--danger-text);
     text-align: center;
   `;
 

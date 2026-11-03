@@ -1,0 +1,846 @@
+/* ============================================================
+   Flaxia UI v2 — foundation layer
+   Loaded AFTER legacy main.css. Sections below:
+     1. Typography & canvas
+     2. Selection, scrollbars, focus
+     3. Motion system (keyframes + utilities)
+     4. Page / list entrance choreography
+     5. Loaders
+   Tokens live in src/styles/main.css (:root / [data-theme="dark"]).
+   Surface-specific work lives in shell.css / timeline.css /
+   composer.css / overlays.css / pages.css.
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   1. Typography & canvas
+   The legacy stack put "monospace" before the Japanese fallback,
+   which made every Japanese glyph render in Noto Sans Mono CJK.
+   Unify the stack and force it over the hard-coded legacy strings.
+   ------------------------------------------------------------ */
+body,
+body *:not(pre):not(pre *):not(code):not(code *):not(kbd):not(kbd *):not(samp):not(samp *) {
+  /* biome-ignore lint/complexity/noImportantStyles: legacy rules hard-code a stale font stack on every component */
+  font-family: var(--font-sans) !important;
+}
+
+code,
+pre,
+kbd,
+samp {
+  /* biome-ignore lint/complexity/noImportantStyles: keep code blocks monospaced despite the font unification above */
+  font-family: var(--font-mono) !important;
+}
+
+body {
+  font-size: 15px;
+  line-height: 1.7;
+  letter-spacing: 0.005em;
+  font-feature-settings: "palt" 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /* shadcn/Obsidian: a quiet neutral canvas. No ambient gradients. */
+  background: var(--bg-primary);
+  transition:
+    background-color var(--duration-slow) var(--ease-standard),
+    color var(--duration-slow) var(--ease-standard);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.005em;
+  line-height: 1.35;
+  font-weight: 600;
+  font-feature-settings: "palt" 1;
+}
+
+/* Small label used by section headings and stat rows (shadcn "label"). */
+.fx-label {
+  font-family: var(--font-display);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* shadcn-style focus ring: neutral, 2px, offset. */
+:is(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+/* Opt-in type utilities. The global unification above uses !important to
+   beat legacy hard-coded stacks, so these two need it as well. */
+.fx-display {
+  /* biome-ignore lint/complexity/noImportantStyles: must beat the global sans unification */
+  font-family: var(--font-display) !important;
+}
+
+.fx-mono {
+  /* biome-ignore lint/complexity/noImportantStyles: must beat the global sans unification */
+  font-family: var(--font-mono) !important;
+}
+
+::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+a {
+  transition: color var(--duration-fast) var(--ease-standard);
+}
+
+img {
+  max-width: 100%;
+}
+
+/* ------------------------------------------------------------
+   2. Selection, scrollbars, focus
+   ------------------------------------------------------------ */
+::selection {
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+:root[data-theme="dark"] ::selection {
+  background: rgba(52, 211, 153, 0.28);
+  color: var(--text-primary);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: var(--radius-pill);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+  background-clip: content-box;
+  border: 3px solid transparent;
+}
+
+/* Touch devices should not show the focus ring after a tap. */
+@media (hover: none) {
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+}
+
+/* A slightly softer ring for elements that already carry a border. */
+.fx-ring {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+  box-shadow: var(--shadow-ring);
+}
+
+/* ------------------------------------------------------------
+   3. Motion system
+   Shared keyframes + a small set of utility classes. Consumers:
+   transform/opacity only (compositor friendly), and every utility
+   is disabled by the global prefers-reduced-motion reset in
+   main.css, so nothing here needs its own media query.
+   ------------------------------------------------------------ */
+@keyframes fx-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fx-fade-up {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes fx-fade-down {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes fx-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes fx-pop {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(0.9);
+  }
+  70% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes fx-pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes fx-slide-in-left {
+  from {
+    opacity: 0;
+    transform: translate3d(-14px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes fx-slide-in-right {
+  from {
+    opacity: 0;
+    transform: translate3d(14px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes fx-slide-up {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 24px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes fx-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes fx-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.72;
+    transform: scale(1.04);
+  }
+}
+
+@keyframes fx-ping {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.65;
+  }
+  70%,
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+@keyframes fx-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(34, 197, 94, 0.12);
+  }
+}
+
+@keyframes fx-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes fx-progress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes fx-bounce-soft {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  40% {
+    transform: translateY(-6px);
+  }
+  60% {
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes fx-heart-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  45% {
+    transform: scale(1.25);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.fx-fade-in {
+  animation: fx-fade-in var(--duration-slow) var(--ease-out) both;
+}
+.fx-fade-up {
+  animation: fx-fade-up var(--duration-slow) var(--ease-out) both;
+}
+.fx-fade-down {
+  animation: fx-fade-down var(--duration-slow) var(--ease-out) both;
+}
+.fx-scale-in {
+  animation: fx-scale-in var(--duration-slow) var(--ease-spring) both;
+}
+.fx-pop {
+  animation: fx-pop 280ms var(--ease-spring) both;
+}
+.fx-pop-in {
+  animation: fx-pop-in 320ms var(--ease-spring) both;
+}
+.fx-slide-in-left {
+  animation: fx-slide-in-left var(--duration-slow) var(--ease-out) both;
+}
+.fx-slide-in-right {
+  animation: fx-slide-in-right var(--duration-slow) var(--ease-out) both;
+}
+
+/* Staggered list entrance: add .fx-stagger to a list container. */
+.fx-stagger > * {
+  animation: fx-fade-up var(--duration-slow) var(--ease-out) both;
+}
+
+.fx-stagger > *:nth-child(1) {
+  animation-delay: 0ms;
+}
+.fx-stagger > *:nth-child(2) {
+  animation-delay: 35ms;
+}
+.fx-stagger > *:nth-child(3) {
+  animation-delay: 70ms;
+}
+.fx-stagger > *:nth-child(4) {
+  animation-delay: 105ms;
+}
+.fx-stagger > *:nth-child(5) {
+  animation-delay: 140ms;
+}
+.fx-stagger > *:nth-child(6) {
+  animation-delay: 175ms;
+}
+.fx-stagger > *:nth-child(7) {
+  animation-delay: 210ms;
+}
+.fx-stagger > *:nth-child(8) {
+  animation-delay: 245ms;
+}
+
+/* Interactive helpers (opt-in via class so we never restyle buttons blindly). */
+.fx-lift {
+  transition:
+    transform var(--duration-base) var(--ease-out),
+    box-shadow var(--duration-base) var(--ease-out);
+  will-change: transform;
+}
+
+@media (hover: hover) {
+  .fx-lift:hover {
+    transform: translate3d(0, -2px, 0);
+    box-shadow: var(--shadow-md);
+  }
+}
+
+.fx-lift:active {
+  transform: translate3d(0, 0, 0) scale(0.985);
+  transition-duration: var(--duration-fast);
+}
+
+.fx-press {
+  transition: transform var(--duration-fast) var(--ease-spring);
+}
+
+.fx-press:active:not(:disabled) {
+  transform: scale(0.955);
+}
+
+/* Animated underline for text links inside content. */
+.fx-underline {
+  background-image: linear-gradient(currentColor, currentColor);
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  background-size: 0% 1.5px;
+  transition: background-size var(--duration-base) var(--ease-out);
+}
+
+.fx-underline:hover {
+  background-size: 100% 1.5px;
+}
+
+/* Retired in v3: the gradient sheen read as generic gloss. Keep the class
+   as a no-op so call sites stay valid while the tactile press/tilt carries
+   the feedback instead. */
+.fx-sheen {
+  position: relative;
+  isolation: isolate;
+}
+
+/* ------------------------------------------------------------
+   4. Page / list entrance choreography
+   These containers are recreated on SPA navigation, so the
+   animation doubles as a soft page transition.
+   ------------------------------------------------------------ */
+@keyframes fx-page-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.timeline,
+.profile-page,
+.settings-page,
+.notifications-page,
+.bookmarks-page,
+.explore-page,
+.search-page,
+.thread-page,
+.arcade-page,
+.docs-page,
+.legal-page,
+.admin-layout {
+  /* backwards (not both): a persistent transform would turn position:fixed
+     descendants (FAB, bottom sheet) into absolutely-positioned ones. */
+  animation: fx-page-in var(--duration-slow) var(--ease-out) backwards;
+}
+
+/* Cards enter one by one, but only the first screenful is delayed. */
+.post-list > .post-card,
+.timeline .post-card {
+  animation: fx-fade-up 380ms var(--ease-out) both;
+}
+
+.post-list > .post-card:nth-child(2),
+.timeline .post-card:nth-child(2) {
+  animation-delay: 30ms;
+}
+.post-list > .post-card:nth-child(3),
+.timeline .post-card:nth-child(3) {
+  animation-delay: 60ms;
+}
+.post-list > .post-card:nth-child(4),
+.timeline .post-card:nth-child(4) {
+  animation-delay: 90ms;
+}
+.post-list > .post-card:nth-child(5),
+.timeline .post-card:nth-child(5) {
+  animation-delay: 120ms;
+}
+.post-list > .post-card:nth-child(6),
+.timeline .post-card:nth-child(6) {
+  animation-delay: 150ms;
+}
+.post-list > .post-card:nth-child(n + 7),
+.timeline .post-card:nth-child(n + 7) {
+  animation-delay: 0ms;
+}
+
+/* Images fade in when they finish decoding instead of popping. */
+.post-media img,
+.media-carousel img,
+.image-preview-img,
+.post-stage img {
+  animation: fx-fade-in var(--duration-slow) var(--ease-out) both;
+}
+
+/* ------------------------------------------------------------
+   5. Loaders
+   ------------------------------------------------------------ */
+.initial-loader,
+.page-loader {
+  background: var(--bg-primary);
+}
+
+.initial-loader-spinner,
+.page-loader-spinner {
+  /* A square registration mark, not a glossy conic spinner. */
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--border-strong);
+  border-top-color: transparent;
+  border-radius: 0;
+  background: none;
+  mask: none;
+  -webkit-mask: none;
+  animation: fx-spin 800ms linear infinite;
+}
+
+.initial-loader-content,
+.page-loader-content {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* Skeleton placeholders: flat ink-grey blocks that breathe.
+   No shimmer sweep (it reads as generic gloss) and no inline gradients. */
+.skeleton-card {
+  padding: 14px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border);
+}
+
+.skeleton-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.skeleton-user {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.skeleton-avatar,
+.skeleton-line,
+.skeleton-media,
+.skeleton-action {
+  background: var(--bg-tertiary);
+  animation: fx-pulse 1.6s ease-in-out infinite;
+}
+
+.skeleton-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+}
+
+.skeleton-line {
+  height: 14px;
+  border-radius: var(--radius-xs);
+}
+
+.skeleton-line--name {
+  width: 120px;
+}
+
+.skeleton-line--time {
+  width: 80px;
+  height: 11px;
+}
+
+.skeleton-line--short {
+  width: 60%;
+}
+
+.skeleton-text {
+  margin-bottom: 1rem;
+}
+
+.skeleton-text .skeleton-line {
+  margin-bottom: 0.5rem;
+}
+
+.skeleton-media {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm);
+  margin-bottom: 1rem;
+}
+
+.skeleton-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.skeleton-action {
+  width: 60px;
+  height: 18px;
+  border-radius: var(--radius-xs);
+}
+
+.skeleton-post {
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+/* ============================================================
+   v4 "Neo-Vector Pop" — signature motion
+   Snap-fast, springy, interaction-driven. These run on top of the
+   shared keyframes above; the global reduced-motion reset disables
+   them, so no extra media queries are needed here.
+   ============================================================ */
+
+@keyframes fx-float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -8px, 0);
+  }
+}
+
+@keyframes fx-marquee {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+@keyframes fx-live {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.5);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 8px rgba(255, 59, 48, 0);
+  }
+}
+
+@keyframes fx-rise {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0) scale(0.8);
+  }
+  25% {
+    opacity: 1;
+    transform: translate3d(0, -6px, 0) scale(1.1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, -34px, 0) scale(1);
+  }
+}
+
+@keyframes fx-burst {
+  0% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(0.4);
+  }
+  70% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--bx, 0), var(--by, -18px), 0) scale(1.1);
+  }
+}
+
+@keyframes fx-wiggle {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(-4deg);
+  }
+  75% {
+    transform: rotate(4deg);
+  }
+}
+
+@keyframes fx-page-pop {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.fx-float {
+  animation: fx-float 4.5s ease-in-out infinite;
+}
+
+.fx-live {
+  animation: fx-live 1.8s ease-out infinite;
+}
+
+.fx-rise {
+  animation: fx-rise 900ms var(--ease-out) both;
+}
+
+.fx-wiggle {
+  animation: fx-wiggle 420ms var(--ease-spring);
+}
+
+.fx-marquee {
+  display: flex;
+  width: max-content;
+  animation: fx-marquee 28s linear infinite;
+}
+
+.fx-marquee:hover {
+  animation-play-state: paused;
+}
+
+/* Page entrance: a quiet fade (shadcn timing, no bounce). */
+.timeline,
+.profile-page,
+.settings-page,
+.notifications-page,
+.bookmarks-page,
+.explore-page,
+.search-page,
+.thread-page,
+.arcade-page,
+.docs-page,
+.legal-page,
+.admin-layout {
+  animation: fx-fade-in 160ms var(--ease-out) backwards;
+}
+
+/* Posts fade in with a short stagger; no spring, no movement. */
+.post-list > .post-card,
+.timeline .post-card {
+  animation: fx-fade-in 180ms var(--ease-out) backwards;
+}
+
+.post-list > .post-card:nth-child(2),
+.timeline .post-card:nth-child(2) {
+  animation-delay: 15ms;
+}
+.post-list > .post-card:nth-child(3),
+.timeline .post-card:nth-child(3) {
+  animation-delay: 30ms;
+}
+.post-list > .post-card:nth-child(4),
+.timeline .post-card:nth-child(4) {
+  animation-delay: 45ms;
+}
+.post-list > .post-card:nth-child(5),
+.timeline .post-card:nth-child(5) {
+  animation-delay: 60ms;
+}
+.post-list > .post-card:nth-child(6),
+.timeline .post-card:nth-child(6) {
+  animation-delay: 75ms;
+}
+.post-list > .post-card:nth-child(n + 7),
+.timeline .post-card:nth-child(n + 7) {
+  animation-delay: 0ms;
+}
+
+/* Tactile lift: content rises, shadow deepens. */
+@media (hover: hover) {
+  .fx-lift:hover {
+    transform: translate3d(0, -3px, 0) scale(1.006);
+    box-shadow: var(--shadow-md);
+  }
+}
+
+.fx-lift {
+  transition:
+    transform var(--duration-base) var(--ease-spring),
+    box-shadow var(--duration-base) var(--ease-out);
+}
+
+/* Loader: a quiet neutral ring. */
+.initial-loader-spinner,
+.page-loader-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--border);
+  border-top-color: var(--text-primary);
+  border-radius: 50%;
+  background: none;
+  mask: none;
+  -webkit-mask: none;
+  animation: fx-spin 800ms linear infinite;
+}
+
+/* KaTeX parse failures are content, not a system error: render them as a
+   quiet inline chip instead of leaking raw red source into the feed. */
+:root .katex-error {
+  /* biome-ignore lint/complexity/noImportantStyles: KaTeX writes color inline on the error span */
+  color: var(--text-muted) !important;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-xs);
+  padding: 0 4px;
+  font-size: 0.92em;
+}

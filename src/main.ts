@@ -1,6 +1,17 @@
 import './styles/main.css';
+import './styles/redesign/foundation.css';
+import './styles/redesign/shell.css';
+import './styles/redesign/timeline.css';
+import './styles/redesign/composer.css';
+import './styles/redesign/overlays.css';
+import './styles/redesign/pages.css';
+import './styles/redesign/command.css';
+import './styles/redesign/feed.css';
+import './styles/redesign/rail.css';
+import './styles/redesign/motion.css';
 import type { ArcadePageHandle } from './components/ArcadePage.js';
 import type { BookmarksPage } from './components/BookmarksPage.js';
+import { initCommandPalette, registerCommandActions } from './components/CommandPalette.js';
 import { showCrowdConsentModal } from './components/CrowdConsentModal.js';
 import type { ExplorePage } from './components/ExplorePage.js';
 import type { LeftNav } from './components/LeftNav.js';
@@ -40,7 +51,7 @@ import { initPerformanceMonitoring } from './lib/performance.js';
 import { createPushSocket } from './lib/push-socket.js';
 import { parseCurrentRoute, type RouteInfo, type RouteView } from './lib/router.js';
 import { goBackInSpaOr, pushSpaHistory } from './lib/spa-history.js';
-import { initTheme } from './lib/theme.js';
+import { getResolvedTheme, initTheme, setTheme } from './lib/theme.js';
 import { showToast } from './lib/toast.js';
 import { viewToBottomNavId } from './lib/view-nav.js';
 import { initializeWebPush } from './lib/web-push.js';
@@ -188,7 +199,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       },
       {
         onOpen: () => {
-          console.log('[push] connected');
           refreshNotificationBadges();
         },
         onMessage: (raw) => {
@@ -231,7 +241,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
         });
       } catch {
-        console.log('[push] @capacitor/app not available');
+        // Optional Capacitor lifecycle API: no app-state hook on this platform.
       }
     }
 
@@ -255,7 +265,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let previousNotificationIds: Set<string> | null = null;
     const refreshNotificationBadges = async () => {
-      console.log('[poll] refreshNotificationBadges called');
       const data = await fetchNotifications();
       // Native HTTP owns Tauri's session jar; browser sockets cannot share it.
       if (isTauriNativePlatform()) {
@@ -269,7 +278,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         previousNotificationIds = new Set(data.notifications.map((notification) => notification.id));
       }
       unreadNotificationCount = data.unread_count || 0;
-      console.log('[poll] unread count:', unreadNotificationCount);
       updateBadgeUI();
     };
 
@@ -321,8 +329,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           return true;
         }
-      } catch (error) {
-        console.log('Not authenticated:', error);
+      } catch {
+        // Guest or expired session: fall through to the signed-out state.
       }
 
       // Clear user state when not authenticated
@@ -359,7 +367,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           return false;
         }
 
-        console.log('User session expired - redirecting to login');
         window.history.replaceState({}, '', '/login');
         navigateTo('login');
         return false;
@@ -407,6 +414,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       return false;
     };
 
+    // Main landmark: the content column carries role="main" so assistive tech can
+    // skip the shell's nav and aside columns (the page itself stays unchanged).
+    const markMainContent = (content: HTMLElement): HTMLElement => {
+      content.setAttribute('role', 'main');
+      return content;
+    };
+
     // URL routing (see src/lib/router.ts)
 
     // Page loading overlay (see src/lib/page-loader.ts)
@@ -421,8 +435,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       searchQuery?: string,
       searchType?: 'posts' | 'users' | 'arcade',
     ) => {
-      console.log('Navigate to:', view, postId, username, tag, 'Current view:', currentView, 'adminTab:', adminTab);
-
       // Close mobile nav if open
       closeLeftNav();
 
@@ -437,12 +449,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (view === 'login' || view === 'register') {
         // Cleanup current view
         if (timeline) {
-          console.log('Cleaning up timeline');
           timeline.destroy();
           timeline = null;
         }
         if (threadPage) {
-          console.log('Cleaning up thread page');
           threadPage.destroy();
           threadPage = null;
         }
@@ -483,7 +493,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Cache current view when navigating to thread or arcade (for back navigation with preserved content)
         if ((view === 'thread' || view === 'arcade') && currentView !== view) {
-          console.log(`Caching current view for back navigation to ${view}:`, currentView);
           if (currentView === 'timeline' && timeline) {
             cachedContentComponent = { view: 'timeline', component: timeline, scrollY: window.scrollY };
             timeline = null;
@@ -514,12 +523,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Cleanup current view (cached components already nulled above)
         if (timeline) {
-          console.log('Cleaning up timeline');
           timeline.destroy();
           timeline = null;
         }
         if (threadPage) {
-          console.log('Cleaning up thread page');
           threadPage.destroy();
           threadPage = null;
         }
@@ -842,7 +849,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
           if (cachedContentComponent?.view === 'explore') {
-            console.log('Restoring cached explore page');
             explorePage = cachedContentComponent.component as ExplorePage;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
@@ -862,20 +868,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-              // Handle search here
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-              // Handle follow here
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(explorePage.getElement());
+          mainContainer.appendChild(markMainContent(explorePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -909,7 +906,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
           if (cachedContentComponent?.view === 'search') {
-            console.log('Restoring cached search page');
             searchPage = cachedContentComponent.component as PageComponent;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
@@ -927,17 +923,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
           }
 
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(searchPage.getElement());
+          mainContainer.appendChild(markMainContent(searchPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -985,20 +974,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-              // Handle search here
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-              // Handle follow here
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(arcadePage.getElement());
+          mainContainer.appendChild(markMainContent(arcadePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -1034,7 +1014,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
           if (cachedContentComponent?.view === 'profile') {
-            console.log('Restoring cached profile');
             profilePage = cachedContentComponent.component as PageComponent;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
@@ -1054,20 +1033,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-              // Handle search here
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-              // Handle follow here
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(profilePage.getElement());
+          mainContainer.appendChild(markMainContent(profilePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -1126,7 +1096,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
 
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(bookmarksPage.getElement());
+          mainContainer.appendChild(markMainContent(bookmarksPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
           app.appendChild(mainContainer);
           hidePageLoader();
@@ -1198,18 +1168,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(notificationsPage.getElement());
+          mainContainer.appendChild(markMainContent(notificationsPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -1268,15 +1231,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                   },
                 });
 
-                const newSettingsPage = settingsPage;
+                const newSettingsElement = markMainContent(settingsPage.getElement());
                 // Wait for the next tick to ensure the element is in the DOM
                 setTimeout(() => {
                   if (oldElement.parentNode) {
-                    oldElement.parentNode.replaceChild(newSettingsPage.getElement(), oldElement);
+                    oldElement.parentNode.replaceChild(newSettingsElement, oldElement);
                   } else {
                     const leftNavElement = mainContainer.children[0];
                     if (leftNavElement && mainContainer.children[1]) {
-                      mainContainer.insertBefore(newSettingsPage.getElement(), mainContainer.children[1]);
+                      mainContainer.insertBefore(newSettingsElement, mainContainer.children[1]);
                     }
                   }
                 }, 0);
@@ -1289,18 +1252,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           loadUserData();
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(settingsPage.getElement());
+          mainContainer.appendChild(markMainContent(settingsPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -1318,7 +1274,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (view === 'thread' && postId) {
           // Thread page view
-          console.log('Creating thread page for postId:', postId);
           currentView = 'thread';
           currentPostId = postId;
 
@@ -1330,7 +1285,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             currentUser,
             unreadCount: unreadNotificationCount,
             onBack: () => {
-              console.log('Back button clicked, returning to previous view');
               goBackInSpaOr(() => {
                 window.history.replaceState({}, '', '/home');
                 navigateTo('timeline');
@@ -1338,9 +1292,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             },
           });
 
-          console.log('Thread page created, adding to container');
+          // ThreadPage owns the content column inside its own three-column shell.
+          const threadMainContent = threadPage.getElement().querySelector('.thread-main-content');
+          if (threadMainContent instanceof HTMLElement) markMainContent(threadMainContent);
           mainContainer.appendChild(threadPage.getElement());
-          console.log('Thread page added to DOM');
 
           // ThreadPage has its own LeftNav, find it and setup mobile functionality
           const threadLeftNav = threadPage.getElement().querySelector('.left-nav') as HTMLElement;
@@ -1351,14 +1306,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
 
           // Create Right Panel
-          const threadRightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-            },
-          });
+          const threadRightPanel = await lazyCreateRightPanel();
           mainContainer.appendChild(threadRightPanel.getElement());
         } else {
           // Timeline view
@@ -1378,7 +1326,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
           if (cachedContentComponent?.view === 'timeline') {
-            console.log('Restoring cached timeline');
             timeline = cachedContentComponent.component as Timeline;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
@@ -1423,20 +1370,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           setupMobileLeftNav(leftNav.getElement());
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-              // Handle search here
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-              // Handle follow here
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(timeline.getElement());
+          mainContainer.appendChild(markMainContent(timeline.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
         }
 
@@ -1530,10 +1468,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // Initial navigation
-    console.log('DOM Content Loaded, starting initial routing...');
-
     const initialRoute = parseCurrentRoute();
-    console.log('Initial route:', initialRoute);
     if (initialRoute) {
       await safeNavigate(
         initialRoute.view,
@@ -1554,6 +1489,109 @@ document.addEventListener('DOMContentLoaded', async () => {
         setTimeout(fn, 3000);
       }
     };
+
+    // Command palette (⌘K / Ctrl+K) — Obsidian-style quick switcher.
+    initCommandPalette();
+    registerCommandActions(() => {
+      const actions: Array<{
+        id: string;
+        label: string;
+        group: string;
+        hint?: string;
+        keywords?: string;
+        run: () => void;
+      }> = [
+        {
+          id: 'home',
+          label: 'ホーム',
+          group: '移動',
+          keywords: 'home timeline',
+          run: () => {
+            pushSpaHistory('/home');
+            void navigateTo('timeline');
+          },
+        },
+        {
+          id: 'explore',
+          label: '探す',
+          group: '移動',
+          keywords: 'explore search',
+          run: () => {
+            pushSpaHistory('/explore');
+            void navigateTo('explore');
+          },
+        },
+        {
+          id: 'arcade',
+          label: 'アーケード',
+          group: '移動',
+          keywords: 'arcade games',
+          run: () => {
+            pushSpaHistory('/arcade');
+            void navigateTo('arcade');
+          },
+        },
+        {
+          id: 'notifications',
+          label: '通知',
+          group: '移動',
+          run: () => {
+            pushSpaHistory('/notifications');
+            void navigateTo('notifications');
+          },
+        },
+        {
+          id: 'bookmarks',
+          label: 'ブックマーク',
+          group: '移動',
+          run: () => {
+            pushSpaHistory('/bookmarks');
+            void navigateTo('bookmarks');
+          },
+        },
+        {
+          id: 'settings',
+          label: '設定',
+          group: '移動',
+          run: () => {
+            pushSpaHistory('/settings');
+            void navigateTo('settings');
+          },
+        },
+        {
+          id: 'theme',
+          label: getResolvedTheme() === 'dark' ? 'ライトテーマに切り替え' : 'ダークテーマに切り替え',
+          group: 'アクション',
+          hint: 'T',
+          run: () => setTheme(getResolvedTheme() === 'dark' ? 'light' : 'dark'),
+        },
+        {
+          id: 'focus-composer',
+          label: '投稿を書く',
+          group: 'アクション',
+          hint: 'N',
+          keywords: 'compose post write',
+          run: () => {
+            const nav = leftNavInstances.values().next().value as { openComposer?: () => void } | undefined;
+            if (nav?.openComposer) nav.openComposer();
+            else document.querySelector<HTMLTextAreaElement>('.composer-textarea')?.focus();
+          },
+        },
+      ];
+      if (currentUser) {
+        actions.push({
+          id: 'profile',
+          label: 'プロフィール',
+          group: '移動',
+          run: () => {
+            if (!currentUser) return;
+            pushSpaHistory(`/profile/${currentUser.username}`);
+            void navigateTo('profile', undefined, currentUser.username);
+          },
+        });
+      }
+      return actions;
+    });
 
     // Register Service Worker for Web Push (browser) — non-blocking
     initializeWebPush(isCapacitorNative).catch(() => {});

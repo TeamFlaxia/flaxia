@@ -75,6 +75,5 @@ export async function executeZipAuto(
   mode?: ZipExecutionMode,
 ): Promise<UniversalZipExecutorHandle> {
   const resolved = mode ?? getOptimalZipMode();
-  console.log(`Using ZIP execution mode: ${resolved}`);
   return executeUniversalZip(postId, containerEl, resolved, url, versionId);
 }

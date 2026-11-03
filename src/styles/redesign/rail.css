@@ -1,0 +1,145 @@
+/* ============================================================
+   Flaxia v6 rail (@scope flaxia-rail)
+   The left rail and the right rail are tool and context; the feed is the
+   page. Sections sit close together, headings are real headings, and the
+   ranking card leads with its top entry instead of a caption.
+   ============================================================ */
+
+@scope (.left-nav) {
+  .nav-section + .nav-section {
+    margin-top: 2px;
+  }
+
+  .nav-section-label {
+    margin: 0;
+    padding: 14px 10px 6px;
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .nav-items {
+    gap: 1px;
+  }
+
+  .nav-tag {
+    height: 30px;
+    padding: 0 10px;
+    border-radius: 6px;
+    font-size: 13px;
+  }
+
+  .nav-footer {
+    margin-top: auto;
+  }
+}
+
+@scope (.right-panel) {
+  .right-card {
+    padding: 8px 12px;
+  }
+
+  .right-card + .right-card {
+    margin-top: 8px;
+  }
+
+  .search-section {
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .search-box {
+    position: relative;
+    height: 36px;
+    border: none;
+    background: transparent;
+  }
+
+  .trending-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .trending-item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 5px 2px;
+    text-decoration: none;
+    color: inherit;
+    border-radius: 6px;
+  }
+
+  /* The top tag is the headline of the card. */
+  .trending-item:first-child {
+    padding-bottom: 10px;
+    margin-bottom: 2px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .trending-item:first-child .trending-hashtag {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  .trending-item:first-child .trending-rank {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent-text);
+  }
+
+  .trending-rank {
+    flex: 0 0 14px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+
+  .trending-content {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 6px;
+    row-gap: 1px;
+  }
+
+  .trending-hashtag {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* The count is a footnote to the tag, not a column of its own. */
+  .trending-count {
+    flex: 0 0 auto;
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .trending-hashtag {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .trending-count {
+    color: var(--text-muted);
+  }
+}
+
+@media (hover: hover) {
+  @scope (.right-panel) {
+    .trending-item:hover {
+      background: var(--bg-hover);
+    }
+  }
+}

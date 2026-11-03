@@ -1,5 +1,6 @@
 /.well-known/webfinger /api/.well-known/webfinger 308
-/users/:splat /api/users/:splat 308
+# /users/:username is rendered by the SPA for browsers and by
+# functions/users/[username].ts for crawlers. Do not redirect it to the JSON API.
 /users/:username/inbox /api/users/:username/inbox 308
 /actors/:username /api/actors/:username 301
 /actors/:username/outbox /api/actors/:username/outbox 301

@@ -1,0 +1,1139 @@
+/* ============================================================
+   Flaxia UI v5 — overlays ("quiet craft": shadcn/ui + Obsidian)
+   Loaded AFTER legacy main.css and foundation.css, so same-specificity
+   rules here win by source order. Tokens: src/styles/main.css.
+   Sections:
+     1. Scrim + dialog
+     2. Toast
+     3. Menus / popovers
+     4. Confirm dialog (alertdialog)
+     5. Share modal
+     6. Report modal
+     7. Image lightbox
+     8. Shared helpers (.fx-btn, .fx-icon-btn, .fx-visually-hidden)
+
+   shadcn rules: 1px hairlines, radius 8 controls / 12 dialogs, shadow-xs
+   /sm/md/lg depth, neutral inverse primary (#18181b / #fafafa) with
+   --primary-fg text, green only for status accents, red for destructive.
+   No gradients, no glass, no glow, no 2px frames, no pop shadows, and no
+   backdrop blur on the scrim. Motion is calm 100-200ms ease.
+   ============================================================ */
+
+/* ------------------------------------------------------------
+   1. Scrim + dialog
+   ------------------------------------------------------------ */
+@keyframes fx-overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes fx-dialog-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes fx-dialog-out {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 2px, 0) scale(0.99);
+  }
+}
+
+.fx-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--backdrop-ink);
+  overscroll-behavior: contain;
+  animation: fx-fade-in 120ms var(--ease-out) both;
+}
+
+.fx-overlay.is-closing {
+  animation: fx-overlay-out 100ms var(--ease-in) both;
+  pointer-events: none;
+}
+
+.fx-dialog {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: var(--fx-dialog-max-width, 420px);
+  max-height: 85vh;
+  max-height: 85dvh;
+  overflow-y: auto;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+  isolation: isolate;
+  animation: fx-dialog-in 150ms var(--ease-out) both;
+}
+
+.fx-overlay.is-closing .fx-dialog {
+  animation: fx-dialog-out 100ms var(--ease-in) both;
+}
+
+/* shadcn dialog title weight/tracking (the family already matches --font-sans). */
+.fx-dialog :is(h1, h2, h3, h4) {
+  letter-spacing: var(--tracking-tight);
+  line-height: 1.2;
+  font-weight: 600;
+}
+
+@media (max-width: 480px) {
+  .fx-overlay {
+    padding: 16px;
+  }
+
+  .fx-dialog {
+    padding: 20px;
+  }
+}
+
+/* ------------------------------------------------------------
+   2. Toast — shadcn card: bg-background + hairline + shadow-lg
+   ------------------------------------------------------------ */
+@keyframes fx-toast-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes fx-toast-out {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+}
+
+@keyframes fx-toast-progress {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+#fx-toast-layer {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--bottom-nav-h, 0px) + 20px + env(safe-area-inset-bottom, 0px));
+  z-index: 4000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(92vw, 420px);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.fx-toast {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 10px 14px 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-lg);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.45;
+  text-align: center;
+  animation: fx-toast-in 150ms var(--ease-out) both;
+}
+
+.fx-toast.is-leaving {
+  animation: fx-toast-out 100ms var(--ease-in) both;
+}
+
+.fx-toast__dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.fx-toast[data-variant="error"] .fx-toast__dot {
+  background: var(--danger);
+}
+
+.fx-toast__message {
+  min-width: 0;
+}
+
+.fx-toast__progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  transform-origin: left center;
+  background: var(--primary);
+  animation: fx-toast-progress 3s linear forwards;
+}
+
+.fx-toast[data-variant="error"] .fx-toast__progress {
+  background: var(--danger);
+}
+
+/* ------------------------------------------------------------
+   3. Menus / popovers
+   Shared shell for every menu surface; rows come from createMenuItem()
+   in src/lib/modal-overlay.ts.
+   ------------------------------------------------------------ */
+.post-action-dropdown-menu,
+.composer-attach-menu,
+.composer-drafts-dropdown {
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-md);
+  animation: fx-scale-in 120ms var(--ease-out) both;
+}
+
+.post-action-dropdown-menu {
+  transform-origin: bottom left;
+  z-index: 120;
+}
+
+.composer-attach-menu {
+  transform-origin: top left;
+}
+
+.composer-drafts-dropdown {
+  transform-origin: top right;
+}
+
+/* PostMenu.ts ships no inline surface, so this menu owns its position too
+   (PostCard marks the header container as relative). */
+.post-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 120;
+  min-width: 180px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-md);
+  transform-origin: top right;
+  animation: fx-scale-in 120ms var(--ease-out) both;
+}
+
+.fx-menu-item,
+.post-action-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .fx-menu-item:hover,
+  .post-action-dropdown-item:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.fx-menu-item:active,
+.post-action-dropdown-item:active {
+  background: var(--bg-active);
+}
+
+.fx-menu-item[data-danger="true"],
+.post-action-dropdown-item[data-danger="true"] {
+  color: var(--danger-text);
+}
+
+@media (hover: hover) {
+  .fx-menu-item[data-danger="true"]:hover,
+  .post-action-dropdown-item[data-danger="true"]:hover {
+    background: var(--bg-hover);
+    color: var(--danger-text);
+  }
+}
+
+.fx-menu-divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+
+/* Composer attach menu rows are <button class="composer-file-button">. */
+.composer-attach-menu .composer-file-button {
+  min-height: 36px;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+}
+
+@media (hover: hover) {
+  .composer-attach-menu .composer-file-button:hover {
+    background: var(--bg-hover);
+  }
+}
+
+/* Draft rows kept inside the post modal. */
+.post-modal-draft-item {
+  border-bottom: 0;
+  border-radius: var(--radius-sm);
+}
+
+.post-modal-draft-del {
+  border-radius: var(--radius-xs);
+}
+
+/* ------------------------------------------------------------
+   4. Confirm dialog
+   ------------------------------------------------------------ */
+.fx-confirm-overlay {
+  z-index: 3000;
+}
+
+.fx-confirm {
+  max-width: 400px;
+  padding: 20px;
+  border-radius: var(--radius-xl);
+}
+
+.fx-confirm__message {
+  margin: 0 0 18px;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.fx-confirm__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 420px) {
+  .fx-confirm__actions {
+    flex-direction: column-reverse;
+  }
+
+  .fx-confirm__actions .fx-btn {
+    width: 100%;
+  }
+}
+
+/* PostCard.ts builds its delete dialog from createModalOverlay() with
+   inline button radii; normalise the corners to the v5 control radius. */
+.fx-dialog .cancel-btn,
+.fx-dialog .delete-btn {
+  /* biome-ignore lint/complexity/noImportantStyles: PostCard.ts sets border-radius inline */
+  border-radius: var(--radius-md) !important;
+  min-height: 36px;
+}
+
+/* ------------------------------------------------------------
+   5. Share modal
+   ------------------------------------------------------------ */
+.fx-share-overlay {
+  z-index: 1000;
+}
+
+.fx-share-modal {
+  max-width: 432px;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.fx-share__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 14px 12px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.fx-share__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.fx-share__body {
+  min-height: 0;
+  padding: 16px 20px 20px;
+  overflow-y: auto;
+}
+
+.fx-share__media {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-height: 42dvh;
+  margin-bottom: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+}
+
+.fx-share__media img {
+  display: block;
+  max-width: 100%;
+  max-height: 42dvh;
+}
+
+.fx-share__hint {
+  margin: 0 0 14px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.fx-share__primary,
+.fx-share__secondary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  margin-bottom: 8px;
+  padding: 0 12px;
+  border-radius: var(--radius-md);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.fx-share__primary {
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: var(--primary-fg);
+}
+
+.fx-share__secondary {
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+@media (hover: hover) {
+  .fx-share__primary:hover {
+    background: var(--primary-hover);
+    border-color: var(--primary-hover);
+  }
+
+  .fx-share__secondary:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.fx-share__linkrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 3px 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  transition: box-shadow var(--duration-base) var(--ease-out);
+}
+
+.fx-share__linkrow:focus-within {
+  box-shadow: var(--shadow-ring);
+}
+
+.fx-share__link {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+}
+
+.fx-share__link:focus {
+  outline: none;
+}
+
+.fx-share__copy {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--primary);
+  border-radius: var(--radius-sm);
+  background: var(--primary);
+  color: var(--primary-fg);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    opacity var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .fx-share__copy:hover {
+    background: var(--primary-hover);
+    border-color: var(--primary-hover);
+  }
+}
+
+.fx-share__divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 12px;
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+
+.fx-share__divider::before,
+.fx-share__divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.fx-share__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.fx-share__tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-xs);
+  color: var(--text-primary);
+  text-decoration: none;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .fx-share__tile:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-strong);
+  }
+}
+
+.fx-share__tile:active {
+  background: var(--bg-active);
+}
+
+.fx-share__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.fx-share__name {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.fx-share__feedback {
+  display: none;
+  margin-top: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-align: center;
+}
+
+.fx-share__feedback.is-visible {
+  display: block;
+  animation: fx-fade-in 150ms var(--ease-out) both;
+}
+
+/* ------------------------------------------------------------
+   6. Report modal
+   ------------------------------------------------------------ */
+.fx-report {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.fx-report__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.fx-report__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.fx-report__question {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-wide);
+}
+
+.fx-report__cats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+@media (max-width: 520px) {
+  .fx-report__cats {
+    grid-template-columns: 1fr;
+  }
+}
+
+.fx-report__card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  font-weight: 400;
+  line-height: 1.4;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .fx-report__card:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.fx-report__card.is-selected {
+  border-color: var(--primary);
+  background: var(--bg-secondary);
+}
+
+.fx-report__card-label {
+  min-width: 0;
+}
+
+.fx-report__radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.fx-report__card-check {
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-left: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--bg-elevated);
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.fx-report__radio:checked ~ .fx-report__card-check {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.fx-report__radio:checked ~ .fx-report__card-check::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 5px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--primary-fg);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+.fx-report__radio:focus-visible ~ .fx-report__card-check {
+  box-shadow: var(--shadow-ring);
+}
+
+.fx-report__dmca {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  animation: fx-fade-in 150ms var(--ease-out) both;
+}
+
+.fx-report__dmca[hidden] {
+  display: none;
+}
+
+.fx-report__field label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+}
+
+.fx-report__input,
+.fx-report__textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  transition:
+    border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.fx-report__textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+
+.fx-report__input:focus,
+.fx-report__textarea:focus {
+  outline: none;
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-ring);
+}
+
+.fx-report__check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.fx-report__checkbox {
+  position: relative;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: var(--bg-input);
+  appearance: none;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    box-shadow var(--duration-fast) var(--ease-standard);
+}
+
+.fx-report__checkbox:checked {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.fx-report__checkbox:checked::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 4px;
+  width: 4px;
+  height: 7px;
+  border: solid var(--primary-fg);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+.fx-report__checkbox:focus-visible {
+  box-shadow: var(--shadow-ring);
+}
+
+.fx-report__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.fx-report__submit {
+  min-width: 120px;
+}
+
+/* ------------------------------------------------------------
+   7. Image lightbox — deep neutral chrome, quiet controls
+   ------------------------------------------------------------ */
+@keyframes fx-lightbox-img-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.fx-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+  background: var(--chrome-glass);
+  animation: fx-fade-in 150ms var(--ease-out) both;
+}
+
+.fx-lightbox.is-closing {
+  animation: fx-overlay-out 100ms var(--ease-in) both;
+  pointer-events: none;
+}
+
+/* Focused as a dialog container: keep the viewport free of the focus ring. */
+.fx-lightbox:focus,
+.fx-lightbox:focus-visible {
+  outline: none;
+}
+
+.fx-lightbox__stage {
+  position: relative;
+  width: 90vw;
+  height: 90vh;
+  overflow: hidden;
+}
+
+.fx-lightbox__zoom {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  cursor: default;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.fx-lightbox__img {
+  display: block;
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+  animation: fx-lightbox-img-in 150ms var(--ease-out) both;
+}
+
+.fx-lightbox__close,
+.fx-lightbox__nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Chrome controls: white/15 hairline on a white/10 wash (no blur). */
+  border: 1px solid color-mix(in srgb, var(--chrome-text) 15%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--chrome-text) 10%, transparent);
+  color: var(--chrome-text);
+  cursor: pointer;
+  z-index: 2;
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .fx-lightbox__close:hover,
+  .fx-lightbox__nav:hover {
+    background: color-mix(in srgb, var(--chrome-text) 16%, transparent);
+  }
+}
+
+.fx-lightbox__close:active,
+.fx-lightbox__nav:active {
+  background: color-mix(in srgb, var(--chrome-text) 22%, transparent);
+}
+
+.fx-lightbox__close {
+  position: fixed;
+  top: max(14px, env(safe-area-inset-top, 0px));
+  right: 16px;
+  width: 36px;
+  height: 36px;
+}
+
+.fx-lightbox__close svg {
+  width: 16px;
+  height: 16px;
+}
+
+.fx-lightbox__nav {
+  position: fixed;
+  top: 50%;
+  width: 40px;
+  height: 40px;
+  margin-top: -20px;
+  font-size: 1.375rem;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.fx-lightbox__nav--prev {
+  left: 12px;
+}
+
+.fx-lightbox__nav--next {
+  right: 12px;
+}
+
+.fx-lightbox__counter {
+  position: fixed;
+  left: 50%;
+  bottom: max(18px, env(safe-area-inset-bottom, 0px));
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--chrome-text) 15%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--chrome-text) 10%, transparent);
+  color: var(--chrome-text);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  transform: translateX(-50%);
+  z-index: 2;
+}
+
+/* ------------------------------------------------------------
+   8. Shared helpers
+   ------------------------------------------------------------ */
+.fx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: var(--radius-md);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+.fx-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.fx-btn--primary {
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: var(--primary-fg);
+}
+
+@media (hover: hover) {
+  .fx-btn--primary:hover:not(:disabled) {
+    border-color: var(--primary-hover);
+    background: var(--primary-hover);
+  }
+}
+
+.fx-btn--secondary {
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+}
+
+@media (hover: hover) {
+  .fx-btn--secondary:hover:not(:disabled) {
+    background: var(--bg-hover);
+  }
+}
+
+/* Destructive confirm CTA: red fill + white text (both themes). */
+.fx-confirm[data-destructive="true"] .fx-btn--primary {
+  border-color: var(--danger-strong);
+  background: var(--danger-strong);
+  color: var(--on-danger);
+}
+
+@media (hover: hover) {
+  .fx-confirm[data-destructive="true"] .fx-btn--primary:hover:not(:disabled) {
+    border-color: var(--danger-strong);
+    background: var(--danger-strong);
+    opacity: 0.92;
+  }
+}
+
+.fx-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .fx-icon-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+.fx-icon-btn:active {
+  background: var(--bg-active);
+}
+
+.fx-icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+@media (max-width: 768px) {
+  .fx-btn {
+    min-height: 44px;
+  }
+
+  .fx-icon-btn {
+    width: 40px;
+    height: 40px;
+  }
+}
+
+/* Visually hidden but announced (foundation has no equivalent yet). */
+.fx-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* In-card media placeholders pick up the v5 control corners. */
+.image-preview-loading,
+.image-preview-error {
+  border-radius: var(--radius-md);
+}
