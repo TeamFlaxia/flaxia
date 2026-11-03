@@ -1,5 +1,6 @@
 import { t } from '../lib/i18n.js';
 import { attachIcons } from '../lib/icons.js';
+import { closeWithAnimation, getTabbableElements } from '../lib/modal-overlay.js';
 import { registerModal } from '../lib/modal-state.js';
 import {
   canUseWebShare,
@@ -28,35 +29,33 @@ export interface ShareModalProps {
   onQuote?: () => void;
 }
 
+let shareModalId = 0;
+
+/**
+ * v3 keeps labels free of cosmetic emoji. Brand glyphs like 𝕏 / "in" stay as
+ * type; an emoji glyph (the Bluesky butterfly) falls back to the initial.
+ */
+function displayIcon(icon: string, name: string): string {
+  return /\p{Extended_Pictographic}/u.test(icon) ? name.charAt(0).toUpperCase() : icon;
+}
+
 export function createShareModal({ post, url: customUrl, media, onClose, onQuote }: ShareModalProps): HTMLElement {
   const unregister = registerModal();
+  shareModalId += 1;
+  const titleId = 'share-modal-title-' + String(shareModalId);
+  const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  let closing = false;
+  let objectUrl: string | null = null;
+
   const overlay = document.createElement('div');
-  overlay.className = 'share-modal-overlay';
-  overlay.style.cssText = `
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    padding: 1rem;
-  `;
+  overlay.className = 'fx-overlay fx-share-overlay';
 
   const modal = document.createElement('div');
-  modal.className = 'share-modal';
-  modal.style.cssText = `
-    background: var(--bg-primary);
-    border-radius: 0.75rem;
-    max-width: 420px;
-    width: 100%;
-    max-height: 85vh;
-    overflow-y: auto;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
-  `;
+  modal.className = 'fx-dialog fx-share-modal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-labelledby', titleId);
+  modal.tabIndex = -1;
 
   const platformNameKey: Record<string, string> = {
     X: 'share.platform_x',
@@ -73,198 +72,70 @@ export function createShareModal({ post, url: customUrl, media, onClose, onQuote
     shareData.url = customUrl;
   }
   const shareUrl = shareData.url;
-  const _shareText = shareData.text;
+
+  if (media) {
+    objectUrl = URL.createObjectURL(media.blob);
+  }
 
   modal.innerHTML = `
-    <div class="share-modal-header" style="
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 1rem 1.25rem;
-      border-bottom: 1px solid var(--border);
-    ">
-      <h3 style="
-        margin: 0;
-        font-size: 1.125rem;
-        font-weight: 600;
-        color: var(--text-primary);
-      ">${t('share.title')}</h3>
-      <button class="share-modal-close" style="
-        background: none;
-        border: none;
-        color: var(--text-muted);
-        font-size: 1.5rem;
-        cursor: pointer;
-        padding: 0.25rem;
-        line-height: 1;
-        border-radius: 4px;
-        transition: background 0.2s;
-      "><span class="action-icon" data-icon="close"></span></button>
-    </div>
-    <div class="share-modal-content" style="
-      padding: 1.25rem;
-    ">
-      ${
-        onQuote
-          ? `
-        <button class="share-button share-button--quote" style="
-          width: 100%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 0.75rem;
-          padding: 0.875rem 1rem;
-          background: var(--bg-secondary);
-          border: 1px solid var(--border);
-          border-radius: 0.5rem;
-          color: var(--text-primary);
-          font-size: 0.9375rem;
-          font-weight: 500;
-          cursor: pointer;
-          margin-bottom: 1rem;
-          transition: background 0.2s;
-        ">
-          <span class="action-icon" data-icon="quote"></span>
-          <span>${t('share.quote')}</span>
-        </button>
-      `
-          : ''
-      }
+    <header class="fx-share__head">
+      <h3 class="fx-share__title" id="${titleId}">${t('share.title')}</h3>
+      <button type="button" class="fx-icon-btn fx-share__close" aria-label="${t('common.close')}">
+        <span class="action-icon" data-icon="close"></span>
+      </button>
+    </header>
+    <div class="fx-share__body">
       ${
         media
           ? `
-        <div class="share-media-preview" style="
-          margin-bottom: 0.5rem;
-          border-radius: 0.5rem;
-          overflow: hidden;
-          background: #000;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          max-height: 45vh;
-        ">
-          <img src="${URL.createObjectURL(media.blob)}" alt="${t('share.media_preview')}" style="
-            max-width: 100%;
-            max-height: 45vh;
-            display: block;
-          ">
+        <div class="fx-share__media">
+          <img src="${objectUrl ?? ''}" alt="${t('share.media_preview')}">
         </div>
-        <p class="share-save-hint" style="
-          text-align: center;
-          color: var(--text-muted);
-          font-size: 0.8125rem;
-          margin: 0 0 1rem 0;
-        ">${t('share.save_hint')}</p>
+        <p class="fx-share__hint">${t('share.save_hint')}</p>
       `
           : ''
       }
       ${
         canUseWebShare()
           ? `
-        <button class="share-button share-button--native" style="
-          width: 100%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 0.75rem;
-          padding: 0.875rem 1rem;
-          background: var(--accent);
-          border: none;
-          border-radius: 0.5rem;
-          color: #000;
-          font-size: 0.9375rem;
-          font-weight: 500;
-          cursor: pointer;
-          margin-bottom: 1rem;
-          transition: opacity 0.2s;
-        ">
+        <button type="button" class="fx-share__primary share-button--native">
           <span class="action-icon" data-icon="send"></span>
           <span>${t('share.native')}</span>
         </button>
       `
           : ''
       }
-      <button class="share-button share-button--clipboard" style="
-        width: 100%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0.75rem;
-        padding: 0.875rem 1rem;
-        background: var(--bg-secondary);
-        border: 1px solid var(--border);
-        border-radius: 0.5rem;
-        color: var(--text-primary);
-        font-size: 0.9375rem;
-        font-weight: 500;
-        cursor: pointer;
-        margin-bottom: 1rem;
-        transition: background 0.2s;
-      ">
-        <span class="action-icon" data-icon="copy"></span>
-        <span>${t('share.copy_link')}</span>
-      </button>
-      <div class="share-toast" style="
-        display: none;
-        text-align: center;
-        padding: 0.5rem;
-        margin-bottom: 1rem;
-        background: var(--accent);
-        color: #000;
-        border-radius: 0.375rem;
-        font-size: 0.875rem;
-      "></div>
-      <div class="share-divider" style="
-        display: flex;
-        align-items: center;
-        gap: 1rem;
-        margin: 1rem 0;
-        color: var(--text-muted);
-        font-size: 0.8125rem;
-      ">
-        <span style="flex: 1; height: 1px; background: var(--border);"></span>
-        <span>${t('share.share_to')}</span>
-        <span style="flex: 1; height: 1px; background: var(--border);"></span>
+      ${
+        onQuote
+          ? `
+        <button type="button" class="fx-share__secondary share-button--quote">
+          <span class="action-icon" data-icon="quote"></span>
+          <span>${t('share.quote')}</span>
+        </button>
+      `
+          : ''
+      }
+      <div class="fx-share__linkrow">
+        <input class="fx-share__link" type="text" readonly aria-label="${t('share.copy_link')}">
+        <button type="button" class="fx-share__copy share-button--clipboard">
+          <span class="action-icon" data-icon="copy"></span>
+          <span>${t('share.copy_link')}</span>
+        </button>
       </div>
-      <div class="share-grid" style="
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 0.75rem;
-      ">
+      <div class="fx-share__divider">${t('share.share_to')}</div>
+      <div class="fx-share__grid">
         ${sharePlatforms
           .map(
             (platform) => `
-          <a class="share-icon" href="${platform.getUrl(shareData)}" target="_blank" rel="noopener noreferrer" style="
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 0.875rem 0.5rem;
-            background: var(--bg-secondary);
-            border-radius: 0.5rem;
-            text-decoration: none;
-            color: var(--text-primary);
-            transition: background 0.2s, transform 0.2s;
-          ">
-            <span style="
-              width: 2.5rem;
-              height: 2.5rem;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              background: ${platform.color};
-              color: #fff;
-              border-radius: 50%;
-              font-size: 1.125rem;
-              font-weight: 600;
-              margin-bottom: 0.375rem;
-            ">${platform.icon}</span>
-            <span style="font-size: 0.75rem; font-weight: 500;">${getPlatformName(platform.name)}</span>
+          <a class="fx-share__tile share-icon" href="${platform.getUrl(shareData)}" target="_blank" rel="noopener noreferrer">
+            <span class="fx-share__icon" aria-hidden="true">${displayIcon(platform.icon, platform.name)}</span>
+            <span class="fx-share__name">${getPlatformName(platform.name)}</span>
           </a>
         `,
           )
           .join('')}
       </div>
+      <div class="fx-share__feedback" role="status" aria-live="polite"></div>
     </div>
   `;
 
@@ -272,47 +143,83 @@ export function createShareModal({ post, url: customUrl, media, onClose, onQuote
 
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
+  (getTabbableElements(modal)[0] ?? modal).focus({ preventScroll: true });
 
-  const closeButton = modal.querySelector('.share-modal-close') as HTMLButtonElement;
-  const nativeShareButton = modal.querySelector('.share-button--native') as HTMLButtonElement;
+  const closeButton = modal.querySelector('.fx-share__close') as HTMLButtonElement;
+  const nativeShareButton = modal.querySelector('.share-button--native') as HTMLButtonElement | null;
   const clipboardButton = modal.querySelector('.share-button--clipboard') as HTMLButtonElement;
-  const quoteButton = modal.querySelector('.share-button--quote') as HTMLButtonElement;
-  const toast = modal.querySelector('.share-toast') as HTMLElement;
+  const quoteButton = modal.querySelector('.share-button--quote') as HTMLButtonElement | null;
+  const linkInput = modal.querySelector('.fx-share__link') as HTMLInputElement;
+  const feedback = modal.querySelector('.fx-share__feedback') as HTMLElement;
 
-  const showToast = (message: string) => {
-    toast.textContent = message;
-    toast.style.display = 'block';
-    setTimeout(() => {
-      toast.style.display = 'none';
-    }, 2000);
+  linkInput.value = shareUrl;
+  linkInput.addEventListener('focus', () => linkInput.select());
+
+  let feedbackTimer = 0;
+  const showFeedback = (message: string) => {
+    feedback.textContent = message;
+    feedback.classList.add('is-visible');
+    window.clearTimeout(feedbackTimer);
+    feedbackTimer = window.setTimeout(() => {
+      feedback.classList.remove('is-visible');
+    }, 2200);
   };
 
-  const close = () => {
+  const dismiss = (after?: () => void) => {
+    if (closing) return;
+    closing = true;
+    document.removeEventListener('keydown', onKeyDown);
     unregister();
-    overlay.remove();
-    onClose();
+    closeWithAnimation(overlay, () => {
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+        objectUrl = null;
+      }
+      if (after) {
+        after();
+      } else {
+        if (previouslyFocused?.isConnected) previouslyFocused.focus({ preventScroll: true });
+        onClose();
+      }
+    });
   };
 
-  closeButton.addEventListener('click', close);
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      dismiss();
+      return;
+    }
+    if (event.key !== 'Tab') return;
+
+    const tabbables = getTabbableElements(modal);
+    if (tabbables.length === 0) {
+      event.preventDefault();
+      modal.focus({ preventScroll: true });
+      return;
+    }
+    const first = tabbables[0];
+    const last = tabbables[tabbables.length - 1];
+    const active = document.activeElement;
+    const activeIndex = active instanceof HTMLElement ? tabbables.indexOf(active) : -1;
+    if (!event.shiftKey && activeIndex === tabbables.length - 1) {
+      event.preventDefault();
+      first.focus();
+    } else if (event.shiftKey && activeIndex <= 0) {
+      event.preventDefault();
+      last.focus();
+    }
+  };
+  document.addEventListener('keydown', onKeyDown);
+
+  closeButton.addEventListener('click', () => dismiss());
 
   if (quoteButton && onQuote) {
-    quoteButton.addEventListener('click', () => {
-      unregister();
-      overlay.remove();
-      onQuote();
-    });
+    quoteButton.addEventListener('click', () => dismiss(onQuote));
   }
 
   overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) {
-      close();
-    }
-  });
-
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      close();
-    }
+    if (e.target === overlay) dismiss();
   });
 
   if (nativeShareButton) {
@@ -321,34 +228,30 @@ export function createShareModal({ post, url: customUrl, media, onClose, onQuote
         const file = new File([media.blob], media.filename, { type: media.blob.type });
         const success = await shareViaWebShareWithFile(shareData, file);
         if (success) {
-          close();
+          dismiss();
         } else {
-          showToast(t('share.native_failed'));
+          showFeedback(t('share.native_failed'));
         }
         return;
       }
       const success = await shareViaWebShare(shareData);
       if (success) {
-        close();
+        dismiss();
       } else {
-        showToast(t('share.native_failed'));
+        showFeedback(t('share.native_failed'));
       }
     });
   }
 
   clipboardButton.addEventListener('click', async () => {
     const success = await copyToClipboard(shareUrl);
-    if (success) {
-      showToast(t('share.copy_success'));
-    } else {
-      showToast(t('share.copy_failed'));
-    }
+    showFeedback(success ? t('share.copy_success') : t('share.copy_failed'));
   });
 
   const shareLinks = modal.querySelectorAll('.share-icon');
   shareLinks.forEach((link) => {
     link.addEventListener('click', () => {
-      close();
+      dismiss();
     });
   });
 

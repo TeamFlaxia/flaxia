@@ -105,6 +105,8 @@ export class PostComposer {
   private thumbnailInput!: HTMLInputElement;
   private submitButton!: HTMLButtonElement;
   private charCount!: HTMLSpanElement;
+  private charMeter!: HTMLElement;
+  private draftCountPill!: HTMLElement;
   private selectedFile: File | null = null;
   private selectedMedia: File[] = [];
   private mediaHandles: AttachPreviewHandle[] = [];
@@ -159,6 +161,7 @@ export class PostComposer {
             maxlength="200"
           ></textarea>
         </div>
+        <div class="composer-progress" aria-hidden="true"><span class="composer-progress-fill"></span></div>
         <div class="composer-file-dropzone" style="display: none;">
           <div class="dropzone-content">
             <span class="dropzone-icon" data-icon="attach"></span>
@@ -171,7 +174,7 @@ export class PostComposer {
           <div class="composer-actions">
             <input type="file" class="composer-file-input" />
             <div class="composer-attach-group">
-              <button class="composer-file-button composer-attach-menu-toggle" type="button" title="${t('composer.attach_button')}" aria-label="${t('composer.attach_button')}" aria-expanded="false">＋</button>
+              <button class="composer-file-button composer-attach-menu-toggle" type="button" title="${t('composer.attach_button')}" aria-label="${t('composer.attach_button')}" aria-expanded="false"><span class="composer-attach-glyph" aria-hidden="true">＋</span></button>
               <div class="composer-attach-menu" style="display:none;">
                 <button class="composer-file-button composer-file-button--image" type="button"><span class="action-icon" data-icon="image-video"></span>${t('composer.attach_image_video')}</button>
                 <button class="composer-file-button composer-file-button--audio" type="button"><span class="action-icon" data-icon="audio"></span>${t('composer.attach_audio')}</button>
@@ -180,11 +183,13 @@ export class PostComposer {
                 <button class="composer-file-button composer-file-button--document" type="button"><span class="action-icon" data-icon="document"></span>${t('composer.attach_document')}</button>
               </div>
             </div>
-            <button class="composer-emoji-button" type="button" title="${t('composer.emoji_button')}">
+            <button class="composer-emoji-button" type="button" title="${t('composer.emoji_button')}" aria-label="${t('composer.emoji_button')}">
               <span class="action-icon" data-icon="emoji"></span>
             </button>
-            <span class="composer-char-count">${t('composer.char_count', { current: 0, max: 200 })}</span>
-            <button class="composer-list-drafts" type="button" title="${t('composer.list_drafts')}"><span class="action-icon" data-icon="drafts"></span></button>
+            <span class="composer-meter" data-state="idle" data-empty="true">
+              <span class="composer-char-count">${t('composer.char_count', { current: 0, max: 200 })}</span>
+            </span>
+            <button class="composer-list-drafts" type="button" title="${t('composer.list_drafts')}" aria-label="${t('composer.list_drafts')}"><span class="action-icon" data-icon="drafts"></span><span class="composer-draft-count" hidden>0</span></button>
           </div>
           <button class="composer-submit" type="button" disabled>
             ${t('composer.post_button')}
@@ -247,6 +252,8 @@ export class PostComposer {
     this.thumbnailInput = container.querySelector('.composer-thumbnail-input')!;
     this.submitButton = container.querySelector('.composer-submit')!;
     this.charCount = container.querySelector('.composer-char-count')!;
+    this.charMeter = container.querySelector('.composer-meter')!;
+    this.draftCountPill = container.querySelector('.composer-draft-count')!;
 
     // Create error display element
     this.errorDisplay = document.createElement('div');
@@ -262,44 +269,18 @@ export class PostComposer {
       body.insertBefore(this.errorDisplay, body.querySelector('.composer-file-preview'));
     }
 
-    // Create drafts dropdown
+    // Create drafts dropdown (surface styling lives in composer.css)
     this.draftsDropdown = document.createElement('div');
     this.draftsDropdown.className = 'composer-drafts-dropdown';
-    this.draftsDropdown.style.cssText = `
-      display: none;
-      position: absolute;
-      top: 100%;
-      left: 0;
-      right: 0;
-      background: var(--bg-primary);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      z-index: 100;
-      max-height: 240px;
-      overflow-y: auto;
-    `;
     const footer = container.querySelector('.composer-footer') as HTMLElement | null;
     if (footer) {
       footer.style.position = 'relative';
       footer.appendChild(this.draftsDropdown);
     }
 
-    // Create mention suggestion dropdown
+    // Create mention suggestion dropdown (surface styling lives in composer.css)
     this.mentionDropdown = document.createElement('div');
     this.mentionDropdown.className = 'mention-dropdown';
-    this.mentionDropdown.style.cssText = `
-      position: absolute;
-      background: var(--bg-primary);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      z-index: 100;
-      max-height: 200px;
-      overflow-y: auto;
-      display: none;
-      min-width: 200px;
-    `;
     const composerHeader = container.querySelector('.composer-header') as HTMLElement | null;
     if (composerHeader) {
       composerHeader.style.position = 'relative';
@@ -309,17 +290,6 @@ export class PostComposer {
     // Set avatar
     const avatar = container.querySelector('.composer-avatar') as HTMLElement;
     if (this.props.currentUser) {
-      avatar.style.width = '40px';
-      avatar.style.height = '40px';
-      avatar.style.borderRadius = '50%';
-      avatar.style.display = 'flex';
-      avatar.style.alignItems = 'center';
-      avatar.style.justifyContent = 'center';
-      avatar.style.fontSize = '1.2rem';
-      avatar.style.color = 'white';
-      avatar.style.background = 'var(--accent)';
-      avatar.style.flexShrink = '0';
-
       if (this.props.currentUser.avatar_key) {
         avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${this.props.currentUser.avatar_key}`)})`;
         avatar.style.backgroundSize = 'cover';
@@ -458,13 +428,8 @@ export class PostComposer {
 
     // Textarea input handling
     this.textarea.addEventListener('input', () => {
-      const length = this.textarea.value.length;
-      this.charCount.textContent = t('composer.char_count', { current: length, max: 200 });
-      if (length > 180) {
-        this.charCount.style.color = length >= 200 ? 'var(--danger)' : 'var(--accent)';
-      } else {
-        this.charCount.style.color = 'var(--text-muted)';
-      }
+      this.updateCharMeter(this.textarea.value.length);
+      this.autosizeTextarea();
       this.updateSubmitButton();
       this.handleMentionInput();
       this.scheduleDraftSave();
@@ -725,7 +690,7 @@ export class PostComposer {
       avatarSpan.style.cssText = `
         width: 24px; height: 24px; border-radius: 50%;
         background: var(--accent); display: flex; align-items: center;
-        justify-content: center; color: white; font-size: 0.7rem; font-weight: bold; flex-shrink: 0;
+        justify-content: center; color: var(--on-accent); font-size: 0.7rem; font-weight: bold; flex-shrink: 0;
       `;
       avatarSpan.textContent = user.username.charAt(0).toUpperCase();
       if (user.avatar_key) {
@@ -789,7 +754,7 @@ export class PostComposer {
       hash.style.cssText = `
         width: 24px; height: 24px; border-radius: 50%;
         background: var(--accent); display: flex; align-items: center;
-        justify-content: center; color: white; font-size: 0.8rem; font-weight: bold; flex-shrink: 0;
+        justify-content: center; color: var(--on-accent); font-size: 0.8rem; font-weight: bold; flex-shrink: 0;
       `;
 
       const textSpan = document.createElement('span');
@@ -880,7 +845,8 @@ export class PostComposer {
     this.textarea.focus();
 
     this.hideMentionDropdown();
-    this.charCount.textContent = t('composer.char_count', { current: this.textarea.value.length, max: 200 });
+    this.updateCharMeter(this.textarea.value.length);
+    this.autosizeTextarea();
     this.updateSubmitButton();
   }
 
@@ -1382,6 +1348,27 @@ export class PostComposer {
     const hasContent = this.textarea.value.trim().length > 0 || this.props.quotedPost != null;
     this.submitButton.disabled = !hasContent || this.isSubmitting;
     this.submitButton.textContent = this.isSubmitting ? t('composer.posting') : t('composer.post_button');
+    this.submitButton.dataset.state = this.isSubmitting ? 'sending' : 'idle';
+  }
+
+  /** Keep the text + conic-gradient progress ring in sync (ratio drives --fx-progress). */
+  private updateCharMeter(length: number): void {
+    this.charCount.textContent = t('composer.char_count', { current: length, max: 200 });
+    const ratio = Math.max(0, Math.min(1, length / 200));
+    const state = length >= 200 ? 'max' : length > 180 ? 'warn' : 'idle';
+    this.element.style.setProperty('--fx-progress', ratio.toFixed(3));
+    this.element.dataset.meterState = state;
+    this.charMeter.dataset.state = state;
+    this.charMeter.dataset.empty = String(length === 0);
+  }
+
+  /** Auto-grow the field; the height transition itself lives in composer.css. */
+  private autosizeTextarea(): void {
+    const textarea = this.textarea;
+    // Detached textareas report scrollHeight 0; leave the CSS min-height in charge.
+    if (!textarea || textarea.scrollHeight <= 0) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 192)}px`;
   }
 
   private scheduleDraftSave(): void {
@@ -1434,7 +1421,8 @@ export class PostComposer {
   private restoreAutosave(draft: ComposerAutosave | null): void {
     if (!draft?.text || this.textarea.value || this.props.quotedPost) return;
     this.textarea.value = draft.text;
-    this.charCount.textContent = t('composer.char_count', { current: draft.text.length, max: 200 });
+    this.updateCharMeter(draft.text.length);
+    this.autosizeTextarea();
     this.updateSubmitButton();
     if (draft.poll) {
       this.pollActive = true;
@@ -1756,7 +1744,7 @@ export class PostComposer {
 
     const deleteBtn = document.createElement('button');
     deleteBtn.style.cssText =
-      'padding: 8px 16px; background: var(--danger, #ef4444); border: none; border-radius: 4px; color: #fff; cursor: pointer; font-family: inherit;';
+      'padding: 8px 16px; background: var(--danger-strong, #b91c1c); border: none; border-radius: 4px; color: #fff; cursor: pointer; font-family: inherit;';
     deleteBtn.textContent = t('common.delete');
 
     buttonRow.appendChild(cancelBtn);
@@ -1813,7 +1801,8 @@ export class PostComposer {
 
   private loadExplicitDraft(draft: { id: string; text: string }): void {
     this.textarea.value = draft.text;
-    this.charCount.textContent = t('composer.char_count', { current: draft.text.length, max: 200 });
+    this.updateCharMeter(draft.text.length);
+    this.autosizeTextarea();
     this.updateSubmitButton();
     this.loadedDraftId = draft.id;
     this.pollActive = false;
@@ -1825,9 +1814,11 @@ export class PostComposer {
 
   private renderDraftsDropdown(): void {
     this.loadSavedDrafts();
+    this.updateDraftCount();
     this.draftsDropdown.innerHTML = '';
 
     const header = document.createElement('div');
+    header.className = 'composer-drafts-header';
     header.style.cssText = `
       display: flex;
       align-items: center;
@@ -1849,7 +1840,7 @@ export class PostComposer {
     saveBtn.style.cssText = `
       background: none;
       border: none;
-      color: var(--accent);
+      color: var(--accent-text);
       cursor: pointer;
       font-size: 0.75rem;
       padding: 0.15rem 0.4rem;
@@ -1874,7 +1865,7 @@ export class PostComposer {
       deleteAllBtn.style.cssText = `
         background: none;
         border: none;
-        color: var(--danger, #ef4444);
+        color: var(--danger-text);
         cursor: pointer;
         font-size: 0.75rem;
         padding: 0.15rem 0.4rem;
@@ -1899,6 +1890,7 @@ export class PostComposer {
 
     if (this.savedDrafts.length === 0) {
       const empty = document.createElement('div');
+      empty.className = 'composer-drafts-empty';
       empty.style.cssText = 'padding: 1rem; color: var(--text-muted); font-size: 0.85rem; text-align: center;';
       empty.textContent = t('composer.no_drafts');
       this.draftsDropdown.appendChild(empty);
@@ -1910,6 +1902,8 @@ export class PostComposer {
     for (const draft of this.savedDrafts) {
       const item = document.createElement('div');
       const isLoaded = draft.id === this.loadedDraftId;
+      item.className = 'composer-draft-item';
+      item.classList.toggle('is-loaded', isLoaded);
       item.style.cssText = `
         display: flex;
         align-items: center;
@@ -1918,7 +1912,7 @@ export class PostComposer {
         border-bottom: 1px solid var(--border);
         cursor: pointer;
         gap: 0.5rem;
-        background: ${isLoaded ? 'var(--accent-alpha, rgba(34, 197, 94, 0.08))' : ''};
+        background: ${isLoaded ? 'var(--accent-soft)' : ''};
       `;
       item.addEventListener('mouseenter', () => {
         if (!isLoaded) item.style.background = 'var(--bg-hover)';
@@ -1928,6 +1922,7 @@ export class PostComposer {
       });
 
       const preview = document.createElement('div');
+      preview.className = 'composer-draft-preview';
       preview.style.cssText = `
         flex: 1;
         font-size: 0.85rem;
@@ -1942,6 +1937,7 @@ export class PostComposer {
       preview.addEventListener('click', () => this.loadExplicitDraft(draft));
 
       const time = document.createElement('span');
+      time.className = 'composer-draft-time';
       time.style.cssText = 'font-size: 0.7rem; color: var(--text-muted); white-space: nowrap;';
       const diff = Date.now() - draft.savedAt;
       const minutes = Math.floor(diff / 60000);
@@ -1958,6 +1954,7 @@ export class PostComposer {
 
       const delBtn = document.createElement('button');
       delBtn.type = 'button';
+      delBtn.className = 'composer-draft-delete';
       delBtn.textContent = '✕';
       delBtn.title = t('common.delete');
       delBtn.style.cssText = `
@@ -1972,7 +1969,7 @@ export class PostComposer {
         line-height: 1;
       `;
       delBtn.addEventListener('mouseenter', () => {
-        delBtn.style.color = 'var(--danger, #ef4444)';
+        delBtn.style.color = 'var(--danger-text)';
       });
       delBtn.addEventListener('mouseleave', () => {
         delBtn.style.color = 'var(--text-muted)';
@@ -1993,16 +1990,24 @@ export class PostComposer {
 
     if (this.loadedDraftId) {
       const hint = document.createElement('div');
+      hint.className = 'composer-drafts-hint';
       hint.style.cssText = `
         padding: 0.4rem 0.75rem;
         font-size: 0.7rem;
-        color: var(--accent);
+        color: var(--accent-text);
         text-align: center;
         border-top: 1px solid var(--border);
       `;
       hint.textContent = t('composer.draft_edit_hint');
       this.draftsDropdown.appendChild(hint);
     }
+  }
+
+  /** Mirror the saved-draft count onto the drafts trigger. */
+  private updateDraftCount(): void {
+    const count = this.savedDrafts.length;
+    this.draftCountPill.textContent = formatCount(count);
+    this.draftCountPill.hidden = count === 0;
   }
 
   private openDraftsDropdown(): void {
@@ -2145,7 +2150,8 @@ export class PostComposer {
       await this.clearAutoDraft();
       this.loadedDraftId = null;
       this.textarea.value = '';
-      this.charCount.textContent = t('composer.char_count', { current: 0, max: 200 });
+      this.updateCharMeter(0);
+      this.autosizeTextarea();
       this.clearFileSelection();
       this.clearMediaSelection();
       if (this.pollActive) this.togglePollSection();
@@ -2364,7 +2370,8 @@ export class PostComposer {
 
   public setText(text: string): void {
     this.textarea.value = text;
-    this.charCount.textContent = t('composer.char_count', { current: text.length, max: 200 });
+    this.updateCharMeter(text.length);
+    this.autosizeTextarea();
     this.updateSubmitButton();
     this.loadedDraftId = null;
     this.pollActive = false;
@@ -2414,17 +2421,6 @@ export class PostComposer {
     if (!avatar) return;
 
     if (this.props.currentUser) {
-      avatar.style.width = '40px';
-      avatar.style.height = '40px';
-      avatar.style.borderRadius = '50%';
-      avatar.style.display = 'flex';
-      avatar.style.alignItems = 'center';
-      avatar.style.justifyContent = 'center';
-      avatar.style.fontSize = '1.2rem';
-      avatar.style.color = 'white';
-      avatar.style.background = 'var(--accent)';
-      avatar.style.flexShrink = '0';
-
       if (this.props.currentUser.avatar_key) {
         avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${this.props.currentUser.avatar_key}`)})`;
         avatar.style.backgroundSize = 'cover';

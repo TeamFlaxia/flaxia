@@ -1,4 +1,5 @@
 import { isFirstPartyApiUrl, isNativeApp } from './native-api.js';
+import { isOffline } from './offline-status.js';
 
 const pending = new WeakMap<HTMLImageElement, symbol>();
 /** Use the persistent native cache for image previews and avatars. */
@@ -25,7 +26,7 @@ export function setOfflineImage(image: HTMLImageElement, href: string): void {
       if (pending.get(image) === token) image.src = source;
     } catch {
       if (pending.get(image) !== token) return;
-      if (navigator.onLine !== false) image.src = href;
+      if (!isOffline()) image.src = href;
       else image.dispatchEvent(new Event('error'));
     }
   })();

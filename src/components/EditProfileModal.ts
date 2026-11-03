@@ -230,7 +230,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
     align-items: center;
     justify-content: center;
     font-size: 2rem;
-    color: white;
+    color: var(--on-accent);
     cursor: pointer;
     overflow: visible;
     border: 4px solid var(--bg-primary);
@@ -439,7 +439,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   const displayNameError = document.createElement('div');
   displayNameError.className = 'field-error';
   displayNameError.style.cssText = `
-    color: var(--danger);
+    color: var(--danger-text);
     font-size: 0.875rem;
     margin-top: 0.25rem;
     margin-bottom: 1rem;
@@ -483,7 +483,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   const bioError = document.createElement('div');
   bioError.className = 'field-error';
   bioError.style.cssText = `
-    color: var(--danger);
+    color: var(--danger-text);
     font-size: 0.875rem;
     margin-top: -0.75rem;
     margin-bottom: 1rem;
@@ -772,7 +772,7 @@ export function createEditProfileModal({ currentUser, onSave }: EditProfileModal
   saveButton.textContent = t('edit_profile.save');
   saveButton.style.cssText = `
     background: var(--accent);
-    color: white;
+    color: var(--on-accent);
     border: none;
     padding: 0.75rem 2rem;
     border-radius: 9999px;

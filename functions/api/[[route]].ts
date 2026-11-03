@@ -7,6 +7,7 @@ import activitypubRouter from './routes/activitypub';
 import adminRouter from './routes/admin';
 import adsRouter from './routes/ads';
 import authRouter from './routes/auth';
+import bugReportsRouter from './routes/bug-reports';
 import topicRouter from './routes/current-topic';
 import gamesRouter from './routes/games';
 import linkPreviewRouter from './routes/link-preview';
@@ -52,6 +53,9 @@ type Bindings = {
   MATCHMAKER?: DurableObjectNamespace;
   FCM_SERVER_KEY?: string;
   VECTORIZE?: Vectorize;
+  GITHUB_APP_ID?: string;
+  GITHUB_APP_INSTALLATION_ID?: string;
+  GITHUB_APP_PRIVATE_KEY?: string;
 };
 
 type Variables = {
@@ -112,6 +116,9 @@ app.route('/api', topicRouter);
 
 // Report route (extracted to routes/report.ts)
 app.route('/api', reportRouter);
+
+// Public GitHub issue submission for authenticated Flaxia users.
+app.route('/api', bugReportsRouter);
 
 // Auth/me routes (extracted to routes/me.ts)
 app.route('/api', meRouter);

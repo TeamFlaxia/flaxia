@@ -15,85 +15,29 @@ export function createSignInPrompt(props: SignInPromptProps = {}) {
   // Create overlay
   const overlay = document.createElement('div');
   overlay.className = 'signin-prompt-overlay';
-  overlay.style.cssText = `
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 3000;
-  `;
 
   // Create dialog
   const dialog = document.createElement('div');
   dialog.className = 'signin-prompt-dialog';
-  dialog.style.cssText = `
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 2rem;
-    max-width: 400px;
-    width: 90%;
-    text-align: center;
-  `;
 
   dialog.innerHTML = `
-    <h3 style="margin: 0 0 0.5rem 0; color: var(--text-primary); font-size: 1.25rem; font-weight: 600;">${t('auth.sign_up_title')}</h3>
-    <p style="margin: 0 0 1.5rem 0; color: var(--text-muted); font-size: 0.875rem; line-height: 1.5;">${subtitle}</p>
-    <div style="display: flex; gap: 1rem; justify-content: center;">
-      <button class="signin-btn" style="
-        padding: 0.75rem 1.5rem;
-        background: var(--text-primary);
-        color: var(--bg-primary);
-        border: none;
-        border-radius: 9999px;
-        cursor: pointer;
-        font-size: 0.875rem;
-        font-weight: 600;
-        transition: opacity 0.2s;
-      ">${t('auth.sign_up')}</button>
-      <button class="signup-btn" style="
-        padding: 0.75rem 1.5rem;
-        background: transparent;
-        color: var(--accent);
-        border: 1px solid var(--accent);
-        border-radius: 9999px;
-        cursor: pointer;
-        font-size: 0.875rem;
-        font-weight: 600;
-        transition: all 0.2s;
-      ">${t('auth.sign_in')}</button>
+    <div class="signin-prompt-badge" aria-hidden="true"><img src="/favicon.ico" alt="" width="40" height="40"></div>
+    <h3 class="signin-prompt-title fx-display">${t('auth.sign_up_title')}</h3>
+    <p class="signin-prompt-subtitle">${subtitle}</p>
+    <div class="signin-prompt-actions">
+      <button class="signin-btn signin-prompt-primary" type="button">${t('auth.sign_up')}</button>
+      <button class="signup-btn signin-prompt-secondary" type="button">${t('auth.sign_in')}</button>
     </div>
   `;
 
   const signInBtn = dialog.querySelector('.signin-btn') as HTMLButtonElement;
   const signUpBtn = dialog.querySelector('.signup-btn') as HTMLButtonElement;
 
-  // Hover effects for primary sign up button (was sign in button)
-  signInBtn.addEventListener('mouseenter', () => {
-    signInBtn.style.opacity = '0.8';
-  });
-  signInBtn.addEventListener('mouseleave', () => {
-    signInBtn.style.opacity = '1';
-  });
   signInBtn.addEventListener('click', () => {
     destroy();
     props.onSignUp?.();
   });
 
-  // Hover effects for secondary sign in button (was sign up button)
-  signUpBtn.addEventListener('mouseenter', () => {
-    signUpBtn.style.background = 'var(--accent)';
-    signUpBtn.style.color = '#000';
-  });
-  signUpBtn.addEventListener('mouseleave', () => {
-    signUpBtn.style.background = 'transparent';
-    signUpBtn.style.color = 'var(--accent)';
-  });
   signUpBtn.addEventListener('click', () => {
     destroy();
     props.onSignIn?.();

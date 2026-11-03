@@ -3,6 +3,8 @@ import {
   BarChart3,
   Bell,
   Bookmark,
+  ChevronDown,
+  ChevronUp,
   Copy,
   createElement,
   Download,
@@ -75,7 +77,9 @@ export type IconName =
   | 'download'
   | 'monitor'
   | 'smartphone'
-  | 'terminal';
+  | 'terminal'
+  | 'chevron-up'
+  | 'chevron-down';
 
 const ICON_NODES: Record<IconName, IconNode> = {
   fresh: Leaf,
@@ -116,6 +120,8 @@ const ICON_NODES: Record<IconName, IconNode> = {
   monitor: Monitor,
   smartphone: Smartphone,
   terminal: Terminal,
+  'chevron-up': ChevronUp,
+  'chevron-down': ChevronDown,
 };
 
 export function icon(name: IconName, attrs: Record<string, string> = {}): SVGElement {

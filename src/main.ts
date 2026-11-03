@@ -1,6 +1,17 @@
 import './styles/main.css';
+import './styles/redesign/foundation.css';
+import './styles/redesign/shell.css';
+import './styles/redesign/timeline.css';
+import './styles/redesign/composer.css';
+import './styles/redesign/overlays.css';
+import './styles/redesign/pages.css';
+import './styles/redesign/command.css';
+import './styles/redesign/feed.css';
+import './styles/redesign/rail.css';
+import './styles/redesign/motion.css';
 import type { ArcadePageHandle } from './components/ArcadePage.js';
 import type { BookmarksPage } from './components/BookmarksPage.js';
+import { initCommandPalette, registerCommandActions } from './components/CommandPalette.js';
 import { showCrowdConsentModal } from './components/CrowdConsentModal.js';
 import type { ExplorePage } from './components/ExplorePage.js';
 import type { LeftNav } from './components/LeftNav.js';
@@ -21,6 +32,7 @@ import { lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from '
 import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
 import type { LeftNavHandlers } from './lib/left-nav-handlers.js';
 import { createLeftNavHandlers } from './lib/left-nav-handlers.js';
+import { isModalOpen } from './lib/modal-state.js';
 import { API_ORIGIN, isCapacitorNativePlatform, isNativeApp, isTauriNativePlatform } from './lib/native-api.js';
 import { createNativeFetch } from './lib/native-fetch.js';
 import {
@@ -33,14 +45,14 @@ import {
 import { initOfflineGames } from './lib/native-offline-games.js';
 import { fetchNotifications, invalidateNotificationsCache } from './lib/notifications-api.js';
 import { createOfflineFetch } from './lib/offline-fetch.js';
-import { initOfflineStatus, setOffline } from './lib/offline-status.js';
+import { isOffline, setOffline } from './lib/offline-status.js';
 import { createOfflineStore } from './lib/offline-store.js';
 import { hidePageLoader, showPageLoader, showPageLoaderFailure } from './lib/page-loader.js';
 import { initPerformanceMonitoring } from './lib/performance.js';
 import { createPushSocket } from './lib/push-socket.js';
 import { parseCurrentRoute, type RouteInfo, type RouteView } from './lib/router.js';
 import { goBackInSpaOr, pushSpaHistory } from './lib/spa-history.js';
-import { initTheme } from './lib/theme.js';
+import { getResolvedTheme, initTheme, setTheme } from './lib/theme.js';
 import { showToast } from './lib/toast.js';
 import { viewToBottomNavId } from './lib/view-nav.js';
 import { initializeWebPush } from './lib/web-push.js';
@@ -56,6 +68,26 @@ initPerformanceMonitoring();
 // Capture Capacitor's patched fetch; local assets stay in the bundle.
 const nativeClient = isNativeApp();
 const nativeFetch = createNativeFetch(window.fetch.bind(window));
+// A real network request that bypasses the offline cache, so a stale
+// navigator.onLine value cannot latch the app offline.
+const probeConnectivity = async (): Promise<boolean> => {
+  try {
+    const response = await nativeFetch('/api/me', {
+      cache: 'no-store',
+      credentials: 'include',
+      // A connected socket with a stalled response must not pin `probing`.
+      signal: AbortSignal.timeout(8000),
+    });
+    try {
+      await response.body?.cancel();
+    } catch {
+      // The response already proved connectivity.
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
 window.fetch = nativeClient
   ? createOfflineFetch(nativeFetch, {
       store: createOfflineStore(),
@@ -63,6 +95,7 @@ window.fetch = nativeClient
       apiOrigin: API_ORIGIN,
       isOnline: () => navigator.onLine !== false,
       setOffline,
+      probe: probeConnectivity,
     })
   : nativeFetch;
 if (nativeClient) window.fetch = initOfflineGames(nativeFetch).wrap(window.fetch);
@@ -85,7 +118,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     history.scrollRestoration = 'manual';
 
     await initI18n();
-    if (nativeClient) initOfflineStatus();
 
     // Routing state
     let currentView:
@@ -168,7 +200,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       },
       {
         onOpen: () => {
-          console.log('[push] connected');
           refreshNotificationBadges();
         },
         onMessage: (raw) => {
@@ -211,13 +242,17 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
         });
       } catch {
-        console.log('[push] @capacitor/app not available');
+        // Optional Capacitor lifecycle API: no app-state hook on this platform.
       }
     }
 
-    // Offline / online をトーストで統一表示する
-    window.addEventListener('offline', () => showToast(t('common.offline'), true));
-    window.addEventListener('online', () => showToast(t('common.online')));
+    // Offline / online をトーストで統一表示する。ブラウザのイベントだけでなく、
+    // 誤った navigator.onLine を補正するバックグラウンド probe の結果も反映する。
+    window.addEventListener('flaxiaConnectivityChange', (event) => {
+      const { offline } = (event as CustomEvent<{ offline: boolean }>).detail;
+      if (offline) showToast(t('common.offline'), true);
+      else showToast(t('common.online'));
+    });
 
     const updateBadgeUI = () => {
       leftNavInstances.forEach((leftNav) => {
@@ -231,7 +266,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     let previousNotificationIds: Set<string> | null = null;
     const refreshNotificationBadges = async () => {
-      console.log('[poll] refreshNotificationBadges called');
       const data = await fetchNotifications();
       // Native HTTP owns Tauri's session jar; browser sockets cannot share it.
       if (isTauriNativePlatform()) {
@@ -245,7 +279,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         previousNotificationIds = new Set(data.notifications.map((notification) => notification.id));
       }
       unreadNotificationCount = data.unread_count || 0;
-      console.log('[poll] unread count:', unreadNotificationCount);
       updateBadgeUI();
     };
 
@@ -297,8 +330,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           return true;
         }
-      } catch (error) {
-        console.log('Not authenticated:', error);
+      } catch {
+        // Guest or expired session: fall through to the signed-out state.
       }
 
       // Clear user state when not authenticated
@@ -335,7 +368,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           return false;
         }
 
-        console.log('User session expired - redirecting to login');
         window.history.replaceState({}, '', '/login');
         navigateTo('login');
         return false;
@@ -346,15 +378,24 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     if (nativeClient) {
       window.setInterval(() => {
-        if (currentUser && navigator.onLine !== false) void refreshNotificationBadges();
+        if (currentUser && !isOffline()) void refreshNotificationBadges();
       }, 60000);
+      // A probe can recover connectivity without the browser firing `online`,
+      // so both signals refresh the session and timeline. The cooldown keeps a
+      // browser online event and a probe success from refreshing twice.
+      let lastReconnectAt = 0;
       const reconnect = async () => {
+        const now = Date.now();
+        if (now - lastReconnectAt < 1000) return;
+        lastReconnectAt = now;
         clearMeCache();
         await checkAuth();
         timeline?.refresh();
       };
       window.addEventListener('online', () => void reconnect());
-      window.addEventListener('flaxiaReconnect', () => void reconnect());
+      window.addEventListener('flaxiaConnectivityChange', (event) => {
+        if (!(event as CustomEvent<{ offline: boolean }>).detail.offline) void reconnect();
+      });
     }
 
     // Fetch notifications (see src/lib/notifications-api.ts)
@@ -374,6 +415,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       return false;
     };
 
+    // Main landmark: the content column carries role="main" so assistive tech can
+    // skip the shell's nav and aside columns (the page itself stays unchanged).
+    const markMainContent = (content: HTMLElement): HTMLElement => {
+      content.setAttribute('role', 'main');
+      return content;
+    };
+
     // URL routing (see src/lib/router.ts)
 
     // Page loading overlay (see src/lib/page-loader.ts)
@@ -388,8 +436,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       searchQuery?: string,
       searchType?: 'posts' | 'users' | 'arcade',
     ) => {
-      console.log('Navigate to:', view, postId, username, tag, 'Current view:', currentView, 'adminTab:', adminTab);
-
       // Close mobile nav if open
       closeLeftNav();
 
@@ -404,12 +450,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (view === 'login' || view === 'register') {
         // Cleanup current view
         if (timeline) {
-          console.log('Cleaning up timeline');
           timeline.destroy();
           timeline = null;
         }
         if (threadPage) {
-          console.log('Cleaning up thread page');
           threadPage.destroy();
           threadPage = null;
         }
@@ -450,7 +494,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Cache current view when navigating to thread or arcade (for back navigation with preserved content)
         if ((view === 'thread' || view === 'arcade') && currentView !== view) {
-          console.log(`Caching current view for back navigation to ${view}:`, currentView);
           if (currentView === 'timeline' && timeline) {
             cachedContentComponent = { view: 'timeline', component: timeline, scrollY: window.scrollY };
             timeline = null;
@@ -481,12 +524,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Cleanup current view (cached components already nulled above)
         if (timeline) {
-          console.log('Cleaning up timeline');
           timeline.destroy();
           timeline = null;
         }
         if (threadPage) {
-          console.log('Cleaning up thread page');
           threadPage.destroy();
           threadPage = null;
         }
@@ -809,7 +850,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
           if (cachedContentComponent?.view === 'explore') {
-            console.log('Restoring cached explore page');
             explorePage = cachedContentComponent.component as ExplorePage;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
@@ -829,20 +869,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-              // Handle search here
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-              // Handle follow here
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(explorePage.getElement());
+          mainContainer.appendChild(markMainContent(explorePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -876,7 +907,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
           if (cachedContentComponent?.view === 'search') {
-            console.log('Restoring cached search page');
             searchPage = cachedContentComponent.component as PageComponent;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
@@ -894,17 +924,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
           }
 
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(searchPage.getElement());
+          mainContainer.appendChild(markMainContent(searchPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -952,20 +975,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-              // Handle search here
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-              // Handle follow here
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(arcadePage.getElement());
+          mainContainer.appendChild(markMainContent(arcadePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -1001,7 +1015,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
           if (cachedContentComponent?.view === 'profile') {
-            console.log('Restoring cached profile');
             profilePage = cachedContentComponent.component as PageComponent;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
@@ -1021,20 +1034,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-              // Handle search here
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-              // Handle follow here
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(profilePage.getElement());
+          mainContainer.appendChild(markMainContent(profilePage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -1093,7 +1097,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
 
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(bookmarksPage.getElement());
+          mainContainer.appendChild(markMainContent(bookmarksPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
           app.appendChild(mainContainer);
           hidePageLoader();
@@ -1165,18 +1169,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           });
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(notificationsPage.getElement());
+          mainContainer.appendChild(markMainContent(notificationsPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -1235,15 +1232,15 @@ document.addEventListener('DOMContentLoaded', async () => {
                   },
                 });
 
-                const newSettingsPage = settingsPage;
+                const newSettingsElement = markMainContent(settingsPage.getElement());
                 // Wait for the next tick to ensure the element is in the DOM
                 setTimeout(() => {
                   if (oldElement.parentNode) {
-                    oldElement.parentNode.replaceChild(newSettingsPage.getElement(), oldElement);
+                    oldElement.parentNode.replaceChild(newSettingsElement, oldElement);
                   } else {
                     const leftNavElement = mainContainer.children[0];
                     if (leftNavElement && mainContainer.children[1]) {
-                      mainContainer.insertBefore(newSettingsPage.getElement(), mainContainer.children[1]);
+                      mainContainer.insertBefore(newSettingsElement, mainContainer.children[1]);
                     }
                   }
                 }, 0);
@@ -1256,18 +1253,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           loadUserData();
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(settingsPage.getElement());
+          mainContainer.appendChild(markMainContent(settingsPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
 
           app.appendChild(mainContainer);
@@ -1285,7 +1275,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         if (view === 'thread' && postId) {
           // Thread page view
-          console.log('Creating thread page for postId:', postId);
           currentView = 'thread';
           currentPostId = postId;
 
@@ -1297,7 +1286,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             currentUser,
             unreadCount: unreadNotificationCount,
             onBack: () => {
-              console.log('Back button clicked, returning to previous view');
               goBackInSpaOr(() => {
                 window.history.replaceState({}, '', '/home');
                 navigateTo('timeline');
@@ -1305,9 +1293,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             },
           });
 
-          console.log('Thread page created, adding to container');
+          // ThreadPage owns the content column inside its own three-column shell.
+          const threadMainContent = threadPage.getElement().querySelector('.thread-main-content');
+          if (threadMainContent instanceof HTMLElement) markMainContent(threadMainContent);
           mainContainer.appendChild(threadPage.getElement());
-          console.log('Thread page added to DOM');
 
           // ThreadPage has its own LeftNav, find it and setup mobile functionality
           const threadLeftNav = threadPage.getElement().querySelector('.left-nav') as HTMLElement;
@@ -1318,14 +1307,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           }
 
           // Create Right Panel
-          const threadRightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-            },
-          });
+          const threadRightPanel = await lazyCreateRightPanel();
           mainContainer.appendChild(threadRightPanel.getElement());
         } else {
           // Timeline view
@@ -1345,7 +1327,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
           if (cachedContentComponent?.view === 'timeline') {
-            console.log('Restoring cached timeline');
             timeline = cachedContentComponent.component as Timeline;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
@@ -1390,20 +1371,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           setupMobileLeftNav(leftNav.getElement());
 
           // Create Right Panel
-          const rightPanel = await lazyCreateRightPanel({
-            onSearch: (query) => {
-              console.log('Search:', query);
-              // Handle search here
-            },
-            onFollowUser: (userId) => {
-              console.log('Follow user:', userId);
-              // Handle follow here
-            },
-          });
+          const rightPanel = await lazyCreateRightPanel();
 
           // Assemble layout
           mainContainer.appendChild(leftNav.getElement());
-          mainContainer.appendChild(timeline.getElement());
+          mainContainer.appendChild(markMainContent(timeline.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
         }
 
@@ -1497,10 +1469,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // Initial navigation
-    console.log('DOM Content Loaded, starting initial routing...');
-
     const initialRoute = parseCurrentRoute();
-    console.log('Initial route:', initialRoute);
     if (initialRoute) {
       await safeNavigate(
         initialRoute.view,
@@ -1521,6 +1490,133 @@ document.addEventListener('DOMContentLoaded', async () => {
         setTimeout(fn, 3000);
       }
     };
+
+    // Command palette (⌘K / Ctrl+K) — Obsidian-style quick switcher.
+    initCommandPalette();
+    const openComposerFromShell = () => {
+      const nav = leftNavInstances.values().next().value as { openComposer?: () => void } | undefined;
+      if (nav?.openComposer) nav.openComposer();
+      else document.querySelector<HTMLTextAreaElement>('.composer-textarea')?.focus();
+    };
+    registerCommandActions(() => {
+      const navigationGroup = t('command.group_navigation');
+      const actionGroup = t('command.group_actions');
+      const actions: Array<{
+        id: string;
+        label: string;
+        group: string;
+        hint?: string;
+        keywords?: string;
+        run: () => void;
+      }> = [
+        {
+          id: 'home',
+          label: t('nav.home'),
+          group: navigationGroup,
+          keywords: 'home timeline',
+          run: () => {
+            pushSpaHistory('/home');
+            void navigateTo('timeline');
+          },
+        },
+        {
+          id: 'explore',
+          label: t('nav.explore'),
+          group: navigationGroup,
+          keywords: 'explore search',
+          run: () => {
+            pushSpaHistory('/explore');
+            void navigateTo('explore');
+          },
+        },
+        {
+          id: 'arcade',
+          label: t('nav.arcade'),
+          group: navigationGroup,
+          keywords: 'arcade games',
+          run: () => {
+            pushSpaHistory('/arcade');
+            void navigateTo('arcade');
+          },
+        },
+        {
+          id: 'notifications',
+          label: t('nav.notifications'),
+          group: navigationGroup,
+          run: () => {
+            pushSpaHistory('/notifications');
+            void navigateTo('notifications');
+          },
+        },
+        {
+          id: 'bookmarks',
+          label: t('nav.bookmarks'),
+          group: navigationGroup,
+          run: () => {
+            pushSpaHistory('/bookmarks');
+            void navigateTo('bookmarks');
+          },
+        },
+        {
+          id: 'settings',
+          label: t('nav.settings'),
+          group: navigationGroup,
+          run: () => {
+            pushSpaHistory('/settings');
+            void navigateTo('settings');
+          },
+        },
+        {
+          id: 'theme',
+          label: getResolvedTheme() === 'dark' ? t('command.theme_light') : t('command.theme_dark'),
+          group: actionGroup,
+          hint: 'T',
+          run: () => setTheme(getResolvedTheme() === 'dark' ? 'light' : 'dark'),
+        },
+        {
+          id: 'focus-composer',
+          label: t('command.new_post'),
+          group: actionGroup,
+          hint: 'N',
+          keywords: 'compose post write',
+          run: openComposerFromShell,
+        },
+      ];
+      if (currentUser) {
+        actions.push({
+          id: 'profile',
+          label: t('nav.profile'),
+          group: navigationGroup,
+          run: () => {
+            if (!currentUser) return;
+            pushSpaHistory(`/profile/${currentUser.username}`);
+            void navigateTo('profile', undefined, currentUser.username);
+          },
+        });
+      }
+      return actions;
+    });
+
+    // N / T quick actions from the shell cheat sheet. Skip while typing,
+    // while a dialog owns the keyboard, or when a modifier is held.
+    window.addEventListener('keydown', (event) => {
+      if (event.defaultPrevented || event.isComposing) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      if (document.querySelector('.cmd-overlay:not([hidden])') || isModalOpen()) return;
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        if (target.isContentEditable) return;
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      }
+      const key = event.key.toLowerCase();
+      if (key === 'n') {
+        event.preventDefault();
+        openComposerFromShell();
+      } else if (key === 't') {
+        event.preventDefault();
+        setTheme(getResolvedTheme() === 'dark' ? 'light' : 'dark');
+      }
+    });
 
     // Register Service Worker for Web Push (browser) — non-blocking
     initializeWebPush(isCapacitorNative).catch(() => {});

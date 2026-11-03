@@ -21,6 +21,7 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   // Create main container
   const container = document.createElement('div');
   container.className = 'auth-page';
+  container.setAttribute('role', 'main');
 
   // Create card
   const card = document.createElement('div');
@@ -42,7 +43,7 @@ export function createLoginPage({ onSuccess }: LoginProps) {
 
   // Heading
   const heading = document.createElement('h1');
-  heading.className = 'auth-heading';
+  heading.className = 'auth-heading fx-display';
   heading.textContent = t('login.heading');
 
   // Form
@@ -92,6 +93,7 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   submitButton.type = 'submit';
   submitButton.className = 'auth-button';
   submitButton.textContent = t('login.submit');
+  submitButton.classList.add('fx-display');
   submitButton.disabled = true;
 
   // Register link
@@ -113,22 +115,60 @@ export function createLoginPage({ onSuccess }: LoginProps) {
     submitButton.disabled = !modeReady || !(emailValid && passwordValid);
   };
 
-  void flaxiaAuthIsAuthoritative()
-    .then((authoritative) => {
-      useFlaxiaAuth ||= authoritative;
-      // Auth-backed logins can enroll a recovery code before the authority
-      // cutover, so the opt-in flow exposes recovery too.
-      recoveryAvailable = useFlaxiaAuth;
-      recoveryLabel.hidden = !recoveryAvailable;
-      modeReady = true;
-      emailInput.type = useFlaxiaAuth ? 'text' : 'email';
-      emailInput.placeholder = useFlaxiaAuth ? t('login.username_placeholder') : t('login.email_placeholder');
-      validateForm();
-    })
-    .catch(() => {
-      errorDiv.textContent = t('login.error_network');
-      errorDiv.style.display = 'block';
-    });
+  let modeInFlight = false;
+  let destroyed = false;
+  let modeRetry: ReturnType<typeof setTimeout> | undefined;
+  let modeRetryDelay = 1000;
+  const clearModeRetry = () => {
+    if (modeRetry !== undefined) {
+      clearTimeout(modeRetry);
+      modeRetry = undefined;
+    }
+  };
+  const loadAuthMode = () => {
+    if (destroyed || modeReady || modeInFlight) return;
+    modeInFlight = true;
+    void flaxiaAuthIsAuthoritative()
+      .then((authoritative) => {
+        if (destroyed) return;
+        useFlaxiaAuth ||= authoritative;
+        // Auth-backed logins can enroll a recovery code before the authority
+        // cutover, so the opt-in flow exposes recovery too.
+        recoveryAvailable = useFlaxiaAuth;
+        recoveryLabel.hidden = !recoveryAvailable;
+        modeReady = true;
+        clearModeRetry();
+        errorDiv.style.display = 'none';
+        emailInput.type = useFlaxiaAuth ? 'text' : 'email';
+        emailInput.placeholder = useFlaxiaAuth ? t('login.username_placeholder') : t('login.email_placeholder');
+        validateForm();
+      })
+      .catch(() => {
+        if (destroyed) return;
+        // A connectivity false positive must not disable sign-in forever.
+        errorDiv.textContent = t('login.error_network');
+        errorDiv.style.display = 'block';
+        if (modeRetry === undefined) {
+          modeRetry = setTimeout(() => {
+            modeRetry = undefined;
+            modeRetryDelay = Math.min(modeRetryDelay * 2, 15000);
+            loadAuthMode();
+          }, modeRetryDelay);
+        }
+      })
+      .finally(() => {
+        modeInFlight = false;
+      });
+  };
+  const retryAuthModeNow = () => {
+    if (modeReady) return;
+    clearModeRetry();
+    modeRetryDelay = 1000;
+    loadAuthMode();
+  };
+  window.addEventListener('online', retryAuthModeNow);
+  window.addEventListener('flaxiaConnectivityChange', retryAuthModeNow);
+  loadAuthMode();
 
   emailInput.addEventListener('input', validateForm);
   passwordInput.addEventListener('input', validateForm);
@@ -238,7 +278,10 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   return {
     getElement: () => container,
     destroy: () => {
-      // Cleanup if needed
+      destroyed = true;
+      clearModeRetry();
+      window.removeEventListener('online', retryAuthModeNow);
+      window.removeEventListener('flaxiaConnectivityChange', retryAuthModeNow);
     },
   };
 }

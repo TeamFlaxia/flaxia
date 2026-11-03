@@ -13,6 +13,10 @@ const ENTRY_INPUTS: Record<string, string> = {
 const HTML_ENTRY: Record<string, string> = Object.fromEntries(
   Object.entries(ENTRY_INPUTS).map(([entry, html]) => [html, entry]),
 );
+const packageVersion = (
+  JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }
+).version;
+const gitCommit = (process.env.GITHUB_SHA || process.env.CF_PAGES_COMMIT_SHA || 'unknown').slice(0, 40);
 
 export default defineConfig({
   build: {
@@ -71,6 +75,8 @@ export default defineConfig({
     'import.meta.env.VITE_CF_ACCESS_LOGIN_URL': JSON.stringify(
       `https://${process.env.CF_TEAM_DOMAIN || 'yourteam.cloudflareaccess.com'}/cdn-cgi/access/login/${process.env.CF_ACCESS_AUD || 'your-aud-tag-here'}`,
     ),
+    'import.meta.env.VITE_APP_VERSION': JSON.stringify(packageVersion),
+    'import.meta.env.VITE_GIT_COMMIT': JSON.stringify(gitCommit),
   },
   ssr: {
     noExternal: ['hono'],

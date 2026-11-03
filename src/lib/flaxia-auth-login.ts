@@ -53,7 +53,11 @@ export async function loginWithFlaxiaAuthRecovery(username: string, recoveryCode
 }
 
 export async function flaxiaAuthIsAuthoritative(): Promise<boolean> {
-  const response = await fetch('/api/auth/mode', { cache: 'no-store' });
+  const response = await fetch('/api/auth/mode', {
+    cache: 'no-store',
+    // Bound the lookup so a stalled connection can enter the retry loop.
+    signal: AbortSignal.timeout(8000),
+  });
   if (!response.ok) throw new Error('Authentication configuration unavailable');
   return ((await response.json()) as { authority?: unknown }).authority === 'flaxia-auth';
 }

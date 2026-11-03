@@ -68,6 +68,13 @@ export default {
     } catch (error) {
       console.error('Trust score recompute failed:', (error as Error).message);
     }
+    try {
+      const { cleanupExpiredBugReportSubmissions } = await import('./lib/bug-report-store');
+      const removed = await cleanupExpiredBugReportSubmissions(env.DB);
+      if (removed > 0) console.log(`Removed ${removed} expired bug report reservations`);
+    } catch (error) {
+      console.error('Bug report reservation cleanup failed:', (error as Error).message);
+    }
   },
 
   async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {

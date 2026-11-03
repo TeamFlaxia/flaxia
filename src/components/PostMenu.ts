@@ -50,17 +50,6 @@ export function createPostMenuDropdown(props: PostMenuProps): HTMLElement {
 
   const dropdown = document.createElement('div');
   dropdown.className = 'post-menu-dropdown';
-  dropdown.style.cssText = `
-    position: absolute;
-    top: 30px;
-    right: 0;
-    background: var(--bg-primary);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    z-index: 100;
-    min-width: 120px;
-  `;
 
   const closeDropdown = () => {
     dropdown.remove();
@@ -171,25 +160,10 @@ export function createPostMenuDropdown(props: PostMenuProps): HTMLElement {
 
 export function createMenuButton(onClick: () => void): HTMLElement {
   const menuButton = document.createElement('button');
+  menuButton.type = 'button';
   menuButton.className = 'post-menu-button';
   menuButton.textContent = '⋯';
-  menuButton.style.cssText = `
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    font-size: 18px;
-    cursor: pointer;
-    padding: 4px 8px;
-    border-radius: 4px;
-    transition: color 0.2s ease;
-  `;
-
-  menuButton.addEventListener('mouseenter', () => {
-    menuButton.style.color = 'var(--text-primary)';
-  });
-  menuButton.addEventListener('mouseleave', () => {
-    menuButton.style.color = 'var(--text-muted)';
-  });
+  menuButton.setAttribute('aria-label', t('post_actions.more_actions'));
 
   menuButton.addEventListener('click', (e) => {
     e.stopPropagation();

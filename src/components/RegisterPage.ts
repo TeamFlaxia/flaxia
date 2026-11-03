@@ -12,6 +12,7 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
   // Create main container
   const container = document.createElement('div');
   container.className = 'auth-page';
+  container.setAttribute('role', 'main');
 
   // Create card
   const card = document.createElement('div');
@@ -33,7 +34,7 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
 
   // Heading
   const heading = document.createElement('h1');
-  heading.className = 'auth-heading';
+  heading.className = 'auth-heading fx-display';
   heading.textContent = t('register.heading');
 
   // Form
@@ -135,6 +136,7 @@ export function createRegisterPage({ onSuccess }: RegisterProps) {
   submitButton.className = 'auth-button';
   submitButton.textContent = t('register.submit');
   submitButton.disabled = true;
+  submitButton.classList.add('fx-display');
 
   // Login link
   const loginLink = document.createElement('div');

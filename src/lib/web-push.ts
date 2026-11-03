@@ -36,9 +36,8 @@ export async function registerPushToken(): Promise<void> {
       credentials: 'include',
       body: JSON.stringify(sub.toJSON()),
     });
-    console.log('Web Push subscription registered');
-  } catch (err) {
-    console.log('Web Push registration not available:', err);
+  } catch {
+    // Push is best-effort: unsupported or denied browsers stay silent.
   }
 }
 

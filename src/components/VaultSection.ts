@@ -77,7 +77,7 @@ const BUTTON_CSS = `
   border: none;
   border-radius: 4px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   cursor: pointer;
   font-size: 0.9rem;
 `;

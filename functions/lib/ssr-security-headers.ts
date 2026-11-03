@@ -1,6 +1,6 @@
 const CSP_SCRIPT_HASHES = [
   // index.html theme, locale, and initial-loader bootstraps
-  "'sha256-fHNVwPbW99e+pMNlG6l4u/Qa4ZXgCiY4NEErpg7xNKA='",
+  "'sha256-CPQesfKVZdL8AM+gUY3i39cUnxYHGn9w+rE2/MvMhZc=' 'sha256-fHNVwPbW99e+pMNlG6l4u/Qa4ZXgCiY4NEErpg7xNKA='",
   "'sha256-8UZ1xbdoEGBJfbCFW7UdTEkjFZkH/d+8yO/eZ/JEOM0='",
   "'sha256-lf+0nM1TqVv41CHz3DTo1q7DzxErxegCLlYtVBZlTWg='",
   // Trusted SWF/Ruffle bootstrap, AdSense iframe bootstrap, and legacy sandbox wrapper.

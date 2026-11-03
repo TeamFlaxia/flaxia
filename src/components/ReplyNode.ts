@@ -32,12 +32,7 @@ export class ReplyNode {
 
   private createElement(): HTMLElement {
     const container = document.createElement('div');
-    container.className = 'reply-node';
-    container.style.cssText = `
-      margin-bottom: 0.75rem;
-      font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      ${this.props.node.post.depth > 0 ? 'padding-left: 1rem;' : ''}
-    `;
+    container.className = `reply-node${this.props.node.post.depth > 0 ? ' reply-node--nested' : ''}`;
 
     const nodeIndex = this.props.postIndexMap?.get(this.props.node.post.id);
 
@@ -56,39 +51,17 @@ export class ReplyNode {
 
     // Create wrapper for post card and expand button
     const postWrapper = document.createElement('div');
-    postWrapper.style.cssText = 'display: flex; align-items: flex-start; gap: 0.25rem;';
+    postWrapper.className = 'reply-node-row';
     postWrapper.appendChild(this.postCard.getElement());
 
     // Add expand button if this reply has children and depth > 0
     if (this.props.node.children.length > 0 && this.props.node.post.depth > 0) {
       this.expandButton = document.createElement('button');
-      this.expandButton.className = 'expand-button';
-      this.expandButton.innerHTML = '▶';
-      this.expandButton.style.cssText = `
-        background: none;
-        border: none;
-        color: #64748b;
-        cursor: pointer;
-        font-size: 0.75rem;
-        padding: 0.25rem;
-        border-radius: 0.25rem;
-        transition: all 0.2s ease;
-        width: 1.25rem;
-        height: 1.25rem;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-      `;
+      this.expandButton.type = 'button';
+      this.expandButton.className = 'reply-expand-button';
+      this.expandButton.textContent = '▶';
+      this.expandButton.setAttribute('aria-expanded', 'false');
       this.expandButton.addEventListener('click', () => this.toggleExpanded());
-      this.expandButton.addEventListener('mouseenter', () => {
-        this.expandButton!.style.backgroundColor = 'var(--bg-input)';
-        this.expandButton!.style.color = 'var(--text-primary)';
-      });
-      this.expandButton.addEventListener('mouseleave', () => {
-        this.expandButton!.style.backgroundColor = 'none';
-        this.expandButton!.style.color = 'var(--text-muted)';
-      });
       postWrapper.insertBefore(this.expandButton, postWrapper.firstChild);
     }
 
@@ -111,12 +84,7 @@ export class ReplyNode {
     if (this.props.node.children.length > 0) {
       this.childrenContainer = document.createElement('div');
       this.childrenContainer.className = 'reply-children';
-      this.childrenContainer.style.cssText = `
-        margin-top: 0.75rem;
-        padding-left: 1rem;
-        border-left: 2px solid var(--border);
-        display: ${this.props.node.post.depth > 0 ? 'none' : 'block'};
-      `;
+      this.childrenContainer.style.display = this.props.node.post.depth > 0 ? 'none' : 'block';
 
       this.props.node.children.forEach((childNode) => {
         const childReplyNode = new ReplyNode({
@@ -203,7 +171,8 @@ export class ReplyNode {
   private toggleExpanded(): void {
     this.isExpanded = !this.isExpanded;
     if (this.expandButton) {
-      this.expandButton.innerHTML = this.isExpanded ? '▼' : '▶';
+      this.expandButton.classList.toggle('is-expanded', this.isExpanded);
+      this.expandButton.setAttribute('aria-expanded', String(this.isExpanded));
     }
     if (this.childrenContainer) {
       this.childrenContainer.style.display = this.isExpanded ? 'block' : 'none';
@@ -217,12 +186,7 @@ export class ReplyNode {
     if (!this.childrenContainer) {
       this.childrenContainer = document.createElement('div');
       this.childrenContainer.className = 'reply-children';
-      this.childrenContainer.style.cssText = `
-        margin-top: 0.75rem;
-        padding-left: 1rem;
-        border-left: 2px solid var(--border);
-        display: block;
-      `;
+      this.childrenContainer.style.display = 'block';
       this.element.appendChild(this.childrenContainer);
     } else {
       this.childrenContainer.style.display = 'block';

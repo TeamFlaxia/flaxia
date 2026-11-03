@@ -25,12 +25,12 @@ import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
 import { getReplyStyle, getShowNsfw, ReplyStyle, setReplyStyle, setShowNsfw } from '../lib/settings.js';
-import { createSettingsNavigation } from '../lib/settings-navigation.js';
 import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
 import { getTheme, setTheme, Theme } from '../lib/theme.js';
 import { createTitleIcon, titleDescription, titleName } from '../lib/user-title.js';
 import { fetchVaultKeys, prepareVaultRewrap } from '../lib/vault/client.js';
 import { createAddStampModal } from './AddStampModal.js';
+import { createBugReportForm } from './BugReportForm.js';
 import { createVaultSection } from './VaultSection.js';
 
 function b64(b: Uint8Array): string {
@@ -53,9 +53,121 @@ interface SettingsPageProps {
   };
 }
 
+interface SettingsCategory {
+  id: string;
+  groupKey: string;
+  titleKey: string;
+  descriptionKey: string;
+  iconName: string;
+  sections: HTMLElement[];
+}
+
+/**
+ * v5 two-pane settings shell: a dense category rail (Obsidian-style) on the
+ * left, one bordered panel per category on the right. Replaces the previous
+ * overview/back-navigation flow while keeping the same public surface.
+ */
+function createSettingsTwoPane() {
+  const container = document.createElement('div');
+  container.className = 'settings-page';
+
+  const header = document.createElement('header');
+  header.className = 'settings-header';
+  const back = document.createElement('button');
+  back.type = 'button';
+  back.className = 'settings-back';
+  back.textContent = '←';
+  back.setAttribute('aria-label', t('common.back'));
+  const heading = document.createElement('h1');
+  heading.textContent = t('settings.title');
+  heading.tabIndex = -1;
+  header.appendChild(back);
+  header.appendChild(heading);
+  container.appendChild(header);
+
+  const pane = document.createElement('div');
+  pane.className = 'settings-two-pane';
+  const nav = document.createElement('nav');
+  nav.className = 'settings-nav';
+  nav.setAttribute('aria-label', t('settings.title'));
+  const content = document.createElement('div');
+  content.className = 'settings-content';
+  pane.appendChild(nav);
+  pane.appendChild(content);
+  container.appendChild(pane);
+
+  const groups = new Map<string, HTMLElement>();
+  const items = new Map<string, HTMLButtonElement>();
+  const panels = new Map<string, HTMLElement>();
+  let active: string | null = null;
+
+  back.addEventListener('click', () => window.history.back());
+
+  function showCategory(id: string | null, moveFocus = true): void {
+    const nextId = id && items.has(id) ? id : (items.keys().next().value ?? null);
+    if (!nextId) return;
+    active = nextId;
+    for (const [key, button] of items) {
+      const isActive = key === nextId;
+      button.classList.toggle('settings-nav-item--active', isActive);
+      if (isActive) button.setAttribute('aria-current', 'page');
+      else button.removeAttribute('aria-current');
+    }
+    for (const [key, panel] of panels) panel.hidden = key !== nextId;
+    if (moveFocus) panels.get(nextId)?.focus({ preventScroll: false });
+  }
+
+  function addCategory(category: SettingsCategory): void {
+    let group = groups.get(category.groupKey);
+    if (!group) {
+      const section = document.createElement('section');
+      section.className = 'settings-nav-group';
+      const title = document.createElement('h2');
+      title.className = 'settings-nav-group-title';
+      title.textContent = t(category.groupKey);
+      const list = document.createElement('div');
+      list.className = 'settings-nav-list';
+      section.appendChild(title);
+      section.appendChild(list);
+      nav.appendChild(section);
+      group = list;
+      groups.set(category.groupKey, group);
+    }
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'settings-nav-item';
+    button.textContent = t(category.titleKey);
+    button.addEventListener('click', () => showCategory(category.id));
+    group.appendChild(button);
+    items.set(category.id, button);
+
+    const panel = document.createElement('section');
+    panel.className = 'settings-panel';
+    panel.setAttribute('aria-label', t(category.titleKey));
+    panel.tabIndex = -1;
+    panel.hidden = true;
+    const intro = document.createElement('p');
+    intro.className = 'settings-panel-description';
+    intro.textContent = t(category.descriptionKey);
+    panel.appendChild(intro);
+    for (const section of category.sections) panel.appendChild(section);
+    content.appendChild(panel);
+    panels.set(category.id, panel);
+  }
+
+  return {
+    getElement: () => container,
+    addCategory,
+    showCategory,
+    getActiveCategory: () => active,
+  };
+}
+
 export function createSettingsPage({ currentUser, initialCategory }: SettingsPageProps) {
-  const navigation = createSettingsNavigation();
+  const navigation = createSettingsTwoPane();
   const container = navigation.getElement();
+  const bugReportForm = createBugReportForm();
   let accountSection: HTMLDivElement | undefined;
   let emojiSection: HTMLDivElement | undefined;
   let titlesSection: HTMLDivElement | undefined;
@@ -71,12 +183,6 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
     const userChip = document.createElement('div');
     userChip.className = 'settings-user';
-    userChip.style.cssText = `
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-      margin-bottom: 1.5rem;
-    `;
 
     const avatarUrl = nativeApiHref(
       currentUser.avatar_key ? `/api/images/${currentUser.avatar_key}` : '/api/images/default-avatar',
@@ -84,12 +190,11 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     const displayName = currentUser.display_name || currentUser.username;
 
     const avatarWrap = document.createElement('div');
-    avatarWrap.style.cssText = 'position: relative; width: 60px; height: 60px; flex-shrink: 0;';
+    avatarWrap.className = 'settings-user-avatar';
     const avatarEl = document.createElement('img');
     avatarEl.src = avatarUrl;
     avatarEl.alt = '';
-    avatarEl.style.cssText =
-      'width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border); display: block;';
+    avatarEl.className = 'settings-user-avatar-img';
     avatarEl.onerror = () => {
       avatarEl.src = nativeApiHref('/api/images/default-avatar');
     };
@@ -98,42 +203,23 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     userChip.appendChild(avatarWrap);
 
     const infoDiv = document.createElement('div');
-    infoDiv.style.cssText = 'flex: 1; min-width: 0;';
+    infoDiv.className = 'settings-user-info';
     userChip.appendChild(infoDiv);
 
     const displayNameEl = document.createElement('div');
-    displayNameEl.style.cssText =
-      'font-size: 1.125rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+    displayNameEl.className = 'settings-user-name';
     displayNameEl.textContent = displayName;
     applyNameColor(displayNameEl, currentUser.name_color, currentUser.badge_type);
     infoDiv.appendChild(displayNameEl);
 
     const usernameEl = document.createElement('div');
-    usernameEl.style.cssText =
-      'color: var(--text-muted); font-family: monospace; font-size: 0.875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;';
+    usernameEl.className = 'settings-user-username';
     usernameEl.textContent = `@${currentUser.username}`;
     infoDiv.appendChild(usernameEl);
 
     const logoutButton = document.createElement('button');
     logoutButton.textContent = t('auth.sign_out');
-    logoutButton.style.cssText = `
-      background: var(--bg-secondary);
-      color: var(--text-primary);
-      border: 1px solid var(--border);
-      padding: 0.75rem 1.5rem;
-      border-radius: 9999px;
-      cursor: pointer;
-      font-size: 0.875rem;
-      font-weight: 600;
-      transition: all 0.2s;
-    `;
-
-    logoutButton.addEventListener('mouseenter', () => {
-      logoutButton.style.backgroundColor = 'var(--bg-tertiary)';
-    });
-    logoutButton.addEventListener('mouseleave', () => {
-      logoutButton.style.backgroundColor = 'var(--bg-secondary)';
-    });
+    logoutButton.className = 'settings-button';
 
     logoutButton.addEventListener('click', async () => {
       const confirmed = await createConfirmDialog(t('auth.logout_confirm', { username: currentUser.username }));
@@ -158,27 +244,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
     const deleteButton = document.createElement('button');
     deleteButton.textContent = t('settings.delete_account');
-    deleteButton.style.cssText = `
-      background: transparent;
-      color: var(--danger);
-      border: 1px solid var(--danger);
-      padding: 0.75rem 1.5rem;
-      border-radius: 9999px;
-      cursor: pointer;
-      font-size: 0.875rem;
-      font-weight: 600;
-      transition: all 0.2s;
-      margin-top: 1.5rem;
-    `;
-
-    deleteButton.addEventListener('mouseenter', () => {
-      deleteButton.style.backgroundColor = 'var(--danger)';
-      deleteButton.style.color = '#fff';
-    });
-    deleteButton.addEventListener('mouseleave', () => {
-      deleteButton.style.backgroundColor = 'transparent';
-      deleteButton.style.color = 'var(--danger)';
-    });
+    deleteButton.className = 'settings-button settings-button--danger';
 
     deleteButton.addEventListener('click', async () => {
       const confirmed = await createConfirmDialog(
@@ -224,7 +290,6 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     accountActions.className = 'settings-account-actions';
     accountActions.appendChild(logoutButton);
     accountActions.appendChild(deleteButton);
-    deleteButton.style.marginTop = '0';
     accountSection.appendChild(accountActions);
   }
 
@@ -238,12 +303,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   const currentStyle = getReplyStyle();
 
   const radioGroup = document.createElement('div');
-  radioGroup.style.cssText = `
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-  `;
+  radioGroup.className = 'settings-choice-list';
 
   const styles: { value: ReplyStyle; labelKey: string; descKey: string }[] = [
     { value: 'twitter', labelKey: 'settings.reply_style_twitter', descKey: 'settings.reply_style_twitter_desc' },
@@ -252,34 +312,24 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
   styles.forEach((s) => {
     const label = document.createElement('label');
-    label.style.cssText = `
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      padding: 0.75rem 1rem;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      cursor: pointer;
-      transition: border-color 0.2s;
-      ${currentStyle === s.value ? 'border-color: var(--accent); background: var(--bg-secondary);' : ''}
-    `;
+    label.className = 'settings-radio-card';
 
     const radio = document.createElement('input');
     radio.type = 'radio';
     radio.name = 'reply-style';
     radio.value = s.value;
     radio.checked = currentStyle === s.value;
-    radio.style.cssText = 'accent-color: var(--accent);';
+    radio.className = 'settings-radio';
 
     const textDiv = document.createElement('div');
-    textDiv.style.cssText = 'display: flex; flex-direction: column;';
+    textDiv.className = 'settings-radio-text';
 
     const nameSpan = document.createElement('span');
-    nameSpan.style.cssText = 'font-weight: 600; color: var(--text-primary); font-size: 0.9375rem;';
+    nameSpan.className = 'settings-radio-name';
     nameSpan.textContent = t(s.labelKey);
 
     const descSpan = document.createElement('span');
-    descSpan.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem;';
+    descSpan.className = 'settings-radio-desc';
     descSpan.textContent = t(s.descKey);
 
     textDiv.appendChild(nameSpan);
@@ -290,77 +340,50 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
     radio.addEventListener('change', () => {
       setReplyStyle(s.value);
-      radioGroup.querySelectorAll('label').forEach((l) => {
-        l.style.borderColor = 'var(--border)';
-        l.style.background = 'none';
-      });
-      label.style.borderColor = 'var(--accent)';
-      label.style.background = 'var(--bg-secondary)';
       displayMessage.textContent = t('settings.display_saved');
-      displayMessage.style.color = 'var(--success, #10b981)';
+      displayMessage.style.color = 'var(--accent-text)';
     });
   });
 
   // NSFW toggle
   const nsfwLabel = document.createElement('label');
-  nsfwLabel.style.cssText = `
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem 1rem;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    cursor: pointer;
-    transition: border-color 0.2s;
-    margin-bottom: 1rem;
-  `;
+  nsfwLabel.className = 'settings-switch-row';
 
   const nsfwCheckbox = document.createElement('input');
   nsfwCheckbox.type = 'checkbox';
   nsfwCheckbox.checked = getShowNsfw();
-  nsfwCheckbox.style.cssText = 'accent-color: var(--accent); width: 18px; height: 18px; cursor: pointer;';
+  nsfwCheckbox.className = 'settings-switch';
 
   const nsfwTextDiv = document.createElement('div');
-  nsfwTextDiv.style.cssText = 'display: flex; flex-direction: column;';
+  nsfwTextDiv.className = 'settings-switch-text';
 
   const nsfwNameSpan = document.createElement('span');
-  nsfwNameSpan.style.cssText = 'font-weight: 600; color: var(--text-primary); font-size: 0.9375rem;';
+  nsfwNameSpan.className = 'settings-switch-name';
   nsfwNameSpan.textContent = t('settings.nsfw');
 
   const nsfwDescSpan = document.createElement('span');
-  nsfwDescSpan.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem;';
+  nsfwDescSpan.className = 'settings-switch-desc';
   nsfwDescSpan.textContent = t('settings.nsfw_desc');
 
   nsfwTextDiv.appendChild(nsfwNameSpan);
   nsfwTextDiv.appendChild(nsfwDescSpan);
-  nsfwLabel.appendChild(nsfwCheckbox);
   nsfwLabel.appendChild(nsfwTextDiv);
+  nsfwLabel.appendChild(nsfwCheckbox);
 
   nsfwCheckbox.addEventListener('change', () => {
     setShowNsfw(nsfwCheckbox.checked);
     displayMessage.textContent = t('settings.display_saved');
-    displayMessage.style.color = 'var(--success, #10b981)';
+    displayMessage.style.color = 'var(--accent-text)';
   });
 
   // Theme selector
   const themeTitle = document.createElement('div');
-  themeTitle.style.cssText = `
-    font-weight: 600;
-    color: var(--text-primary);
-    font-size: 0.9375rem;
-    margin-top: 0.5rem;
-    margin-bottom: 0.5rem;
-  `;
+  themeTitle.className = 'fx-label settings-subheading';
   themeTitle.textContent = t('settings.theme');
 
   const currentTheme = getTheme();
   const themeRadioGroup = document.createElement('div');
-  themeRadioGroup.style.cssText = `
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-  `;
+  themeRadioGroup.className = 'settings-choice-list';
 
   const themes: { value: Theme; labelKey: string; descKey: string }[] = [
     { value: 'light', labelKey: 'settings.theme_light', descKey: 'settings.theme_light_desc' },
@@ -370,34 +393,24 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
   themes.forEach((st) => {
     const label = document.createElement('label');
-    label.style.cssText = `
-      display: flex;
-      align-items: center;
-      gap: 0.75rem;
-      padding: 0.75rem 1rem;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      cursor: pointer;
-      transition: border-color 0.2s;
-      ${currentTheme === st.value ? 'border-color: var(--accent); background: var(--bg-secondary);' : ''}
-    `;
+    label.className = 'settings-radio-card';
 
     const radio = document.createElement('input');
     radio.type = 'radio';
     radio.name = 'theme';
     radio.value = st.value;
     radio.checked = currentTheme === st.value;
-    radio.style.cssText = 'accent-color: var(--accent);';
+    radio.className = 'settings-radio';
 
     const textDiv = document.createElement('div');
-    textDiv.style.cssText = 'display: flex; flex-direction: column;';
+    textDiv.className = 'settings-radio-text';
 
     const nameSpan = document.createElement('span');
-    nameSpan.style.cssText = 'font-weight: 600; color: var(--text-primary); font-size: 0.9375rem;';
+    nameSpan.className = 'settings-radio-name';
     nameSpan.textContent = t(st.labelKey);
 
     const descSpan = document.createElement('span');
-    descSpan.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem;';
+    descSpan.className = 'settings-radio-desc';
     descSpan.textContent = t(st.descKey);
 
     textDiv.appendChild(nameSpan);
@@ -408,24 +421,14 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
     radio.addEventListener('change', () => {
       setTheme(st.value);
-      themeRadioGroup.querySelectorAll('label').forEach((l) => {
-        l.style.borderColor = 'var(--border)';
-        l.style.background = 'none';
-      });
-      label.style.borderColor = 'var(--accent)';
-      label.style.background = 'var(--bg-secondary)';
       displayMessage.textContent = t('settings.display_saved');
-      displayMessage.style.color = 'var(--success, #10b981)';
+      displayMessage.style.color = 'var(--accent-text)';
     });
   });
 
   const displayMessage = document.createElement('div');
   displayMessage.setAttribute('role', 'status');
-  displayMessage.style.cssText = `
-    margin-top: 0.5rem;
-    font-size: 0.875rem;
-    min-height: 1.25rem;
-  `;
+  displayMessage.className = 'settings-status';
 
   displaySection.appendChild(displayTitle);
   displaySection.appendChild(radioGroup);
@@ -444,51 +447,36 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
   const nodeAvailable = canRunFlaxiaNode();
 
   const crowdLabel = document.createElement('label');
-  crowdLabel.style.cssText = `
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.75rem 1rem;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    cursor: ${nodeAvailable ? 'pointer' : 'not-allowed'};
-    transition: border-color 0.2s;
-    margin-bottom: 0.5rem;
-    opacity: ${nodeAvailable ? '1' : '0.6'};
-  `;
+  crowdLabel.className = nodeAvailable ? 'settings-switch-row' : 'settings-switch-row settings-switch-row--disabled';
 
   const crowdCheckbox = document.createElement('input');
   crowdCheckbox.type = 'checkbox';
   crowdCheckbox.checked = getCrowdConsentState() === 'granted';
   crowdCheckbox.disabled = !nodeAvailable;
-  crowdCheckbox.style.cssText = 'accent-color: var(--accent); width: 18px; height: 18px; cursor: pointer;';
+  crowdCheckbox.className = 'settings-switch';
 
   const crowdTextDiv = document.createElement('div');
-  crowdTextDiv.style.cssText = 'display: flex; flex-direction: column;';
+  crowdTextDiv.className = 'settings-switch-text';
 
   const crowdNameSpan = document.createElement('span');
-  crowdNameSpan.style.cssText = 'font-weight: 600; color: var(--text-primary); font-size: 0.9375rem;';
+  crowdNameSpan.className = 'settings-switch-name';
   crowdNameSpan.textContent = t('settings.crowd');
 
   const crowdDescSpan = document.createElement('span');
-  crowdDescSpan.style.cssText = 'color: var(--text-muted); font-size: 0.8125rem;';
+  crowdDescSpan.className = 'settings-switch-desc';
   crowdDescSpan.textContent = t('settings.crowd_desc');
 
   crowdTextDiv.appendChild(crowdNameSpan);
   crowdTextDiv.appendChild(crowdDescSpan);
-  crowdLabel.appendChild(crowdCheckbox);
   crowdLabel.appendChild(crowdTextDiv);
+  crowdLabel.appendChild(crowdCheckbox);
 
   const crowdStatus = document.createElement('div');
-  crowdStatus.style.cssText = 'font-size: 0.8125rem; color: var(--text-muted);';
+  crowdStatus.className = 'settings-status settings-status--sm';
 
   const crowdMessage = document.createElement('div');
   crowdMessage.setAttribute('role', 'status');
-  crowdMessage.style.cssText = `
-    margin-top: 0.5rem;
-    font-size: 0.875rem;
-    min-height: 1.25rem;
-  `;
+  crowdMessage.className = 'settings-status';
 
   const updateCrowdStatus = () => {
     if (!nodeAvailable) {
@@ -502,7 +490,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
         : state === 'denied'
           ? t('settings.crowd_denied')
           : t('settings.crowd_unset');
-    crowdStatus.style.color = state === 'granted' ? 'var(--success, #10b981)' : 'var(--text-muted)';
+    crowdStatus.style.color = state === 'granted' ? 'var(--accent-text)' : 'var(--text-muted)';
   };
   updateCrowdStatus();
 
@@ -519,7 +507,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     }
     if (!getCrowdNodeController()) {
       crowdMessage.textContent = t('settings.crowd_unavailable');
-      crowdMessage.style.color = 'var(--danger, #ef4444)';
+      crowdMessage.style.color = 'var(--danger-text)';
       crowdCheckbox.checked = false;
       return;
     }
@@ -532,7 +520,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     }
     updateCrowdStatus();
     crowdMessage.textContent = t('settings.crowd_saved');
-    crowdMessage.style.color = 'var(--success, #10b981)';
+    crowdMessage.style.color = 'var(--accent-text)';
   });
 
   // Stay in sync if consent is changed elsewhere (e.g. the consent modal).
@@ -599,11 +587,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
   const languageMessage = document.createElement('div');
   languageMessage.setAttribute('role', 'status');
-  languageMessage.style.cssText = `
-    margin-top: 0.5rem;
-    font-size: 0.875rem;
-    min-height: 1.25rem;
-  `;
+  languageMessage.className = 'settings-status';
 
   languageSection.appendChild(languageTitle);
   languageSection.appendChild(languageSelect);
@@ -619,12 +603,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
   const currentPasswordLabel = document.createElement('label');
   currentPasswordLabel.textContent = t('settings.email_current_password');
-  currentPasswordLabel.style.cssText = `
-    display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 500;
-    color: var(--text-primary);
-  `;
+  currentPasswordLabel.className = 'settings-label';
 
   const currentPasswordInput = document.createElement('input');
   currentPasswordInput.type = 'password';
@@ -636,12 +615,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
   const newEmailLabel = document.createElement('label');
   newEmailLabel.textContent = t('settings.email_new_email');
-  newEmailLabel.style.cssText = `
-    display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 500;
-    color: var(--text-primary);
-  `;
+  newEmailLabel.className = 'settings-label';
 
   const newEmailInput = document.createElement('input');
   newEmailInput.type = 'email';
@@ -657,11 +631,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
   const emailMessage = document.createElement('div');
   emailMessage.setAttribute('role', 'status');
-  emailMessage.style.cssText = `
-    margin-top: 0.5rem;
-    font-size: 0.875rem;
-    min-height: 1.25rem;
-  `;
+  emailMessage.className = 'settings-status';
 
   emailSection.appendChild(emailTitle);
   emailSection.appendChild(currentPasswordLabel);
@@ -680,12 +650,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
   const currentPasswordLabel2 = document.createElement('label');
   currentPasswordLabel2.textContent = t('settings.password_current');
-  currentPasswordLabel2.style.cssText = `
-    display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 500;
-    color: var(--text-primary);
-  `;
+  currentPasswordLabel2.className = 'settings-label';
 
   const currentPasswordInput2 = document.createElement('input');
   currentPasswordInput2.type = 'password';
@@ -701,12 +666,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
   const newPasswordLabel = document.createElement('label');
   newPasswordLabel.textContent = t('settings.password_new');
-  newPasswordLabel.style.cssText = `
-    display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 500;
-    color: var(--text-primary);
-  `;
+  newPasswordLabel.className = 'settings-label';
 
   const newPasswordInput = document.createElement('input');
   newPasswordInput.type = 'password';
@@ -718,12 +678,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
   const confirmPasswordLabel = document.createElement('label');
   confirmPasswordLabel.textContent = t('settings.password_confirm');
-  confirmPasswordLabel.style.cssText = `
-    display: block;
-    margin-bottom: 0.5rem;
-    font-weight: 500;
-    color: var(--text-primary);
-  `;
+  confirmPasswordLabel.className = 'settings-label';
 
   const confirmPasswordInput = document.createElement('input');
   confirmPasswordInput.type = 'password';
@@ -739,11 +694,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
   const passwordMessage = document.createElement('div');
   passwordMessage.setAttribute('role', 'status');
-  passwordMessage.style.cssText = `
-    margin-top: 0.5rem;
-    font-size: 0.875rem;
-    min-height: 1.25rem;
-  `;
+  passwordMessage.className = 'settings-status';
 
   passwordSection.appendChild(passwordTitle);
   passwordSection.appendChild(currentPasswordLabel2);
@@ -812,17 +763,17 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
       if (response.ok) {
         languageMessage.textContent = t('settings.language_saved');
-        languageMessage.style.color = 'var(--success, #10b981)';
+        languageMessage.style.color = 'var(--accent-text)';
         await setLocale(language);
         location.reload();
       } else {
         const errorData = (await response.json()) as { error?: string };
         languageMessage.textContent = errorData.error || t('settings.language_save_failed');
-        languageMessage.style.color = 'var(--danger)';
+        languageMessage.style.color = 'var(--danger-text)';
       }
     } catch (_error: unknown) {
       languageMessage.textContent = t('settings.language_network_error');
-      languageMessage.style.color = 'var(--danger)';
+      languageMessage.style.color = 'var(--danger-text)';
     } finally {
       languageSaveButton.disabled = false;
       languageSaveButton.style.opacity = '1';
@@ -835,7 +786,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
     if (!currentPassword || !newEmail) {
       emailMessage.textContent = t('settings.email_fill_all');
-      emailMessage.style.color = 'var(--danger)';
+      emailMessage.style.color = 'var(--danger-text)';
       return;
     }
 
@@ -849,7 +800,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
       const proof = await createSrpProof(currentPassword);
       if (!proof) {
         emailMessage.textContent = t('settings.current_password_incorrect');
-        emailMessage.style.color = 'var(--danger)';
+        emailMessage.style.color = 'var(--danger-text)';
         return;
       }
 
@@ -863,17 +814,17 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
       if (response.ok) {
         emailMessage.textContent = t('settings.email_saved');
-        emailMessage.style.color = 'var(--success, #10b981)';
+        emailMessage.style.color = 'var(--accent-text)';
         currentPasswordInput.value = '';
         newEmailInput.value = '';
       } else {
         const errorData = (await response.json()) as { error?: string };
         emailMessage.textContent = errorData.error || t('settings.email_save_failed');
-        emailMessage.style.color = 'var(--danger)';
+        emailMessage.style.color = 'var(--danger-text)';
       }
     } catch (_error: unknown) {
       emailMessage.textContent = t('settings.email_network_error');
-      emailMessage.style.color = 'var(--danger)';
+      emailMessage.style.color = 'var(--danger-text)';
     } finally {
       emailSaveButton.disabled = false;
       emailSaveButton.style.opacity = '1';
@@ -887,19 +838,19 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
 
     if (!currentPassword || !newPassword || !confirmPassword) {
       passwordMessage.textContent = t('settings.password_fill_all');
-      passwordMessage.style.color = 'var(--danger)';
+      passwordMessage.style.color = 'var(--danger-text)';
       return;
     }
 
     if (newPassword !== confirmPassword) {
       passwordMessage.textContent = t('settings.password_mismatch');
-      passwordMessage.style.color = 'var(--danger)';
+      passwordMessage.style.color = 'var(--danger-text)';
       return;
     }
 
     if (passwordLengthError(newPassword)) {
       passwordMessage.textContent = t('settings.password_length');
-      passwordMessage.style.color = 'var(--danger)';
+      passwordMessage.style.color = 'var(--danger-text)';
       return;
     }
 
@@ -936,7 +887,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
       const currentSrp = await createSrpProof(currentPassword, recovering);
       if (!currentSrp) {
         passwordMessage.textContent = t('settings.current_password_incorrect');
-        passwordMessage.style.color = 'var(--danger)';
+        passwordMessage.style.color = 'var(--danger-text)';
         return;
       }
 
@@ -956,12 +907,12 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
       const vaultRewrap = await prepareVaultRewrap(vaultSecret, newPassword, recovering);
       if (vaultRewrap.status === 'unlock_failed') {
         passwordMessage.textContent = t('settings.current_password_incorrect');
-        passwordMessage.style.color = 'var(--danger)';
+        passwordMessage.style.color = 'var(--danger-text)';
         return;
       }
       if (vaultRewrap.status === 'error') {
         passwordMessage.textContent = t('settings.password_save_failed');
-        passwordMessage.style.color = 'var(--danger)';
+        passwordMessage.style.color = 'var(--danger-text)';
         return;
       }
 
@@ -989,7 +940,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
         if (recovering) sessionStorage.removeItem('flaxia.recovery-login');
         storeSrpSalt(salt);
         passwordMessage.textContent = t('settings.password_saved');
-        passwordMessage.style.color = 'var(--success, #10b981)';
+        passwordMessage.style.color = 'var(--accent-text)';
         currentPasswordInput2.value = '';
         newPasswordInput.value = '';
         confirmPasswordInput.value = '';
@@ -1003,11 +954,11 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
               ? t('settings.vault_changed')
               : errorData.error || t('settings.password_save_failed');
         passwordMessage.textContent = message;
-        passwordMessage.style.color = 'var(--danger)';
+        passwordMessage.style.color = 'var(--danger-text)';
       }
     } catch (_error: unknown) {
       passwordMessage.textContent = t('settings.password_network_error');
-      passwordMessage.style.color = 'var(--danger)';
+      passwordMessage.style.color = 'var(--danger-text)';
     } finally {
       passwordSaveButton.disabled = false;
       passwordSaveButton.style.opacity = '1';
@@ -1214,8 +1165,8 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
               position: absolute;
               top: 2px;
               right: 2px;
-              background: var(--danger, #ef4444);
-              color: white;
+              background: var(--danger-strong, #b91c1c);
+              color: #fff;
               border: none;
               border-radius: 50%;
               width: 16px;
@@ -1612,6 +1563,14 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     iconName: 'poll',
     sections: [crowdSection],
   });
+  navigation.addCategory({
+    id: 'bug-report',
+    groupKey: 'settings.group_other',
+    titleKey: 'settings.bug_report',
+    descriptionKey: 'settings.bug_report_description',
+    iconName: 'flag',
+    sections: [bugReportForm.getElement()],
+  });
   navigation.showCategory(initialCategory ?? null, false);
 
   return {
@@ -1620,6 +1579,7 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
     destroy: () => {
       window.removeEventListener(CROWD_CONSENT_CHANGE_EVENT, onCrowdConsentChange);
       vaultSection?.destroy();
+      bugReportForm.destroy();
       container.remove();
     },
   };
