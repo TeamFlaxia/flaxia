@@ -19,7 +19,10 @@ function createAppDownloadPromo(): HTMLAnchorElement | null {
   promo.appendChild(icon('download', { width: '18', height: '18' }));
 
   const text = document.createElement('span');
+  text.className = 'nav-app-promo-text';
   text.textContent = t('app_download.left_nav_promo');
+  promo.setAttribute('aria-label', t('app_download.title'));
+  promo.setAttribute('title', t('app_download.title'));
   promo.appendChild(text);
 
   promo.addEventListener('click', (e) => {
@@ -450,7 +453,16 @@ export class LeftNav {
     const signUpButton = document.createElement('button');
     signUpButton.type = 'button';
     signUpButton.className = 'nav-signin-button';
-    signUpButton.textContent = t('nav.register');
+    signUpButton.setAttribute('aria-label', t('nav.register'));
+    signUpButton.setAttribute('title', t('nav.register'));
+    const signUpIcon = document.createElement('span');
+    signUpIcon.className = 'nav-auth-icon';
+    signUpIcon.appendChild(icon('user', { width: '16', height: '16' }));
+    const signUpLabel = document.createElement('span');
+    signUpLabel.className = 'nav-auth-label';
+    signUpLabel.textContent = t('nav.register');
+    signUpButton.appendChild(signUpIcon);
+    signUpButton.appendChild(signUpLabel);
     signUpButton.addEventListener('click', () => {
       this.props.onSignUp?.();
     });
@@ -458,7 +470,16 @@ export class LeftNav {
     const signInButton = document.createElement('button');
     signInButton.type = 'button';
     signInButton.className = 'nav-signin-button';
-    signInButton.textContent = t('nav.login');
+    signInButton.setAttribute('aria-label', t('nav.login'));
+    signInButton.setAttribute('title', t('nav.login'));
+    const signInIcon = document.createElement('span');
+    signInIcon.className = 'nav-auth-icon';
+    signInIcon.appendChild(icon('key', { width: '16', height: '16' }));
+    const signInLabel = document.createElement('span');
+    signInLabel.className = 'nav-auth-label';
+    signInLabel.textContent = t('nav.login');
+    signInButton.appendChild(signInIcon);
+    signInButton.appendChild(signInLabel);
     signInButton.addEventListener('click', () => {
       this.props.onSignIn?.();
     });

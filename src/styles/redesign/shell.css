@@ -637,6 +637,10 @@
 }
 
 .nav-signin-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   width: 100%;
   min-height: 34px;
   padding: 0 12px;
@@ -648,6 +652,17 @@
   transition:
     background-color var(--duration-fast) var(--ease-standard),
     border-color var(--duration-fast) var(--ease-standard);
+}
+
+.nav-auth-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-app-promo-text {
+  min-width: 0;
 }
 
 .nav-auth-buttons .nav-signin-button:first-child {
@@ -1397,11 +1412,42 @@
     width: 44px;
   }
 
+  .nav-auth-buttons {
+    width: 44px;
+    padding: 0;
+    gap: 8px;
+  }
+
   .nav-auth-buttons .nav-signin-button {
-    font-size: 11px;
-    padding: 6px 2px;
-    width: 100%;
-    text-align: center;
+    width: 44px;
+    min-height: 44px;
+    padding: 0;
+    border-radius: 50%;
+  }
+
+  .nav-auth-label,
+  .nav-app-promo-text {
+    display: none !important;
+  }
+
+  .nav-auth-icon svg,
+  .left-nav .nav-app-promo svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .left-nav .nav-app-promo {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    margin-top: 10px;
+    padding: 0;
+  }
+
+  .left-nav .nav-app-promo svg {
+    margin-top: 0;
   }
 
   .main-container > :not(.left-nav):not(.right-panel):not(.thread-page):not(.arcade-page):not(.settings-page),
