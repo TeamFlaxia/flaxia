@@ -64,7 +64,7 @@
   }
 
   .post-list > .post-card > .post-stage {
-    order: -1;
+    order: 2;
     margin: 0 0 8px;
     border-radius: 8px;
     overflow: hidden;
