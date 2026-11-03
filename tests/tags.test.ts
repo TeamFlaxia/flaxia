@@ -10,6 +10,43 @@ describe('GET /api/tags/trending', () => {
     assert.equal(res.status, 200);
     const data = await res.json();
     assert.ok(Array.isArray(data.tags));
+    for (const tag of data.tags) {
+      assert.equal(typeof tag.percentage, 'number');
+    }
+  });
+
+  it('reports each tag as a share of the recent post sample', async () => {
+    const { cookie } = await seedUserAndLogin('pct');
+    for (const text of ['one #pcttag', 'two #pcttag', 'three']) {
+      const created = await fetch(`${BASE_URL}/api/posts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ text }),
+      });
+      assert.equal(created.status, 201);
+    }
+
+    const first = (await (await fetch(`${BASE_URL}/api/tags/trending`)).json()) as {
+      tags: Array<{ tag: string; count: number; percentage: number }>;
+    };
+    const firstTag = first.tags.find((tag) => tag.tag === 'pcttag');
+    assert.ok(firstTag, 'expected #pcttag in the trending list');
+    assert.equal(firstTag.count, 2);
+    assert.equal(firstTag.percentage, 66.7);
+
+    // A repeated hashtag inside one post is one post, not two.
+    await fetch(`${BASE_URL}/api/posts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ text: 'four #pcttag #pcttag' }),
+    });
+    const second = (await (await fetch(`${BASE_URL}/api/tags/trending`)).json()) as {
+      tags: Array<{ tag: string; count: number; percentage: number }>;
+    };
+    const secondTag = second.tags.find((tag) => tag.tag === 'pcttag');
+    assert.ok(secondTag);
+    assert.equal(secondTag.count, 3);
+    assert.equal(secondTag.percentage, 75);
   });
 
   it('tags ordered by post_count descending', async () => {

@@ -289,8 +289,16 @@
   line-height: 1.62;
   letter-spacing: -0.005em;
   overflow-wrap: anywhere;
+  /* Plain-text placeholder only. Markdown output carries its own <br>s; see
+     .post-text--rich below. */
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Rich markdown already encodes breaks as <br>; preserving the newlines in
+   markdown-it's HTML would double every line break. */
+.post-text--rich {
+  white-space: normal;
 }
 
 .post-text .hashtag-link {
@@ -1453,15 +1461,24 @@
 
 /* --- v5.1 typography (Lead) ---
    Japanese body text needs a slightly larger size and looser leading than
-   the Latin-first 14px the dense list was using. */
-.post-text,
-.post-text p {
+   the Latin-first 14px the dense list was using. The <p> inherits the
+   container values so the feed's tighter line-height is not overridden. */
+.post-text {
   font-size: 15px;
-  line-height: 1.78;
+  line-height: 1.7;
   letter-spacing: 0.01em;
   overflow-wrap: anywhere;
   line-break: strict;
   text-wrap: pretty;
+}
+
+.post-text p {
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  overflow-wrap: inherit;
+  line-break: inherit;
+  text-wrap: inherit;
 }
 
 .post-display-name {

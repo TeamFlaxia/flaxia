@@ -638,8 +638,10 @@
   color: var(--text-primary);
   caret-color: var(--primary);
   font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 1.6;
+  /* Match the rendered 15px/1.7 post body so typed and published text share
+     the same rhythm. */
+  font-size: 15px;
+  line-height: 1.7;
   letter-spacing: -0.003em;
   resize: none;
   transition:
@@ -898,8 +900,8 @@
 .post-composer .composer-textarea {
   min-height: 2.25rem;
   padding: 0.1rem 0.2rem 0.2rem;
-  font-size: 14.5px;
-  line-height: 1.55;
+  font-size: 15px;
+  line-height: 1.7;
 }
 
 .post-composer .composer-toolbar {

@@ -1817,6 +1817,16 @@
   transition: background-color var(--duration-fast) var(--ease-standard);
 }
 
+/* Explore's card is a left-aligned stack: tag, share meter, then the
+   percentage/count caption. */
+.explore-trending-tags .trending-item {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 4px;
+  text-align: left;
+}
+
 .trending-item:first-of-type {
   border-top: 0;
 }

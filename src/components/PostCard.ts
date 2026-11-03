@@ -185,9 +185,7 @@ export class PostCard {
     container.appendChild(headerContainer);
 
     // Post text - 優先的にプレーンテキストで表示
-    const displayText = this.props.stripLeadingPostRef
-      ? this.props.post.text.replace(/^\s*>>\d+\s*/g, '').trimStart()
-      : this.props.post.text;
+    const displayText = this.getDisplayText();
     this.originalText = displayText;
 
     this.postTextContainer = document.createElement('div');
@@ -205,40 +203,7 @@ export class PostCard {
 
     container.appendChild(this.postTextContainer);
 
-    if ('requestIdleCallback' in window) {
-      window.requestIdleCallback?.(
-        async () => {
-          try {
-            const richText = await createPostText({
-              text: displayText,
-              mentions: this.props.post.mentions,
-              enablePostRefs: this.props.enablePostRefs,
-              authorId: this.props.post.user_id,
-              badgeType: this.props.post.badge_type,
-            });
-            textElement.replaceWith(richText);
-          } catch (error) {
-            console.error('Failed to create rich post text:', error);
-          }
-        },
-        { timeout: 2000 },
-      );
-    } else {
-      setTimeout(async () => {
-        try {
-          const richText = await createPostText({
-            text: displayText,
-            mentions: this.props.post.mentions,
-            enablePostRefs: this.props.enablePostRefs,
-            authorId: this.props.post.user_id,
-            badgeType: this.props.post.badge_type,
-          });
-          textElement.replaceWith(richText);
-        } catch (error) {
-          console.error('Failed to create rich post text:', error);
-        }
-      }, 500);
-    }
+    this.renderRichText(textElement, displayText);
 
     // Hashtags stay inline links inside .post-text (no boxed chip row).
 
@@ -1265,6 +1230,41 @@ export class PostCard {
     }
   }
 
+  /** Text shown in the card (drops the `>>N` prefix in reply views). */
+  private getDisplayText(): string {
+    return this.props.stripLeadingPostRef
+      ? this.originalText.replace(/^\s*>>\d+\s*/g, '').trimStart()
+      : this.originalText;
+  }
+
+  /**
+   * Replace the plain-text placeholder with the sanitized markdown renderer.
+   * Runs on idle so opening a long feed stays responsive.
+   */
+  private renderRichText(textElement: HTMLElement, text: string): void {
+    const render = async () => {
+      try {
+        const richText = await createPostText({
+          text,
+          mentions: this.props.post.mentions,
+          enablePostRefs: this.props.enablePostRefs,
+          authorId: this.props.post.user_id,
+          badgeType: this.props.post.badge_type,
+        });
+        textElement.replaceWith(richText);
+      } catch (error) {
+        console.error('Failed to create rich post text:', error);
+      }
+    };
+
+    const schedule = window.requestIdleCallback?.bind(window);
+    if (schedule) {
+      schedule(() => void render(), { timeout: 2000 });
+    } else {
+      setTimeout(() => void render(), 500);
+    }
+  }
+
   private startEditing(): void {
     if (this.isEditing || !this.postTextContainer) return;
     this.isEditing = true;
@@ -1272,7 +1272,7 @@ export class PostCard {
     const textElement = this.postTextContainer.querySelector('.post-text');
     if (!textElement) return;
 
-    const currentText = this.originalText;
+    const currentText = this.getDisplayText();
 
     this.editContainer = document.createElement('div');
     this.editContainer.style.cssText = 'margin-bottom: 1rem;';
@@ -1724,12 +1724,14 @@ export class PostCard {
     this.editAttachmentList = [];
     this.editNewMediaFiles = [];
 
+    const displayText = this.getDisplayText();
     const textElement = document.createElement('div');
     textElement.className = 'post-text';
-    textElement.textContent = this.originalText;
+    textElement.textContent = displayText;
 
     this.editContainer.replaceWith(textElement);
     this.editContainer = null;
+    this.renderRichText(textElement, displayText);
   }
 }
 

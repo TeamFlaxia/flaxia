@@ -336,6 +336,10 @@ export class Timeline {
   }
 
   private handleNewPost(post: Post): void {
+    // For You never contains the viewer's own posts (the API excludes them).
+    // Don't bypass that rule by prepending a just-created post; it will appear
+    // in Global/Following when the user switches there.
+    if (this.state.mode === 'foryou') return;
     if (this.seenPostIds.has(post.id)) return;
     this.seenPostIds.add(post.id);
     this.state.posts = [post, ...this.state.posts];

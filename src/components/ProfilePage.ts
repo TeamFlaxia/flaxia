@@ -501,8 +501,8 @@ export function createProfilePage({ username, currentUser, sandboxOrigin, onOpen
 
               // Render math elements and linkify
               renderMathElements(bio);
-              linkifyHashtags(bio);
               linkifyUrls(bio);
+              linkifyHashtags(bio);
             })
             .catch((error) => {
               console.error('Failed to process bio:', error);

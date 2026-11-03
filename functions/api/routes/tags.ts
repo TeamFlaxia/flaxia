@@ -24,14 +24,18 @@ WITH recent_posts AS (
 )
 SELECT
   value AS tag,
-  COUNT(*) AS count,
-  ROUND(COUNT(*) * 100.0 / ?, 1) AS percentage
+  COUNT(DISTINCT recent_posts.id) AS count,
+  ROUND(
+    COUNT(DISTINCT recent_posts.id) * 100.0 /
+      MAX(1, (SELECT COUNT(*) FROM recent_posts)),
+    1
+  ) AS percentage
 FROM recent_posts, json_each(recent_posts.hashtags)
 GROUP BY value
-ORDER BY count DESC
+ORDER BY count DESC, tag ASC
 LIMIT 5
     `)
-      .bind(validRecentCount, validRecentCount)
+      .bind(validRecentCount)
       .all();
 
     if (!result.success) {

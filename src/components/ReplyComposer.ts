@@ -44,6 +44,15 @@ export class ReplyComposer {
   constructor(props: ReplyComposerProps) {
     this.props = props;
     this.element = this.createElement();
+    // Apply the prefill after `this.element` exists: updateCharMeter() writes
+    // the progress custom property on the composer root, so calling it from
+    // createElement() would throw before the property is assigned (and abort
+    // the whole thread render when reply cards pass a `>>N` prefill).
+    if (this.props.prefillText) {
+      this.textarea.value = this.props.prefillText;
+      this.updateCharMeter(this.props.prefillText.length);
+      this.autosizeTextarea();
+    }
     this.setupEventListeners();
   }
 
@@ -107,13 +116,6 @@ export class ReplyComposer {
     this.cancelButton = container.querySelector('.reply-composer-cancel')!;
     this.charCount = container.querySelector('.reply-composer-char-count')!;
     this.charMeter = container.querySelector('.composer-meter')!;
-
-    // Pre-fill text if provided
-    if (this.props.prefillText) {
-      this.textarea.value = this.props.prefillText;
-      this.updateCharMeter(this.props.prefillText.length);
-      this.autosizeTextarea();
-    }
 
     // Mention dropdown surface styling lives in composer.css; only position is dynamic.
     this.mentionDropdown = document.createElement('div');
