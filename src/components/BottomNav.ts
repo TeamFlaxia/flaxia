@@ -103,14 +103,14 @@ export class BottomNav {
     btn.setAttribute('aria-current', active ? 'page' : 'false');
 
     const user = this.props.currentUser!;
-    if (user.avatar_key) {
+    const avatarKey = user.avatar_key;
+    if (avatarKey && /^avatar\/[A-Za-z0-9_-]{1,128}$/.test(avatarKey)) {
       const avatar = document.createElement('span');
       avatar.className = 'bottom-nav-avatar';
-      // avatar_key is server-minted (`avatar/<sha256>`), but never trust a
-      // stored value inside a style context: validate the shape first.
-      if (/^avatar\/[0-9a-f]{64}$/.test(user.avatar_key)) {
-        avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${user.avatar_key}`)})`;
-      }
+      // avatar_key is server-minted and may be hex (new uploads) or base64url
+      // (legacy uploads), but never trust a stored value inside a style
+      // context: the allowlist above keeps quotes/parens out of `url()`.
+      avatar.style.backgroundImage = `url(${nativeApiHref(`/api/images/${avatarKey}`)})`;
       btn.appendChild(avatar);
     } else {
       const avatar = document.createElement('span');
