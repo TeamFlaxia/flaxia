@@ -267,8 +267,11 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
     reachable = true;
     clearRetry();
     options.setOffline(false);
+    // A guest's /api/me is always 401. Only clear snapshots when an
+    // authenticated owner is losing its session; otherwise the guest feed that
+    // was just cached (or is about to be) would be wiped on every visit.
     if (
-      (isMe && response.status === 401) ||
+      (isMe && response.status === 401 && owner !== 'guest') ||
       (request.method === 'DELETE' && url.pathname === '/api/users/me' && response.ok)
     ) {
       await reset();

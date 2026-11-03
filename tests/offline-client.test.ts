@@ -600,3 +600,37 @@ test('a stalled probe times out and retries', async (t) => {
   assert.equal(probes, 2);
   assert.equal((await fetch('/api/posts')).status, 503);
 });
+
+test('a guest /api/me 401 does not clear the public feed snapshot', async () => {
+  const c = client(async (input) =>
+    new URL((input as Request).url).pathname === '/api/me'
+      ? json({ error: 'unauthorized' }, 401)
+      : json({ posts: ['saved'] }),
+  );
+  await c.fetch('/api/posts');
+  assert.equal((await c.fetch('/api/me')).status, 401);
+  c.setOnline(false);
+  const response = await c.fetch('/api/posts');
+  assert.equal(response.headers.get('X-Flaxia-Offline'), '1');
+  assert.deepEqual(await response.json(), { posts: ['saved'] });
+});
+
+test('a guest 401 that lands after the feed cache does not clear it', async () => {
+  let resolveMe: ((response: Response) => void) | undefined;
+  const c = client(async (input) => {
+    if (new URL((input as Request).url).pathname === '/api/me')
+      return new Promise<Response>((resolve) => {
+        resolveMe = resolve;
+      });
+    return json({ posts: ['saved'] });
+  });
+  await c.fetch('/api/posts');
+  const pendingMe = c.fetch('/api/me');
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  resolveMe?.(json({ error: 'unauthorized' }, 401));
+  await pendingMe;
+  c.setOnline(false);
+  const response = await c.fetch('/api/posts');
+  assert.equal(response.headers.get('X-Flaxia-Offline'), '1');
+  assert.deepEqual(await response.json(), { posts: ['saved'] });
+});

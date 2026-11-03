@@ -25,8 +25,10 @@ timeline without recreating the composer.
 - Separate database: flaxia-offline-v1; vault keys and encrypted Studio data
   are untouched.
 - Account-scoped keys include the complete feed query/cursor. Login/logout,
-  account changes, deletion, and an authoritative /api/me 401 clear snapshots.
-  Password reauthentication and SRP upgrades preserve the saved identity and reads.
+  account changes, deletion, and an authoritative /api/me 401 for the active
+  account clear snapshots. A guest's always-401 /api/me does not discard the
+  public feed. Password reauthentication and SRP upgrades preserve the saved
+  identity and reads.
 - Only the display identity (id, username, display name, avatar, badge) is
   retained from /api/me. It is UI metadata, never an authentication credential.
 - No vault payloads/keys, notifications, account settings, email, billing,
