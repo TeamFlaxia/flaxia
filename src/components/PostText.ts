@@ -88,13 +88,15 @@ interface MathPlaceholder {
 
 export async function createPostText(props: PostTextProps): Promise<HTMLElement> {
   const container = document.createElement('div');
-  container.className = 'post-text';
+  // Markdown output already encodes line breaks as <br>; `white-space: pre-wrap`
+  // is only for the plain-text placeholder, otherwise the literal newlines in
+  // markdown-it's HTML double every break.
+  container.className = 'post-text post-text--rich';
 
   // Process the text through the unified pipeline. Colors are an author-side
   // Flaxia+ entitlement; non-members' markers stay literal.
   const { html, colorEntries } = await processTextInternal(
     props.text,
-    props.enablePostRefs,
     canUsePostColors({ badge_type: props.badgeType }),
   );
   container.innerHTML = html;
@@ -103,9 +105,10 @@ export async function createPostText(props: PostTextProps): Promise<HTMLElement>
   // Render math elements after HTML is inserted
   renderMathElements(container);
 
-  // Linkify hashtags and URLs
-  linkifyHashtags(container);
+  // Link URLs first so a `#fragment` stays inside the URL anchor, then link
+  // hashtags while skipping anchors/code (see isExcludedTextParent).
   linkifyUrls(container);
+  linkifyHashtags(container);
   linkifyMentions(container, props.mentions);
   if (props.enablePostRefs) {
     linkifyPostRefs(container);
@@ -135,12 +138,11 @@ export {
  * 4. Parse Markdown
  * 5. Sanitize HTML
  * 6. Expand KaTeX placeholders
- * 7. Restore post references
+ * 7. Restore post references as literal text (linkified in createPostText)
  * 8. Restore color placeholders (in the DOM, see createPostText)
  */
 async function processTextInternal(
   text: string,
-  enablePostRefs: boolean | undefined,
   enableColors: boolean,
 ): Promise<{ html: string; colorEntries: ColorPlaceholderEntry[] }> {
   // Step 1: Escape math notation with placeholders
@@ -217,21 +219,20 @@ async function processTextInternal(
     ALLOW_DATA_ATTR: true,
   });
 
-  // Step 7: Restore post reference placeholders as clickable links (or plain text)
+  // Step 7: Restore post references as plain text. createPostText() linkifies
+  // them later, which keeps `>>N` inside code blocks literal.
   for (const ref of refPlaceholders) {
     const placeholderRegex = new RegExp(`⚡${ref.id}⚡`, 'g');
-    const replacement = enablePostRefs
-      ? `<a class="post-ref-link" href="#post-${ref.index}" data-post-index="${ref.index}">>>${ref.index}</a>`
-      : `>>${ref.index}`;
-    html = html.replace(placeholderRegex, replacement);
+    // Escape the angle brackets: this string is inserted as HTML.
+    html = html.replace(placeholderRegex, `&gt;&gt;${ref.index}`);
   }
 
   return { html, colorEntries };
 }
 
 /** HTML with colors disabled, for profile bios and legacy callers. */
-async function processText(text: string, enablePostRefs?: boolean): Promise<string> {
-  return (await processTextInternal(text, enablePostRefs, false)).html;
+async function processText(text: string): Promise<string> {
+  return (await processTextInternal(text, false)).html;
 }
 
 /**
@@ -240,25 +241,40 @@ async function processText(text: string, enablePostRefs?: boolean): Promise<stri
  */
 function escapeMathNotation(text: string): { textWithPlaceholders: string; mathPlaceholders: MathPlaceholder[] } {
   const mathPlaceholders: MathPlaceholder[] = [];
-  let placeholderId = 0;
 
-  // Match $$display math$$ or $inline math$
-  const mathRegex = /\$\$([^$]+)\$\$|\$([^$]+?)\$/g;
+  const escapeSegment = (segment: string): string => {
+    // Match $$display math$$ or $inline math$. The inline form deliberately
+    // rejects currency-like pairs such as `$5 and $10` (no whitespace adjacent
+    // to the delimiters, and the closing `$` must not be followed by a digit).
+    const mathRegex = /(?<!\\)\$\$([^$\n]+?)\$\$|(?<!\\)\$(?!\s)([^$\n]+?)(?<!\s)\$(?![\d$])/g;
+    return segment.replace(mathRegex, (_match, displayContent, inlineContent) => {
+      const content = displayContent || inlineContent;
+      const displayMode = !!displayContent;
+      const id = `math-${mathPlaceholders.length}`;
 
-  const textWithPlaceholders = text.replace(mathRegex, (match, displayContent, inlineContent) => {
-    const content = displayContent || inlineContent;
-    const displayMode = !!displayContent;
-    const id = `math-${placeholderId++}`;
+      mathPlaceholders.push({
+        id,
+        content: content.trim(),
+        displayMode,
+      });
 
-    mathPlaceholders.push({
-      id,
-      content: content.trim(),
-      displayMode,
+      // Use special Unicode characters that won't be affected by Markdown parsing
+      return `⚡${id}⚡`;
     });
+  };
 
-    // Use special Unicode characters that won't be affected by Markdown parsing
-    return `⚡${id}⚡`;
-  });
+  // Code spans/fences are literal Markdown: a `$...$` inside them must stay as
+  // source text rather than becoming a KaTeX node.
+  const codePattern = /```[\s\S]*?```|`[^`\n]*`/g;
+  let textWithPlaceholders = '';
+  let lastIndex = 0;
+  for (const match of text.matchAll(codePattern)) {
+    const index = match.index ?? 0;
+    textWithPlaceholders += escapeSegment(text.slice(lastIndex, index));
+    textWithPlaceholders += match[0];
+    lastIndex = index + match[0].length;
+  }
+  textWithPlaceholders += escapeSegment(text.slice(lastIndex));
 
   return { textWithPlaceholders, mathPlaceholders };
 }
@@ -345,6 +361,15 @@ function renderMathElement(element: HTMLElement): void {
 }
 
 /**
+ * Linkifiers must not rewrite text inside links or code. Markdown links are
+ * already anchors, and code blocks/spans are literal source.
+ */
+function isExcludedTextParent(parent: Node | null): boolean {
+  const element = parent?.nodeType === 1 ? (parent as Element) : parent?.parentElement;
+  return Boolean(element?.closest('a, code, pre'));
+}
+
+/**
  * Convert hashtags to clickable links
  */
 function linkifyHashtags(container: HTMLElement): void {
@@ -368,7 +393,7 @@ function linkifyHashtags(container: HTMLElement): void {
     hashtagRegex.lastIndex = 0;
 
     const parent = textNode.parentNode;
-    if (!parent) continue;
+    if (!parent || isExcludedTextParent(parent)) continue;
 
     const fragment = document.createDocumentFragment();
     let lastIndex = 0;
@@ -431,7 +456,7 @@ function linkifyUrls(container: HTMLElement): void {
     urlRegex.lastIndex = 0;
 
     const parent = textNode.parentNode;
-    if (!parent) continue;
+    if (!parent || isExcludedTextParent(parent)) continue;
 
     const fragment = document.createDocumentFragment();
     let lastIndex = 0;
@@ -493,7 +518,7 @@ async function linkifyCustomEmoji(container: HTMLElement, authorId?: string): Pr
     emojiRegex.lastIndex = 0;
 
     const parent = textNode.parentNode;
-    if (!parent) continue;
+    if (!parent || isExcludedTextParent(parent)) continue;
 
     const fragment = document.createDocumentFragment();
     let lastIndex = 0;
@@ -572,10 +597,7 @@ function linkifyMentions(container: HTMLElement, mentions?: string): void {
     mentionRegex.lastIndex = 0;
 
     const parent = textNode.parentNode;
-    if (!parent) continue;
-
-    // Skip if parent is already a link (e.g. inside an <a> tag)
-    if (parent.nodeName === 'A') continue;
+    if (!parent || isExcludedTextParent(parent)) continue;
 
     const fragment = document.createDocumentFragment();
     let lastIndex = 0;
@@ -672,9 +694,7 @@ function linkifyPostRefs(container: HTMLElement): void {
     postRefRegex.lastIndex = 0;
 
     const parent = textNode.parentNode;
-    if (!parent) continue;
-
-    if (parent.nodeName === 'A') continue;
+    if (!parent || isExcludedTextParent(parent)) continue;
 
     const fragment = document.createDocumentFragment();
     let lastIndex = 0;

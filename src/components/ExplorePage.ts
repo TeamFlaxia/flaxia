@@ -1,6 +1,6 @@
 import { attachPlusBadge } from '../lib/avatar.js';
 import { createFabButton } from '../lib/fab-button.js';
-import { formatCount } from '../lib/format.js';
+import { formatCount, formatPercentage, relativeBarPercent } from '../lib/format.js';
 import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { createSkeletonCards } from '../lib/loading-ui.js';
@@ -553,7 +553,9 @@ export class ExplorePage {
     const [tagsRes, postsRes] = await Promise.all([fetch('/api/tags/trending'), fetch('/api/posts/trending?limit=10')]);
 
     if (tagsRes.ok) {
-      const tagsData = (await tagsRes.json()) as { tags: Array<{ tag: string; count: number }> };
+      const tagsData = (await tagsRes.json()) as {
+        tags: Array<{ tag: string; count: number; percentage?: number }>;
+      };
       this.renderTrendingTags(tagsData.tags || []);
     }
 
@@ -762,22 +764,47 @@ export class ExplorePage {
     postsContainer.appendChild(fragment);
   }
 
-  private renderTrendingTags(tags: Array<{ tag: string; count: number }>): void {
+  private renderTrendingTags(tags: Array<{ tag: string; count: number; percentage?: number }>): void {
     const container = this.element.querySelector('.explore-trending-tags') as HTMLElement;
     if (!container) return;
 
     container.innerHTML = `<h2 class="explore-trending-heading">${t('explore.trending_tags')}</h2>`;
     container.style.display = 'block';
 
-    tags.forEach(({ tag, count }) => {
-      // Post counts describe the tag; "1% of a 100-post sample" did not.
+    const maxCount = Math.max(...tags.map(({ count }) => count), 1);
+
+    tags.forEach(({ tag, count, percentage }) => {
       const item = document.createElement('a');
       item.className = 'trending-item';
       item.href = `/explore?tag=${encodeURIComponent(tag)}`;
-      item.innerHTML = `
-        <div class="trending-tag-name"># ${tag}</div>
-        <div class="trending-tag-meta">${t('right_panel.trending_count', { count })}</div>
-      `;
+      item.dataset.count = String(count);
+
+      const name = document.createElement('div');
+      name.className = 'trending-tag-name';
+      name.textContent = `# ${tag}`;
+
+      // Bars compare tags with each other; the text keeps the true share of
+      // the recent-post sample so the graph cannot overstate a tag.
+      const bar = document.createElement('div');
+      bar.className = 'trending-bar';
+      bar.setAttribute('aria-hidden', 'true');
+      const fill = document.createElement('span');
+      fill.className = 'trending-bar-fill';
+      fill.style.width = `${relativeBarPercent(count, maxCount)}%`;
+      bar.appendChild(fill);
+
+      const pct = typeof percentage === 'number' && Number.isFinite(percentage) ? percentage : null;
+      const meta = document.createElement('div');
+      meta.className = 'trending-tag-meta';
+      meta.textContent =
+        pct === null
+          ? t('right_panel.trending_count', { count })
+          : `${t('explore.trending_percent', { percentage: formatPercentage(pct) })} · ${t('right_panel.trending_count', { count })}`;
+
+      item.appendChild(name);
+      item.appendChild(bar);
+      item.appendChild(meta);
+
       item.addEventListener('click', (ev) => {
         ev.preventDefault();
         window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`);

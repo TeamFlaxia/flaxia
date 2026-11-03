@@ -73,6 +73,50 @@ describe('GET /api/posts/recommended', () => {
   });
 });
 
+describe('own post visibility', () => {
+  beforeEach(resetDb);
+
+  it('shows own posts in Global and Replies, but not in For You', async () => {
+    const { cookie } = await seedUserAndLogin('own-posts');
+    const created = await fetch(`${BASE_URL}/api/posts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ text: 'my own post' }),
+    });
+    assert.equal(created.status, 201);
+    const { id } = (await created.json()) as { id: string };
+
+    const global = (await (await fetch(`${BASE_URL}/api/posts?limit=20`, { headers: { Cookie: cookie } })).json()) as {
+      posts: Array<{ id: string }>;
+    };
+    assert.ok(
+      global.posts.some((post) => post.id === id),
+      'own post must appear in the Global timeline',
+    );
+
+    const recommended = (await (
+      await fetch(`${BASE_URL}/api/posts/recommended?limit=20`, { headers: { Cookie: cookie } })
+    ).json()) as { posts: Array<{ id: string }> };
+    assert.ok(!recommended.posts.some((post) => post.id === id), 'own post must not appear in For You');
+
+    const replyId = crypto.randomUUID();
+    const reply = await fetch(`${BASE_URL}/api/posts/${id}/replies/commit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ replyId, text: 'my own reply', hashtags: [] }),
+    });
+    assert.equal(reply.status, 200);
+
+    const thread = (await (
+      await fetch(`${BASE_URL}/api/posts/${id}/thread`, { headers: { Cookie: cookie } })
+    ).json()) as { replies: Array<{ id: string }> };
+    assert.ok(
+      thread.replies.some((post) => post.id === replyId),
+      'own reply must appear in the thread',
+    );
+  });
+});
+
 describe('POST /api/posts', () => {
   beforeEach(resetDb);
 

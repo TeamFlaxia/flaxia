@@ -1,4 +1,5 @@
 import { attachPlusBadge } from '../lib/avatar.js';
+import { formatPercentage, relativeBarPercent } from '../lib/format.js';
 import { getLocale, t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
 import { applyNameColor } from '../lib/name-color.js';
@@ -204,7 +205,9 @@ export class RightPanel {
       return;
     }
 
-    this.trendingTags.forEach(({ tag, count }, index) => {
+    const maxCount = Math.max(...this.trendingTags.map(({ count }) => count), 1);
+
+    this.trendingTags.forEach(({ tag, count, percentage }, index) => {
       // A row navigates, so it is a link, not a div with a role bolted on.
       const item = document.createElement('a');
       item.className = 'trending-item';
@@ -223,11 +226,24 @@ export class RightPanel {
       // Rank 1 carries the weight; the rest are a readable list under it.
       hashtag.textContent = index === 0 ? tag : `#${tag}`;
 
+      // The bar compares tags with each other; the text keeps the true share
+      // of the recent-post sample so the graph cannot overstate a tag.
+      const bar = document.createElement('div');
+      bar.className = 'trending-bar';
+      bar.setAttribute('aria-hidden', 'true');
+      const fill = document.createElement('span');
+      fill.className = 'trending-bar-fill';
+      fill.style.width = `${relativeBarPercent(count, maxCount)}%`;
+      bar.appendChild(fill);
+
       const countEl = document.createElement('div');
       countEl.className = 'trending-count';
-      countEl.textContent = t('right_panel.trending_count', { count });
+      countEl.textContent = Number.isFinite(percentage)
+        ? `${t('right_panel.trending_percent', { percentage: formatPercentage(percentage) })} · ${t('right_panel.trending_count', { count })}`
+        : t('right_panel.trending_count', { count });
 
       content.appendChild(hashtag);
+      content.appendChild(bar);
       content.appendChild(countEl);
       item.appendChild(rank);
       item.appendChild(content);
