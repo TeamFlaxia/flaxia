@@ -3,14 +3,6 @@ import { resolveNameColor } from './name-color.ts';
 import { parsePostColors, postTextStyleClass, stripPostColors } from './post-colors.ts';
 import { isTitleIconImage } from './title-icon.ts';
 
-/**
- * Lucide "leaf" icon as inline SVG. Used for the Fresh (like) count in SSR
- * HTML so the icon matches the SPA's Lucide icon instead of an emoji.
- */
-export function renderFreshIcon(className = 'ssr-fresh-icon'): string {
-  return `<svg class="${className}" xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M11 20a10 10 0 0010-10 25.9 25.9 0 00-1.04-7.281 1 1 0 00-1.755-.325C15.833 5.5 13 5.5 9.8 6.1A7 7 0 0011 20"/><path d="M2 21a5 5 0 012.911-4.544C7.613 15.212 8.351 15.24 11 13"/></svg>`;
-}
-
 export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
@@ -226,7 +218,7 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       --accent:        #22c55e;
       --accent-dark:   #16a34a;
       --danger:        #ef4444;
-      --link:          var(--accent-dark);
+      --link:          #3b82f6;
       --post-color-red:    #b91c1c;
       --post-color-orange: #c2410c;
       --post-color-yellow: #a16207;
@@ -252,7 +244,7 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       --accent:        #22c55e;
       --accent-dark:   #16a34a;
       --danger:        #ef4444;
-      --link:          var(--accent);
+      --link:          #60a5fa;
       --post-color-red:    #f87171;
       --post-color-orange: #fb923c;
       --post-color-yellow: #facc15;
@@ -266,7 +258,6 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       --post-rainbow: linear-gradient(90deg, #f87171, #fb923c, #facc15, #4ade80, #60a5fa, #c084fc, #f472b6);
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    a { color: var(--link); }
     body {
       font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: var(--bg-primary);
@@ -315,7 +306,7 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
     .ssr-logo {
       font-size: 20px;
       font-weight: 700;
-      color: var(--accent-dark);
+      color: #007bff;
       text-decoration: none;
     }
     .ssr-logo:hover { text-decoration: underline; }
@@ -463,7 +454,6 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
     }
     .ssr-post-meta time { color: var(--text-muted); }
     .ssr-post-stats { display: flex; gap: 12px; font-size: 13px; color: var(--text-muted); margin-top: 8px; }
-    .ssr-fresh-icon { width: 1em; height: 1em; vertical-align: -0.15em; }
     .ssr-replies { margin-top: 24px; }
     .ssr-replies h2 {
       font-size: 16px;
@@ -498,7 +488,7 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       color: var(--text-muted);
       font-size: 13px;
     }
-    .ssr-footer a { color: var(--accent); text-decoration: none; }
+    .ssr-footer a { color: #007bff; text-decoration: none; }
     .ssr-footer a:hover { text-decoration: underline; }
     .ssr-nav {
       display: flex;
@@ -516,7 +506,7 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
     .ssr-nav-link:hover { color: var(--text-primary); background: var(--bg-input); }
     .ssr-nav-link.active {
       color: #fff;
-      background: var(--accent-dark);
+      background: #007bff;
       font-weight: 600;
     }
     .ssr-breadcrumb ol {
@@ -531,7 +521,7 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
     }
     .ssr-breadcrumb li { display: inline-flex; align-items: center; }
     .ssr-breadcrumb li:not(:last-child)::after { content: '›'; margin-left: 6px; color: #bbb; }
-    .ssr-breadcrumb a { color: var(--accent); text-decoration: none; }
+    .ssr-breadcrumb a { color: #007bff; text-decoration: none; }
     .ssr-breadcrumb a:hover { text-decoration: underline; }
     .ssr-breadcrumb li[aria-current="page"] { color: var(--text-primary); font-weight: 600; }
     .ssr-footer-grid {
@@ -554,10 +544,10 @@ export function renderHtmlShell(content: string, options: HtmlShellOptions): str
       padding: 0;
     }
     .ssr-footer-col li { margin-bottom: 4px; }
-    .ssr-footer-col a { color: var(--accent); text-decoration: none; font-size: 13px; }
+    .ssr-footer-col a { color: #007bff; text-decoration: none; font-size: 13px; }
     .ssr-footer-col a:hover { text-decoration: underline; }
     .ssr-footer-bottom { margin-top: 8px; }
-    .ssr-hashtag { color: var(--accent); }
+    .ssr-hashtag { color: #007bff; }
     .ssr-section-title {
       font-size: 16px;
       font-weight: 600;
@@ -744,7 +734,7 @@ export function renderPostArticle(post: PostRow, baseUrl: string, isReply = fals
       <a href="${escapeHtml(postUrl)}">View post</a>
     </div>
     <div class="ssr-post-stats">
-      <span>${renderFreshIcon()} ${post.fresh_count}</span>
+      <span>❤️ ${post.fresh_count}</span>
       <span>💬 ${post.reply_count}</span>
       <span>🔖 ${post.bookmark_count}</span>
     </div>

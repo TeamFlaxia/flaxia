@@ -63,8 +63,8 @@
   --danger-text: #dc2626;
   --danger-soft: rgba(239, 68, 68, 0.1);
   --warning: #f59e0b;
-  --link: var(--accent-text);
-  --link-hover: var(--accent-hover);
+  --link: #0369a1;
+  --link-hover: #075985;
   --ring: rgba(16, 185, 129, 0.35);
 
   /* Flaxia+ post text colours (WCAG-checked for the light canvas). */
@@ -174,8 +174,8 @@
   --danger-text: #fca5a5;
   --danger-soft: rgba(248, 113, 113, 0.16);
   --warning: #fbbf24;
-  --link: var(--accent-text);
-  --link-hover: var(--accent-hover);
+  --link: #38bdf8;
+  --link-hover: #7dd3fc;
   --ring: rgba(16, 185, 129, 0.4);
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
@@ -206,10 +206,6 @@
   margin: 0;
   padding: 0;
   box-sizing: border-box;
-}
-
-a {
-  color: var(--link);
 }
 
 body {

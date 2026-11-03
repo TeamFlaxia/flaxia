@@ -29,7 +29,6 @@ import { computeVerifier, DEFAULT_SRP_KDF, generateSalt } from '../lib/srp.js';
 import { getTheme, setTheme, Theme } from '../lib/theme.js';
 import { createTitleIcon, titleDescription, titleName } from '../lib/user-title.js';
 import { fetchVaultKeys, prepareVaultRewrap } from '../lib/vault/client.js';
-import { syncVaultVersionAfterRewrap } from '../lib/vault/session.js';
 import { createAddStampModal } from './AddStampModal.js';
 import { createBugReportForm } from './BugReportForm.js';
 import { createVaultSection } from './VaultSection.js';
@@ -940,7 +939,6 @@ export function createSettingsPage({ currentUser, initialCategory }: SettingsPag
         clearCredentialOperation();
         if (recovering) sessionStorage.removeItem('flaxia.recovery-login');
         storeSrpSalt(salt);
-        if (vaultRewrap.status === 'ok') await syncVaultVersionAfterRewrap();
         passwordMessage.textContent = t('settings.password_saved');
         passwordMessage.style.color = 'var(--accent-text)';
         currentPasswordInput2.value = '';

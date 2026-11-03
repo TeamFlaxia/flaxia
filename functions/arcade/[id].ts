@@ -1,13 +1,7 @@
 import { buildGameDescription, buildGameTitle } from '../../src/lib/game-seo';
 import { isCrawler } from '../../src/lib/is-crawler';
 import { stripPostColors } from '../../src/lib/post-colors.ts';
-import {
-  escapeHtml,
-  renderAvatarBadge,
-  renderFreshIcon,
-  renderHtmlShell,
-  renderJsonLd,
-} from '../../src/lib/render-html';
+import { escapeHtml, renderAvatarBadge, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import {
   renderBreadcrumbJsonLd,
@@ -291,7 +285,7 @@ export async function onRequest(context: {
             </div>
           </div>
           <div class="ssr-game-stats">
-            <span>${renderFreshIcon()} ${post.fresh_count}</span>
+            <span>❤️ ${post.fresh_count}</span>
             <span>💬 ${post.reply_count}</span>
             <span>🔖 ${post.bookmark_count}</span>
             <span>🏷️ ${typeLabel}</span>
@@ -338,7 +332,7 @@ export async function onRequest(context: {
       }
       .ssr-game-play-btn {
         display: inline-block;
-        background: var(--accent-dark);
+        background: #007bff;
         color: white;
         text-decoration: none;
         padding: 10px 24px;
@@ -346,7 +340,7 @@ export async function onRequest(context: {
         font-weight: 600;
         font-size: 15px;
       }
-      .ssr-game-play-btn:hover { background: var(--accent); }
+      .ssr-game-play-btn:hover { background: #0056b3; }
     </style>`;
 
     return new Response(

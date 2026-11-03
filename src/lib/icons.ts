@@ -1,6 +1,5 @@
 import {
   AlertTriangle,
-  AtSign,
   BarChart3,
   Bell,
   Bookmark,
@@ -10,7 +9,6 @@ import {
   createElement,
   Download,
   Eye,
-  EyeOff,
   FileText,
   Flag,
   Gamepad2,
@@ -20,7 +18,6 @@ import {
   Key,
   Leaf,
   Maximize,
-  Megaphone,
   MessageCircle,
   Monitor,
   Music2,
@@ -39,7 +36,6 @@ import {
   Terminal,
   Upload,
   User,
-  Users,
   X,
 } from 'lucide';
 
@@ -83,11 +79,7 @@ export type IconName =
   | 'smartphone'
   | 'terminal'
   | 'chevron-up'
-  | 'chevron-down'
-  | 'users'
-  | 'megaphone'
-  | 'at-sign'
-  | 'eye-off';
+  | 'chevron-down';
 
 const ICON_NODES: Record<IconName, IconNode> = {
   fresh: Leaf,
@@ -130,10 +122,6 @@ const ICON_NODES: Record<IconName, IconNode> = {
   terminal: Terminal,
   'chevron-up': ChevronUp,
   'chevron-down': ChevronDown,
-  users: Users,
-  megaphone: Megaphone,
-  'at-sign': AtSign,
-  'eye-off': EyeOff,
 };
 
 export function icon(name: IconName, attrs: Record<string, string> = {}): SVGElement {

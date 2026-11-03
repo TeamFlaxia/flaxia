@@ -1,13 +1,7 @@
 import { buildGameTitle } from '../../src/lib/game-seo';
 import { isCrawler } from '../../src/lib/is-crawler';
 import { stripPostColors } from '../../src/lib/post-colors.ts';
-import {
-  escapeHtml,
-  renderAvatarBadge,
-  renderFreshIcon,
-  renderHtmlShell,
-  renderJsonLd,
-} from '../../src/lib/render-html';
+import { escapeHtml, renderAvatarBadge, renderHtmlShell, renderJsonLd } from '../../src/lib/render-html';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import { renderBreadcrumbJsonLd, renderSsrFooter, renderSsrHeader, renderSsrLayoutCss } from '../lib/ssr-layout';
 
@@ -95,7 +89,7 @@ function renderGameCard(game: GameRow, baseUrl: string): string {
           <span>${escapeHtml(game.display_name || game.username)}</span>
         </div>
         <div class="ssr-game-stats">
-          <span>${renderFreshIcon()} ${game.fresh_count}</span>
+          <span>❤️ ${game.fresh_count}</span>
           <span>💬 ${game.reply_count}</span>
         </div>
       </div>
