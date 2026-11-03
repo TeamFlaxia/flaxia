@@ -114,6 +114,9 @@ Rows still present in Flaxia D1 are copied once through
 `/api/flaxia/vault/import` on the first Vault request and removed only after
 Auth confirms the identical envelope. The import carries only wrapped
 ciphertext, and a conflicting envelope is rejected instead of overwritten.
+A password change advances `vk_version` (and the item versions) at Auth even
+though VK itself is unchanged; the acting browser refreshes its in-memory
+version after the change so later item writes are not rejected as stale.
 
 - `salt` and `recovery_salt` are independent, so a user who picks their
   password as their recovery phrase still gets two separate paths rather than
