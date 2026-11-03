@@ -6,6 +6,7 @@ export const GAME_FILE_EXTENSIONS = new Set(['zip', 'swf', 'html', 'htm', 'rsp',
 export const ALLOWED_EXTENSIONS: Record<string, string> = {
   // Web content
   '.html': 'text/html',
+  '.htm': 'text/html',
   '.css': 'text/css',
   '.js': 'text/javascript',
   '.mjs': 'text/javascript',

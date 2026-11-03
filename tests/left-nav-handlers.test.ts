@@ -33,6 +33,13 @@ describe('createLeftNavHandlers', () => {
     assert.deepEqual(pushed, ['/home', '/explore', '/arcade', '/notifications', '/bookmarks', '/settings']);
   });
 
+  it('routes Studio through the SPA history', () => {
+    const { handlers, navigated } = setup('alice');
+    handlers.onNavigate('studio');
+    assert.deepEqual(navigated, ['studio']);
+    assert.deepEqual(pushed, ['/studio']);
+  });
+
   it('routes profile to the current user', () => {
     const { handlers, navigated } = setup('alice');
     handlers.onNavigate('profile');

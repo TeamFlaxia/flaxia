@@ -32,7 +32,7 @@ describe('isPublicRoute', () => {
   });
 
   it('protects app routes', () => {
-    for (const p of ['/notifications', '/bookmarks', '/settings', '/admin', '/admin/users']) {
+    for (const p of ['/notifications', '/bookmarks', '/settings', '/studio', '/admin', '/admin/users']) {
       assert.equal(isPublicRoute(p), false, p);
     }
   });
@@ -52,6 +52,7 @@ describe('resolveAuthRedirect', () => {
 
   it('sends guests on other protected routes to login', () => {
     assert.deepEqual(resolveAuthRedirect('/settings', false), { path: '/login', view: 'login' });
+    assert.deepEqual(resolveAuthRedirect('/studio', false), { path: '/login', view: 'login' });
     assert.deepEqual(resolveAuthRedirect('/admin/users', false), { path: '/login', view: 'login' });
   });
 });

@@ -65,6 +65,23 @@ export function subscribeVault(listener: () => void): () => void {
 }
 
 /** The unwrapped vault key, or null while locked. Never persisted anywhere. */
+export type VaultRekeyListener = (oldVaultKey: Uint8Array, newVaultKey: Uint8Array) => Promise<void>;
+const rekeyListeners = new Set<VaultRekeyListener>();
+
+/**
+ * Register local encrypted stores that must re-wrap item keys when VK rotates.
+ * Listeners run before the server is told about the new envelope, so a failed
+ * local re-wrap aborts the rotation instead of stranding ciphertext.
+ */
+export function onVaultRekey(listener: VaultRekeyListener): () => void {
+  rekeyListeners.add(listener);
+  return () => rekeyListeners.delete(listener);
+}
+
+async function notifyVaultRekey(oldVaultKey: Uint8Array, newVaultKey: Uint8Array): Promise<void> {
+  for (const listener of [...rekeyListeners]) await listener(oldVaultKey, newVaultKey);
+}
+
 export function getVaultKey(): Uint8Array | null {
   return sessionVk;
 }
@@ -303,6 +320,11 @@ export async function revokeDeviceWithRotation(
     decodeB64(keys.recovery_salt),
     keys.kdf_params,
   );
+  try {
+    await notifyVaultRekey(currentVk, newVk);
+  } catch {
+    return false;
+  }
   const ok = await revokeDeviceAndRotate({
     current_srp: proof,
     device_id: deviceId,
@@ -315,7 +337,10 @@ export async function revokeDeviceWithRotation(
     recovery_blob,
     item_keys: rewrapped,
   });
-  if (!ok) return false;
+  if (!ok) {
+    await notifyVaultRekey(newVk, currentVk).catch(() => undefined);
+    return false;
+  }
 
   setVaultKey(newVk, keys.vk_version + 1);
   const device = await getOrCreateCurrentDevice();

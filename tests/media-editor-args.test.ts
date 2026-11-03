@@ -1,19 +1,219 @@
 import assert from 'node:assert';
 import { describe, it } from 'node:test';
+import {
+  type AudioTimelineClip,
+  audibleAudioTimelineClips,
+  audioClipEqSettings,
+  audioClipGainAutomation,
+  audioClipGainEnvelope,
+  audioClipSpeed,
+  audioClipTimelineDuration,
+  audioTrackMixSettings,
+  soloAudioTimelineClip,
+  splitAudioClipGainEnvelope,
+} from '@flaxia/studio/editor/audio-mixer';
+import {
+  videoClipAudioFadeFilters,
+  videoClipColorFilters,
+  videoClipFadeFilters,
+  videoClipOpacityAt,
+} from '@flaxia/studio/editor/video-sequence';
 import { buildAudioArgs, defaultAudioEditState } from '../src/lib/editor/audio-editor.ts';
 import {
+  applyImageColorAdjustments,
   buildGifEditArgs,
   defaultImageEditState,
   getOutputSize,
   type ImageEditState,
+  imageFilterCss,
+  isImageStateDirty,
 } from '../src/lib/editor/image-editor.ts';
 import { computeVideoPlan } from '../src/lib/editor/render-preset.ts';
 import {
   buildVideoArgs,
   defaultVideoEditState,
+  isVideoStateDirty,
   resolveOutputSize,
   type VideoMeta,
+  videoFilterCss,
 } from '../src/lib/editor/video-editor.ts';
+
+describe('audio solo preview', () => {
+  it('moves only the selected clip to time zero and preserves its trims and mix controls', () => {
+    const clip: AudioTimelineClip = {
+      id: 'audio-1',
+      fileIndex: 2,
+      track: 3,
+      start: 12.5,
+      sourceStart: 1.25,
+      sourceEnd: 8.75,
+      speed: 1.5,
+      gain: 0.6,
+      fadeIn: 0.4,
+      fadeOut: 1.2,
+      pan: -0.3,
+      muted: true,
+    };
+    assert.deepEqual(soloAudioTimelineClip(clip), {
+      ...clip,
+      start: 0,
+      muted: false,
+      trackMuted: false,
+      trackSolo: false,
+    });
+    assert.equal(clip.start, 12.5);
+    assert.equal(clip.muted, true);
+  });
+});
+
+describe('audio track mute and solo', () => {
+  const clip = (id: string, track: number, settings: Partial<AudioTimelineClip> = {}): AudioTimelineClip => ({
+    id,
+    fileIndex: 0,
+    track,
+    start: 0,
+    sourceStart: 0,
+    sourceEnd: 5,
+    gain: 1,
+    fadeIn: 0,
+    fadeOut: 0,
+    pan: 0,
+    muted: false,
+    ...settings,
+  });
+
+  it('mutes whole tracks and restricts playback to soloed tracks', () => {
+    const clips = [
+      clip('muted-track', 0, { trackMuted: true }),
+      clip('solo-track', 1, { trackSolo: true }),
+      clip('other-track', 2),
+      clip('muted-clip-on-solo', 1, { trackSolo: true, muted: true }),
+    ];
+    assert.deepEqual(
+      audibleAudioTimelineClips(clips).map(({ id }) => id),
+      ['solo-track'],
+    );
+  });
+
+  it('plays every unmuted track when no track is soloed', () => {
+    const clips = [clip('first', 0), clip('second', 1), clip('muted', 2, { trackMuted: true })];
+    assert.deepEqual(
+      audibleAudioTimelineClips(clips).map(({ id }) => id),
+      ['first', 'second'],
+    );
+  });
+});
+
+describe('audio track mixer controls', () => {
+  it('defaults track gain and pan to unity and center, and clamps saved values', () => {
+    assert.deepEqual(audioTrackMixSettings({}), { gain: 1, pan: 0 });
+    assert.deepEqual(audioTrackMixSettings({ trackGain: 3, trackPan: -2 }), { gain: 2, pan: -1 });
+    assert.deepEqual(audioTrackMixSettings({ trackGain: Number.NaN, trackPan: Number.POSITIVE_INFINITY }), {
+      gain: 1,
+      pan: 0,
+    });
+  });
+});
+
+describe('audio clip playback speed', () => {
+  it('changes placed duration while preserving the trimmed source range', () => {
+    const clip = { sourceStart: 2, sourceEnd: 10, speed: 2 };
+    assert.equal(audioClipSpeed(clip), 2);
+    assert.equal(audioClipTimelineDuration(clip), 4);
+    assert.equal(audioClipSpeed({ speed: 0.1 }), 0.5);
+    assert.equal(audioClipTimelineDuration({ sourceStart: 0, sourceEnd: 6, speed: 0.5 }), 12);
+    assert.equal(audioClipSpeed({ speed: Number.NaN }), 1);
+  });
+});
+
+describe('audio clip EQ', () => {
+  it('defaults missing controls to flat EQ and clamps saved values', () => {
+    assert.deepEqual(audioClipEqSettings({}), { lowEqDb: 0, midEqDb: 0, highEqDb: 0 });
+    assert.deepEqual(audioClipEqSettings({ lowEqDb: -24, midEqDb: 4, highEqDb: Number.NaN }), {
+      lowEqDb: -18,
+      midEqDb: 4,
+      highEqDb: 0,
+    });
+    assert.deepEqual(audioClipEqSettings({ lowEqDb: 22, midEqDb: -20, highEqDb: 18 }), {
+      lowEqDb: 18,
+      midEqDb: -18,
+      highEqDb: 18,
+    });
+  });
+});
+
+describe('audio clip volume automation', () => {
+  it('defaults to unity and clamps envelope points to the 0–200% range', () => {
+    assert.deepEqual(audioClipGainEnvelope({}), { start: 1, middle: 1, end: 1 });
+    assert.deepEqual(audioClipGainEnvelope({ gainEnvelope: { start: -1, middle: 0.75, end: 3 } }), {
+      start: 0,
+      middle: 0.75,
+      end: 2,
+    });
+  });
+
+  it('creates a smooth three-point gain curve and multiplies it with the fades', () => {
+    const clip = {
+      gain: 0.5,
+      fadeIn: 2,
+      fadeOut: 2,
+      gainEnvelope: { start: 0, middle: 1, end: 0.5 },
+    };
+    assert.deepEqual(audioClipGainAutomation(clip, 10), [
+      { time: 0, gain: 0 },
+      { time: 2, gain: 0.2 },
+      { time: 5, gain: 0.5 },
+      { time: 8, gain: 0.35 },
+      { time: 10, gain: 0 },
+    ]);
+  });
+
+  it('keeps the original gain curve continuous across an audio split', () => {
+    const split = splitAudioClipGainEnvelope({ gainEnvelope: { start: 0.5, middle: 1.5, end: 0.25 } }, 0.3);
+    assert.deepEqual(split.left, { start: 0.5, middle: 0.8, end: 1.1 });
+    assert.equal(split.right.start, 1.1);
+    assert.ok(Math.abs(split.right.middle - 1.125) < 1e-12);
+    assert.equal(split.right.end, 0.25);
+    assert.equal(split.left.end, split.right.start);
+  });
+});
+
+describe('video sequence fades', () => {
+  it('builds bounded timeline fade filters', () => {
+    assert.deepEqual(videoClipFadeFilters(8, 1.25, 2), ['fade=t=in:st=0:d=1.250', 'fade=t=out:st=6.000:d=2.000']);
+    assert.deepEqual(videoClipFadeFilters(4, 8, -1), ['fade=t=in:st=0:d=4.000']);
+    assert.deepEqual(videoClipFadeFilters(0), []);
+  });
+
+  it('builds matching source-audio fades on the post-speed timeline', () => {
+    assert.deepEqual(videoClipAudioFadeFilters(8, 1.25, 2), [
+      'afade=t=in:st=0:d=1.250',
+      'afade=t=out:st=6.000:d=2.000',
+    ]);
+    assert.deepEqual(videoClipAudioFadeFilters(4, 8, -1), ['afade=t=in:st=0:d=4.000']);
+    assert.deepEqual(videoClipAudioFadeFilters(0), []);
+  });
+
+  it('computes the preview opacity for both clip edges', () => {
+    assert.equal(videoClipOpacityAt(0.5, 8, 1, 2), 0.5);
+    assert.equal(videoClipOpacityAt(7, 8, 1, 2), 0.5);
+    assert.equal(videoClipOpacityAt(3, 8, 1, 2), 1);
+  });
+});
+
+describe('video clip image adjustments', () => {
+  it('omits hue and blur filters at their neutral values', () => {
+    assert.deepEqual(videoClipColorFilters({}), ['eq=brightness=0.000:contrast=1.000:saturation=1.000']);
+  });
+
+  it('clamps color controls and emits FFmpeg hue and blur filters', () => {
+    assert.deepEqual(videoClipColorFilters({ brightness: 250, contrast: -10, hueDeg: 90, blurPx: 0.1 }), [
+      'eq=brightness=1.000:contrast=0.000:saturation=1.000',
+      'hue=h=1.571',
+      'gblur=sigma=0.5',
+    ]);
+  });
+});
 
 describe('image-editor getOutputSize', () => {
   const base = (): ImageEditState => defaultImageEditState();
@@ -48,6 +248,8 @@ describe('image-editor buildGifEditArgs', () => {
       crop: { x: 0, y: 0, w: 0.5, h: 0.5 },
       brightness: 110,
       contrast: 90,
+      saturation: 80,
+      hueDeg: 30,
       maxLongEdge: 100,
       autoLongEdge: false,
     };
@@ -58,7 +260,8 @@ describe('image-editor buildGifEditArgs', () => {
     assert.ok(vf.includes('transpose=1'), vf);
     assert.ok(vf.includes('crop='), vf);
     assert.ok(vf.includes('scale='), vf);
-    assert.ok(vf.includes('eq=brightness=0.100:contrast=0.900'), vf);
+    assert.ok(vf.includes('eq=brightness=0.100:contrast=0.900:saturation=0.800'), vf);
+    assert.ok(vf.includes('hue=h=0.524'), vf);
     assert.equal(args[args.length - 1], 'out.gif');
     assert.ok(args.includes('-loop'));
   });
@@ -66,6 +269,29 @@ describe('image-editor buildGifEditArgs', () => {
   it('skips -vf when the state is neutral', () => {
     const args = buildGifEditArgs(400, 200, defaultImageEditState(), 'in.gif', 'out.gif');
     assert.ok(!args.includes('-vf'));
+  });
+});
+
+describe('image-editor color adjustments', () => {
+  it('rotates hue in image pixels without changing alpha', () => {
+    const pixels = new Uint8ClampedArray([255, 0, 0, 128]);
+    applyImageColorAdjustments(pixels, { ...defaultImageEditState(), hueDeg: 120 });
+    assert.deepEqual(pixels, new Uint8ClampedArray([0, 113, 0, 128]));
+  });
+
+  it('desaturates pixels and tracks the edits as dirty state', () => {
+    const state = { ...defaultImageEditState(), saturation: 0 };
+    const pixels = new Uint8ClampedArray([255, 0, 0, 255]);
+    applyImageColorAdjustments(pixels, state);
+    assert.deepEqual(pixels, new Uint8ClampedArray([54, 54, 54, 255]));
+    assert.equal(isImageStateDirty(state), true);
+  });
+
+  it('matches saturation and hue in the live CSS preview', () => {
+    assert.equal(
+      imageFilterCss({ ...defaultImageEditState(), saturation: 75, hueDeg: -30 }),
+      'brightness(100%) contrast(100%) saturate(75%) hue-rotate(-30deg)',
+    );
   });
 });
 
@@ -112,8 +338,16 @@ describe('video-editor args and sizing', () => {
     });
   });
 
-  it('omits scale when output matches source, adds eq when adjusting', () => {
-    const state = { ...defaultVideoEditState(meta), start: 2, end: 10, brightness: 120 };
+  it('omits scale when output matches source and exports full color adjustments', () => {
+    const state = {
+      ...defaultVideoEditState(meta),
+      start: 2,
+      end: 10,
+      brightness: 120,
+      saturation: 85,
+      hueDeg: -30,
+      blurPx: 2.5,
+    };
     const args = buildVideoArgs({
       state,
       videoKbps: 2500,
@@ -129,10 +363,19 @@ describe('video-editor args and sizing', () => {
     const vfIdx = args.indexOf('-vf');
     assert.ok(vfIdx > 0);
     assert.ok(!args[vfIdx + 1].includes('scale='), args[vfIdx + 1]);
-    assert.ok(args[vfIdx + 1].includes('eq=brightness=0.200:contrast=1.000'));
+    assert.ok(args[vfIdx + 1].includes('eq=brightness=0.200:contrast=1.000:saturation=0.850'));
+    assert.ok(args[vfIdx + 1].includes('hue=h=-0.524'));
+    assert.ok(args[vfIdx + 1].includes('gblur=sigma=2.5'));
     assert.ok(args.includes('libx264'));
     assert.ok(args.includes('+faststart'));
     assert.deepEqual(args.slice(0, 5), ['-ss', '2.000', '-t', '8.000', '-i']);
+  });
+
+  it('keeps live CSS previews and dirty state in sync with exported filters', () => {
+    const state = { ...defaultVideoEditState(meta), saturation: 75, hueDeg: 45, blurPx: 3 };
+    assert.equal(videoFilterCss(state), 'brightness(100%) contrast(100%) saturate(75%) hue-rotate(45deg) blur(3px)');
+    assert.equal(isVideoStateDirty(state), true);
+    assert.equal(isVideoStateDirty(defaultVideoEditState(meta)), false);
   });
 
   it('drops the audio track when muted and keeps aac otherwise', () => {

@@ -31,6 +31,8 @@ describe('parseRoute', () => {
     assert.equal(parseRoute('/profile/bob', '')?.username, 'bob');
     assert.equal(parseRoute('/arcade/game1', '')?.postId, 'game1');
     assert.equal(parseRoute('/arcade', '')?.view, 'arcade');
+    assert.equal(parseRoute('/studio', '')?.view, 'studio');
+    assert.equal(parseRoute('/studio/', '')?.view, 'studio');
   });
 
   it('parses explore tag and search query from the query string', () => {

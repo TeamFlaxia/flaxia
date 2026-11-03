@@ -20,6 +20,7 @@ export type RouteView =
   | 'admin'
   | 'settings'
   | 'arcade'
+  | 'studio'
   | 'billing-success'
   | 'billing-canceled'
   | 'download';
@@ -106,6 +107,11 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
   // Arcade route - public, no auth required
   if (cleanPath === '/arcade') {
     return { view: 'arcade', postId: null, username: null, tag: null };
+  }
+
+  // Studio route - requires auth (handled by the auth guard)
+  if (cleanPath === '/studio') {
+    return { view: 'studio', postId: null, username: null, tag: null };
   }
 
   // Thread route (check before profile) - public, no auth required

@@ -29,6 +29,9 @@ export function createLeftNavHandlers(deps: LeftNavDeps): LeftNavHandlers {
       } else if (item === 'arcade') {
         pushSpaHistory('/arcade');
         deps.navigate('arcade');
+      } else if (item === 'studio') {
+        pushSpaHistory('/studio');
+        deps.navigate('studio');
       } else if (item === 'notifications') {
         window.history.pushState({}, '', '/notifications');
         deps.navigate('notifications');

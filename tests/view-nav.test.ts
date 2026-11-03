@@ -17,6 +17,7 @@ describe('viewToBottomNavId', () => {
   it('maps single views to their own tabs', () => {
     assert.equal(viewToBottomNavId('arcade'), 'arcade');
     assert.equal(viewToBottomNavId('notifications'), 'notifications');
+    assert.equal(viewToBottomNavId('studio'), '');
   });
 
   it('maps account views to account', () => {

@@ -194,6 +194,7 @@ export class LeftNav {
         { id: 'home', text: t('nav.home'), icon: 'home' },
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
+        { id: 'studio', text: t('nav.studio'), icon: 'edit' },
         { id: 'notifications', text: t('nav.notifications'), icon: 'notifications' },
         { id: 'bookmarks', text: t('nav.bookmarks'), icon: 'bookmark' },
       ] as const;
@@ -696,6 +697,7 @@ export function updateLeftNavUser(
         { id: 'home', text: t('nav.home'), icon: 'home' },
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
+        { id: 'studio', text: t('nav.studio'), icon: 'edit' },
         { id: 'notifications', text: t('nav.notifications'), icon: 'notifications' },
         { id: 'bookmarks', text: t('nav.bookmarks'), icon: 'bookmark' },
       ] as const;
