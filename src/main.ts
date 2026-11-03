@@ -6,7 +6,6 @@ import './styles/redesign/composer.css';
 import './styles/redesign/overlays.css';
 import './styles/redesign/pages.css';
 import './styles/redesign/command.css';
-import './styles/redesign/feed.css';
 import './styles/redesign/rail.css';
 import './styles/redesign/motion.css';
 import type { ArcadePageHandle } from './components/ArcadePage.js';
