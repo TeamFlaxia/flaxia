@@ -97,6 +97,10 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
       'post_embeddings',
       'post_translations',
       'freshs',
+      'embed_queue',
+      'cc_queue',
+      'cc_sources',
+      'web_documents',
       'search_documents',
       'custom_stamps',
       'transactions',
@@ -132,6 +136,86 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
     }
   }
   return c.json({ ok: true });
+});
+
+// POST /api/test/web-doc - seed a Common Crawl web-index document for search tests.
+app.post('/api/test/web-doc', requireTestEnvironment, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const url = typeof body.url === 'string' ? body.url.trim() : '';
+  if (!url) return c.json({ error: 'Missing url' }, 400);
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw new Error('protocol');
+  } catch {
+    return c.json({ error: 'Invalid url' }, 400);
+  }
+  const id = typeof body.id === 'string' && body.id ? body.id : crypto.randomUUID();
+  const title = typeof body.title === 'string' ? body.title.slice(0, 300) : '';
+  const excerpt = typeof body.excerpt === 'string' ? body.excerpt.slice(0, 400) : '';
+  const lang = typeof body.lang === 'string' ? body.lang.slice(0, 16) : null;
+  const publishedAt = typeof body.publishedAt === 'string' ? body.publishedAt.slice(0, 40) : null;
+  await c.env.DB.prepare(
+    `INSERT INTO web_documents
+       (id, url, canonical_url, domain, lang, title, excerpt, published_at, crawl, status, fetched_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CC-MAIN-TEST', 'active', ?)
+     ON CONFLICT(id) DO UPDATE SET
+       url = excluded.url,
+       canonical_url = excluded.canonical_url,
+       domain = excluded.domain,
+       lang = excluded.lang,
+       title = excluded.title,
+       excerpt = excluded.excerpt,
+       published_at = excluded.published_at,
+       status = 'active',
+       fetched_at = excluded.fetched_at`,
+  )
+    .bind(
+      id,
+      parsed.toString(),
+      parsed.toString(),
+      parsed.hostname.toLowerCase(),
+      lang,
+      title,
+      excerpt,
+      publishedAt,
+      new Date().toISOString(),
+    )
+    .run();
+  return c.json({ ok: true, id }, 201);
+});
+
+// POST /api/test/cc-queue - seed a Common Crawl queue row for webhook tests.
+app.post('/api/test/cc-queue', requireTestEnvironment, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+  const url = typeof body.url === 'string' ? body.url : '';
+  const warcFilename = typeof body.warcFilename === 'string' ? body.warcFilename : '';
+  const offset = Number(body.offset);
+  const length = Number(body.length);
+  if (!url || !warcFilename || !Number.isSafeInteger(offset) || !Number.isSafeInteger(length)) {
+    return c.json({ error: 'Invalid queue row' }, 400);
+  }
+  const id = typeof body.id === 'string' && body.id ? body.id : crypto.randomUUID();
+  const crawl = typeof body.crawl === 'string' ? body.crawl : 'CC-MAIN-TEST';
+  const taskId = typeof body.taskId === 'string' ? body.taskId : null;
+  const status = typeof body.status === 'string' ? body.status : 'submitted';
+  await c.env.DB.prepare(
+    `INSERT INTO cc_queue (id, crawl, url, warc_filename, offset, length, status, task_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       crawl = excluded.crawl,
+       url = excluded.url,
+       warc_filename = excluded.warc_filename,
+       offset = excluded.offset,
+       length = excluded.length,
+       status = excluded.status,
+       task_id = excluded.task_id,
+       error = NULL,
+       updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+  )
+    .bind(id, crawl, url, warcFilename, offset, length, status, taskId)
+    .run();
+  return c.json({ ok: true, id }, 201);
 });
 
 // POST /api/test/vault-item - seed an encrypted vault item for rotation tests.

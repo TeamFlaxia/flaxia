@@ -4,6 +4,9 @@ import { API_ORIGIN, isTauriNativePlatform } from './native-api.ts';
 export const CROWD_ORCHESTRATOR_URL = 'https://crowd.flaxia.app';
 
 /** Pinned `@flaxia/node` version served through the /api/crowd asset proxy. */
+// Keep the pinned version in sync with the published npm release. Bump this to
+// 0.6.0 and add `cc-extract` / `embed-gemma` to CROWD_SITE_CAPABILITIES only
+// after that Crowd release is published, otherwise the node bundle 404s.
 export const CROWD_NODE_VERSION = '0.5.1';
 
 export const CROWD_SITE_ID = 'flaxia';
@@ -54,6 +57,8 @@ export interface CrowdNodeConfig {
   containerImageOrigins?: string[];
   /** Exact same-origin API host allowed to serve signed scan-file tickets. */
   fileSourceOrigins?: string[];
+  /** Exact origins allowed to serve signed Common Crawl byte ranges. */
+  ccRangeOrigins?: string[];
   maxCpuLoad?: number;
 }
 
@@ -153,6 +158,8 @@ function buildNodeConfig(onConsentRequired?: (controls: CrowdConsentControls) =>
     },
     capabilities: CROWD_SITE_CAPABILITIES,
     fileSourceOrigins:
+      typeof window !== 'undefined' ? [isTauriNativePlatform() ? API_ORIGIN : window.location.origin] : [],
+    ccRangeOrigins:
       typeof window !== 'undefined' ? [isTauriNativePlatform() ? API_ORIGIN : window.location.origin] : [],
     maxCpuLoad: CROWD_NODE_MAX_CPU_LOAD,
   };
