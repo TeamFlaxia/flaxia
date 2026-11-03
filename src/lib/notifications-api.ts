@@ -47,8 +47,8 @@ export const fetchNotifications = async (): Promise<NotificationData> => {
       lastNotificationFetch = now;
       return data;
     }
-  } catch (error) {
-    console.log('Failed to fetch notifications:', error);
+  } catch {
+    // Network/API failure: fall back to an empty inbox.
   }
   // Keep the last in-memory result through a transient outage. Native polling
   // must not treat an outage as an empty inbox and re-notify on recovery.

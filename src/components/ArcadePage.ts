@@ -249,56 +249,58 @@ export class ArcadePage {
     // Navigation arrows
     const navUp = document.createElement('button');
     navUp.className = 'arcade-nav arcade-nav-up';
-    navUp.innerHTML = '▲';
+    navUp.setAttribute('aria-label', 'Previous game');
+    navUp.appendChild(icon('chevron-up', { width: '20', height: '20' }));
     navUp.style.cssText = `
       position: absolute;
       top: 1rem;
       left: 50%;
       transform: translateX(-50%);
-      width: 48px;
-      height: 48px;
+      width: 40px;
+      height: 40px;
       border-radius: 50%;
-      border: none;
-      background: rgba(0, 0, 0, 0.5);
-      color: white;
-      font-size: 1.25rem;
+      border: 1px solid var(--border);
+      background: var(--bg-primary);
+      color: var(--text-primary);
       cursor: pointer;
       z-index: 10;
       display: flex;
       align-items: center;
       justify-content: center;
-      opacity: 0.7;
-      transition: opacity 0.2s;
+      opacity: 0.85;
+      box-shadow: var(--shadow-sm);
+      transition: opacity var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
     `;
     navUp.addEventListener('mouseenter', () => (navUp.style.opacity = '1'));
-    navUp.addEventListener('mouseleave', () => (navUp.style.opacity = '0.7'));
+    navUp.addEventListener('mouseleave', () => (navUp.style.opacity = '0.85'));
     navUp.addEventListener('click', () => this.navigateToPrevious());
 
     const navDown = document.createElement('button');
     navDown.className = 'arcade-nav arcade-nav-down';
-    navDown.innerHTML = '▼';
+    navDown.setAttribute('aria-label', 'Next game');
+    navDown.appendChild(icon('chevron-down', { width: '20', height: '20' }));
     navDown.style.cssText = `
       position: absolute;
       bottom: 1rem;
       left: 50%;
       transform: translateX(-50%);
-      width: 48px;
-      height: 48px;
+      width: 40px;
+      height: 40px;
       border-radius: 50%;
-      border: none;
-      background: rgba(0, 0, 0, 0.5);
-      color: white;
-      font-size: 1.25rem;
+      border: 1px solid var(--border);
+      background: var(--bg-primary);
+      color: var(--text-primary);
       cursor: pointer;
       z-index: 10;
       display: flex;
       align-items: center;
       justify-content: center;
-      opacity: 0.7;
-      transition: opacity 0.2s;
+      opacity: 0.85;
+      box-shadow: var(--shadow-sm);
+      transition: opacity var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard);
     `;
     navDown.addEventListener('mouseenter', () => (navDown.style.opacity = '1'));
-    navDown.addEventListener('mouseleave', () => (navDown.style.opacity = '0.7'));
+    navDown.addEventListener('mouseleave', () => (navDown.style.opacity = '0.85'));
     navDown.addEventListener('click', () => this.navigateToNext());
 
     // Loading indicator
@@ -1240,7 +1242,7 @@ export class ArcadePage {
     } catch {
       list.innerHTML = '';
       const err = document.createElement('div');
-      err.style.cssText = 'text-align: center; padding: 2rem; color: var(--danger); font-size: 0.85rem;';
+      err.style.cssText = 'text-align: center; padding: 2rem; color: var(--danger-text); font-size: 0.85rem;';
       err.textContent = t('common.error');
       list.appendChild(err);
     }
@@ -2633,8 +2635,8 @@ export class ArcadePage {
         if (isWelcome) {
           const startBtn = ArcadePage.createTutorialButton(
             t('arcade.tutorial_start'),
-            'var(--accent, #22c55e)',
-            '#fff',
+            'var(--primary)',
+            'var(--primary-fg)',
           );
           startBtn.addEventListener('click', () => {
             currentStep = 1;
@@ -2668,7 +2670,7 @@ export class ArcadePage {
             const doneBtn = ArcadePage.createTutorialButton(
               t('arcade.tutorial_done'),
               'var(--accent, #22c55e)',
-              '#fff',
+              'var(--on-accent)',
             );
             doneBtn.addEventListener('click', closeTutorial);
             btnRow.appendChild(doneBtn);
@@ -2676,7 +2678,7 @@ export class ArcadePage {
             const nextBtn = ArcadePage.createTutorialButton(
               t('arcade.tutorial_next'),
               'var(--accent, #22c55e)',
-              '#fff',
+              'var(--on-accent)',
             );
             nextBtn.addEventListener('click', () => {
               currentStep++;
@@ -2729,7 +2731,11 @@ export class ArcadePage {
           });
           btnRow.appendChild(prevBtn);
         }
-        const nextBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_next'), 'var(--accent, #22c55e)', '#fff');
+        const nextBtn = ArcadePage.createTutorialButton(
+          t('arcade.tutorial_next'),
+          'var(--primary)',
+          'var(--primary-fg)',
+        );
         nextBtn.addEventListener('click', () => {
           currentStep++;
           renderStep();
@@ -2768,16 +2774,16 @@ export class ArcadePage {
           if (isLast) {
             const doneBtn = ArcadePage.createTutorialButton(
               t('arcade.tutorial_done'),
-              'var(--accent, #22c55e)',
-              '#fff',
+              'var(--primary)',
+              'var(--primary-fg)',
             );
             doneBtn.addEventListener('click', closeTutorial);
             btnRow.appendChild(doneBtn);
           } else {
             const nextBtn = ArcadePage.createTutorialButton(
               t('arcade.tutorial_next'),
-              'var(--accent, #22c55e)',
-              '#fff',
+              'var(--primary)',
+              'var(--primary-fg)',
             );
             nextBtn.addEventListener('click', () => {
               currentStep++;
@@ -2801,9 +2807,9 @@ export class ArcadePage {
           height: ${rect.height}px;
           z-index: 2000;
           pointer-events: none;
-          box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65), 0 0 20px rgba(34, 197, 94, 0.3);
-          border-radius: 12px;
-          animation: spotlight-pulse 2s ease-in-out infinite;
+          box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.65);
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          border-radius: var(--radius-card);
         `;
         overlay.appendChild(spotlightEl);
 
@@ -2856,13 +2862,21 @@ export class ArcadePage {
         }
 
         if (isLast) {
-          const doneBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_done'), 'var(--accent, #22c55e)', '#fff');
+          const doneBtn = ArcadePage.createTutorialButton(
+            t('arcade.tutorial_done'),
+            'var(--primary)',
+            'var(--primary-fg)',
+          );
           doneBtn.style.padding = '0.4rem 0.8rem';
           doneBtn.style.fontSize = '0.8rem';
           doneBtn.addEventListener('click', closeTutorial);
           btnRow.appendChild(doneBtn);
         } else {
-          const nextBtn = ArcadePage.createTutorialButton(t('arcade.tutorial_next'), 'var(--accent, #22c55e)', '#fff');
+          const nextBtn = ArcadePage.createTutorialButton(
+            t('arcade.tutorial_next'),
+            'var(--primary)',
+            'var(--primary-fg)',
+          );
           nextBtn.style.padding = '0.4rem 0.8rem';
           nextBtn.style.fontSize = '0.8rem';
           nextBtn.addEventListener('click', () => {
@@ -2925,12 +2939,14 @@ export class ArcadePage {
       border: none;
       color: ${color};
       cursor: pointer;
-      padding: 0.6rem 1.4rem;
-      font-size: 0.9rem;
-      font-weight: 600;
-      border-radius: 8px;
-      transition: opacity 0.2s;
-      line-height: 1.2;
+      padding: 0.5rem 1.2rem;
+      font-family: var(--font-sans);
+      font-size: 0.875rem;
+      font-weight: 500;
+      border-radius: var(--radius-button);
+      box-shadow: var(--shadow-xs);
+      transition: opacity var(--duration-fast) var(--ease-standard);
+      line-height: 1.3;
     `;
     btn.addEventListener('mouseenter', () => {
       btn.style.opacity = '0.85';

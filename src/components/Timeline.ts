@@ -28,6 +28,7 @@ export class Timeline {
   private headObserver: IntersectionObserver | null = null;
   private infiniteScroll: ReturnType<typeof createInfiniteScroll>;
   private postUpdatedHandler?: (e: Event) => void;
+  private composeRequestHandler?: (e: Event) => void;
 
   // How far above the viewport a rendered card must sit before infinite
   // scrolling removes it from the DOM, measured in viewport heights.
@@ -324,6 +325,14 @@ export class Timeline {
     // Listen for post updates (e.g. fresh/like toggles from other views)
     this.postUpdatedHandler = createPostUpdatedHandler(this.postCards);
     window.addEventListener('postUpdated', this.postUpdatedHandler);
+
+    // A post created from the shell (left-nav post button) bubbles up here so
+    // the visible feed can prepend it without a full reload.
+    this.composeRequestHandler = ((e: Event) => {
+      const post = (e as CustomEvent<Post>).detail;
+      if (post && post.id) this.handleNewPost(post);
+    }) as EventListener;
+    window.addEventListener('postCreated', this.composeRequestHandler);
   }
 
   private handleNewPost(post: Post): void {
@@ -890,6 +899,9 @@ export class Timeline {
     window.removeEventListener('profileUpdated', this.boundHandleProfileUpdate);
     if (this.postUpdatedHandler) {
       window.removeEventListener('postUpdated', this.postUpdatedHandler);
+    }
+    if (this.composeRequestHandler) {
+      window.removeEventListener('postCreated', this.composeRequestHandler);
     }
 
     if (this.composer) {

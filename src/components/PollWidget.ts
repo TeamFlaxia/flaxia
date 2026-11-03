@@ -33,64 +33,83 @@ export function createPollElement(poll: PollData): HTMLElement {
   const isExpired = isPollExpired(poll);
   const showResults = shouldShowPollResults(poll, hasVoted);
   const canChangeVote = hasVoted && !isExpired;
+  const maxVotes = poll.options.reduce(
+    (max: number, opt: { votes_count: number }) => Math.max(max, Number(opt.votes_count || 0)),
+    0,
+  );
 
   const container = document.createElement('div');
-  container.className = 'post-poll';
-  container.style.cssText = `margin: 12px 0; padding: 12px; background: var(--bg-secondary); border-radius: 8px;`;
+  container.className = `post-poll${isExpired ? ' is-expired' : ''}`;
 
   const question = document.createElement('div');
   question.className = 'poll-question';
-  question.style.cssText = `font-weight: 600; margin-bottom: 8px; color: var(--text-primary);`;
   question.textContent = poll.question;
   container.appendChild(question);
 
   if (isExpired) {
     const endedBadge = document.createElement('div');
-    endedBadge.style.cssText = `font-size: 0.75rem; color: var(--text-muted); margin-bottom: 6px;`;
+    endedBadge.className = 'poll-ended-badge';
     endedBadge.textContent = t('poll.ended');
     container.appendChild(endedBadge);
   }
 
+  const optionsList = document.createElement('div');
+  optionsList.className = 'poll-options';
+  container.appendChild(optionsList);
+
+  // Bars render at 0% and are widened on the next frame so the fill
+  // animates in (and re-animates after a vote re-renders the widget).
+  const fills: Array<{ bar: HTMLElement; pct: number }> = [];
+
   poll.options.forEach((opt: { id: string; label: string; votes_count: number }) => {
     const optEl = document.createElement('div');
-    optEl.className = 'poll-option';
     const pct = totalVotes > 0 ? Math.round((opt.votes_count / totalVotes) * 100) : 0;
     const isOwnVote = opt.id === poll.userVote;
+    const isLeading =
+      showResults && totalVotes > 0 && Number(opt.votes_count || 0) > 0 && Number(opt.votes_count) === maxVotes;
     const clickable = !isExpired && !isOwnVote;
-    optEl.style.cssText = `
-      position: relative; padding: 8px 12px; margin-bottom: 6px; border-radius: 6px;
-      cursor: ${clickable ? 'pointer' : 'default'};
-      background: var(--bg-primary); overflow: hidden;
-      transition: opacity 0.2s; border: 1px solid var(--border);
-      ${showResults || opt.votes_count > 0 ? '' : 'opacity: 0.9;'}
-      ${isOwnVote ? 'border-color: var(--accent);' : ''}
-    `;
+
+    optEl.className = [
+      'poll-option',
+      clickable ? 'is-clickable' : '',
+      isOwnVote ? 'is-voted' : '',
+      isLeading ? 'is-leading' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
 
     const bar = document.createElement('div');
     bar.className = 'poll-bar';
-    bar.style.cssText = `
-      position: absolute; top: 0; left: 0; height: 100%;
-      background: var(--accent);
-      width: ${showResults ? pct : 0}%; transition: width 0.5s ease; border-radius: 5px;
-      opacity: 0.25;
-    `;
+    bar.style.width = '0%';
     optEl.appendChild(bar);
+    if (showResults) fills.push({ bar, pct });
 
     const label = document.createElement('span');
     label.className = 'poll-option-label';
-    label.style.cssText = `position: relative; z-index: 1; display: flex; justify-content: space-between; align-items: center;`;
+
     const textSpan = document.createElement('span');
+    textSpan.className = 'poll-option-text';
     textSpan.textContent = opt.label;
-    const countSpan = document.createElement('span');
-    countSpan.style.cssText = `font-size: 0.8rem; color: var(--text-muted); margin-left: 8px;`;
-    countSpan.textContent = showResults ? `${pct}%` : '';
+
+    const pctSpan = document.createElement('span');
+    pctSpan.className = 'poll-option-pct';
+    if (showResults) {
+      pctSpan.textContent = `${pct}%`;
+      if (isOwnVote) {
+        const check = document.createElement('span');
+        check.className = 'poll-voted-check';
+        check.textContent = '✓';
+        check.setAttribute('aria-hidden', 'true');
+        pctSpan.appendChild(check);
+      }
+    }
+
     label.appendChild(textSpan);
-    label.appendChild(countSpan);
+    label.appendChild(pctSpan);
     optEl.appendChild(label);
 
     if (clickable) {
-      optEl.addEventListener('click', async (e) => {
-        e.stopPropagation();
+      const castVote = async (): Promise<void> => {
         try {
           const response = await fetch(`/api/polls/${poll.id}/vote`, {
             method: 'POST',
@@ -115,19 +134,30 @@ export function createPollElement(poll: PollData): HTMLElement {
         } catch (e) {
           console.error('Vote failed:', e);
         }
+      };
+
+      // Keyboard parity for the div-based options (Enter / Space).
+      optEl.setAttribute('role', 'button');
+      optEl.setAttribute('tabindex', '0');
+      optEl.setAttribute('aria-label', opt.label);
+
+      optEl.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await castVote();
       });
-      optEl.addEventListener('mouseenter', () => {
-        optEl.style.borderColor = 'var(--accent)';
-      });
-      optEl.addEventListener('mouseleave', () => {
-        optEl.style.borderColor = 'var(--border)';
+      optEl.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        e.preventDefault();
+        e.stopPropagation();
+        void castVote();
       });
     }
-    container.appendChild(optEl);
+
+    optionsList.appendChild(optEl);
   });
 
   const footer = document.createElement('div');
-  footer.style.cssText = `font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;`;
+  footer.className = 'post-poll-footer';
 
   const voteText =
     totalVotes === 1
@@ -143,6 +173,14 @@ export function createPollElement(poll: PollData): HTMLElement {
 
   footer.textContent = `${voteText}${votedText}${changeHint}${timeText}`;
   container.appendChild(footer);
+
+  if (fills.length > 0) {
+    requestAnimationFrame(() => {
+      for (const { bar, pct } of fills) {
+        bar.style.width = `${pct}%`;
+      }
+    });
+  }
 
   if (!isExpired && poll.endsAt) {
     const endTime = Date.parse(poll.endsAt);

@@ -1,7 +1,15 @@
 import { t } from '../lib/i18n.js';
+import { attachIcons } from '../lib/icons.js';
 import { createModalOverlay } from '../lib/modal-overlay.js';
 import { showToast } from '../lib/toast.js';
 import type { ReportCategory } from '../types/post.js';
+
+/** Leading cosmetic emoji (v3 keeps labels typographic). */
+const LEADING_EMOJI = /^(?:\p{Extended_Pictographic}|\uFE0F|\s)+/u;
+
+function plainLabel(value: string): string {
+  return value.replace(LEADING_EMOJI, '');
+}
 
 const categories: { value: ReportCategory; labelKey: string }[] = [
   { value: 'spam', labelKey: 'post.report_category_spam' },
@@ -19,80 +27,48 @@ const categories: { value: ReportCategory; labelKey: string }[] = [
 
 function buildDialogHtml(): string {
   return `
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-      <h3 style="margin: 0; font-size: 18px; color: var(--text-primary);">${t('post.report_title')}</h3>
-      <button class="close-btn" style="
-        background: none;
-        border: none;
-        color: var(--text-muted);
-        font-size: 20px;
-        cursor: pointer;
-      ">✕</button>
-    </div>
-    <p style="margin: 0 0 16px 0; color: var(--text-muted); font-size: 14px;">${t('post.report_question')}</p>
-    <div class="categories" style="margin-bottom: 24px;">
-      ${categories
-        .map(
-          (c) => `
-          <label style="
-            display: flex;
-            align-items: center;
-            padding: 10px 0;
-            cursor: pointer;
-            color: var(--text-primary);
-          ">
-            <input type="radio" name="report-category" value="${c.value}" style="margin-right: 12px;">
-            <span>${t(c.labelKey)}</span>
+    <div class="fx-report">
+      <div class="fx-report__head">
+        <div>
+          <h3 class="fx-report__title" id="report-modal-title">${plainLabel(t('post.report_title'))}</h3>
+          <p class="fx-report__question">${t('post.report_question')}</p>
+        </div>
+        <button type="button" class="fx-icon-btn fx-report__close" aria-label="${t('common.close')}">
+          <span class="action-icon" data-icon="close"></span>
+        </button>
+      </div>
+      <fieldset class="fx-report__cats">
+        <legend class="fx-visually-hidden">${t('post.report_question')}</legend>
+        ${categories
+          .map(
+            (c) => `
+          <label class="fx-report__card">
+            <input class="fx-report__radio" type="radio" name="report-category" value="${c.value}">
+            <span class="fx-report__card-label">${t(c.labelKey)}</span>
+            <span class="fx-report__card-check" aria-hidden="true"></span>
           </label>
         `,
-        )
-        .join('')}
-    </div>
-    <div class="dmca-section" style="display: none; margin-bottom: 24px; padding: 16px; background: var(--bg-secondary); border-radius: 8px;">
-      <h4 style="margin: 0 0 12px 0; font-size: 14px; color: var(--text-primary);">${t('post.report_dmca_title')}</h4>
-      <div style="margin-bottom: 12px;">
-        <label style="display: block; margin-bottom: 4px; font-size: 12px; color: var(--text-muted);">${t('post.report_dmca_work_label')}</label>
-        <input type="text" class="dmca-work" style="
-          width: 100%;
-          padding: 8px;
-          border: 1px solid var(--border);
-          border-radius: 4px;
-          background: var(--bg-primary);
-          color: var(--text-primary);
-          font-size: 14px;
-          box-sizing: border-box;
-        " placeholder="${t('post.report_dmca_work_placeholder')}">
+          )
+          .join('')}
+      </fieldset>
+      <div class="fx-report__dmca" hidden>
+        <h4 class="fx-report__title" style="font-size: 0.875rem;">${t('post.report_dmca_title')}</h4>
+        <div class="fx-report__field">
+          <label for="report-dmca-work">${t('post.report_dmca_work_label')}</label>
+          <textarea id="report-dmca-work" class="fx-report__textarea dmca-work" rows="3" placeholder="${t('post.report_dmca_work_placeholder')}"></textarea>
+        </div>
+        <div class="fx-report__field">
+          <label for="report-dmca-email">${t('post.report_dmca_email_label')}</label>
+          <input id="report-dmca-email" class="fx-report__input dmca-email" type="email" placeholder="${t('post.report_dmca_email_placeholder')}">
+        </div>
+        <label class="fx-report__check">
+          <input class="fx-report__checkbox dmca-sworn" type="checkbox">
+          <span>${t('post.report_dmca_swear')}</span>
+        </label>
       </div>
-      <div style="margin-bottom: 12px;">
-        <label style="display: block; margin-bottom: 4px; font-size: 12px; color: var(--text-muted);">${t('post.report_dmca_email_label')}</label>
-        <input type="email" class="dmca-email" style="
-          width: 100%;
-          padding: 8px;
-          border: 1px solid var(--border);
-          border-radius: 4px;
-          background: var(--bg-primary);
-          color: var(--text-primary);
-          font-size: 14px;
-          box-sizing: border-box;
-        " placeholder="${t('post.report_dmca_email_placeholder')}">
+      <div class="fx-report__actions">
+        <button type="button" class="fx-btn fx-btn--primary fx-report__submit submit-btn" disabled>${t('common.submit')}</button>
       </div>
-      <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
-        <input type="checkbox" class="dmca-sworn" style="margin-top: 2px;">
-        <span style="font-size: 12px; color: var(--text-muted);">${t('post.report_dmca_swear')}</span>
-      </label>
-    </div>
-    <div style="display: flex; justify-content: flex-end;">
-      <button class="submit-btn" disabled style="
-        padding: 10px 24px;
-        background: var(--accent);
-        border: none;
-        border-radius: 9999px;
-        color: #000;
-        font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        font-size: 14px;
-        cursor: pointer;
-        opacity: 0.5;
-      ">${t('common.submit')}</button>
     </div>
   `;
 }
@@ -143,28 +119,21 @@ async function submitReport(
 }
 
 export function openReportModal(postId: string): void {
-  const { overlay, dialog, close } = createModalOverlay('420px');
+  const { overlay, dialog, close } = createModalOverlay('520px');
   dialog.innerHTML = buildDialogHtml();
+  attachIcons(dialog);
   document.body.appendChild(overlay);
 
   const submitBtn = dialog.querySelector('.submit-btn') as HTMLButtonElement;
-  const closeBtn = dialog.querySelector('.close-btn');
-  const radioInputs = dialog.querySelectorAll('input[name="report-category"]');
-  const dmcaSection = dialog.querySelector('.dmca-section') as HTMLElement;
-  const dmcaWorkInput = dialog.querySelector('.dmca-work') as HTMLInputElement;
+  const closeBtn = dialog.querySelector('.fx-report__close') as HTMLButtonElement;
+  const cards = Array.from(dialog.querySelectorAll<HTMLElement>('.fx-report__card'));
+  const radioInputs = dialog.querySelectorAll<HTMLInputElement>('input[name="report-category"]');
+  const dmcaSection = dialog.querySelector('.fx-report__dmca') as HTMLElement;
+  const dmcaWorkInput = dialog.querySelector('.dmca-work') as HTMLTextAreaElement;
   const dmcaEmailInput = dialog.querySelector('.dmca-email') as HTMLInputElement;
   const dmcaSwornCheckbox = dialog.querySelector('.dmca-sworn') as HTMLInputElement;
 
   let selectedCategory: ReportCategory | null = null;
-
-  radioInputs.forEach((input) => {
-    input.addEventListener('change', (e) => {
-      selectedCategory = (e.target as HTMLInputElement).value as ReportCategory;
-      submitBtn.disabled = false;
-      submitBtn.style.opacity = '1';
-      dmcaSection.style.display = selectedCategory === 'copyright' ? 'block' : 'none';
-    });
-  });
 
   const checkSubmitEnabled = (): boolean => {
     if (!selectedCategory) return false;
@@ -177,10 +146,21 @@ export function openReportModal(postId: string): void {
   };
 
   const updateSubmitState = () => {
-    const enabled = checkSubmitEnabled();
-    submitBtn.disabled = !enabled;
-    submitBtn.style.opacity = enabled ? '1' : '0.5';
+    submitBtn.disabled = !checkSubmitEnabled();
   };
+
+  radioInputs.forEach((input) => {
+    input.addEventListener('change', () => {
+      selectedCategory = input.value as ReportCategory;
+      const value = selectedCategory;
+      for (const card of cards) {
+        const radio = card.querySelector<HTMLInputElement>('.fx-report__radio');
+        card.classList.toggle('is-selected', radio?.value === value);
+      }
+      dmcaSection.hidden = value !== 'copyright';
+      updateSubmitState();
+    });
+  });
 
   dmcaWorkInput?.addEventListener('input', updateSubmitState);
   dmcaEmailInput?.addEventListener('input', updateSubmitState);

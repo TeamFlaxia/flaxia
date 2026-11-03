@@ -7,7 +7,35 @@ import { openStampPicker } from './StampPicker.js';
 
 let nextActionDropdownId = 0;
 
-export function createPostActions(props: PostActionsProps): HTMLElement {
+/** Toggle actions that get a one-shot pop when they turn ON. */
+export type ActionPop = 'fresh' | 'bookmark' | 'reload';
+
+type PostActionsOptions = PostActionsProps & {
+  /** Which toggle just turned ON — plays a 320ms spring pop once. */
+  popAction?: ActionPop;
+  /** Emoji of the reaction that just turned ON — pops that chip. */
+  popReaction?: string;
+};
+
+/** How long the transient pop class lives before it is cleaned up. */
+const POP_DURATION_MS = 160;
+
+/**
+ * Adds `.is-popping` for one animation cycle, then removes it.
+ * Keyed on the class so both pointer and keyboard (Enter/Space fire
+ * a click on buttons) share the same path.
+ */
+function playOneShotPop(element: HTMLElement): void {
+  // The class is set before the node is attached (PostCard inserts the
+  // rebuilt action row right after this factory returns), so the CSS
+  // animation starts on first style resolution. No rAF hop here: the
+  // fetch can resolve fast enough to re-render the row and detach the
+  // element before a frame callback would have run.
+  element.classList.add('is-popping');
+  window.setTimeout(() => element.classList.remove('is-popping'), POP_DURATION_MS);
+}
+
+export function createPostActions(props: PostActionsOptions): HTMLElement {
   const container = document.createElement('div');
   container.className = 'post-actions';
 
@@ -33,12 +61,6 @@ export function createPostActions(props: PostActionsProps): HTMLElement {
 
   // Impressions button (display only, not clickable)
   const impressionsButton = createActionButton('impressions', formatCount(props.impressions), false, true);
-  impressionsButton.style.cursor = 'default';
-  const impressionsIcon = impressionsButton.querySelector('.action-icon') as HTMLElement;
-  if (impressionsIcon) {
-    impressionsIcon.style.fontSize = '0.75rem';
-    impressionsIcon.style.opacity = '0.5';
-  }
 
   leftGroup.appendChild(freshButton);
   leftGroup.appendChild(replyButton);
@@ -51,7 +73,13 @@ export function createPostActions(props: PostActionsProps): HTMLElement {
   container.appendChild(leftGroup);
   container.appendChild(rightGroup);
 
-  container.appendChild(createReactionsRow(props.reactions, props.onReactionToggle));
+  container.appendChild(createReactionsRow(props.reactions, props.onReactionToggle, props.popReaction));
+
+  // One-shot feedback for the toggle that just turned ON.
+  if (props.popAction) {
+    const toggled = container.querySelector<HTMLElement>(`.action-button--${props.popAction}`);
+    if (toggled) playOneShotPop(toggled);
+  }
 
   return container;
 }
@@ -170,12 +198,21 @@ function createReloadActionsDropdown(props: PostActionsProps): HTMLElement {
   return wrapper;
 }
 
-function createReactionsRow(reactions: ReactionSummary[], onToggle: (emoji: string) => void): HTMLElement {
+function createReactionsRow(
+  reactions: ReactionSummary[],
+  onToggle: (emoji: string) => void,
+  popReaction?: string,
+): HTMLElement {
   const row = document.createElement('div');
   row.className = 'post-reactions';
 
   for (const reaction of reactions) {
-    row.appendChild(createReactionChip(reaction, onToggle));
+    const chip = createReactionChip(reaction, onToggle);
+    chip.dataset.emoji = reaction.emoji;
+    row.appendChild(chip);
+    if (popReaction && reaction.emoji === popReaction) {
+      playOneShotPop(chip);
+    }
   }
 
   // Add-reaction button that opens the emoji picker
@@ -244,10 +281,17 @@ function createActionButton(type: ActionButtonType, count: string, isActive: boo
     button.classList.add('action-button--active');
   }
 
-  // Create icon (universal Lucide icon, not OS-dependent emoji)
+  // Toggle semantics for the two single-state actions. Reload opens a
+  // disclosure menu, so aria-pressed would be the wrong role there.
+  if (type === 'fresh' || type === 'bookmark') {
+    button.setAttribute('aria-pressed', String(isActive));
+  }
+
+  // Create icon (universal Lucide icon, not OS-dependent emoji).
+  // The like action uses a heart, matching the shadcn "like" affordance.
   const iconEl = document.createElement('span');
   iconEl.className = 'action-icon';
-  iconEl.appendChild(icon(getIconNameForType(type)));
+  iconEl.appendChild(type === 'fresh' ? createHeartIcon() : icon(getIconNameForType(type)));
 
   button.appendChild(iconEl);
 
@@ -261,6 +305,28 @@ function createActionButton(type: ActionButtonType, count: string, isActive: boo
   }
 
   return button;
+}
+
+/** Lucide "heart" path, styled like the shared icon set. */
+function createHeartIcon(): SVGElement {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '24');
+  svg.setAttribute('height', '24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute(
+    'd',
+    'M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z',
+  );
+  svg.appendChild(path);
+  return svg;
 }
 
 type ActionButtonType = 'fresh' | 'bookmark' | 'reply' | 'reload' | 'share' | 'impressions' | 'quote';

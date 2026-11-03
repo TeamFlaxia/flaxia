@@ -20,7 +20,7 @@ import {
 import { openCounterNoticeModal } from './CounterNoticeModal.js';
 import { openGameUpdateModal } from './GameUpdateModal.js';
 import { createPollElement } from './PollWidget.js';
-import { createPostActions } from './PostActions.js';
+import { type ActionPop, createPostActions } from './PostActions.js';
 import { createPostHeader } from './PostHeader.js';
 import { createMenuButton, createPostMenuDropdown, setupMenuCloseHandler } from './PostMenu.js';
 import { createPostStage, isZipGame, updatePostStage } from './PostStage.js';
@@ -73,6 +73,8 @@ export class PostCard {
   private editNewMediaFiles: File[] = [];
   private currentVersionId: string | null = null;
   private impressionObserver?: IntersectionObserver;
+  /** JSON snapshot of the state the action row was last rendered from. */
+  private renderedActionsSignature?: string;
 
   constructor(props: PostCardProps) {
     this.originalText = props.post.text;
@@ -110,34 +112,39 @@ export class PostCard {
       return hidden;
     }
 
+    // A post with a canvas (GIF / ZIP app / SWF / image / attachments) is a
+    // different object than plain text, so the feed can lay them out
+    // differently: canvas-first cards against compact text cards.
+    const hasMedia = Boolean(
+      this.props.post.gif_key ||
+        this.props.post.payload_key ||
+        this.props.post.swf_key ||
+        this.props.post.thumbnail_key ||
+        (this.props.post.attachments && this.props.post.attachments.length > 0),
+    );
+
+    // Short text posts can share a column on the desktop board; long ones
+    // need the full width to stay readable at a 200-character limit.
+    const textLength = (this.props.post.text ?? '').trim().length;
+    const isLongText = !hasMedia && textLength > 90;
+
     const container = document.createElement('article');
-    container.className = 'post-card';
+    container.className = `post-card post-card--${hasMedia ? 'media' : 'text'}${isLongText ? ' post-card--long' : ''}${this.props.disableNavigation ? ' post-card--static' : ''}`;
     container.setAttribute('data-post-id', this.props.post.id);
     if (this.props.postIndex !== undefined) {
       container.setAttribute('data-post-index', String(this.props.postIndex));
     }
-    const cursorStyle = this.props.disableNavigation ? 'default' : 'pointer';
-    container.style.cssText = `max-width: 100%; overflow-x: hidden; box-sizing: border-box; word-break: break-word; cursor: ${cursorStyle};`;
+    container.style.cssText = 'max-width: 100%; overflow-x: hidden; box-sizing: border-box; word-break: break-word;';
 
     // Header container with ... menu
     const headerContainer = document.createElement('div');
-    headerContainer.style.cssText = `
-      display: flex;
-      align-items: flex-start;
-      position: relative;
-    `;
+    headerContainer.className = 'post-card-header';
 
     // Post index (left side)
     if (this.props.postIndex !== undefined) {
       const indexEl = document.createElement('span');
+      indexEl.className = 'post-index';
       indexEl.textContent = `${this.props.postIndex}`;
-      indexEl.style.cssText = `
-        color: #94a3b8;
-        font-size: 0.8125rem;
-        font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        margin-right: 0.5rem;
-        flex-shrink: 0;
-      `;
       headerContainer.appendChild(indexEl);
     }
 
@@ -169,9 +176,8 @@ export class PostCard {
     aiCheck.setAttribute('aria-label', aiCheck.title);
     aiCheck.tabIndex = 0;
     aiCheck.hidden = this.props.post.ai_indexed !== true;
-    aiCheck.style.cssText = 'color: var(--accent, #22c55e); font-size: 18px; padding: 4px; flex-shrink: 0;';
     const headerActions = document.createElement('div');
-    headerActions.style.cssText = 'display: flex; align-items: center; margin-left: auto; flex-shrink: 0;';
+    headerActions.className = 'post-header-actions';
     headerActions.appendChild(aiCheck);
     headerActions.appendChild(menuButton);
     headerContainer.appendChild(headerActions);
@@ -185,17 +191,10 @@ export class PostCard {
     this.originalText = displayText;
 
     this.postTextContainer = document.createElement('div');
-    this.postTextContainer.style.cssText = 'margin-bottom: 1rem;';
+    this.postTextContainer.className = 'post-text-wrap';
 
     const textElement = document.createElement('div');
     textElement.className = 'post-text';
-    textElement.style.cssText = `
-      line-height: 1.6;
-      font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      color: var(--text-primary);
-      white-space: pre-wrap;
-      word-break: break-word;
-    `;
     // Show the marker-free body immediately for entitled authors; the rich
     // renderer replaces this node on idle and would otherwise briefly expose
     // raw `{red}` markers. `originalText` stays raw for editing.
@@ -241,12 +240,7 @@ export class PostCard {
       }, 500);
     }
 
-    // Tag chips (between text and PostStage)
-    const hashtags = this.parseHashtags(this.props.post.hashtags);
-    if (hashtags.length > 0) {
-      const tagChips = this.createTagChips(hashtags);
-      container.appendChild(tagChips);
-    }
+    // Hashtags stay inline links inside .post-text (no boxed chip row).
 
     // Poll section
     if (this.props.post.poll) {
@@ -258,7 +252,6 @@ export class PostCard {
     if (this.props.currentUser) {
       const previewContainer = document.createElement('div');
       previewContainer.className = 'post-link-preview-container';
-      previewContainer.style.cssText = 'overflow: hidden;';
       container.appendChild(previewContainer);
       loadLinkPreview(this.props.post.text, previewContainer, true);
     }
@@ -274,13 +267,7 @@ export class PostCard {
     }
 
     // Post stage (16:9 container for GIF/iframe/thumbnail) - only show if has attachments
-    if (
-      this.props.post.gif_key ||
-      this.props.post.payload_key ||
-      this.props.post.swf_key ||
-      this.props.post.thumbnail_key ||
-      (this.props.post.attachments && this.props.post.attachments.length > 0)
-    ) {
+    if (hasMedia) {
       this.postStageElement = createPostStage({
         post: this.props.post,
         mode: this.mode,
@@ -606,8 +593,8 @@ export class PostCard {
     this.isFreshed = !previousFreshed;
     this.freshCount = previousFreshed ? previousCount - 1 : previousCount + 1;
 
-    // Update UI immediately
-    this.updateActions();
+    // Update UI immediately, with the one-shot pop when it turns ON
+    this.updateActions(this.isFreshed ? 'fresh' : undefined);
 
     this.freshLoading = true;
 
@@ -642,7 +629,7 @@ export class PostCard {
       this.freshLoading = false;
     }
 
-    this.updateActions();
+    this.syncActions();
   }
 
   private async handleReloadToggle(): Promise<void> {
@@ -668,7 +655,7 @@ export class PostCard {
 
     this.isReloaded = !previousReloaded;
     this.reloadCount = previousReloaded ? previousCount - 1 : previousCount + 1;
-    this.updateActions();
+    this.updateActions(this.isReloaded ? 'reload' : undefined);
 
     this.reloadLoading = true;
 
@@ -699,7 +686,7 @@ export class PostCard {
       this.reloadLoading = false;
     }
 
-    this.updateActions();
+    this.syncActions();
   }
 
   private async handleReactionToggle(emoji: string): Promise<void> {
@@ -735,7 +722,8 @@ export class PostCard {
       optimistic.push({ emoji, count: 1, reacted: true });
     }
     this.reactions = optimistic;
-    this.updateActions();
+    const reactedNow = optimistic.find((r) => r.emoji === emoji)?.reacted === true;
+    this.updateActions(undefined, reactedNow ? emoji : undefined);
 
     try {
       const response = await fetch(`/api/posts/${this.props.post.id}/reactions`, {
@@ -766,7 +754,7 @@ export class PostCard {
       console.error('Failed to toggle reaction:', error);
     }
 
-    this.updateActions();
+    this.syncActions();
   }
 
   private async handleBookmarkToggle(): Promise<void> {
@@ -793,7 +781,7 @@ export class PostCard {
     this.isBookmarked = !previousBookmarked;
     this.bookmarkCount = previousBookmarked ? previousCount - 1 : previousCount + 1;
 
-    this.updateActions();
+    this.updateActions(this.isBookmarked ? 'bookmark' : undefined);
 
     this.bookmarkLoading = true;
 
@@ -825,7 +813,7 @@ export class PostCard {
       this.bookmarkLoading = false;
     }
 
-    this.updateActions();
+    this.syncActions();
   }
 
   private handleReplyToggle(): void {
@@ -958,10 +946,12 @@ export class PostCard {
     this.navigateToThread(this.props.post.id);
   }
 
-  private updateActions(): void {
+  private updateActions(popAction?: ActionPop, popReaction?: string): void {
     const actionsContainer = this.element.querySelector('.post-actions');
     if (actionsContainer) {
       const newActions = createPostActions({
+        popAction,
+        popReaction,
         postId: this.props.post.id,
         freshCount: this.freshCount,
         reloadCount: this.reloadCount,
@@ -982,7 +972,33 @@ export class PostCard {
         onReactionToggle: (emoji) => this.handleReactionToggle(emoji),
       });
       actionsContainer.replaceWith(newActions);
+      this.renderedActionsSignature = this.actionsSignature();
     }
+  }
+
+  /** Cheap state fingerprint so the row is only rebuilt when it must be. */
+  private actionsSignature(): string {
+    return JSON.stringify({
+      isFreshed: this.isFreshed,
+      freshCount: this.freshCount,
+      isReloaded: this.isReloaded,
+      reloadCount: this.reloadCount,
+      isBookmarked: this.isBookmarked,
+      replyCount: this.replyCount,
+      impressions: this.impressions,
+      reactions: this.reactions,
+    });
+  }
+
+  /**
+   * Re-render the action row only when the authoritative server state
+   * actually differs from what is already on screen. Without this the
+   * post-fetch re-render would tear down the one-shot pop animation a
+   * few milliseconds after it started.
+   */
+  private syncActions(popAction?: ActionPop, popReaction?: string): void {
+    if (this.renderedActionsSignature === this.actionsSignature()) return;
+    this.updateActions(popAction, popReaction);
   }
 
   public getElement(): HTMLElement {
@@ -994,6 +1010,11 @@ export class PostCard {
   }
 
   public updatePost(post: Partial<typeof this.props.post>): void {
+    const wasFreshed = this.isFreshed;
+    const wasReloaded = this.isReloaded;
+    const wasBookmarked = this.isBookmarked;
+    const reactionsBefore = this.reactions;
+
     if (post.reply_count !== undefined) {
       this.replyCount = post.reply_count;
     }
@@ -1021,7 +1042,24 @@ export class PostCard {
     this.props.post = { ...this.props.post, ...post };
     const aiCheck = this.element.querySelector<HTMLElement>('.post-ai-index');
     if (aiCheck) aiCheck.hidden = this.props.post.ai_indexed !== true;
-    this.updateActions();
+
+    // External updates (postUpdated events, thread reply counters) also
+    // deserve the same one-shot feedback when a toggle flips ON.
+    let popAction: ActionPop | undefined;
+    if (!wasFreshed && this.isFreshed) popAction = 'fresh';
+    else if (!wasBookmarked && this.isBookmarked) popAction = 'bookmark';
+    else if (!wasReloaded && this.isReloaded) popAction = 'reload';
+
+    let popReaction: string | undefined;
+    for (const reaction of this.reactions) {
+      const before = reactionsBefore.find((r) => r.emoji === reaction.emoji);
+      if (reaction.reacted && !before?.reacted) {
+        popReaction = reaction.emoji;
+        break;
+      }
+    }
+
+    this.syncActions(popAction, popReaction);
   }
 
   private toggleMenu(isOwnPost: boolean): void {
@@ -1095,7 +1133,7 @@ export class PostCard {
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'delete-btn';
     deleteBtn.style.cssText =
-      'padding: 8px 16px; background: var(--danger, #e74c3c); border: none; border-radius: 4px; color: #fff; cursor: pointer;';
+      'padding: 8px 16px; background: var(--danger-strong, #b91c1c); border: none; border-radius: 4px; color: #fff; cursor: pointer;';
     deleteBtn.textContent = t('common.delete');
 
     buttonRow.appendChild(cancelBtn);
@@ -1225,55 +1263,6 @@ export class PostCard {
     } catch {
       return [];
     }
-  }
-
-  private createTagChips(hashtags: string[]): HTMLElement {
-    const container = document.createElement('div');
-    container.className = 'post-tag-chips';
-    container.style.cssText = `
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin: 12px 0;
-    `;
-
-    hashtags.forEach((tag) => {
-      const chip = document.createElement('span');
-      chip.className = 'post-tag-chip';
-      chip.textContent = `#${tag}`;
-      chip.style.cssText = `
-        display: inline-block;
-        padding: 4px 12px;
-        background: var(--bg-secondary);
-        color: var(--accent);
-        font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        font-size: 13px;
-        border-radius: 9999px;
-        cursor: pointer;
-        transition: all 0.2s ease;
-      `;
-
-      chip.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        window.history.pushState({}, '', `/explore?tag=${encodeURIComponent(tag)}`);
-        window.dispatchEvent(new CustomEvent('spaNavigate', { detail: { view: 'explore', tag } }));
-      });
-
-      chip.addEventListener('mouseenter', () => {
-        chip.style.background = 'var(--accent)';
-        chip.style.color = '#000';
-      });
-
-      chip.addEventListener('mouseleave', () => {
-        chip.style.background = 'var(--bg-secondary)';
-        chip.style.color = 'var(--accent)';
-      });
-
-      container.appendChild(chip);
-    });
-
-    return container;
   }
 
   private startEditing(): void {
@@ -1466,7 +1455,7 @@ export class PostCard {
         border: 1px solid var(--danger, #e74c3c);
         border-radius: 4px;
         background: transparent;
-        color: var(--danger, #e74c3c);
+        color: var(--danger-text, #b91c1c);
         cursor: pointer;
         font-size: 0.8rem;
       `;
@@ -1525,7 +1514,7 @@ export class PostCard {
       border: none;
       border-radius: 6px;
       background: var(--accent);
-      color: white;
+      color: var(--on-accent);
       cursor: pointer;
       font-size: 0.85rem;
       font-weight: 600;
@@ -1737,13 +1726,6 @@ export class PostCard {
 
     const textElement = document.createElement('div');
     textElement.className = 'post-text';
-    textElement.style.cssText = `
-      line-height: 1.6;
-      font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      color: var(--text-primary);
-      white-space: pre-wrap;
-      word-break: break-word;
-    `;
     textElement.textContent = this.originalText;
 
     this.editContainer.replaceWith(textElement);

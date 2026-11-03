@@ -131,6 +131,7 @@ const groups = {
     'native-crowd',
     'native-fetch',
     'page-loader',
+    'profile-route-redirects',
     'push-vapid',
     'render-preset',
     'router',

@@ -41,7 +41,7 @@ function buttonStyle(primary: boolean): string {
     font-family: inherit;
     ${
       primary
-        ? 'background: var(--accent); border: none; color: #000; font-weight: 600;'
+        ? 'background: var(--accent); border: none; color: var(--on-accent); font-weight: 600;'
         : 'background: transparent; border: 1px solid var(--border); color: var(--text-primary);'
     }
   `;
@@ -78,7 +78,7 @@ export function showCrowdConsentModal(options: CrowdConsentModalOptions): void {
     </p>
     <p style="margin: 0 0 20px; color: var(--text-muted); font-size: 12px; line-height: 1.6;">
       ${t('crowd.consent_note')}
-      <a href="/privacy" target="_blank" rel="noopener noreferrer" style="color: var(--accent);">
+      <a href="/privacy" target="_blank" rel="noopener noreferrer" style="color: var(--accent-text);">
         ${t('crowd.consent_privacy_link')}
       </a>
     </p>

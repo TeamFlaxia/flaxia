@@ -106,7 +106,7 @@ function injectStyles(): void {
       background: var(--bg-secondary); border: 1px solid var(--border); color: var(--text-muted);
       border-radius: 999px; padding: 6px 14px; font-size: 0.8rem; cursor: pointer;
     }
-    .me-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    .me-tab.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
     .me-panel { display: flex; flex-direction: column; gap: 10px; }
     .me-btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
     .me-tool-btn {
@@ -114,7 +114,7 @@ function injectStyles(): void {
       border-radius: 8px; padding: 8px 12px; font-size: 0.82rem; cursor: pointer;
     }
     .me-tool-btn:hover { border-color: var(--accent); }
-    .me-tool-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .me-tool-btn.active { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
     .me-tool-btn:disabled { opacity: 0.5; cursor: default; }
     .me-slider-row { display: flex; align-items: center; gap: 10px; font-size: 0.82rem; color: var(--text-primary); }
     .me-slider-row label { width: 92px; flex-shrink: 0; color: var(--text-muted); }
@@ -146,7 +146,7 @@ function injectStyles(): void {
       border-radius: 8px; padding: 9px 18px; font-size: 0.88rem; cursor: pointer;
     }
     .me-apply-btn {
-      background: var(--accent); border: 1px solid var(--accent); color: #fff;
+      background: var(--accent); border: 1px solid var(--accent); color: var(--on-accent);
       border-radius: 8px; padding: 9px 22px; font-size: 0.88rem; font-weight: 600; cursor: pointer;
     }
     .me-cancel-btn:disabled, .me-apply-btn:disabled { opacity: 0.5; cursor: default; }

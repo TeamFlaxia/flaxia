@@ -230,19 +230,4 @@ export const PerformanceOptimizer = {
 export const initPerformanceMonitoring = (): void => {
   const monitor = PerformanceMonitor.getInstance();
   monitor.startMonitoring();
-
-  // Log metrics after page load
-  if (document.readyState === 'complete') {
-    setTimeout(() => {
-      const metrics = monitor.getMetrics();
-      console.log('Core Web Vitals:', metrics);
-    }, 3000);
-  } else {
-    window.addEventListener('load', () => {
-      setTimeout(() => {
-        const metrics = monitor.getMetrics();
-        console.log('Core Web Vitals:', metrics);
-      }, 3000);
-    });
-  }
 };

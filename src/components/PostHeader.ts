@@ -10,25 +10,21 @@ export function createPostHeader(props: PostHeaderProps & { editedAt?: string })
   const header = document.createElement('div');
   header.className = 'post-header';
 
+  // Outer element paints the gradient ring; the inner disc holds the
+  // initials or the lazily loaded photo, so the ring survives both.
   const avatar = document.createElement('div');
   avatar.className = 'post-avatar';
-  avatar.style.cursor = 'pointer';
-  avatar.style.width = '40px';
-  avatar.style.height = '40px';
-  avatar.style.borderRadius = '50%';
-  avatar.style.display = 'flex';
-  avatar.style.alignItems = 'center';
-  avatar.style.justifyContent = 'center';
-  avatar.style.fontSize = '1.2rem';
-  avatar.style.color = 'white';
-  avatar.style.background = 'var(--accent)';
-  avatar.style.flexShrink = '0';
+
+  const avatarInner = document.createElement('div');
+  avatarInner.className = 'post-avatar-inner';
 
   // 優先的に初期文字を表示（アバター画像は後で非同期読み込み）
   const initial = document.createElement('span');
   initial.className = 'avatar-initial';
   initial.textContent = props.username.charAt(0).toUpperCase();
-  avatar.appendChild(initial);
+  avatarInner.appendChild(initial);
+
+  avatar.appendChild(avatarInner);
 
   attachPlusBadge(avatar, props.badge_type);
 
@@ -38,14 +34,14 @@ export function createPostHeader(props: PostHeaderProps & { editedAt?: string })
     if ('requestIdleCallback' in window) {
       window.requestIdleCallback?.(
         () => {
-          loadAvatarImage(avatar, props.avatar_key!);
+          loadAvatarImage(avatarInner, props.avatar_key!);
         },
         { timeout: 1000 },
       );
     } else {
       // フォールバック：setTimeoutで遅延読み込み
       setTimeout(() => {
-        loadAvatarImage(avatar, props.avatar_key!);
+        loadAvatarImage(avatarInner, props.avatar_key!);
       }, 100);
     }
   }
@@ -53,16 +49,11 @@ export function createPostHeader(props: PostHeaderProps & { editedAt?: string })
   const displayName = document.createElement('span');
   displayName.className = 'post-display-name';
   displayName.textContent = props.display_name || props.username;
-  displayName.style.cursor = 'pointer';
-  displayName.style.fontWeight = 'bold';
   applyNameColor(displayName, props.name_color, props.badge_type);
 
   const username = document.createElement('span');
   username.className = 'post-username';
   username.textContent = `@${props.username}`;
-  username.style.cursor = 'pointer';
-  username.style.color = 'var(--text-muted)';
-  username.style.marginLeft = '0.5rem';
 
   const timestamp = document.createElement('span');
   timestamp.className = 'post-timestamp';
@@ -70,12 +61,7 @@ export function createPostHeader(props: PostHeaderProps & { editedAt?: string })
   if (props.editedAt) {
     const editedBadge = document.createElement('span');
     editedBadge.className = 'post-edited-badge';
-    editedBadge.textContent = ` (${t('post.edited')})`;
-    editedBadge.style.cssText = `
-      color: var(--text-muted);
-      font-size: 0.75rem;
-      margin-left: 0.25rem;
-    `;
+    editedBadge.textContent = t('post.edited');
     timestamp.appendChild(editedBadge);
   }
 
@@ -115,15 +101,15 @@ export function createPostHeader(props: PostHeaderProps & { editedAt?: string })
 }
 
 // アバター画像を非同期で読み込む関数
-function loadAvatarImage(avatar: HTMLElement, avatarKey: string): void {
+function loadAvatarImage(avatarInner: HTMLElement, avatarKey: string): void {
   const img = new Image();
   img.onload = () => {
     // 画像読み込み完了後に背景画像を設定
-    avatar.style.backgroundImage = 'url(' + img.src + ')';
-    avatar.style.backgroundSize = 'cover';
-    avatar.style.backgroundPosition = 'center';
+    avatarInner.style.backgroundImage = 'url(' + img.src + ')';
+    avatarInner.style.backgroundSize = 'cover';
+    avatarInner.style.backgroundPosition = 'center';
     // Clear only the initial letter — keep the badge element.
-    avatar.querySelector(':scope > .avatar-initial')?.remove();
+    avatarInner.querySelector(':scope > .avatar-initial')?.remove();
   };
   img.onerror = () => {
     // 読み込み失敗時は初期文字のまま

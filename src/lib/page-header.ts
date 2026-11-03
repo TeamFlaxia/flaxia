@@ -7,74 +7,57 @@ export interface PageHeaderOptions {
   titleSize?: string;
 }
 
+/**
+ * Sticky glass page header used by list/detail pages that are not part of the
+ * three-column shell (bookmarks, notifications, tag explore, ...).
+ *
+ * Presentation lives in src/styles/redesign/shell.css (.page-header*); this
+ * module only builds structure, so the header stays themeable and no inline
+ * colours leak into the new token system.
+ */
 export function createPageHeader(options: PageHeaderOptions): HTMLElement {
   const header = document.createElement('div');
-  header.style.cssText = `
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 1rem;
-    border-bottom: 1px solid var(--border);
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    background: var(--bg-primary);
-  `;
+  header.className = 'page-header';
+
+  if (options.titleSize) {
+    header.style.setProperty('--page-header-title-size', options.titleSize);
+  }
 
   if (options.onBack) {
     const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.className = 'page-header-back';
     backBtn.textContent = '←';
-    backBtn.style.cssText = `
-      background: none;
-      border: none;
-      font-size: 1.25rem;
-      cursor: pointer;
-      color: var(--text-primary);
-      padding: 0.25rem 0.5rem;
-      border-radius: 4px;
-      transition: background 0.2s;
-      flex-shrink: 0;
-    `;
-    backBtn.addEventListener('mouseenter', () => {
-      backBtn.style.background = 'var(--bg-hover, rgba(0,0,0,0.04))';
-    });
-    backBtn.addEventListener('mouseleave', () => {
-      backBtn.style.background = 'none';
-    });
+    backBtn.setAttribute('aria-label', 'Back');
     backBtn.addEventListener('click', options.onBack);
     header.appendChild(backBtn);
   }
 
   const titleSection = document.createElement('div');
-  titleSection.style.cssText = 'display: flex; flex-direction: column;';
+  titleSection.className = 'page-header-titles';
 
   const titleEl = document.createElement('h1');
+  titleEl.className = 'page-header-title fx-display';
   titleEl.textContent = options.title;
-  titleEl.style.cssText = `
-    margin: 0;
-    font-size: ${options.titleSize ?? '1.25rem'};
-    font-weight: 700;
-    color: var(--text-primary);
-  `;
   titleSection.appendChild(titleEl);
 
   if (options.subtitle) {
     const subtitleEl = document.createElement('span');
+    subtitleEl.className = 'page-header-subtitle';
     subtitleEl.textContent = options.subtitle;
-    subtitleEl.style.cssText = `
-      font-size: 0.8rem;
-      color: var(--text-muted);
-    `;
     titleSection.appendChild(subtitleEl);
     options.subtitleRef?.(subtitleEl);
   }
 
   header.appendChild(titleSection);
 
-  if (options.actions) {
+  if (options.actions && options.actions.length > 0) {
+    const actionRow = document.createElement('div');
+    actionRow.className = 'page-header-actions';
     for (const action of options.actions) {
-      header.appendChild(action);
+      actionRow.appendChild(action);
     }
+    header.appendChild(actionRow);
   }
 
   return header;

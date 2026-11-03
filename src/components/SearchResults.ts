@@ -140,7 +140,7 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
         height: 40px;
         border-radius: 50%;
         background: var(--accent);
-        color: var(--bg-primary);
+        color: var(--on-accent);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -246,7 +246,7 @@ export function createSearchResults(props: SearchResultsProps): HTMLElement {
       if (props.type === 'arcade' || post.payload_key) {
         const badge = document.createElement('span');
         badge.style.cssText =
-          'margin-left: 0.5rem; padding: 0.1rem 0.4rem; background: var(--accent); color: white; border-radius: 4px; font-size: 0.7rem; vertical-align: middle;';
+          'margin-left: 0.5rem; padding: 0.1rem 0.4rem; background: var(--accent); color: var(--on-accent); border-radius: 4px; font-size: 0.7rem; vertical-align: middle;';
         badge.textContent = t('search.media_game');
         postHeader.appendChild(badge);
       }

@@ -146,7 +146,7 @@ export function createLegalPage({ type }: LegalPageProps) {
 
   const wordmark = document.createElement('a');
   wordmark.href = '/';
-  wordmark.className = 'legal-wordmark';
+  wordmark.className = 'legal-wordmark fx-display';
   wordmark.textContent = t('legal.brand');
   wordmark.addEventListener('click', (e) => {
     e.preventDefault();
@@ -177,7 +177,7 @@ export function createLegalPage({ type }: LegalPageProps) {
       const contentMarkdown = markdown.replace(/^Effective Date:.+\n?/m, '').trim();
 
       const titleEl = document.createElement('h1');
-      titleEl.className = 'legal-title';
+      titleEl.className = 'legal-title fx-display';
       titleEl.textContent = t(page.titleKey);
       content.appendChild(titleEl);
 

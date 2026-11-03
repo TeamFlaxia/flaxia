@@ -69,7 +69,7 @@ export function createMediaCarousel(props: MediaCarouselProps): HTMLElement {
         const link = document.createElement('a');
         link.className = 'file-preview-doc-chip';
         link.href = attachmentUrl(att);
-        link.textContent = `📄 ${att.r2_key.split('/').pop() || 'file'} · ${t('composer.download_file')}`;
+        link.textContent = `▤ ${att.r2_key.split('/').pop() || 'file'} · ${t('composer.download_file')}`;
         link.setAttribute('download', '');
         slide.appendChild(link);
       }
@@ -90,6 +90,7 @@ export function createMediaCarousel(props: MediaCarouselProps): HTMLElement {
       dot.type = 'button';
       dot.className = `media-carousel-dot${i === 0 ? ' media-carousel-dot--active' : ''}`;
       dot.setAttribute('aria-label', `${i + 1} / ${props.attachments.length}`);
+      dot.setAttribute('aria-current', i === 0 ? 'true' : 'false');
       dot.addEventListener('click', (e) => {
         e.stopPropagation();
         track.scrollTo({ left: i * track.clientWidth, behavior: 'smooth' });
@@ -104,6 +105,7 @@ export function createMediaCarousel(props: MediaCarouselProps): HTMLElement {
         const idx = Math.round(track.scrollLeft / Math.max(track.clientWidth, 1));
         dotElements.forEach((dot, i) => {
           dot.classList.toggle('media-carousel-dot--active', i === idx);
+          dot.setAttribute('aria-current', i === idx ? 'true' : 'false');
         });
       },
       { passive: true },

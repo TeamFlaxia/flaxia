@@ -73,8 +73,10 @@ export class BottomNav {
 
   private createItem(id: string, label: string, iconName: IconName, active: boolean): HTMLElement {
     const btn = document.createElement('button');
+    btn.type = 'button';
     btn.className = `bottom-nav-item ${active ? 'bottom-nav-item--active' : ''}`;
     btn.setAttribute('data-nav-id', id);
+    btn.setAttribute('aria-current', active ? 'page' : 'false');
     btn.appendChild(this.buildIconSpan(iconName));
     const labelSpan = document.createElement('span');
     labelSpan.className = 'bottom-nav-label';
@@ -95,8 +97,10 @@ export class BottomNav {
 
   private createAccountItem(active: boolean): HTMLElement {
     const btn = document.createElement('button');
+    btn.type = 'button';
     btn.className = `bottom-nav-item ${active ? 'bottom-nav-item--active' : ''}`;
     btn.setAttribute('data-nav-id', 'account');
+    btn.setAttribute('aria-current', active ? 'page' : 'false');
 
     const user = this.props.currentUser!;
     if (user.avatar_key) {
@@ -131,6 +135,7 @@ export class BottomNav {
 
   private createLoginItem(): HTMLElement {
     const btn = document.createElement('button');
+    btn.type = 'button';
     btn.className = 'bottom-nav-item bottom-nav-login';
     btn.setAttribute('data-nav-id', 'login');
     btn.appendChild(this.buildIconSpan('key'));
@@ -153,7 +158,9 @@ export class BottomNav {
     this.activeItem = item;
     this.element.querySelectorAll('.bottom-nav-item').forEach((el) => {
       const navId = el.getAttribute('data-nav-id');
-      el.classList.toggle('bottom-nav-item--active', navId === item);
+      const isActive = navId === item;
+      el.classList.toggle('bottom-nav-item--active', isActive);
+      el.setAttribute('aria-current', isActive ? 'page' : 'false');
     });
   }
 

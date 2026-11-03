@@ -31,6 +31,7 @@ export class ReplyComposer {
   private submitButton!: HTMLButtonElement;
   private cancelButton!: HTMLButtonElement;
   private charCount!: HTMLSpanElement;
+  private charMeter!: HTMLElement;
   private selectedFile: File | null = null;
   private isSubmitting = false;
   private previewHandle: AttachPreviewHandle | null = null;
@@ -49,14 +50,6 @@ export class ReplyComposer {
   private createElement(): HTMLElement {
     const container = document.createElement('div');
     container.className = 'reply-composer';
-    container.style.cssText = `
-      border: 1px solid var(--border);
-      border-radius: 0;
-      padding: 1rem;
-      margin-top: 0.75rem;
-      background: var(--bg-primary);
-      font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    `;
 
     container.innerHTML = `
       <div class="reply-composer-body">
@@ -68,6 +61,7 @@ export class ReplyComposer {
             maxlength="200"
           ></textarea>
         </div>
+        <div class="composer-progress" aria-hidden="true"><span class="composer-progress-fill"></span></div>
         <div class="reply-composer-file-dropzone" style="display: none;">
           <div class="dropzone-content">
             <span class="dropzone-icon" data-icon="attach"></span>
@@ -79,63 +73,26 @@ export class ReplyComposer {
           <div class="reply-composer-actions">
             <input type="file" class="reply-composer-file-input" accept=".gif,.png,.jpg,.jpeg,.mp3,.wav,.ogg,.m4a,.webm" />
             <div class="reply-composer-attach-group">
-              <button class="reply-composer-file-button reply-composer-file-button--image" type="button" title="${t('composer.attach_image_video')}" style="
-              background: none;
-              border: none;
-              color: #94a3b8;
-              cursor: pointer;
-              padding: 0.25rem;
-            ">
+              <button class="reply-composer-file-button reply-composer-file-button--image" type="button" title="${t('composer.attach_image_video')}" aria-label="${t('composer.attach_image_video')}">
                 <span class="action-icon" data-icon="image-video"></span>
               </button>
-              <button class="reply-composer-file-button reply-composer-file-button--audio" type="button" title="${t('composer.attach_audio')}" style="
-              background: none;
-              border: none;
-              color: #94a3b8;
-              cursor: pointer;
-              padding: 0.25rem;
-            ">
+              <button class="reply-composer-file-button reply-composer-file-button--audio" type="button" title="${t('composer.attach_audio')}" aria-label="${t('composer.attach_audio')}">
                 <span class="action-icon" data-icon="audio"></span>
               </button>
             </div>
-            <span class="reply-composer-char-count" style="color: #94a3b8; font-size: 0.75rem;">0/200</span>
+            <span class="composer-meter" data-state="idle" data-empty="true">
+              <span class="composer-char-count reply-composer-char-count">0/200</span>
+            </span>
           </div>
           <div class="reply-composer-buttons">
-            <button class="reply-composer-cancel" type="button" style="
-              background: none;
-              border: 1px solid #22c55e;
-              color: #22c55e;
-              padding: 0.375rem 0.75rem;
-              border-radius: 0;
-              font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-              font-size: 0.75rem;
-              cursor: pointer;
-              margin-right: 0.5rem;
-            ">${t('reply_composer.cancel')}</button>
-            <button class="reply-composer-submit" type="button" disabled style="
-              background: #22c55e;
-              border: 1px solid #22c55e;
-              color: #000;
-              padding: 0.375rem 0.75rem;
-              border-radius: 0;
-              font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-              font-size: 0.75rem;
-              font-weight: bold;
-              cursor: pointer;
-            ">${t('reply_composer.reply')}</button>
+            <button class="reply-composer-cancel" type="button">${t('reply_composer.cancel')}</button>
+            <button class="reply-composer-submit" type="button" disabled>${t('reply_composer.reply')}</button>
           </div>
         </div>
         <div class="reply-composer-file-preview" style="display: none;">
           <div class="file-info">
             <span class="file-name"></span>
-            <button class="file-remove" type="button" style="
-              background: transparent;
-              border: none;
-              color: #64748b;
-              cursor: pointer;
-              padding: 0.25rem;
-              border-radius: 0.25rem;
-            "><span class="action-icon" data-icon="close"></span></button>
+            <button class="file-remove" type="button"><span class="action-icon" data-icon="close"></span></button>
           </div>
         </div>
       </div>
@@ -149,28 +106,18 @@ export class ReplyComposer {
     this.submitButton = container.querySelector('.reply-composer-submit')!;
     this.cancelButton = container.querySelector('.reply-composer-cancel')!;
     this.charCount = container.querySelector('.reply-composer-char-count')!;
+    this.charMeter = container.querySelector('.composer-meter')!;
 
     // Pre-fill text if provided
     if (this.props.prefillText) {
       this.textarea.value = this.props.prefillText;
-      this.charCount.textContent = `${this.props.prefillText.length}/200`;
+      this.updateCharMeter(this.props.prefillText.length);
+      this.autosizeTextarea();
     }
 
-    // Create mention suggestion dropdown
+    // Mention dropdown surface styling lives in composer.css; only position is dynamic.
     this.mentionDropdown = document.createElement('div');
     this.mentionDropdown.className = 'mention-dropdown';
-    this.mentionDropdown.style.cssText = `
-      position: absolute;
-      background: var(--bg-primary);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      z-index: 100;
-      max-height: 200px;
-      overflow-y: auto;
-      display: none;
-      min-width: 200px;
-    `;
     const composerHeader = container.querySelector('.reply-composer-header') as HTMLElement | null;
     if (composerHeader) {
       composerHeader.style.position = 'relative';
@@ -183,13 +130,8 @@ export class ReplyComposer {
   private setupEventListeners(): void {
     // Textarea input handling
     this.textarea.addEventListener('input', () => {
-      const length = this.textarea.value.length;
-      this.charCount.textContent = `${length}/200`;
-      if (length > 180) {
-        this.charCount.style.color = length >= 200 ? '#ef4444' : '#22c55e';
-      } else {
-        this.charCount.style.color = '#94a3b8';
-      }
+      this.updateCharMeter(this.textarea.value.length);
+      this.autosizeTextarea();
       this.updateSubmitButton();
       this.handleMentionInput();
     });
@@ -203,8 +145,8 @@ export class ReplyComposer {
         }
         this.clearFileSelection();
         this.textarea.value = '';
-        this.charCount.textContent = '0/200';
-        this.charCount.style.color = '#94a3b8';
+        this.updateCharMeter(0);
+        this.autosizeTextarea();
         this.updateSubmitButton();
         this.props.onCancel();
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !this.submitButton.disabled) {
@@ -259,8 +201,8 @@ export class ReplyComposer {
     this.cancelButton.addEventListener('click', () => {
       this.clearFileSelection();
       this.textarea.value = '';
-      this.charCount.textContent = '0/200';
-      this.charCount.style.color = '#94a3b8';
+      this.updateCharMeter(0);
+      this.autosizeTextarea();
       this.updateSubmitButton();
       this.props.onCancel();
     });
@@ -344,7 +286,7 @@ export class ReplyComposer {
       item.setAttribute('data-value', user.username);
       item.style.cssText = `padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;`;
       const avatarSpan = document.createElement('span');
-      avatarSpan.style.cssText = `width: 24px; height: 24px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; color: white; font-size: 0.7rem; font-weight: bold; flex-shrink: 0;`;
+      avatarSpan.style.cssText = `width: 24px; height: 24px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; color: var(--on-accent); font-size: 0.7rem; font-weight: bold; flex-shrink: 0;`;
       avatarSpan.textContent = user.username.charAt(0).toUpperCase();
       if (user.avatar_key) {
         avatarSpan.style.backgroundImage = `url(${nativeApiHref(`/api/images/${user.avatar_key}`)})`;
@@ -391,7 +333,7 @@ export class ReplyComposer {
       item.style.cssText = `padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;`;
       const hash = document.createElement('span');
       hash.textContent = '#';
-      hash.style.cssText = `width: 24px; height: 24px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; color: white; font-size: 0.8rem; font-weight: bold; flex-shrink: 0;`;
+      hash.style.cssText = `width: 24px; height: 24px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; color: var(--on-accent); font-size: 0.8rem; font-weight: bold; flex-shrink: 0;`;
       const textSpan = document.createElement('span');
       textSpan.style.cssText = 'display: flex; flex-direction: column;';
       const nameSpan = document.createElement('span');
@@ -470,7 +412,8 @@ export class ReplyComposer {
     this.textarea.setSelectionRange(newPos, newPos);
     this.textarea.focus();
     this.hideMentionDropdown();
-    this.charCount.textContent = `${this.textarea.value.length}/200`;
+    this.updateCharMeter(this.textarea.value.length);
+    this.autosizeTextarea();
     this.updateSubmitButton();
   }
 
@@ -571,18 +514,27 @@ export class ReplyComposer {
     const hasContent = this.textarea.value.trim().length > 0;
     this.submitButton.disabled = !hasContent || this.isSubmitting;
     this.submitButton.textContent = this.isSubmitting ? t('reply_composer.replying') : t('reply_composer.reply');
+    this.submitButton.dataset.state = this.isSubmitting ? 'sending' : 'idle';
+  }
 
-    if (this.submitButton.disabled) {
-      this.submitButton.style.background = 'var(--border)';
-      this.submitButton.style.borderColor = 'var(--border)';
-      this.submitButton.style.color = 'var(--text-muted)';
-      this.submitButton.style.cursor = 'not-allowed';
-    } else {
-      this.submitButton.style.background = 'var(--accent)';
-      this.submitButton.style.borderColor = 'var(--accent)';
-      this.submitButton.style.color = '#000';
-      this.submitButton.style.cursor = 'pointer';
-    }
+  /** Keep the text + conic-gradient progress ring in sync (ratio drives --fx-progress). */
+  private updateCharMeter(length: number): void {
+    this.charCount.textContent = `${length}/200`;
+    const ratio = Math.max(0, Math.min(1, length / 200));
+    const state = length >= 200 ? 'max' : length > 180 ? 'warn' : 'idle';
+    this.element.style.setProperty('--fx-progress', ratio.toFixed(3));
+    this.element.dataset.meterState = state;
+    this.charMeter.dataset.state = state;
+    this.charMeter.dataset.empty = String(length === 0);
+  }
+
+  /** Auto-grow the field; the height transition itself lives in composer.css. */
+  private autosizeTextarea(): void {
+    const textarea = this.textarea;
+    // Detached textareas report scrollHeight 0; leave the CSS min-height in charge.
+    if (!textarea || textarea.scrollHeight <= 0) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 144)}px`;
   }
 
   private initAvatar(): void {
@@ -670,7 +622,8 @@ export class ReplyComposer {
 
       // Clear form
       this.textarea.value = '';
-      this.charCount.textContent = '0/200';
+      this.updateCharMeter(0);
+      this.autosizeTextarea();
       this.clearFileSelection();
 
       // Notify parent
@@ -808,7 +761,8 @@ export class ReplyComposer {
     const newPos = start + text.length;
     this.textarea.selectionStart = newPos;
     this.textarea.selectionEnd = newPos;
-    this.charCount.textContent = `${this.textarea.value.length}/200`;
+    this.updateCharMeter(this.textarea.value.length);
+    this.autosizeTextarea();
     this.updateSubmitButton();
     this.textarea.focus();
   }

@@ -21,6 +21,7 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   // Create main container
   const container = document.createElement('div');
   container.className = 'auth-page';
+  container.setAttribute('role', 'main');
 
   // Create card
   const card = document.createElement('div');
@@ -42,7 +43,7 @@ export function createLoginPage({ onSuccess }: LoginProps) {
 
   // Heading
   const heading = document.createElement('h1');
-  heading.className = 'auth-heading';
+  heading.className = 'auth-heading fx-display';
   heading.textContent = t('login.heading');
 
   // Form
@@ -92,6 +93,7 @@ export function createLoginPage({ onSuccess }: LoginProps) {
   submitButton.type = 'submit';
   submitButton.className = 'auth-button';
   submitButton.textContent = t('login.submit');
+  submitButton.classList.add('fx-display');
   submitButton.disabled = true;
 
   // Register link

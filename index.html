@@ -19,7 +19,7 @@
   <!-- Noto Sans Font -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <meta name="google-adsense-account" content="ca-pub-8703789531673358">
   
@@ -38,7 +38,7 @@
         if (theme === 'dark' || theme === 'light') {
           document.documentElement.dataset.theme = theme;
           meta = document.querySelector('meta[name="theme-color"]');
-          if (meta) meta.content = theme === 'dark' ? '#0f172a' : '#ffffff';
+          if (meta) meta.content = theme === 'dark' ? '#181d28' : '#ffffff';
         }
       } catch (_e) {}
     })();
@@ -48,41 +48,78 @@
   <style>
     :root {
       color-scheme: light;
+      --font-sans: "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-display: "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", system-ui, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
       --bg-primary: #ffffff;
-      --bg-secondary: #f0fdf4;
-      --bg-input: #f1f5f9;
-      --bg-tertiary: #f0f0f0;
-      --bg-hover: rgba(0, 0, 0, 0.04);
+      --bg-secondary: #f8fafc;
+      --bg-input: #ffffff;
+      --bg-tertiary: #f1f5f9;
+      --bg-hover: rgba(15, 23, 42, 0.045);
       --border: #e2e8f0;
+      --border-strong: #cbd5e1;
       --text-primary: #0f172a;
+      --text-secondary: #334155;
       --text-muted: #64748b;
-      --accent: #22c55e;
-      --accent-dark: #16a34a;
+      --primary: #10b981;
+      --primary-fg: #022c22;
+      --accent: #10b981;
+      --accent-dark: #047857;
+      --accent-text: #047857;
+      --accent-soft: rgba(16, 185, 129, 0.1);
+      --on-accent: #022c22;
+      --coral: #f43f5e;
+      --coral-text: #e11d48;
       --danger: #ef4444;
-      --link: #3b82f6;
+      --danger-text: #dc2626;
+      --link: #0369a1;
+      --ring: rgba(16, 185, 129, 0.35);
+      --gradient-accent: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      --shadow-xs: 0 1px 2px rgba(9, 9, 11, 0.05);
+      --shadow-sm: 0 1px 3px rgba(9, 9, 11, 0.08), 0 1px 2px rgba(9, 9, 11, 0.04);
+      --shadow-md: 0 8px 24px rgba(9, 9, 11, 0.1);
+      --radius-card: 12px;
     }
     :root[data-theme='dark'] {
       color-scheme: dark;
-      --bg-primary: #0f172a;
-      --bg-secondary: #1e293b;
-      --bg-input: #1e293b;
-      --bg-tertiary: #1f2937;
-      --bg-hover: rgba(255, 255, 255, 0.06);
-      --border: #334155;
-      --text-primary: #f1f5f9;
+      --bg-primary: #181d28;
+      --bg-secondary: #212736;
+      --bg-input: #1b212e;
+      --bg-tertiary: #2a3246;
+      --bg-hover: rgba(255, 255, 255, 0.075);
+      --border: #2e374d;
+      --border-strong: #3d4966;
+      --text-primary: #f8fafc;
+      --text-secondary: #cbd5e1;
       --text-muted: #94a3b8;
-      --accent: #22c55e;
-      --accent-dark: #16a34a;
-      --danger: #ef4444;
-      --link: #60a5fa;
+      --primary: #10b981;
+      --primary-fg: #022c22;
+      --accent: #10b981;
+      --accent-dark: #059669;
+      --accent-text: #34d399;
+      --accent-soft: rgba(16, 185, 129, 0.18);
+      --on-accent: #022c22;
+      --coral: #fb7185;
+      --coral-text: #fda4af;
+      --danger: #f87171;
+      --danger-text: #fca5a5;
+      --link: #38bdf8;
+      --ring: rgba(16, 185, 129, 0.4);
+      --gradient-accent: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
+      --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+      --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.55);
+      --radius-card: 12px;
       --bottom-nav-h: 0px;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      font-family: 'Noto Sans', monospace, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-family: var(--font-sans);
       background: var(--bg-primary);
       color: var(--text-primary);
       line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
     }
     #app {
       display: flex;
@@ -174,7 +211,7 @@
       text-align: left; width: 100%;
     }
     .nav-item:hover { background: var(--bg-secondary); }
-    .nav-item--active { color: var(--accent); font-weight: 600; }
+    .nav-item--active { color: var(--accent-text); font-weight: 600; }
     .nav-post-button {
       width: 100%; padding: .75rem 1rem; background: var(--accent);
       color: #000; border: none; border-radius: 9999px;

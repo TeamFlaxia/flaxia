@@ -1,0 +1,953 @@
+/* Flaxia UI v5 — composer surface: post composer, reply composer, attach menu, char counter, editor triggers.
+   "Quiet craft": shadcn/ui form surfaces + Obsidian density. 1px hairlines, neutral
+   inverse primary submit, ghost toolbar, 12px muted counter with a 2px progress bar.
+   No gradients, glass, glow, lime fills, bounce or pop shadows.
+   Tokens: src/styles/main.css (:root / [data-theme="dark"]).
+   Loaded after legacy main.css + foundation.css, so same-specificity rules win by source order. */
+
+/* ============================================================
+   1. Post composer — a quiet form card
+   ============================================================ */
+.post-composer {
+  position: relative;
+  margin: 0.75rem 0.75rem 1rem;
+  padding: 1rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xs);
+  transition:
+    border-color var(--duration-base) var(--ease-standard),
+    box-shadow var(--duration-base) var(--ease-standard);
+}
+
+/* Focus = primary hairline + 2px neutral ring. */
+.post-composer:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+/* Inside the post modal the dialog is already the surface: stay flat. */
+.post-modal-dialog .post-composer {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.composer-body {
+  position: relative;
+}
+
+/* ============================================================
+   2. Header: quiet avatar + editor textarea + progress rule
+   ============================================================ */
+.composer-header {
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 0.15rem;
+}
+
+.composer-avatar {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  transition: border-color var(--duration-base) var(--ease-standard);
+}
+
+.post-composer:focus-within .composer-avatar {
+  border-color: var(--border-strong);
+}
+
+.composer-textarea {
+  min-height: 2.75rem;
+  max-height: 12rem;
+  padding: 0.15rem 0.25rem 0.35rem;
+  overflow-y: auto;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  caret-color: var(--primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  letter-spacing: -0.003em;
+  resize: none;
+  transition: height var(--duration-fast) var(--ease-out);
+}
+
+/* The card ring is the focus indicator; avoid a second outline on the field. */
+.post-composer .composer-textarea:focus-visible {
+  outline: none;
+}
+
+.composer-textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+.composer-textarea::selection {
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+/* 2px progress bar under the textarea (replaces the old conic ring). */
+.composer-progress {
+  height: 2px;
+  margin: 0.15rem 0 0.65rem;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  border-radius: var(--radius-pill);
+  opacity: clamp(0, calc(var(--fx-progress, 0) * 1000), 1);
+  transition: opacity var(--duration-base) var(--ease-standard);
+}
+
+.composer-progress-fill {
+  display: block;
+  width: calc(var(--fx-progress, 0) * 100%);
+  height: 100%;
+  background: var(--primary);
+  border-radius: inherit;
+  transition:
+    width var(--duration-base) var(--ease-out),
+    background-color var(--duration-base) var(--ease-standard);
+}
+
+.post-composer[data-meter-state="max"] .composer-progress-fill,
+.reply-composer[data-meter-state="max"] .composer-progress-fill {
+  background: var(--danger);
+}
+
+/* The progress rule now separates the editor from the toolbar. */
+.composer-divider {
+  display: none;
+}
+
+/* ============================================================
+   3. Toolbar: ghost icons, muted counter, neutral primary submit
+   ============================================================ */
+.composer-footer {
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.composer-actions {
+  gap: 0.125rem;
+  flex-wrap: wrap;
+  row-gap: 0.125rem;
+}
+
+.composer-file-button,
+.composer-emoji-button,
+.composer-list-drafts {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    opacity var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .composer-file-button:hover,
+  .composer-emoji-button:hover,
+  .composer-list-drafts:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+.composer-file-button:active:not(:disabled),
+.composer-emoji-button:active:not(:disabled),
+.composer-list-drafts:active:not(:disabled) {
+  opacity: 0.7;
+}
+
+.composer-attach-group {
+  gap: 0.125rem;
+}
+
+.composer-attach-menu-toggle {
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+}
+
+.composer-attach-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: transform var(--duration-base) var(--ease-standard);
+}
+
+.composer-attach-menu-toggle[aria-expanded="true"] .composer-attach-glyph {
+  transform: rotate(45deg);
+}
+
+.composer-emoji-button .action-icon {
+  display: inline-flex;
+}
+
+/* Draft count: quiet secondary badge. */
+.composer-draft-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 0;
+  border-radius: var(--radius-pill);
+  font-size: 0.5625rem;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-draft-count[hidden] {
+  display: none;
+}
+
+/* --- Counter: 12px muted tabular ---------------------------------- */
+.composer-meter {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0.25rem;
+  color: var(--text-muted);
+}
+
+.composer-meter[data-state="warn"] {
+  color: var(--text-primary);
+}
+
+.composer-meter[data-state="max"] {
+  color: var(--danger-text);
+}
+
+.composer-char-count {
+  min-width: 2.2rem;
+  color: inherit;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  transition: color var(--duration-fast) var(--ease-standard);
+}
+
+/* --- Submit: neutral primary (shadcn default sm) ------------------- */
+.composer-submit {
+  height: 36px;
+  min-height: 36px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  background: var(--primary);
+  color: var(--primary-fg);
+  border: 0;
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  box-shadow: none;
+  transition:
+    background-color var(--duration-base) var(--ease-standard),
+    opacity var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .composer-submit:hover:not(:disabled):not([aria-disabled="true"]) {
+    background: var(--primary-hover);
+  }
+}
+
+.composer-submit:active:not(:disabled):not([aria-disabled="true"]) {
+  opacity: 0.85;
+}
+
+/* Disabled: quiet secondary plate, never a dimmed primary fill. */
+.composer-submit:disabled,
+.composer-submit[aria-disabled="true"] {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  box-shadow: none;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+.composer-submit[data-state="sending"] {
+  cursor: progress;
+  opacity: 0.8;
+}
+
+/* ============================================================
+   4. Menus — popovers, not glass
+   ============================================================ */
+/* Scoped above overlays.css' shared menu shell (loaded later) so the
+   composer menus keep the 6px/36px popover rhythm. */
+.post-composer .composer-attach-menu,
+.post-composer .composer-drafts-dropdown,
+.mention-dropdown {
+  padding: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  animation: fx-scale-in 140ms var(--ease-out) both;
+}
+
+.post-composer .composer-attach-menu {
+  position: absolute;
+  min-width: 196px;
+  transform-origin: top left;
+}
+
+.post-composer .composer-drafts-dropdown {
+  position: absolute;
+  top: calc(100% + 0.375rem);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  display: none;
+  max-height: 280px;
+  overflow-y: auto;
+  transform-origin: top center;
+}
+
+.mention-dropdown {
+  position: absolute;
+  z-index: 40;
+  display: none;
+  min-width: 200px;
+  max-height: 200px;
+  overflow-y: auto;
+  transform-origin: top left;
+  animation-duration: 120ms;
+}
+
+/* Attach menu rows are <button class="composer-file-button">: strip ghost sizing. */
+.post-composer .composer-attach-menu .composer-file-button {
+  width: 100%;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 8px;
+  justify-content: flex-start;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  opacity: 1;
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .post-composer .composer-attach-menu .composer-file-button:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+.post-composer .composer-attach-menu .composer-file-button:active:not(:disabled) {
+  background: var(--bg-active);
+  opacity: 1;
+}
+
+.post-composer .composer-attach-menu .action-icon {
+  color: var(--text-muted);
+}
+
+/* Draft menu */
+.composer-draft-item {
+  border-radius: var(--radius-sm);
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.composer-drafts-header {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.composer-draft-time {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+/* Mention menu */
+.mention-dropdown .mention-item {
+  min-height: 36px;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--duration-fast) var(--ease-standard);
+}
+
+.mention-dropdown .mention-item:hover,
+.mention-dropdown .mention-item--active {
+  background: var(--bg-hover);
+}
+
+/* ============================================================
+   5. Attachments: quiet chips and previews
+   ============================================================ */
+.composer-media-list {
+  margin-top: 0.65rem;
+  padding: 0;
+  background: transparent;
+  border: none;
+}
+
+.media-list-items {
+  gap: 0.5rem;
+}
+
+.composer-media-item {
+  padding: 0.5rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition:
+    background-color var(--duration-base) var(--ease-standard),
+    border-color var(--duration-base) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .composer-media-item:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.composer-media-item-body .file-preview-body {
+  margin-top: 0;
+}
+
+.media-item-name {
+  padding: 0 0.15rem;
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  letter-spacing: 0;
+}
+
+.media-list-meta {
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.media-item-actions {
+  top: 0.5rem;
+  right: 0.5rem;
+  gap: 0.125rem;
+  opacity: 1;
+}
+
+.media-item-edit,
+.media-item-remove {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--text-muted);
+  border: 0;
+  border-radius: var(--radius-sm);
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .media-item-edit:hover,
+  .media-item-remove:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+.media-item-edit:active,
+.media-item-remove:active {
+  opacity: 0.7;
+}
+
+.file-preview-image,
+.file-preview-body img,
+.file-preview-body video,
+.composer-thumbnail-section .thumbnail-image {
+  border-radius: var(--radius-md);
+}
+
+.file-preview-body audio {
+  border-radius: var(--radius-md);
+}
+
+.thumbnail-preview {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.composer-file-preview {
+  margin-top: 0.65rem;
+  padding: 0.75rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.composer-file-preview .file-preview-body {
+  margin-top: 0.6rem;
+}
+
+.composer-file-dropzone {
+  margin: 0.25rem 0 0.65rem;
+  padding: 1rem;
+  background: var(--bg-secondary);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  transition:
+    border-color var(--duration-base) var(--ease-standard),
+    background-color var(--duration-base) var(--ease-standard);
+}
+
+.composer-file-dropzone.dragover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.composer-quoted-post {
+  margin-top: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.composer-error {
+  margin: 0.4rem 0;
+  color: var(--danger-text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ============================================================
+   6. Reply composer — compact card, hairline sticky bar in threads
+   ============================================================ */
+.reply-composer {
+  position: relative;
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xs);
+  transition:
+    border-color var(--duration-base) var(--ease-standard),
+    box-shadow var(--duration-base) var(--ease-standard);
+}
+
+.reply-composer:focus-within {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+/* Sticky reply bar: hairline rules only. */
+.thread-page .reply-composer {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  margin-top: 0;
+  padding: 0.65rem 0.75rem;
+  background: var(--bg-primary);
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.thread-page .reply-composer:focus-within {
+  border-color: var(--border);
+  border-bottom-color: var(--primary);
+  box-shadow: none;
+}
+
+.reply-composer-header {
+  align-items: flex-start;
+  gap: 0.6rem;
+  margin-bottom: 0.1rem;
+}
+
+.reply-composer-avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+}
+
+.reply-composer-textarea {
+  min-height: 2.4rem;
+  max-height: 9rem;
+  padding: 0.45rem 0.55rem;
+  overflow-y: auto;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  caret-color: var(--primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  letter-spacing: -0.003em;
+  resize: none;
+  transition:
+    border-color var(--duration-base) var(--ease-standard),
+    height var(--duration-fast) var(--ease-out);
+}
+
+.reply-composer .reply-composer-textarea:focus-visible {
+  outline: none;
+}
+
+.reply-composer-textarea:focus {
+  border-color: var(--primary);
+}
+
+.reply-composer-textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+.reply-composer-divider {
+  display: none;
+}
+
+.reply-composer-footer {
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.reply-composer-actions {
+  gap: 0.125rem;
+}
+
+.reply-composer-file-button {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard),
+    opacity var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .reply-composer-file-button:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+.reply-composer-file-button:active:not(:disabled) {
+  opacity: 0.7;
+}
+
+.reply-composer .composer-meter {
+  margin-left: 0.1rem;
+}
+
+.reply-composer .composer-meter .composer-char-count {
+  min-width: 2.1rem;
+  font-size: 12px;
+}
+
+.reply-composer-buttons {
+  gap: 0.375rem;
+  align-items: center;
+}
+
+.reply-composer-cancel {
+  height: 32px;
+  min-height: 32px;
+  padding: 0 10px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 0;
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast) var(--ease-standard),
+    color var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .reply-composer-cancel:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+}
+
+.reply-composer-cancel:active {
+  opacity: 0.7;
+}
+
+.reply-composer-submit {
+  height: 32px;
+  min-height: 32px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary);
+  color: var(--primary-fg);
+  border: 0;
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  box-shadow: none;
+  transition:
+    background-color var(--duration-base) var(--ease-standard),
+    opacity var(--duration-fast) var(--ease-standard);
+}
+
+@media (hover: hover) {
+  .reply-composer-submit:hover:not(:disabled):not([aria-disabled="true"]) {
+    background: var(--primary-hover);
+  }
+}
+
+.reply-composer-submit:active:not(:disabled):not([aria-disabled="true"]) {
+  opacity: 0.85;
+}
+
+.reply-composer-submit:disabled,
+.reply-composer-submit[aria-disabled="true"] {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  box-shadow: none;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+.reply-composer-submit[data-state="sending"] {
+  cursor: progress;
+  opacity: 0.8;
+}
+
+.reply-composer-file-preview {
+  margin-top: 0.6rem;
+  padding: 0.65rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.reply-composer-file-dropzone {
+  margin: 0.25rem 0 0.6rem;
+  padding: 0.9rem;
+  background: var(--bg-secondary);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  transition:
+    border-color var(--duration-base) var(--ease-standard),
+    background-color var(--duration-base) var(--ease-standard);
+}
+
+.reply-composer-file-dropzone.dragover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/* ============================================================
+   7. Responsive
+   ============================================================ */
+@media (max-width: 640px) {
+  .post-composer {
+    margin: 0.5rem 0.5rem 0.75rem;
+    padding: 0.85rem;
+    border-radius: var(--radius-xl);
+  }
+
+  .composer-header {
+    gap: 0.6rem;
+  }
+
+  .composer-avatar {
+    width: 30px;
+    height: 30px;
+  }
+
+  .composer-textarea {
+    font-size: 14px;
+  }
+
+  .composer-file-button,
+  .composer-emoji-button,
+  .composer-list-drafts,
+  .composer-attach-menu-toggle {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  .composer-submit {
+    height: 40px;
+    min-height: 40px;
+    font-size: 13px;
+  }
+
+  .reply-composer {
+    margin-top: 0.5rem;
+    padding: 0.65rem;
+  }
+
+  .thread-page .reply-composer {
+    top: 0;
+    padding: 0.55rem 0.65rem;
+  }
+}
+
+/* --- v5 polish (Lead) ---
+   Empty composer should read compact, not like an empty page. */
+.post-composer {
+  padding: 10px 12px 8px;
+}
+
+.composer-footer {
+  margin-top: 2px;
+}
+
+/* --- v5.1 typography (Lead) --- */
+.composer-textarea {
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+/* ============================================================
+   v5.2 composer — collapsed form
+   The composer used to occupy ~130px before the first post; it is a
+   single-line input until the user engages with it.
+   ============================================================ */
+.post-composer {
+  margin: 8px 10px 6px;
+  padding: 8px 10px 6px;
+  border-radius: 10px;
+}
+
+.post-composer .composer-avatar {
+  width: 32px;
+  height: 32px;
+}
+
+.post-composer .composer-textarea {
+  min-height: 2.25rem;
+  padding: 0.1rem 0.2rem 0.2rem;
+  font-size: 14.5px;
+  line-height: 1.55;
+}
+
+.post-composer .composer-toolbar {
+  margin-top: 2px;
+}
+
+.post-composer .composer-icon-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+.post-composer .composer-submit {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+
+.post-composer .composer-footer {
+  margin-top: 2px;
+}
+
+/* The ring is only needed once the field has focus. */
+.post-composer:not(:focus-within) {
+  border-color: var(--border);
+}
+
+@media (max-width: 640px) {
+  .post-composer {
+    margin: 8px 8px 6px;
+  }
+}
+
+/* Draft state: a single input line. Toolbar and progress appear on engagement. */
+.post-composer:not(:focus-within):not(.is-expanded) .composer-textarea {
+  min-height: 2.25rem;
+  max-height: 2.25rem;
+}
+
+.post-composer:not(:focus-within) .composer-progress {
+  display: none;
+}
+
+.post-composer:not(:focus-within) .composer-footer {
+  margin-top: 0;
+}
+
+.post-composer .composer-footer {
+  height: 32px;
+}

@@ -1,5 +1,7 @@
 import { safeRemoveFromBody } from '../lib/dom-utils.js';
 import { t } from '../lib/i18n.js';
+import { icon } from '../lib/icons.js';
+import { closeWithAnimation, getTabbableElements } from '../lib/modal-overlay.js';
 import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { setOfflineImage } from '../lib/offline-image.js';
@@ -29,9 +31,9 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     img.oncontextmenu = (e) => e.preventDefault();
     img.src = props.src;
     img.style.cssText =
-      'width: 100%; height: auto; max-height: 700px; cursor: pointer; display: block; border-radius: 8px;';
+      'width: 100%; height: auto; max-height: 700px; cursor: pointer; display: block; border-radius: var(--radius-md);';
     container.style.cssText =
-      'position: relative; width: 100%; height: auto; display: flex; flex-direction: column; align-items: center; background: var(--bg-input); border-radius: 8px;';
+      'position: relative; width: 100%; height: auto; display: flex; flex-direction: column; align-items: center; background: var(--bg-input); border-radius: var(--radius-md);';
     container.appendChild(img);
     return container;
   }
@@ -70,7 +72,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
       overflow: hidden;
       display: block;
       background: var(--bg-input);
-      ${props.isThumbnail ? '' : 'border-radius: 8px;'}
+      ${props.isThumbnail ? '' : 'border-radius: var(--radius-md);'}
     `;
 
     img.style.cssText = `
@@ -80,7 +82,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
       object-position: center;
       cursor: pointer;
       display: block;
-      ${props.isThumbnail ? '' : 'border-radius: 8px;'}
+      ${props.isThumbnail ? '' : 'border-radius: var(--radius-md);'}
     `;
 
     if (props.isThumbnail) {
@@ -95,7 +97,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
       position: absolute;
       inset: 0;
       background: var(--bg-input);
-      border-radius: 8px;
+      border-radius: var(--radius-md);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -123,7 +125,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
         font-size: 0.875rem;
         text-align: center;
         padding: 2rem;
-        border-radius: 8px;
+        border-radius: var(--radius-md);
       `;
       fallback.textContent = t('image_preview.load_failed');
       container.appendChild(fallback);
@@ -143,7 +145,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     display: flex;
     flex-direction: column;
     align-items: center;
-    ${props.isThumbnail ? '' : 'background: var(--bg-input); border-radius: 8px;'}
+    ${props.isThumbnail ? '' : 'background: var(--bg-input); border-radius: var(--radius-md);'}
   `;
 
   const MAX_IMG_HEIGHT = 700;
@@ -181,7 +183,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
     max-height: 700px;
     cursor: pointer;
     display: block;
-    ${props.isThumbnail ? '' : 'border-radius: 8px;'}
+    ${props.isThumbnail ? '' : 'border-radius: var(--radius-md);'}
   `;
 
   if (props.isThumbnail) {
@@ -197,7 +199,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
       width: 100%;
       padding-bottom: 56.25%;
       background: var(--bg-input);
-      border-radius: 8px;
+      border-radius: var(--radius-md);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -226,7 +228,7 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
         font-size: 0.875rem;
         text-align: center;
         padding: 2rem;
-        border-radius: 8px;
+        border-radius: var(--radius-md);
       `;
       fallback.textContent = t('image_preview.load_failed');
       container.appendChild(fallback);
@@ -244,50 +246,24 @@ export function createImagePreview(props: GifPreviewProps): HTMLElement {
 // When `gallery` (image attachment keys) has more than one entry, prev/next
 // controls navigate between the post's images.
 function createImageOverlay(imageUrl: string, postId: string, gallery?: string[], galleryIndex = 0): void {
+  const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const overlay = document.createElement('div');
-  overlay.style.cssText = `
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.9);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    cursor: pointer;
-  `;
+  overlay.className = 'fx-lightbox';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', t('image_preview.post_full_size', { id: postId }));
+  overlay.tabIndex = -1;
 
   const imageContainer = document.createElement('div');
-  imageContainer.style.cssText = `
-    width: 90vw;
-    height: 90vh;
-    position: relative;
-    overflow: hidden;
-  `;
+  imageContainer.className = 'fx-lightbox__stage';
 
   const zoomWrapper = document.createElement('div');
-  zoomWrapper.style.cssText = `
-    position: absolute;
-    top: 0;
-    left: 0;
-    transform-origin: 0 0;
-    cursor: default;
-    touch-action: none;
-    user-select: none;
-    -webkit-user-select: none;
-  `;
+  zoomWrapper.className = 'fx-lightbox__zoom';
 
   const fullImage = document.createElement('img');
+  fullImage.className = 'fx-lightbox__img';
   fullImage.alt = t('image_preview.post_full_size', { id: postId });
   fullImage.draggable = false;
-  fullImage.style.cssText = `
-    display: block;
-    border-radius: 8px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-    pointer-events: none;
-  `;
 
   let scale = 1;
   let translateX = 0;
@@ -548,38 +524,27 @@ function createImageOverlay(imageUrl: string, postId: string, gallery?: string[]
 
   // Close button (positioned outside the image container)
   const closeButton = document.createElement('button');
-  closeButton.textContent = t('image_preview.close');
-  closeButton.style.cssText = `
-    position: fixed;
-    top: 8px;
-    right: 16px;
-    background: rgba(255, 255, 255, 0.2);
-    border: none;
-    color: white;
-    font-size: 24px;
-    width: 40px;
-    height: 40px;
-    border-radius: 50%;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.2s ease;
-    z-index: 1001;
-  `;
-
-  closeButton.onmouseover = () => (closeButton.style.background = 'rgba(255, 255, 255, 0.3)');
-  closeButton.onmouseout = () => (closeButton.style.background = 'rgba(255, 255, 255, 0.2)');
+  closeButton.type = 'button';
+  closeButton.className = 'fx-lightbox__close';
+  closeButton.setAttribute('aria-label', t('common.close'));
+  closeButton.appendChild(icon('close'));
 
   const unregister = registerModal();
   let navKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+  let closing = false;
   const closeOverlay = () => {
+    if (closing) return;
+    closing = true;
     unregister();
     document.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseup', onMouseUp);
     document.removeEventListener('keydown', handleEsc);
+    document.removeEventListener('keydown', handleTab);
     if (navKeyHandler) document.removeEventListener('keydown', navKeyHandler);
-    safeRemoveFromBody(overlay);
+    closeWithAnimation(overlay, () => {
+      safeRemoveFromBody(overlay);
+      if (previouslyFocused?.isConnected) previouslyFocused.focus({ preventScroll: true });
+    });
   };
 
   closeButton.onclick = (e) => {
@@ -599,6 +564,31 @@ function createImageOverlay(imageUrl: string, postId: string, gallery?: string[]
     }
   };
   document.addEventListener('keydown', handleEsc);
+
+  const handleTab = (e: KeyboardEvent) => {
+    if (e.key !== 'Tab') return;
+    const tabbables = getTabbableElements(overlay);
+    if (tabbables.length === 0) {
+      e.preventDefault();
+      overlay.focus({ preventScroll: true });
+      return;
+    }
+    const first = tabbables[0];
+    const last = tabbables[tabbables.length - 1];
+    const active = document.activeElement;
+    const activeIndex = active instanceof HTMLElement ? tabbables.indexOf(active) : -1;
+    if (activeIndex === -1) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+    } else if (!e.shiftKey && activeIndex === tabbables.length - 1) {
+      e.preventDefault();
+      first.focus();
+    } else if (e.shiftKey && activeIndex === 0) {
+      e.preventDefault();
+      last.focus();
+    }
+  };
+  document.addEventListener('keydown', handleTab);
 
   // Gallery navigation (multiple image attachments)
   const hasGallery = !!gallery && gallery.length > 1;
@@ -632,31 +622,12 @@ function createImageOverlay(imageUrl: string, postId: string, gallery?: string[]
   };
 
   if (hasGallery) {
-    const makeNav = (label: string, dir: -1 | 1) => {
+    const makeNav = (dir: -1 | 1) => {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.textContent = label;
-      btn.style.cssText = `
-        position: fixed;
-        top: 50%;
-        transform: translateY(-50%);
-        ${dir === -1 ? 'left: 12px;' : 'right: 12px;'}
-        background: rgba(255, 255, 255, 0.15);
-        border: none;
-        color: white;
-        font-size: 28px;
-        width: 44px;
-        height: 44px;
-        border-radius: 50%;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 1001;
-        transition: background 0.2s ease;
-      `;
-      btn.onmouseover = () => (btn.style.background = 'rgba(255, 255, 255, 0.3)');
-      btn.onmouseout = () => (btn.style.background = 'rgba(255, 255, 255, 0.15)');
+      btn.className = 'fx-lightbox__nav fx-lightbox__nav--' + (dir === -1 ? 'prev' : 'next');
+      btn.textContent = dir === -1 ? '‹' : '›';
+      btn.setAttribute('aria-label', dir === -1 ? 'Previous image' : 'Next image');
       btn.onclick = (e) => {
         e.stopPropagation();
         showIndex(currentIndex + dir);
@@ -664,22 +635,10 @@ function createImageOverlay(imageUrl: string, postId: string, gallery?: string[]
       navButtons.push(btn);
       return btn;
     };
-    makeNav('‹', -1);
-    makeNav('›', 1);
+    makeNav(-1);
+    makeNav(1);
 
-    counter.style.cssText = `
-      position: fixed;
-      bottom: 16px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(0, 0, 0, 0.6);
-      color: white;
-      font-size: 13px;
-      padding: 4px 12px;
-      border-radius: 12px;
-      z-index: 1001;
-      pointer-events: none;
-    `;
+    counter.className = 'fx-lightbox__counter';
     updateCounter();
 
     const handleNavKeys = (e: KeyboardEvent) => {
@@ -703,6 +662,7 @@ function createImageOverlay(imageUrl: string, postId: string, gallery?: string[]
   for (const btn of navButtons) overlay.appendChild(btn);
   if (hasGallery) overlay.appendChild(counter);
   document.body.appendChild(overlay);
+  overlay.focus({ preventScroll: true });
 
   // The image may have finished loading before the overlay was in the DOM
   // (container size was 0), so size it now that layout is available.
