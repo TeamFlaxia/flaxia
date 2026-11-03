@@ -820,6 +820,9 @@
 .right-panel .trending-item {
   display: flex;
   align-items: center;
+  /* pages.css still carries a space-between rule for the Explore card; the
+     rail must stay left-aligned even when @scope rules are unavailable. */
+  justify-content: flex-start;
   gap: 10px;
   min-height: 40px;
   padding: 3px 8px;
@@ -853,9 +856,20 @@
 
 .right-panel .trending-content {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
+  align-items: flex-start;
   gap: 1px;
+  width: 100%;
   min-width: 0;
+  margin-right: auto;
+  text-align: left;
+}
+
+.right-panel .trending-hashtag,
+.right-panel .trending-count {
+  width: 100%;
+  text-align: left;
 }
 
 .right-panel .trending-hashtag {
