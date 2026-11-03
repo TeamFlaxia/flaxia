@@ -288,10 +288,9 @@ function createActionButton(type: ActionButtonType, count: string, isActive: boo
   }
 
   // Create icon (universal Lucide icon, not OS-dependent emoji).
-  // The like action uses a heart, matching the shadcn "like" affordance.
   const iconEl = document.createElement('span');
   iconEl.className = 'action-icon';
-  iconEl.appendChild(type === 'fresh' ? createHeartIcon() : icon(getIconNameForType(type)));
+  iconEl.appendChild(icon(getIconNameForType(type)));
 
   button.appendChild(iconEl);
 
@@ -305,28 +304,6 @@ function createActionButton(type: ActionButtonType, count: string, isActive: boo
   }
 
   return button;
-}
-
-/** Lucide "heart" path, styled like the shared icon set. */
-function createHeartIcon(): SVGElement {
-  const ns = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(ns, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('width', '24');
-  svg.setAttribute('height', '24');
-  svg.setAttribute('fill', 'none');
-  svg.setAttribute('stroke', 'currentColor');
-  svg.setAttribute('stroke-width', '2');
-  svg.setAttribute('stroke-linecap', 'round');
-  svg.setAttribute('stroke-linejoin', 'round');
-  svg.setAttribute('aria-hidden', 'true');
-  const path = document.createElementNS(ns, 'path');
-  path.setAttribute(
-    'd',
-    'M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z',
-  );
-  svg.appendChild(path);
-  return svg;
 }
 
 type ActionButtonType = 'fresh' | 'bookmark' | 'reply' | 'reload' | 'share' | 'impressions' | 'quote';

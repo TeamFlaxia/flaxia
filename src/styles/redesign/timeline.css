@@ -125,7 +125,9 @@
   height: 36px;
   padding: 0;
   flex-shrink: 0;
-  overflow: hidden;
+  /* The image is clipped by .post-avatar-inner. Keep the outer disc visible so
+     the Flaxia+ check badge can overhang the avatar instead of being cut off. */
+  overflow: visible;
   border: 1px solid var(--border);
   border-radius: 50%;
   background: var(--bg-secondary);
@@ -393,8 +395,8 @@
   }
 
   .action-button--fresh:hover {
-    color: var(--coral);
-    background: var(--coral-soft);
+    color: var(--accent);
+    background: var(--accent-soft);
   }
 
   .action-button--bookmark:hover {
@@ -407,17 +409,17 @@
   background: var(--bg-active);
 }
 
-/* Like: coral glyph + a 120ms scale-only pop */
+/* Fresh: leaf glyph + a 120ms scale-only pop */
 .action-button--fresh.action-button--active {
-  color: var(--coral-text);
+  color: var(--accent-text);
 }
 
 :root[data-theme="dark"] .action-button--fresh.action-button--active {
-  color: var(--coral-text);
+  color: var(--accent-text);
 }
 
 :root[data-theme="dark"] .action-button--fresh.action-button--active .action-icon {
-  color: var(--coral);
+  color: var(--accent);
 }
 
 .action-button--fresh.action-button--active .action-icon svg {

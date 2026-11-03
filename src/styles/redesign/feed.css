@@ -98,6 +98,8 @@
     width: 22px;
     height: 22px;
     margin: 0;
+    /* Keep the Flaxia+ check readable at the compact feed avatar size. */
+    --avatar-plus-ratio: 0.5;
   }
 
   .post-list > .post-card .post-display-name {
