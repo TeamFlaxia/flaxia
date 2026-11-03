@@ -2854,7 +2854,8 @@
   flex: 1;
 }
 
-/* Arcade is an immersive game view: hide the right rail and center the viewport. */
+/* Arcade is an immersive game view: hide the right rail and let the game
+   viewport fill every available pixel. */
 .main-container:has(.arcade-page) {
   max-width: 100%;
 }
@@ -2878,14 +2879,15 @@
 }
 
 .main-container:has(.arcade-page) .arcade-game-container {
-  max-width: 760px;
-  margin: 14px auto 16px;
-  width: calc(100% - 32px);
-  height: calc(100vh - 84px);
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border);
+  flex: 1;
+  min-height: 0;
+  max-width: none;
+  margin: 0;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
   background: var(--bg-secondary);
-  box-shadow: var(--shadow-md);
+  box-shadow: none;
   position: relative;
   overflow: hidden;
 }
