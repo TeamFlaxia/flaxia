@@ -57,6 +57,8 @@ export interface CrowdEnv {
 /** Minimal Vectorize surface used by the vector-embed callback. */
 export interface VectorizeLike {
   upsert(vectors: Array<{ id: string; values: number[]; metadata?: Record<string, string> }>): Promise<unknown>;
+  /** Optional hard-delete used by web-index retention (Vectorize `deleteByIds`). */
+  deleteByIds?(ids: string[]): Promise<unknown>;
 }
 
 export interface CrowdConfig {

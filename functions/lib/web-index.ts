@@ -1,6 +1,6 @@
 import type { CrowdWebhookEvent } from '@flaxia/sdk';
 import { extractCallbackOutput } from '@flaxia/sdk';
-import type { CrowdEnv } from './crowd';
+import type { CrowdEnv, VectorizeLike } from './crowd';
 import { buildFtsMatch, buildLikePattern, type ParsedSearchQuery, searchTextTerms } from './search-query.ts';
 import type { WebSearchResult } from './search-web.ts';
 import { sha256Hex } from './sha256.ts';
@@ -44,7 +44,7 @@ interface WebDocumentSearchRow {
 interface CcQueueRow {
   id: string;
   crawl: string;
-  title?: string;
+  content_digest?: string | null;
 }
 
 function nowIso(): string {
@@ -111,7 +111,7 @@ export async function handleCcExtractResult(event: CrowdWebhookEvent, db: D1Data
   for (const document of documents) {
     const row = (await db
       .prepare(
-        `SELECT id, crawl FROM cc_queue
+        `SELECT id, crawl, content_digest FROM cc_queue
          WHERE task_id = ? AND warc_filename = ? AND offset = ? AND length = ? AND status = 'submitted'
          LIMIT 1`,
       )
@@ -152,6 +152,34 @@ export async function handleCcExtractResult(event: CrowdWebhookEvent, db: D1Data
 
     const id = await sha256Hex(canonical.toString());
     const domain = canonical.hostname.toLowerCase();
+    // Content-based dedup: a re-crawl whose CDX digest matches the stored
+    // `content_sha` leaves the document, its FTS entry and its embedding
+    // untouched — only freshness is updated. Digests come from the CDX index;
+    // they identify the source record, not the extracted text.
+    const contentSha =
+      typeof row.content_digest === 'string' && row.content_digest.length > 0 ? row.content_digest : null;
+    if (contentSha) {
+      const previous = await db
+        .prepare(`SELECT content_sha, status FROM web_documents WHERE id = ?`)
+        .bind(id)
+        .first<{ content_sha: string | null; status: string }>();
+      if (previous && previous.status === 'active' && previous.content_sha === contentSha) {
+        await db
+          .prepare(
+            `UPDATE web_documents SET fetched_at = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?`,
+          )
+          .bind(nowIso(), id)
+          .run();
+        await db
+          .prepare(
+            `UPDATE cc_queue SET status = 'done', error = NULL, updated_at = ? WHERE id = ? AND status = 'submitted'`,
+          )
+          .bind(nowIso(), row.id)
+          .run();
+        continue;
+      }
+    }
+
     const text = cleanText(document.text, 64_000);
     const excerpt = cleanText(document.excerpt || text, 400);
     const title = cleanText(document.title, 300) || canonical.toString();
@@ -169,8 +197,8 @@ export async function handleCcExtractResult(event: CrowdWebhookEvent, db: D1Data
     await db
       .prepare(
         `INSERT INTO web_documents
-           (id, url, canonical_url, domain, lang, title, excerpt, r2_key, published_at, crawl, status, fetched_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+           (id, url, canonical_url, domain, lang, title, excerpt, r2_key, published_at, crawl, content_sha, status, fetched_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
          ON CONFLICT(id) DO UPDATE SET
            url = excluded.url,
            canonical_url = excluded.canonical_url,
@@ -181,6 +209,7 @@ export async function handleCcExtractResult(event: CrowdWebhookEvent, db: D1Data
            r2_key = excluded.r2_key,
            published_at = excluded.published_at,
            crawl = excluded.crawl,
+           content_sha = COALESCE(excluded.content_sha, web_documents.content_sha),
            status = 'active',
            fetched_at = excluded.fetched_at,
            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
@@ -196,6 +225,7 @@ export async function handleCcExtractResult(event: CrowdWebhookEvent, db: D1Data
         r2Key,
         document.publishedAt?.slice(0, 40) ?? null,
         row.crawl,
+        contentSha,
         nowIso(),
       )
       .run();
@@ -427,4 +457,110 @@ export async function searchWebIndex(
     source: row.domain || 'Web',
     published_at: row.published_at || undefined,
   }));
+}
+
+/**
+ * Retention for the web index.
+ *
+ * Documents that have not been re-fetched in `WEB_DOC_STALE_AFTER_MS` are
+ * marked `stale` (excluded from search) and hard-deleted after
+ * `WEB_DOC_DELETE_AFTER_MS` together with their R2 text object, their
+ * `embed_queue` row and their Vectorize vector. Terminal queue rows are
+ * purged after `TERMINAL_QUEUE_PURGE_AFTER_MS`. All timestamps are ISO-8601
+ * strings, so lexicographic comparison matches chronological order.
+ */
+const WEB_DOC_STALE_AFTER_MS = 90 * 24 * 60 * 60 * 1000;
+const WEB_DOC_DELETE_AFTER_MS = 120 * 24 * 60 * 60 * 1000;
+const TERMINAL_QUEUE_PURGE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
+const WEB_DOC_DELETE_BATCH = 200;
+
+export interface WebRetentionEnv {
+  BUCKET?: R2Bucket;
+  VECTORIZE_WEB?: VectorizeLike;
+}
+
+export interface WebRetentionResult {
+  staled: number;
+  deleted: number;
+  purgedCcQueue: number;
+  purgedEmbedQueue: number;
+}
+
+export async function reapWebDocuments(
+  db: D1Database,
+  env: WebRetentionEnv,
+  now = Date.now(),
+): Promise<WebRetentionResult> {
+  const nowIsoValue = new Date(now).toISOString();
+  const staleCutoff = new Date(now - WEB_DOC_STALE_AFTER_MS).toISOString();
+  const deleteCutoff = new Date(now - WEB_DOC_DELETE_AFTER_MS).toISOString();
+  const purgeCutoff = new Date(now - TERMINAL_QUEUE_PURGE_AFTER_MS).toISOString();
+
+  const staledResult = await db
+    .prepare(`UPDATE web_documents SET status = 'stale', updated_at = ? WHERE status = 'active' AND fetched_at < ?`)
+    .bind(nowIsoValue, staleCutoff)
+    .run();
+
+  const doomed = await db
+    .prepare(`SELECT id, r2_key FROM web_documents WHERE status = 'stale' AND fetched_at < ? LIMIT ?`)
+    .bind(deleteCutoff, WEB_DOC_DELETE_BATCH)
+    .all<{ id: string; r2_key: string | null }>();
+  const doomedRows = doomed.results ?? [];
+
+  const doomedIds: string[] = [];
+  for (const doc of doomedRows) {
+    if (doc.r2_key) {
+      if (env.BUCKET) {
+        try {
+          await env.BUCKET.delete(doc.r2_key);
+        } catch (error) {
+          // Keep the row so the next pass can retry the cleanup rather than
+          // orphaning the R2 object and losing the handle to it.
+          console.error(`Failed to delete R2 object ${doc.r2_key}; keeping the document row:`, error);
+          continue;
+        }
+      } else {
+        console.warn(`BUCKET binding is missing; deleting the document row for ${doc.id} and leaving its R2 object`);
+      }
+    }
+    doomedIds.push(doc.id);
+  }
+
+  let deleted = 0;
+  if (doomedIds.length > 0) {
+    if (env.VECTORIZE_WEB?.deleteByIds) {
+      try {
+        await env.VECTORIZE_WEB.deleteByIds(doomedIds);
+      } catch (error) {
+        // The vector index tolerates orphans; retry is best-effort.
+        console.error('Failed to delete web vectors for stale documents:', error);
+      }
+    }
+    const placeholders = doomedIds.map(() => '?').join(',');
+    await db
+      .prepare(`DELETE FROM embed_queue WHERE doc_id IN (${placeholders})`)
+      .bind(...doomedIds)
+      .run();
+    const deleteResult = await db
+      .prepare(`DELETE FROM web_documents WHERE id IN (${placeholders}) AND status = 'stale'`)
+      .bind(...doomedIds)
+      .run();
+    deleted = deleteResult.meta.changes ?? 0;
+  }
+
+  const purgedCc = await db
+    .prepare(`DELETE FROM cc_queue WHERE status IN ('done', 'failed', 'skipped') AND updated_at < ?`)
+    .bind(purgeCutoff)
+    .run();
+  const purgedEmbed = await db
+    .prepare(`DELETE FROM embed_queue WHERE status IN ('done', 'failed') AND updated_at < ?`)
+    .bind(purgeCutoff)
+    .run();
+
+  return {
+    staled: staledResult.meta.changes ?? 0,
+    deleted,
+    purgedCcQueue: purgedCc.meta.changes ?? 0,
+    purgedEmbedQueue: purgedEmbed.meta.changes ?? 0,
+  };
 }

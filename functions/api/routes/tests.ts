@@ -3,8 +3,10 @@ import { Hono } from 'hono';
 import { isTitleIconImage } from '../../../src/lib/title-icon.ts';
 import { getMeWithSession, getSessionToken, hashPassword } from '../../lib/auth.ts';
 import { badgeTypeForPlan } from '../../lib/billing.ts';
+import { reapStaleSubmissions } from '../../lib/cc-ingest.ts';
 import { ensureNsfwScansTable, ensurePendingEmbedsTable } from '../../lib/crowd.ts';
 import { ensureFileScansTable } from '../../lib/scan/db.ts';
+import { reapWebDocuments } from '../../lib/web-index.ts';
 import type { Bindings, Variables } from '../types';
 
 async function ensureReactionsTable(db: D1Database): Promise<void> {
@@ -153,6 +155,15 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
   return c.json({ ok: true });
 });
 
+// POST /api/test/maintenance - run the hourly retention/sweep maintenance inline.
+app.post('/api/test/maintenance', requireTestEnvironment, async (c) => {
+  const db = c.env.DB_TEST || c.env.DB;
+  if (!db) return c.json({ error: 'Database not available' }, 500);
+  const submissions = await reapStaleSubmissions(db);
+  const retention = await reapWebDocuments(db, c.env);
+  return c.json({ ok: true, submissions, retention });
+});
+
 // POST /api/test/web-doc - seed a Common Crawl web-index document for search tests.
 app.post('/api/test/web-doc', requireTestEnvironment, async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
@@ -170,6 +181,10 @@ app.post('/api/test/web-doc', requireTestEnvironment, async (c) => {
   const excerpt = typeof body.excerpt === 'string' ? body.excerpt.slice(0, 400) : '';
   const lang = typeof body.lang === 'string' ? body.lang.slice(0, 16) : null;
   const publishedAt = typeof body.publishedAt === 'string' ? body.publishedAt.slice(0, 40) : null;
+  let fetchedAt = new Date().toISOString();
+  if (typeof body.fetchedAt === 'string' && !Number.isNaN(Date.parse(body.fetchedAt))) {
+    fetchedAt = body.fetchedAt;
+  }
   await c.env.DB.prepare(
     `INSERT INTO web_documents
        (id, url, canonical_url, domain, lang, title, excerpt, published_at, crawl, status, fetched_at)
@@ -194,7 +209,7 @@ app.post('/api/test/web-doc', requireTestEnvironment, async (c) => {
       title,
       excerpt,
       publishedAt,
-      new Date().toISOString(),
+      fetchedAt,
     )
     .run();
   return c.json({ ok: true, id }, 201);
@@ -214,21 +229,23 @@ app.post('/api/test/cc-queue', requireTestEnvironment, async (c) => {
   const crawl = typeof body.crawl === 'string' ? body.crawl : 'CC-MAIN-TEST';
   const taskId = typeof body.taskId === 'string' ? body.taskId : null;
   const status = typeof body.status === 'string' ? body.status : 'submitted';
+  const contentDigest = typeof body.contentDigest === 'string' ? body.contentDigest.slice(0, 200) : null;
   await c.env.DB.prepare(
-    `INSERT INTO cc_queue (id, crawl, url, warc_filename, offset, length, status, task_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO cc_queue (id, crawl, url, warc_filename, offset, length, content_digest, status, task_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
        crawl = excluded.crawl,
        url = excluded.url,
        warc_filename = excluded.warc_filename,
        offset = excluded.offset,
        length = excluded.length,
+       content_digest = COALESCE(excluded.content_digest, cc_queue.content_digest),
        status = excluded.status,
        task_id = excluded.task_id,
        error = NULL,
        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
   )
-    .bind(id, crawl, url, warcFilename, offset, length, status, taskId)
+    .bind(id, crawl, url, warcFilename, offset, length, contentDigest, status, taskId)
     .run();
   return c.json({ ok: true, id }, 201);
 });

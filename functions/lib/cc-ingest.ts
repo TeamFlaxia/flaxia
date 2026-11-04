@@ -2,6 +2,7 @@ import { createCcRangeUrl, isValidWarcPath, MAX_CC_RECORD_BYTES } from './cc-ran
 import type { CrowdConfig, CrowdEnv } from './crowd.ts';
 import { crowdConfig, getCrowdClient, signedCallbackUrl } from './crowd.ts';
 import { sha256Hex } from './sha256.ts';
+import { reapWebDocuments } from './web-index.ts';
 
 /**
  * Scheduled Common Crawl ingestion.
@@ -80,7 +81,7 @@ function submitter(config: CrowdConfig): CrowdSubmitter | null {
  * (or fails them once `MAX_CC_ATTEMPTS` is reached) so a lost callback does
  * not strand the record forever. Runs before any submission on every pass.
  */
-async function reapStaleSubmissions(db: D1Database): Promise<number> {
+export async function reapStaleSubmissions(db: D1Database): Promise<number> {
   const cutoff = new Date(Date.now() - STALE_SUBMISSION_MS).toISOString();
   let reaped = 0;
   for (const table of ['cc_queue', 'embed_queue'] as const) {
@@ -390,8 +391,15 @@ export async function drainCcIngestion(env: CcIngestEnv): Promise<void> {
   try {
     const reaped = await reapStaleSubmissions(env.DB);
     if (reaped > 0) console.log(`Requeued ${reaped} stale submission(s)`);
+    const retention = await reapWebDocuments(env.DB, env);
+    const touched = retention.staled + retention.deleted + retention.purgedCcQueue + retention.purgedEmbedQueue;
+    if (touched > 0) {
+      console.log(
+        `Web retention: staled=${retention.staled} deleted=${retention.deleted} ccQueue=${retention.purgedCcQueue} embedQueue=${retention.purgedEmbedQueue}`,
+      );
+    }
   } catch (error) {
-    console.error('Stale submission sweep failed:', error);
+    console.error('Stale submission / retention sweep failed:', error);
   }
 
   const config = crowdConfig(env);
