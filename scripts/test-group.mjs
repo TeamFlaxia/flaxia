@@ -23,7 +23,7 @@ const groups = {
     'auth-rate-limit-fail-closed',
     'auth-vault',
     'email-normalization',
-    'flaxia-auth-login',
+    'auth-redirect',
     'flaxia-auth-session',
     'market-auth-session',
     'password-policy',
