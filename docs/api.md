@@ -9,6 +9,11 @@ All API endpoints are served from `functions/api/[[route]].ts` via Hono framewor
 SRP-6a end-to-end: the browser derives the verifier locally and the server
 never sees a password (see `docs/e2ee.md`).
 
+ログイン画面は `auth.flaxia.app` が配信します。Flaxia の `GET /api/auth/start` が
+PKCE の verifier を Cookie に保存して Auth へ 302 し、`GET /api/auth/callback` が
+`code` を grant に交換して `session` Cookie を発行します。詳細は
+[auth-redirect.md](auth-redirect.md) を参照してください。
+
 ### Register
 `POST /api/auth/register`
 - Body: `{ username, display_name, srp: { salt, verifier, group, kdf } }`

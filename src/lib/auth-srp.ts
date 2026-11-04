@@ -2,16 +2,7 @@
 // browser in plaintext: registration computes the verifier locally, and login
 // proves knowledge of the password via the SRP handshake.
 
-import {
-  clientStep1,
-  clientStep2,
-  computeVerifier,
-  DEFAULT_SRP_KDF,
-  generateSalt,
-  isSupportedSrpKdf,
-  type SrpKdfId,
-  verifyServerProof,
-} from './srp.ts';
+import { clientStep1, clientStep2, DEFAULT_SRP_KDF, isSupportedSrpKdf, type SrpKdfId } from './srp.ts';
 
 function b64(b: Uint8Array): string {
   let binary = '';
@@ -52,125 +43,6 @@ export function getStoredSrpSalt(): Uint8Array | null {
 // v1. New verifiers are always written with the current default (v2).
 function kdfFrom(value: unknown): SrpKdfId {
   return isSupportedSrpKdf(value) ? value : DEFAULT_SRP_KDF;
-}
-
-// Register a new account via SRP.
-export async function registerWithSrp(
-  username: string,
-  displayName: string,
-  password: string,
-): Promise<{ ok: boolean; error?: string }> {
-  const salt = generateSalt();
-  const verifier = await computeVerifier(password, salt, DEFAULT_SRP_KDF);
-  const res = await fetch('/api/auth/register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({
-      username,
-      display_name: displayName,
-      srp_salt: b64(salt),
-      srp_verifier: b64(verifier),
-      srp_group: '2048',
-      srp_kdf: DEFAULT_SRP_KDF,
-    }),
-  });
-  if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
-    return { ok: false, error: data.error };
-  }
-  storeSrpSalt(salt);
-  return { ok: true };
-}
-
-// Log in via SRP. Legacy (non-SRP) accounts transparently fall back to the
-// plaintext endpoint, then upgrade to SRP on first login.
-export async function loginWithSrp(
-  username: string,
-  password: string,
-): Promise<boolean | { frozen: true; username: string }> {
-  const start = await fetch('/api/auth/login/start', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({ username }),
-  });
-  if (!start.ok) return false;
-  const s = (await start.json()) as {
-    srp: boolean;
-    challenge_id?: string;
-    salt?: string;
-    B?: string;
-    srp_kdf?: string;
-  };
-  if (!s.srp) {
-    // Deprecated plaintext fallback for pre-SRP accounts; immediately followed
-    // by an upgrade so this account can never take this path again.
-    const legacy = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ username, password }),
-    });
-    if (!legacy.ok) {
-      const data = (await legacy.json().catch(() => ({}))) as { error?: string; username?: string };
-      if (legacy.status === 403 && data.error === 'account_frozen' && data.username) {
-        return { frozen: true, username: data.username };
-      }
-      return false;
-    }
-    return await upgradeSrp(password);
-  }
-
-  const salt = unb64(s.salt!);
-  const B = unb64(s.B!);
-  const { A, a } = await clientStep1(password, salt);
-  const finish = await clientStep2(password, salt, a, B, kdfFrom(s.srp_kdf));
-  const verify = await fetch('/api/auth/login/verify', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({ username, challenge_id: s.challenge_id, A: b64(A), M1: b64(finish.M1) }),
-  });
-  const data = (await verify.json().catch(() => ({}))) as { M2?: string; error?: string; username?: string };
-  if (!verify.ok && !(verify.status === 403 && data.error === 'account_frozen' && data.username)) return false;
-  const ok = data.M2 ? await verifyServerProof(finish.A, finish.M1, finish.K, unb64(data.M2)) : false;
-  if (!ok) return false;
-
-  if (verify.status === 403 && data.username) return { frozen: true, username: data.username };
-
-  storeSrpSalt(salt);
-  return true;
-}
-
-// Upgrade a legacy account to SRP, or migrate a v1 verifier to v2. Both only
-// happen while the browser still holds the plaintext password, which is the
-// only moment x can be re-derived.
-async function upgradeSrp(password: string, includeProof = false): Promise<boolean> {
-  let current_srp: SrpProof | undefined;
-  if (includeProof) {
-    const proof = await createSrpProof(password);
-    if (!proof) return false;
-    current_srp = proof;
-  }
-  const salt = generateSalt();
-  const verifier = await computeVerifier(password, salt, DEFAULT_SRP_KDF);
-  const response = await fetch('/api/auth/upgrade-srp', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',
-    body: JSON.stringify({
-      srp_salt: b64(salt),
-      srp_verifier: b64(verifier),
-      srp_group: '2048',
-      srp_kdf: DEFAULT_SRP_KDF,
-      ...(current_srp ? { current_srp } : {}),
-      ...(!includeProof ? { legacy_password: password } : {}),
-    }),
-  });
-  if (!response.ok) return false;
-  storeSrpSalt(salt);
-  return true;
 }
 
 export interface SrpProof {

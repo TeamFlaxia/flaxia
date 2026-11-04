@@ -34,9 +34,19 @@ declare module '@capacitor/app' {
     isActive: boolean;
   }
 
+  export interface AppLaunchUrl {
+    url: string;
+  }
+
+  export interface URLOpenListenerEvent {
+    url: string;
+  }
+
   export const App: {
     addListener(event: 'appStateChange', handler: (state: AppStateChange) => void): Promise<void>;
     addListener(event: 'backButton', handler: (event: { canGoBack: boolean }) => void): Promise<void>;
+    addListener(event: 'appUrlOpen', handler: (event: URLOpenListenerEvent) => void): Promise<void>;
+    getLaunchUrl(): Promise<AppLaunchUrl | undefined>;
     exitApp(): Promise<void>;
   };
 }

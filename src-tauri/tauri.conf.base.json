@@ -15,7 +15,9 @@
     }
   },
   "plugins": {
-    "http": { "scopeRedirects": true }
+    "http": { "scopeRedirects": true },
+    "deep-link": { "desktop": { "schemes": ["flaxia"] } },
+    "opener": {}
   },
   "bundle": {
     "active": true,
