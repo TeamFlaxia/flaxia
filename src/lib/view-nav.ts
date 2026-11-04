@@ -11,6 +11,8 @@ export function viewToBottomNavId(view: string): string {
       return 'explore';
     case 'arcade':
       return 'arcade';
+    case 'studio':
+      return '';
     case 'profile':
     case 'settings':
     case 'bookmarks':

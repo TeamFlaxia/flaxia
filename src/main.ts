@@ -26,6 +26,7 @@ import type { BottomNavDeps } from './lib/bottom-nav-setup.js';
 import { ensureBottomNav, getBottomNav } from './lib/bottom-nav-setup.js';
 import { initContentProtection } from './lib/content-protection.js';
 import { canRunFlaxiaNode, initCrowdNode, notifyCrowdConsentChanged } from './lib/crowd-node.js';
+import { consumeStudioHandoff } from './lib/editor/studio-handoff.js';
 import { initI18n, t } from './lib/i18n.js';
 import { lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from './lib/lazy-nav.js';
 import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
@@ -63,6 +64,9 @@ interface PageComponent {
 
 // Initialize performance monitoring
 initPerformanceMonitoring();
+
+// Register Studio's local project re-wrap before the user can rotate the vault.
+void import('./lib/studio-vault-bridge.js');
 
 // Capture Capacitor's patched fetch; local assets stay in the bundle.
 const nativeClient = isNativeApp();
@@ -137,6 +141,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'admin'
       | 'settings'
       | 'arcade'
+      | 'studio'
       | 'billing-success'
       | 'billing-canceled'
       | 'download' = 'timeline';
@@ -155,6 +160,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let docsPage: PageComponent | null = null;
     let notificationsPage: NotificationsPage | null = null;
     let settingsPage: ReturnType<typeof import('./components/SettingsPage.js').createSettingsPage> | null = null;
+    let studioPage: PageComponent | null = null;
     let arcadePage: ArcadePageHandle | null = null;
     let searchPage: PageComponent | null = null;
     let bookmarksPage: BookmarksPage | null = null;
@@ -476,6 +482,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           settingsPage.destroy();
           settingsPage = null;
         }
+        if (studioPage) {
+          studioPage.destroy();
+          studioPage = null;
+        }
         if (bookmarksPage) {
           bookmarksPage.destroy();
           bookmarksPage = null;
@@ -549,6 +559,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (settingsPage) {
           settingsPage.destroy();
           settingsPage = null;
+        }
+        if (studioPage) {
+          studioPage.destroy();
+          studioPage = null;
         }
         if (bookmarksPage) {
           bookmarksPage.destroy();
@@ -928,6 +942,39 @@ document.addEventListener('DOMContentLoaded', async () => {
           mainContainer.appendChild(leftNav.getElement());
           mainContainer.appendChild(markMainContent(searchPage.getElement()));
           mainContainer.appendChild(rightPanel.getElement());
+
+          app.appendChild(mainContainer);
+          hidePageLoader();
+
+          setupMobileLeftNav(leftNav.getElement());
+
+          return;
+        }
+
+        // Handle Studio page (full-width local-first workspace)
+        if (view === 'studio') {
+          currentView = 'studio';
+          currentPostId = null;
+          _currentUsername = null;
+          currentTag = null;
+
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container studio-layout';
+
+          const leftNav = await lazyCreateLeftNav({
+            activeItem: 'studio',
+            unreadCount: unreadNotificationCount,
+            currentUser: currentUser || undefined,
+            ...leftNavHandlers(),
+          });
+
+          leftNavInstances.add(leftNav);
+
+          const { createStudioPage } = await import('./components/StudioPage.js');
+          studioPage = createStudioPage();
+
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(markMainContent(studioPage.getElement()));
 
           app.appendChild(mainContainer);
           hidePageLoader();
@@ -1325,10 +1372,23 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           const sandboxOrigin = import.meta.env.VITE_SANDBOX_ORIGIN || 'https://sandbox.flaxia.app';
 
+          const handoffToken = new URLSearchParams(window.location.search).get('studio_handoff');
+          let composerFiles: File[] | undefined;
+          if (handoffToken) {
+            try {
+              composerFiles = consumeStudioHandoff(handoffToken);
+            } catch (error) {
+              console.warn('Could not restore Studio post assets:', error);
+            }
+            window.history.replaceState({}, '', '/home');
+          }
+
           if (cachedContentComponent?.view === 'timeline') {
             timeline = cachedContentComponent.component as Timeline;
             const scrollY = cachedContentComponent.scrollY;
             cachedContentComponent = null;
+
+            if (composerFiles?.length) await timeline.addComposerFiles(composerFiles);
 
             requestAnimationFrame(() => {
               window.scrollTo(0, scrollY);
@@ -1339,6 +1399,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             timeline = createTimeline({
               sandboxOrigin,
               currentUser,
+              composerFiles,
             });
 
             // Listen for navigation events from timeline

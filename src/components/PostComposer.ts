@@ -11,6 +11,7 @@ export interface PostComposerProps {
   } | null;
   onDraftSaved?: () => void;
   quotedPost?: QuotedPost | null;
+  initialFiles?: File[];
 }
 
 import { attachPlusBadge } from '../lib/avatar.js';
@@ -145,6 +146,7 @@ export class PostComposer {
     this.setupEventListeners();
     this.unsubscribeVault = subscribeVault(() => this.handleVaultSessionChange());
     this.draftStorageReady = this.initializeDraftStorage();
+    if (props.initialFiles?.length) void this.handleFiles(props.initialFiles);
   }
 
   private createElement(): HTMLElement {
@@ -2377,6 +2379,10 @@ export class PostComposer {
     this.pollActive = false;
     const section = this.element.querySelector('.composer-poll-section') as HTMLElement;
     if (section) section.style.display = 'none';
+  }
+
+  public addFiles(files: File[]): Promise<void> {
+    return this.handleFiles(files);
   }
 
   public getSavedDrafts(): Array<{ id: string; text: string; savedAt: number }> {

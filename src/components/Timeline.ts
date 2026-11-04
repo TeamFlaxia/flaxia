@@ -98,6 +98,7 @@ export class Timeline {
       this.composer = createPostComposer({
         onPostCreated: (post) => this.handleNewPost(post as unknown as Post),
         currentUser: this.props.currentUser,
+        initialFiles: this.props.composerFiles,
       });
       container.appendChild(this.composer.getElement());
     } else {
@@ -862,6 +863,11 @@ export class Timeline {
 
   public getElement(): HTMLElement {
     return this.element;
+  }
+
+  public addComposerFiles(files: File[]): Promise<void> {
+    if (!this.props.currentUser || files.length === 0) return Promise.resolve();
+    return this.composer.addFiles(files);
   }
 
   private setupComposerObserver(): void {

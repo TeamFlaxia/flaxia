@@ -68,6 +68,7 @@ export type ParentMessage =
   | { type: 'MULTIPLAYER_PEER_DATA'; data: unknown };
 
 export type SandboxMessage =
+  | { type: 'STUDIO_CONSOLE_CONNECT' }
   | { type: 'FULLSCREEN_GRANTED' }
   | { type: 'FULLSCREEN_DENIED' }
   | { type: 'FRESH_GRANTED' }
@@ -87,6 +88,10 @@ export type SandboxMessage =
   | { type: 'MULTIPLAYER_CHAT'; message: string }
   | { type: 'MULTIPLAYER_REQUEST_STATE' }
   | { type: 'MULTIPLAYER_SEND_PEER_DATA'; data: unknown };
+
+export const STUDIO_CONSOLE_CONNECT_MESSAGE: Extract<SandboxMessage, { type: 'STUDIO_CONSOLE_CONNECT' }> = {
+  type: 'STUDIO_CONSOLE_CONNECT',
+};
 
 function isRecord(msg: unknown): msg is Record<string, unknown> {
   return typeof msg === 'object' && msg !== null;
@@ -183,6 +188,8 @@ export function isSandboxMessage(msg: unknown): msg is SandboxMessage {
   if (!isRecord(msg)) return false;
 
   switch (msg.type) {
+    case 'STUDIO_CONSOLE_CONNECT':
+      return true;
     case 'FULLSCREEN_GRANTED':
     case 'FULLSCREEN_DENIED':
     case 'FRESH_GRANTED':
