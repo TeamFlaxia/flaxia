@@ -17,7 +17,8 @@ const CC_WARC_PATH_PATTERN =
   /^crawl-data\/CC-MAIN-\d{4}-\d{2}\/segments\/[A-Za-z0-9._-]+\/warc\/[A-Za-z0-9._-]+\.warc\.gz$/;
 export const MAX_CC_RECORD_BYTES = 2 * 1024 * 1024;
 const MAX_TICKET_CHARS = 4096;
-const CC_RANGE_TICKET_TTL_MS = 10 * 60 * 1000;
+const CC_RANGE_TICKET_TTL_MS = 30 * 60 * 1000;
+const CC_RANGE_FUTURE_SKEW_MS = 60 * 1000;
 const CC_RANGE_SIGNING_PREFIX = 'flaxia-cc-range-v1';
 
 export interface CcRangeInput {
@@ -118,7 +119,8 @@ export async function verifyCcRangeTicket(
     (value.length as number) < 1 ||
     (value.length as number) > MAX_CC_RECORD_BYTES ||
     !Number.isSafeInteger(value.exp) ||
-    (value.exp as number) <= now
+    (value.exp as number) <= now ||
+    (value.exp as number) > now + CC_RANGE_TICKET_TTL_MS + CC_RANGE_FUTURE_SKEW_MS
   ) {
     return null;
   }
@@ -157,7 +159,8 @@ export async function handleCcRangeRequest(request: Request, env: CcRangeEnv): P
   });
   if (!allowed) return new Response('Too Many Requests', { status: 429, headers: CORS_HEADERS });
 
-  const range = `bytes=${claims.offset}-${claims.offset + claims.length - 1}`;
+  const end = claims.offset + claims.length - 1;
+  const range = `bytes=${claims.offset}-${end}`;
   let upstream: Response;
   try {
     upstream = await fetch(`https://${CC_DATA_HOST}/${claims.warcFilename}`, {
@@ -178,10 +181,18 @@ export async function handleCcRangeRequest(request: Request, env: CcRangeEnv): P
     return new Response('Upstream error', { status: 502, headers: CORS_HEADERS });
   }
   const contentRange = upstream.headers.get('content-range');
+  let instanceLength: number | null = null;
   if (contentRange) {
-    const match = /^bytes\s+(\d+)-(\d+)\//i.exec(contentRange.trim());
-    if (!match || Number(match[1]) !== claims.offset) {
+    const match = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)/i.exec(contentRange.trim());
+    if (!match || Number(match[1]) !== claims.offset || Number(match[2]) !== end) {
       return new Response('Upstream range mismatch', { status: 502, headers: CORS_HEADERS });
+    }
+    if (match[3] !== '*') {
+      const total = Number(match[3]);
+      if (!Number.isSafeInteger(total) || total < claims.offset + claims.length) {
+        return new Response('Upstream range mismatch', { status: 502, headers: CORS_HEADERS });
+      }
+      instanceLength = total;
     }
   } else if (upstream.status !== 206) {
     return new Response('Upstream ignored the range', { status: 502, headers: CORS_HEADERS });
@@ -198,7 +209,7 @@ export async function handleCcRangeRequest(request: Request, env: CcRangeEnv): P
       ...CORS_HEADERS,
       'Content-Type': 'application/octet-stream',
       'Content-Length': String(bytes.byteLength),
-      'Content-Range': `bytes ${claims.offset}-${claims.offset + claims.length - 1}/${claims.offset + claims.length}`,
+      'Content-Range': `bytes ${claims.offset}-${end}/${instanceLength ?? '*'}`,
       'Cache-Control': 'private, max-age=60',
       'X-Content-Type-Options': 'nosniff',
     },

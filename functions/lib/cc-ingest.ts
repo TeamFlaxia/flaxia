@@ -1,6 +1,7 @@
 import { createCcRangeUrl, isValidWarcPath, MAX_CC_RECORD_BYTES } from './cc-range.ts';
 import type { CrowdConfig, CrowdEnv } from './crowd.ts';
 import { crowdConfig, getCrowdClient, signedCallbackUrl } from './crowd.ts';
+import { sha256Hex } from './sha256.ts';
 
 /**
  * Scheduled Common Crawl ingestion.
@@ -17,6 +18,11 @@ const EMBED_TASKS_PER_RUN = 4;
 const EMBED_DOCS_PER_TASK = 16;
 const EMBED_DIMENSIONS = 512;
 const MAX_CC_ATTEMPTS = 5;
+// Rows stuck in 'submitted' lose their task: the callback never arrives (the
+// node dies, the orchestrator loses the task, or the signed fetch URL expires
+// before the node picks the task up). Requeue them after this window so the
+// record gets another chance; once attempts are exhausted the row is failed.
+const STALE_SUBMISSION_MS = 2 * 60 * 60 * 1000;
 // Keep the literal out of an `expirationTtl:` expression: the security guard
 // treats an immediately following integer as the TTL and rejects values < 60.
 const LATEST_CRAWL_TTL_SECONDS = 24 * 60 * 60;
@@ -64,14 +70,34 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
 function submitter(config: CrowdConfig): CrowdSubmitter | null {
   const client = getCrowdClient(config);
   return client ? (client as unknown as CrowdSubmitter) : null;
+}
+
+/**
+ * Sweep rows that were submitted but never settled. Returns them to `pending`
+ * (or fails them once `MAX_CC_ATTEMPTS` is reached) so a lost callback does
+ * not strand the record forever. Runs before any submission on every pass.
+ */
+async function reapStaleSubmissions(db: D1Database): Promise<number> {
+  const cutoff = new Date(Date.now() - STALE_SUBMISSION_MS).toISOString();
+  let reaped = 0;
+  for (const table of ['cc_queue', 'embed_queue'] as const) {
+    const result = await db
+      .prepare(
+        `UPDATE ${table}
+         SET status = CASE WHEN attempts + 1 >= ? THEN 'failed' ELSE 'pending' END,
+             attempts = attempts + 1,
+             error = 'submission_timeout',
+             updated_at = ?
+         WHERE status = 'submitted' AND updated_at < ?`,
+      )
+      .bind(MAX_CC_ATTEMPTS, nowIso(), cutoff)
+      .run();
+    reaped += result.meta.changes ?? 0;
+  }
+  return reaped;
 }
 
 async function latestCrawl(env: CcIngestEnv): Promise<string | null> {
@@ -261,7 +287,10 @@ async function submitExtractTasks(env: CcIngestEnv, config: CrowdConfig, client:
 }
 
 async function submitEmbeddingTasks(env: CcIngestEnv, config: CrowdConfig, client: CrowdSubmitter): Promise<number> {
-  if (env.WEB_EMBEDDINGS_ENABLED !== '1' || !env.BUCKET) return 0;
+  // Without a dedicated vector index every submitted task is guaranteed to
+  // come back as a no-op failure; skip submission until the operator creates
+  // VECTORIZE_WEB (see docs/web-index.md).
+  if (env.WEB_EMBEDDINGS_ENABLED !== '1' || !env.BUCKET || !env.VECTORIZE_WEB) return 0;
   const pending = await env.DB.prepare(
     `SELECT e.doc_id, d.title, d.r2_key
      FROM embed_queue e
@@ -358,6 +387,13 @@ async function submitEmbeddingTasks(env: CcIngestEnv, config: CrowdConfig, clien
 
 /** Hourly entry point. Submits a bounded amount of work and returns silently. */
 export async function drainCcIngestion(env: CcIngestEnv): Promise<void> {
+  try {
+    const reaped = await reapStaleSubmissions(env.DB);
+    if (reaped > 0) console.log(`Requeued ${reaped} stale submission(s)`);
+  } catch (error) {
+    console.error('Stale submission sweep failed:', error);
+  }
+
   const config = crowdConfig(env);
   if (!config.configured) return;
   const client = submitter(config);

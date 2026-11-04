@@ -32,7 +32,7 @@ describe('cc-range tickets', () => {
     const { ticket } = await ticketFor();
     const tampered = `${ticket.slice(0, -1)}${ticket.endsWith('0') ? '1' : '0'}`;
     assert.equal(await verifyCcRangeTicket(SECRET, tampered), null);
-    assert.equal(await verifyCcRangeTicket(SECRET, ticket, Date.now() + 11 * 60 * 1000), null);
+    assert.equal(await verifyCcRangeTicket(SECRET, ticket, Date.now() + 31 * 60 * 1000), null);
   });
 
   it('rejects invalid paths, offsets and lengths', async () => {
@@ -68,7 +68,7 @@ describe('cc-range tickets', () => {
       );
       assert.equal(response.status, 206);
       assert.equal(response.headers.get('access-control-allow-origin'), '*');
-      assert.equal(response.headers.get('content-range'), 'bytes 10-13/14');
+      assert.equal(response.headers.get('content-range'), 'bytes 10-13/100');
       assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
     } finally {
       globalThis.fetch = originalFetch;
@@ -78,5 +78,40 @@ describe('cc-range tickets', () => {
   it('rejects unsigned requests', async () => {
     const response = await handleCcRangeRequest(new Request('https://flaxia.app/api/crowd/cc-range'), env);
     assert.equal(response.status, 401);
+  });
+
+  it('rejects a ticket whose expiry is implausibly far in the future', async () => {
+    const claims = { v: 1, warcFilename: WARC_PATH, offset: 0, length: 1, exp: Date.now() + 60 * 60 * 1000 };
+    const body = Buffer.from(JSON.stringify(claims), 'utf8').toString('base64url');
+    const { createHmac } = await import('node:crypto');
+    const sig = createHmac('sha256', SECRET).update(`flaxia-cc-range-v1.${body}`).digest('hex');
+    assert.equal(await verifyCcRangeTicket(SECRET, `${body}.${sig}`), null);
+  });
+
+  it('passes through an upstream total of * and rejects inconsistent upstream ranges', async () => {
+    const run = async (upstreamHeaders: Record<string, string>) => {
+      const { ticket } = await ticketFor({ length: 4 });
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async () =>
+        new Response(new Uint8Array([1, 2, 3, 4]), { status: 206, headers: upstreamHeaders })) as typeof fetch;
+      try {
+        return await handleCcRangeRequest(
+          new Request(`https://flaxia.app/api/crowd/cc-range?ticket=${encodeURIComponent(ticket)}`),
+          env,
+        );
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    };
+
+    const unknown = await run({ 'content-range': 'bytes 10-13/*' });
+    assert.equal(unknown.status, 206);
+    assert.equal(unknown.headers.get('content-range'), 'bytes 10-13/*');
+
+    const tooSmall = await run({ 'content-range': 'bytes 10-13/10' });
+    assert.equal(tooSmall.status, 502);
+
+    const wrongSpan = await run({ 'content-range': 'bytes 0-3/100' });
+    assert.equal(wrongSpan.status, 502);
   });
 });

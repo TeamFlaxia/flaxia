@@ -282,14 +282,15 @@ search.get('/search/v2', async (c) => {
     if (cached) return c.json({ ...cached, took_ms: Date.now() - startedAt });
 
     const limits = tabLimits(tab, limit);
-    const indexedWeb =
+    const indexedWebPromise =
       c.env.WEB_INDEX_ENABLED === '1' && (tab === 'web' || tab === 'all') && limits.web > 0
-        ? await searchWebIndex(db, parsed, limits.web).catch((error) => {
+        ? searchWebIndex(db, parsed, limits.web).catch((error) => {
             console.error('Web index search failed:', error);
             return [] as WebSearchResult[];
           })
-        : [];
-    const [posts, users, games] = await Promise.all([
+        : Promise.resolve([] as WebSearchResult[]);
+    const [indexedWeb, posts, users, games] = await Promise.all([
+      indexedWebPromise,
       searchPosts(db, parsed, { limit: limits.posts, gamesOnly: false, currentUserId }),
       searchUsers(db, parsed, { limit: limits.users, currentUserId }),
       searchPosts(db, parsed, { limit: limits.games, gamesOnly: true, currentUserId }),

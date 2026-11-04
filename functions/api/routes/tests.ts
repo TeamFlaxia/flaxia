@@ -135,6 +135,21 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
       await db.batch(statements);
     }
   }
+  // Drop the short-lived search caches as well: the KV entries survive database
+  // resets otherwise and leak stale results into the next test.
+  const cache = c.env.CACHE;
+  if (cache) {
+    try {
+      for (const prefix of ['searchv2:', 'searchweb:']) {
+        const keys = await cache.list({ prefix });
+        for (const key of keys.keys) {
+          await cache.delete(key.name);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to purge search caches during test reset:', error);
+    }
+  }
   return c.json({ ok: true });
 });
 

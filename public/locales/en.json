@@ -1039,7 +1039,7 @@
   "settings.crowd_unset": "Not set (turn on to contribute)",
   "settings.crowd_saved": "✓ Saved",
   "crowd.consent_title": "Help power Flaxia Crowd",
-  "crowd.consent_body": "By joining Crowd, your browser stays connected and runs tasks assigned by third parties, such as NSFW image screening, text embedding, and fetching public web pages from the Common Crawl archive. Fetching a page tells that site your device's IP address; extracted text is sent to the requester and is not stored on your device. Processing may use CPU, GPU, network data, and battery.",
+  "crowd.consent_body": "By joining Crowd, your browser stays connected and runs tasks assigned by third parties, such as NSFW image screening, text embedding, and fetching public web pages from the Common Crawl archive. Page fetches go through Flaxia's servers, so the fetched site or archive never learns your device's IP address. Extracted results are sent to Flaxia and stored in Flaxia's search index; they are not stored on your device. Processing may use CPU, GPU, network data, and battery.",
   "crowd.consent_note": "Consent is stored on this device only and expires after 180 days. You can turn it off anytime in Settings.",
   "crowd.consent_privacy_link": "Privacy Policy",
   "crowd.consent_accept": "Agree and help",

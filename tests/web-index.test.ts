@@ -57,6 +57,23 @@ describe('Common Crawl web index', () => {
     assert.ok(results.every((result) => new URL(result.url).hostname === 'example.com'));
   });
 
+  it('treats multiple site: filters as a union', async () => {
+    await seedWebDoc({
+      url: 'https://example.com/articles/flamingos',
+      title: 'Flamingo migration notes',
+      excerpt: 'A long note about flamingo migration.',
+    });
+    await seedWebDoc({
+      url: 'https://other.test/articles/flamingos',
+      title: 'Flamingo migration elsewhere',
+      excerpt: 'Another note about flamingo migration.',
+    });
+
+    const results = await searchWeb('flamingo site:example.com site:other.test');
+    const urls = results.map((result) => new URL(result.url).hostname).sort();
+    assert.deepEqual(urls, ['example.com', 'other.test']);
+  });
+
   it('does not return documents that do not match the query', async () => {
     await seedWebDoc({
       url: 'https://example.com/articles/flamingos',

@@ -3,6 +3,7 @@ import { extractCallbackOutput } from '@flaxia/sdk';
 import type { CrowdEnv } from './crowd';
 import { buildFtsMatch, buildLikePattern, type ParsedSearchQuery, searchTextTerms } from './search-query.ts';
 import type { WebSearchResult } from './search-web.ts';
+import { sha256Hex } from './sha256.ts';
 
 /** Minimal shape of a `cc-extract` callback result (the SDK version is decoupled). */
 interface CcExtractDocument {
@@ -66,9 +67,14 @@ function validHttpUrl(value: string): URL | null {
   }
 }
 
-async function sha256Hex(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+const MAX_EXTRACT_DOCUMENTS = 16;
+const EMBED_DIMS_FLOOR = 128;
+
+function isIndexableDocument(document: CcExtractDocument): boolean {
+  const status = Number(document.httpStatus);
+  if (!Number.isFinite(status) || status < 200 || status >= 300) return false;
+  const contentType = (typeof document.contentType === 'string' ? document.contentType : '').toLowerCase();
+  return contentType.includes('text/html') || contentType.includes('application/xhtml+xml');
 }
 
 function sitePattern(site: string): string | null {
@@ -96,7 +102,7 @@ async function markCcTaskFailed(db: D1Database, taskId: string, message: string,
  */
 export async function handleCcExtractResult(event: CrowdWebhookEvent, db: D1Database, env: CrowdEnv): Promise<void> {
   const output = extractCallbackOutput(event) as CcExtractOutput | undefined;
-  const documents = Array.isArray(output?.documents) ? output.documents : [];
+  const documents = Array.isArray(output?.documents) ? output.documents.slice(0, MAX_EXTRACT_DOCUMENTS) : [];
   if (documents.length === 0) {
     await markCcTaskFailed(db, event.taskId, 'empty_result', true);
     return;
@@ -106,7 +112,7 @@ export async function handleCcExtractResult(event: CrowdWebhookEvent, db: D1Data
     const row = (await db
       .prepare(
         `SELECT id, crawl FROM cc_queue
-         WHERE task_id = ? AND warc_filename = ? AND offset = ? AND length = ?
+         WHERE task_id = ? AND warc_filename = ? AND offset = ? AND length = ? AND status = 'submitted'
          LIMIT 1`,
       )
       .bind(event.taskId, document.warcFilename, document.offset, document.length)
@@ -115,8 +121,20 @@ export async function handleCcExtractResult(event: CrowdWebhookEvent, db: D1Data
 
     if (document.error) {
       await db
-        .prepare(`UPDATE cc_queue SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`)
+        .prepare(
+          `UPDATE cc_queue SET status = 'failed', error = ?, updated_at = ? WHERE id = ? AND status = 'submitted'`,
+        )
         .bind(document.error.slice(0, 300), nowIso(), row.id)
+        .run();
+      continue;
+    }
+
+    if (!isIndexableDocument(document)) {
+      await db
+        .prepare(
+          `UPDATE cc_queue SET status = 'failed', error = 'not_indexable', updated_at = ? WHERE id = ? AND status = 'submitted'`,
+        )
+        .bind(nowIso(), row.id)
         .run();
       continue;
     }
@@ -124,7 +142,9 @@ export async function handleCcExtractResult(event: CrowdWebhookEvent, db: D1Data
     const canonical = validHttpUrl(document.canonicalUrl || document.finalUrl || document.url);
     if (!canonical) {
       await db
-        .prepare(`UPDATE cc_queue SET status = 'failed', error = 'invalid_url', updated_at = ? WHERE id = ?`)
+        .prepare(
+          `UPDATE cc_queue SET status = 'failed', error = 'invalid_url', updated_at = ? WHERE id = ? AND status = 'submitted'`,
+        )
         .bind(nowIso(), row.id)
         .run();
       continue;
@@ -196,7 +216,9 @@ export async function handleCcExtractResult(event: CrowdWebhookEvent, db: D1Data
     }
 
     await db
-      .prepare(`UPDATE cc_queue SET status = 'done', error = NULL, updated_at = ? WHERE id = ?`)
+      .prepare(
+        `UPDATE cc_queue SET status = 'done', error = NULL, updated_at = ? WHERE id = ? AND status = 'submitted'`,
+      )
       .bind(nowIso(), row.id)
       .run();
   }
@@ -210,7 +232,9 @@ export async function handleWebIndexTaskFailure(
 ): Promise<void> {
   const error = (event.error || 'task_failed').slice(0, 300);
   if (callbackType === 'cc-extract') {
-    await markCcTaskFailed(db, event.taskId, error);
+    // Only rows the callback is still accountable for; never overwrite a row
+    // the task already settled as done.
+    await markCcTaskFailed(db, event.taskId, error, true);
   } else if (callbackType === 'embed-gemma') {
     await db
       .prepare(
@@ -229,15 +253,21 @@ export async function handleEmbedGemmaResult(
   db: D1Database,
   env: CrowdEnv,
 ): Promise<void> {
+  const markTaskFailed = async (message: string): Promise<void> => {
+    await db
+      .prepare(
+        `UPDATE embed_queue SET status = 'failed', error = ?, updated_at = ? WHERE task_id = ? AND status = 'submitted'`,
+      )
+      .bind(message.slice(0, 300), nowIso(), event.taskId)
+      .run();
+  };
+
   const docIds = (url.searchParams.get('docs') || '')
     .split(',')
     .map((value) => value.trim())
     .filter((value) => value.length > 0);
   if (docIds.length === 0 || docIds.length > 32) {
-    await db
-      .prepare(`UPDATE embed_queue SET status = 'failed', error = 'invalid_docs', updated_at = ? WHERE task_id = ?`)
-      .bind(nowIso(), event.taskId)
-      .run();
+    await markTaskFailed('invalid_docs');
     return;
   }
 
@@ -246,13 +276,18 @@ export async function handleEmbedGemmaResult(
   const dimensions = vectors[0]?.length ?? 0;
   if (
     vectors.length !== docIds.length ||
-    dimensions < 128 ||
+    dimensions < EMBED_DIMS_FLOOR ||
     !vectors.every((vector) => Array.isArray(vector) && vector.length === dimensions && vector.every(Number.isFinite))
   ) {
-    await db
-      .prepare(`UPDATE embed_queue SET status = 'failed', error = 'invalid_vectors', updated_at = ? WHERE task_id = ?`)
-      .bind(nowIso(), event.taskId)
-      .run();
+    await markTaskFailed('invalid_vectors');
+    return;
+  }
+
+  // The callback URL carries the expected dimensionality; refuse to upsert a
+  // vector set that does not match it rather than 500 into a retry loop.
+  const expectedDims = Number(url.searchParams.get('dims'));
+  if (Number.isFinite(expectedDims) && expectedDims > 0 && expectedDims !== dimensions) {
+    await markTaskFailed('dimensions_mismatch');
     return;
   }
 
@@ -263,32 +298,66 @@ export async function handleEmbedGemmaResult(
     .all<{ id: string; domain: string; lang: string | null }>();
   const byId = new Map((rows.results || []).map((row) => [row.id, row]));
 
-  const vectorIndex = env.VECTORIZE_WEB;
-  if (!vectorIndex) {
+  // Embedding a document we no longer hold is pointless; fail it loudly and
+  // keep the vector index free of orphans.
+  const present: Array<{ id: string; index: number }> = [];
+  const missing: string[] = [];
+  for (let index = 0; index < docIds.length; index++) {
+    const id = docIds[index]!;
+    if (byId.has(id)) present.push({ id, index });
+    else missing.push(id);
+  }
+  if (missing.length > 0) {
+    const missingPlaceholders = missing.map(() => '?').join(',');
     await db
       .prepare(
-        `UPDATE embed_queue SET status = 'failed', error = 'vectorize_web_unavailable', updated_at = ? WHERE task_id = ?`,
+        `UPDATE embed_queue SET status = 'failed', error = 'document_missing', updated_at = ? WHERE doc_id IN (${missingPlaceholders}) AND status = 'submitted'`,
       )
-      .bind(nowIso(), event.taskId)
+      .bind(nowIso(), ...missing)
+      .run();
+  }
+  if (present.length === 0) return;
+
+  const vectorIndex = env.VECTORIZE_WEB;
+  if (!vectorIndex) {
+    const presentPlaceholders = present.map(() => '?').join(',');
+    await db
+      .prepare(
+        `UPDATE embed_queue SET status = 'failed', error = 'vectorize_web_unavailable', updated_at = ? WHERE doc_id IN (${presentPlaceholders}) AND status = 'submitted'`,
+      )
+      .bind(nowIso(), ...present.map((entry) => entry.id))
       .run();
     return;
   }
 
-  await vectorIndex.upsert(
-    docIds.map((id, index) => {
-      const row = byId.get(id);
-      return {
-        id,
-        values: vectors[index]!,
-        metadata: { kind: 'web', domain: row?.domain ?? '', lang: row?.lang ?? '' },
-      };
-    }),
-  );
-
-  for (const id of docIds) {
-    if (!byId.has(id)) continue;
+  try {
+    await vectorIndex.upsert(
+      present.map(({ id, index }) => {
+        const row = byId.get(id)!;
+        return {
+          id,
+          values: vectors[index]!,
+          metadata: { kind: 'web', domain: row.domain, lang: row.lang ?? '' },
+        };
+      }),
+    );
+  } catch (error) {
+    console.error('VECTORIZE_WEB upsert failed:', error);
+    const presentPlaceholders = present.map(() => '?').join(',');
     await db
-      .prepare(`UPDATE embed_queue SET status = 'done', error = NULL, updated_at = ? WHERE doc_id = ?`)
+      .prepare(
+        `UPDATE embed_queue SET status = 'failed', error = 'upsert_failed', updated_at = ? WHERE doc_id IN (${presentPlaceholders}) AND status = 'submitted'`,
+      )
+      .bind(nowIso(), ...present.map((entry) => entry.id))
+      .run();
+    return;
+  }
+
+  for (const { id } of present) {
+    await db
+      .prepare(
+        `UPDATE embed_queue SET status = 'done', error = NULL, updated_at = ? WHERE doc_id = ? AND status = 'submitted'`,
+      )
       .bind(nowIso(), id)
       .run();
   }
@@ -322,11 +391,18 @@ export async function searchWebIndex(
     }
   }
 
+  // Multiple `site:` filters are a union, matching the external web providers.
+  const siteClauses: string[] = [];
   for (const site of parsed.sites) {
     const host = sitePattern(site);
     if (!host) continue;
-    where.push('(d.domain = ? OR d.domain LIKE ?)');
+    siteClauses.push('(d.domain = ? OR d.domain LIKE ?)');
     params.push(host, `%.${host}`);
+  }
+  if (siteClauses.length === 1) {
+    where.push(siteClauses[0]!);
+  } else if (siteClauses.length > 1) {
+    where.push(`(${siteClauses.join(' OR ')})`);
   }
 
   const join = fts ? 'JOIN web_fts ON web_fts.rowid = d.rowid' : '';

@@ -76,6 +76,46 @@ describe('cc-extract webhook', () => {
     assert.ok(data.web?.some((result) => result.url === 'https://example.com/articles/cc-webhook-flamingo'));
   });
 
+  it('does not index a document that is not a 2xx text/html response', async () => {
+    const taskId = 'cc-task-webhook-3';
+    await seedQueue(taskId);
+    const callback = await signedCallbackUrl(config, { baseUrl: BASE_URL, type: 'cc-extract' });
+
+    const response = await fetch(callback, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        taskId,
+        status: 'done',
+        result: {
+          output: {
+            documents: [
+              {
+                url: 'https://example.com/articles/error-page',
+                finalUrl: 'https://example.com/articles/error-page',
+                title: 'Flamingo error page',
+                text: 'An error page mentioning flamingo that must not be indexed.',
+                excerpt: 'flamingo error page',
+                contentType: 'text/html',
+                httpStatus: 500,
+                warcFilename: WARC_PATH,
+                offset: 0,
+                length: 1000,
+                truncated: false,
+              },
+            ],
+          },
+        },
+      }),
+    });
+    assert.equal(response.status, 200);
+
+    const search = await fetch(`${BASE_URL}/api/search/v2?q=flamingo&tab=web&limit=20`);
+    assert.equal(search.status, 200);
+    const data = (await search.json()) as { web?: Array<{ url: string }> };
+    assert.ok(!data.web?.some((result) => result.url === 'https://example.com/articles/error-page'));
+  });
+
   it('keeps an unsigned callback out of the index', async () => {
     const taskId = 'cc-task-webhook-2';
     await seedQueue(taskId);

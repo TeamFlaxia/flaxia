@@ -37,6 +37,23 @@ Scheduled worker (`wrangler.toml.worker`):
 - `WEB_EMBEDDINGS_ENABLED=1` — submit `embed-gemma` batches (requires the Crowd
   release and a `VECTORIZE_WEB` index)
 
+## Reliability
+
+- `cc_queue` and `embed_queue` rows stuck in `submitted` (the callback never
+  arrives — the node dies, the orchestrator loses the task, or the signed
+  fetch URL expires before the node picks the task up) are swept back to
+  `pending` after 2 hours, or failed once `MAX_CC_ATTEMPTS` is reached. The
+  sweep runs on every hourly ingestion pass.
+- `cc-range` fetch URLs live 30 minutes and are minted per task batch; a
+  callback that never arrives is caught by the sweep above, and an explicit
+  failure callback marks the batch's rows `failed`.
+- `cc-extract` results are indexed only when the record is a 2xx `text/html`
+  (or `application/xhtml+xml`) response; anything else fails the queue row.
+- `WEB_EMBEDDINGS_ENABLED=1` has no effect until a `VECTORIZE_WEB` index
+  exists and is bound to the scheduled worker — submissions are skipped
+  otherwise instead of burning volunteer compute on guaranteed failures.
+- Callbacks that redeliver a task already settled as `done` are ignored.
+
 ## Crowd release ordering
 
 The Flaxia node bundle pin intentionally stays at the published version. The
