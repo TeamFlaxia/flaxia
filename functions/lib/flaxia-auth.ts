@@ -176,6 +176,7 @@ export async function provisionAuthAccount(
     srp_verifier: string;
     srp_group: string;
     srp_kdf: string;
+    email: string | null;
   },
 ): Promise<'ok' | 'conflict' | 'unavailable'> {
   try {
@@ -232,9 +233,20 @@ export async function adminAuthAccount(
   }
 }
 
-export async function completeAuthLink(env: AuthEnv, grant: string, userId: string): Promise<boolean> {
+export async function completeAuthLink(
+  env: AuthEnv,
+  grant: string,
+  userId: string,
+  email?: string | null,
+): Promise<boolean> {
   try {
-    return (await postAuth(env, '/api/flaxia/link-complete', { grant, user_id: userId })).ok;
+    return (
+      await postAuth(env, '/api/flaxia/link-complete', {
+        grant,
+        user_id: userId,
+        ...(email ? { email } : {}),
+      })
+    ).ok;
   } catch {
     return false;
   }

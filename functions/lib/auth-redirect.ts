@@ -12,3 +12,15 @@ export function safeReturnPath(raw: string | null): string {
   }
   return raw;
 }
+
+/**
+ * Flaxia stores a reserved `@users.flaxia.invalid` placeholder for accounts
+ * without a real email. Only a real address may be copied to Auth, where it
+ * becomes an additional login identifier.
+ */
+export function realProfileEmail(email: string | null | undefined): string | null {
+  if (!email) return null;
+  const value = email.trim().toLowerCase();
+  if (value.length === 0 || value.length > 254 || value.endsWith('.invalid')) return null;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? value : null;
+}

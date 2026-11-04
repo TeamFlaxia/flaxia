@@ -14,13 +14,18 @@
    HttpOnly・`SameSite=Lax` の `flaxia_oauth` Cookie に保存して
    `https://auth.flaxia.app/login?...` へ 302 する。
 3. Auth のログイン画面で SRP-6a 認証（旧方式・復旧コード・新規登録も同じ画面）
-   を行い、`POST /api/auth/flaxia/authorize` で一度限りの `code` を取得する。
+   を行う。ログインの識別子はユーザー名でもメールアドレスでもよく、`POST
+   /api/auth/flaxia/authorize` で一度限りの `code` を取得する。
 4. Auth は `return_uri`（`https://flaxia.app/api/auth/callback`）へ
    `code` と `state` を付けて戻す。
 5. `GET /api/auth/callback` は Cookie の `state` を照合し、`AUTH_SERVICE`
    binding 経由で `/api/flaxia/exchange` を呼んで grant を得る。プロフィールの
    作成・リンク・旧資格情報の削除は既存の `/flaxia/exchange` と同じ処理を共有する。
 6. `session=<grant>` Cookie を発行し、`return_to`（既定 `/home`）へ 302 する。
+
+Flaxia のプロフィールに実在のメールアドレスがある場合、リンク完了・移行時に Auth へ
+コピーする（`@users.flaxia.invalid` のプレースホルダは除外）。これにより、移行済みの
+アカウントもメールアドレスでログインできる。
 
 ## セッションの有効性
 

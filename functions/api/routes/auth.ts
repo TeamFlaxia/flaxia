@@ -16,7 +16,7 @@ import {
   verifySrpLogin,
   verifySrpPassword,
 } from '../../lib/auth';
-import { safeReturnPath } from '../../lib/auth-redirect';
+import { realProfileEmail, safeReturnPath } from '../../lib/auth-redirect';
 import {
   authIsAuthoritative,
   authRecoveryEnrolled,
@@ -169,7 +169,7 @@ auth.post('/flaxia/provision', requireAuth, async (c) => {
     .bind(user.id)
     .run();
   const account = await c.env.DB.prepare(
-    'SELECT p.user_id AS id, p.username, p.display_name, p.srp_salt, p.srp_verifier, p.srp_group, p.srp_kdf FROM flaxia_auth_provisioning p JOIN users u ON u.id = p.user_id WHERE p.user_id = ? AND u.frozen_at IS NULL',
+    'SELECT p.user_id AS id, p.username, p.display_name, p.srp_salt, p.srp_verifier, p.srp_group, p.srp_kdf, u.email FROM flaxia_auth_provisioning p JOIN users u ON u.id = p.user_id WHERE p.user_id = ? AND u.frozen_at IS NULL',
   )
     .bind(user.id)
     .first<{
@@ -180,6 +180,7 @@ auth.post('/flaxia/provision', requireAuth, async (c) => {
       srp_verifier: string | null;
       srp_group: string | null;
       srp_kdf: string | null;
+      email: string | null;
     }>();
   if (!account?.srp_salt || !account.srp_verifier || !account.srp_group || !account.srp_kdf)
     return c.json({ error: 'SRP migration required' }, 409);
@@ -191,6 +192,7 @@ auth.post('/flaxia/provision', requireAuth, async (c) => {
     srp_verifier: account.srp_verifier,
     srp_group: account.srp_group,
     srp_kdf: account.srp_kdf,
+    email: realProfileEmail(account.email),
   });
   if (result === 'conflict') return c.json({ error: 'Auth account conflict' }, 409);
   if (result !== 'ok') return c.json({ error: 'Auth unavailable' }, 503);
@@ -272,9 +274,9 @@ function clearOAuthCookie(response: Response): void {
 
 async function commitAuthIdentity(env: Bindings, identity: AuthIdentity): Promise<ExchangeOutcome> {
   return withPendingAuthGrant(env, identity.grant, async (commit) => {
-    let user = await env.DB.prepare('SELECT id FROM users WHERE id = ? AND frozen_at IS NULL')
+    let user = await env.DB.prepare('SELECT id, email FROM users WHERE id = ? AND frozen_at IS NULL')
       .bind(identity.user_id)
-      .first<{ id: string }>();
+      .first<{ id: string; email: string | null }>();
     if (
       !user &&
       authIsAuthoritative(env) &&
@@ -300,15 +302,15 @@ async function commitAuthIdentity(env: Bindings, identity: AuthIdentity): Promis
           ).bind(identity.user_id, identityEmail, identity.username, identity.display_name),
           env.DB.prepare('INSERT INTO flaxia_auth_links (user_id) VALUES (?)').bind(identity.user_id),
         ]);
-        user = { id: identity.user_id };
+        user = { id: identity.user_id, email: identityEmail };
       } catch {
         // Concurrent successful creation is safe only when the exact ID is
         // already linked. A conflicting existing profile is never adopted.
         user = await env.DB.prepare(
-          'SELECT u.id FROM users u JOIN flaxia_auth_links l ON l.user_id = u.id WHERE u.id = ? AND u.frozen_at IS NULL',
+          'SELECT u.id, u.email FROM users u JOIN flaxia_auth_links l ON l.user_id = u.id WHERE u.id = ? AND u.frozen_at IS NULL',
         )
           .bind(identity.user_id)
-          .first<{ id: string }>();
+          .first<{ id: string; email: string | null }>();
         if (!user) return { error: 'Profile conflict', status: 409 };
       }
     }
@@ -329,7 +331,8 @@ async function commitAuthIdentity(env: Bindings, identity: AuthIdentity): Promis
           return { error: 'Account migration pending', status: 503 };
         if (!(await purgeLinkedLocalCredentials(env.DB, user.id)))
           return { error: 'Account migration pending', status: 409 };
-        if (!(await completeAuthLink(env, identity.grant, user.id))) return { error: 'Auth unavailable', status: 503 };
+        if (!(await completeAuthLink(env, identity.grant, user.id, realProfileEmail(user.email))))
+          return { error: 'Auth unavailable', status: 503 };
         commit();
         return { grant: identity.grant };
       }
@@ -376,7 +379,8 @@ async function commitAuthIdentity(env: Bindings, identity: AuthIdentity): Promis
       if (!linked) return { error: 'Credentials changed', status: 409 };
       if (!(await purgeLinkedLocalCredentials(env.DB, user.id)))
         return { error: 'Account migration pending', status: 409 };
-      if (!(await completeAuthLink(env, identity.grant, user.id))) return { error: 'Auth unavailable', status: 503 };
+      if (!(await completeAuthLink(env, identity.grant, user.id, realProfileEmail(user.email))))
+        return { error: 'Auth unavailable', status: 503 };
       commit();
       return { grant: identity.grant };
     }
