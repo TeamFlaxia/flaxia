@@ -205,21 +205,29 @@ describe('security guards', () => {
     // no session, no CSRF. An unsigned callback could post an `infected`
     // verdict for any public media key and blocklist it permanently.
     const crowd = readFileSync(join(ROOT, 'functions/lib/crowd.ts'), 'utf8');
-    assert.ok(crowd.includes('verifyCallbackSignature'), 'the webhook must verify the callback signature');
+    assert.ok(crowd.includes('verifyCrowdWebhook'), 'header-signed callbacks must use the shared SDK verifier');
+    assert.ok(
+      !crowd.includes('verifyCallbackSignature'),
+      'the body-independent ?sig= callback contract must stay retired',
+    );
+    assert.ok(!crowd.includes("searchParams.get('sig')"), 'callback auth must never read ?sig');
     assert.match(
       crowd,
-      /if \(!\(await verifyCallbackSignature\(url, crowdConfig\(env\)\)\)\)/,
-      'the signature must be checked before the payload is parsed',
+      /verifyCrowdWebhook\(\{[\s\S]*?replayGuard: createCrowdWebhookReplayGuard\(db\)/,
+      'header callbacks must verify the HMAC and a replay guard before dispatch',
     );
+    const verifyHeader = crowd.indexOf('verifyCrowdWebhook({');
+    const dispatch = crowd.indexOf("if (event.status === 'done')");
+    assert.ok(verifyHeader > 0 && dispatch > verifyHeader, 'the signature must run before any verdict is applied');
 
-    // Every URL handed to the orchestrator must go through the signer.
+    // Callback URLs must not carry a body-independent query signature.
     for (const file of ['functions/lib/crowd.ts', 'functions/lib/scan/clamav.ts']) {
       const src = readFileSync(join(ROOT, file), 'utf8');
       assert.ok(
-        !/callbackUrl:\s*buildCallbackUrl\(/.test(src),
-        `${file} hands the orchestrator an unsigned callback URL`,
+        !src.includes('signedCallbackUrl'),
+        `${file} must not sign callback URLs with the retired ?sig= contract`,
       );
-      assert.ok(src.includes('signedCallbackUrl'), `${file} must sign its callback URLs`);
+      assert.ok(src.includes('buildCallbackUrl'), `${file} must build callback URLs through the SDK`);
     }
   });
 });
@@ -384,10 +392,12 @@ describe('plaintext passwords are retired (docs/e2ee.md)', () => {
   it('fails crowd callbacks closed outside local dev', () => {
     const crowd = readFileSync(join(ROOT, 'functions/lib/crowd.ts'), 'utf8');
     assert.ok(crowd.includes('allowUnsignedCallbacks'), 'unsigned callbacks must be gated');
-    assert.ok(
-      !/if \(!config\.webhookSecret\) return true;/.test(crowd),
-      'an unconfigured production webhook must reject unsigned callbacks',
+    assert.match(
+      crowd,
+      /else if \(config\.allowUnsignedCallbacks\)/,
+      'unsigned callbacks must be accepted only on an unconfigured local dev server',
     );
+    assert.ok(crowd.includes('Forbidden'), 'a configured deployment without a signing secret must fail closed');
   });
 
   it('validates recovery phrases with the BIP-39 checksum', () => {

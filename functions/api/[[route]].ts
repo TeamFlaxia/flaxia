@@ -37,8 +37,10 @@ type Bindings = {
   AP_DELIVERY_QUEUE: Queue;
   CROWD_ORCHESTRATOR_URL: string;
   CROWD_API_KEY: string;
-  /** Optional dedicated secret for signing callbacks and scan-file tickets. */
+  /** Secret for signed Crowd scan-file tickets. */
   CROWD_WEBHOOK_SECRET?: string;
+  /** Crowd's WEBHOOK_SIGNING_SECRET, used to verify X-Flaxia-* headers. */
+  CROWD_WEBHOOK_SIGNING_SECRET?: string;
   CROWD_NODE_ORIGINS: string;
   CROWD_SCAN_FILE_SOURCES: string;
   FILE_SCAN_CLAMAV_IMAGE?: string;

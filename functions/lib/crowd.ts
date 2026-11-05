@@ -7,15 +7,17 @@
 // independently through `@flaxia/sdk`.
 import {
   buildCallbackUrl,
-  type CallbackUrlOptions,
   type CrowdWebhookEvent,
+  type CrowdWebhookReplayGuard,
   callbackTypeFromUrl,
   DEFAULT_WORKLOAD_TIMEOUT_MS,
   extractCallbackOutput,
   FlaxiaClient,
   type NudeNetDetection,
   parseCrowdWebhook,
+  readCrowdWebhookHeaders,
   resolveNsfwTags,
+  verifyCrowdWebhook,
 } from '@flaxia/sdk';
 import { stripPostColors } from '../../src/lib/post-colors.ts';
 import { postTextSha } from './ai-index.ts';
@@ -28,8 +30,14 @@ import type { FileFeatures } from './scan/features.ts';
 export interface CrowdEnv {
   CROWD_ORCHESTRATOR_URL?: string;
   CROWD_API_KEY?: string;
-  /** Optional dedicated callback secret; falls back to the API key. */
+  /** Secret for signed scan-file tickets; falls back to the API key. */
   CROWD_WEBHOOK_SECRET?: string;
+  /**
+   * Crowd's `WEBHOOK_SIGNING_SECRET`. Every webhook delivery is verified with
+   * the SDK's shared `X-Flaxia-Signature/Timestamp/Nonce` contract; without it
+   * the route fails closed outside a local dev/test server.
+   */
+  CROWD_WEBHOOK_SIGNING_SECRET?: string;
   /**
    * Ops kill-switch: when '1', screening/embedding submissions are skipped
    * (embeds queue for later) so a Crowd outage can be shed without a deploy.
@@ -57,8 +65,10 @@ export interface CrowdConfig {
   orchestratorUrl: string;
   apiKey: string;
   baseUrl: string;
-  /** Secret callbacks are signed with; empty when Crowd is unconfigured. */
-  webhookSecret: string;
+  /** Secret for signed scan-file tickets; empty when Crowd is unconfigured. */
+  fileScanTicketSecret: string;
+  /** Crowd `WEBHOOK_SIGNING_SECRET` for `X-Flaxia-*` header signatures. */
+  webhookSigningSecret: string;
   configured: boolean;
   /**
    * True only for local/test deployments. An unconfigured *production*
@@ -89,6 +99,10 @@ const PENDING_EMBED_MAX_ATTEMPTS = 5;
 // (post, key) would keep vouching for an image that was swapped in later.
 const NSFW_SCAN_SCHEMA = `post_id TEXT NOT NULL, media_key TEXT NOT NULL DEFAULT '', task_id TEXT, content_sha TEXT, ai_passed INTEGER, status TEXT NOT NULL DEFAULT 'submitted' CHECK(status IN ('submitted', 'done', 'failed')), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), scanned_at TEXT, PRIMARY KEY (post_id, media_key)`;
 const PENDING_EMBEDS_SCHEMA = `post_id TEXT PRIMARY KEY, text TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), last_error TEXT`;
+// Replay guard for the header-signed Crowd webhook. A nonce is inserted once
+// and retained until the timestamp tolerance window closes, so a captured
+// (body, signature) pair can never be replayed.
+const CROWD_WEBHOOK_NONCE_SCHEMA = `nonce TEXT PRIMARY KEY, expires_at INTEGER NOT NULL`;
 
 // In-flight / rate-limit guards. Kept module-scoped so every route bundled into
 // the same Pages Function worker shares one budget.
@@ -105,18 +119,22 @@ export function crowdConfig(env: CrowdEnv): CrowdConfig {
   const apiKey = env.CROWD_API_KEY || '';
   const baseUrl = (env.BASE_URL || 'https://flaxia.app').replace(/\/+$/, '');
   const configured = Boolean(orchestratorUrl && apiKey);
-  // Reusing the API key keeps verification active in exactly the deployments
-  // that can submit tasks, with no extra secret to provision; set
-  // CROWD_WEBHOOK_SECRET to rotate it independently of the API key.
-  const webhookSecret = configured ? env.CROWD_WEBHOOK_SECRET || apiKey : '';
-  // Without a secret, unsigned callbacks are only tolerated when the instance
-  // is a local dev/test server. Production fails closed.
+  // Reusing the API key keeps scan-file tickets working in exactly the
+  // deployments that can submit tasks; set CROWD_WEBHOOK_SECRET to rotate that
+  // ticket key independently of the API key.
+  const fileScanTicketSecret = configured ? env.CROWD_WEBHOOK_SECRET || apiKey : '';
+  // Webhook authentication uses Crowd's dedicated WEBHOOK_SIGNING_SECRET. The
+  // legacy `?sig=` query contract is retired and is never consulted.
+  const webhookSigningSecret = env.CROWD_WEBHOOK_SIGNING_SECRET || '';
+  // Without a signing secret, unsigned callbacks are only tolerated when the
+  // instance is a local dev/test server. Production fails closed.
   const allowUnsignedCallbacks = !configured && /^http:\/\/localhost(:\d+)?$/.test(baseUrl);
   return {
     orchestratorUrl,
     apiKey,
     baseUrl,
-    webhookSecret,
+    fileScanTicketSecret,
+    webhookSigningSecret,
     configured,
     allowUnsignedCallbacks,
     screeningDisabled: env.CROWD_SCREENING_DISABLED === '1',
@@ -129,23 +147,13 @@ export function getCrowdClient(config: CrowdConfig): FlaxiaClient | null {
   return new FlaxiaClient({ baseUrl: `${config.orchestratorUrl}/crowd`, apiKey: config.apiKey });
 }
 
-// ── Callback signing ──
+// ── File-scan tickets ──
 //
 // `/api/crowd/webhook` is a standalone Pages Function: it never passes through
 // the Hono middleware in functions/api/[[route]].ts, so nothing authenticates
-// the caller. Every callback URL we hand the orchestrator therefore carries
-// `sig=<HMAC-SHA256 of the canonical path+query>` and the receiver recomputes
-// it before touching a row. Without this, anyone who knows a public media key
-// could post an `infected` verdict, permanently blocklisting that file.
-
-/** Message a signature covers: path plus query with `sig` stripped and sorted. */
-function signingMessage(url: URL): string {
-  const params = new URLSearchParams(url.search);
-  params.delete('sig');
-  params.sort();
-  const query = params.toString();
-  return query ? `${url.pathname}?${query}` : url.pathname;
-}
+// the caller. Every delivery is verified with Crowd's `X-Flaxia-*` HMAC headers
+// (see handleCrowdWebhook); the retired `?sig=` query contract is no longer
+// accepted. The HMAC helpers below are now used only for scan-file tickets.
 
 async function hmacHex(secret: string, message: string): Promise<string> {
   const encoder = new TextEncoder();
@@ -162,30 +170,6 @@ function signatureEquals(a: string, b: string): boolean {
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
-}
-
-/**
- * Build a callback URL and sign it for `config.webhookSecret`. An empty secret
- * (Crowd unconfigured — local dev and tests) returns the URL unsigned.
- */
-export async function signedCallbackUrl(config: CrowdConfig, options: CallbackUrlOptions): Promise<string> {
-  const url = buildCallbackUrl(options);
-  if (!config.webhookSecret) return url;
-  const parsed = new URL(url);
-  parsed.searchParams.set('sig', await hmacHex(config.webhookSecret, signingMessage(parsed)));
-  return parsed.toString();
-}
-
-/**
- * True when the callback carries a signature matching `config.webhookSecret`.
- * An unconfigured production instance fails closed (a local dev/test server
- * keeps accepting unsigned callbacks because Crowd cannot submit there).
- */
-export async function verifyCallbackSignature(url: URL, config: CrowdConfig): Promise<boolean> {
-  if (!config.webhookSecret) return config.allowUnsignedCallbacks;
-  const provided = url.searchParams.get('sig');
-  if (!provided) return false;
-  return signatureEquals(provided, await hmacHex(config.webhookSecret, signingMessage(url)));
 }
 
 // ── Short-lived R2 scan-file tickets ──
@@ -235,7 +219,7 @@ export async function createFileScanTicket(
   config: CrowdConfig,
   input: { key: string; sha256: string; size: number },
 ): Promise<string> {
-  if (!config.webhookSecret) throw new Error('Crowd file-scan signing secret is not configured');
+  if (!config.fileScanTicketSecret) throw new Error('Crowd file-scan signing secret is not configured');
   if (!validScanFileKey(input.key)) throw new Error('Invalid R2 key for file-scan ticket');
   if (!/^[a-f0-9]{64}$/i.test(input.sha256)) throw new Error('Invalid SHA-256 for file-scan ticket');
   if (!Number.isSafeInteger(input.size) || input.size < 0 || input.size > FILE_SCAN_SOURCE_MAX_BYTES) {
@@ -250,7 +234,7 @@ export async function createFileScanTicket(
     expiresAt: Date.now() + FILE_SCAN_TICKET_TTL_MS,
   };
   const body = base64UrlEncodeText(JSON.stringify(claims));
-  const signature = await hmacHex(config.webhookSecret, `flaxia-file-scan-v1.${body}`);
+  const signature = await hmacHex(config.fileScanTicketSecret, `flaxia-file-scan-v1.${body}`);
   return `${body}.${signature}`;
 }
 
@@ -260,7 +244,7 @@ export async function verifyFileScanTicket(
   ticket: string,
   now = Date.now(),
 ): Promise<FileScanTicketClaims | null> {
-  const secret = crowdConfig(env).webhookSecret;
+  const secret = crowdConfig(env).fileScanTicketSecret;
   if (!secret || typeof ticket !== 'string' || ticket.length > 4096) return null;
   const parts = ticket.split('.');
   if (parts.length !== 2 || !/^[a-f0-9]{64}$/.test(parts[1]!)) return null;
@@ -347,6 +331,46 @@ export async function ensurePendingEmbedsTable(db: D1Database): Promise<void> {
   } catch (e) {
     console.error('Failed to ensure pending_embeddings table:', e);
   }
+}
+
+const crowdNonceTableChecked = new WeakSet<D1Database>();
+async function ensureCrowdWebhookNoncesTable(db: D1Database): Promise<void> {
+  if (crowdNonceTableChecked.has(db)) return;
+  try {
+    await db.prepare(`CREATE TABLE IF NOT EXISTS crowd_webhook_nonces (${CROWD_WEBHOOK_NONCE_SCHEMA})`).run();
+    await db
+      .prepare('CREATE INDEX IF NOT EXISTS idx_crowd_webhook_nonces_expiry ON crowd_webhook_nonces(expires_at)')
+      .run();
+    crowdNonceTableChecked.add(db);
+  } catch (e) {
+    // Leave the table unchecked so the next callback retries; the guard below
+    // fails closed until the table exists.
+    console.error('Failed to ensure crowd_webhook_nonces table:', e);
+  }
+}
+
+/**
+ * D1-backed replay guard shared by every isolate. A nonce is accepted exactly
+ * once; a storage failure rejects the callback rather than risking a replay.
+ */
+function createCrowdWebhookReplayGuard(db: D1Database): CrowdWebhookReplayGuard {
+  return {
+    async check(nonce: string, expiresAtMs: number): Promise<boolean> {
+      try {
+        await ensureCrowdWebhookNoncesTable(db);
+        // Opportunistic cleanup keeps the table bounded without a cron.
+        await db.prepare('DELETE FROM crowd_webhook_nonces WHERE expires_at < ?').bind(Date.now()).run();
+        const result = await db
+          .prepare('INSERT OR IGNORE INTO crowd_webhook_nonces (nonce, expires_at) VALUES (?, ?)')
+          .bind(nonce, expiresAtMs)
+          .run();
+        return (result.meta?.changes ?? 0) > 0;
+      } catch (e) {
+        console.error('Crowd webhook nonce check failed:', e);
+        return false;
+      }
+    },
+  };
 }
 
 // ── NSFW screening (NudeNet) ──
@@ -464,7 +488,7 @@ export async function submitDetectNsfw(
     lastNsfwSubmitTime = Date.now();
     // `key` says which object of the post this verdict belongs to.
     // buildCallbackUrl omits empty params, so legacy callbacks stay postId-only.
-    const callbackUrl = await signedCallbackUrl(config, {
+    const callbackUrl = buildCallbackUrl({
       baseUrl: config.baseUrl,
       type: 'nsfw',
       params: { postId, key: mediaKey },
@@ -557,7 +581,7 @@ async function submitEmbedTask(config: CrowdConfig, postId: string, text: string
 
   // Embed the human-readable body, not the color markup.
   const embeddingText = stripPostColors(text);
-  const callbackUrl = await signedCallbackUrl(config, {
+  const callbackUrl = buildCallbackUrl({
     baseUrl: config.baseUrl,
     type: 'vector-embed',
     params: { postId, sha: await postTextSha(embeddingText) },
@@ -677,6 +701,17 @@ export async function embedPost(
 
 function json(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+}
+
+/** Crowd's own result ceiling is 4 MiB; allow headroom but never buffer more. */
+const MAX_CROWD_WEBHOOK_CHARS = 8 * 1024 * 1024;
+
+/** Read the raw body once, rejecting an oversized payload before buffering it. */
+async function readCrowdWebhookBody(request: Request): Promise<string | null> {
+  const contentLength = Number(request.headers.get('content-length') ?? '');
+  if (Number.isFinite(contentLength) && contentLength > MAX_CROWD_WEBHOOK_CHARS) return null;
+  const text = await request.text();
+  return text.length > MAX_CROWD_WEBHOOK_CHARS ? null : text;
 }
 
 async function handleNsfwResult(url: URL, event: CrowdWebhookEvent, db: D1Database): Promise<void> {
@@ -926,34 +961,63 @@ async function handleFileScanResult(url: URL, event: CrowdWebhookEvent, db: D1Da
 }
 
 /**
- * Handle an orchestrator callback. Returns the HTTP response for the route:
- * `401` for a missing or invalid callback signature, `400` for malformed
- * payloads, `200 { received: true }` for a callback we observed (a verdict we
- * deliberately drop as stale, or an undeliverable body — the orchestrator
- * could never deliver those successfully, so retrying them would only loop),
- * and `500` when an unexpected error left the row unwritten — the orchestrator
- * retries non-2xx responses, so a transient D1 failure no longer loses a
- * verdict.
+ * Handle an orchestrator callback. Every delivery must carry Crowd's
+ * `X-Flaxia-Signature/Timestamp/Nonce` headers signed with
+ * `WEBHOOK_SIGNING_SECRET`; the retired `?sig=` query contract is ignored.
+ * Unsigned callbacks are accepted only by an unconfigured local dev/test
+ * server where Crowd cannot submit. Returns `401` for a missing or invalid
+ * signature, `413` for an oversized body, `200 { received: true }` for a
+ * callback we observed (including a signed body that can never parse, since
+ * retrying it would only loop), and `500` when an unexpected error left the
+ * row unwritten.
  */
 export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1Database): Promise<Response> {
   const url = new URL(request.url);
   const callbackType = callbackTypeFromUrl(url);
+  const config = crowdConfig(env);
 
   try {
-    // Verified before the body is read: an unsigned caller must not be able to
-    // touch scan rows, embeds or NSFW tags at all.
-    if (!(await verifyCallbackSignature(url, crowdConfig(env)))) {
+    // The header contract signs the raw body, so it must be read before the
+    // signature is checked. Bound it first so an unauthenticated caller cannot
+    // make the isolate buffer an arbitrarily large payload.
+    const rawBody = await readCrowdWebhookBody(request);
+    if (rawBody === null) return new Response('Payload Too Large', { status: 413 });
+
+    const headers = readCrowdWebhookHeaders(request.headers);
+    let event: CrowdWebhookEvent | null = null;
+
+    if (config.webhookSigningSecret) {
+      // Crowd contract: X-Flaxia-Signature/Timestamp/Nonce over the raw body.
+      // The SDK is the shared source of truth with the worker.
+      const verified = await verifyCrowdWebhook({
+        secret: config.webhookSigningSecret,
+        body: rawBody,
+        signature: headers.signature,
+        timestamp: headers.timestamp,
+        nonce: headers.nonce,
+        replayGuard: createCrowdWebhookReplayGuard(db),
+      });
+      if (!verified.ok) {
+        // A signed body that can never parse should not be retried forever.
+        if (verified.reason === 'invalid_body') return json({ received: true });
+        console.warn(`Crowd webhook rejected (${verified.reason})`);
+        return new Response('Forbidden', { status: 401 });
+      }
+      event = verified.payload;
+    } else if (config.allowUnsignedCallbacks) {
+      // Local dev/test only: Crowd is unconfigured, so nothing can sign.
+      let body: unknown;
+      try {
+        body = JSON.parse(rawBody);
+      } catch {
+        return json({ received: true });
+      }
+      event = parseCrowdWebhook(body);
+      if (!event) return new Response('Bad Request', { status: 400 });
+    } else {
+      console.warn('Crowd webhook rejected (signing secret is not configured)');
       return new Response('Forbidden', { status: 401 });
     }
-
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return json({ received: true });
-    }
-    const event = parseCrowdWebhook(body);
-    if (!event) return new Response('Bad Request', { status: 400 });
 
     if (event.status === 'done') {
       if (callbackType === 'nsfw') {
@@ -988,8 +1052,10 @@ export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1
 
     return json({ received: true });
   } catch (e) {
-    // Fail loudly: the row was not written, and answering 200 would make the
-    // orchestrator drop a verdict it could still deliver on a retry.
+    // Fail loudly: the row was not written. Crowd does not retry webhook
+    // deliveries (Coordinator.deliverCallback is a single fire-and-forget
+    // fetch), so the consumed nonce is kept: releasing it would only reopen a
+    // replay window without recovering the verdict.
     console.error('Webhook error:', e);
     return json({ received: false, error: 'callback_failed' }, 500);
   }

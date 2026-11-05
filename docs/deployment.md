@@ -34,6 +34,25 @@ pnpm build && pnpm deploy
 
 The build output is in `dist/`.
 
+## Crowd integration secrets
+
+The Crowd worker signs every webhook delivery with its dedicated
+`WEBHOOK_SIGNING_SECRET` (`X-Flaxia-Signature` / `X-Flaxia-Timestamp` /
+`X-Flaxia-Nonce`). Set the same value on the Pages project so callbacks verify:
+
+```bash
+npx wrangler pages secret put CROWD_API_KEY --project-name flaxia
+npx wrangler pages secret put CROWD_WEBHOOK_SIGNING_SECRET --project-name flaxia
+```
+
+The legacy `?sig=` query contract is retired: without
+`CROWD_WEBHOOK_SIGNING_SECRET`, every callback is rejected `401` (unsigned
+callbacks are accepted only by an unconfigured localhost dev/test server).
+`CROWD_WEBHOOK_SECRET` now only keys the short-lived scan-file tickets and
+defaults to `CROWD_API_KEY`. The `crowd_webhook_nonces` table from migration
+`0129_crowd_webhook_nonces.sql` stores the replay guard; apply migrations
+before deploying.
+
 ## GitHub bug reports (#263)
 
 Apply D1 migrations before deploying this feature; migration `0128_bug_report_submissions.sql` provides submission reservations and rate limits. The table stores only reservation metadata (a content fingerprint, issue URL, and expiry), never report text, diagnostics, or screenshots; the scheduled backend worker removes expired rows daily.
