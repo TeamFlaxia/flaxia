@@ -84,6 +84,19 @@ export function setVaultKey(vk: Uint8Array | null, version: number | null = null
   notify();
 }
 
+/**
+ * A password change rewraps the envelope under Auth and advances vk_version
+ * (and every item's version). The acting tab still holds the same VK, so keep
+ * its optimistic-lock version in step instead of rejecting item writes until
+ * the next reload. Locked tabs fetch the fresh version when they unlock.
+ */
+export async function syncVaultVersionAfterRewrap(): Promise<void> {
+  if (!sessionVk) return;
+  const keys = await fetchVaultKeys();
+  if (!keys?.enabled || !Number.isSafeInteger(keys.vk_version) || (keys.vk_version ?? 0) < 1) return;
+  setVaultKey(sessionVk, keys.vk_version);
+}
+
 /** Drop VK from memory only — the device's wrapped copy survives a reload. */
 export function lockVault(): void {
   sessionVk = null;

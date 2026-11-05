@@ -62,6 +62,12 @@ export async function resumeDirectCredentialChange(
   try {
     let job = await read();
     if (!job) return 'not_found';
+    // The rewrap is persisted so a retry can replay prepare without asking the
+    // browser for the password again. Auth applies it; Flaxia only applies it
+    // locally while the transitional envelope still exists here.
+    const vault = job.vault_json
+      ? (JSON.parse(job.vault_json) as { salt: string; kdf_params: unknown; wrapped_vk: string; vk_version: number })
+      : null;
     if (job.state === 'committed') return acknowledge();
     if (job.state === 'cancelled') return 'cancelled';
     if (job.state === 'pending') {
@@ -98,9 +104,15 @@ export async function resumeDirectCredentialChange(
       return 'cancelled';
     }
     if (job.state === 'prepared') {
-      const vault = job.vault_json
-        ? (JSON.parse(job.vault_json) as { salt: string; kdf_params: unknown; wrapped_vk: string; vk_version: number })
+      // Auth already owns the envelope for migrated accounts, so the local
+      // vault may be gone. Only assert a local rewrap while the transitional
+      // row still exists at the expected version.
+      const localVault = vault
+        ? await env.DB.prepare('SELECT vk_version FROM vault_keys WHERE user_id = ?')
+            .bind(userId)
+            .first<{ vk_version: number }>()
         : null;
+      const applyLocalVault = Boolean(vault && localVault && localVault.vk_version === vault.vk_version);
       const assertOne = () =>
         env.DB.prepare(
           'INSERT INTO flaxia_auth_transition_assertions (valid) VALUES (CASE WHEN changes() = 1 THEN 1 ELSE NULL END)',
@@ -112,21 +124,31 @@ export async function resumeDirectCredentialChange(
         ).bind(hash),
         assertOne(),
         clear(),
-        vault
-          ? env.DB.prepare(
-              "UPDATE vault_keys SET salt = ?, kdf_params = ?, wrapped_vk = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE user_id = ? AND vk_version = ?",
-            ).bind(vault.salt, JSON.stringify(vault.kdf_params), vault.wrapped_vk, userId, vault.vk_version)
-          : env.DB.prepare(
-              'UPDATE flaxia_direct_vault_changes SET state = state WHERE operation_hash = ? AND NOT EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ?)',
-            ).bind(hash, userId),
-        assertOne(),
-        clear(),
+      ];
+      if (applyLocalVault && vault) {
+        statements.push(
+          env.DB.prepare(
+            "UPDATE vault_keys SET salt = ?, kdf_params = ?, wrapped_vk = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE user_id = ? AND vk_version = ?",
+          ).bind(vault.salt, JSON.stringify(vault.kdf_params), vault.wrapped_vk, userId, vault.vk_version),
+          assertOne(),
+          clear(),
+        );
+      } else if (!vault) {
+        statements.push(
+          env.DB.prepare(
+            'UPDATE flaxia_direct_vault_changes SET state = state WHERE operation_hash = ? AND NOT EXISTS (SELECT 1 FROM vault_keys WHERE user_id = ?)',
+          ).bind(hash, userId),
+          assertOne(),
+          clear(),
+        );
+      }
+      statements.push(
         env.DB.prepare(
           "UPDATE flaxia_direct_vault_changes SET state = 'local_committed' WHERE operation_hash = ? AND state = 'applying'",
         ).bind(hash),
         assertOne(),
         clear(),
-      ];
+      );
       try {
         await env.DB.batch(statements);
       } catch {
