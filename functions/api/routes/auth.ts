@@ -438,11 +438,16 @@ auth.get('/start', async (c) => {
   const returnTo = safeReturnPath(requestUrl.searchParams.get('return_to'));
   const mode = requestUrl.searchParams.get('mode') === 'register' ? 'register' : null;
 
+  const lang = requestUrl.searchParams.get('lang');
+  const theme = requestUrl.searchParams.get('theme');
+
   const target = new URL('/login', c.env.AUTH_UI_ORIGIN || AUTH_UI_ORIGIN);
   target.searchParams.set('code_challenge', await pkceChallenge(verifier));
   target.searchParams.set('state', state);
   target.searchParams.set('return_uri', `${origin}/api/auth/callback`);
   if (mode) target.searchParams.set('mode', mode);
+  if (lang === 'ja' || lang === 'en') target.searchParams.set('lang', lang);
+  if (theme === 'light' || theme === 'dark') target.searchParams.set('theme', theme);
 
   const response = c.redirect(target.toString(), 302);
   response.headers.set('Cache-Control', 'no-store');

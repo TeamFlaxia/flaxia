@@ -27,7 +27,7 @@ import type { BottomNavDeps } from './lib/bottom-nav-setup.js';
 import { ensureBottomNav, getBottomNav } from './lib/bottom-nav-setup.js';
 import { initContentProtection } from './lib/content-protection.js';
 import { canRunFlaxiaNode, initCrowdNode, notifyCrowdConsentChanged } from './lib/crowd-node.js';
-import { initI18n, t } from './lib/i18n.js';
+import { getLocale, initI18n, t } from './lib/i18n.js';
 import { lazyCreateLeftNav, lazyCreateRightPanel, lazyUpdateLeftNavUser } from './lib/lazy-nav.js';
 import { closeLeftNav, openLeftNav, removeLeftNavOverlay, setupMobileLeftNav } from './lib/left-nav-drawer.js';
 import type { LeftNavHandlers } from './lib/left-nav-handlers.js';
@@ -441,7 +441,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         const here = `${window.location.pathname}${window.location.search}`;
         const returnTo = here === '/login' || here === '/register' ? '/home' : here;
         if (await beginNativeAuthRedirect(returnTo, view)) return;
-        const query = new URLSearchParams({ return_to: returnTo });
+        const query = new URLSearchParams({
+          return_to: returnTo,
+          lang: getLocale(),
+          theme: getResolvedTheme(),
+        });
         if (view === 'register') query.set('mode', 'register');
         window.location.assign(`/api/auth/start?${query.toString()}`);
         return;

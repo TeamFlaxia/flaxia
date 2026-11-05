@@ -1,7 +1,9 @@
 // Native sign-in uses the system browser so the Auth session cookie belongs to
 // auth.flaxia.app, then returns through the app's custom URL scheme. The PKCE
 // verifier never leaves this device.
+import { getLocale } from './i18n.ts';
 import { isCapacitorNativePlatform, isNativeApp, isTauriNativePlatform } from './native-api.ts';
+import { getResolvedTheme } from './theme.ts';
 
 const AUTH_ORIGIN = 'https://auth.flaxia.app';
 const RETURN_URI = 'flaxia://auth/callback';
@@ -78,6 +80,8 @@ export async function beginNativeAuthRedirect(
   target.searchParams.set('code_challenge', await challengeFor(pending.verifier));
   target.searchParams.set('state', pending.state);
   target.searchParams.set('return_uri', RETURN_URI);
+  target.searchParams.set('lang', getLocale());
+  target.searchParams.set('theme', getResolvedTheme());
   if (mode === 'register') target.searchParams.set('mode', 'register');
   try {
     await openExternal(target.toString());
