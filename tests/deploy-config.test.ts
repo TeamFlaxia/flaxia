@@ -87,7 +87,7 @@ test('CSP script-src stays explicit (no unsafe-eval, no scheme allowlist)', asyn
   assert.doesNotMatch(scriptSrc, /'https'/, 'quoted schemes are invalid CSP and only add noise');
   const scriptAttr = /script-src-attr ([^;]+)/.exec(csp)?.[1];
   assert.equal(scriptAttr, "'none'", 'inline event handler attributes must be blocked');
-  for (const host of ['https://cdn.jsdelivr.net', 'https://unpkg.com']) {
+  for (const host of ['https://cdn.jsdelivr.net', 'https://unpkg.com', 'https://static.cloudflareinsights.com']) {
     assert.ok(scriptSrc.includes(host), `script-src must keep ${host} (runtime-loaded libs)`);
   }
 });
