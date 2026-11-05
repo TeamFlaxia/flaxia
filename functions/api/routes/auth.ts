@@ -16,6 +16,7 @@ import {
   verifySrpLogin,
   verifySrpPassword,
 } from '../../lib/auth';
+import { realProfileEmail, safeReturnPath } from '../../lib/auth-redirect';
 import {
   authIsAuthoritative,
   authRecoveryEnrolled,
@@ -35,6 +36,7 @@ import {
 } from '../../lib/flaxia-auth';
 import { resumeAuthCredentialChange } from '../../lib/flaxia-auth-credentials';
 import { cancelStaleDirectCredentialChange, resumeDirectCredentialChange } from '../../lib/flaxia-direct-credentials';
+import { NATIVE_APP_ORIGINS } from '../../lib/native-origins';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { ensureNewcomerTitle } from '../../lib/titles';
 import { getBaseOrigin, requireAuth } from '../helpers';
@@ -167,7 +169,7 @@ auth.post('/flaxia/provision', requireAuth, async (c) => {
     .bind(user.id)
     .run();
   const account = await c.env.DB.prepare(
-    'SELECT p.user_id AS id, p.username, p.display_name, p.srp_salt, p.srp_verifier, p.srp_group, p.srp_kdf FROM flaxia_auth_provisioning p JOIN users u ON u.id = p.user_id WHERE p.user_id = ? AND u.frozen_at IS NULL',
+    'SELECT p.user_id AS id, p.username, p.display_name, p.srp_salt, p.srp_verifier, p.srp_group, p.srp_kdf, u.email FROM flaxia_auth_provisioning p JOIN users u ON u.id = p.user_id WHERE p.user_id = ? AND u.frozen_at IS NULL',
   )
     .bind(user.id)
     .first<{
@@ -178,6 +180,7 @@ auth.post('/flaxia/provision', requireAuth, async (c) => {
       srp_verifier: string | null;
       srp_group: string | null;
       srp_kdf: string | null;
+      email: string | null;
     }>();
   if (!account?.srp_salt || !account.srp_verifier || !account.srp_group || !account.srp_kdf)
     return c.json({ error: 'SRP migration required' }, 409);
@@ -189,6 +192,7 @@ auth.post('/flaxia/provision', requireAuth, async (c) => {
     srp_verifier: account.srp_verifier,
     srp_group: account.srp_group,
     srp_kdf: account.srp_kdf,
+    email: realProfileEmail(account.email),
   });
   if (result === 'conflict') return c.json({ error: 'Auth account conflict' }, 409);
   if (result !== 'ok') return c.json({ error: 'Auth unavailable' }, 503);
@@ -204,22 +208,78 @@ for (const path of ['/register', '/login', '/login/start', '/login/verify', '/up
   });
 }
 
-auth.post('/flaxia/exchange', async (c) => {
-  if (c.req.header('Origin') !== getBaseOrigin(c)) return c.json({ error: 'Invalid origin' }, 403);
-  const limited = await rateLimit(c, 'auth:flaxia-exchange:ip', getClientIp(c.req.raw), 10, 60);
-  if (limited) return limited;
-  const body = (await c.req.json().catch(() => null)) as { code?: unknown; verifier?: unknown } | null;
-  if (!body || typeof body.code !== 'string' || typeof body.verifier !== 'string')
-    return c.json({ error: 'Invalid request' }, 400);
-  const identity = await exchangeAuthCode(c.env, body.code, body.verifier);
-  if (!identity) return c.json({ error: 'Invalid authorization' }, 401);
-  return withPendingAuthGrant(c.env, identity.grant, async (commit) => {
-    let user = await c.env.DB.prepare('SELECT id FROM users WHERE id = ? AND frozen_at IS NULL')
+type AuthIdentity = NonNullable<Awaited<ReturnType<typeof exchangeAuthCode>>>;
+type ExchangeOutcome = { grant: string } | { error: string; status: 403 | 409 | 503 };
+
+const AUTH_UI_ORIGIN = 'https://auth.flaxia.app';
+const OAUTH_COOKIE = 'flaxia_oauth';
+const OAUTH_COOKIE_ATTRS = 'HttpOnly; Secure; SameSite=Lax; Path=/api/auth';
+
+const base64url = (bytes: Uint8Array): string =>
+  btoa(String.fromCharCode(...bytes))
+    .replaceAll('+', '-')
+    .replaceAll('/', '_')
+    .replaceAll('=', '');
+
+async function pkceChallenge(verifier: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  return base64url(new Uint8Array(digest));
+}
+
+function randomToken(): string {
+  return base64url(crypto.getRandomValues(new Uint8Array(32)));
+}
+
+function decodeBase64url(value: string): string {
+  const padded = value.replaceAll('-', '+').replaceAll('_', '/');
+  return new TextDecoder().decode(Uint8Array.from(atob(padded), (char) => char.charCodeAt(0)));
+}
+
+function readOAuthCookie(request: Request): { v: string; s: string; r: string } | null {
+  const header = request.headers.get('Cookie');
+  if (!header) return null;
+  for (const part of header.split(';')) {
+    const trimmed = part.trim();
+    if (!trimmed.startsWith(`${OAUTH_COOKIE}=`)) continue;
+    try {
+      const value = JSON.parse(decodeBase64url(trimmed.slice(OAUTH_COOKIE.length + 1))) as {
+        v?: unknown;
+        s?: unknown;
+        r?: unknown;
+      };
+      if (
+        typeof value.v !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(value.v) ||
+        typeof value.s !== 'string' ||
+        !/^[A-Za-z0-9_-]{43}$/.test(value.s) ||
+        typeof value.r !== 'string'
+      )
+        return null;
+      return { v: value.v, s: value.s, r: value.r };
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function oauthCookie(value: { v: string; s: string; r: string }): string {
+  const encoded = base64url(new TextEncoder().encode(JSON.stringify(value)));
+  return `${OAUTH_COOKIE}=${encoded}; ${OAUTH_COOKIE_ATTRS}; Max-Age=600`;
+}
+
+function clearOAuthCookie(response: Response): void {
+  response.headers.append('Set-Cookie', `${OAUTH_COOKIE}=; ${OAUTH_COOKIE_ATTRS}; Max-Age=0`);
+}
+
+async function commitAuthIdentity(env: Bindings, identity: AuthIdentity): Promise<ExchangeOutcome> {
+  return withPendingAuthGrant(env, identity.grant, async (commit) => {
+    let user = await env.DB.prepare('SELECT id, email FROM users WHERE id = ? AND frozen_at IS NULL')
       .bind(identity.user_id)
-      .first<{ id: string }>();
+      .first<{ id: string; email: string | null }>();
     if (
       !user &&
-      authIsAuthoritative(c.env) &&
+      authIsAuthoritative(env) &&
       identity.username &&
       /^[A-Za-z0-9_]{1,20}$/.test(identity.username) &&
       identity.display_name &&
@@ -236,50 +296,48 @@ auth.post('/flaxia/exchange', async (c) => {
       try {
         // Never link by a matching username or email. A new profile and its
         // link are created together only for this authenticated Auth ID.
-        await c.env.DB.batch([
-          c.env.DB.prepare(
+        await env.DB.batch([
+          env.DB.prepare(
             "INSERT INTO users (id, email, username, display_name, password_hash, srp_group) VALUES (?, ?, ?, ?, '', NULL)",
           ).bind(identity.user_id, identityEmail, identity.username, identity.display_name),
-          c.env.DB.prepare('INSERT INTO flaxia_auth_links (user_id) VALUES (?)').bind(identity.user_id),
+          env.DB.prepare('INSERT INTO flaxia_auth_links (user_id) VALUES (?)').bind(identity.user_id),
         ]);
-        user = { id: identity.user_id };
+        user = { id: identity.user_id, email: identityEmail };
       } catch {
         // Concurrent successful creation is safe only when the exact ID is
         // already linked. A conflicting existing profile is never adopted.
-        user = await c.env.DB.prepare(
-          'SELECT u.id FROM users u JOIN flaxia_auth_links l ON l.user_id = u.id WHERE u.id = ? AND u.frozen_at IS NULL',
+        user = await env.DB.prepare(
+          'SELECT u.id, u.email FROM users u JOIN flaxia_auth_links l ON l.user_id = u.id WHERE u.id = ? AND u.frozen_at IS NULL',
         )
           .bind(identity.user_id)
-          .first<{ id: string }>();
-        if (!user) return c.json({ error: 'Profile conflict' }, 409);
+          .first<{ id: string; email: string | null }>();
+        if (!user) return { error: 'Profile conflict', status: 409 };
       }
     }
-    if (!user) return c.json({ error: 'Account unavailable' }, 403);
+    if (!user) return { error: 'Account unavailable', status: 403 };
     // New Auth profiles and accounts linked before titles existed receive the
     // account-creation title on sign-in. Best-effort, like the local flows.
-    await ensureNewcomerTitle(c.env.DB, user.id);
-    if (authIsAuthoritative(c.env)) {
-      const linked = await c.env.DB.prepare('SELECT 1 FROM flaxia_auth_links WHERE user_id = ?').bind(user.id).first();
+    await ensureNewcomerTitle(env.DB, user.id);
+    if (authIsAuthoritative(env)) {
+      const linked = await env.DB.prepare('SELECT 1 FROM flaxia_auth_links WHERE user_id = ?').bind(user.id).first();
       if (linked) {
-        const pending = await pendingAuthCredentialOperation(c.env, identity.grant, user.id);
-        if (pending === 'unavailable') return c.json({ error: 'Auth unavailable' }, 503);
+        const pending = await pendingAuthCredentialOperation(env, identity.grant, user.id);
+        if (pending === 'unavailable') return { error: 'Auth unavailable', status: 503 };
         if (pending) {
-          const recovered = await resumeDirectCredentialChange(c.env, pending, identity.grant, user.id);
+          const recovered = await resumeDirectCredentialChange(env, pending, identity.grant, user.id);
           if (recovered !== 'ok' && recovered !== 'cancelled')
-            return c.json({ error: 'Account migration pending' }, 503);
-        } else if (!(await cancelStaleDirectCredentialChange(c.env, identity.grant, user.id)))
-          return c.json({ error: 'Account migration pending' }, 503);
-        if (!(await purgeLinkedLocalCredentials(c.env.DB, user.id)))
-          return c.json({ error: 'Account migration pending' }, 409);
-        if (!(await completeAuthLink(c.env, identity.grant, user.id)))
-          return c.json({ error: 'Auth unavailable' }, 503);
+            return { error: 'Account migration pending', status: 503 };
+        } else if (!(await cancelStaleDirectCredentialChange(env, identity.grant, user.id)))
+          return { error: 'Account migration pending', status: 503 };
+        if (!(await purgeLinkedLocalCredentials(env.DB, user.id)))
+          return { error: 'Account migration pending', status: 409 };
+        if (!(await completeAuthLink(env, identity.grant, user.id, realProfileEmail(user.email))))
+          return { error: 'Auth unavailable', status: 503 };
         commit();
-        const response = c.json({ success: true });
-        setSessionCookie(response, identity.grant);
-        return response;
+        return { grant: identity.grant };
       }
     }
-    const source = await c.env.DB.prepare(
+    const source = await env.DB.prepare(
       'SELECT password_hash, srp_salt, srp_verifier, srp_group, srp_kdf FROM users WHERE id = ? AND frozen_at IS NULL',
     )
       .bind(user.id)
@@ -290,10 +348,10 @@ auth.post('/flaxia/exchange', async (c) => {
         srp_group: string | null;
         srp_kdf: string | null;
       }>();
-    if (!source) return c.json({ error: 'Account unavailable' }, 403);
+    if (!source) return { error: 'Account unavailable', status: 403 };
     const localStamp = await credentialStampFor(source);
     if (!localStamp || localStamp.stamp !== (localStamp.legacy ? identity.legacy_stamp : identity.credential_stamp))
-      return c.json({ error: 'Account requires migration' }, 409);
+      return { error: 'Account requires migration', status: 409 };
     const token = nanoid(32);
     const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
     const unchanged =
@@ -306,45 +364,114 @@ auth.post('/flaxia/exchange', async (c) => {
       source.srp_group,
       source.srp_kdf,
     ];
-    if (authIsAuthoritative(c.env)) {
-      const link = await c.env.DB.prepare(
+    if (authIsAuthoritative(env)) {
+      const link = await env.DB.prepare(
         `INSERT OR IGNORE INTO flaxia_auth_links (user_id) SELECT id FROM users WHERE ${unchanged}`,
       )
         .bind(...snapshot)
         .run();
-      if (!link.success) return c.json({ error: 'Account unavailable' }, 409);
-      const linked = await c.env.DB.prepare(
+      if (!link.success) return { error: 'Account unavailable', status: 409 };
+      const linked = await env.DB.prepare(
         `SELECT 1 FROM users WHERE ${unchanged} AND EXISTS (SELECT 1 FROM flaxia_auth_links WHERE user_id = users.id)`,
       )
         .bind(...snapshot)
         .first();
-      if (!linked) return c.json({ error: 'Credentials changed' }, 409);
-      if (!(await purgeLinkedLocalCredentials(c.env.DB, user.id)))
-        return c.json({ error: 'Account migration pending' }, 409);
-      if (!(await completeAuthLink(c.env, identity.grant, user.id))) return c.json({ error: 'Auth unavailable' }, 503);
+      if (!linked) return { error: 'Credentials changed', status: 409 };
+      if (!(await purgeLinkedLocalCredentials(env.DB, user.id)))
+        return { error: 'Account migration pending', status: 409 };
+      if (!(await completeAuthLink(env, identity.grant, user.id, realProfileEmail(user.email))))
+        return { error: 'Auth unavailable', status: 503 };
       commit();
-      const response = c.json({ success: true });
-      setSessionCookie(response, identity.grant);
-      return response;
+      return { grant: identity.grant };
     }
-    const inserted = await c.env.DB.batch([
-      c.env.DB.prepare(
-        `INSERT OR IGNORE INTO flaxia_auth_links (user_id) SELECT id FROM users WHERE ${unchanged}`,
-      ).bind(...snapshot),
-      c.env.DB.prepare(
+    const inserted = await env.DB.batch([
+      env.DB.prepare(`INSERT OR IGNORE INTO flaxia_auth_links (user_id) SELECT id FROM users WHERE ${unchanged}`).bind(
+        ...snapshot,
+      ),
+      env.DB.prepare(
         `INSERT INTO sessions (id, user_id, expires_at) SELECT ?, id, ? FROM users WHERE ${unchanged}`,
       ).bind(token, expires, ...snapshot),
-      c.env.DB.prepare(
+      env.DB.prepare(
         'INSERT INTO flaxia_auth_sessions (session_id, grant_token, auth_stamp, source_stamp) SELECT id, ?, ?, ? FROM sessions WHERE id = ?',
       ).bind(identity.grant, identity.credential_stamp, localStamp.stamp, token),
     ]);
     if (inserted[1].meta.changes !== 1 || inserted[2].meta.changes !== 1)
-      return c.json({ error: 'Credentials changed' }, 409);
+      return { error: 'Credentials changed', status: 409 };
     commit();
-    const response = c.json({ success: true });
-    setSessionCookie(response, token);
-    return response;
+    return { grant: token };
   });
+}
+
+// Transitional and native clients redeem a code directly. Native apps send
+// their bundled origin, which is allowlisted for the CSRF middleware but is not
+// the base origin.
+auth.post('/flaxia/exchange', async (c) => {
+  const origin = c.req.header('Origin');
+  // Native HTTP transports may omit Origin entirely. The one-time code and the
+  // caller-held PKCE verifier are the authorization, not the browser origin.
+  if (origin && origin !== getBaseOrigin(c) && !(NATIVE_APP_ORIGINS as readonly string[]).includes(origin))
+    return c.json({ error: 'Invalid origin' }, 403);
+  const limited = await rateLimit(c, 'auth:flaxia-exchange:ip', getClientIp(c.req.raw), 10, 60);
+  if (limited) return limited;
+  const body = (await c.req.json().catch(() => null)) as { code?: unknown; verifier?: unknown } | null;
+  if (!body || typeof body.code !== 'string' || typeof body.verifier !== 'string')
+    return c.json({ error: 'Invalid request' }, 400);
+  const identity = await exchangeAuthCode(c.env, body.code, body.verifier);
+  if (!identity) return c.json({ error: 'Invalid authorization' }, 401);
+  const outcome = await commitAuthIdentity(c.env, identity);
+  if ('error' in outcome) return c.json({ error: outcome.error }, outcome.status);
+  const response = c.json({ success: true });
+  setSessionCookie(response, outcome.grant);
+  return response;
+});
+
+// Browser entry point for the redirect-based login UI. The verifier and state
+// live in an HttpOnly cookie so the code can only be redeemed by the browser
+// that started the flow.
+auth.get('/start', async (c) => {
+  const limited = await rateLimit(c, 'auth:start:ip', getClientIp(c.req.raw), 30, 60);
+  if (limited) return limited;
+  const origin = getBaseOrigin(c);
+  const requestUrl = new URL(c.req.url);
+  const verifier = randomToken();
+  const state = randomToken();
+  const returnTo = safeReturnPath(requestUrl.searchParams.get('return_to'));
+  const mode = requestUrl.searchParams.get('mode') === 'register' ? 'register' : null;
+
+  const target = new URL('/login', c.env.AUTH_UI_ORIGIN || AUTH_UI_ORIGIN);
+  target.searchParams.set('code_challenge', await pkceChallenge(verifier));
+  target.searchParams.set('state', state);
+  target.searchParams.set('return_uri', `${origin}/api/auth/callback`);
+  if (mode) target.searchParams.set('mode', mode);
+
+  const response = c.redirect(target.toString(), 302);
+  response.headers.set('Cache-Control', 'no-store');
+  response.headers.append('Set-Cookie', oauthCookie({ v: verifier, s: state, r: returnTo }));
+  return response;
+});
+
+auth.get('/callback', async (c) => {
+  const limited = await rateLimit(c, 'auth:callback:ip', getClientIp(c.req.raw), 30, 60);
+  if (limited) return limited;
+  const pending = readOAuthCookie(c.req.raw);
+  const code = c.req.query('code');
+  const state = c.req.query('state');
+  const fail = () => {
+    const response = c.redirect('/login', 302);
+    response.headers.set('Cache-Control', 'no-store');
+    clearOAuthCookie(response);
+    return response;
+  };
+  if (!pending || !code || !state || pending.s !== state) return fail();
+  const identity = await exchangeAuthCode(c.env, code, pending.v);
+  if (!identity) return fail();
+  const outcome = await commitAuthIdentity(c.env, identity);
+  if ('error' in outcome) return fail();
+  const response = c.redirect(safeReturnPath(pending.r), 302);
+  response.headers.set('Cache-Control', 'no-store');
+  setSessionCookie(response, outcome.grant);
+  clearOAuthCookie(response);
+  return response;
 });
 
 /**

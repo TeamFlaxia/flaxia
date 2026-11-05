@@ -30,6 +30,8 @@ export type Bindings = {
   CROWD_ORCHESTRATOR?: Fetcher;
   AUTH_SERVICE?: Fetcher;
   AUTH_AUTHORITY_MODE?: string;
+  /** Login UI origin. Override for local development. */
+  AUTH_UI_ORIGIN?: string;
   NOTIFICATION_STREAM?: DurableObjectNamespace;
   MULTIPLAYER_ROOM?: DurableObjectNamespace;
   MATCHMAKER?: DurableObjectNamespace;

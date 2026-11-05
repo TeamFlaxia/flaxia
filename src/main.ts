@@ -22,6 +22,7 @@ import { clearMeCache, getMe } from './lib/auth-cache.js';
 import { retryPendingCredentialChange } from './lib/auth-credential-operation.js';
 import { retryPendingDeletion } from './lib/auth-deletion.js';
 import { resolveAuthRedirect } from './lib/auth-guard.js';
+import { beginNativeAuthRedirect, initNativeAuthCallback } from './lib/auth-redirect.js';
 import type { BottomNavDeps } from './lib/bottom-nav-setup.js';
 import { ensureBottomNav, getBottomNav } from './lib/bottom-nav-setup.js';
 import { initContentProtection } from './lib/content-protection.js';
@@ -110,6 +111,7 @@ initI18n();
 
 // Basic app initialization
 document.addEventListener('DOMContentLoaded', async () => {
+  initNativeAuthCallback();
   if (await retryPendingDeletion()) clearMeCache();
   if ((await retryPendingCredentialChange()) === 'committed') clearMeCache();
   const app = document.getElementById('app');
@@ -147,8 +149,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     let timeline: Timeline | null = null;
     let threadPage: ThreadPage | null = null;
     let savedScrollY = 0;
-    let loginPage: PageComponent | null = null;
-    let registerPage: PageComponent | null = null;
     let profilePage: PageComponent | null = null;
     let explorePage: ExplorePage | null = null;
     let legalPage: PageComponent | null = null;
@@ -435,6 +435,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       searchQuery?: string,
       searchType?: 'posts' | 'users' | 'arcade',
     ) => {
+      // Authentication UI lives on auth.flaxia.app. A full navigation keeps the
+      // login flow out of this SPA and returns through /api/auth/callback.
+      if (view === 'login' || view === 'register') {
+        const here = `${window.location.pathname}${window.location.search}`;
+        const returnTo = here === '/login' || here === '/register' ? '/home' : here;
+        if (await beginNativeAuthRedirect(returnTo, view)) return;
+        const query = new URLSearchParams({ return_to: returnTo });
+        if (view === 'register') query.set('mode', 'register');
+        window.location.assign(`/api/auth/start?${query.toString()}`);
+        return;
+      }
+
       // Close mobile nav if open
       closeLeftNav();
 
@@ -445,46 +457,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (navId) syncedNav.setActiveItem(navId);
       }
 
-      // For auth routes, proceed directly
-      if (view === 'login' || view === 'register') {
-        // Cleanup current view
-        if (timeline) {
-          timeline.destroy();
-          timeline = null;
-        }
-        if (threadPage) {
-          threadPage.destroy();
-          threadPage = null;
-        }
-        if (loginPage) {
-          loginPage.destroy();
-          loginPage = null;
-        }
-        if (registerPage) {
-          registerPage.destroy();
-          registerPage = null;
-        }
-        if (profilePage) {
-          profilePage.destroy();
-          profilePage = null;
-        }
-        if (notificationsPage) {
-          notificationsPage.destroy();
-          notificationsPage = null;
-        }
-        if (settingsPage) {
-          settingsPage.destroy();
-          settingsPage = null;
-        }
-        if (bookmarksPage) {
-          bookmarksPage.destroy();
-          bookmarksPage = null;
-        }
-        if (downloadPage) {
-          downloadPage.destroy();
-          downloadPage = null;
-        }
-      } else {
+      {
         // Auth guard for protected routes
         const isAuthenticated = await requireAuth();
         if (!isAuthenticated) {
@@ -530,14 +503,6 @@ document.addEventListener('DOMContentLoaded', async () => {
           threadPage.destroy();
           threadPage = null;
         }
-        if (loginPage) {
-          loginPage.destroy();
-          loginPage = null;
-        }
-        if (registerPage) {
-          registerPage.destroy();
-          registerPage = null;
-        }
         if (profilePage) {
           profilePage.destroy();
           profilePage = null;
@@ -572,45 +537,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Wrap rendering in try-catch so errors don't leave the loader stuck
       try {
-        // Handle auth pages (full screen, no nav)
-        if (view === 'login') {
-          removeLeftNavOverlay();
-          currentView = 'login';
-          currentPostId = null;
-          _currentUsername = null;
-
-          const { createLoginPage } = await import('./components/LoginPage.js');
-          loginPage = createLoginPage({
-            onSuccess: () => {
-              window.history.pushState({}, '', '/arcade');
-              navigateTo('arcade');
-            },
-          });
-
-          app.appendChild(loginPage.getElement());
-          hidePageLoader();
-          return;
-        }
-
-        if (view === 'register') {
-          removeLeftNavOverlay();
-          currentView = 'register';
-          currentPostId = null;
-          _currentUsername = null;
-
-          const { createRegisterPage } = await import('./components/RegisterPage.js');
-          registerPage = createRegisterPage({
-            onSuccess: () => {
-              window.history.pushState({}, '', '/arcade');
-              navigateTo('arcade');
-            },
-          });
-
-          app.appendChild(registerPage.getElement());
-          hidePageLoader();
-          return;
-        }
-
         // Handle legal pages (public, no auth required, no layout)
         if (view === 'terms' || view === 'privacy' || view === 'child-safety' || view === 'about') {
           removeLeftNavOverlay();

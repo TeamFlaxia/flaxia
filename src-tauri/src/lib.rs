@@ -37,6 +37,8 @@ pub fn run() {
     .plugin(tauri_plugin_notification::init())
     .plugin(tauri_plugin_process::init())
     .plugin(tauri_plugin_http::init())
+    .plugin(tauri_plugin_deep_link::init())
+    .plugin(tauri_plugin_opener::init())
     .invoke_handler(tauri::generate_handler![set_notification_count])
     .setup(|app| {
       if cfg!(debug_assertions) {
@@ -45,6 +47,14 @@ pub fn run() {
             .level(log::LevelFilter::Info)
             .build(),
         )?;
+      }
+
+      // Register the flaxia:// scheme on desktop so the browser can hand the
+      // one-time Auth code back to the app.
+      #[cfg(desktop)]
+      {
+        use tauri_plugin_deep_link::DeepLinkExt;
+        let _ = app.deep_link().register_all();
       }
 
       // Desktop: tray + background polling
