@@ -57,7 +57,7 @@ end-to-end encrypted anywhere in the UI or docs.
 | Inbound DKIM | `cf2024-1._domainkey.flaxia.app` present. |
 | Outbound sending | Not onboarded: no `cf-bounce` MX/DKIM records. |
 | DMARC | Not present. |
-| Auth identity | Username-first (`/^[A-Za-z0-9_]{1,20}$/`, case-insensitive). Email is optional and unverified. |
+| Auth identity | Auth is the authoritative credential source (see `docs/auth-authority-transition.md`); username-first (`/^[A-Za-z0-9_]{1,20}$/`, case-insensitive), email optional and unverified. |
 | Username changes | No rename endpoint exists today. Mail addresses therefore remain stable; if rename is added later, old addresses must stay as aliases. |
 | E2EE | Personal Vault exists (`docs/e2ee.md`); reuse its VK, device approval, and vault-item storage. |
 | API/UI | Hono router in `functions/api/[[route]].ts`; SPA routes in `src/lib/router.ts`; left nav in `src/components/LeftNav.ts`. |
@@ -286,8 +286,11 @@ either path as end-to-end encrypted.
 ## 7. Data model
 
 Mail data lives in `MAIL_DB`, not the main `flaxia` database. User identity is
-the existing `users.id`; address provisioning checks it through the Pages
-proxy before creating rows.
+the Auth-owned identity: Flaxia Auth is the authoritative credential and
+authentication source, the browser holds an opaque Auth grant that Flaxia checks
+with Auth, and the linked Flaxia profile is the SNS-side record (see
+`docs/auth-authority-transition.md`). Address provisioning checks the
+authenticated user through the Pages proxy before creating rows.
 
 ### `mail_addresses`
 
@@ -406,7 +409,10 @@ delete it explicitly on success.
 All public endpoints are under `/api/mail/*` on the main origin. The Pages
 route authenticates the session, applies CSRF and rate limits, then calls the
 Mail Worker through `MAIL_SERVICE` with the user id and an HMAC. The worker
-never trusts a user id supplied directly by a browser.
+never trusts a user id supplied directly by a browser. With
+`AUTH_AUTHORITY_MODE=flaxia-auth` as the current baseline, the user id is
+resolved from the Auth-backed session grant instead of a local credential, per
+`docs/auth-authority-transition.md`.
 
 | Method | Path | Purpose |
 |---|---|---|
