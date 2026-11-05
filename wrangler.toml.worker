@@ -15,6 +15,15 @@ entrypoint = "FlaxiaBridge"
 
 [vars]
 BASE_URL = "https://flaxia.app"
+CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
+# Comma-separated seed domains for the Common Crawl ingestion job (empty until
+# an operator chooses the first set). CROWD_API_KEY and CROWD_WEBHOOK_SECRET are
+# secrets:
+#   npx wrangler secret put CROWD_API_KEY --config wrangler.toml.worker
+#   npx wrangler secret put CROWD_WEBHOOK_SECRET --config wrangler.toml.worker
+CC_DOMAINS = ""
+CC_CRAWL = ""
+WEB_EMBEDDINGS_ENABLED = "0"
 # Optional: destination for the Arcade dwell dataset. Set HF_TOKEN as a secret:
 #   npx wrangler secret put HF_TOKEN --config wrangler.toml.worker
 # HF_REPO = "youruser/flaxia-arcade-dwell"
@@ -22,6 +31,10 @@ BASE_URL = "https://flaxia.app"
 [[kv_namespaces]]
 binding = "EXPORT_KV"
 id = "5bae08ca0489493d878e18dd64c44c4a"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "c78f7711cd9d45738678474d884734c1"
 
 [[r2_buckets]]
 binding = "EXPORT_BUCKET"
@@ -32,7 +45,7 @@ binding = "BUCKET"
 bucket_name = "flaxia-content"
 
 [triggers]
-crons = ["0 4 * * *"]
+crons = ["0 4 * * *", "0 * * * *"]
 
 [[queues.consumers]]
 queue = "activitypub-delivery"

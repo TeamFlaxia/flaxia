@@ -19,11 +19,13 @@ import {
 } from '@flaxia/sdk';
 import { stripPostColors } from '../../src/lib/post-colors.ts';
 import { postTextSha } from './ai-index.ts';
+import { hmacHex, signatureEquals } from './hmac.ts';
 import { createProjection, parseBanditConfig, projConfigKey, project } from './linucb.ts';
 import { loadBlocklist, matchBlocklist, matchSignatureEntry } from './scan/blocklist.ts';
 import { clamavVerdict, parseContainerOutput, parseVideoPhashes } from './scan/container-result.ts';
 import { getFileScan, recordInfection, setScanPhash, setScanStatus } from './scan/db.ts';
 import type { FileFeatures } from './scan/features.ts';
+import { handleCcExtractResult, handleEmbedGemmaResult, handleWebIndexTaskFailure } from './web-index.ts';
 
 export interface CrowdEnv {
   CROWD_ORCHESTRATOR_URL?: string;
@@ -44,13 +46,19 @@ export interface CrowdEnv {
   BASE_URL?: string;
   CACHE?: KVNamespace;
   VECTORIZE?: VectorizeLike;
+  /** Dedicated vector index for the Common Crawl web index (never the posts index). */
+  VECTORIZE_WEB?: VectorizeLike;
   /** R2 bucket holding uploads; binds a verdict to the bytes it screened. */
   BUCKET?: R2Bucket;
+  /** Enable `embed-gemma` batching for the Common Crawl web index. */
+  WEB_EMBEDDINGS_ENABLED?: string;
 }
 
 /** Minimal Vectorize surface used by the vector-embed callback. */
 export interface VectorizeLike {
-  upsert(vectors: Array<{ id: string; values: number[] }>): Promise<unknown>;
+  upsert(vectors: Array<{ id: string; values: number[]; metadata?: Record<string, string> }>): Promise<unknown>;
+  /** Optional hard-delete used by web-index retention (Vectorize `deleteByIds`). */
+  deleteByIds?(ids: string[]): Promise<unknown>;
 }
 
 export interface CrowdConfig {
@@ -145,23 +153,6 @@ function signingMessage(url: URL): string {
   params.sort();
   const query = params.toString();
   return query ? `${url.pathname}?${query}` : url.pathname;
-}
-
-async function hmacHex(secret: string, message: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, [
-    'sign',
-  ]);
-  const mac = await crypto.subtle.sign('HMAC', key, encoder.encode(message));
-  return [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-/** Length-independent byte compare so a wrong signature cannot be brute-forced by timing. */
-function signatureEquals(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
 }
 
 /**
@@ -962,6 +953,10 @@ export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1
         await handleVectorEmbedResult(url, event, db, env);
       } else if (callbackType === 'file-scan') {
         await handleFileScanResult(url, event, db, env);
+      } else if (callbackType === 'cc-extract') {
+        await handleCcExtractResult(event, db, env);
+      } else if (callbackType === 'embed-gemma') {
+        await handleEmbedGemmaResult(url, event, db, env);
       }
     } else if (event.status === 'failed') {
       console.log(
@@ -983,6 +978,8 @@ export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1
         }
       } else if (callbackType === 'file-scan') {
         await handleFileScanTaskFailure(url, event, db);
+      } else {
+        await handleWebIndexTaskFailure(callbackType, event, db);
       }
     }
 
