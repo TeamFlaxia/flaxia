@@ -33,7 +33,11 @@ interface CcRangeClaims extends CcRangeInput {
 }
 
 export function isValidWarcPath(value: unknown): value is string {
-  return typeof value === 'string' && CC_WARC_PATH_PATTERN.test(value);
+  if (typeof value !== 'string' || !CC_WARC_PATH_PATTERN.test(value)) return false;
+  // The pattern's character class permits dots, so reject a traversal segment
+  // explicitly even though tickets are only minted server-side.
+  const segments = value.split('/');
+  return segments[3] !== '.' && segments[3] !== '..' && segments[5] !== '.' && segments[5] !== '..';
 }
 
 function base64UrlEncodeText(value: string): string {

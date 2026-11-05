@@ -43,6 +43,13 @@ describe('cc-range tickets', () => {
         length: 1,
       }),
     );
+    await assert.rejects(
+      createCcRangeUrl(SECRET, BASE_URL, {
+        warcFilename: 'crawl-data/CC-MAIN-2026-43/segments/../warc/CC-MAIN-20260101000000-20260101010000-00000.warc.gz',
+        offset: 0,
+        length: 1,
+      }),
+    );
     await assert.rejects(createCcRangeUrl(SECRET, BASE_URL, { warcFilename: WARC_PATH, offset: -1, length: 1 }));
     await assert.rejects(
       createCcRangeUrl(SECRET, BASE_URL, { warcFilename: WARC_PATH, offset: 0, length: 3 * 1024 * 1024 }),
