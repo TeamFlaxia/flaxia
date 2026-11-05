@@ -4,7 +4,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { BASE_URL, resetDb, seedUserAndLogin } from './helpers/setup.ts';
 
 // The test dev server binds this secret (see package.json dev:test).
-const CROWD_WEBHOOK_SECRET = 'test-callback-secret';
+const CROWD_WEBHOOK_SIGNING_SECRET = 'test-webhook-signing-secret';
 
 async function createTextPost(cookie: string, text: string): Promise<string> {
   const postId = crypto.randomUUID();
@@ -22,17 +22,25 @@ async function createTextPost(cookie: string, text: string): Promise<string> {
 // until this runs.
 async function sendVectorEmbed(postId: string, vector: number[]): Promise<void> {
   const query = new URLSearchParams({ type: 'vector-embed', postId });
-  query.sort();
-  const sig = createHmac('sha256', CROWD_WEBHOOK_SECRET).update(`/api/crowd/webhook?${query}`).digest('hex');
-  query.set('sig', sig);
+  const raw = JSON.stringify({
+    taskId: `t-${postId}`,
+    status: 'done',
+    result: { output: { vector, model: 'Qwen/Qwen3-Embedding-0.6B', dimensions: 1024 } },
+  });
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const nonce = crypto.randomUUID();
+  const mac = createHmac('sha256', CROWD_WEBHOOK_SIGNING_SECRET)
+    .update(`${timestamp}.${nonce}.${raw}`)
+    .digest('base64url');
   const response = await fetch(`${BASE_URL}/api/crowd/webhook?${query}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      taskId: `t-${postId}`,
-      status: 'done',
-      result: { output: { vector, model: 'Qwen/Qwen3-Embedding-0.6B', dimensions: 1024 } },
-    }),
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Flaxia-Signature': `sha256=${mac}`,
+      'X-Flaxia-Timestamp': timestamp,
+      'X-Flaxia-Nonce': nonce,
+    },
+    body: raw,
   });
   assert.equal(response.status, 200, 'vector-embed callback should be accepted');
 }

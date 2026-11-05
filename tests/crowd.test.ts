@@ -74,30 +74,13 @@ async function sendWebhook(
   type: string,
   body: Record<string, unknown>,
   params: Record<string, string> = {},
+  opts: { secret?: string; nonce?: string; timestamp?: string; rawBody?: string } = {},
 ): Promise<Response> {
-  // Signed like the orchestrator would: the webhook rejects unsigned callers.
+  // Crowd contract: sign `<timestamp>.<nonce>.<raw body>` and send the values
+  // in X-Flaxia-* headers, exactly like Coordinator.deliverCallback.
   const query = new URLSearchParams({ type, ...params });
-  query.sort();
-  const sig = createHmac('sha256', CROWD_WEBHOOK_SECRET).update(`/api/crowd/webhook?${query}`).digest('hex');
-  query.set('sig', sig);
-  return fetch(`${BASE_URL}/api/crowd/webhook?${query}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-}
-
-async function sendHeaderWebhook(
-  type: string,
-  body: Record<string, unknown>,
-  params: Record<string, string> = {},
-  opts: { secret?: string; nonce?: string } = {},
-): Promise<Response> {
-  // Current Crowd contract: sign `<timestamp>.<nonce>.<raw body>` and send the
-  // values in X-Flaxia-* headers, exactly like Coordinator.deliverCallback.
-  const query = new URLSearchParams({ type, ...params });
-  const raw = JSON.stringify(body);
-  const timestamp = String(Math.floor(Date.now() / 1000));
+  const raw = opts.rawBody ?? JSON.stringify(body);
+  const timestamp = opts.timestamp ?? String(Math.floor(Date.now() / 1000));
   const nonce = opts.nonce ?? crypto.randomUUID();
   const mac = createHmac('sha256', opts.secret ?? CROWD_WEBHOOK_SIGNING_SECRET)
     .update(`${timestamp}.${nonce}.${raw}`)
@@ -114,9 +97,8 @@ async function sendHeaderWebhook(
   });
 }
 
-// Dummy secrets bound into the dev:test server (see package.json). Never
-// production values: they only let the suite speak the webhook protocol.
-const CROWD_WEBHOOK_SECRET = 'test-callback-secret';
+// Dummy secret bound into the dev:test server (see package.json). Never a
+// production value: it only lets the suite speak the webhook protocol.
 const CROWD_WEBHOOK_SIGNING_SECRET = 'test-webhook-signing-secret';
 
 async function getPost(cookie: string, postId: string): Promise<{ hashtags: string[] }> {
@@ -179,9 +161,10 @@ describe('GET /api/crowd/* — asset proxy', () => {
 });
 
 describe('POST /api/crowd/webhook — protocol', () => {
-  it('rejects a payload without taskId → 400', async () => {
+  it('acks a signed payload without taskId instead of asking for a retry', async () => {
     const res = await sendWebhook('vector-embed', { status: 'done', result: {} });
-    assert.equal(res.status, 400);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { received: true });
   });
 
   it('acknowledges failed tasks with {received:true}', async () => {
@@ -197,15 +180,7 @@ describe('POST /api/crowd/webhook — protocol', () => {
   });
 
   it('acks invalid JSON bodies gracefully (permanent callback retries)', async () => {
-    const query = new URLSearchParams({ type: 'nsfw' });
-    query.sort();
-    const sig = createHmac('sha256', CROWD_WEBHOOK_SECRET).update(`/api/crowd/webhook?${query}`).digest('hex');
-    query.set('sig', sig);
-    const res = await fetch(`${BASE_URL}/api/crowd/webhook?${query}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: 'not-json{{{',
-    });
+    const res = await sendWebhook('nsfw', {}, {}, { rawBody: 'not-json{{{' });
     assert.equal(res.status, 200);
     assert.deepEqual(await res.json(), { received: true });
   });
@@ -218,6 +193,19 @@ describe('POST /api/crowd/webhook — protocol', () => {
     });
     assert.equal(res.status, 401);
   });
+
+  it('rejects the retired ?sig= query signature → 401', async () => {
+    const query = new URLSearchParams({ type: 'nsfw' });
+    query.sort();
+    const sig = createHmac('sha256', 'test-api-key').update(`/api/crowd/webhook?${query}`).digest('hex');
+    query.set('sig', sig);
+    const res = await fetch(`${BASE_URL}/api/crowd/webhook?${query}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskId: 't-legacy-sig', status: 'done', result: {} }),
+    });
+    assert.equal(res.status, 401);
+  });
 });
 
 describe('POST /api/crowd/webhook — Crowd header signature', () => {
@@ -225,7 +213,7 @@ describe('POST /api/crowd/webhook — Crowd header signature', () => {
     const cookie = await loginUnique();
     const postId = await createTextPost(cookie, 'header signed nsfw');
 
-    const res = await sendHeaderWebhook(
+    const res = await sendWebhook(
       'nsfw',
       {
         taskId: 't-header-nsfw',
@@ -241,7 +229,7 @@ describe('POST /api/crowd/webhook — Crowd header signature', () => {
   });
 
   it('rejects a header signature made with the wrong secret → 401', async () => {
-    const res = await sendHeaderWebhook(
+    const res = await sendWebhook(
       'nsfw',
       { taskId: 't-bad-header', status: 'done', result: { detections: [] } },
       {},
@@ -253,9 +241,9 @@ describe('POST /api/crowd/webhook — Crowd header signature', () => {
   it('rejects a replayed nonce → 401', async () => {
     const nonce = crypto.randomUUID();
     const body = { taskId: 't-replay', status: 'failed', error: 'boom' };
-    const first = await sendHeaderWebhook('unknown-workload', body, {}, { nonce });
+    const first = await sendWebhook('unknown-workload', body, {}, { nonce });
     assert.equal(first.status, 200);
-    const replay = await sendHeaderWebhook('unknown-workload', body, {}, { nonce });
+    const replay = await sendWebhook('unknown-workload', body, {}, { nonce });
     assert.equal(replay.status, 401);
   });
 });

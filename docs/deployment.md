@@ -45,12 +45,13 @@ npx wrangler pages secret put CROWD_API_KEY --project-name flaxia
 npx wrangler pages secret put CROWD_WEBHOOK_SIGNING_SECRET --project-name flaxia
 ```
 
-The legacy `?sig=` query contract still works; set `CROWD_WEBHOOK_SECRET` only
-to rotate that key independently of `CROWD_API_KEY`. Without
-`CROWD_WEBHOOK_SIGNING_SECRET`, header-signed callbacks are rejected `401`
-(production never accepts unsigned callbacks). The `crowd_webhook_nonces`
-table from migration `0129_crowd_webhook_nonces.sql` stores the replay guard;
-apply migrations before deploying.
+The legacy `?sig=` query contract is retired: without
+`CROWD_WEBHOOK_SIGNING_SECRET`, every callback is rejected `401` (unsigned
+callbacks are accepted only by an unconfigured localhost dev/test server).
+`CROWD_WEBHOOK_SECRET` now only keys the short-lived scan-file tickets and
+defaults to `CROWD_API_KEY`. The `crowd_webhook_nonces` table from migration
+`0129_crowd_webhook_nonces.sql` stores the replay guard; apply migrations
+before deploying.
 
 ## GitHub bug reports (#263)
 

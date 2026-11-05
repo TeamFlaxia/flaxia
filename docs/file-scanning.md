@@ -134,11 +134,11 @@ remain viewable but unscanned.
   verifies them with the SDK's `verifyCrowdWebhook()` and a D1-backed nonce
   replay guard. Set `CROWD_WEBHOOK_SIGNING_SECRET` to the same value as Crowd's
   `WEBHOOK_SIGNING_SECRET`.
-  The legacy `sig=<HMAC-SHA256>` query contract (`signedCallbackUrl` /
-  `verifyCallbackSignature`) is still accepted when no header is present; its
-  key defaults to `CROWD_API_KEY` (`CROWD_WEBHOOK_SECRET` rotates it
-  independently). Both are empty while Crowd is unconfigured, which is what
-  keeps local dev and the integration suites working unsigned.
+  The legacy `sig=<HMAC-SHA256>` query contract is retired and ignored; only
+  the header signature authenticates a callback. Unsigned callbacks are
+  accepted only by an unconfigured localhost dev/test server.
+  `CROWD_WEBHOOK_SECRET` now only keys the short-lived scan-file tickets and
+  defaults to `CROWD_API_KEY`.
 - `GET /api/crowd/scan-file` streams R2 bytes only when a short-lived HMAC
   bearer ticket is valid. The ticket binds key, SHA-256, size, and expiry; the
   handler also requires the current `file_scans` row to remain `pending`,
