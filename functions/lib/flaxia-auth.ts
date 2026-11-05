@@ -382,17 +382,21 @@ export async function cancelAuthCredentialHash(
   operationHash: string,
   grant: string,
   userId: string,
-): Promise<boolean> {
-  if (!TOKEN.test(operationHash) || !TOKEN.test(grant)) return false;
+): Promise<'ok' | 'committed' | 'unavailable'> {
+  if (!TOKEN.test(operationHash) || !TOKEN.test(grant)) return 'unavailable';
   try {
     const response = await postAuth(env, '/api/flaxia/credentials/cancel-hash', {
       operation_hash: operationHash,
       grant,
       user_id: userId,
     });
-    return response.ok;
+    if (response.ok) return 'ok';
+    // Auth returns 409 only when the change is already committed or otherwise
+    // no longer cancellable. Neither state blocks the account deletion.
+    if (response.status === 409) return 'committed';
+    return 'unavailable';
   } catch {
-    return false;
+    return 'unavailable';
   }
 }
 

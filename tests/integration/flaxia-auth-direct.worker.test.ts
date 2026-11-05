@@ -521,6 +521,13 @@ test('direct Auth mode migrates credentials, changes Vault password and deletes 
   });
   assert.equal(wrongDeletion.status, 401, await wrongDeletion.clone().text());
   assert.equal(((await wrongDeletion.json()) as { cancelled?: boolean }).cancelled, true);
+  // Unfinished transitions and an abandoned deletion job must not block a new
+  // authenticated deletion. Each of these trips a guard in the old flow.
+  const staleOperation = random();
+  const staleSeed = db(
+    `INSERT INTO flaxia_auth_deletion_jobs (operation_hash, user_id, grant_token, proof_json, state) VALUES ('${staleOperation}', '${user.id}', '${random()}', '{"challenge_id":"stale","A":"stale","M1":"stale"}', 'pending'); INSERT INTO flaxia_direct_email_changes (operation_hash, user_id, target_email, state, created_at) VALUES ('${random()}', '${user.id}', '${username}@stale.example', 'pending', strftime('%Y-%m-%dT%H:%M:%fZ','now')); INSERT INTO flaxia_direct_vault_changes (operation_hash, user_id, target_stamp, vault_json, state) VALUES ('${random()}', '${user.id}', 'stale', NULL, 'pending');`,
+  );
+  assert.equal(staleSeed.status, 0, staleSeed.stderr);
   const deletion = random();
   const removed = await fetch(`${app}/api/users/me`, {
     method: 'DELETE',

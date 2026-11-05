@@ -22,7 +22,7 @@ import {
   sessionGrant,
 } from '../../lib/flaxia-auth';
 import { cancelAuthCredentialChange, resumeAuthCredentialChange } from '../../lib/flaxia-auth-credentials';
-import { deletionOperationHash, resumeAuthDeletion } from '../../lib/flaxia-auth-deletion';
+import { deletionOperationHash, resumeAuthDeletion, settleDeletionTransitions } from '../../lib/flaxia-auth-deletion';
 import { ensureAuthVault } from '../../lib/flaxia-auth-vault';
 import { resumeDirectCredentialChange } from '../../lib/flaxia-direct-credentials';
 import { resumeDirectDeletion } from '../../lib/flaxia-direct-deletion';
@@ -1755,6 +1755,15 @@ users.delete('/users/me', requireAuth, async (c) => {
       return c.json({ error: 'Current password proof is required' }, 400);
     }
     const userId = user.id;
+    if (typeof operation !== 'string') return c.json({ error: 'Deletion operation required' }, 400);
+
+    // An unfinished email or credential/vault change would trip a local guard
+    // before the deletion job can be written. Settle them first; a valid
+    // deletion proof means Auth still has the identity and nothing was deleted.
+    const deletionGrant = sessionToken && /^[A-Za-z0-9_-]{43}$/.test(sessionToken) ? sessionToken : grant;
+    if (deletionGrant && (await settleDeletionTransitions(c.env, deletionGrant, userId)) !== 'ok')
+      return c.json({ error: 'Deletion temporarily unavailable' }, 503);
+
     if (sessionToken && /^[A-Za-z0-9_-]{43}$/.test(sessionToken)) {
       if (typeof operation !== 'string') return c.json({ error: 'Deletion operation required' }, 400);
       const hash = await deletionOperationHash(operation);

@@ -82,11 +82,11 @@ export async function deleteAccount(
   // so the reservation cannot be completed and must be released here.
   statements.push(db.prepare('DELETE FROM flaxia_direct_email_changes WHERE user_id = ?').bind(userId));
 
-  // Admin deletion happens after the Auth account is gone, so every local
-  // transition row is meaningless and its guard must be cleared before the
-  // user or vault rows are touched. Coordinated (self-service) deletion keeps
-  // its receipt protocol and is expected to be free of active transition rows.
-  if (forceLinked) {
+  // Deletion happens after the Auth account is gone (or was never linked), so
+  // every local transition row is meaningless and its guard must be cleared
+  // before the user or vault rows are touched. The receipt was written above,
+  // so removing the job rows cannot break a retry.
+  if (forceLinked || authOperationHash) {
     statements.push(
       db.prepare('DELETE FROM flaxia_auth_purge_in_progress WHERE user_id = ?').bind(userId),
       db.prepare('DELETE FROM flaxia_auth_provisioning WHERE user_id = ?').bind(userId),

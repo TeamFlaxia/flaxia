@@ -28,7 +28,10 @@ export async function cancelStaleDirectCredentialChange(env: Env, grant: string,
       .bind(job.operation_hash)
       .first();
     if (!locked) return true;
-    if (!(await cancelAuthCredentialHash(env as { AUTH_SERVICE?: Fetcher }, job.operation_hash, grant, userId)))
+    if (
+      (await cancelAuthCredentialHash(env as { AUTH_SERVICE?: Fetcher }, job.operation_hash, grant, userId)) ===
+      'unavailable'
+    )
       return false;
     await env.DB.prepare(
       "UPDATE flaxia_direct_vault_changes SET state = 'cancelled', vault_json = NULL, target_stamp = '' WHERE operation_hash = ? AND state = 'cancelling'",
