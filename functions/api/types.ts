@@ -13,8 +13,10 @@ export type Bindings = {
   AP_DELIVERY_QUEUE: Queue;
   CROWD_ORCHESTRATOR_URL: string;
   CROWD_API_KEY: string;
-  /** Optional dedicated secret for signing orchestrator callbacks and scan-file tickets. */
+  /** Legacy `?sig=` secret for orchestrator callbacks and scan-file tickets. */
   CROWD_WEBHOOK_SECRET?: string;
+  /** Crowd's WEBHOOK_SIGNING_SECRET, used to verify X-Flaxia-* headers. */
+  CROWD_WEBHOOK_SIGNING_SECRET?: string;
   /** Comma-separated page origins permitted to fetch signed Crowd scan-file responses. */
   CROWD_NODE_ORIGINS: string;
   /** Enable R2-backed file references for scans after Crowd and nodes are deployed. */

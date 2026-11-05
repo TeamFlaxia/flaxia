@@ -205,11 +205,23 @@ describe('security guards', () => {
     // no session, no CSRF. An unsigned callback could post an `infected`
     // verdict for any public media key and blocklist it permanently.
     const crowd = readFileSync(join(ROOT, 'functions/lib/crowd.ts'), 'utf8');
-    assert.ok(crowd.includes('verifyCallbackSignature'), 'the webhook must verify the callback signature');
+    assert.ok(crowd.includes('verifyCallbackSignature'), 'the legacy query signature must still be verified');
+    assert.ok(crowd.includes('verifyCrowdWebhook'), 'header-signed callbacks must use the shared SDK verifier');
     assert.match(
       crowd,
-      /if \(!\(await verifyCallbackSignature\(url, crowdConfig\(env\)\)\)\)/,
-      'the signature must be checked before the payload is parsed',
+      /if \(!\(await verifyCallbackSignature\(url, config\)\)\)/,
+      'the legacy signature must be checked before the payload is dispatched',
+    );
+    assert.match(
+      crowd,
+      /verifyCrowdWebhook\(\{[\s\S]*?replayGuard: createCrowdWebhookReplayGuard\(db\)/,
+      'header callbacks must verify the HMAC and a replay guard before dispatch',
+    );
+    const verifyHeader = crowd.indexOf('verifyCrowdWebhook({');
+    const dispatch = crowd.indexOf("if (event.status === 'done')");
+    assert.ok(
+      verifyHeader > 0 && dispatch > verifyHeader,
+      'both signature checks must run before any verdict is applied',
     );
 
     // Every URL handed to the orchestrator must go through the signer.

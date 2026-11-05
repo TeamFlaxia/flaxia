@@ -128,13 +128,17 @@ remain viewable but unscanned.
   the immutable scan target; 16-hex prefixes remain accepted only for callbacks
   already in flight during rollout.
 - `POST /api/crowd/webhook` → `{ received: true }`. The route is a standalone
-  Pages Function, so no Hono middleware runs on it; instead every callback URL
-  is signed with `sig=<HMAC-SHA256>` over the canonical path+query
-  (`signedCallbackUrl` / `verifyCallbackSignature` in `functions/lib/crowd.ts`)
-  and an invalid or missing signature is rejected `401` before the body is read.
-  The key defaults to `CROWD_API_KEY` (set `CROWD_WEBHOOK_SECRET` to rotate it
-  independently) and is empty while Crowd is unconfigured, which is what keeps
-  local dev and the integration suites working unsigned.
+  Pages Function, so no Hono middleware runs on it. Current Crowd deployments
+  sign `<timestamp>.<nonce>.<raw body>` with `WEBHOOK_SIGNING_SECRET` and send
+  `X-Flaxia-Signature` / `X-Flaxia-Timestamp` / `X-Flaxia-Nonce`; Flaxia
+  verifies them with the SDK's `verifyCrowdWebhook()` and a D1-backed nonce
+  replay guard. Set `CROWD_WEBHOOK_SIGNING_SECRET` to the same value as Crowd's
+  `WEBHOOK_SIGNING_SECRET`.
+  The legacy `sig=<HMAC-SHA256>` query contract (`signedCallbackUrl` /
+  `verifyCallbackSignature`) is still accepted when no header is present; its
+  key defaults to `CROWD_API_KEY` (`CROWD_WEBHOOK_SECRET` rotates it
+  independently). Both are empty while Crowd is unconfigured, which is what
+  keeps local dev and the integration suites working unsigned.
 - `GET /api/crowd/scan-file` streams R2 bytes only when a short-lived HMAC
   bearer ticket is valid. The ticket binds key, SHA-256, size, and expiry; the
   handler also requires the current `file_scans` row to remain `pending`,

@@ -87,9 +87,37 @@ async function sendWebhook(
   });
 }
 
-// Dummy secret bound into the dev:test server (see package.json). Never a
-// production value: it only lets the suite speak the webhook protocol.
+async function sendHeaderWebhook(
+  type: string,
+  body: Record<string, unknown>,
+  params: Record<string, string> = {},
+  opts: { secret?: string; nonce?: string } = {},
+): Promise<Response> {
+  // Current Crowd contract: sign `<timestamp>.<nonce>.<raw body>` and send the
+  // values in X-Flaxia-* headers, exactly like Coordinator.deliverCallback.
+  const query = new URLSearchParams({ type, ...params });
+  const raw = JSON.stringify(body);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const nonce = opts.nonce ?? crypto.randomUUID();
+  const mac = createHmac('sha256', opts.secret ?? CROWD_WEBHOOK_SIGNING_SECRET)
+    .update(`${timestamp}.${nonce}.${raw}`)
+    .digest('base64url');
+  return fetch(`${BASE_URL}/api/crowd/webhook?${query}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Flaxia-Signature': `sha256=${mac}`,
+      'X-Flaxia-Timestamp': timestamp,
+      'X-Flaxia-Nonce': nonce,
+    },
+    body: raw,
+  });
+}
+
+// Dummy secrets bound into the dev:test server (see package.json). Never
+// production values: they only let the suite speak the webhook protocol.
 const CROWD_WEBHOOK_SECRET = 'test-callback-secret';
+const CROWD_WEBHOOK_SIGNING_SECRET = 'test-webhook-signing-secret';
 
 async function getPost(cookie: string, postId: string): Promise<{ hashtags: string[] }> {
   const res = await fetch(`${BASE_URL}/api/posts/${postId}`, { headers: { Cookie: cookie } });
@@ -189,6 +217,46 @@ describe('POST /api/crowd/webhook — protocol', () => {
       body: JSON.stringify({ taskId: 't-nosig', status: 'done', result: {} }),
     });
     assert.equal(res.status, 401);
+  });
+});
+
+describe('POST /api/crowd/webhook — Crowd header signature', () => {
+  it('applies an nsfw verdict signed with X-Flaxia headers', async () => {
+    const cookie = await loginUnique();
+    const postId = await createTextPost(cookie, 'header signed nsfw');
+
+    const res = await sendHeaderWebhook(
+      'nsfw',
+      {
+        taskId: 't-header-nsfw',
+        status: 'done',
+        result: { detections: [{ label: 'FEMALE_GENITALIA_EXPOSED', score: 0.98, box: [0, 0, 10, 10] }] },
+      },
+      { postId },
+    );
+    assert.equal(res.status, 200);
+
+    const post = await getPost(cookie, postId);
+    assert.ok(post.hashtags.includes('nsfw'), 'expected the header-signed verdict to apply');
+  });
+
+  it('rejects a header signature made with the wrong secret → 401', async () => {
+    const res = await sendHeaderWebhook(
+      'nsfw',
+      { taskId: 't-bad-header', status: 'done', result: { detections: [] } },
+      {},
+      { secret: 'wrong-secret' },
+    );
+    assert.equal(res.status, 401);
+  });
+
+  it('rejects a replayed nonce → 401', async () => {
+    const nonce = crypto.randomUUID();
+    const body = { taskId: 't-replay', status: 'failed', error: 'boom' };
+    const first = await sendHeaderWebhook('unknown-workload', body, {}, { nonce });
+    assert.equal(first.status, 200);
+    const replay = await sendHeaderWebhook('unknown-workload', body, {}, { nonce });
+    assert.equal(replay.status, 401);
   });
 });
 
