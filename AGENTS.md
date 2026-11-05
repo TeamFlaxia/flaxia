@@ -132,4 +132,4 @@ npm run test:billing  # in another shell
 ```
 
 ## Detailed Specifications
-See `docs/` for architecture, setup, deployment, API, database, and billing documentation. Encryption, key hierarchy, and the plaintext-password retirement are specified in `docs/e2ee.md`.
+See `docs/` for architecture, setup, deployment, API, database, and billing documentation. Encryption, key hierarchy, and the plaintext-password retirement are specified in `docs/e2ee.md`. The Flaxia Mail design (real `@flaxia.app` mail, E2EE boundaries, schema, API, and rollout) is specified in `docs/mail.md` — design only until implementation starts.
