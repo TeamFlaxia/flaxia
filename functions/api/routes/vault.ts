@@ -24,7 +24,10 @@ const vault = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 // Once Auth owns the account and its Vault, this router is a thin proxy. The
 // browser keeps using /api/vault; only the storage authority changes. Wrapped
 // keys are never copied into Flaxia's request path or persisted locally.
-vault.use('*', async (c, next) => {
+// Scope the Auth proxy to the vault routes. Hono sub-app wildcards also
+// match sibling routes mounted later (for example /api/mail/*), which made
+// the vault proxy intercept them and return 503.
+vault.use('/vault/*', async (c, next) => {
   if (!authIsAuthoritative(c.env)) return next();
   const user = c.get('user');
   const token = getSessionToken(c.req.raw);

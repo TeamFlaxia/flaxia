@@ -79,6 +79,14 @@ describe('security guards', () => {
     assert.ok(pagesToml.includes('MAIL_DOMAIN = "flaxia.app"'), 'mail domain must be apex flaxia.app');
   });
 
+  it('keeps the Auth vault proxy scoped to vault routes', () => {
+    const vault = readFileSync(join(ROOT, 'functions/api/routes/vault.ts'), 'utf8');
+    // A bare '*' sub-app middleware also matches sibling routes mounted later
+    // (for example /api/mail/*), so the Auth proxy must stay under /vault/*.
+    assert.match(vault, /vault\.use\('\/vault\/\*'/, 'vault proxy must be scoped to /vault/*');
+    assert.ok(!/vault\.use\('\*'/.test(vault), 'vault proxy must not use a bare wildcard');
+  });
+
   it('never decrypts vault key material server-side (mail included)', () => {
     const offenders = walk(join(ROOT, 'mail-worker'))
       .filter((file) =>
