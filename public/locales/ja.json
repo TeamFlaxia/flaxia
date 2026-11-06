@@ -1085,6 +1085,9 @@
   "mail.settings_title": "メール設定",
   "mail.address": "アドレス",
   "mail.vault_unlocked": "Personal Vault: ロック解除済み",
-  "mail.vault_locked": "Personal Vault: ロック中（有効化には設定画面で解除してください）",
-  "mail.activate": "メールアドレスを有効化"
+  "mail.vault_locked": "Personal Vault: ロック中（下で解除すると Mail を有効化できます）",
+  "mail.activate": "メールアドレスを有効化",
+  "settings.vault_not_setup": "Personal Vault はまだ設定されていません。先に設定画面で有効化してください。",
+  "settings.vault_open_settings": "設定を開く",
+  "settings.vault_pair_in_settings": "設定でこの端末をペアリング"
 }
