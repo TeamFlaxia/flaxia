@@ -1,6 +1,6 @@
-// Client-side candidate ranking. The server supplies only non-personal public
-// features plus candidate embeddings; the decrypted preference vector never
-// leaves this module's caller.
+// Client-side candidate ranking. The server supplies public candidate
+// embeddings plus its own per-user ordering hints; the decrypted preference
+// vector never leaves this module's caller.
 
 import { cosineSimilarity, normalizedCosine } from './vector.ts';
 
@@ -11,7 +11,7 @@ export interface RankOptions<T> {
   getBaseScore: (item: T) => number;
   limit: number;
   getAuthor?: (item: T) => string;
-  /** Weight of cosine relevance against the server's non-personal base score. */
+  /** Weight of cosine relevance against the server's base score. */
   personalWeight?: number;
   /** Higher values favor relevance; lower values favor MMR diversity. */
   mmrLambda?: number;
@@ -29,9 +29,9 @@ interface Prepared<T> {
 }
 
 /**
- * Blend relevance with the non-personal base score, then apply maximal
- * marginal relevance plus a per-author cap. Without a profile the server's
- * order is preserved so a locked/absent vault never degrades the feed.
+ * Blend relevance with the server's base score, then apply maximal marginal
+ * relevance plus a per-author cap. Without a profile the server's order is
+ * preserved so a locked/absent vault never degrades the feed.
  */
 export function rankCandidates<T>(options: RankOptions<T>): T[] {
   const {
@@ -72,6 +72,12 @@ export function rankCandidates<T>(options: RankOptions<T>): T[] {
       .map((entry) => entry.item);
   }
 
+  // MMR would otherwise recompute the same pairwise cosines every iteration
+  // (O(n^3 * dim)). Precompute the non-negative similarity matrix once so the
+  // greedy loop is O(n^3) scalar lookups; the matrix is bounded to keep memory
+  // predictable for pathological candidate sets.
+  const similarities = precomputeSimilarities(prepared);
+  const candidateCount = prepared.length;
   const remaining = [...prepared].sort((a, b) => b.combined - a.combined || a.index - b.index);
   const selected: Prepared<T>[] = [];
   const authorCounts = new Map<string, number>();
@@ -83,7 +89,13 @@ export function rankCandidates<T>(options: RankOptions<T>): T[] {
       const candidate = remaining[i];
       if (candidate.author && (authorCounts.get(candidate.author) || 0) >= maxPerAuthor) continue;
       let maxSimilarity = 0;
-      if (candidate.vector) {
+      if (similarities) {
+        const rowOffset = candidate.index * candidateCount;
+        for (const picked of selected) {
+          const similarity = similarities[rowOffset + picked.index];
+          if (similarity > maxSimilarity) maxSimilarity = similarity;
+        }
+      } else if (candidate.vector) {
         for (const picked of selected) {
           if (!picked.vector) continue;
           const similarity = Math.max(0, cosineSimilarity(candidate.vector, picked.vector));
@@ -103,6 +115,26 @@ export function rankCandidates<T>(options: RankOptions<T>): T[] {
   }
 
   return selected.map((entry) => entry.item);
+}
+
+const MAX_SIMILARITY_MATRIX_ITEMS = 1024;
+
+function precomputeSimilarities<T>(prepared: readonly Prepared<T>[]): Float64Array | null {
+  const n = prepared.length;
+  if (n > MAX_SIMILARITY_MATRIX_ITEMS) return null;
+  const matrix = new Float64Array(n * n);
+  for (let i = 0; i < n; i++) {
+    const left = prepared[i].vector;
+    if (!left) continue;
+    for (let j = i + 1; j < n; j++) {
+      const right = prepared[j].vector;
+      if (!right) continue;
+      const similarity = Math.max(0, cosineSimilarity(left, right));
+      matrix[i * n + j] = similarity;
+      matrix[j * n + i] = similarity;
+    }
+  }
+  return matrix;
 }
 
 function withAuthorCap<T>(maxPerAuthor: number) {

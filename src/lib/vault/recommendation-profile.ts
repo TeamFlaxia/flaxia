@@ -153,7 +153,7 @@ async function rebuildProfile(): Promise<RecommendationProfile | null> {
 /**
  * Return the decrypted profile, rebuilding it when stale/dirty. A locked vault
  * or missing signal history yields null, which callers treat as "show the
- * non-personal feed" rather than an error.
+ * server-side feed" rather than an error.
  */
 export async function getRecommendationProfile(
   options: { force?: boolean } = {},
@@ -169,6 +169,9 @@ export async function getRecommendationProfile(
   if (inflight) return inflight;
   inflight = (async () => {
     const stored = force ? null : await readStoredProfile();
+    // The vault can lock while a read/rebuild is awaiting; never repopulate the
+    // in-memory cache after that transition.
+    if (!isVaultUnlocked()) return null;
     const storedAge = stored ? Date.now() - Date.parse(stored.builtAt) : Number.POSITIVE_INFINITY;
     if (stored && !force && !dirty && Number.isFinite(storedAge) && storedAge < PROFILE_TTL_MS) {
       cached = { profile: stored, loadedAt: Date.now() };
@@ -176,6 +179,7 @@ export async function getRecommendationProfile(
     }
 
     const rebuilt = await rebuildProfile();
+    if (!isVaultUnlocked()) return null;
     if (rebuilt) {
       clearDirty();
       cached = { profile: rebuilt, loadedAt: Date.now() };
@@ -192,12 +196,6 @@ export async function getRecommendationProfile(
   });
 
   return inflight;
-}
-
-/** Test hook: forget the in-memory copy without touching the Vault. */
-export function clearRecommendationProfileCache(): void {
-  cached = null;
-  inflight = null;
 }
 
 export { PROFILE_TTL_MS, RECOMMENDATION_VECTOR_DIM };

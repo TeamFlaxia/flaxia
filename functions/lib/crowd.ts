@@ -21,7 +21,6 @@ import {
 } from '@flaxia/sdk';
 import { stripPostColors } from '../../src/lib/post-colors.ts';
 import { postTextSha } from './ai-index.ts';
-
 import { loadBlocklist, matchBlocklist, matchSignatureEntry } from './scan/blocklist.ts';
 import { clamavVerdict, parseContainerOutput, parseVideoPhashes } from './scan/container-result.ts';
 import { getFileScan, recordInfection, setScanPhash, setScanStatus } from './scan/db.ts';

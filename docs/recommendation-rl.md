@@ -10,7 +10,7 @@ Flaxia の For You と Arcade は、**個人の好みベクトルを端末内で
 |---|---|---|
 | 好みベクトル（1024次元 int8/float） | Vault item `recommendation_profile` / `reco-profile-v1`（AES-GCM） | ❌ 暗号文のみ |
 | 候補投稿の埋め込み | `post_embeddings.embedding`（公開コンテンツ由来） | ✅ |
-| 非パーソナルな base score | リクエスト時に算出 | ✅ |
+| サーバー側 base score | リクエスト時に算出（follow / 履歴 / 人気 / 未プレイ） | ✅ |
 | fresh / reply / share / dwell イベント | `freshs` / `arcade_events` など | ✅ |
 
 **正直な限界:** 行動イベント自体はサーバーに残るため、運用者は行動ログから好みを近似的に
@@ -39,8 +39,8 @@ Flaxia の For You と Arcade は、**個人の好みベクトルを端末内で
 }
 ```
 
-- Vault が未設定・ロック中・期限切れの場合はプロフィールを返さず、サーバーの
-  非パーソナルランキングへフォールバックします。
+- Vault が未設定・ロック中・期限切れの場合はプロフィールを返さず、サーバー側の
+  ランキングへフォールバックします。
 - fresh などの操作後は `markRecommendationProfileDirty()` を呼び、次回取得時に再構築します。
 - TTL は 15 分。
 
@@ -66,7 +66,9 @@ GET /api/games?recommended=true&client_rank=1&include_vectors=1&limit=120&offset
 ```
 
 - `vectors` は int8 + per-vector scale + base64（`src/lib/recommendation/vector-codec.ts`）。
-- `base_scores` は freshness、dwell、popularity、未プレイ探索などの非パーソナル信号。
+- `base_scores` は freshness、dwell、popularity、未プレイ探索、フォロー関係、自分の
+  fresh / 既読履歴などから作る**サーバー側**のランキング信号です（個人プロフィール
+  ベクトルではありません）。
 - `client_rank` を付けない既存クライアントには従来どおりサーバー順で返します。
 
 ## 4. クライアントランキング
@@ -82,9 +84,9 @@ GET /api/games?recommended=true&client_rank=1&include_vectors=1&limit=120&offset
 
 ## 5. サーバー側の役割
 
-- For You: following / trending / recent の候補を統合し、非パーソナルスコアで並べる。
+- For You: following / trending / recent の候補を統合し、サーバー側スコアで並べる。
 - Arcade: dwell 統計、popularity、未プレイ、freshness で base score を作る。
-- どちらも個人プロフィールを読まない。
+- どちらも個人プロフィール（Vault の好みベクトル）は読まない。
 
 ## 6. 廃止したもの
 
@@ -102,3 +104,8 @@ GET /api/games?recommended=true&client_rank=1&include_vectors=1&limit=120&offset
 あります。`recommendation_profile` を追加できない場合、プロフィール保存は失敗しますが、
 クライアントはそのセッションのメモリ内ベクトルでランキングを継続します。リリース前に
 Auth 側の allowlist を確認してください。
+
+`migrations/0130_drop_server_recommendation_profiles.sql` は先にアプリをデプロイしてから
+適用してください。旧リリースはまだ `user_profiles` / `bandit_state` を参照するため、
+migration を先に流すとデプロイ完了までの間 For You / Arcade が 500 になります。
+新しいコードはこれらのテーブルを必要としません。

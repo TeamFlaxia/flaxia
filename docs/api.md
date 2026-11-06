@@ -155,12 +155,13 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 
 ### Recommended Feed
 `GET /api/posts/recommended?limit=20&cursor=...`
-- Non-personal ranking (following / trending / recent)
+- Server-side ranking (following / trending / recent)
 
 `GET /api/posts/recommended?client_rank=1&include_vectors=1&limit=100`
 - Adds `vectors` (int8 public post embeddings), `vector_meta`, and
-  `base_scores`; the unlocked browser blends cosine similarity with its Vault
-  recommendation profile
+  `base_scores`; the server computes these from follows, recency, popularity,
+  and the caller's own history, and the unlocked browser blends them with
+  cosine similarity against its Vault recommendation profile
 - `next_cursor` is compatible with the non-client endpoint
 
 ### Recommendation Profile Sources

@@ -624,8 +624,8 @@ async function attachRecommendationVectors(
 
 /**
  * Candidate batch for client-side re-ranking. No preference vector is read or
- * written here: the server returns public embeddings plus non-personal scores,
- * and the unlocked browser applies cosine similarity locally.
+ * written here: the server returns public embeddings plus its own ranking
+ * scores, and the unlocked browser applies cosine similarity locally.
  */
 async function loadClientRankedCandidatePage(
   db: D1Database,

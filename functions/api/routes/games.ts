@@ -326,7 +326,7 @@ games.get('/games', async (c) => {
       const now = Date.now();
       const dayMs = 86400000;
 
-      // Non-personal popularity fallback, normalized across the candidate set.
+      // Popularity fallback, normalized across the candidate set.
       let popMin = Number.POSITIVE_INFINITY;
       let popMax = Number.NEGATIVE_INFINITY;
       const popRaw = candidateRows.map((row) => {

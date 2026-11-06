@@ -138,18 +138,19 @@ Authors with a low trust score (repeated near-duplicate posts) are excluded from
 For You, and exact duplicate posts are collapsed to their newest copy across
 feeds.
 
-The personal part of ranking happens in the browser. With
+The explicit preference vector lives in the browser. With
 `client_rank=1&include_vectors=1`, the API also returns public candidate
-embeddings plus a non-personal `base_score`; the unlocked client blends cosine
-similarity with its Vault-held preference vector (`src/lib/recommendation/`).
-The server never stores or receives that vector. A locked/absent Vault falls
-back to the server's non-personal order.
+embeddings plus a server-computed `base_score` (follows, recency, popularity,
+and the caller's own history); the unlocked client blends cosine similarity
+with its Vault-held preference vector (`src/lib/recommendation/`). The server
+never stores or receives that vector. A locked/absent Vault falls back to the
+server's own order.
 
 Arcade recommendations are implemented separately in
 `functions/api/routes/games.ts` (`GET /api/games?recommended=true`) using dwell,
-popularity, exploration, and freshness as base signals, then the same
-client-side ranking. See [`docs/recommendation-rl.md`](recommendation-rl.md) for
-the recommendation model.
+popularity, exploration (already-played), and freshness as base signals, then
+the same client-side ranking. See [`docs/recommendation-rl.md`](recommendation-rl.md)
+for the recommendation model.
 
 ## Layout
 

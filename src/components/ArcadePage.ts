@@ -2054,13 +2054,18 @@ export class ArcadePage {
     const batch = this.pendingEvents.splice(0);
     this.eventFlushTimer = null;
     try {
-      await fetch('/api/games/events', {
+      const response = await fetch('/api/games/events', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         keepalive: true,
         body: JSON.stringify({ sessionId: this.sessionId, events: batch }),
       });
+      // Long dwells are a recommendation source; refresh the vault profile on
+      // the next feed load instead of waiting for the TTL.
+      if (response.ok && batch.some((event) => event.dwellMs > 5000)) {
+        markRecommendationProfileDirty();
+      }
     } catch {
       // Silently fail — event data is non-critical
     }

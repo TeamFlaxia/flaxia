@@ -56,6 +56,10 @@ recommendations.get('/recommendations/profile-sources', requireAuth, async (c) =
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
   if (!c.env.DB) return c.json({ error: 'Database not available' }, 500);
 
+  // This response contains the caller's own interaction history; never let a
+  // shared cache retain it, including the empty-sources early return below.
+  c.header('Cache-Control', 'no-store');
+
   if (
     !(await checkRateLimit(c.env.CACHE, `recommendation-profile:${user.id}`, {
       maxRequests: 30,
@@ -185,7 +189,6 @@ recommendations.get('/recommendations/profile-sources', requireAuth, async (c) =
       });
     }
 
-    c.header('Cache-Control', 'no-store');
     return c.json({
       v: 1,
       dim: RECOMMENDATION_VECTOR_DIM,
