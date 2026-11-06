@@ -7,6 +7,7 @@
 //
 // P1 ships: addresses, keys, quota. Threads/messages/send land in P2/P3.
 import { type Context, Hono } from 'hono';
+import { RESERVED_LOCALS } from '../../../src/lib/mail/address.ts';
 import { getSessionToken } from '../../lib/auth';
 import { authIsAuthoritative, authVaultRequest, sessionGrant } from '../../lib/flaxia-auth';
 import { ensureAuthVault } from '../../lib/flaxia-auth-vault';
@@ -26,7 +27,37 @@ type MailContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 
 const mail = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
+const MAX_MAIL_REQUEST_BYTES = 16 * 1024;
+
 mail.use('*', requireAuth);
+
+async function readSmallBody(c: MailContext): Promise<string | null> {
+  const declared = Number(c.req.header('Content-Length') ?? '');
+  if (Number.isFinite(declared) && declared > MAX_MAIL_REQUEST_BYTES) return null;
+
+  const reader = c.req.raw.body?.getReader();
+  if (!reader) return '';
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_MAIL_REQUEST_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(body);
+}
 
 async function proxy(c: MailContext, path: string, init: RequestInit = {}): Promise<Response> {
   const user = c.get('user');
@@ -38,7 +69,9 @@ async function proxy(c: MailContext, path: string, init: RequestInit = {}): Prom
   const contentType = new Headers(init.headers).get('Content-Type');
   if (contentType) headers['Content-Type'] = contentType;
   const idempotencyKey = c.req.header('Idempotency-Key');
-  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+  if (idempotencyKey && /^[A-Za-z0-9_-]{8,128}$/.test(idempotencyKey)) {
+    headers['Idempotency-Key'] = idempotencyKey;
+  }
 
   const res = await callMailService(c.env, user.id, method, path, body === undefined ? { headers } : { body, headers });
   if (!res) return c.json({ error: 'mail_unavailable' }, 503);
@@ -70,8 +103,6 @@ async function hasEnabledVault(c: MailContext, userId: string): Promise<boolean>
   return Boolean(row);
 }
 
-const RESERVED_LOCALS = new Set(['admin', 'abuse', 'dmarc', 'noreply', 'postmaster', 'security', 'support', 'team']);
-
 export function primaryAddressFor(username: string, domain = 'flaxia.app'): string {
   const local = username.trim().toLowerCase();
   if (!/^[A-Za-z0-9_]{1,20}$/.test(local)) throw new Error('mail_invalid_username');
@@ -94,16 +125,27 @@ mail.post('/addresses', async (c) => {
   const allowed = await allow(c, `mail:address:${user.id}`, 10, 3600);
   if (!allowed) return c.json({ error: 'mail_rate_limited' }, 429);
 
-  const body = (await c.req.json().catch(() => ({}))) as {
-    public_key?: unknown;
-    key_version?: unknown;
-  };
+  const raw = await readSmallBody(c);
+  if (raw === null) return c.json({ error: 'mail_request_too_large' }, 413);
+  let parsed: unknown = {};
+  try {
+    parsed = raw.length > 0 ? JSON.parse(raw) : {};
+  } catch {
+    parsed = {};
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return c.json({ error: 'mail_invalid_body' }, 400);
+  }
+  const body = parsed as { public_key?: unknown; key_version?: unknown };
+
   if (!(await hasEnabledVault(c, user.id))) return c.json({ error: 'mail_vault_required' }, 409);
   if (typeof body.public_key !== 'string' || body.public_key.length === 0 || body.public_key.length > 500) {
     return c.json({ error: 'mail_invalid_public_key' }, 400);
   }
   const keyVersion = Number(body.key_version ?? 1);
-  if (!Number.isInteger(keyVersion) || keyVersion < 1) return c.json({ error: 'mail_invalid_key_version' }, 400);
+  if (!Number.isInteger(keyVersion) || keyVersion < 1 || keyVersion > 1_000_000) {
+    return c.json({ error: 'mail_invalid_key_version' }, 400);
+  }
 
   let address: string;
   try {
@@ -134,10 +176,12 @@ mail.get('/keys/me', async (c) => {
 mail.put('/keys/me', async (c) => {
   const allowed = await allow(c, `mail:keys:${c.get('user')?.id}`, 20, 3600);
   if (!allowed) return c.json({ error: 'mail_rate_limited' }, 429);
+  const body = await readSmallBody(c);
+  if (body === null) return c.json({ error: 'mail_request_too_large' }, 413);
   return proxy(c, '/internal/keys/me', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: await c.req.text(),
+    body,
   });
 });
 
@@ -154,10 +198,12 @@ mail.get('/keys', async (c) => {
 mail.post('/report-abuse', async (c) => {
   const allowed = await allow(c, `mail:report:${c.get('user')?.id}`, 30, 3600);
   if (!allowed) return c.json({ error: 'mail_rate_limited' }, 429);
+  const body = await readSmallBody(c);
+  if (body === null) return c.json({ error: 'mail_request_too_large' }, 413);
   return proxy(c, '/internal/report-abuse', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: await c.req.text(),
+    body,
   });
 });
 

@@ -28,7 +28,7 @@ function fakeEnv(spkiB64: string, addressRow: { user_id: string; state: string }
 
   const firstFor = (sql: string): unknown => {
     if (sql.includes('FROM mail_addresses')) return addressRow;
-    if (sql.includes('FROM mail_identities')) return { public_key: spkiB64 };
+    if (sql.includes('FROM mail_identities')) return { public_key: spkiB64, key_version: 1 };
     if (sql.includes('FROM mail_usage')) return null;
     throw new Error(`unexpected query: ${sql}`);
   };
@@ -94,12 +94,13 @@ describe('mail inbound ingest', () => {
 
     const keys = written.find((statement) => statement.sql.includes('INSERT INTO mail_message_keys'));
     assert.ok(keys, 'wrapped content key row is inserted');
+    assert.equal(keys.params[2], 1, 'the identity key version is persisted with the wrap');
 
     const contentKey = await unwrapContentKey(
       {
-        ephemeralPublicKey: keys.params[2] as string,
-        iv: keys.params[3] as string,
-        wrappedContentKey: keys.params[4] as string,
+        ephemeralPublicKey: keys.params[3] as string,
+        iv: keys.params[4] as string,
+        wrappedContentKey: keys.params[5] as string,
       },
       recipient.pkcs8B64,
       messageId,

@@ -71,6 +71,7 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
       'flaxia_auth_purge_in_progress',
       'flaxia_auth_deletion_receipts',
       'flaxia_auth_transition_assertions',
+      'mail_deletion_outbox',
       'profile_media_deletion_outbox',
       'poll_votes',
       'poll_options',

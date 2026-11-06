@@ -11,8 +11,8 @@ workers_dev = false
 [[d1_databases]]
 binding = "MAIL_DB"
 database_name = "flaxia-mail"
-# Replace with the id printed by `wrangler d1 create flaxia-mail` before
-# deploying (docs/deployment.md). The deploy job rejects the placeholder.
+# CI substitutes the MAIL_D1_DATABASE_ID secret here (docs/deployment.md).
+# For a manual deploy, replace it locally with the id from `wrangler d1 create`.
 database_id = "00000000-0000-0000-0000-000000000000"
 
 [[r2_buckets]]
@@ -35,5 +35,8 @@ dead_letter_queue = "flaxia-mail-dlq"
 
 [vars]
 MAIL_DOMAIN = "flaxia.app"
+# P1 does not accept live mail yet: MIME auth/scanning/threading land in P2.
+# Keep this "0" and do not point Email Routing at the Worker until P2 ships.
+MAIL_INBOUND_ENABLED = "0"
 # Apex cutover (D6): human forwarding is deleted. Unknown recipients are
 # rejected by the Worker with 550; there is no fallback mailbox.

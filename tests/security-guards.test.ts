@@ -71,6 +71,8 @@ describe('security guards', () => {
     // not enough: the config must explicitly disable it.
     assert.match(workerToml, /^\s*workers_dev\s*=\s*false\s*$/m, 'mail worker must explicitly set workers_dev = false');
     assert.ok(!/^\s*workers_dev\s*=\s*true\s*$/m.test(workerToml), 'mail worker must not expose workers.dev');
+    // P1 has no MIME auth/scanning/read UI, so live mail must stay rejected.
+    assert.match(workerToml, /^\s*MAIL_INBOUND_ENABLED\s*=\s*"0"\s*$/m, 'P1 must keep inbound mail disabled');
 
     const pagesToml = readFileSync(join(ROOT, 'wrangler.toml'), 'utf8');
     assert.ok(pagesToml.includes('MAIL_SERVICE'), 'Pages must bind MAIL_SERVICE');

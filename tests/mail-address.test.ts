@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import {
   isReservedLocal,
   isValidMailAddress,
   normalizeMailAddress,
   primaryAddressForUsername,
+  RESERVED_LOCALS,
 } from '../src/lib/mail/address.ts';
 
 describe('mail addresses', () => {
@@ -18,10 +20,33 @@ describe('mail addresses', () => {
   });
 
   it('rejects reserved locals', () => {
-    for (const reserved of ['admin', 'abuse', 'dmarc', 'noreply', 'postmaster', 'security', 'support', 'team']) {
+    for (const reserved of [
+      'admin',
+      'abuse',
+      'billing',
+      'dmarc',
+      'hostmaster',
+      'mailerdaemon',
+      'noreply',
+      'postmaster',
+      'root',
+      'security',
+      'support',
+      'team',
+      'webmaster',
+    ]) {
       assert.equal(isReservedLocal(reserved), true);
       assert.throws(() => primaryAddressForUsername(reserved), /mail_reserved/);
     }
+  });
+
+  it('keeps the Pages proxy and Mail Worker on the shared reserved list', () => {
+    for (const path of ['../functions/api/routes/mail.ts', '../mail-worker/src/index.ts']) {
+      const source = readFileSync(new URL(path, import.meta.url), 'utf8');
+      assert.match(source, /src\/lib\/mail\/address\.ts/, `${path} must import the shared address module`);
+      assert.ok(!source.includes('const RESERVED_LOCALS = new Set'), `${path} must not duplicate the list`);
+    }
+    assert.ok(RESERVED_LOCALS.size >= 20, 'operational lookalikes must stay reserved');
   });
 
   it('rejects invalid usernames', () => {

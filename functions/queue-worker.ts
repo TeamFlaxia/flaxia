@@ -57,6 +57,13 @@ export default {
       console.error('Account deletion recovery failed:', (error as Error).message);
     }
     try {
+      const { reapMailDeletions } = await import('./lib/mail-deletion-reap');
+      const reaped = await reapMailDeletions(env);
+      if (reaped > 0) console.log(`Completed ${reaped} pending Mail deletions`);
+    } catch (error) {
+      console.error('Mail deletion retry failed:', (error as Error).message);
+    }
+    try {
       const { reapProfileMedia } = await import('./lib/profile-media-reap');
       const reaped = await reapProfileMedia(env);
       if (reaped > 0) console.log(`Deleted ${reaped} unreferenced profile images`);

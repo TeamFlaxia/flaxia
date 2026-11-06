@@ -76,6 +76,10 @@ jobs:
 
   deploy-queue:
     if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main')
+    # The backend worker binds MAIL_SERVICE for scheduled account deletion and
+    # reads mail_deletion_outbox, so Mail must exist and main migrations must
+    # have run first.
+    needs: [deploy-mail, deploy-pages]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -133,12 +137,15 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci --ignore-scripts
-      - name: Require a real Mail D1 database id
+      - name: Configure Mail D1 database id
         run: |
-          if grep -q '00000000-0000-0000-0000-000000000000' mail-worker/wrangler.toml; then
-            echo "::error file=mail-worker/wrangler.toml::Set database_id to the id from 'wrangler d1 create flaxia-mail' (docs/deployment.md)."
+          if ! [[ "$MAIL_D1_DATABASE_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+            echo "::error::Add the MAIL_D1_DATABASE_ID repository secret (id from 'wrangler d1 create flaxia-mail')."
             exit 1
           fi
+          sed -i "s/00000000-0000-0000-0000-000000000000/$MAIL_D1_DATABASE_ID/" mail-worker/wrangler.toml
+        env:
+          MAIL_D1_DATABASE_ID: ${{ secrets.MAIL_D1_DATABASE_ID }}
       - name: Apply Mail D1 migrations
         run: npx wrangler d1 migrations apply flaxia-mail --remote --config mail-worker/wrangler.toml
         env:

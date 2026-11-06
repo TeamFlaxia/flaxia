@@ -6,15 +6,49 @@
 export const MAIL_DOMAIN = 'flaxia.app';
 export const USERNAME_PATTERN = /^[A-Za-z0-9_]{1,20}$/;
 
+// Operational locals must never become user mailboxes, and lookalikes such as
+// root@/hostmaster@ invite impersonation. This is the single source of truth
+// for the SPA, Pages proxy, and Mail Worker.
 export const RESERVED_LOCALS = new Set([
   'admin',
+  'administrator',
   'abuse',
+  'api',
+  'app',
+  'auth',
+  'billing',
+  'bounce',
+  'bounces',
+  'contact',
+  'dkim',
   'dmarc',
+  'dns',
+  'donotreply',
+  'flaxia',
+  'help',
+  'hostmaster',
+  'info',
+  'legal',
+  'mail',
+  'mailerdaemon',
+  'marketing',
+  'news',
+  'no_reply',
   'noreply',
   'postmaster',
+  'press',
+  'privacy',
+  'registrar',
+  'root',
+  'sales',
   'security',
+  'spam',
+  'spf',
+  'status',
   'support',
   'team',
+  'webmaster',
+  'www',
 ]);
 
 export function normalizeMailAddress(address: string): string {

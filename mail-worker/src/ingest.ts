@@ -18,6 +18,7 @@ export interface MailEnv {
   MAIL_DOMAIN?: string;
   MAIL_THREAD_SECRET?: string;
   MAIL_INTERNAL_SECRET?: string;
+  MAIL_INBOUND_ENABLED?: string;
 }
 
 export async function handleInboundEmail(env: MailEnv, raw: ArrayBuffer, toAddress: string): Promise<void> {
@@ -29,10 +30,12 @@ export async function handleInboundEmail(env: MailEnv, raw: ArrayBuffer, toAddre
     .first<{ user_id: string; state: string }>();
   // Apex cutover (D6): no human fallback forward. Unknown/disabled -> reject.
   if (!address || address.state !== 'active') throw Object.assign(new Error('mail_recipient_unknown'), { code: 550 });
+  // User ids are database identifiers; this one is interpolated into an R2 key.
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(address.user_id)) throw new Error('mail_invalid_user');
 
-  const identity = await env.MAIL_DB.prepare('SELECT public_key FROM mail_identities WHERE user_id = ?')
+  const identity = await env.MAIL_DB.prepare('SELECT public_key, key_version FROM mail_identities WHERE user_id = ?')
     .bind(address.user_id)
-    .first<{ public_key: string }>();
+    .first<{ public_key: string; key_version: number }>();
   if (!identity) throw new Error('mail_identity_missing');
 
   const usage = await env.MAIL_DB.prepare('SELECT storage_bytes FROM mail_usage WHERE user_id = ?')
@@ -55,6 +58,15 @@ export async function handleInboundEmail(env: MailEnv, raw: ArrayBuffer, toAddre
     contentKey.fill(0);
   });
 
+  // Re-check after encryption: account deletion may have removed the address
+  // while this message was being processed. Do not write R2 for a dead mailbox.
+  const stillActive = await env.MAIL_DB.prepare('SELECT user_id, state FROM mail_addresses WHERE address = ?')
+    .bind(normalizedTo)
+    .first<{ user_id: string; state: string }>();
+  if (!stillActive || stillActive.state !== 'active' || stillActive.user_id !== address.user_id) {
+    throw Object.assign(new Error('mail_recipient_unknown'), { code: 550 });
+  }
+
   const r2Key = `mail/${address.user_id}/${messageId}/payload.enc`;
   await env.MAIL_BUCKET.put(r2Key, encrypted.ciphertext);
 
@@ -70,8 +82,15 @@ export async function handleInboundEmail(env: MailEnv, raw: ArrayBuffer, toAddre
     ).bind(messageId, address.user_id, messageId, normalizedTo, raw.byteLength, r2Key, encrypted.iv),
     env.MAIL_DB.prepare(
       `INSERT INTO mail_message_keys (message_id, recipient_address, key_version, ephemeral_public_key, iv, wrapped_content_key)
-       VALUES (?, ?, 1, ?, ?, ?)`,
-    ).bind(messageId, normalizedTo, wrapped.ephemeralPublicKey, wrapped.iv, wrapped.wrappedContentKey),
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      messageId,
+      normalizedTo,
+      identity.key_version,
+      wrapped.ephemeralPublicKey,
+      wrapped.iv,
+      wrapped.wrappedContentKey,
+    ),
     env.MAIL_DB.prepare(
       `INSERT INTO mail_usage (user_id, storage_bytes, updated_at)
        VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))

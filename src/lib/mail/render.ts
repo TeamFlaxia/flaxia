@@ -9,13 +9,14 @@ import DOMPurify from 'dompurify';
 
 export const MAIL_SANDBOX_POLICY = 'sandbox=""';
 
-const INLINE_IMAGE = /^data:image\//i;
+// Only inert raster payloads; SVG can carry external references/animation.
+const INLINE_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp|avif)(?:;|,)/i;
 
 /**
  * Block remote media by default (docs/mail.md §9.4). Tracking pixels and
- * remote styles leak the reader's IP and read time, so only inline `data:image`
- * sources survive. Link targets stay intact; only media/background fetches are
- * stripped.
+ * remote styles leak the reader's IP and read time, so only inline raster
+ * data: URLs survive. Link targets stay intact but are constrained to
+ * http(s)/mailto and opened without opener access.
  */
 function stripRemoteMedia(node: Element): void {
   const tag = node.tagName.toLowerCase();
@@ -25,6 +26,12 @@ function stripRemoteMedia(node: Element): void {
       const value = node.getAttribute(attribute);
       if (value && !INLINE_IMAGE.test(value.trim())) node.removeAttribute(attribute);
     }
+  }
+  if (tag === 'a' && node.hasAttribute('href')) {
+    const href = node.getAttribute('href') ?? '';
+    if (!/^(https?:\/\/|mailto:)/i.test(href)) node.removeAttribute('href');
+    node.setAttribute('rel', 'noopener noreferrer');
+    node.setAttribute('target', '_blank');
   }
   node.removeAttribute('background');
   node.removeAttribute('style');
@@ -53,7 +60,7 @@ export function sanitizeMailHtml(dirty: string): string {
   stripMediaForMail = true;
   try {
     const clean = DOMPurify.sanitize(dirty, {
-      FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'meta', 'link', 'base'],
+      FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'meta', 'link', 'base', 'svg', 'math'],
       FORBID_ATTR: [
         'onerror',
         'onload',
@@ -71,8 +78,9 @@ export function sanitizeMailHtml(dirty: string): string {
       ALLOW_UNKNOWN_PROTOCOLS: false,
       IN_PLACE: false,
     });
-    // CSS url() is a second exfiltration path; only inline data:image survives.
-    return clean.replace(/url\(\s*['"]?(?!data:image\/)[^)]+\)/gi, 'url(blocked)');
+    // CSS url() is a second exfiltration path; only inline raster data: URLs
+    // survive (and the style attribute is forbidden above anyway).
+    return clean.replace(/url\(\s*['"]?(?!data:image\/(?:png|jpe?g|gif|webp|avif)(?:;|,))[^)]+\)/gi, 'url(blocked)');
   } finally {
     stripMediaForMail = false;
   }

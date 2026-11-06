@@ -197,6 +197,9 @@ CREATE TABLE IF NOT EXISTS mail_idempotency_keys (
   PRIMARY KEY (user_id, idempotency_key)
 );
 
+CREATE INDEX IF NOT EXISTS idx_mail_idempotency_created
+  ON mail_idempotency_keys(user_id, created_at);
+
 -- Deleted addresses stay reserved for 90 days to prevent misdirected mail
 -- and impersonation (docs/mail.md §11.3).
 CREATE TABLE IF NOT EXISTS mail_reserved_addresses (
@@ -204,3 +207,6 @@ CREATE TABLE IF NOT EXISTS mail_reserved_addresses (
   reserved_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   release_at  TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_mail_reserved_release
+  ON mail_reserved_addresses(release_at);
