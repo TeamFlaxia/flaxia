@@ -30,11 +30,8 @@ Mail は apex `flaxia.app` の `@flaxia.app` メールボックス。既存の h
 ```bash
 # 1. Mail の D1 / R2 / Queue を作成
 npx wrangler d1 create flaxia-mail
-#    -> 出力された database_id を GitHub repository secret
-#       MAIL_D1_DATABASE_ID に登録する。deploy.yml が CI 実行時に
-#       mail-worker/wrangler.toml のプレースホルダを置き換える。
-#       ローカルで migrate/deploy する場合だけ、wrangler.toml の
-#       database_id を一時的に同じ値へ書き換える。
+#    -> database_id は mail-worker/wrangler.toml にコミット済み。
+#       DB を作り直した場合だけ、その値を更新してコミットする。
 npx wrangler r2 bucket create flaxia-mail-content
 npx wrangler queues create flaxia-mail-queue
 npx wrangler queues create flaxia-mail-dlq
