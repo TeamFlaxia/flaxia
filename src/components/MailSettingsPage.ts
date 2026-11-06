@@ -4,6 +4,7 @@ import { primaryAddressForUsername } from '../lib/mail/address.js';
 import { getQuota } from '../lib/mail/api.js';
 import { isVaultUnlocked } from '../lib/vault/session.js';
 import { activateMailAddress } from './MailPage.js';
+import { createVaultUnlockForm, type VaultUnlockForm } from './VaultUnlockForm.js';
 
 export interface MailSettingsPageProps {
   currentUser: { id: string; username: string } | null;
@@ -11,6 +12,7 @@ export interface MailSettingsPageProps {
 
 export class MailSettingsPage {
   private element: HTMLElement;
+  private unlockForm: VaultUnlockForm | null = null;
 
   constructor(props: MailSettingsPageProps) {
     this.element = document.createElement('div');
@@ -20,6 +22,8 @@ export class MailSettingsPage {
 
   private async render(props: MailSettingsPageProps): Promise<void> {
     const el = this.element;
+    this.unlockForm?.destroy();
+    this.unlockForm = null;
     el.innerHTML = '';
     const h = document.createElement('h2');
     h.textContent = t('mail.settings_title') || 'Mail settings';
@@ -40,15 +44,29 @@ export class MailSettingsPage {
     }
     el.appendChild(addr);
 
+    const unlocked = isVaultUnlocked();
     const vault = document.createElement('p');
-    vault.textContent = isVaultUnlocked()
+    vault.textContent = unlocked
       ? t('mail.vault_unlocked') || 'Personal Vault: unlocked'
-      : t('mail.vault_locked') || 'Personal Vault: locked (unlock in Settings to activate Mail)';
+      : t('mail.vault_locked') || 'Personal Vault: locked (unlock below to activate Mail)';
     el.appendChild(vault);
+
+    if (!unlocked) {
+      // Keep the unlock flow in this page: reloading or opening Mail settings
+      // directly should not require a detour through Settings. The form tries
+      // the remembered device key first, then offers the password prompt.
+      this.unlockForm = createVaultUnlockForm({
+        onUnlocked: () => {
+          void this.render(props);
+        },
+      });
+      el.appendChild(this.unlockForm.getElement());
+    }
 
     const activate = document.createElement('button');
     activate.type = 'button';
     activate.textContent = t('mail.activate') || 'Activate Mail address';
+    activate.disabled = !unlocked;
     const msg = document.createElement('p');
     activate.addEventListener('click', () => {
       void (async () => {
@@ -58,7 +76,14 @@ export class MailSettingsPage {
           const address = await activateMailAddress(props.currentUser.username);
           msg.textContent = address;
         } catch (e) {
-          msg.textContent = (e as Error).message;
+          const code = (e as Error).message;
+          if (code.includes('mail_vault_required')) {
+            // The vault locked underneath us (for example after a manual lock
+            // in another tab): show the unlock form instead of a raw error.
+            void this.render(props);
+            return;
+          }
+          msg.textContent = code;
         }
       })();
     });
@@ -79,6 +104,8 @@ export class MailSettingsPage {
   }
 
   destroy(): void {
+    this.unlockForm?.destroy();
+    this.unlockForm = null;
     this.element.remove();
   }
 }

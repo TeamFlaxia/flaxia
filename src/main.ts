@@ -54,6 +54,7 @@ import { parseCurrentRoute, type RouteInfo, type RouteView } from './lib/router.
 import { goBackInSpaOr, pushSpaHistory } from './lib/spa-history.js';
 import { getResolvedTheme, initTheme, setTheme } from './lib/theme.js';
 import { showToast } from './lib/toast.js';
+import { autoUnlockVault, lockVaultSession } from './lib/vault/auto-unlock.js';
 import { viewToBottomNavId } from './lib/view-nav.js';
 import { initializeWebPush } from './lib/web-push.js';
 
@@ -345,6 +346,10 @@ document.addEventListener('DOMContentLoaded', async () => {
           // 初回の未読通知数を取得（以降は WebSocket でリアルタイム更新）
           refreshNotificationBadges();
           void refreshMailUnreadCount();
+          // Reopen a remembered vault after reload. The device key is
+          // non-extractable and origin-bound; a device without one stays
+          // locked and gets the inline unlock form where it is needed.
+          autoUnlockVault();
 
           // WebSocket でリアルタイム通知受信（全プラットフォーム）
           if (!nativeClient) pushSocket.connect();
@@ -361,6 +366,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       currentUser = null;
       previousNotificationIds = null;
       mailUnreadCount = 0;
+      if (wasLoggedIn) lockVaultSession();
 
       // Update all existing LeftNav instances to remove user area
       leftNavInstances.forEach((leftNav) => {

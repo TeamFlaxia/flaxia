@@ -1085,6 +1085,9 @@
   "mail.settings_title": "Mail settings",
   "mail.address": "Address",
   "mail.vault_unlocked": "Personal Vault: unlocked",
-  "mail.vault_locked": "Personal Vault: locked (unlock in Settings to activate Mail)",
-  "mail.activate": "Activate Mail address"
+  "mail.vault_locked": "Personal Vault: locked (unlock below to activate Mail)",
+  "mail.activate": "Activate Mail address",
+  "settings.vault_not_setup": "The Personal Vault is not set up yet. Set it up in Settings first.",
+  "settings.vault_open_settings": "Open Settings",
+  "settings.vault_pair_in_settings": "Pair this device in Settings"
 }
