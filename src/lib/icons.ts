@@ -1,9 +1,12 @@
 import {
   AlertTriangle,
+  Archive,
+  ArrowLeft,
   AtSign,
   BarChart3,
   Bell,
   Bookmark,
+  Check,
   ChevronDown,
   ChevronUp,
   Copy,
@@ -13,31 +16,44 @@ import {
   EyeOff,
   FileText,
   Flag,
+  Forward,
   Gamepad2,
   Home,
   type IconNode,
   ImagePlus,
+  Inbox,
   Key,
   Leaf,
+  Lock,
   Mail,
+  MailOpen,
   Maximize,
   Megaphone,
   MessageCircle,
   Monitor,
+  MoreHorizontal,
   Music2,
+  Paperclip,
   Pencil,
+  PenLine,
   Quote,
+  RefreshCw,
   Repeat2,
+  Reply,
   Save,
   Search,
   Send,
   Settings,
   Share2,
+  ShieldCheck,
+  SlidersHorizontal,
   Smartphone,
   Smile,
   SmilePlus,
+  Star,
   StickyNote,
   Terminal,
+  Trash2,
   Upload,
   User,
   Users,
@@ -89,7 +105,23 @@ export type IconName =
   | 'megaphone'
   | 'at-sign'
   | 'eye-off'
-  | 'mail';
+  | 'mail'
+  | 'inbox'
+  | 'archive'
+  | 'trash'
+  | 'star'
+  | 'paperclip'
+  | 'arrow-left'
+  | 'reply-arrow'
+  | 'forward'
+  | 'more'
+  | 'shield'
+  | 'lock'
+  | 'compose'
+  | 'refresh'
+  | 'sliders'
+  | 'check'
+  | 'mail-open';
 
 const ICON_NODES: Record<IconName, IconNode> = {
   fresh: Leaf,
@@ -137,6 +169,22 @@ const ICON_NODES: Record<IconName, IconNode> = {
   'at-sign': AtSign,
   'eye-off': EyeOff,
   mail: Mail,
+  inbox: Inbox,
+  archive: Archive,
+  trash: Trash2,
+  star: Star,
+  paperclip: Paperclip,
+  'arrow-left': ArrowLeft,
+  'reply-arrow': Reply,
+  forward: Forward,
+  more: MoreHorizontal,
+  shield: ShieldCheck,
+  lock: Lock,
+  compose: PenLine,
+  refresh: RefreshCw,
+  sliders: SlidersHorizontal,
+  check: Check,
+  'mail-open': MailOpen,
 };
 
 export function icon(name: IconName, attrs: Record<string, string> = {}): SVGElement {
