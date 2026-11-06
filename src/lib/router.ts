@@ -22,7 +22,11 @@ export type RouteView =
   | 'arcade'
   | 'billing-success'
   | 'billing-canceled'
-  | 'download';
+  | 'download'
+  | 'mail'
+  | 'mail-thread'
+  | 'mail-compose'
+  | 'mail-settings';
 
 export interface RouteInfo {
   view: RouteView;
@@ -139,6 +143,21 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
   // Settings route - requires auth
   if (cleanPath === '/settings') {
     return { view: 'settings', postId: null, username: null, tag: null };
+  }
+
+  // Mail routes - requires auth (docs/mail.md §10)
+  if (cleanPath === '/mail') {
+    return { view: 'mail', postId: null, username: null, tag: null };
+  }
+  const mailThreadMatch = cleanPath.match(/^\/mail\/thread\/([^/]+)$/);
+  if (mailThreadMatch) {
+    return { view: 'mail-thread', postId: mailThreadMatch[1], username: null, tag: null };
+  }
+  if (cleanPath === '/mail/compose') {
+    return { view: 'mail-compose', postId: null, username: null, tag: null };
+  }
+  if (cleanPath === '/mail/settings') {
+    return { view: 'mail-settings', postId: null, username: null, tag: null };
   }
 
   // Billing routes

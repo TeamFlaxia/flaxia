@@ -1,3 +1,5 @@
+import { deleteMailAccount } from './mail-service.ts';
+
 interface PostRowWithKeys {
   id: string;
   gif_key: string | null;
@@ -128,6 +130,13 @@ export async function deleteAccount(
 
   // Messaging and calls were removed by migration 0089; no related rows remain
   // to clean up when deleting a user.
+  //
+  // Flaxia Mail lives in the separate MAIL_DB (docs/mail.md §11.3). Its D1
+  // rows and R2 objects are removed through the MAIL_SERVICE binding after this
+  // batch commits; vault mail_identity items are already deleted above because
+  // they are vault_items rows. The outbox row makes the hook durable when the
+  // Mail worker is temporarily unavailable.
+  statements.push(db.prepare('INSERT OR IGNORE INTO mail_deletion_outbox (user_id) VALUES (?)').bind(userId));
 
   // --- Billing + custom stamps: bare FKs to users (#131) ---
   statements.push(db.prepare('DELETE FROM transactions WHERE user_id = ?').bind(userId));
@@ -189,6 +198,18 @@ export async function deleteAccount(
   }
 
   await db.batch(statements);
+
+  // Flaxia Mail lives in MAIL_DB/R2 behind the MAIL_SERVICE binding. Keep the
+  // outbox row until the Worker confirms the purge; the scheduled backend
+  // worker retries otherwise. A missing Mail deployment never fails the
+  // account deletion itself.
+  try {
+    if (await deleteMailAccount(env, userId)) {
+      await db.prepare('DELETE FROM mail_deletion_outbox WHERE user_id = ?').bind(userId).run();
+    }
+  } catch {
+    console.error('Failed to enqueue Flaxia Mail deletion for a deleted account');
+  }
 
   // The durable outbox is drained by the scheduled worker. A single claimed
   // deletion at a time prevents a late duplicate R2 delete from removing a

@@ -37,6 +37,7 @@ function createAppDownloadPromo(): HTMLAnchorElement | null {
 export interface LeftNavProps {
   activeItem?: string;
   unreadCount?: number;
+  mailUnreadCount?: number;
   onNavigate?: (item: string) => void;
   onSignIn?: () => void;
   onSignUp?: () => void;
@@ -174,8 +175,8 @@ export class LeftNav {
     labelSpan.textContent = text;
     navItem.appendChild(labelSpan);
 
-    // Unread badge for notifications (green dot-ish count)
-    if (id === 'notifications' && unreadCount > 0) {
+    // Unread badge for notifications and Mail.
+    if ((id === 'notifications' || id === 'mail') && unreadCount > 0) {
       const badge = document.createElement('span');
       badge.className = 'nav-dm-badge';
       badge.textContent = unreadCount >= 99 ? '99+' : String(unreadCount);
@@ -195,10 +196,16 @@ export class LeftNav {
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
         { id: 'notifications', text: t('nav.notifications'), icon: 'notifications' },
+        { id: 'mail', text: t('nav.mail'), icon: 'mail' },
         { id: 'bookmarks', text: t('nav.bookmarks'), icon: 'bookmark' },
       ] as const;
       items.forEach((item) => {
-        const unread = item.id === 'notifications' ? this.props.unreadCount || 0 : 0;
+        const unread =
+          item.id === 'notifications'
+            ? this.props.unreadCount || 0
+            : item.id === 'mail'
+              ? this.props.mailUnreadCount || 0
+              : 0;
         navItems.appendChild(this.createNavItem(item.id, item.text, item.icon as IconName, unread));
       });
     } else {
@@ -583,13 +590,11 @@ export class LeftNav {
     return this.element;
   }
 
-  public setUnreadCount(count: number): void {
-    this.props.unreadCount = count;
+  private setNavBadge(navId: string, count: number): void {
+    const item = this.element.querySelector(`.nav-item[data-nav-id="${navId}"]`) as HTMLElement | null;
+    if (!item) return;
 
-    const notifItem = this.element.querySelector('.nav-item[data-nav-id="notifications"]') as HTMLElement | null;
-    if (!notifItem) return;
-
-    const existingBadge = notifItem.querySelector('.nav-dm-badge') as HTMLElement | null;
+    const existingBadge = item.querySelector('.nav-dm-badge') as HTMLElement | null;
     if (count > 0) {
       if (existingBadge) {
         existingBadge.textContent = count >= 99 ? '99+' : formatCount(count);
@@ -597,11 +602,21 @@ export class LeftNav {
         const badge = document.createElement('span');
         badge.className = 'nav-dm-badge';
         badge.textContent = count >= 99 ? '99+' : formatCount(count);
-        notifItem.appendChild(badge);
+        item.appendChild(badge);
       }
     } else if (existingBadge) {
       existingBadge.remove();
     }
+  }
+
+  public setUnreadCount(count: number): void {
+    this.props.unreadCount = count;
+    this.setNavBadge('notifications', count);
+  }
+
+  public setMailUnreadCount(count: number): void {
+    this.props.mailUnreadCount = count;
+    this.setNavBadge('mail', count);
   }
 
   public togglePopup(): void {
@@ -697,11 +712,17 @@ export function updateLeftNavUser(
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
         { id: 'notifications', text: t('nav.notifications'), icon: 'notifications' },
+        { id: 'mail', text: t('nav.mail'), icon: 'mail' },
         { id: 'bookmarks', text: t('nav.bookmarks'), icon: 'bookmark' },
       ] as const;
 
       items.forEach((item) => {
-        const count = item.id === 'notifications' ? (leftNav.props.unreadCount ?? 0) : 0;
+        const count =
+          item.id === 'notifications'
+            ? (leftNav.props.unreadCount ?? 0)
+            : item.id === 'mail'
+              ? (leftNav.props.mailUnreadCount ?? 0)
+              : 0;
         const navItem = document.createElement('button');
         navItem.type = 'button';
         navItem.className = `nav-item${leftNav.getActiveItem() === item.id ? ' nav-item--active' : ''}`;

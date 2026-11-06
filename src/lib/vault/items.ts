@@ -10,7 +10,8 @@ export type VaultItemKind =
   | 'post_draft'
   | 'private_note'
   | 'personal_setting'
-  | 'recommendation_profile';
+  | 'recommendation_profile'
+  | 'mail_identity';
 
 interface StoredVaultItem {
   id: string;

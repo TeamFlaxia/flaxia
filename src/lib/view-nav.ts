@@ -17,6 +17,11 @@ export function viewToBottomNavId(view: string): string {
       return 'account';
     case 'notifications':
       return 'notifications';
+    case 'mail':
+    case 'mail-thread':
+    case 'mail-compose':
+    case 'mail-settings':
+      return 'mail';
     default:
       return '';
   }

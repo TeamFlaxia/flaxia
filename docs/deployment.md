@@ -13,14 +13,57 @@ wrangler d1 execute flaxia --remote --command "UPDATE users SET role='admin' WHE
 
 ## Overview
 
-Flaxia consists of 3 deployable components:
+Flaxia consists of 4+ deployable components:
 
 | Component | Config | Deployment Command |
 |---|---|---|
 | Main Pages (SPA + API) | `wrangler.toml` | `pnpm deploy` |
 | Backend Worker (Queue consumer) | `wrangler.toml.worker` | Manual `wrangler deploy` |
 | Sandbox Worker | `wrangler.sandbox.toml` | `pnpm deploy:sandbox` |
+| Mail Worker (`flaxia-mail`) | `mail-worker/wrangler.toml` | `npm run deploy:mail`（D1 migrate 後にデプロイ。`workers.dev` 公開なし） |
 | Status Worker (`status.flaxia.app`) | `status-worker/wrangler.toml.example`（設定は未作成） | 現在デプロイ不可（下記参照） |
+
+## Flaxia Mail (`docs/mail.md`)
+
+Mail は apex `flaxia.app` の `@flaxia.app` メールボックス。既存の human Email Routing 転送は削除され、ユーザーメールは Mail Worker（`flaxia-mail`）へ向き、未知の宛先は 550 で拒否される（D6）。`postmaster@flaxia.app` と `abuse@flaxia.app` の2件だけは Email Routing で `teamflaxia@proton.me` へ転送される例外（`docs/mail.md` §11.1.3）。
+
+```bash
+# 1. Mail の D1 / R2 / Queue を作成
+npx wrangler d1 create flaxia-mail
+#    -> database_id は mail-worker/wrangler.toml にコミット済み。
+#       DB を作り直した場合だけ、その値を更新してコミットする。
+npx wrangler r2 bucket create flaxia-mail-content
+npx wrangler queues create flaxia-mail-queue
+npx wrangler queues create flaxia-mail-dlq
+# 本番 migrate は deploy.yml の deploy-mail が実行する。
+# ローカルから実行する場合: npm run migrate:mail:prod
+
+# 2. Worker をデプロイ（Email Routing ハンドラ + 内部 API）
+npm run deploy:mail
+
+# 3. Pages 側の binding が有効になるよう Pages をデプロイする。
+#    P1 では Email Routing / MX をまだ切り替えない。Worker は
+#    MAIL_INBOUND_ENABLED=0 で受信を拒否し、P2 (MIME auth/scan/threading/UI)
+#    完了後に "1" へ変更して cutover する。
+#    MAIL_INTERNAL_SECRET / MAIL_THREAD_SECRET は secret として設定:
+npx wrangler secret put MAIL_INTERNAL_SECRET --config mail-worker/wrangler.toml
+npx wrangler secret put MAIL_THREAD_SECRET --config mail-worker/wrangler.toml
+npx wrangler pages secret put MAIL_INTERNAL_SECRET --project-name flaxia
+# 予約されたアカウント削除（scheduled backend worker）も Mail を消すため、
+# 同じ secret を backend worker にも設定する。
+npx wrangler secret put MAIL_INTERNAL_SECRET --config wrangler.toml.worker
+```
+
+DNS/MX/SPF/DKIM/DMARC の手順は `docs/mail.md` §11.1 を参照。メール関連レコードは DNS-only（proxy しない）。P1 デプロイでは Email Routing に一切触れない。
+
+### postmaster/abuse 転送（Cloudflare ダッシュボード作業）
+
+コード変更は不要。Cloudflare Email Routing で以下を設定します：
+
+1. **宛先（Destination）を登録・検証** — `teamflaxia@proton.me` を Destination Address として追加。Cloudflare から届く確認メールを proton.me 側で承認する。未検証の宛先への転送ルールは作成できない。
+2. **ルーティングルール（Custom address）** — `postmaster@flaxia.app` → `teamflaxia@proton.me`、`abuse@flaxia.app` → `teamflaxia@proton.me` の2件を作成。どちらのルールも「Catch-all」の上位に置く。**P1 デプロイでは catch-all を変更しない**（P2 の cutover 時に Mail Worker へ向ける）。
+3. **検証** — 外部アドレスから `postmaster@flaxia.app` / `abuse@flaxia.app` 宛にテスト送信し、proton.me 側に届くことを確認する。届かなければ Email Routing の「Domain status」が `Active` になっているか、宛先が `Verified` かを確認する。
+4. **注意** — この2アドレスのメールは Flaxia Mail の暗号化境界の外（proton.me 上で平文として格納される）。プライバシーポリシー等では「Flaxia Mail の暗号化はこの2アドレスには適用されない」と案内すること。
 
 ## Main Pages Deployment
 

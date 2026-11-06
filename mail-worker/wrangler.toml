@@ -1,0 +1,43 @@
+name = "flaxia-mail"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# No workers.dev route. Reachable only via the MAIL_SERVICE service binding
+# from Pages Functions and the Email Routing email() handler (docs/mail.md §5).
+# This must stay explicit: the Wrangler default enables workers.dev.
+workers_dev = false
+
+[[d1_databases]]
+binding = "MAIL_DB"
+database_name = "flaxia-mail"
+# Production D1 id, committed like the main/backing worker configs.
+# If the database is recreated, update this id.
+database_id = "47176d01-f6d2-4f05-81bb-3d94276369c6"
+migrations_dir = "../migrations/mail"
+
+[[r2_buckets]]
+binding = "MAIL_BUCKET"
+bucket_name = "flaxia-mail-content"
+
+[[queues.producers]]
+queue = "flaxia-mail-queue"
+binding = "MAIL_QUEUE"
+
+[[queues.producers]]
+queue = "flaxia-mail-dlq"
+binding = "MAIL_QUEUE_DLQ"
+
+[[queues.consumers]]
+queue = "flaxia-mail-queue"
+max_batch_size = 5
+max_retries = 3
+dead_letter_queue = "flaxia-mail-dlq"
+
+[vars]
+MAIL_DOMAIN = "flaxia.app"
+# P1 does not accept live mail yet: MIME auth/scanning/threading land in P2.
+# Keep this "0" and do not point Email Routing at the Worker until P2 ships.
+MAIL_INBOUND_ENABLED = "0"
+# Apex cutover (D6): human forwarding is deleted. Unknown recipients are
+# rejected by the Worker with 550; there is no fallback mailbox.

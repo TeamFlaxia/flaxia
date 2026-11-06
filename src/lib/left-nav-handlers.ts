@@ -32,6 +32,9 @@ export function createLeftNavHandlers(deps: LeftNavDeps): LeftNavHandlers {
       } else if (item === 'notifications') {
         window.history.pushState({}, '', '/notifications');
         deps.navigate('notifications');
+      } else if (item === 'mail') {
+        window.history.pushState({}, '', '/mail');
+        deps.navigate('mail');
       } else if (item === 'bookmarks') {
         window.history.pushState({}, '', '/bookmarks');
         deps.navigate('bookmarks');
