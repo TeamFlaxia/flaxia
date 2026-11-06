@@ -18,6 +18,7 @@ import pollsRouter from './routes/polls';
 import postVersionsRouter from './routes/post-versions';
 import postsRouter from './routes/posts';
 import pushRouter from './routes/push';
+import recommendationsRouter from './routes/recommendations';
 import reportRouter from './routes/report';
 import stampsRouter from './routes/stamps';
 import tagsRouter from './routes/tags';
@@ -136,6 +137,9 @@ app.route('/api', pushRouter);
 
 // Game routes (extracted to routes/games.ts)
 app.route('/api', gamesRouter);
+
+// Client-side recommendation signals (docs/e2ee.md)
+app.route('/api', recommendationsRouter);
 
 // Post routes (extracted to routes/posts.ts)
 app.route('/api', postsRouter);

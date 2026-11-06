@@ -153,6 +153,23 @@ handoff blob — never the shared secret (see `docs/e2ee.md`).
 `POST /api/posts/:id/bookmark`
 `DELETE /api/posts/:id/bookmark`
 
+### Recommended Feed
+`GET /api/posts/recommended?limit=20&cursor=...`
+- Non-personal ranking (following / trending / recent)
+
+`GET /api/posts/recommended?client_rank=1&include_vectors=1&limit=100`
+- Adds `vectors` (int8 public post embeddings), `vector_meta`, and
+  `base_scores`; the unlocked browser blends cosine similarity with its Vault
+  recommendation profile
+- `next_cursor` is compatible with the non-client endpoint
+
+### Recommendation Profile Sources
+`GET /api/recommendations/profile-sources`
+- Requires a session; rate limited
+- Returns the caller's fresh / bookmark / reply / share / dwell sources with
+  public post embeddings
+- Never returns or accepts a plaintext preference vector
+
 ---
 
 ## Upload
@@ -258,6 +275,10 @@ are image URLs; non-image legacy values are rendered as a name-only badge.
 ## Arcade (Game Posts)
 
 `GET /api/games?cursor=&limit=`
+
+`GET /api/games?recommended=true&client_rank=1&include_vectors=1&limit=120&offset=0`
+- Recommended mode adds `vectors`, `vector_meta`, and `base_scores` for
+  client-side ranking. Without `client_rank`, ordering stays server-side.
 
 ---
 

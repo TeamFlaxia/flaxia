@@ -1,177 +1,104 @@
-# Recommendation & Dwell-time RL
+# Recommendation Model
 
-Flaxia の Arcade は TikTok/Shorts 風の縦スクロール全画面フィードです。本ドキュメントは
-ユーザープロファイリングと、滞在時間 (dwell time) 最大化のための強化学習 (RL) 方針を説明します。
+Flaxia の For You と Arcade は、**個人の好みベクトルを端末内でのみ復号し、候補の公開埋め込みと
+突き合わせてクライアント側でランキング**します。サーバーは個人プロフィールを保存せず、
+復号済みの好みベクトルも受け取りません。
 
-## 概要
+## 1. プライバシー境界
 
-3 層構成で、`収集 → 推論 → 学習` のループを回します。
-
-| 層 | 役割 | 実装 |
+| データ | 保存先 | サーバーが見えるか |
 |---|---|---|
-| 収集 | すべての閲覧（スキップ含む）とエンゲージメントを記録 | `arcade_events` + `user_profiles` |
-| 推論 | エッジでパーソナライズ表示を決める | `functions/api/[[route]].ts` の `/api/games` |
-| 学習 | データセットから方策を学習（外部実行） | HuggingFace データセット + 外部トレーニング |
+| 好みベクトル（1024次元 int8/float） | Vault item `recommendation_profile` / `reco-profile-v1`（AES-GCM） | ❌ 暗号文のみ |
+| 候補投稿の埋め込み | `post_embeddings.embedding`（公開コンテンツ由来） | ✅ |
+| 非パーソナルな base score | リクエスト時に算出 | ✅ |
+| fresh / reply / share / dwell イベント | `freshs` / `arcade_events` など | ✅ |
 
-トレーニングは Flaxia のインフラでは実行しません。Workers はステートレスなエッジであり、
-深層 RL の学習には不向きです。そのため、**オンラインの軽量コンテキスチュアル・バンディット**で
-配信し、**オフライン RL 用データセット**を HuggingFace に公開して外部で学習します。
+**正直な限界:** 行動イベント自体はサーバーに残るため、運用者は行動ログから好みを近似的に
+再構成できます。Vault が守るのは「明示的に構築した好みベクトル」という保存物であり、
+観測可能な行動の秘匿ではありません。
 
-## 1. プロファイリング
+## 2. プロフィールの構築
 
-### 生イベント (`arcade_events`)
-`src/components/ArcadePage.ts` は、表示されたすべてのゲームについてイベントを
-`POST /api/games/events` へバッチ送信します（`sessionId` 付き）。
+`GET /api/recommendations/profile-sources`（要ログイン）が、減衰付きのソースを返します。
 
-- `view` — 表示。**2 秒未満のスキップも `did_skip=1` として記録**（負例）。
-- `fresh` / `reply` / `fullscreen` / `share` — ポジティブなエンゲージメント。
+- fresh、bookmark、reply、share、長めの dwell（`>5s`）
+- 各ソースの投稿埋め込みを重み付き平均し、L2 正規化
+- クライアントは結果を `src/lib/vault/recommendation-profile.ts` で Vault に保存
 
-### マテリアライズ済みプロファイル (`user_profiles`)
-`interest_vec`（重み付き平均の 1024 次元ベクトル）を DB に保存し、
-`loadOrComputeInterestVector()` が 5 分 TTL でキャッシュします。Fresh、ブックマーク、返信、
-シェア、高滞在 (dwell>5s) のプレイから重み付きで導出されます。
+保存形式:
 
-## 2. 推論: コンテキスチュアル・バンディット (LinUCB)
-
-`functions/lib/linucb.ts` に実装。`/api/games?recommended=true` で既存ヒューリスティックと
-ブレンドされます。
-
-- 各候補の 1024 次元埋め込みを **決定的ランダム射影** で 64 次元に圧縮（JL）。
-- ユーザーごとの状態 `A⁻¹`（64×64）, `b`, `t` を `bandit_state` に保存し、
-  Sherman-Morrison でオンライン更新。
-- スコア = `θᵀx + α·sqrt(xᵀA⁻¹x)`（期待報酬 + 探索ボーナス）。
-- 最終スコア = `λ·ヒューリスティック + (1−λ)·バンディット正規化スコア`。
-
-### 設定 (KV)
-`arcade:bandit:config` (JSON) で動作を制御します。**デフォルトは無効**です。
-
-```json
-{ "enabled": true, "alpha": 0.6, "dim": 64, "srcDim": 1024, "seed": 20260701, "lambda": 0.6 }
-```
-
-- `enabled` — バンディットを有効化。
-- `alpha` — 探索強度（大きいほど探索重視）。
-- `lambda` — ヒューリスティックへの重み（1 で完全に無効化と同等）。
-- `dim` — 投影次元（8〜256）。
-- `srcDim` — ソース埋め込み次元（通常 1024）。
-- `seed` — 射影行列の決定シード（**変更すると過去の学習状態が無効化**されます）。
-
-### 学習済み prior (`arcade:bandit:prior`)
-
-オフライン学習で得た**グローバル方策**を KV `arcade:bandit:prior` にデプロイすると、
-`bandit_state` を持たない新規ユーザーの状態を初期シードできます
-（`createStateFromPrior`）。prior はユーザー非依存のコールドスタート方策で、
-`arcade:bandit:config` と別キーに分離されており、デフォルト KV 設定は無効のまま維持されます。
-
-スキーマ (`BanditPrior`):
 ```json
 {
-  "v": 1, "dim": 64, "seed": 20260701, "srcDim": 1024,
-  "theta": [...], "lambda0": 1.0, "trainedAt": "...", "records": 12345
+  "v": 1,
+  "dim": 1024,
+  "vector": [0.012, -0.004, "..."],
+  "sourceCount": 42,
+  "sourceVersion": "2026-11-06T00:00:00.000Z|42",
+  "builtAt": "2026-11-06T00:00:00.000Z",
+  "model": "weighted-mean-v1"
 }
 ```
 
-- シードは `A⁻¹ = (1/λ₀)·I`, `b = λ₀·θ₀` として表現され、初期 posterior mean が `θ₀` と一致。
-- `λ₀` が大きいほどオンライン更新が prior に強くアンカーされます。
-- **投影設定 (`seed`/`srcDim`/`dim`) が有効な config と一致する場合のみ適用**されます。
+- Vault が未設定・ロック中・期限切れの場合はプロフィールを返さず、サーバーの
+  非パーソナルランキングへフォールバックします。
+- fresh などの操作後は `markRecommendationProfileDirty()` を呼び、次回取得時に再構築します。
+- TTL は 15 分。
 
-設定例:
-```bash
-npx wrangler kv key put --binding=CACHE 'arcade:bandit:config' '{"enabled":true,"alpha":0.6,"dim":64,"lambda":0.6,"seed":20260701}'
+## 3. 候補 API
+
+```http
+GET /api/posts/recommended?client_rank=1&include_vectors=1&limit=100&cursor=...
+GET /api/games?recommended=true&client_rank=1&include_vectors=1&limit=120&offset=0
 ```
 
-### 報酬
-`/api/games/events` が `eventReward()` で報酬を計算し `bandit_state` を更新します。
+`client_rank=1` または `include_vectors=1` で、候補レスポンスに次が追加されます。
 
-| イベント | 報酬 |
-|---|---|
-| view (dwell) | `min(dwell_ms/30000, 1)`（スキップはほぼ 0） |
-| fresh / reply | 1.0 |
-| share | 0.8 |
-| fullscreen | 0.6 |
-
-## 3. HuggingFace データセット
-
-`scheduled` ハンドラ（`functions/queue-worker.ts`）が毎日 04:00 UTC に
-`functions/lib/dataset-export.ts` の `runDatasetExport()` を実行します
-（`wrangler.toml.worker` の `[triggers] crons`）。
-
-### プライバシー
-- `user_id` / `session_id` / `post_id` は **回転ソルト付き SHA-256** で匿名化。
-- 本文・メール・bio 等の PII は一切含めません。
-- ソルトは KV (`arcade:dataset:salt`) に保存され、ローテーション可能。
-
-### スキーマ
-各行 = セッション内で表示された 1 ゲーム（スキップ含む）。
-
-```
-user_id, session_id, post_id, game_type, position, event_type,
-dwell_ms, did_skip, is_fullscreen, swipe_velocity, hour, created_at,
-post_embedding (1024-d), label (reward)
+```json
+{
+  "posts": [],
+  "vectors": {
+    "<post_id>": { "scale": 0.031, "data": "..." }
+  },
+  "vector_meta": { "dim": 1024, "encoding": "int8" },
+  "base_scores": { "<post_id>": 0.42 },
+  "next_cursor": "..."
+}
 ```
 
-### アップロード (fail-graceful)
-- 成果物 (JSONL) は常に R2 (`flaxia-exports`) に書き込み。
-- `HF_TOKEN` secret と `HF_REPO` var が設定されている場合のみ HuggingFace へアップロード。
-- 設定がない場合はログを出してスキップ（チェックポイントは進む）。
+- `vectors` は int8 + per-vector scale + base64（`src/lib/recommendation/vector-codec.ts`）。
+- `base_scores` は freshness、dwell、popularity、未プレイ探索などの非パーソナル信号。
+- `client_rank` を付けない既存クライアントには従来どおりサーバー順で返します。
 
-設定:
-```bash
-npx wrangler secret put HF_TOKEN --config wrangler.toml.worker
-# wrangler.toml.worker の [vars] に HF_REPO を追加
-```
+## 4. クライアントランキング
 
-チェックポイントは KV (`arcade:dataset:checkpoint`) に保存され、再開可能です。
+`src/lib/recommendation/rank.ts` の `rankCandidates()`:
 
-## 4. 外部トレーニング手順
+1. `base_score` とコサイン類似度を `0.55 : 0.45` で合成
+2. MMR（`lambda=0.75`）で類似候補の重複を抑制
+3. 同一著者は最大 2 件
 
-方策 1 (LinUCB 再学習) は `scripts/train_linucb.py` で実行します。
-このスクリプトは `functions/lib/linucb.ts` の `mulberry32` と ±1 JL 射影を
-**ビット完全に移植**しており、オンライン配信と同じ射影空間で回帰を学習します。
-必要なのは numpy のみです（HF ソースを使う場合は `datasets` も必要）。
+プロフィールがない場合はサーバーの `base_score` 順を維持します。Arcade の `initialId` は
+クライアント側で先頭へ移動します。
 
-```bash
-# R2 成果物 (JSONL) から学習
-python3 scripts/train_linucb.py --dataset path/to/arcade-dwell-<ts>.jsonl \
-  --dim 64 --seed 20260701 --src-dim 1024 --out prior.json
+## 5. サーバー側の役割
 
-# HuggingFace データセットから学習（--seed/--dim/--src-dim は online config と一致させる）
-python3 scripts/train_linucb.py --dataset youruser/flaxia-arcade-dwell \
-  --dim 64 --seed 20260701 --src-dim 1024 --out prior.json
+- For You: following / trending / recent の候補を統合し、非パーソナルスコアで並べる。
+- Arcade: dwell 統計、popularity、未プレイ、freshness で base score を作る。
+- どちらも個人プロフィールを読まない。
 
-# 射影の一致確認（Node の出力と突き合わせる）
-python3 scripts/train_linucb.py --dataset /dev/null --check-projection
-```
+## 6. 廃止したもの
 
-- 回帰は `A = XᵀX + λ·I`, `θ = A⁻¹Xᵀy`（ridge）。`--val-fraction` で train/val RMSE を表示。
-- 出力 `prior.json` は `parseBanditPrior` を通る形の `BanditPrior`。
-- フィンガープリント (`fingerprint`) は `v/dim/seed/srcDim/theta` の SHA-256 先頭 16 桁で、
-  デプロイ時の整合確認に使えます。
+- `user_profiles.interest_vec` と `loadOrComputeInterestVector()`
+- サーバー側 LinUCB 配信（`bandit_state`、`/api/games` 内のブレンド）
+- `POST /api/games/events` からの bandit 報酬更新
 
-### デプロイ
+`migrations/0130_drop_server_recommendation_profiles.sql` が個人状態テーブルを削除します。
+`functions/lib/linucb.ts` はオフライン研究・データセット変換用に残していますが、
+リクエスト処理からは呼びません。`arcade_events` と dwell ログは、研究用データセット生成に引き続き利用できます。
 
-`scripts/deploy-prior.mjs` で KV に書き込みます。serving 側の検証関数を再利用するため
-`--experimental-strip-types` を付けて実行します。
+## 7. デプロイ時の確認
 
-```bash
-node --experimental-strip-types scripts/deploy-prior.mjs \
-  --kv <namespace-id> --file prior.json
-
-# バンディット設定も同時にデプロイする場合
-node --experimental-strip-types scripts/deploy-prior.mjs \
-  --kv <namespace-id> --file prior.json --config bandit-config.json
-```
-
-- `--kv` には KV ネームスペース ID を指定します（`wrangler.toml` の `[[kv_namespaces]]` `id`）。
-- 優先度は `arcade:bandit:prior`、設定は `arcade:bandit:config` に書き込まれます。
-- **設定を明示しない限り `arcade:bandit:config` は無効のまま**です。
-
-方策 2 (深層 RL) — フィード上のセッションを系列とみなし、累積滞在を最大化する方策
-（例: 系列レコメンダー、学習済み方策のロールアウト）を学習し、結果を KV/D1 にデプロイします。
-
-## 実運用上の注意
-
-- バンディットは**デフォルト無効**。`arcade:bandit:config` で段階的に有効化。
-- `seed` 変更は射影行列を変えるため学習状態をリセットしてください。
-- 大量の `bandit_state` 書き込みを避けるため、報酬更新はイベントバッチごとに
-  1 回の読み書きにまとめています。
+`AUTH_AUTHORITY_MODE=flaxia-auth` では Vault item の kind 許可リストが Flaxia Auth 側にも
+あります。`recommendation_profile` を追加できない場合、プロフィール保存は失敗しますが、
+クライアントはそのセッションのメモリ内ベクトルでランキングを継続します。リリース前に
+Auth 側の allowlist を確認してください。

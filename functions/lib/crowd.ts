@@ -21,7 +21,7 @@ import {
 } from '@flaxia/sdk';
 import { stripPostColors } from '../../src/lib/post-colors.ts';
 import { postTextSha } from './ai-index.ts';
-import { createProjection, parseBanditConfig, projConfigKey, project } from './linucb.ts';
+
 import { loadBlocklist, matchBlocklist, matchSignatureEntry } from './scan/blocklist.ts';
 import { clamavVerdict, parseContainerOutput, parseVideoPhashes } from './scan/container-result.ts';
 import { getFileScan, recordInfection, setScanPhash, setScanStatus } from './scan/db.ts';
@@ -110,8 +110,6 @@ const nsfwScanPosts = new Set<string>();
 const embeddingPosts = new Set<string>();
 let lastNsfwSubmitTime = 0;
 let lastEmbedTime = 0;
-
-const projectionCache = new Map<string, number[][]>();
 
 /** Resolve Crowd configuration from the Pages/Worker environment. */
 export function crowdConfig(env: CrowdEnv): CrowdConfig {
@@ -760,26 +758,6 @@ async function handleNsfwResult(url: URL, event: CrowdWebhookEvent, db: D1Databa
   );
 }
 
-async function loadBanditConfig(env: CrowdEnv) {
-  const cache = env.CACHE;
-  if (!cache) return { ...parseBanditConfig(null) };
-  try {
-    return parseBanditConfig(await cache.get('arcade:bandit:config'));
-  } catch {
-    return { ...parseBanditConfig(null) };
-  }
-}
-
-function getProjection(config: ReturnType<typeof parseBanditConfig>): number[][] {
-  const key = projConfigKey(config);
-  let projection = projectionCache.get(key);
-  if (!projection) {
-    projection = createProjection(config.srcDim, config.dim, config.seed);
-    projectionCache.set(key, projection);
-  }
-  return projection;
-}
-
 async function handleVectorEmbedResult(
   url: URL,
   event: CrowdWebhookEvent,
@@ -816,21 +794,11 @@ async function handleVectorEmbedResult(
     }
   }
 
-  const banditConfig = await loadBanditConfig(env);
-  const projected = project(vector, getProjection(banditConfig));
   await db
     .prepare(
-      'INSERT OR REPLACE INTO post_embeddings (post_id, embedding, model, dimensions, bandit_vec, bandit_cfg, source_sha) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      'INSERT OR REPLACE INTO post_embeddings (post_id, embedding, model, dimensions, source_sha) VALUES (?, ?, ?, ?, ?)',
     )
-    .bind(
-      postId,
-      JSON.stringify(vector),
-      model,
-      dimensions,
-      JSON.stringify(projected),
-      projConfigKey(banditConfig),
-      sourceSha,
-    )
+    .bind(postId, JSON.stringify(vector), model, dimensions, sourceSha)
     .run();
   console.log(`Vector embed webhook done for post ${postId}: dims=${dimensions}`);
 }

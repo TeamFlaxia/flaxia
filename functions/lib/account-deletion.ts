@@ -123,8 +123,6 @@ export async function deleteAccount(
   statements.push(db.prepare('DELETE FROM vault_keys WHERE user_id = ?').bind(userId));
 
   // --- User preference / recommender state ---
-  statements.push(db.prepare('DELETE FROM user_profiles WHERE user_id = ?').bind(userId));
-  statements.push(db.prepare('DELETE FROM bandit_state WHERE user_id = ?').bind(userId));
   statements.push(db.prepare('DELETE FROM user_game_plays WHERE user_id = ?').bind(userId));
   statements.push(db.prepare('DELETE FROM arcade_events WHERE user_id = ?').bind(userId));
 

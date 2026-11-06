@@ -132,19 +132,24 @@ The feed mode in `src/components/Timeline.ts` selects the API endpoint:
 | For You | `GET /api/posts/recommended` | Ranked recommendations |
 
 `functions/api/routes/posts.ts` implements both chronological and recommended
-post retrieval. For You combines separate in-network, vector-similarity,
-popular, and recent candidate sources, then applies freshness, engagement,
-author diversity, and recently-seen filters. Authors with a low trust score
-(repeated near-duplicate posts) are excluded from For You, and exact duplicate
-posts are collapsed to their newest copy across feeds. Freshs, bookmarks,
-replies, shares, and game dwell time contribute to the interest vector. The shared
-interest-vector and LinUCB helpers live in `functions/api/routes/recommender.ts`
-and `functions/lib/linucb.ts`.
+post retrieval. For You combines following, trending, and recent candidate
+sources, then applies freshness, engagement, trust, and recently-seen filters.
+Authors with a low trust score (repeated near-duplicate posts) are excluded from
+For You, and exact duplicate posts are collapsed to their newest copy across
+feeds.
+
+The personal part of ranking happens in the browser. With
+`client_rank=1&include_vectors=1`, the API also returns public candidate
+embeddings plus a non-personal `base_score`; the unlocked client blends cosine
+similarity with its Vault-held preference vector (`src/lib/recommendation/`).
+The server never stores or receives that vector. A locked/absent Vault falls
+back to the server's non-personal order.
 
 Arcade recommendations are implemented separately in
-`functions/api/routes/games.ts` (`GET /api/games?recommended=true`) and use
-game-play dwell signals as well as personalization. See
-[`docs/recommendation-rl.md`](recommendation-rl.md) for the recommendation model.
+`functions/api/routes/games.ts` (`GET /api/games?recommended=true`) using dwell,
+popularity, exploration, and freshness as base signals, then the same
+client-side ranking. See [`docs/recommendation-rl.md`](recommendation-rl.md) for
+the recommendation model.
 
 ## Layout
 
