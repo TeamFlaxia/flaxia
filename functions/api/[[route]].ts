@@ -81,7 +81,7 @@ app.use(
       return allowedOrigins.has(origin) || origin === getBaseOrigin(c) ? origin : '';
     },
     allowMethods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowHeaders: ['Content-Type', 'Authorization', 'X-Flaxia-Native-App'],
+    allowHeaders: ['Content-Type', 'Authorization', 'X-Flaxia-Native-App', 'Idempotency-Key'],
     credentials: true,
   }),
 );

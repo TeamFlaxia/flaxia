@@ -190,6 +190,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       name_color?: string | null;
     } | null = null;
     let unreadNotificationCount = 0;
+    let mailUnreadCount = 0;
 
     // Native notification platforms (see src/lib/native-notify.ts)
 
@@ -264,9 +265,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (typeof leftNav.setUnreadCount === 'function') {
           leftNav.setUnreadCount(unreadNotificationCount);
         }
+        if (typeof leftNav.setMailUnreadCount === 'function') {
+          leftNav.setMailUnreadCount(mailUnreadCount);
+        }
       });
 
       setNativeBadge(unreadNotificationCount);
+    };
+
+    const refreshMailUnreadCount = async () => {
+      if (!currentUser) {
+        mailUnreadCount = 0;
+        updateBadgeUI();
+        return;
+      }
+      const { getMailUnreadCount } = await import('./lib/mail/api.js');
+      mailUnreadCount = await getMailUnreadCount().catch(() => 0);
+      updateBadgeUI();
     };
 
     let previousNotificationIds: Set<string> | null = null;
@@ -329,6 +344,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           // 初回の未読通知数を取得（以降は WebSocket でリアルタイム更新）
           refreshNotificationBadges();
+          void refreshMailUnreadCount();
 
           // WebSocket でリアルタイム通知受信（全プラットフォーム）
           if (!nativeClient) pushSocket.connect();
@@ -344,6 +360,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const previousUsername = currentUser?.username ?? null;
       currentUser = null;
       previousNotificationIds = null;
+      mailUnreadCount = 0;
 
       // Update all existing LeftNav instances to remove user area
       leftNavInstances.forEach((leftNav) => {
@@ -619,6 +636,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'mail',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -661,6 +679,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'download',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -826,6 +845,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'explore',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -883,6 +903,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'explore',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -938,6 +959,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'arcade',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -991,6 +1013,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'profile',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -1054,6 +1077,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'bookmarks',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -1109,6 +1133,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'notifications',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -1185,6 +1210,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'settings',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });
@@ -1303,6 +1329,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           const leftNav = await lazyCreateLeftNav({
             activeItem: 'home',
             unreadCount: unreadNotificationCount,
+            mailUnreadCount,
             currentUser: currentUser || undefined,
             ...leftNavHandlers(),
           });

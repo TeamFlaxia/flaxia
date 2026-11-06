@@ -6,7 +6,11 @@
 // trusts a bare user id from the browser.
 //
 // P1 ships: addresses, keys, quota. Threads/messages/send land in P2/P3.
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
+import { getSessionToken } from '../../lib/auth';
+import { authIsAuthoritative, authVaultRequest, sessionGrant } from '../../lib/flaxia-auth';
+import { ensureAuthVault } from '../../lib/flaxia-auth-vault';
+import { callMailService } from '../../lib/mail-service';
 import { checkRateLimit } from '../../lib/rate-limit';
 import { requireAuth } from '../helpers';
 import type { Bindings as SharedBindings, Variables } from '../types';
@@ -18,41 +22,52 @@ type Bindings = SharedBindings & {
   MAIL_DOMAIN?: string;
 };
 
+type MailContext = Context<{ Bindings: Bindings; Variables: Variables }>;
+
 const mail = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 mail.use('*', requireAuth);
 
-async function sign(env: Bindings, userId: string): Promise<Record<string, string>> {
-  const ts = String(Math.floor(Date.now() / 1000));
-  const secret = env.MAIL_INTERNAL_SECRET;
-  if (!secret) return { 'x-flaxia-user-id': userId, 'x-flaxia-ts': ts };
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret) as BufferSource,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${userId}.${ts}`) as BufferSource);
-  const hex = Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-  return { 'x-flaxia-user-id': userId, 'x-flaxia-ts': ts, 'x-flaxia-sig': hex };
+async function proxy(c: MailContext, path: string, init: RequestInit = {}): Promise<Response> {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+
+  const method = (init.method ?? 'GET').toUpperCase();
+  const body = typeof init.body === 'string' ? init.body : undefined;
+  const headers: Record<string, string> = {};
+  const contentType = new Headers(init.headers).get('Content-Type');
+  if (contentType) headers['Content-Type'] = contentType;
+  const idempotencyKey = c.req.header('Idempotency-Key');
+  if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+
+  const res = await callMailService(c.env, user.id, method, path, body === undefined ? { headers } : { body, headers });
+  if (!res) return c.json({ error: 'mail_unavailable' }, 503);
+  return res;
 }
 
-async function proxy(
-  c: { env: Bindings; get: (k: 'user') => { id: string } | null; req: { method: string; url: string; raw: Request } },
-  path: string,
-  init: RequestInit = {},
-): Promise<Response> {
-  const user = c.get('user');
-  if (!user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 });
-  const svc = (c.env as unknown as { MAIL_SERVICE?: Fetcher }).MAIL_SERVICE;
-  if (!svc) return new Response(JSON.stringify({ error: 'mail_unavailable' }), { status: 503 });
-  const headers = new Headers(init.headers);
-  const sig = await sign(c.env, user.id);
-  for (const [k, v] of Object.entries(sig)) headers.set(k, v);
-  return svc.fetch(`https://flaxia-mail${path}`, { ...init, headers });
+async function allow(c: MailContext, key: string, maxRequests: number, windowSeconds: number): Promise<boolean> {
+  return checkRateLimit(c.env.CACHE, key, { maxRequests, windowSeconds, failureMode: 'closed' }).catch(() => false);
+}
+
+/**
+ * D4 requires an enabled Personal Vault before a Mail address exists. The
+ * client's `vault_unlocked` flag is only a hint; this is the authoritative
+ * check. With Auth as the vault owner the envelope is read through the same
+ * grant-backed proxy the vault router uses.
+ */
+async function hasEnabledVault(c: MailContext, userId: string): Promise<boolean> {
+  if (authIsAuthoritative(c.env)) {
+    const token = getSessionToken(c.req.raw);
+    if (!token) return false;
+    const grant = await sessionGrant(c.env.DB, token);
+    if (!grant) return false;
+    if (!(await ensureAuthVault(c.env, grant, userId))) return false;
+    const result = await authVaultRequest(c.env, grant, userId, 'GET', '/api/vault/keys');
+    return result?.status === 200 && result.body.enabled === true;
+  }
+
+  const row = await c.env.DB.prepare('SELECT user_id FROM vault_keys WHERE user_id = ?').bind(userId).first();
+  return Boolean(row);
 }
 
 const RESERVED_LOCALS = new Set(['admin', 'abuse', 'dmarc', 'noreply', 'postmaster', 'security', 'support', 'team']);
@@ -65,26 +80,25 @@ export function primaryAddressFor(username: string, domain = 'flaxia.app'): stri
 }
 
 mail.get('/addresses', async (c) => {
-  const res = await proxy(c, '/internal/addresses');
-  return res;
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:address-list:${user.id}`, 60, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
+  return proxy(c, '/internal/addresses');
 });
 
 mail.post('/addresses', async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
-  const allowed = await checkRateLimit(c.env.CACHE, `mail:address:${user.id}`, {
-    maxRequests: 10,
-    windowSeconds: 3600,
-    failureMode: 'closed',
-  }).catch(() => false);
+  const allowed = await allow(c, `mail:address:${user.id}`, 10, 3600);
   if (!allowed) return c.json({ error: 'mail_rate_limited' }, 429);
 
   const body = (await c.req.json().catch(() => ({}))) as {
-    vault_unlocked?: unknown;
     public_key?: unknown;
     key_version?: unknown;
   };
-  if (body.vault_unlocked !== true) return c.json({ error: 'mail_vault_required' }, 409);
+  if (!(await hasEnabledVault(c, user.id))) return c.json({ error: 'mail_vault_required' }, 409);
   if (typeof body.public_key !== 'string' || body.public_key.length === 0 || body.public_key.length > 500) {
     return c.json({ error: 'mail_invalid_public_key' }, 400);
   }
@@ -109,16 +123,16 @@ mail.get('/quota', async (c) => {
   return proxy(c, '/internal/quota');
 });
 
+mail.get('/unread', async (c) => {
+  return proxy(c, '/internal/unread');
+});
+
 mail.get('/keys/me', async (c) => {
   return proxy(c, '/internal/keys/me');
 });
 
 mail.put('/keys/me', async (c) => {
-  const allowed = await checkRateLimit(c.env.CACHE, `mail:keys:${c.get('user')?.id}`, {
-    maxRequests: 20,
-    windowSeconds: 3600,
-    failureMode: 'closed',
-  }).catch(() => false);
+  const allowed = await allow(c, `mail:keys:${c.get('user')?.id}`, 20, 3600);
   if (!allowed) return c.json({ error: 'mail_rate_limited' }, 429);
   return proxy(c, '/internal/keys/me', {
     method: 'PUT',
@@ -128,16 +142,17 @@ mail.put('/keys/me', async (c) => {
 });
 
 mail.get('/keys', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:key-lookup:${user.id}`, 120, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
   const addresses = c.req.query('addresses') ?? '';
   return proxy(c, `/internal/keys?addresses=${encodeURIComponent(addresses)}`);
 });
 
 mail.post('/report-abuse', async (c) => {
-  const allowed = await checkRateLimit(c.env.CACHE, `mail:report:${c.get('user')?.id}`, {
-    maxRequests: 30,
-    windowSeconds: 3600,
-    failureMode: 'closed',
-  }).catch(() => false);
+  const allowed = await allow(c, `mail:report:${c.get('user')?.id}`, 30, 3600);
   if (!allowed) return c.json({ error: 'mail_rate_limited' }, 429);
   return proxy(c, '/internal/report-abuse', {
     method: 'POST',

@@ -72,6 +72,13 @@ export async function ensureVaultUnlocked(): Promise<boolean> {
  */
 export async function provisionMailIdentity(keyVersion = 1): Promise<MailIdentityMaterial> {
   if (!getVaultKey()) throw new Error('mail_vault_required: unlock the Personal Vault first');
+
+  // Reuse an existing identity so a failed activation (for example, the Worker
+  // is not deployed yet) does not create a new orphan vault item on every
+  // retry. Rotation is a future explicit operation, not a side effect here.
+  const existing = await loadMailIdentity();
+  if (existing) return existing;
+
   const material = await generateMailIdentity(keyVersion);
   const itemId = `mail-v${keyVersion}-${newVaultItemId()}`.slice(0, 40);
   await saveVaultItem(itemId, 'mail_identity', {

@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS mail_messages (
   auth_results        TEXT NOT NULL DEFAULT '{}',
   spam_score          REAL NOT NULL DEFAULT 0,
   blob_id             TEXT NOT NULL DEFAULT '',
+  payload_iv          TEXT NOT NULL DEFAULT '',
   raw_blob_key        TEXT NOT NULL DEFAULT '',
   deleted_at          TEXT,
   created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -186,6 +187,15 @@ CREATE TABLE IF NOT EXISTS mail_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_mail_events_user ON mail_events(user_id, created_at);
+
+-- Idempotency keys for non-idempotent mutations (abuse reports). Retained for
+-- 30 days; naturally idempotent endpoints use the column/row key instead.
+CREATE TABLE IF NOT EXISTS mail_idempotency_keys (
+  user_id         TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  PRIMARY KEY (user_id, idempotency_key)
+);
 
 -- Deleted addresses stay reserved for 90 days to prevent misdirected mail
 -- and impersonation (docs/mail.md §11.3).

@@ -36,14 +36,40 @@ export function b64decode(value: string): Uint8Array {
   return out;
 }
 
+export async function sha256Hex(value: string): Promise<string> {
+  const digest = await subtle.digest('SHA-256', new TextEncoder().encode(value) as BufferSource);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 async function importSpki(spkiB64: string): Promise<CryptoKey> {
   return (await subtle.importKey(
     'spki',
     b64decode(spkiB64) as BufferSource,
     { name: 'ECDH', namedCurve: 'P-256' },
     true,
-    ['deriveKey', 'deriveBits'],
+    // ECDH public keys must be imported with no usages (WebCrypto spec); the
+    // private key supplies the usages in deriveBits/deriveKey.
+    [],
   )) as CryptoKey;
+}
+
+/**
+ * Validate a published identity key before storing it. An invalid or
+ * non-P-256 SPKI would silently break every future inbound message for the
+ * mailbox, so activation must fail closed.
+ */
+export async function isValidP256SpkiB64(value: unknown): Promise<boolean> {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 512) return false;
+  try {
+    const bytes = b64decode(value);
+    if (bytes.length === 0 || bytes.length > 256) return false;
+    await subtle.importKey('spki', bytes as BufferSource, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function deriveWrapKey(

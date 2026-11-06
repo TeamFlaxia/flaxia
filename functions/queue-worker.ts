@@ -25,6 +25,8 @@ interface Env {
   EXPORT_BUCKET?: R2Bucket;
   BUCKET?: R2Bucket;
   AUTH_SERVICE?: Fetcher;
+  MAIL_SERVICE?: Fetcher;
+  MAIL_INTERNAL_SECRET?: string;
   HF_TOKEN?: string;
   HF_REPO?: string;
 }

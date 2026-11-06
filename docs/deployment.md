@@ -30,6 +30,8 @@ Mail は apex `flaxia.app` の `@flaxia.app` メールボックス。既存の h
 ```bash
 # 1. Mail の D1 / R2 / Queue を作成して migrate
 npx wrangler d1 create flaxia-mail
+#    -> 出力された database_id を mail-worker/wrangler.toml の MAIL_DB に貼る。
+#       CI の deploy-mail はプレースホルダ id のままでは失敗する。
 npx wrangler r2 bucket create flaxia-mail-content
 npx wrangler queues create flaxia-mail-queue
 npx wrangler queues create flaxia-mail-dlq
@@ -44,6 +46,9 @@ npm run deploy:mail
 npx wrangler secret put MAIL_INTERNAL_SECRET --config mail-worker/wrangler.toml
 npx wrangler secret put MAIL_THREAD_SECRET --config mail-worker/wrangler.toml
 npx wrangler pages secret put MAIL_INTERNAL_SECRET --project-name flaxia
+# 予約されたアカウント削除（scheduled backend worker）も Mail を消すため、
+# 同じ secret を backend worker にも設定する。
+npx wrangler secret put MAIL_INTERNAL_SECRET --config wrangler.toml.worker
 ```
 
 DNS/MX/SPF/DKIM/DMARC の手順は `docs/mail.md` §11.1 を参照。メール関連レコードは DNS-only（proxy しない）。

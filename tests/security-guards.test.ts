@@ -67,8 +67,10 @@ describe('security guards', () => {
     assert.ok(renderer.includes('DOMPurify'), 'mail renderer must sanitize with DOMPurify');
 
     const workerToml = readFileSync(join(ROOT, 'mail-worker/wrangler.toml'), 'utf8');
-    assert.ok(!workerToml.includes('workers_dev = true'), 'mail worker must not be publicly routable');
-    assert.ok(!/workers_dev\s*=\s*true/.test(workerToml), 'mail worker must not expose workers.dev');
+    // The Wrangler default enables workers.dev, so an absent/commented line is
+    // not enough: the config must explicitly disable it.
+    assert.match(workerToml, /^\s*workers_dev\s*=\s*false\s*$/m, 'mail worker must explicitly set workers_dev = false');
+    assert.ok(!/^\s*workers_dev\s*=\s*true\s*$/m.test(workerToml), 'mail worker must not expose workers.dev');
 
     const pagesToml = readFileSync(join(ROOT, 'wrangler.toml'), 'utf8');
     assert.ok(pagesToml.includes('MAIL_SERVICE'), 'Pages must bind MAIL_SERVICE');

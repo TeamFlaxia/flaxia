@@ -60,6 +60,11 @@ export function getQuota(): Promise<MailQuota> {
   return request('/api/mail/quota');
 }
 
+export async function getMailUnreadCount(): Promise<number> {
+  const result = await request<{ unread?: unknown }>('/api/mail/unread');
+  return typeof result.unread === 'number' ? result.unread : 0;
+}
+
 export function getMyKey(): Promise<{ public_key: string; key_version: number; address: string }> {
   return request('/api/mail/keys/me');
 }

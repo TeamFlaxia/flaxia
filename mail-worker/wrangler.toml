@@ -5,11 +5,14 @@ compatibility_flags = ["nodejs_compat"]
 
 # No workers.dev route. Reachable only via the MAIL_SERVICE service binding
 # from Pages Functions and the Email Routing email() handler (docs/mail.md §5).
-# workers_dev = false
+# This must stay explicit: the Wrangler default enables workers.dev.
+workers_dev = false
 
 [[d1_databases]]
 binding = "MAIL_DB"
 database_name = "flaxia-mail"
+# Replace with the id printed by `wrangler d1 create flaxia-mail` before
+# deploying (docs/deployment.md). The deploy job rejects the placeholder.
 database_id = "00000000-0000-0000-0000-000000000000"
 
 [[r2_buckets]]
