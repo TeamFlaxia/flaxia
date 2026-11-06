@@ -11,6 +11,7 @@ import bugReportsRouter from './routes/bug-reports';
 import topicRouter from './routes/current-topic';
 import gamesRouter from './routes/games';
 import linkPreviewRouter from './routes/link-preview';
+import mailRouter from './routes/mail';
 import meRouter from './routes/me';
 import mediaRouter from './routes/media';
 import multiplayerRouter from './routes/multiplayer';
@@ -59,6 +60,9 @@ type Bindings = {
   GITHUB_APP_ID?: string;
   GITHUB_APP_INSTALLATION_ID?: string;
   GITHUB_APP_PRIVATE_KEY?: string;
+  MAIL_SERVICE?: Fetcher;
+  MAIL_INTERNAL_SECRET?: string;
+  MAIL_DOMAIN?: string;
 };
 
 type Variables = {
@@ -152,6 +156,9 @@ app.route('/', testsRouter);
 
 // Vault key storage (extracted to routes/vault.ts) — see docs/e2ee.md
 app.route('/api', vaultRouter);
+
+// Mail proxy (extracted to routes/mail.ts) — see docs/mail.md
+app.route('/api/mail', mailRouter);
 
 export async function onRequest(context: Record<string, unknown>) {
   const request = context.request as Request;

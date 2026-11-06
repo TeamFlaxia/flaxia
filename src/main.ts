@@ -141,7 +141,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'arcade'
       | 'billing-success'
       | 'billing-canceled'
-      | 'download' = 'timeline';
+      | 'download'
+      | 'mail'
+      | 'mail-thread'
+      | 'mail-compose'
+      | 'mail-settings' = 'timeline';
     let currentPostId: string | null = null;
     let _currentUsername: string | null = null;
     let currentTag: string | null = null;
@@ -159,6 +163,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let searchPage: PageComponent | null = null;
     let bookmarksPage: BookmarksPage | null = null;
     let downloadPage: PageComponent | null = null;
+    let mailPage: PageComponent | null = null;
+    let mailSettingsPage: PageComponent | null = null;
     let cachedContentComponent: { view: string; component: unknown; scrollY: number } | null = null;
     let adminLayout:
       | (PageComponent & { updateMainContent: (el: HTMLElement) => void; setAccessDenied: () => void })
@@ -535,6 +541,14 @@ document.addEventListener('DOMContentLoaded', async () => {
           downloadPage.destroy();
           downloadPage = null;
         }
+        if (mailPage) {
+          mailPage.destroy();
+          mailPage = null;
+        }
+        if (mailSettingsPage) {
+          mailSettingsPage.destroy();
+          mailSettingsPage = null;
+        }
       }
       showPageLoader();
       app.innerHTML = '';
@@ -589,6 +603,48 @@ document.addEventListener('DOMContentLoaded', async () => {
 
           app.appendChild(billingPage.getElement());
           hidePageLoader();
+          return;
+        }
+
+        // Handle mail pages (requires auth, within the standard 3-column layout)
+        if (view === 'mail' || view === 'mail-settings' || view === 'mail-thread' || view === 'mail-compose') {
+          currentView = view;
+          currentPostId = postId || null;
+          _currentUsername = null;
+          currentTag = null;
+
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          const leftNav = await lazyCreateLeftNav({
+            activeItem: 'mail',
+            unreadCount: unreadNotificationCount,
+            currentUser: currentUser || undefined,
+            ...leftNavHandlers(),
+          });
+          leftNavInstances.add(leftNav);
+
+          const rightPanel = await lazyCreateRightPanel();
+          mainContainer.appendChild(leftNav.getElement());
+
+          if (view === 'mail-settings') {
+            const { createMailSettingsPage } = await import('./components/MailSettingsPage.js');
+            mailSettingsPage = createMailSettingsPage({
+              currentUser: currentUser ? { id: currentUser.id, username: currentUser.username } : null,
+            });
+            mainContainer.appendChild(mailSettingsPage.getElement());
+          } else {
+            const { createMailPage } = await import('./components/MailPage.js');
+            mailPage = createMailPage({
+              currentUser: currentUser ? { id: currentUser.id, username: currentUser.username } : null,
+            });
+            mainContainer.appendChild(mailPage.getElement());
+          }
+
+          mainContainer.appendChild(rightPanel.getElement());
+          app.appendChild(mainContainer);
+          hidePageLoader();
+          setupMobileLeftNav(leftNav.getElement());
           return;
         }
 

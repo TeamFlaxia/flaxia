@@ -110,6 +110,7 @@ const VAULT_ITEM_KINDS = new Set([
   'private_note',
   'personal_setting',
   'recommendation_profile',
+  'mail_identity',
 ]);
 /** A QR left on screen should stop working quickly; clients may ask for less. */
 const DEFAULT_PAIRING_TTL_SECONDS = 600;

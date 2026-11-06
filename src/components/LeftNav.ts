@@ -195,6 +195,7 @@ export class LeftNav {
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
         { id: 'notifications', text: t('nav.notifications'), icon: 'notifications' },
+        { id: 'mail', text: t('nav.mail'), icon: 'mail' },
         { id: 'bookmarks', text: t('nav.bookmarks'), icon: 'bookmark' },
       ] as const;
       items.forEach((item) => {
@@ -697,6 +698,7 @@ export function updateLeftNavUser(
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
         { id: 'notifications', text: t('nav.notifications'), icon: 'notifications' },
+        { id: 'mail', text: t('nav.mail'), icon: 'mail' },
         { id: 'bookmarks', text: t('nav.bookmarks'), icon: 'bookmark' },
       ] as const;
 

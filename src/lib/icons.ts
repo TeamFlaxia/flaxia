@@ -19,6 +19,7 @@ import {
   ImagePlus,
   Key,
   Leaf,
+  Mail,
   Maximize,
   Megaphone,
   MessageCircle,
@@ -87,7 +88,8 @@ export type IconName =
   | 'users'
   | 'megaphone'
   | 'at-sign'
-  | 'eye-off';
+  | 'eye-off'
+  | 'mail';
 
 const ICON_NODES: Record<IconName, IconNode> = {
   fresh: Leaf,
@@ -134,6 +136,7 @@ const ICON_NODES: Record<IconName, IconNode> = {
   megaphone: Megaphone,
   'at-sign': AtSign,
   'eye-off': EyeOff,
+  mail: Mail,
 };
 
 export function icon(name: IconName, attrs: Record<string, string> = {}): SVGElement {

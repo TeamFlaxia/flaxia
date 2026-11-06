@@ -53,6 +53,37 @@ describe('security guards', () => {
     assert.deepEqual(offenders, [], `allow-same-origin is banned: ${offenders.join(', ')}`);
   });
 
+  it('renders mail HTML in a sandbox with no scripts and no same-origin', () => {
+    const renderer = readFileSync(join(ROOT, 'src/lib/mail/render.ts'), 'utf8');
+    assert.ok(renderer.includes("setAttribute('sandbox', '')"), 'mail iframe must use an opaque sandbox');
+    assert.ok(
+      !/setAttribute\(\s*["']sandbox["']\s*,\s*["'][^"']*allow-scripts/.test(renderer),
+      'mail renderer must not allow scripts',
+    );
+    assert.ok(
+      !/setAttribute\(\s*["']sandbox["']\s*,\s*["'][^"']*allow-same-origin/.test(renderer),
+      'mail renderer must not allow same-origin',
+    );
+    assert.ok(renderer.includes('DOMPurify'), 'mail renderer must sanitize with DOMPurify');
+
+    const workerToml = readFileSync(join(ROOT, 'mail-worker/wrangler.toml'), 'utf8');
+    assert.ok(!workerToml.includes('workers_dev = true'), 'mail worker must not be publicly routable');
+    assert.ok(!/workers_dev\s*=\s*true/.test(workerToml), 'mail worker must not expose workers.dev');
+
+    const pagesToml = readFileSync(join(ROOT, 'wrangler.toml'), 'utf8');
+    assert.ok(pagesToml.includes('MAIL_SERVICE'), 'Pages must bind MAIL_SERVICE');
+    assert.ok(pagesToml.includes('MAIL_DOMAIN = "flaxia.app"'), 'mail domain must be apex flaxia.app');
+  });
+
+  it('never decrypts vault key material server-side (mail included)', () => {
+    const offenders = walk(join(ROOT, 'mail-worker'))
+      .filter((file) =>
+        /deriveVaultKe|unlockVaultWith|unwrapSecret|decryptVaultItem|wrapVaultKey/.test(readFileSync(file, 'utf8')),
+      )
+      .map((file) => relative(ROOT, file));
+    assert.deepEqual(offenders, [], `vault cryptography must stay client-side: ${offenders.join(', ')}`);
+  });
+
   it('serves the sandbox from a dedicated origin', () => {
     const toml = readFileSync(join(ROOT, 'wrangler.toml'), 'utf8');
     const get = (key: string) => toml.match(new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, 'm'))?.[1];

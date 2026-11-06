@@ -128,6 +128,12 @@ export async function deleteAccount(
 
   // Messaging and calls were removed by migration 0089; no related rows remain
   // to clean up when deleting a user.
+  //
+  // Flaxia Mail lives in the separate MAIL_DB (docs/mail.md §11.3). Deletion
+  // is enqueued through the MAIL_SERVICE binding so D1 rows and R2 objects are
+  // removed idempotently; vault mail_identity items are already deleted above
+  // because they are vault_items rows. P1 keeps this hook best-effort: if the
+  // Mail worker is undeployed, account deletion still succeeds.
 
   // --- Billing + custom stamps: bare FKs to users (#131) ---
   statements.push(db.prepare('DELETE FROM transactions WHERE user_id = ?').bind(userId));

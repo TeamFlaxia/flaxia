@@ -1,6 +1,6 @@
 # Flaxia Mail
 
-**Status:** design only — no production code yet.
+**Status:** P0/P1 foundation in progress (apex cutover approved).
 
 Flaxia Mail is a real mailbox on `@flaxia.app`: it receives mail from the
 public SMTP network, sends mail to external recipients, and exposes a webmail
@@ -10,7 +10,7 @@ UI inside Flaxia. It is not a revival of the removed Lounge/DM feature
 This document is the implementation contract. Code that contradicts it is a
 bug, the same rule `docs/e2ee.md` uses for the Personal Vault.
 
-Last updated: 2026-11-05.
+Last updated: 2026-11-06.
 
 ---
 
@@ -87,11 +87,11 @@ end-to-end encrypted anywhere in the UI or docs.
 | D1 | Mail is a real `@flaxia.app` mailbox, not in-app DM | Approved |
 | D2 | Separate `flaxia-mail` Worker with its own D1/R2/Queue | Approved |
 | D3 | Pages Functions authenticate the session and proxy to the Worker | Approved |
-| D4 | Personal Vault is required to activate a Mail address | Recommended, confirm at implementation |
-| D5 | Flaxia-to-Flaxia mail is true E2EE; external mail is TLS + encrypted at rest | Recommended, confirm |
-| D6 | Apex `@flaxia.app` first, or `@mail.flaxia.app` beta first | Open |
-| D7 | Eligibility: all users, Flaxia+, or trust-gated | Open |
-| D8 | Storage/send quotas and retention periods | Open |
+| D4 | Personal Vault is required to activate a Mail address | Approved (2026-11-06) |
+| D5 | Flaxia-to-Flaxia mail is true E2EE; external mail is TLS + encrypted at rest | Approved (2026-11-06) |
+| D6 | Apex `@flaxia.app` directly. Existing human Email Routing forwarding is removed; catch-all routes to the Mail Worker and unknown recipients are rejected (550). | Approved (2026-11-06) |
+| D7 | Eligibility: all authenticated users. External sending is still trust-gated (age/trust/rate limits, §11.4). | Approved (2026-11-06) |
+| D8 | Storage/send quotas and retention periods (§11.2): mailbox storage 512 MiB per user (free and Flaxia+ alike for MVP), external sends 20/day conservative. | Approved (2026-11-06) |
 
 `D5` is the important honesty boundary. A public sender has no Flaxia key, so
 external mail cannot be end-to-end encrypted. Encrypting it immediately after
@@ -172,13 +172,15 @@ byte-compatible and cover them with known-answer tests.
 | `MAIL_SERVICE` | Service binding (Pages side) | Pages → Worker |
 | `MAIL_INTERNAL_SECRET` | Secret | Signature for trusted Pages → Worker calls |
 | `MAIL_THREAD_SECRET` | Secret | HMAC for subject-based thread fallback |
-| `MAIL_DOMAIN` | Var | `flaxia.app` or the beta subdomain |
-| `MAIL_FALLBACK_FORWARD` | Var | Existing human mailbox for unknown recipients |
+| `MAIL_DOMAIN` | Var | `flaxia.app` (apex, D6 approved) |
+| `MAIL_INBOUND_ENABLED` | Var | `"0"` during P1 (rejects live mail); set `"1"` only at the P2 cutover. |
+| `MAIL_FALLBACK_FORWARD` | — | Removed. Human forwarding is deleted; unknown recipients get 550 from the Worker (no catch-all forward). |
 
 The Mail Worker must not expose a public `workers.dev` route. Only the Service
 Binding and the Email Routing handler are reachable. Internal requests carry
-the authenticated user id and an HMAC; the Worker validates both even though
-Service Bindings are already trusted.
+the authenticated user id and an HMAC; the signature binds the user, timestamp,
+method, path+query, and a body hash, and the Worker validates all of it even
+though Service Bindings are already trusted.
 
 ---
 
@@ -347,6 +349,7 @@ updating the current pointer.
 | `auth_results` | SPF/DKIM/DMARC summary for warnings |
 | `spam_score` | Optional heuristic score |
 | `blob_id` | Encrypted payload blob |
+| `payload_iv` | Base64 AES-GCM IV for the encrypted payload |
 | `raw_blob_key` | Encrypted original MIME, optional |
 | `deleted_at` | Soft delete |
 
@@ -384,7 +387,10 @@ filters do not require decrypting names.
 - `mail_ingest_jobs`: inbound job state, attempts, last error.
 - `mail_outbound_jobs`: external send state, provider message id, attempts.
 - `mail_deletion_jobs`: account deletion and R2 garbage collection.
+- `mail_deletion_outbox`: main-D1 retry queue when the Mail Worker is unreachable during account deletion.
 - `mail_events`: sync cursor and notification hints.
+- `mail_reserved_addresses`: addresses held for 90 days after deletion.
+- `mail_idempotency_keys`: replay guard for non-idempotent mutations, pruned after 30 days.
 - `mail_local_index` is not server-side; it lives encrypted in the browser.
 
 ### R2 layout
@@ -439,6 +445,7 @@ resolved from the Auth-backed session grant instead of a local credential, per
 | `PUT` | `/api/mail/keys/me` | Publish a new public key version |
 | `GET` | `/api/mail/keys?addresses=` | Fetch public keys for internal E2EE |
 | `GET` | `/api/mail/quota` | Storage and send counters |
+| `GET` | `/api/mail/unread` | Unread thread count for the nav badge |
 | `POST` | `/api/mail/report-abuse` | Report spam/phishing |
 
 Rules:
@@ -462,8 +469,7 @@ Rules:
 
 1. Email Routing routes `*@<MAIL_DOMAIN>` to the Worker.
 2. Resolve the recipient in `mail_addresses`.
-   - Unknown address: forward to `MAIL_FALLBACK_FORWARD` if configured, or
-     reject with `550`.
+   - Unknown address: reject with `550`. There is no fallback forward.
    - Disabled/frozen account: reject; do not queue.
 3. Enforce size and recipient limits. The MVP accepts at most 10 MiB.
 4. Check SPF/DKIM/DMARC results from the incoming message. Reject clear
@@ -607,20 +613,19 @@ Mobile collapses to a list/detail pair. Add a Mail item and unread badge to
 
 ## 11. Operations
 
-### 11.1 DNS and Email Routing
+### 11.1 DNS and Email Routing (apex cutover, D6 approved 2026-11-06)
 
-1. Audit every existing Email Routing rule and destination before changing
-   anything. Record human addresses, catch-all behavior, and fallback targets.
-2. Keep existing human mailboxes working. The catch-all should route to the
-   Mail Worker, which forwards unknown recipients to `MAIL_FALLBACK_FORWARD`
-   instead of dropping them.
-3. Start with a beta subdomain such as `mail.flaxia.app` if the apex cutover
-   risk is too high; move to `flaxia.app` after deliverability is proven.
-4. Add `postmaster@` and `abuse@` routing; providers expect them.
-5. Onboard the sending domain in Cloudflare Email Service and verify the
-   `cf-bounce` MX, SPF, and DKIM records.
-6. Publish DMARC at `p=none` with reporting, then move to `quarantine` and
-   `reject` after monitoring.
+**P1 note (2026-11-06):** do not change MX or Email Routing during the P1
+deploy. The Worker ships with `MAIL_INBOUND_ENABLED=0` and rejects live mail;
+MIME authentication, attachment scanning, threading, and the read UI land in P2.
+Cut over only after P2 is deployed and tested.
+
+1. Existing human Email Routing destinations are **removed**: no catch-all forward, no `MAIL_FALLBACK_FORWARD`. All `@flaxia.app` user routing goes to the Mail Worker; unknown recipients are rejected with 550 at the Worker.
+2. Existing human addresses (`dmarc@`, `security@`, `support@`, `noreply@`, `admin@`, `team@`) become reserved mail addresses handled by the Worker (or explicit reject), never silently forwarded to an external human mailbox.
+3. **Exception (2026-11-06):** `postmaster@flaxia.app` and `abuse@flaxia.app` are forwarded via Cloudflare Email Routing to `teamflaxia@proton.me`. These two addresses are operational mailboxes monitored by TeamFlaxia outside Flaxia Mail, so they are outside the Mail encryption boundary (not E2EE, not encrypted at rest in MAIL_DB). User mail (`username@flaxia.app`) and the catch-all never transit this rule.
+4. Apex `flaxia.app` is the launch domain (no beta subdomain). Deliverability is proven in P5 before enabling external sending broadly.
+5. Onboard the sending domain in Cloudflare Email Service and verify the `cf-bounce` MX, SPF, and DKIM records. Inbound DKIM (`cf2024-1._domainkey`) already exists; keep it DNS-only.
+6. Publish DMARC at `p=none` with reporting, then move to `quarantine` and `reject` after monitoring.
 7. Do not proxy mail-related DNS records. They must be DNS-only.
 
 ### 11.2 Quotas
@@ -632,7 +637,7 @@ Mobile collapses to a list/detail pair. Add a Mail item and unread badge to
 | Attachments per message | 20 |
 | Recipients per message | 20 |
 | Daily external sends | 20 (new accounts), raise with trust |
-| Mailbox storage | 1 GiB (free), 10 GiB (Flaxia+) |
+| Mailbox storage | **512 MiB per user** (all users, free and Flaxia+ alike for MVP; D8 approved 2026-11-06) |
 | Trash/Spam retention | 30 days |
 | Inbound/outbound job retention | 30 days |
 | Staging plaintext retention | 1 hour |
@@ -647,6 +652,8 @@ at ingest and before accepting outbound attachments.
 - Account deletion must create a `mail_deletion_jobs` row, delete D1 rows, and
   remove R2 objects idempotently. Hook this into the existing account deletion
   flow (`functions/lib/account-deletion.ts`) through the Mail Service Binding.
+  If the Worker is unreachable, a main-D1 `mail_deletion_outbox` row is retried
+  by the scheduled backend worker until the purge is confirmed.
 - Disabled or deleted addresses must not receive new mail. Reject at SMTP if
   possible; otherwise quarantine and alert.
 - Deleted addresses are not reusable for at least 90 days, to prevent
@@ -752,20 +759,16 @@ inbound delivery and external sending independently.
 
 ---
 
-## 14. Open questions
+## 14. Open questions (resolved 2026-11-06 except noted)
 
-1. **Domain:** start at `@flaxia.app` or beta at `@mail.flaxia.app`?
-2. **E2EE boundary:** confirm internal E2EE plus external TLS/at-rest
-   encryption. If external E2EE is mandatory, PGP/S/MIME becomes a
-   prerequisite.
-3. **Eligibility:** all accounts, Flaxia+, or trust-gated?
-4. **Existing routing:** what are the current Email Routing rules, catch-all,
-   and human destinations that must keep working?
-5. **Vault requirement:** is requiring Personal Vault activation acceptable
-   for Mail? Recommended because Mail keys live under VK.
-6. **Quotas/retention:** confirm the defaults in section 11.2.
-7. **Attachments:** confirm the 10 MiB cap and the executable blocklist.
-8. **Operations:** who owns `postmaster@`, `abuse@`, and incident response?
+1. **Domain:** `flaxia.app` apex (D6). Human forwarding removed except the documented postmaster/abuse exception (§11.1.3).
+2. **E2EE boundary:** internal E2EE + external TLS/at-rest (D5). PGP/S/MIME deferred.
+3. **Eligibility:** all authenticated users (D7). External sends trust-gated.
+4. **Existing routing:** human destinations deleted; Worker rejects unknown (550). `postmaster@`/`abuse@` forward to `teamflaxia@proton.me` (§11.1.3).
+5. **Vault requirement:** required for activation (D4).
+6. **Quotas/retention:** storage 512 MiB/user; other defaults §11.2 (D8).
+7. **Attachments:** 10 MiB cap retained; blocklist in P2.
+8. **Operations:** `postmaster@`/`abuse@` forward to `teamflaxia@proton.me` (TeamFlaxia monitors). Other incident response owner still OPEN.
 
 ---
 

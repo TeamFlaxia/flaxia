@@ -28,6 +28,10 @@ binding = "AUTH_SERVICE"
 service = "flaxia-auth"
 entrypoint = "FlaxiaBridge"
 
+[[services]]
+binding = "MAIL_SERVICE"
+service = "flaxia-mail"
+
 [vars]
 # Github App
 GITHUB_APP_ID = "5552259"
@@ -40,6 +44,7 @@ SANDBOX_ORIGIN = "https://sandbox.flaxia.app"
 BASE_URL = "https://flaxia.app"
 ENVIRONMENT = "production"
 CROWD_ORCHESTRATOR_URL = "https://crowd.flaxia.app"
+MAIL_DOMAIN = "flaxia.app"
 
 # Keep file-source scanning disabled until the Crowd worker/node release is deployed.
 CROWD_SCAN_FILE_SOURCES = "0"
