@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Protect **personal data stored on the server** — drafts, private notes, and
-personal settings — so that a database dump, a curious operator, or a stolen
-backup does not expose what the user wrote.
+Protect **personal data stored on the server** — drafts, private notes,
+personal settings, and the recommendation profile — so that a database dump, a
+curious operator, or a stolen backup does not expose what the user wrote.
 
 Posts and media are **deliberately out of scope**: they are public by design,
 federate over ActivityPub, must be indexable by the SSR/vector pipelines, and
@@ -33,6 +33,12 @@ This document is the specification. Code that contradicts it is a bug.
 after decrypting it locally. A server that serves modified JavaScript can read
 it during that session. E2EE here protects *stored data and backups*, not
 against a hostile live build. That is stated openly rather than implied away.
+
+**Recommendation limit:** the encrypted `recommendation_profile` hides the
+explicit preference vector, but the interaction events used to build it
+(freshs, bookmarks, replies, shares, game dwell) remain server-side by design.
+An operator can approximate interests from those events; E2EE does not make
+observable behaviour private.
 
 ---
 
@@ -77,10 +83,14 @@ error-prone operation unnecessary.
 
 ## Storage (D1)
 
-Post drafts and private notes use the same per-item encryption format as vault
-items. Their item payloads and item keys are encrypted in the browser before
-being sent to D1. The server may see the item kind and timestamps, but never the
-text. Legacy composer drafts are moved from localStorage into the vault after
+Post drafts, private notes, and the personal recommendation profile use the
+same per-item encryption format as vault items. Their item payloads and item
+keys are encrypted in the browser before being sent to D1. The server may see
+the item kind and timestamps, but never the text or the preference vector.
+The recommendation profile is the singleton item `reco-profile-v1` with kind
+`recommendation_profile`; the browser rebuilds it from
+`GET /api/recommendations/profile-sources` and ranks public candidate
+embeddings locally. Legacy composer drafts are moved from localStorage into the vault after
 the vault is unlocked, then their plaintext localStorage copies are removed.
 Vault item requests are bounded to 200 rows and 5 MB of ciphertext per account;
 each payload is limited to 128 KB.
@@ -219,7 +229,7 @@ when a device is lost without ever being paired.
 | Unlock (password) | Derives KEK, unwraps VK | nothing |
 | Recovery | Derives REK from phrase, unwraps VK, then re-establishes KEK/devices | nothing |
 | Password change | Re-derives KEK, re-wraps **VK only** — atomically in the same `PATCH /users/me/password` | new `wrapped_vk` (opaque) |
-| Save a draft or private note | Encrypts the value and its item key in the browser before storage | item kind, id, ciphertext, wrapped key |
+| Save a draft, private note, or recommendation profile | Encrypts the value and its item key in the browser before storage | item kind, id, ciphertext, wrapped key |
 | Device revoke | Generates a new VK, re-wraps every `item_key`, re-wraps own paths; other device rows deleted | n wrapped keys, no bodies |
 | Account with vault, no re-wrap | **Rejected (409)** — the vault would be orphaned | — |
 

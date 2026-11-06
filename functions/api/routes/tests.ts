@@ -108,13 +108,11 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
       'device_keys',
       'vault_keys',
       'user_titles',
-      'user_profiles',
       'push_subscriptions',
       'device_tokens',
       'sessions',
       'ad_interactions',
       'admin_alerts',
-      'bandit_state',
       'ads',
       'users',
     ];

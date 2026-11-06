@@ -3,6 +3,12 @@ import { nanoid } from 'nanoid';
 import { isAdmin } from '../../../src/lib/admin';
 import { canUsePostColors } from '../../../src/lib/entitlements.ts';
 import { hasPostColors, stripPostColors } from '../../../src/lib/post-colors.ts';
+import { cosineSimilarity } from '../../../src/lib/recommendation/vector.ts';
+import {
+  type EncodedVector,
+  encodeVector,
+  RECOMMENDATION_VECTOR_DIM,
+} from '../../../src/lib/recommendation/vector-codec.ts';
 import { copyHtmlToWvfs, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
 import type { ReportCategory } from '../../../src/types/post';
 import { buildCreateActivity, buildDeleteActivity, buildNoteObject } from '../../lib/activitypub/note';
@@ -46,7 +52,6 @@ import {
 } from '../helpers';
 import type { ActorData, Bindings, PollOptionRow, PollRow, PostRow, Variables } from '../types';
 import { extractGameDescription } from './post-versions';
-import { cosineSimilarity, loadOrComputeInterestVector } from './recommender';
 
 const posts = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
@@ -591,11 +596,236 @@ const RECOMMENDED_SELECT = `SELECT p.id, p.user_id, p.username, u.display_name, 
   COALESCE(p.impressions, 0) as impressions, p.parent_id, p.root_id, COALESCE(p.depth, 0) as depth, COALESCE(p.status, 'published') as status, p.created_at`;
 
 const RECOMMENDATION_TRUST_FILTER = `AND COALESCE(u.trust_score, 1.0) >= ${RECOMMENDATION_MIN_TRUST}`;
+const CLIENT_RANK_VECTOR_BATCH_MAX = 120;
+
+async function attachRecommendationVectors(
+  db: D1Database,
+  posts: Array<Record<string, unknown>>,
+): Promise<Record<string, EncodedVector>> {
+  const ids = posts.map((post) => String(post.id)).filter(Boolean);
+  if (ids.length === 0) return {};
+  const rows = await db
+    .prepare('SELECT post_id, embedding FROM post_embeddings WHERE post_id IN (SELECT value FROM json_each(?))')
+    .bind(JSON.stringify(ids))
+    .all<{ post_id: string; embedding: string }>();
+  const vectors: Record<string, EncodedVector> = {};
+  for (const row of rows.results ?? []) {
+    try {
+      const vector: unknown = JSON.parse(row.embedding);
+      if (!Array.isArray(vector) || vector.length !== RECOMMENDATION_VECTOR_DIM) continue;
+      const encoded = encodeVector(vector.map(Number));
+      if (encoded) vectors[row.post_id] = encoded;
+    } catch {
+      // A malformed embedding simply removes that candidate from vector ranking.
+    }
+  }
+  return vectors;
+}
+
+/**
+ * Candidate batch for client-side re-ranking. No preference vector is read or
+ * written here: the server returns public embeddings plus its own ranking
+ * scores, and the unlocked browser applies cosine similarity locally.
+ */
+async function loadClientRankedCandidatePage(
+  db: D1Database,
+  currentUserId: string | null,
+  limit: number,
+  cursorCreatedAt: string | undefined,
+  cursorId: string | undefined,
+  asOfMs: number,
+  seenIds: Set<string>,
+  isArchiveCursor: boolean,
+): Promise<{
+  posts: Array<Record<string, unknown>>;
+  next_cursor: string | null;
+  vectors: Record<string, EncodedVector>;
+  vector_meta: { dim: number; encoding: 'int8' };
+  base_scores: Record<string, number>;
+}> {
+  const asOfIso = new Date(asOfMs).toISOString();
+  const asOfUnixSeconds = Math.floor(asOfMs / 1000);
+  const vectorMeta = { dim: RECOMMENDATION_VECTOR_DIM, encoding: 'int8' as const };
+
+  if (isArchiveCursor) {
+    const archive = await loadRecommendedArchivePage(db, currentUserId, limit, cursorCreatedAt, cursorId, asOfMs);
+    const vectors = await attachRecommendationVectors(db, archive.posts);
+    const baseScores: Record<string, number> = {};
+    for (const post of archive.posts) baseScores[String(post.id)] = 0.5;
+    return { ...archive, vectors, vector_meta: vectorMeta, base_scores: baseScores };
+  }
+
+  const visibilityFilter = currentUserId
+    ? 'AND p.user_id != ? AND p.user_id NOT IN (SELECT blocked_id FROM blocks WHERE blocker_id = ?)'
+    : '';
+  const visibilityParams: string[] = currentUserId ? [currentUserId, currentUserId] : [];
+  const recentCutoff = new Date(asOfMs - RECENT_CANDIDATE_WINDOW_HOURS * 3600_000).toISOString();
+  const trendingCutoff = new Date(asOfMs - TRENDING_CANDIDATE_WINDOW_DAYS * 86400_000).toISOString();
+  const engagementFormula = `MAX(COALESCE(p.engagement_hotness, 0), p.fresh_count * 2.0 + COALESCE(p.reply_count, 0) * 3.0 + COALESCE(p.bookmark_count, 0) * 2.0 + 1.0) / EXP(1.2 * LN(MAX(0.0, (? - unixepoch(p.created_at)) / 3600.0) + 2.0))`;
+  const sourceLimit = Math.min(limit * 2, 200);
+
+  const [recentResult, trendingResult, followingResult] = await Promise.all([
+    db
+      .prepare(
+        `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
+         LEFT JOIN titles t ON t.id = u.equipped_title_id
+         WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
+           ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+         ORDER BY p.created_at DESC LIMIT ?`,
+      )
+      .bind(...visibilityParams, recentCutoff, asOfIso, sourceLimit)
+      .all<Record<string, unknown>>(),
+    db
+      .prepare(
+        `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score FROM posts p LEFT JOIN users u ON p.user_id = u.id
+         LEFT JOIN titles t ON t.id = u.equipped_title_id
+         WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
+           ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER} AND p.created_at >= ? AND p.created_at <= ?
+         ORDER BY eng_score DESC, p.created_at DESC LIMIT ?`,
+      )
+      .bind(asOfUnixSeconds, ...visibilityParams, trendingCutoff, asOfIso, sourceLimit)
+      .all<Record<string, unknown>>(),
+    currentUserId
+      ? db
+          .prepare(
+            `${RECOMMENDED_SELECT} FROM posts p LEFT JOIN users u ON p.user_id = u.id
+             LEFT JOIN titles t ON t.id = u.equipped_title_id
+             WHERE p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
+               AND p.created_at >= ? AND p.created_at <= ?
+               AND EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = ? AND f.followee_id = p.user_id)
+               ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+             ORDER BY p.created_at DESC LIMIT ?`,
+          )
+          .bind(trendingCutoff, asOfIso, currentUserId, ...visibilityParams, sourceLimit)
+          .all<Record<string, unknown>>()
+      : Promise.resolve(null),
+  ]);
+
+  const recentPosts = recentResult.results ?? [];
+  const trendingPosts = trendingResult.results ?? [];
+  const followingPosts = followingResult?.results ?? [];
+  const candidateIds = [
+    ...new Set([
+      ...followingPosts.map((post) => String(post.id)),
+      ...trendingPosts.map((post) => String(post.id)),
+      ...recentPosts.map((post) => String(post.id)),
+    ]),
+  ];
+  if (candidateIds.length === 0) {
+    return loadClientRankedCandidatePage(db, currentUserId, limit, undefined, undefined, asOfMs, seenIds, true);
+  }
+
+  const serializedCandidateIds = JSON.stringify(candidateIds);
+  const candidateResult = await db
+    .prepare(
+      `${RECOMMENDED_SELECT}, (${engagementFormula}) as eng_score
+       FROM posts p LEFT JOIN users u ON p.user_id = u.id
+       LEFT JOIN titles t ON t.id = u.equipped_title_id
+       WHERE p.id IN (SELECT value FROM json_each(?))
+         AND p.status = 'published' AND p.hidden = 0 AND p.parent_id IS NULL ${EXACT_DUPLICATE_FILTER}
+         ${visibilityFilter} ${RECOMMENDATION_TRUST_FILTER}
+         AND p.created_at >= ? AND p.created_at <= ?`,
+    )
+    .bind(asOfUnixSeconds, serializedCandidateIds, ...visibilityParams, trendingCutoff, asOfIso)
+    .all<Record<string, unknown>>();
+  const candidatePosts = candidateResult.results ?? [];
+
+  const freshAtByPost = new Map<string, string>();
+  const lastSeenAtByPost = new Map<string, string>();
+  if (currentUserId) {
+    const [freshRows, impressionRows] = await Promise.all([
+      db
+        .prepare(
+          `SELECT post_id, created_at FROM freshs
+           WHERE user_id = ? AND post_id IN (SELECT value FROM json_each(?))
+             AND (created_at IS NULL OR created_at <= ?)`,
+        )
+        .bind(currentUserId, serializedCandidateIds, asOfIso)
+        .all<{ post_id: string; created_at: string | null }>(),
+      db
+        .prepare(
+          `SELECT post_id, last_seen_at FROM user_post_impressions
+           WHERE user_id = ? AND post_id IN (SELECT value FROM json_each(?))
+             AND last_seen_at <= ?`,
+        )
+        .bind(currentUserId, serializedCandidateIds, asOfIso)
+        .all<{ post_id: string; last_seen_at: string }>(),
+    ]);
+    for (const row of freshRows.results ?? []) {
+      if (row.created_at) freshAtByPost.set(row.post_id, row.created_at);
+    }
+    for (const row of impressionRows.results ?? []) lastSeenAtByPost.set(row.post_id, row.last_seen_at);
+  }
+
+  const followingRanks = rankCandidateIds(followingPosts.map((post) => String(post.id)));
+  const trendingRanks = rankCandidateIds(trendingPosts.map((post) => String(post.id)));
+  const recentRanks = rankCandidateIds(recentPosts.map((post) => String(post.id)));
+  const maxEngagement = Math.max(...candidatePosts.map((post) => Math.max(0, Number(post.eng_score) || 0)), 1);
+  const maxLogEngagement = Math.log1p(maxEngagement);
+
+  const scored = candidatePosts
+    .filter((post) => !seenIds.has(String(post.id)))
+    .map((post) => {
+      const id = String(post.id);
+      const sourceScore =
+        0.5 * candidateRankScore(id, followingRanks) +
+        0.3 * candidateRankScore(id, trendingRanks) +
+        0.2 * candidateRankScore(id, recentRanks);
+      const engagement = Math.max(0, Number(post.eng_score) || 0);
+      const popularity = maxLogEngagement > 0 ? Math.log1p(engagement) / maxLogEngagement : 0;
+      const ageHours = Math.max(0, (asOfMs - new Date(String(post.created_at)).getTime()) / 3600000);
+      const freshness = Math.exp(-ageHours / 168);
+      const contentQuality = computeQualityScore(
+        stripPostColors(String(post.text || '')),
+        !!(post.payload_key || post.swf_key || post.gif_key || post.thumbnail_key),
+        0,
+      );
+      const qualityFactor = 0.9 + 0.1 * Math.min(1, Math.max(0, contentQuality));
+      const baseScore = (0.65 * sourceScore + 0.18 * popularity + 0.17 * freshness) * qualityFactor;
+      const historyPenalty = Math.min(
+        0.55,
+        decayingRecommendationPenalty(freshAtByPost.get(id), asOfMs, 0.25, 7) +
+          decayingRecommendationPenalty(lastSeenAtByPost.get(id), asOfMs, 0.3, 3),
+      );
+      delete post.eng_score;
+      return { post, score: baseScore * (1 - historyPenalty) };
+    })
+    .sort(compareScoredPosts);
+
+  if (scored.length === 0) {
+    return loadClientRankedCandidatePage(db, currentUserId, limit, undefined, undefined, asOfMs, seenIds, true);
+  }
+
+  const page = scored.slice(0, limit);
+  const posts = await enrichRecommendedPosts(
+    page.map(({ post }) => post),
+    db,
+    currentUserId,
+  );
+  const baseScores: Record<string, number> = {};
+  for (const entry of page) baseScores[String(entry.post.id)] = entry.score;
+  for (const post of posts) seenIds.add(String(post.id));
+
+  const vectors = await attachRecommendationVectors(db, posts);
+  const lastPost = posts.at(-1);
+  const lastScore = lastPost ? baseScores[String(lastPost.id)] : null;
+  const nextCursor =
+    !lastPost || lastScore === null
+      ? null
+      : seenIds.size >= 700
+        ? `archive,,,${asOfMs}`
+        : `${lastScore},${lastPost.created_at},${lastPost.id},${asOfMs},${[...seenIds].join(':')}`;
+
+  return { posts, next_cursor: nextCursor, vectors, vector_meta: vectorMeta, base_scores: baseScores };
+}
 
 // GET /api/posts/recommended - multi-source feed inspired by X's Home Mixer.
 posts.get('/posts/recommended', async (c) => {
   try {
-    const limit = clampLimit(c.req.query('limit'), 20, 50);
+    const clientRank = c.req.query('client_rank') === '1' || c.req.query('include_vectors') === '1';
+    const limit = clientRank
+      ? clampLimit(c.req.query('limit'), 80, CLIENT_RANK_VECTOR_BATCH_MAX)
+      : clampLimit(c.req.query('limit'), 20, 50);
     const cursor = c.req.query('cursor');
     const cursorParts = cursor ? cursor.split(',') : [];
     const isArchiveCursor = cursorParts[0] === 'archive';
@@ -622,73 +852,23 @@ posts.get('/posts/recommended', async (c) => {
 
     const db = c.env.DB;
     const currentUserId = c.get('user')?.id || null;
+    if (clientRank) {
+      return c.json(
+        await loadClientRankedCandidatePage(
+          db,
+          currentUserId,
+          limit,
+          cursorCreatedAt,
+          cursorId,
+          asOfMs,
+          seenIds,
+          isArchiveCursor,
+        ),
+      );
+    }
+
     if (isArchiveCursor) {
       return c.json(await loadRecommendedArchivePage(db, currentUserId, limit, cursorCreatedAt, cursorId, asOfMs));
-    }
-
-    let interestVector: number[] | null = null;
-    if (currentUserId) {
-      interestVector = (await loadOrComputeInterestVector(db, currentUserId))?.vector ?? null;
-    }
-
-    // Build independent candidate sources so a missing profile or embedding
-    // service never collapses For You into a single global popularity list.
-    let vectorMatches: Array<{ id: string; score: number }> = [];
-    if (interestVector) {
-      if (c.env.VECTORIZE) {
-        try {
-          const queryResult = await c.env.VECTORIZE.query(interestVector, {
-            topK: 100,
-            returnValues: false,
-            returnMetadata: false,
-          });
-          vectorMatches = (queryResult.matches || [])
-            .map((match) => ({ id: match.id, score: Number(match.score) }))
-            .filter((match) => Number.isFinite(match.score))
-            .sort((a, b) => b.score - a.score)
-            .slice(0, 100);
-        } catch (error) {
-          console.error('Vectorize query failed, falling back to D1:', error);
-        }
-      }
-
-      if (vectorMatches.length === 0) {
-        const embeddingRows = await db
-          .prepare(
-            `SELECT post_id, embedding FROM post_embeddings
-             WHERE created_at IS NULL OR unixepoch(created_at) <= ?
-             ORDER BY created_at DESC LIMIT 500`,
-          )
-          .bind(asOfUnixSeconds)
-          .all<{ post_id: string; embedding: string }>();
-        for (const row of embeddingRows.results || []) {
-          try {
-            const vector: unknown = JSON.parse(row.embedding);
-            if (Array.isArray(vector) && vector.every((value) => typeof value === 'number')) {
-              vectorMatches.push({ id: row.post_id, score: cosineSimilarity(interestVector, vector) });
-            }
-          } catch {
-            // Ignore malformed embeddings and keep the remaining candidates.
-          }
-        }
-        vectorMatches.sort((a, b) => b.score - a.score);
-        vectorMatches = vectorMatches.slice(0, 100);
-      }
-
-      // Vectorize cannot filter by embedding time. Drop matches embedded after
-      // the feed snapshot so page two sees the same vector ranks as page one.
-      if (vectorMatches.length > 0) {
-        const embedded = await db
-          .prepare(
-            `SELECT post_id FROM post_embeddings
-             WHERE post_id IN (SELECT value FROM json_each(?))
-               AND (created_at IS NULL OR unixepoch(created_at) <= ?)`,
-          )
-          .bind(JSON.stringify(vectorMatches.map((match) => match.id)), asOfUnixSeconds)
-          .all<{ post_id: string }>();
-        const allowed = new Set((embedded.results || []).map((row) => row.post_id));
-        vectorMatches = vectorMatches.filter((match) => allowed.has(match.id));
-      }
     }
 
     const visibilityFilter = currentUserId
@@ -739,10 +919,8 @@ posts.get('/posts/recommended', async (c) => {
     const recentPosts = recentResult.results || [];
     const trendingPosts = trendingResult.results || [];
     const followingPosts = followingResult?.results || [];
-    const vectorIds = vectorMatches.map((match) => match.id);
     const candidateIds = [
       ...new Set([
-        ...vectorIds,
         ...followingPosts.map((post) => String(post.id)),
         ...trendingPosts.map((post) => String(post.id)),
         ...recentPosts.map((post) => String(post.id)),
@@ -766,9 +944,7 @@ posts.get('/posts/recommended', async (c) => {
       .bind(asOfUnixSeconds, serializedCandidateIds, ...visibilityParams, trendingCutoff, asOfIso)
       .all<Record<string, unknown>>();
     const candidatePosts = candidateResult.results || [];
-    const validCandidateIds = new Set(candidatePosts.map((post) => String(post.id)));
 
-    const vectorRanks = rankCandidateIds(vectorIds.filter((id) => validCandidateIds.has(id)));
     const followingRanks = rankCandidateIds(followingPosts.map((post) => String(post.id)));
     const trendingRanks = rankCandidateIds(trendingPosts.map((post) => String(post.id)));
     const recentRanks = rankCandidateIds(recentPosts.map((post) => String(post.id)));
@@ -806,10 +982,9 @@ posts.get('/posts/recommended', async (c) => {
     const scoredPosts = candidatePosts.map((post) => {
       const id = String(post.id);
       const sourceScore =
-        0.35 * candidateRankScore(id, vectorRanks) +
-        0.35 * candidateRankScore(id, followingRanks) +
-        0.18 * candidateRankScore(id, trendingRanks) +
-        0.12 * candidateRankScore(id, recentRanks);
+        0.5 * candidateRankScore(id, followingRanks) +
+        0.3 * candidateRankScore(id, trendingRanks) +
+        0.2 * candidateRankScore(id, recentRanks);
       const engagement = Math.max(0, Number(post.eng_score) || 0);
       const popularity = maxLogEngagement > 0 ? Math.log1p(engagement) / maxLogEngagement : 0;
       const ageHours = Math.max(0, (asOfMs - new Date(String(post.created_at)).getTime()) / 3600000);

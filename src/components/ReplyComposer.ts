@@ -5,6 +5,7 @@ import { t } from '../lib/i18n.js';
 import { attachIcons } from '../lib/icons.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { showToast } from '../lib/toast.js';
+import { markRecommendationProfileDirty } from '../lib/vault/recommendation-profile.js';
 import { Post } from '../types/post.js';
 import { showSignInPrompt } from './SignInPrompt.js';
 
@@ -621,6 +622,7 @@ export class ReplyComposer {
       if (!commitResult) {
         throw new Error('Failed to commit reply');
       }
+      markRecommendationProfileDirty();
 
       // Clear form
       this.textarea.value = '';

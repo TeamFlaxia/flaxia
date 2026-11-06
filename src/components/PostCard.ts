@@ -10,6 +10,7 @@ import { useSandboxBridge } from '../lib/sandbox-bridge.js';
 import { getShowNsfw } from '../lib/settings.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { showToast } from '../lib/toast.js';
+import { markRecommendationProfileDirty } from '../lib/vault/recommendation-profile.js';
 import {
   type PostAttachment,
   PostCardMode,
@@ -578,6 +579,7 @@ export class PostCard {
       // Sync with server response (use authoritative fresh_count from server)
       this.isFreshed = result.freshed;
       this.freshCount = result.fresh_count;
+      markRecommendationProfileDirty();
 
       // Notify other components (e.g. cached timeline) about the fresh state change
       window.dispatchEvent(
@@ -764,6 +766,7 @@ export class PostCard {
 
       this.isBookmarked = result.bookmarked;
       this.bookmarkCount = result.bookmark_count;
+      markRecommendationProfileDirty();
 
       window.dispatchEvent(
         new CustomEvent('postUpdated', {

@@ -104,7 +104,13 @@ const MAX_ACTIVE_DEVICES = 10;
 const MAX_VAULT_ITEM_CIPHERTEXT_CHARS = 128_000;
 const MAX_VAULT_ITEMS = 200;
 const MAX_VAULT_STORAGE_CHARS = 5_000_000;
-const VAULT_ITEM_KINDS = new Set(['post_autosave', 'post_draft', 'private_note', 'personal_setting']);
+const VAULT_ITEM_KINDS = new Set([
+  'post_autosave',
+  'post_draft',
+  'private_note',
+  'personal_setting',
+  'recommendation_profile',
+]);
 /** A QR left on screen should stop working quickly; clients may ask for less. */
 const DEFAULT_PAIRING_TTL_SECONDS = 600;
 const NOW_SQL = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";

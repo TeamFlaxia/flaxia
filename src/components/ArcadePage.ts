@@ -8,10 +8,17 @@ import { attachIcons, type IconName, icon } from '../lib/icons.js';
 import { impressionTracker } from '../lib/impression-tracker.js';
 import { registerModal } from '../lib/modal-state.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { rankCandidates } from '../lib/recommendation/rank.js';
+import { decodeVector, type EncodedVector } from '../lib/recommendation/vector-codec.js';
 import { getReplyStyle } from '../lib/settings.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { buildTree } from '../lib/thread.js';
 import { showToast } from '../lib/toast.js';
+import {
+  getRecommendationProfile,
+  markRecommendationProfileDirty,
+  type RecommendationProfile,
+} from '../lib/vault/recommendation-profile.js';
 import { executeWvfsZip } from '../lib/wvfs-zip-client.js';
 import type { ArcadePageProps, Game, GameType } from '../types/game.js';
 import type { Post } from '../types/post.js';
@@ -40,6 +47,16 @@ interface ArcadeEvent {
   gameType: string;
 }
 
+interface ClientRankedGamesResponse {
+  games: Game[];
+  hasMore?: boolean;
+  token?: string;
+  offset?: number;
+  vectors?: Record<string, EncodedVector>;
+  vector_meta?: { dim?: number };
+  base_scores?: Record<string, number>;
+}
+
 export class ArcadePage {
   private element: HTMLElement;
   private props: ArcadePageProps;
@@ -55,6 +72,7 @@ export class ArcadePage {
   private renderController: AbortController | null = null;
   private destroyed = false;
   private recommendedOffset: number = 0;
+  private recommendedProfile: RecommendationProfile | null = null;
   private gameContainer: HTMLElement;
   private floatingActions: HTMLElement | null = null;
   private currentGameHandle: { destroy: () => void } | null = null;
@@ -601,6 +619,30 @@ export class ArcadePage {
     this.swipeVelocity = 0;
   }
 
+  private rankRecommendedGames(data: ClientRankedGamesResponse, promoteInitial = true): Game[] {
+    if (!this.recommendedProfile) return data.games || [];
+    const dim = data.vector_meta?.dim ?? 1024;
+    const vectors = new Map<string, number[]>();
+    for (const [postId, encoded] of Object.entries(data.vectors || {})) {
+      const vector = decodeVector(encoded, dim);
+      if (vector) vectors.set(postId, vector);
+    }
+    const games = data.games || [];
+    const ranked = rankCandidates({
+      items: games,
+      profile: this.recommendedProfile.vector,
+      getVector: (game) => vectors.get(game.postId) ?? null,
+      getBaseScore: (game) => data.base_scores?.[game.postId] ?? 0,
+      getAuthor: (game) => game.username,
+      limit: games.length,
+    });
+    if (promoteInitial && this.initialGameId) {
+      const index = ranked.findIndex((game) => game.postId === this.initialGameId);
+      if (index > 0) ranked.unshift(...ranked.splice(index, 1));
+    }
+    return ranked;
+  }
+
   private async loadGames(): Promise<void> {
     if (this.isLoading) return;
     this.isLoading = true;
@@ -609,21 +651,21 @@ export class ArcadePage {
     loadingIndicator.style.display = 'flex';
 
     try {
+      this.recommendedProfile = this.props.currentUser ? await getRecommendationProfile() : null;
+      if (this.destroyed) return;
+
       let url = this.props.currentUser ? '/api/games?recommended=true' : '/api/games?shuffle=true';
+      if (this.recommendedProfile) {
+        url += '&client_rank=1&include_vectors=1&limit=200';
+      }
       if (this.initialGameId) {
         url += `&initialId=${encodeURIComponent(this.initialGameId)}`;
       }
       const response = await fetch(url, { credentials: 'include' });
       if (response.ok) {
-        const data = (await response.json()) as {
-          games: Game[];
-          hasMore?: boolean;
-          token?: string;
-          offset?: number;
-          cursor?: string;
-        };
+        const data = (await response.json()) as ClientRankedGamesResponse;
         if (this.destroyed) return;
-        this.games = (data.games || []).filter((game) => !this.missingGameIds.has(game.postId));
+        this.games = this.rankRecommendedGames(data).filter((game) => !this.missingGameIds.has(game.postId));
         this.hasMore = data.hasMore || false;
         this.shuffleToken = data.token || null;
         this.shuffleOffset = data.token ? data.offset || 0 : 0;
@@ -671,6 +713,9 @@ export class ArcadePage {
       let url: string;
       if (useRecommended) {
         url = `/api/games?recommended=true&offset=${this.recommendedOffset}`;
+        if (this.recommendedProfile) {
+          url += '&client_rank=1&include_vectors=1&limit=120';
+        }
       } else if (this.shuffleToken) {
         url = `/api/games?shuffle=true&token=${this.shuffleToken}&offset=${this.shuffleOffset}`;
       } else {
@@ -678,10 +723,12 @@ export class ArcadePage {
       }
       const response = await fetch(url, { credentials: 'include' });
       if (response.ok) {
-        const data = (await response.json()) as { games: Game[]; hasMore?: boolean; token?: string; offset?: number };
+        const data = (await response.json()) as ClientRankedGamesResponse;
         if (this.destroyed) return false;
         const existing = new Set(this.games.map((game) => game.postId));
-        for (const game of data.games || []) {
+        const incoming =
+          useRecommended && this.recommendedProfile ? this.rankRecommendedGames(data, false) : data.games || [];
+        for (const game of incoming) {
           if (this.missingGameIds.has(game.postId) || existing.has(game.postId)) continue;
           this.games.push(game);
           existing.add(game.postId);
@@ -1351,6 +1398,7 @@ export class ArcadePage {
       const data = (await res.json()) as { freshed: boolean; fresh_count: number };
       game.isFreshed = data.freshed;
       game.freshCount = data.fresh_count;
+      markRecommendationProfileDirty();
     } catch {
       // Rollback on error
       game.isFreshed = wasFreshed;
@@ -1392,6 +1440,7 @@ export class ArcadePage {
       const data = (await res.json()) as { bookmarked: boolean; bookmark_count: number };
       game.isBookmarked = data.bookmarked;
       game.bookmarkCount = data.bookmark_count;
+      markRecommendationProfileDirty();
       showToast(data.bookmarked ? t('arcade.bookmarked') : t('arcade.bookmark_removed'));
     } catch {
       // Rollback on error
@@ -2005,13 +2054,18 @@ export class ArcadePage {
     const batch = this.pendingEvents.splice(0);
     this.eventFlushTimer = null;
     try {
-      await fetch('/api/games/events', {
+      const response = await fetch('/api/games/events', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         keepalive: true,
         body: JSON.stringify({ sessionId: this.sessionId, events: batch }),
       });
+      // Long dwells are a recommendation source; refresh the vault profile on
+      // the next feed load instead of waiting for the TTL.
+      if (response.ok && batch.some((event) => event.dwellMs > 5000)) {
+        markRecommendationProfileDirty();
+      }
     } catch {
       // Silently fail — event data is non-critical
     }
