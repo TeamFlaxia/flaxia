@@ -1,4 +1,4 @@
-import { deleteMailAccount } from './mail-service';
+import { deleteMailAccount } from './mail-service.ts';
 
 interface PostRowWithKeys {
   id: string;

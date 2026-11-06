@@ -32,6 +32,10 @@ entrypoint = "FlaxiaBridge"
 binding = "MAIL_SERVICE"
 service = "flaxia-mail"
 
+# Flaxia Mail internal HMAC (docs/mail.md). Set the same value on Pages, the
+# Mail Worker, and the backend worker:
+#   npx wrangler pages secret put MAIL_INTERNAL_SECRET --project-name flaxia
+
 [vars]
 # Github App
 GITHUB_APP_ID = "5552259"

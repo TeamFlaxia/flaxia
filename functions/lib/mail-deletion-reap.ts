@@ -1,7 +1,7 @@
 // Retries account deletions that could not reach the Mail Worker during the
 // original request (docs/mail.md §11.3). Runs from the scheduled backend
 // worker, which holds the MAIL_SERVICE binding.
-import { deleteMailAccount, type MailServiceEnv } from './mail-service';
+import { deleteMailAccount, type MailServiceEnv } from './mail-service.ts';
 
 type ReapEnv = MailServiceEnv & { DB: D1Database };
 

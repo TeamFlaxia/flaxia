@@ -11,7 +11,7 @@ import { RESERVED_LOCALS } from '../../../src/lib/mail/address.ts';
 import { getSessionToken } from '../../lib/auth';
 import { authIsAuthoritative, authVaultRequest, sessionGrant } from '../../lib/flaxia-auth';
 import { ensureAuthVault } from '../../lib/flaxia-auth-vault';
-import { callMailService } from '../../lib/mail-service';
+import { callMailService } from '../../lib/mail-service.ts';
 import { checkRateLimit } from '../../lib/rate-limit';
 import { requireAuth } from '../helpers';
 import type { Bindings as SharedBindings, Variables } from '../types';
