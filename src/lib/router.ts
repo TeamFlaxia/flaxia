@@ -10,6 +10,7 @@ export type RouteView =
   | 'profile'
   | 'explore'
   | 'search'
+  | 'translate'
   | 'notifications'
   | 'bookmarks'
   | 'terms'
@@ -171,6 +172,11 @@ export function parseRoute(path: string, search: string): RouteInfo | null {
   // App download page - public, no auth required
   if (cleanPath === '/download') {
     return { view: 'download', postId: null, username: null, tag: null };
+  }
+
+  // Translation page - public, no auth required
+  if (cleanPath === '/translate') {
+    return { view: 'translate', postId: null, username: null, tag: null };
   }
 
   // Sandbox route - public, no auth required
