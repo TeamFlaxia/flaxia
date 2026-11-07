@@ -313,8 +313,8 @@ mail.post('/messages/actions', async (c) => {
   });
 });
 
-// Send and drafts (P3, docs/mail.md §9.2/§10). Internal E2EE envelopes only;
-// the Worker rejects external recipients until the SMTP path ships.
+// Send and drafts (P3, docs/mail.md §9.2/§10). Internal E2EE envelopes go to
+// /messages; external recipients go to /external-send (plaintext TLS path).
 mail.post('/messages', async (c) => {
   const user = c.get('user');
   if (!user) return c.json({ error: 'Unauthorized' }, 401);
@@ -324,6 +324,21 @@ mail.post('/messages', async (c) => {
   const body = await readLargeBody(c);
   if (body === null) return c.json({ error: 'mail_request_too_large' }, 413);
   return proxy(c, '/internal/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
+});
+
+mail.post('/external-send', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:send:${user.id}`, 30, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
+  const body = await readLargeBody(c);
+  if (body === null) return c.json({ error: 'mail_request_too_large' }, 413);
+  return proxy(c, '/internal/external-send', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body,

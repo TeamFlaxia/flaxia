@@ -5,7 +5,6 @@ import { t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
 import { primaryAddressForUsername } from '../lib/mail/address.js';
 import { deleteDraft, type MailSecurity } from '../lib/mail/api.js';
-import { isMailPreview } from '../lib/mail/demo.js';
 import { mailBack } from '../lib/mail/navigation.js';
 import { type ComposeAttachmentInput, type ComposeFields, MAX_ATTACHMENTS, MAX_SEND_BYTES } from '../lib/mail/seal.js';
 import { openDraft, saveComposeDraft, sendCompose } from '../lib/mail/send.js';
@@ -40,11 +39,11 @@ export class MailComposePage {
   }
 
   private fromAddress(): string {
-    if (!this.props.currentUser) return 'preview@flaxia.app';
+    if (!this.props.currentUser) return '';
     try {
       return primaryAddressForUsername(this.props.currentUser.username);
     } catch {
-      return 'preview@flaxia.app';
+      return '';
     }
   }
 
@@ -285,10 +284,6 @@ export class MailComposePage {
       this.setStatus(t('mail.no_recipient') || 'Add at least one recipient.');
       return;
     }
-    if (isMailPreview()) {
-      this.setStatus(t('mail.preview_send') || 'Preview mode: the message is not sent.');
-      return;
-    }
     this.setBusy(true);
     this.setStatus(t('mail.sending') || 'Sending…');
     try {
@@ -305,10 +300,6 @@ export class MailComposePage {
 
   private async draft(form: HTMLFormElement): Promise<void> {
     if (this.busy) return;
-    if (isMailPreview()) {
-      this.setStatus(t('mail.preview_draft') || 'Preview mode: the draft is not saved.');
-      return;
-    }
     this.setBusy(true);
     this.setStatus(t('mail.saving_draft') || 'Saving draft…');
     try {

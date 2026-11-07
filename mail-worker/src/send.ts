@@ -5,8 +5,9 @@
 // once with a per-message content key and wraps that key for every recipient
 // plus the sender. The Worker never sees subject, body, or attachment names; it
 // fans the ciphertext out to one message row per mailbox, resolves threads, and
-// writes the Sent copy. Any external recipient is rejected until the SMTP path
-// (M2) lands, so this module cannot silently downgrade E2EE.
+// writes the Sent copy. External recipients go through the separate TLS handler
+// below (plaintext, send_email binding, sender-only Sent copy), never through
+// the E2EE fan-out, so E2EE cannot be silently downgraded.
 //
 // Drafts reuse the same envelope but wrap the content key for the sender only
 // and store the row under direction='draft'/folder='drafts'.
@@ -414,7 +415,7 @@ async function deliver(env: MailEnv, userId: string, envelope: Envelope): Promis
 
   const domain = (env.MAIL_DOMAIN ?? 'flaxia.app').toLowerCase();
   if (recipients.some((address) => !address.endsWith(`@${domain}`))) {
-    // M2 adds the external/TLS path; until then the client must not promise it.
+    // External recipients belong on the TLS handler, not the E2EE fan-out.
     return error('mail_external_unavailable', 422);
   }
 
@@ -657,6 +658,300 @@ export async function handleInternalSend(env: MailEnv, userId: string, req: Requ
 }
 
 // ---------------------------------------------------------------------------
+// External TLS send (docs/mail.md §9.2, §8). This endpoint explicitly takes
+// plaintext (security: tls) and is the only exception to the ciphertext-only
+// rule. The client keeps a sender-only sealed Sent copy (`retained`); the
+// Worker delivers plaintext via the send_email binding and stores the Sent
+// copy encrypted to the sender. If any recipient is external, every recipient
+// is delivered over SMTP (one code path, per §6.1) — never E2EE.
+// Plaintext is never logged or stored; only the sealed Sent copy is kept.
+// ---------------------------------------------------------------------------
+
+interface ExternalAttachment {
+  filename: string;
+  contentType: string;
+  bytes: Uint8Array;
+}
+
+interface ExternalPlaintext {
+  from: string;
+  fromName: string;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  text: string;
+  attachments: ExternalAttachment[];
+}
+
+function parseExternalPlaintext(raw: Json, retained: Envelope): ExternalPlaintext | Invalid {
+  const from = normalizeAddress(raw.from);
+  if (!from || from !== retained.from) return invalid('mail_invalid_from');
+  const to = normalizeList(raw.to, MAX_RECIPIENTS);
+  const cc = normalizeList(raw.cc, MAX_RECIPIENTS);
+  const bcc = normalizeList(raw.bcc, MAX_RECIPIENTS);
+  if (!to || !cc || !bcc) return invalid('mail_invalid_recipient');
+  const recipients = [...new Set([...to, ...cc, ...bcc])];
+  if (recipients.length === 0) return invalid('mail_no_recipients');
+  if (recipients.length > MAX_RECIPIENTS) return invalid('mail_too_many_recipients');
+  if (JSON.stringify(to) !== JSON.stringify(retained.to)) return invalid('mail_invalid_recipient');
+  if (JSON.stringify(cc) !== JSON.stringify(retained.cc)) return invalid('mail_invalid_recipient');
+  if (JSON.stringify(bcc) !== JSON.stringify(retained.bcc)) return invalid('mail_invalid_recipient');
+
+  const fromName = typeof raw.from_name === 'string' ? raw.from_name : '';
+  const subject = typeof raw.subject === 'string' ? raw.subject : '';
+  const text = typeof raw.text === 'string' ? raw.text : '';
+  if (fromName.length > 500 || subject.length > 998) return invalid('mail_invalid_body');
+  try {
+    assertNoHeaderInjection(from, 'from');
+    assertNoHeaderInjection(fromName, 'from_name');
+    assertNoHeaderInjection(subject, 'subject');
+    for (const recipient of recipients) assertNoHeaderInjection(recipient, 'to');
+  } catch {
+    return invalid('mail_header_injection');
+  }
+
+  const attachments: ExternalAttachment[] = [];
+  const rawAttachments = raw.attachments;
+  if (rawAttachments !== undefined) {
+    if (!Array.isArray(rawAttachments)) return invalid('mail_invalid_attachment');
+    if (rawAttachments.length > MAX_ATTACHMENTS) return invalid('mail_too_many_attachments', 413);
+    for (const entry of rawAttachments) {
+      if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+        return invalid('mail_invalid_attachment');
+      }
+      const item = entry as Record<string, unknown>;
+      const filename = typeof item.filename === 'string' ? item.filename : '';
+      const contentType = typeof item.content_type === 'string' ? item.content_type : 'application/octet-stream';
+      const dataB64 = typeof item.data_b64 === 'string' ? item.data_b64 : '';
+      if (!filename || filename.length > 500 || !dataB64 || !CIPHERTEXT_PATTERN.test(dataB64)) {
+        return invalid('mail_invalid_attachment');
+      }
+      if (contentType.length > 128 || /[\r\n]/.test(contentType)) return invalid('mail_invalid_attachment');
+      try {
+        assertNoHeaderInjection(filename, 'filename');
+        assertNoHeaderInjection(contentType, 'content_type');
+      } catch {
+        return invalid('mail_invalid_attachment');
+      }
+      const bytes = b64ToBytes(dataB64);
+      if (bytes.length > MAX_OUTBOUND_BYTES) return invalid('mail_too_large', 413);
+      attachments.push({ filename, contentType, bytes });
+    }
+  }
+  const totalPlaintext = new TextEncoder().encode(text).length;
+  const totalAttachments = attachments.reduce((sum, attachment) => sum + attachment.bytes.length, 0);
+  if (totalPlaintext + totalAttachments > MAX_OUTBOUND_BYTES) return invalid('mail_too_large', 413);
+  return { from, fromName, to, cc, bcc, subject, text, attachments };
+}
+
+export async function handleExternalSend(env: MailEnv, userId: string, req: Request): Promise<Response> {
+  const key = idempotencyKey(req);
+  if (!key) return error('mail_idempotency_required');
+  const raw = await readJsonBody(req, MAX_SEND_BODY);
+  if (!raw) return error('mail_invalid_body');
+  const retainedRaw = raw.retained;
+  if (typeof retainedRaw !== 'object' || retainedRaw === null || Array.isArray(retainedRaw)) {
+    return error('mail_invalid_body');
+  }
+  const retained = parseEnvelope(retainedRaw as Json);
+  if ('error' in retained) return error(retained.error, retained.status);
+  const messageId = typeof raw.message_id === 'string' ? raw.message_id : '';
+  if (!ID_PATTERN.test(messageId) || messageId !== retained.messageId) return error('mail_invalid_body');
+  const plaintext = parseExternalPlaintext(raw, retained);
+  if ('error' in plaintext) return error(plaintext.error, plaintext.status);
+
+  const domain = (env.MAIL_DOMAIN ?? 'flaxia.app').toLowerCase();
+  const recipients = [...new Set([...plaintext.to, ...plaintext.cc, ...plaintext.bcc])];
+  // The TLS endpoint exists only for external delivery; all-Flaxia mail must
+  // use the E2EE path so it is never silently downgraded.
+  if (!recipients.some((address) => !address.endsWith(`@${domain}`))) {
+    return error('mail_external_unavailable', 422);
+  }
+  if (retained.keys.length !== 1 || retained.keys[0]?.address !== retained.from) {
+    return error('mail_invalid_keys');
+  }
+  if (!env.MAIL_SEND) return error('mail_external_unavailable', 503);
+
+  const addresses = await loadAddressRows(env, [retained.from]);
+  const sender = addresses.get(retained.from);
+  if (!sender || sender.user_id !== userId || sender.state !== 'active') {
+    return error('mail_from_not_owned', 403);
+  }
+
+  const identities = await loadIdentities(env, [userId]);
+  const identity = identities.get(userId);
+  const senderKey = retained.keys[0];
+  if (!identity || !senderKey || Number(identity.key_version) !== senderKey.keyVersion) {
+    return error('mail_invalid_keys');
+  }
+
+  let senderThreadId = '';
+  if (retained.threadId || retained.inReplyToHash) {
+    if (retained.threadId) {
+      const thread = await env.MAIL_DB.prepare('SELECT id FROM mail_threads WHERE id = ? AND user_id = ?')
+        .bind(retained.threadId, userId)
+        .first<{ id: string }>();
+      if (!thread) return error('mail_thread_not_found', 404);
+      senderThreadId = retained.threadId;
+    }
+    if (retained.inReplyToHash) {
+      const parentThread = await findThreadByHash(env, userId, retained.inReplyToHash);
+      if (!parentThread) return error('mail_thread_not_found', 404);
+      if (senderThreadId && parentThread !== senderThreadId) return error('mail_thread_not_found', 404);
+      senderThreadId = senderThreadId || parentThread;
+    }
+  }
+
+  const bytes = storedBytes(retained);
+  const usage = await loadUsage(env, [userId]);
+  if ((usage.get(userId) ?? 0) + bytes > MAX_STORAGE_BYTES) return error('mail_quota_exceeded', 507);
+  const usageRow = await env.MAIL_DB.prepare('SELECT external_sends, external_day FROM mail_usage WHERE user_id = ?')
+    .bind(userId)
+    .first<{ external_sends: number; external_day: string }>();
+  const today = new Date().toISOString().slice(0, 10);
+  const sendsToday = usageRow?.external_day === today ? Number(usageRow.external_sends) || 0 : 0;
+  if (sendsToday >= DEFAULT_DAILY_EXTERNAL_SENDS) return error('mail_rate_limited', 429);
+
+  if (!(await claimIdempotency(env, userId, key))) return json({ ok: true, duplicate: true });
+
+  // The only place plaintext leaves the system: the send_email binding.
+  let providerMessageId = '';
+  try {
+    const builder = {
+      from: plaintext.fromName ? { name: plaintext.fromName, email: plaintext.from } : plaintext.from,
+      subject: plaintext.subject,
+      text: plaintext.text,
+      attachments: plaintext.attachments.map((attachment) => ({
+        disposition: 'attachment' as const,
+        filename: attachment.filename,
+        type: attachment.contentType,
+        content: attachment.bytes,
+      })),
+      ...(plaintext.to.length > 0 ? { to: plaintext.to } : {}),
+      ...(plaintext.cc.length > 0 ? { cc: plaintext.cc } : {}),
+      ...(plaintext.bcc.length > 0 ? { bcc: plaintext.bcc } : {}),
+    } as unknown as EmailMessageBuilder;
+    const result = await env.MAIL_SEND.send(builder);
+    providerMessageId = result?.messageId ?? '';
+  } catch {
+    await env.MAIL_DB.prepare('DELETE FROM mail_idempotency_keys WHERE user_id = ? AND idempotency_key = ?')
+      .bind(userId, key)
+      .run()
+      .catch(() => {});
+    return error('mail_send_failed', 502);
+  }
+
+  // Store only the sealed Sent copy (never the plaintext).
+  const receivedAt = new Date().toISOString();
+  const copyId = crypto.randomUUID();
+  const base = `mail/${userId}/${copyId}`;
+  const payloadKey = `${base}/payload.enc`;
+  const threadId = senderThreadId || crypto.randomUUID();
+  const payloadCiphertext = b64ToBytes(retained.payload.ciphertext);
+  const attachmentCiphertexts = retained.attachments.map((attachment) => b64ToBytes(attachment.ciphertext));
+  const staged: Array<{ key: string; bytes: Uint8Array }> = [{ key: payloadKey, bytes: payloadCiphertext }];
+  const statements: D1PreparedStatement[] = [];
+
+  if (!senderThreadId) {
+    statements.push(
+      env.MAIL_DB.prepare(
+        `INSERT INTO mail_threads
+           (id, user_id, subject_enc, last_message_at, message_count, unread_count, participants_enc, thread_key, folder)
+         VALUES (?, ?, ?, ?, 1, 0, '', '', 'sent')`,
+      ).bind(threadId, userId, retained.subjectEnc, receivedAt),
+    );
+  } else {
+    statements.push(
+      env.MAIL_DB.prepare(
+        `UPDATE mail_threads
+           SET last_message_at = ?,
+               message_count = message_count + 1,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE id = ? AND user_id = ?`,
+      ).bind(receivedAt, threadId, userId),
+    );
+  }
+
+  statements.push(
+    env.MAIL_DB.prepare(
+      `INSERT INTO mail_messages
+         (id, user_id, thread_id, direction, folder, from_addr, to_addr, from_name_enc,
+          to_enc, cc_enc, bcc_enc, reply_to_enc, subject_enc, meta_enc,
+          message_id_hash, in_reply_to_hash, references_hash, sent_at, received_at,
+          size_bytes, has_attachments, read_at, starred_at, security, auth_results,
+          spam_score, blob_id, payload_iv, raw_blob_key, deleted_at, aad_id)
+       VALUES (?, ?, ?, 'outbound', 'sent', ?, ?, ?, '', '', '', '', ?, ?, ?, ?, '', ?, ?,
+               ?, ?, ?, ?, 'tls', '{}', 0, ?, ?, '', NULL, ?)`,
+    ).bind(
+      copyId,
+      userId,
+      threadId,
+      retained.from,
+      retained.to[0] ?? '',
+      retained.fromNameEnc,
+      retained.subjectEnc,
+      retained.metaEnc,
+      retained.messageId,
+      retained.inReplyToHash,
+      retained.inReplyToHash,
+      receivedAt,
+      receivedAt,
+      bytes,
+      retained.attachments.length > 0 ? 1 : 0,
+      receivedAt,
+      payloadKey,
+      retained.payload.iv,
+      retained.messageId,
+    ),
+  );
+  statements.push(insertKey(env, copyId, retained.from, senderKey));
+  statements.push(insertBlob(env, copyId, payloadKey, retained.payload.bytes));
+
+  for (const [index, attachment] of retained.attachments.entries()) {
+    const rowId = crypto.randomUUID();
+    const r2Key = `${base}/attachments/${rowId}.enc`;
+    staged.push({ key: r2Key, bytes: attachmentCiphertexts[index] as Uint8Array });
+    statements.push(
+      insertAttachment(env, {
+        id: rowId,
+        messageId: copyId,
+        userId,
+        filenameEnc: attachment.filenameEnc,
+        contentType: attachment.contentType,
+        sizeBytes: attachment.sizeBytes,
+        r2Key,
+        aadId: attachment.id,
+        iv: attachment.iv,
+      }),
+    );
+  }
+
+  statements.push(
+    env.MAIL_DB.prepare(
+      `INSERT INTO mail_usage (user_id, storage_bytes, external_sends, external_day, updated_at)
+       VALUES (?, ?, 1, ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+       ON CONFLICT(user_id) DO UPDATE SET
+         storage_bytes = MAX(0, storage_bytes + excluded.storage_bytes),
+         external_sends = CASE WHEN external_day = excluded.external_day THEN external_sends + 1 ELSE 1 END,
+         external_day = excluded.external_day,
+         updated_at = excluded.updated_at`,
+    ).bind(userId, bytes, today),
+  );
+  statements.push(
+    env.MAIL_DB.prepare(
+      `INSERT INTO mail_outbound_jobs (id, message_id, user_id, state, provider_message_id, attempts)
+       VALUES (?, ?, ?, 'sent', ?, 1)`,
+    ).bind(crypto.randomUUID(), retained.messageId, userId, providerMessageId),
+  );
+
+  if (!(await writeStaged(env, staged, statements))) {
+    return error('mail_delivery_failed', 500);
+  }
+  return json({ ok: true, message_id: retained.messageId, delivered: recipients.length });
+}
+
+// ---------------------------------------------------------------------------
 // Drafts (§10: drafts are encrypted and survive reload when the vault is
 // unlocked). A draft is a normal message row with direction='draft' and its own
 // one-message thread so the mailbox list can keep the folder model.
@@ -704,7 +999,7 @@ function draftRecipientCount(envelope: Envelope): number {
   return new Set([...envelope.to, ...envelope.cc, ...envelope.bcc]).size;
 }
 
-/** Drafts may address external recipients even before the SMTP path ships. */
+/** Drafts may address external recipients; they are sealed sender-only. */
 function validateDraftEnvelope(envelope: Envelope): Response | null {
   if (envelope.to.length === 0 && envelope.cc.length === 0 && envelope.bcc.length === 0) {
     // Empty drafts are fine: compose often saves before typing a recipient.

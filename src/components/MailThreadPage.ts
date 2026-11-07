@@ -1,6 +1,6 @@
 // Mail thread reader (docs/mail.md §10). Consumes the P2 thread API; when the
 // backend is still 501 it shows a calm "getting ready" state instead of an
-// error. The preview flag (?mail_preview=1) renders sample messages.
+// error.
 import { t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
 import { primaryAddressForUsername } from '../lib/mail/address.js';
@@ -11,7 +11,6 @@ import {
   type MailMessage,
   type MailThreadDetail,
 } from '../lib/mail/api.js';
-import { demoThread, isMailPreview } from '../lib/mail/demo.js';
 import { mailBack } from '../lib/mail/navigation.js';
 import { type DecryptedMessage, downloadAttachment, MailReader } from '../lib/mail/reader.js';
 import { sendCompose } from '../lib/mail/send.js';
@@ -64,15 +63,6 @@ export class MailThreadPage {
       return;
     }
     this.renderShell();
-    const preview = isMailPreview();
-    if (preview) {
-      this.thread = demoThread(this.props.threadId);
-      this.starred = Boolean(this.thread);
-      this.loading = false;
-      if (!this.thread) this.loadError = t('mail.thread_not_found') || 'This thread could not be found.';
-      this.renderBody();
-      return;
-    }
     if (!isVaultUnlocked()) await tryDeviceUnlock();
     this.locked = !isVaultUnlocked();
     if (this.locked) {
@@ -129,11 +119,11 @@ export class MailThreadPage {
   }
 
   private expectedAddress(): string {
-    if (!this.props.currentUser) return 'preview@flaxia.app';
+    if (!this.props.currentUser) return '';
     try {
       return primaryAddressForUsername(this.props.currentUser.username);
     } catch {
-      return 'preview@flaxia.app';
+      return '';
     }
   }
 
@@ -176,7 +166,7 @@ export class MailThreadPage {
       star.classList.toggle('mail-star--active', this.starred);
       star.setAttribute('aria-pressed', String(this.starred));
       triggerPop(star);
-      if (!isMailPreview() && this.thread) {
+      if (this.thread) {
         void applyMessageAction(
           this.starred ? 'star' : 'unstar',
           this.thread.messages.map((message) => message.id),
@@ -197,10 +187,6 @@ export class MailThreadPage {
 
   private runAction(action: string): void {
     if (!this.thread) return;
-    if (isMailPreview()) {
-      this.setReplyStatus(t('mail.preview_action') || 'Preview mode: actions are not applied.');
-      return;
-    }
     void applyMessageAction(
       action,
       this.thread.messages.map((message) => message.id),
@@ -439,10 +425,6 @@ export class MailThreadPage {
       const text = textarea.value.trim();
       if (!text) {
         status.textContent = t('mail.empty_message') || 'Write something first.';
-        return;
-      }
-      if (isMailPreview()) {
-        status.textContent = t('mail.preview_send') || 'Preview mode: the reply is not sent.';
         return;
       }
       const last = this.thread.messages[this.thread.messages.length - 1];

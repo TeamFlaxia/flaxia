@@ -87,11 +87,17 @@ export function isFlaxiaAddress(address: string, domain = 'flaxia.app'): boolean
 /**
  * Seal a composed message into the wire envelope. `keys` must cover every
  * unique recipient plus the sender. Purely local: no network, no vault.
+ *
+ * `wrapAddresses` restricts which addresses get a wrapped content key.
+ * The external/TLS path seals only a sender-retained Sent copy (external
+ * recipients have no Flaxia key); drafts do the same. Without it every
+ * recipient address needs a key.
  */
 export async function sealEnvelope(
   fields: ComposeFields,
   keys: RecipientKey[],
   context: SendContext = {},
+  options?: { wrapAddresses?: string[] },
 ): Promise<SendEnvelopeInput> {
   const messageId = context.messageId ?? crypto.randomUUID();
   const keyByAddress = new Map(keys.map((key) => [normalize(key.address), key]));
@@ -144,8 +150,12 @@ export async function sealEnvelope(
     const metaEnc = await encryptString(contentKey, JSON.stringify(metadata), metaInfo(messageId));
 
     const wireKeys: SendEnvelopeInput['keys'] = [];
+    const wrapTargets =
+      options?.wrapAddresses === undefined
+        ? [...new Set([normalize(fields.from), ...recipients])]
+        : [...new Set(options.wrapAddresses.map(normalize))];
     // Sending to yourself makes `from` a recipient too; wrap once per address.
-    for (const address of [...new Set([normalize(fields.from), ...recipients])]) {
+    for (const address of wrapTargets) {
       const key = keyByAddress.get(address);
       if (!key) throw new Error('mail_recipient_key_missing');
       const wrapped = await wrapContentKey(contentKey, key.public_key, messageId, address);

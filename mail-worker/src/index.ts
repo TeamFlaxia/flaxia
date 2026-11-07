@@ -12,6 +12,7 @@ import {
   handleDraftAttachment,
   handleDraftDetail,
   handleDraftPayload,
+  handleExternalSend,
   handleInternalSend,
   handleListDrafts,
   handleUpdateDraft,
@@ -797,6 +798,7 @@ async function handleInternal(env: MailEnv, req: Request, userId: string): Promi
   if (method === 'GET' && url.pathname === '/internal/threads') return listThreads(env, userId, url);
   if (method === 'POST' && url.pathname === '/internal/messages/actions') return messageActions(env, userId, req);
   if (method === 'POST' && url.pathname === '/internal/send') return handleInternalSend(env, userId, req);
+  if (method === 'POST' && url.pathname === '/internal/external-send') return handleExternalSend(env, userId, req);
   if (method === 'GET' && url.pathname === '/internal/drafts') return handleListDrafts(env, userId);
   if (method === 'POST' && url.pathname === '/internal/drafts') return handleCreateDraft(env, userId, req);
 

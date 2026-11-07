@@ -14,7 +14,6 @@ import {
   type MailFolder,
   type MailThreadSummary,
 } from '../lib/mail/api.js';
-import { demoCounts, demoThreads, isMailPreview } from '../lib/mail/demo.js';
 import { goToMailCompose, goToMailSettings, goToMailThread } from '../lib/mail/navigation.js';
 import { MailReader } from '../lib/mail/reader.js';
 import { avatar, emptyState, formatMailDate, iconButton, mailButton, triggerPop } from '../lib/mail/ui.js';
@@ -53,7 +52,6 @@ export class MailPage {
   private notReady = false;
   private loadError: string | null = null;
   private search = '';
-  private preview = false;
   private address = '';
   private active = false;
   private locked = false;
@@ -71,8 +69,6 @@ export class MailPage {
   }
 
   private async init(): Promise<void> {
-    this.preview = isMailPreview();
-
     if (!this.props.currentUser) {
       this.renderShell({ login: true });
       this.renderList();
@@ -83,17 +79,6 @@ export class MailPage {
       this.address = primaryAddressForUsername(this.props.currentUser.username);
     } catch {
       this.renderMessage('mail.invalid_username', 'Your username cannot be a Mail address.', 'warning');
-      return;
-    }
-
-    if (this.preview) {
-      this.active = true;
-      this.threads = demoThreads();
-      this.counts = demoCounts(this.threads);
-      this.unreadTotal = Object.values(this.counts).reduce((sum, n) => sum + (n ?? 0), 0);
-      this.loading = false;
-      this.renderShell();
-      this.renderList();
       return;
     }
 
@@ -142,7 +127,7 @@ export class MailPage {
     title.textContent = t(titleKey) || fallback;
     const address = document.createElement('span');
     address.className = 'mail-address';
-    address.textContent = this.preview ? `${this.address} · ${t('mail.preview_badge') || 'Preview'}` : this.address;
+    address.textContent = this.address;
     titles.appendChild(title);
     titles.appendChild(address);
     header.appendChild(titles);
@@ -163,20 +148,6 @@ export class MailPage {
     const top = document.createElement('div');
     top.className = 'mail-top';
     top.appendChild(this.buildTopbar());
-    if (this.preview) {
-      const banner = document.createElement('div');
-      banner.className = 'mail-preview-banner';
-      const chip = document.createElement('span');
-      chip.className = 'mail-preview-chip';
-      chip.textContent = t('mail.preview_badge') || 'Preview';
-      const text = document.createElement('span');
-      text.textContent =
-        t('mail.preview_banner') ||
-        'You are viewing sample mail. Open the mailbox without ?mail_preview=1 to use real data.';
-      banner.appendChild(chip);
-      banner.appendChild(text);
-      top.appendChild(banner);
-    }
     if (!options.login) {
       this.tabsEl = this.buildTabs();
       top.appendChild(this.tabsEl);
@@ -267,14 +238,6 @@ export class MailPage {
     this.loadError = null;
     this.notReady = false;
     this.renderList();
-    if (this.preview) {
-      this.loading = false;
-      this.threads = demoThreads();
-      this.counts = demoCounts(this.threads);
-      this.updateTabs();
-      this.renderList();
-      return;
-    }
     try {
       const result: EncryptedThreadList =
         this.folder === 'drafts'
@@ -356,7 +319,7 @@ export class MailPage {
       return;
     }
 
-    if (!this.active && !this.preview) {
+    if (!this.active) {
       const empty = emptyState(
         'mail-open',
         t('mail.not_activated') || 'Mail is not activated yet.',
@@ -538,13 +501,6 @@ export class MailPage {
   private markRead(thread: MailRow): void {
     if (!thread.unread) return;
     thread.unread = false;
-    if (this.preview) {
-      this.counts = demoCounts(this.threads);
-      this.unreadTotal = Math.max(0, this.unreadTotal - 1);
-      this.updateTabs();
-      this.renderList();
-      return;
-    }
     void applyMessageAction('read', [thread.messageId ?? thread.id]).catch(() => undefined);
     this.unreadTotal = Math.max(0, this.unreadTotal - 1);
     if (this.folder === 'inbox') this.counts = { ...this.counts, inbox: Math.max(0, (this.counts.inbox ?? 0) - 1) };
@@ -554,11 +510,7 @@ export class MailPage {
 
   private toggleStar(thread: MailRow, starButton?: HTMLButtonElement): void {
     thread.starred = !thread.starred;
-    if (!this.preview) {
-      void applyMessageAction(thread.starred ? 'star' : 'unstar', [thread.messageId ?? thread.id]).catch(
-        () => undefined,
-      );
-    }
+    void applyMessageAction(thread.starred ? 'star' : 'unstar', [thread.messageId ?? thread.id]).catch(() => undefined);
     // Update in place so the row does not replay its entrance on every
     // toggle; the pop reports the state change (motion.css "press and
     // answer") instead of a silent swap.

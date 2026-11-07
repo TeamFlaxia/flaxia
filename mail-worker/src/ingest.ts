@@ -27,7 +27,7 @@ export interface MailEnv {
   MAIL_BUCKET: R2Bucket;
   MAIL_QUEUE: Queue;
   MAIL_QUEUE_DLQ: Queue;
-  MAIL_SEND?: { send(message: unknown): Promise<void> };
+  MAIL_SEND?: SendEmail;
   MAIL_DOMAIN?: string;
   MAIL_THREAD_SECRET?: string;
   MAIL_INTERNAL_SECRET?: string;

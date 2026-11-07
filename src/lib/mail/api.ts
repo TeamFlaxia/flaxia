@@ -331,6 +331,39 @@ export function sendMessage(
   return request('/api/mail/messages', { method: 'POST', body: JSON.stringify(envelope) });
 }
 
+export interface ExternalAttachmentInput {
+  filename: string;
+  content_type: string;
+  data_b64: string;
+}
+
+/**
+ * Plaintext TLS send for external recipients (docs/mail.md §8/§9.2). This is
+ * the only endpoint that carries message content the server can see; it is
+ * explicitly `tls`, never `e2ee`. `retained` is the sender-only sealed Sent
+ * copy whose `message_id` must equal the outer id.
+ */
+export interface ExternalSendInput {
+  message_id: string;
+  thread_id?: string;
+  in_reply_to_hash?: string;
+  from: string;
+  from_name: string;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  text: string;
+  attachments: ExternalAttachmentInput[];
+  retained: SendEnvelopeInput;
+}
+
+export function sendExternalMessage(
+  input: ExternalSendInput,
+): Promise<{ ok: boolean; message_id: string; delivered: number }> {
+  return request('/api/mail/external-send', { method: 'POST', body: JSON.stringify(input) });
+}
+
 export function saveDraft(envelope: SendEnvelopeInput): Promise<{ ok: boolean; draft_id: string }> {
   return request('/api/mail/drafts', { method: 'POST', body: JSON.stringify(envelope) });
 }

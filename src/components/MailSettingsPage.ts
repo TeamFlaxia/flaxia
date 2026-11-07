@@ -5,7 +5,6 @@ import { t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
 import { primaryAddressForUsername } from '../lib/mail/address.js';
 import { getQuota, listAddresses } from '../lib/mail/api.js';
-import { isMailPreview } from '../lib/mail/demo.js';
 import { goToMail, mailBack } from '../lib/mail/navigation.js';
 import { mailButton } from '../lib/mail/ui.js';
 import { isVaultUnlocked } from '../lib/vault/session.js';
@@ -79,20 +78,19 @@ export class MailSettingsPage {
       return;
     }
 
-    const preview = isMailPreview();
     const [addresses, quota] = await Promise.all([
-      preview ? Promise.resolve({ addresses: [] }) : listAddresses().catch(() => ({ addresses: [] })),
+      listAddresses().catch(() => ({ addresses: [] })),
       getQuota().catch(() => null),
     ]);
     const mine = addresses.addresses.find((entry) => entry.address === expectedAddress);
-    const active = preview || mine?.state === 'active';
+    const active = mine?.state === 'active';
 
-    content.appendChild(this.buildMailboxSection(expectedAddress, active, preview));
+    content.appendChild(this.buildMailboxSection(expectedAddress, active));
     content.appendChild(this.buildStorageSection(quota));
     content.appendChild(this.buildSecuritySection());
   }
 
-  private buildMailboxSection(address: string, active: boolean, preview: boolean): HTMLElement {
+  private buildMailboxSection(address: string, active: boolean): HTMLElement {
     const section = document.createElement('section');
     section.className = 'mail-settings-card';
     const heading = document.createElement('div');
@@ -102,11 +100,7 @@ export class MailSettingsPage {
     heading.appendChild(h2);
     const pill = document.createElement('span');
     pill.className = `mail-status-pill mail-status-pill--${active ? 'active' : 'idle'}`;
-    pill.textContent = preview
-      ? t('mail.preview_badge') || 'Preview'
-      : active
-        ? t('mail.status_active') || 'Active'
-        : t('mail.status_inactive') || 'Not activated';
+    pill.textContent = active ? t('mail.status_active') || 'Active' : t('mail.status_inactive') || 'Not activated';
     heading.appendChild(pill);
     section.appendChild(heading);
 
@@ -122,18 +116,16 @@ export class MailSettingsPage {
     addressEl.textContent = address;
     const note = document.createElement('span');
     note.className = 'mail-settings-note';
-    note.textContent = preview
-      ? t('mail.preview_note') || 'Sample mailbox for the UI preview.'
-      : active
-        ? t('mail.address_active_note') || 'Incoming mail is encrypted in this mailbox.'
-        : t('mail.address_inactive_note') || 'Activate to receive mail at this address.';
+    note.textContent = active
+      ? t('mail.address_active_note') || 'Incoming mail is encrypted in this mailbox.'
+      : t('mail.address_inactive_note') || 'Activate to receive mail at this address.';
     identity.appendChild(addressEl);
     identity.appendChild(note);
     row.appendChild(avatar);
     row.appendChild(identity);
     section.appendChild(row);
 
-    if (!active && !preview) {
+    if (!active) {
       const vault = document.createElement('div');
       vault.className = 'mail-settings-vault';
       const lock = document.createElement('div');

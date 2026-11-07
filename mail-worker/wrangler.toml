@@ -20,6 +20,11 @@ migrations_dir = "../migrations/mail"
 binding = "MAIL_BUCKET"
 bucket_name = "flaxia-mail-content"
 
+# External TLS delivery via Cloudflare Email Service (docs/mail.md §9.2).
+# Unrestricted on purpose: external recipients are arbitrary SMTP addresses.
+[[send_email]]
+name = "MAIL_SEND"
+
 [[queues.producers]]
 queue = "flaxia-mail-queue"
 binding = "MAIL_QUEUE"
