@@ -17,7 +17,7 @@ import {
 import { demoCounts, demoThreads, isMailPreview } from '../lib/mail/demo.js';
 import { goToMailCompose, goToMailSettings, goToMailThread } from '../lib/mail/navigation.js';
 import { MailReader } from '../lib/mail/reader.js';
-import { avatar, emptyState, formatMailDate, iconButton, mailButton } from '../lib/mail/ui.js';
+import { avatar, emptyState, formatMailDate, iconButton, mailButton, triggerPop } from '../lib/mail/ui.js';
 import { ensureVaultUnlocked, provisionMailIdentity } from '../lib/vault/mail-identity.js';
 import { isVaultUnlocked, tryDeviceUnlock } from '../lib/vault/session.js';
 import { createVaultUnlockForm } from './VaultUnlockForm.js';
@@ -525,7 +525,7 @@ export class MailPage {
       side.appendChild(dot);
     }
     const star = iconButton('star', thread.starred ? t('mail.unstar') || 'Unstar' : t('mail.star') || 'Star', () =>
-      this.toggleStar(thread),
+      this.toggleStar(thread, star),
     );
     star.classList.add('mail-row-action', 'mail-star');
     star.classList.toggle('mail-star--active', thread.starred);
@@ -552,14 +552,26 @@ export class MailPage {
     this.renderList();
   }
 
-  private toggleStar(thread: MailRow): void {
+  private toggleStar(thread: MailRow, starButton?: HTMLButtonElement): void {
     thread.starred = !thread.starred;
     if (!this.preview) {
       void applyMessageAction(thread.starred ? 'star' : 'unstar', [thread.messageId ?? thread.id]).catch(
         () => undefined,
       );
     }
-    this.renderList();
+    // Update in place so the row does not replay its entrance on every
+    // toggle; the pop reports the state change (motion.css "press and
+    // answer") instead of a silent swap.
+    if (starButton) {
+      const label = thread.starred ? t('mail.unstar') || 'Unstar' : t('mail.star') || 'Star';
+      starButton.classList.toggle('mail-star--active', thread.starred);
+      starButton.setAttribute('aria-label', label);
+      starButton.setAttribute('aria-pressed', String(thread.starred));
+      starButton.title = label;
+      triggerPop(starButton);
+    } else {
+      this.renderList();
+    }
   }
 
   getElement(): HTMLElement {

@@ -213,6 +213,7 @@ export class MailSettingsPage {
     bar.setAttribute('aria-valuemax', '100');
     bar.setAttribute('aria-valuenow', String(Math.round(percent)));
     const fill = document.createElement('span');
+    fill.style.setProperty('--mail-quota', `${percent}%`);
     fill.style.width = `${percent}%`;
     bar.appendChild(fill);
     section.appendChild(bar);

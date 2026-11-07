@@ -329,7 +329,23 @@ html.is-theme-switching *::after {
   .skeleton-card,
   .skeleton-box,
   .skeleton-line,
-  .skeleton-avatar {
+  .skeleton-avatar,
+  .mail-page,
+  .mail-thread-page,
+  .mail-compose-page,
+  .mail-settings-page,
+  .mail-thread-row,
+  .mail-thread-intro,
+  .mail-message,
+  .mail-message-html,
+  .mail-empty,
+  .mail-compose-card,
+  .mail-settings-card,
+  .mail-cc-fields,
+  .mail-count--visible,
+  .mail-folder-tab.active::after,
+  .mail-star.is-popping svg,
+  .mail-quota-bar span {
     animation: none !important;
   }
 

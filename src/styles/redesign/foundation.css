@@ -481,7 +481,11 @@ img {
 .arcade-page,
 .docs-page,
 .legal-page,
-.admin-layout {
+.admin-layout,
+.mail-page,
+.mail-thread-page,
+.mail-compose-page,
+.mail-settings-page {
   /* backwards (not both): a persistent transform would turn position:fixed
      descendants (FAB, bottom sheet) into absolutely-positioned ones. */
   animation: fx-page-in var(--duration-slow) var(--ease-out) backwards;
@@ -771,7 +775,11 @@ img {
 .arcade-page,
 .docs-page,
 .legal-page,
-.admin-layout {
+.admin-layout,
+.mail-page,
+.mail-thread-page,
+.mail-compose-page,
+.mail-settings-page {
   animation: fx-fade-in 160ms var(--ease-out) backwards;
 }
 

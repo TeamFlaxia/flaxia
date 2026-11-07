@@ -47,6 +47,19 @@ export function securityChip(security: MailSecurity): HTMLElement {
   return chip;
 }
 
+/**
+ * Re-trigger the state pop (`.is-popping`) used for toggles such as star.
+ * Mirrors motion.css `icon-lift` / `bookmark-hop`: the pop runs once and is
+ * removed so the next toggle plays it again.
+ */
+export function triggerPop(el: HTMLElement): void {
+  el.classList.remove('is-popping');
+  // Restart the CSS animation on the next frame.
+  void el.offsetWidth;
+  el.classList.add('is-popping');
+  window.setTimeout(() => el.classList.remove('is-popping'), 300);
+}
+
 export function iconButton(name: IconName, label: string, onClick: () => void): HTMLButtonElement {
   const button = document.createElement('button');
   button.type = 'button';

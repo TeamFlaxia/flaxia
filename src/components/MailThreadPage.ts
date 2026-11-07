@@ -24,6 +24,7 @@ import {
   mailButton,
   mailErrorKey,
   securityChip,
+  triggerPop,
 } from '../lib/mail/ui.js';
 import { getResolvedTheme } from '../lib/theme.js';
 import { isVaultUnlocked, tryDeviceUnlock } from '../lib/vault/session.js';
@@ -173,6 +174,8 @@ export class MailThreadPage {
     const star = iconButton('star', t('mail.star') || 'Star', () => {
       this.starred = !this.starred;
       star.classList.toggle('mail-star--active', this.starred);
+      star.setAttribute('aria-pressed', String(this.starred));
+      triggerPop(star);
       if (!isMailPreview() && this.thread) {
         void applyMessageAction(
           this.starred ? 'star' : 'unstar',
