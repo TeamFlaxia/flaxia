@@ -37,7 +37,7 @@ binding = "BUCKET"
 bucket_name = "flaxia-content"
 
 [triggers]
-crons = ["0 4 * * *"]
+crons = ["0 * * * *", "0 4 * * *"]
 
 [[queues.consumers]]
 queue = "activitypub-delivery"

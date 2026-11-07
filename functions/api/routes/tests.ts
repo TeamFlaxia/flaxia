@@ -115,6 +115,8 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
       'ad_interactions',
       'admin_alerts',
       'ads',
+      'external_items',
+      'external_sources',
       'users',
     ];
     const existing = new Set(
@@ -127,6 +129,20 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
     const statements = resetOrder.filter((t) => existing.has(t)).map((t) => db.prepare(`DELETE FROM ${t}`));
     if (statements.length > 0) {
       await db.batch(statements);
+    }
+    if (existing.has('external_sources')) {
+      await db
+        .prepare('INSERT OR IGNORE INTO external_sources (source, label, feed_url, enabled) VALUES (?, ?, ?, 1)')
+        .bind(
+          'arxiv',
+          'arXiv',
+          'https://export.arxiv.org/api/query?search_query=all:%2A&sortBy=submittedDate&sortOrder=descending&max_results=50',
+        )
+        .run();
+      await db
+        .prepare('INSERT OR IGNORE INTO external_sources (source, label, feed_url, enabled) VALUES (?, ?, ?, 1)')
+        .bind('hackernews', 'Hacker News', 'https://hn.algolia.com/api/v1/search_by_date?tags=story&hitsPerPage=50')
+        .run();
     }
   }
   return c.json({ ok: true });
@@ -417,6 +433,51 @@ app.post('/api/test/seed-legacy-user', requireTestEnvironment, async (c) => {
     .run();
 
   return c.json({ id: userId }, 201);
+});
+
+// POST /api/test/external-item - seed an external feed item (arXiv/HN tests).
+// Gated like /api/test/reset: only reachable from the test dev server.
+app.post('/api/test/external-item', requireTestEnvironment, async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    source?: unknown;
+    external_id?: unknown;
+    title?: unknown;
+    summary?: unknown;
+    url?: unknown;
+    author?: unknown;
+    tags?: unknown;
+    publish_at?: unknown;
+  };
+  if (
+    (body.source !== 'arxiv' && body.source !== 'hackernews') ||
+    typeof body.external_id !== 'string' ||
+    typeof body.title !== 'string' ||
+    typeof body.url !== 'string' ||
+    typeof body.publish_at !== 'string'
+  ) {
+    return c.json({ error: 'source, external_id, title, url and publish_at are required' }, 400);
+  }
+  const id = crypto.randomUUID();
+  await c.env.DB.prepare(
+    `INSERT INTO external_items (id, source, external_id, title, summary, url, author, tags, publish_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(source, external_id) DO UPDATE SET
+       title = excluded.title, summary = excluded.summary, url = excluded.url,
+       author = excluded.author, tags = excluded.tags, publish_at = excluded.publish_at`,
+  )
+    .bind(
+      id,
+      body.source,
+      body.external_id,
+      body.title,
+      typeof body.summary === 'string' ? body.summary : '',
+      body.url,
+      typeof body.author === 'string' ? body.author : '',
+      JSON.stringify(Array.isArray(body.tags) ? body.tags : []),
+      body.publish_at,
+    )
+    .run();
+  return c.json({ id }, 201);
 });
 
 export default app;

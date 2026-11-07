@@ -9,6 +9,7 @@ import adsRouter from './routes/ads';
 import authRouter from './routes/auth';
 import bugReportsRouter from './routes/bug-reports';
 import topicRouter from './routes/current-topic';
+import externalFeedRouter from './routes/external-feed';
 import gamesRouter from './routes/games';
 import linkPreviewRouter from './routes/link-preview';
 import mailRouter from './routes/mail';
@@ -115,6 +116,9 @@ app.route('/api', stampsRouter);
 
 // Tag routes (extracted to routes/tags.ts)
 app.route('/api', tagsRouter);
+
+// External feed routes (arXiv / Hacker News multi-source timeline)
+app.route('/api', externalFeedRouter);
 
 // Link-preview routes (extracted to routes/link-preview.ts)
 app.route('/api', linkPreviewRouter);

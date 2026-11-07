@@ -340,6 +340,15 @@ The admin-curated deny list that upload and verdicts are matched against
 `phash` matches by Hamming distance ≤ 8, computed in JS (SQLite has no
 popcount and the table stays small).
 
+## External Feed Tables
+
+- `external_sources` — enabled external sources (`arxiv`, `hackernews`),
+  their labels, feed URLs, and last fetch status (migration 0133).
+- `external_items` — normalized external items
+  (`id, source, external_id, title, summary, url, author, tags, publish_at`),
+  deduplicated per `(source, external_id)` and pruned after 30 days by the
+  hourly refresh.
+
 ## Other Tables
 
 - `reports` — User reports with reason and status
