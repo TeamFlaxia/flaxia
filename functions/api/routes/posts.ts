@@ -3626,6 +3626,55 @@ posts.post('/posts/:id/replies/commit', requireAuth, async (c) => {
   }
 });
 
+async function searchExternalItems(
+  db: D1Database,
+  tokens: string[],
+  limit: number,
+): Promise<Record<string, unknown>[]> {
+  if (tokens.length === 0) return [];
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  for (const token of tokens) {
+    if (token.startsWith('#')) {
+      const tag = token.slice(1).trim().toLowerCase();
+      if (!tag) continue;
+      conditions.push(`EXISTS (SELECT 1 FROM json_each(ei.tags) WHERE LOWER(value) = ?)`);
+      params.push(tag);
+    } else {
+      const term = `%${token.toLowerCase()}%`;
+      conditions.push(`(LOWER(ei.title) LIKE ? OR LOWER(ei.summary) LIKE ? OR LOWER(ei.author) LIKE ?)`);
+      params.push(term, term, term);
+    }
+  }
+  if (conditions.length === 0) return [];
+  try {
+    const result = await db
+      .prepare(
+        `SELECT ei.id, ei.title, ei.summary, ei.url, ei.source, es.label AS source_label,
+                ei.publish_at, ei.author, ei.tags
+         FROM external_items ei
+         JOIN external_sources es ON es.source = ei.source
+         WHERE ${conditions.join(' AND ')}
+         ORDER BY ei.publish_at DESC
+         LIMIT ?`,
+      )
+      .bind(...params, limit)
+      .all<Record<string, unknown>>();
+    return (result.results || []).map((row) => {
+      let tags: string[] = [];
+      try {
+        const parsed: unknown = JSON.parse(String(row.tags || '[]'));
+        if (Array.isArray(parsed)) tags = parsed.filter((t): t is string => typeof t === 'string');
+      } catch {
+        tags = [];
+      }
+      return { ...row, tags };
+    });
+  } catch {
+    return [];
+  }
+}
+
 // GET /api/search - search posts and users
 async function addReloadStatus(
   db: D1Database,
@@ -3662,6 +3711,7 @@ posts.get('/search', async (c) => {
       query: string;
       results: Record<string, unknown>[];
       users: Record<string, unknown>[];
+      external_results?: Record<string, unknown>[];
     }>(c, cacheKey);
     if (cached) {
       return c.json({ ...cached, results: await addReloadStatus(c.env.DB, c.get('user')?.id, cached.results) });
@@ -3734,7 +3784,8 @@ posts.get('/search', async (c) => {
           name_color: (u.name_color as string | null) ?? null,
         }));
       }
-      return c.json({ type, query, results: [], users: usersResult });
+      const externalResults = type === 'posts' ? await searchExternalItems(c.env.DB, tokens, limit) : [];
+      return c.json({ type, query, results: [], users: usersResult, external_results: externalResults });
     }
 
     const whereClause = `WHERE p.status = 'published' AND p.hidden = 0 AND (${conditions.join(' AND ')}) ${EXACT_DUPLICATE_FILTER}`;
@@ -3773,11 +3824,13 @@ posts.get('/search', async (c) => {
       }));
     }
 
+    const externalResults = type === 'posts' ? await searchExternalItems(c.env.DB, tokens, limit) : [];
     const responseData = {
       type,
       query,
       results: posts.results || [],
       users: usersResult,
+      external_results: externalResults,
     };
     await kvCacheSet(c, cacheKey, responseData, 60);
     return c.json({
