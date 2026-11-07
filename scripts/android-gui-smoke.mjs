@@ -7,7 +7,35 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright')
 mkdirSync('android-gui-artifacts', { recursive: true });
 const adb = (...args) => execFileSync('adb', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trim();
 const app = 'app.flaxia.app';
-const start = () => console.log(adb('shell', 'am', 'start', '-W', '-n', app + '/.MainActivity'));
+const sleepSync = (ms) => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+};
+const waitForDevice = (attempts = 30) => {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      adb('shell', 'echo', 'ok');
+      return;
+    } catch {
+      sleepSync(1000);
+    }
+  }
+  throw new Error('adb device did not return online');
+};
+const start = () => {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    try {
+      console.log(adb('shell', 'am', 'start', '-W', '-n', app + '/.MainActivity'));
+      return;
+    } catch (error) {
+      const message = String(error?.stderr ?? error?.message ?? error);
+      if (!/device offline|no devices|device .* not found/i.test(message)) throw error;
+      console.log(`adb device offline; waiting (attempt ${attempt + 1})`);
+      sleepSync(1000);
+      waitForDevice();
+    }
+  }
+  throw new Error('Failed to start app: adb device stayed offline');
+};
 async function connect() {
   let lastError;
   for (let attempt = 0; attempt < 60; attempt++) {
