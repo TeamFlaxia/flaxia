@@ -140,12 +140,14 @@ export async function handleInboundEmail(
       sizeBytes: number;
       r2Key: string;
       scanStatus: string;
+      iv: string;
     }> = [];
     // Seal every attachment in memory; the R2 writes happen after the quota and
     // recipient re-checks below so a rejected message never leaves objects behind.
     for (const attachment of parsed.attachments) {
       const filenameEnc = await encryptString(contentKey, attachment.filename, attachmentNameInfo(attachment.id));
       let attachmentR2Key = '';
+      let attachmentIv = '';
       let scanStatus = 'blocked';
       if (!attachment.blocked) {
         const attachmentKey = await deriveAttachmentKey(contentKey, attachment.id);
@@ -154,6 +156,7 @@ export async function handleInboundEmail(
           attachmentR2Key = `mail/${address.user_id}/${messageId}/attachments/${attachment.id}.enc`;
           staged.push({ key: attachmentR2Key, bytes: sealed.ciphertext });
           storedBytes += sealed.ciphertext.byteLength;
+          attachmentIv = sealed.iv;
           scanStatus = 'pending';
         } finally {
           attachmentKey.fill(0);
@@ -169,6 +172,7 @@ export async function handleInboundEmail(
         sizeBytes: attachment.sizeBytes,
         r2Key: attachmentR2Key,
         scanStatus,
+        iv: attachmentIv,
       });
     }
 
@@ -320,8 +324,8 @@ export async function handleInboundEmail(
       statements.push(
         env.MAIL_DB.prepare(
           `INSERT INTO mail_attachments
-             (id, message_id, user_id, filename_enc, content_type, size_bytes, r2_key, content_hash, scan_status, cid_enc)
-           VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, '')`,
+             (id, message_id, user_id, filename_enc, content_type, size_bytes, r2_key, content_hash, scan_status, cid_enc, aad_id, iv)
+           VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, '', ?, ?)`,
         ).bind(
           attachment.id,
           messageId,
@@ -331,6 +335,8 @@ export async function handleInboundEmail(
           attachment.sizeBytes,
           attachment.r2Key,
           attachment.scanStatus,
+          attachment.id,
+          attachment.iv,
         ),
       );
     }

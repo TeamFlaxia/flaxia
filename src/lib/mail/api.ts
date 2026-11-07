@@ -9,10 +9,14 @@ export type MailSecurity = 'e2ee' | 'at_rest' | 'tls';
 export type MailFolder = 'inbox' | 'sent' | 'drafts' | 'archive' | 'spam' | 'trash';
 
 export interface MailAttachment {
+  /** Server attachment row id (download route). */
   id: string;
   filename: string;
   content_type: string;
   size_bytes: number;
+  /** Logical attachment id bound into the AEAD AAD / HKDF info. */
+  aad_id?: string;
+  iv?: string;
 }
 
 export interface MailThreadSummary {
@@ -76,6 +80,7 @@ export interface EncryptedThreadRow {
   meta_enc: string;
   payload_iv: string;
   blob_id: string;
+  aad_id: string;
   from_addr: string;
   received_at: string;
   read_at: string | null;
@@ -101,6 +106,7 @@ export interface EncryptedMessageRow {
   meta_enc: string;
   payload_iv: string;
   blob_id: string;
+  aad_id: string;
   message_id_hash: string;
   in_reply_to_hash: string;
   references_hash: string;
@@ -119,6 +125,8 @@ export interface EncryptedMessageRow {
 export interface EncryptedAttachmentRow {
   id: string;
   message_id: string;
+  aad_id: string;
+  iv: string;
   content_type: string;
   size_bytes: number;
   scan_status: string;
@@ -263,31 +271,95 @@ export function applyMessageAction(action: string, ids: string[]): Promise<unkno
   });
 }
 
-export function sendMessage(input: {
+export interface SendAttachmentInput {
+  /** Logical attachment id (also the HKDF info input). */
+  id: string;
+  iv: string;
+  ciphertext: string;
+  filename_enc: string;
+  content_type: string;
+  size_bytes: number;
+}
+
+export interface SendKeyInput {
+  address: string;
+  key_version: number;
+  ephemeral_public_key: string;
+  iv: string;
+  wrapped_content_key: string;
+}
+
+/** Client-sealed envelope for POST /api/mail/messages and drafts (§9.2). */
+export interface SendEnvelopeInput {
+  message_id: string;
+  thread_id?: string;
+  in_reply_to_hash?: string;
   from: string;
   to: string[];
   cc?: string[];
   bcc?: string[];
-  subject: string;
-  text: string;
-  security: MailSecurity;
-}): Promise<unknown> {
-  return request('/api/mail/messages', {
-    method: 'POST',
-    body: JSON.stringify(input),
+  subject_enc: string;
+  from_name_enc: string;
+  meta_enc: string;
+  payload: { iv: string; ciphertext: string };
+  attachments?: SendAttachmentInput[];
+  keys: SendKeyInput[];
+}
+
+export interface MailDraftRow {
+  id: string;
+  from_addr: string;
+  to_addr: string;
+  subject_enc: string;
+  meta_enc: string;
+  payload_iv: string;
+  aad_id: string;
+  received_at: string;
+  size_bytes: number;
+  has_attachments: boolean;
+  key: WrappedMailKey | null;
+}
+
+export interface MailDraftDetail {
+  draft: MailDraftRow;
+  attachments: EncryptedAttachmentRow[];
+}
+
+export function sendMessage(
+  envelope: SendEnvelopeInput,
+): Promise<{ ok: boolean; message_id: string; delivered: number }> {
+  return request('/api/mail/messages', { method: 'POST', body: JSON.stringify(envelope) });
+}
+
+export function saveDraft(envelope: SendEnvelopeInput): Promise<{ ok: boolean; draft_id: string }> {
+  return request('/api/mail/drafts', { method: 'POST', body: JSON.stringify(envelope) });
+}
+
+export function updateDraft(draftId: string, envelope: SendEnvelopeInput): Promise<{ ok: boolean; draft_id: string }> {
+  return request(`/api/mail/drafts/${encodeURIComponent(draftId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(envelope),
   });
 }
 
-export function saveDraft(input: {
-  from: string;
-  to: string[];
-  cc?: string[];
-  bcc?: string[];
-  subject: string;
-  text: string;
-}): Promise<unknown> {
-  return request('/api/mail/drafts', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
+export function deleteDraft(draftId: string): Promise<unknown> {
+  return request(`/api/mail/drafts/${encodeURIComponent(draftId)}`, { method: 'DELETE' });
+}
+
+export function listDrafts(): Promise<{ drafts: MailDraftRow[] }> {
+  return request('/api/mail/drafts');
+}
+
+export function getDraft(draftId: string): Promise<MailDraftDetail> {
+  return request(`/api/mail/drafts/${encodeURIComponent(draftId)}`);
+}
+
+export function fetchDraftPayload(draftId: string): Promise<Uint8Array> {
+  return binaryRequest(`/api/mail/drafts/${encodeURIComponent(draftId)}/payload`);
+}
+
+export function fetchDraftAttachment(draftId: string, attachmentId: string): Promise<Uint8Array> {
+  return binaryRequest(
+    `/api/mail/drafts/${encodeURIComponent(draftId)}/attachments/${encodeURIComponent(attachmentId)}`,
+  );
 }

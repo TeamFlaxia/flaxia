@@ -28,6 +28,9 @@ type MailContext = Context<{ Bindings: Bindings; Variables: Variables }>;
 const mail = new Hono<{ Bindings: Bindings; Variables: Variables }>();
 
 const MAX_MAIL_REQUEST_BYTES = 16 * 1024;
+// Send/draft envelopes carry base64 ciphertext (10 MiB payload + attachments),
+// so they need a larger transport than the 16 KiB control-plane bodies.
+const MAX_MAIL_SEND_BYTES = 16 * 1024 * 1024;
 
 mail.use('*', requireAuth);
 
@@ -50,6 +53,35 @@ async function readSmallBody(c: MailContext): Promise<string | null> {
     chunks.push(value);
   }
 
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(body);
+}
+
+async function readLargeBody(c: MailContext): Promise<string | null> {
+  const declared = Number(c.req.header('Content-Length') ?? '');
+  if (Number.isFinite(declared) && declared > MAX_MAIL_SEND_BYTES) return null;
+
+  // Stream with a hard cap instead of buffering an unbounded chunked body.
+  const reader = c.req.raw.body?.getReader();
+  if (!reader) return null;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_MAIL_SEND_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  if (size === 0) return null;
   const body = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) {
@@ -281,12 +313,106 @@ mail.post('/messages/actions', async (c) => {
   });
 });
 
-// P2/P3 stubs — explicit 501 so the client can feature-detect.
+// Send and drafts (P3, docs/mail.md §9.2/§10). Internal E2EE envelopes only;
+// the Worker rejects external recipients until the SMTP path ships.
+mail.post('/messages', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:send:${user.id}`, 30, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
+  const body = await readLargeBody(c);
+  if (body === null) return c.json({ error: 'mail_request_too_large' }, 413);
+  return proxy(c, '/internal/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
+});
+
+mail.get('/drafts', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:drafts:${user.id}`, 240, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
+  return proxy(c, '/internal/drafts');
+});
+
+mail.post('/drafts', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:draft:${user.id}`, 60, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
+  const body = await readLargeBody(c);
+  if (body === null) return c.json({ error: 'mail_request_too_large' }, 413);
+  return proxy(c, '/internal/drafts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
+});
+
+mail.get('/drafts/:id', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:draft-item:${user.id}`, 600, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
+  const id = c.req.param('id') ?? '';
+  return proxy(c, `/internal/drafts/${encodeURIComponent(id)}`);
+});
+
+mail.get('/drafts/:id/payload', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:payload:${user.id}`, 900, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
+  const id = c.req.param('id') ?? '';
+  return proxy(c, `/internal/drafts/${encodeURIComponent(id)}/payload`);
+});
+
+mail.get('/drafts/:id/attachments/:attachmentId', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:payload:${user.id}`, 900, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
+  const id = c.req.param('id') ?? '';
+  const attachmentId = c.req.param('attachmentId') ?? '';
+  return proxy(c, `/internal/drafts/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attachmentId)}`);
+});
+
+mail.patch('/drafts/:id', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:draft:${user.id}`, 60, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
+  const id = c.req.param('id') ?? '';
+  const body = await readLargeBody(c);
+  if (body === null) return c.json({ error: 'mail_request_too_large' }, 413);
+  return proxy(c, `/internal/drafts/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
+});
+
+mail.delete('/drafts/:id', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:draft:${user.id}`, 60, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
+  const id = c.req.param('id') ?? '';
+  return proxy(c, `/internal/drafts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+});
+
+// Remaining P3+ stubs — explicit 501 so the client can feature-detect.
 for (const [method, route] of [
-  ['POST', '/messages'],
-  ['POST', '/drafts'],
-  ['PATCH', '/drafts/:id'],
-  ['DELETE', '/drafts/:id'],
   ['GET', '/labels'],
   ['POST', '/labels'],
   ['PATCH', '/labels/:id'],

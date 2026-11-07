@@ -15,7 +15,11 @@ const USER = 'user-1';
 function database(): DatabaseSync {
   const sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
-  for (const file of ['migrations/mail/0001_mail_schema.sql', 'migrations/mail/0002_mail_p2_read.sql']) {
+  for (const file of [
+    'migrations/mail/0001_mail_schema.sql',
+    'migrations/mail/0002_mail_p2_read.sql',
+    'migrations/mail/0003_mail_p3_send.sql',
+  ]) {
     sqlite.exec(readFileSync(file, 'utf8'));
   }
   sqlite.exec(`

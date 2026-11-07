@@ -9,6 +9,7 @@ import {
   getMailUnreadCount,
   isMailNotImplemented,
   listAddresses,
+  listDrafts,
   listThreads,
   type MailFolder,
   type MailThreadSummary,
@@ -275,11 +276,14 @@ export class MailPage {
       return;
     }
     try {
-      const result: EncryptedThreadList = await listThreads({
-        folder: this.folder,
-        limit: 30,
-        q: this.search.trim() || undefined,
-      });
+      const result: EncryptedThreadList =
+        this.folder === 'drafts'
+          ? await this.encryptedDraftList()
+          : await listThreads({
+              folder: this.folder,
+              limit: 30,
+              q: this.search.trim() || undefined,
+            });
       const reader = new MailReader(this.address);
       const decrypted = await reader.decryptThreadList(result);
       this.threads = decrypted.threads;
@@ -300,6 +304,34 @@ export class MailPage {
         this.renderList();
       }
     }
+  }
+
+  private async encryptedDraftList(): Promise<EncryptedThreadList> {
+    const result = await listDrafts();
+    return {
+      threads: result.drafts.map((draft) => ({
+        id: draft.id,
+        folder: 'drafts' as const,
+        last_message_at: draft.received_at,
+        message_count: 1,
+        unread_count: 0,
+        message_id: draft.id,
+        subject_enc: draft.subject_enc,
+        meta_enc: draft.meta_enc,
+        payload_iv: draft.payload_iv,
+        blob_id: '',
+        aad_id: draft.aad_id,
+        from_addr: draft.from_addr,
+        received_at: draft.received_at,
+        read_at: draft.received_at,
+        starred_at: null,
+        has_attachments: draft.has_attachments,
+        size_bytes: draft.size_bytes,
+        security: 'e2ee' as const,
+        key: draft.key,
+      })),
+      counts: this.counts,
+    };
   }
 
   private filteredThreads(): MailRow[] {
@@ -434,16 +466,22 @@ export class MailPage {
     row.setAttribute('role', 'listitem');
     row.tabIndex = 0;
     row.classList.toggle('mail-thread-row--unread', thread.unread);
-    row.addEventListener('click', (event) => {
-      if ((event.target as HTMLElement).closest('.mail-row-action')) return;
+    const open = (): void => {
+      if (thread.folder === 'drafts') {
+        goToMailCompose(thread.messageId ?? thread.id);
+        return;
+      }
       this.markRead(thread);
       goToMailThread(thread.id);
+    };
+    row.addEventListener('click', (event) => {
+      if ((event.target as HTMLElement).closest('.mail-row-action')) return;
+      open();
     });
     row.addEventListener('keydown', (event) => {
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault();
-        this.markRead(thread);
-        goToMailThread(thread.id);
+        open();
       }
     });
 

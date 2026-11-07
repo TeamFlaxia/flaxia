@@ -172,6 +172,28 @@ export async function encryptPayload(
   return { iv: encodeB64(iv), ciphertext: new Uint8Array(ciphertext) };
 }
 
+/** Encrypt bytes with AES-256-GCM and an explicit AAD (mirror of the Worker). */
+export async function encryptBytes(
+  keyBytes: Uint8Array,
+  plaintext: Uint8Array,
+  aad: string,
+): Promise<{ iv: string; ciphertext: Uint8Array }> {
+  const key = await subtle.importKey('raw', keyBytes as BufferSource, 'AES-GCM', false, ['encrypt', 'decrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await subtle.encrypt(
+    { name: 'AES-GCM', iv: iv as BufferSource, additionalData: new TextEncoder().encode(aad) },
+    key,
+    plaintext as BufferSource,
+  );
+  return { iv: encodeB64(iv), ciphertext: new Uint8Array(ciphertext) };
+}
+
+/** Encrypt a UTF-8 string; returns an `iv.ciphertext` envelope. */
+export async function encryptString(keyBytes: Uint8Array, plaintext: string, info: string): Promise<string> {
+  const encrypted = await encryptBytes(keyBytes, new TextEncoder().encode(plaintext), info);
+  return `${encrypted.iv}.${encodeB64(encrypted.ciphertext)}`;
+}
+
 export async function decryptPayload(
   contentKey: Uint8Array,
   ivB64: string,
@@ -210,6 +232,20 @@ export async function decryptString(keyBytes: Uint8Array, envelope: string, info
   if (!iv || !ciphertext) throw new Error('invalid encrypted string');
   const plaintext = await decryptBytes(keyBytes, iv, decodeB64(ciphertext), info);
   return new TextDecoder().decode(plaintext);
+}
+
+/** Seal attachment bytes with the per-attachment key derived from the content key. */
+export async function encryptAttachment(
+  contentKey: Uint8Array,
+  attachmentId: string,
+  plaintext: Uint8Array,
+): Promise<{ iv: string; ciphertext: Uint8Array }> {
+  const key = await deriveAttachmentKey(contentKey, attachmentId);
+  try {
+    return await encryptBytes(key, plaintext, attachmentKeyInfo(attachmentId));
+  } finally {
+    key.fill(0);
+  }
 }
 
 /** Decrypt an attachment with the key derived from the message content key. */
