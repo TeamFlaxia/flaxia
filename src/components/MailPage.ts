@@ -5,23 +5,27 @@ import { icon } from '../lib/icons.js';
 import { primaryAddressForUsername } from '../lib/mail/address.js';
 import {
   applyMessageAction,
+  type EncryptedThreadList,
   getMailUnreadCount,
   isMailNotImplemented,
   listAddresses,
   listThreads,
   type MailFolder,
-  type MailThreadList,
   type MailThreadSummary,
 } from '../lib/mail/api.js';
 import { demoCounts, demoThreads, isMailPreview } from '../lib/mail/demo.js';
 import { goToMailCompose, goToMailSettings, goToMailThread } from '../lib/mail/navigation.js';
+import { MailReader } from '../lib/mail/reader.js';
 import { avatar, emptyState, formatMailDate, iconButton, mailButton } from '../lib/mail/ui.js';
 import { ensureVaultUnlocked, provisionMailIdentity } from '../lib/vault/mail-identity.js';
-import { isVaultUnlocked } from '../lib/vault/session.js';
+import { isVaultUnlocked, tryDeviceUnlock } from '../lib/vault/session.js';
+import { createVaultUnlockForm } from './VaultUnlockForm.js';
 
 export interface MailPageProps {
   currentUser: { id: string; username: string } | null;
 }
+
+type MailRow = MailThreadSummary & { messageId?: string };
 
 interface FolderDef {
   id: MailFolder;
@@ -42,7 +46,7 @@ export class MailPage {
   private element: HTMLElement;
   private props: MailPageProps;
   private folder: MailFolder = 'inbox';
-  private threads: MailThreadSummary[] = [];
+  private threads: MailRow[] = [];
   private counts: Partial<Record<MailFolder, number>> = {};
   private loading = true;
   private notReady = false;
@@ -51,6 +55,7 @@ export class MailPage {
   private preview = false;
   private address = '';
   private active = false;
+  private locked = false;
   private unreadTotal = 0;
   private destroyed = false;
   private listEl: HTMLElement | null = null;
@@ -99,6 +104,13 @@ export class MailPage {
     this.unreadTotal = unread;
     this.renderShell();
     if (!this.active) {
+      this.loading = false;
+      this.renderList();
+      return;
+    }
+    if (!isVaultUnlocked()) await tryDeviceUnlock();
+    this.locked = !isVaultUnlocked();
+    if (this.locked) {
       this.loading = false;
       this.renderList();
       return;
@@ -245,6 +257,11 @@ export class MailPage {
 
   private async loadThreads(): Promise<void> {
     if (this.destroyed) return;
+    if (this.locked) {
+      this.loading = false;
+      this.renderList();
+      return;
+    }
     this.loading = true;
     this.loadError = null;
     this.notReady = false;
@@ -258,14 +275,21 @@ export class MailPage {
       return;
     }
     try {
-      const result: MailThreadList = await listThreads({
+      const result: EncryptedThreadList = await listThreads({
         folder: this.folder,
         limit: 30,
         q: this.search.trim() || undefined,
       });
-      this.threads = result.threads ?? [];
-      this.counts = result.counts ?? this.counts;
+      const reader = new MailReader(this.address);
+      const decrypted = await reader.decryptThreadList(result);
+      this.threads = decrypted.threads;
+      this.counts = decrypted.counts ?? result.counts ?? this.counts;
       if (this.folder === 'inbox') this.unreadTotal = this.counts.inbox ?? this.unreadTotal;
+      if (result.threads.length > 0 && decrypted.threads.length === 0) {
+        this.loadError =
+          t('mail.key_unavailable') ||
+          'Encrypted mail could not be opened on this device. Unlock the vault and try again.';
+      }
     } catch (error) {
       if (isMailNotImplemented(error)) this.notReady = true;
       else this.loadError = t('mail.load_failed') || 'Could not load mail. Check your connection and try again.';
@@ -278,7 +302,7 @@ export class MailPage {
     }
   }
 
-  private filteredThreads(): MailThreadSummary[] {
+  private filteredThreads(): MailRow[] {
     const query = this.search.trim().toLowerCase();
     return this.threads
       .filter((thread) => !thread.folder || thread.folder === this.folder)
@@ -309,6 +333,25 @@ export class MailPage {
       const action = mailButton(t('mail.open_settings') || 'Open Mail settings', 'primary', 'settings');
       action.addEventListener('click', () => goToMailSettings());
       empty.appendChild(action);
+      list.appendChild(empty);
+      return;
+    }
+
+    if (this.locked) {
+      const empty = emptyState(
+        'lock',
+        t('mail.unlock_to_read') || 'Unlock to read mail',
+        t('mail.unlock_to_read_desc') ||
+          'Your messages are encrypted with the Personal Vault. Unlock it on this device to decrypt the mailbox.',
+      );
+      empty.appendChild(
+        createVaultUnlockForm({
+          onUnlocked: () => {
+            this.locked = false;
+            void this.loadThreads();
+          },
+        }).getElement(),
+      );
       list.appendChild(empty);
       return;
     }
@@ -385,7 +428,7 @@ export class MailPage {
     }
   }
 
-  private buildRow(thread: MailThreadSummary): HTMLElement {
+  private buildRow(thread: MailRow): HTMLElement {
     const row = document.createElement('div');
     row.className = 'mail-thread-row';
     row.setAttribute('role', 'listitem');
@@ -454,7 +497,7 @@ export class MailPage {
     return row;
   }
 
-  private markRead(thread: MailThreadSummary): void {
+  private markRead(thread: MailRow): void {
     if (!thread.unread) return;
     thread.unread = false;
     if (this.preview) {
@@ -464,16 +507,20 @@ export class MailPage {
       this.renderList();
       return;
     }
-    void applyMessageAction('read', [thread.id]).catch(() => undefined);
+    void applyMessageAction('read', [thread.messageId ?? thread.id]).catch(() => undefined);
     this.unreadTotal = Math.max(0, this.unreadTotal - 1);
     if (this.folder === 'inbox') this.counts = { ...this.counts, inbox: Math.max(0, (this.counts.inbox ?? 0) - 1) };
     this.updateTabs();
     this.renderList();
   }
 
-  private toggleStar(thread: MailThreadSummary): void {
+  private toggleStar(thread: MailRow): void {
     thread.starred = !thread.starred;
-    if (!this.preview) void applyMessageAction(thread.starred ? 'star' : 'unstar', [thread.id]).catch(() => undefined);
+    if (!this.preview) {
+      void applyMessageAction(thread.starred ? 'star' : 'unstar', [thread.messageId ?? thread.id]).catch(
+        () => undefined,
+      );
+    }
     this.renderList();
   }
 

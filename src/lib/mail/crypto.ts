@@ -14,6 +14,26 @@ export function attachmentKeyInfo(attachmentId: string): string {
   return `flaxia.mail.attachment.v1:${attachmentId}`;
 }
 
+export function metaInfo(messageId: string): string {
+  return `flaxia.mail.meta.v1:${messageId}`;
+}
+
+export function subjectInfo(messageId: string): string {
+  return `flaxia.mail.subject.v1:${messageId}`;
+}
+
+export function fromNameInfo(messageId: string): string {
+  return `flaxia.mail.from-name.v1:${messageId}`;
+}
+
+export function attachmentNameInfo(attachmentId: string): string {
+  return `flaxia.mail.attachment-name.v1:${attachmentId}`;
+}
+
+export function payloadInfo(messageId: string): string {
+  return `flaxia.mail.payload.v1:${messageId}`;
+}
+
 export function encodeB64(bytes: Uint8Array): string {
   let binary = '';
   for (const x of bytes) binary += String.fromCharCode(x);
@@ -166,4 +186,39 @@ export async function decryptPayload(
     ciphertext as BufferSource,
   );
   return new Uint8Array(plaintext);
+}
+
+/** Decrypt bytes sealed with AES-256-GCM + explicit AAD. */
+export async function decryptBytes(
+  keyBytes: Uint8Array,
+  ivB64: string,
+  ciphertext: Uint8Array,
+  aad: string,
+): Promise<Uint8Array> {
+  const key = await subtle.importKey('raw', keyBytes as BufferSource, 'AES-GCM', false, ['encrypt', 'decrypt']);
+  const plaintext = await subtle.decrypt(
+    { name: 'AES-GCM', iv: decodeB64(ivB64) as BufferSource, additionalData: new TextEncoder().encode(aad) },
+    key,
+    ciphertext as BufferSource,
+  );
+  return new Uint8Array(plaintext);
+}
+
+/** Decrypt an `iv.ciphertext` envelope produced by the Mail Worker. */
+export async function decryptString(keyBytes: Uint8Array, envelope: string, info: string): Promise<string> {
+  const [iv, ciphertext] = envelope.split('.', 2);
+  if (!iv || !ciphertext) throw new Error('invalid encrypted string');
+  const plaintext = await decryptBytes(keyBytes, iv, decodeB64(ciphertext), info);
+  return new TextDecoder().decode(plaintext);
+}
+
+/** Decrypt an attachment with the key derived from the message content key. */
+export async function decryptAttachment(
+  contentKey: Uint8Array,
+  attachmentId: string,
+  ivB64: string,
+  ciphertext: Uint8Array,
+): Promise<Uint8Array> {
+  const key = await deriveAttachmentKey(contentKey, attachmentId);
+  return decryptBytes(key, ivB64, ciphertext, attachmentKeyInfo(attachmentId));
 }

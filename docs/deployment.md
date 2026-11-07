@@ -42,9 +42,10 @@ npx wrangler queues create flaxia-mail-dlq
 npm run deploy:mail
 
 # 3. Pages 側の binding が有効になるよう Pages をデプロイする。
-#    P1 では Email Routing / MX をまだ切り替えない。Worker は
-#    MAIL_INBOUND_ENABLED=0 で受信を拒否し、P2 (MIME auth/scan/threading/UI)
-#    完了後に "1" へ変更して cutover する。
+#    P2 (MIME parse / 暗号化保存 / threading / 一覧・スレッド UI) は実装済み。
+#    ただし初回デプロイでは Email Routing / MX をまだ切り替えず、
+#    MAIL_INBOUND_ENABLED=0 のままテストする。受信テストが通ったら
+#    Worker の MAIL_INBOUND_ENABLED を "1" にして Email Routing を cutover する。
 #    MAIL_INTERNAL_SECRET / MAIL_THREAD_SECRET は secret として設定:
 npx wrangler secret put MAIL_INTERNAL_SECRET --config mail-worker/wrangler.toml
 npx wrangler secret put MAIL_THREAD_SECRET --config mail-worker/wrangler.toml
@@ -54,7 +55,7 @@ npx wrangler pages secret put MAIL_INTERNAL_SECRET --project-name flaxia
 npx wrangler secret put MAIL_INTERNAL_SECRET --config wrangler.toml.worker
 ```
 
-DNS/MX/SPF/DKIM/DMARC の手順は `docs/mail.md` §11.1 を参照。メール関連レコードは DNS-only（proxy しない）。P1 デプロイでは Email Routing に一切触れない。
+DNS/MX/SPF/DKIM/DMARC の手順は `docs/mail.md` §11.1 を参照。メール関連レコードは DNS-only（proxy しない）。初回デプロイでは Email Routing に一切触れない。P2 の受信 cutover は `docs/mail.md` §11.1 の手順で行う。
 
 ### postmaster/abuse 転送（Cloudflare ダッシュボード作業）
 

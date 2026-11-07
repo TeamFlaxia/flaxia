@@ -1,11 +1,17 @@
-// Inbound pipeline regression: the raw MIME must be encrypted with the
-// per-message content key before it is persisted, and the persisted ciphertext
-// must be decryptable with the wrapped key the Worker stored for the recipient.
-// This also pins client/worker ECIES byte compatibility (docs/mail.md §6.2).
+// Inbound pipeline regression: MIME is parsed, metadata/payload are encrypted
+// before persistence, and the wrapped content key lets the recipient decrypt
+// both. This also pins client/worker crypto byte compatibility.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { handleInboundEmail, type MailEnv } from '../mail-worker/src/ingest.ts';
-import { decryptPayload, encodeB64, unwrapContentKey } from '../src/lib/mail/crypto.ts';
+import {
+  decryptPayload,
+  decryptString,
+  encodeB64,
+  metaInfo,
+  subjectInfo,
+  unwrapContentKey,
+} from '../src/lib/mail/crypto.ts';
 
 interface Captured {
   sql: string;
@@ -30,6 +36,8 @@ function fakeEnv(spkiB64: string, addressRow: { user_id: string; state: string }
     if (sql.includes('FROM mail_addresses')) return addressRow;
     if (sql.includes('FROM mail_identities')) return { public_key: spkiB64, key_version: 1 };
     if (sql.includes('FROM mail_usage')) return null;
+    if (sql.includes('FROM mail_messages')) return null;
+    if (sql.includes('FROM mail_threads')) return null;
     throw new Error(`unexpected query: ${sql}`);
   };
 
@@ -64,37 +72,53 @@ function fakeEnv(spkiB64: string, addressRow: { user_id: string; state: string }
     MAIL_BUCKET: bucket,
     MAIL_QUEUE: {},
     MAIL_QUEUE_DLQ: {},
+    MAIL_THREAD_SECRET: 'test-thread-secret',
   } as unknown as MailEnv;
 
   return { env, written, puts };
 }
 
+const RAW_EMAIL = [
+  'From: Alice <alice@example.com>',
+  'To: preview@flaxia.app',
+  'Subject: Hello from the outside',
+  'Message-ID: <message-1@example.com>',
+  'Date: Wed, 05 Nov 2026 12:00:00 +0000',
+  'MIME-Version: 1.0',
+  'Content-Type: text/plain; charset=utf-8',
+  '',
+  'Hello body',
+].join('\r\n');
+
 describe('mail inbound ingest', () => {
-  it('stores ciphertext and a decryptable wrapped content key', async () => {
+  it('encrypts metadata and payload and stores a decryptable content key', async () => {
     const recipient = await makeRecipient();
-    const rawText = 'From: sender@example.com\r\nSubject: hello\r\n\r\nbody';
-    const raw = new TextEncoder().encode(rawText).buffer;
+    const raw = new TextEncoder().encode(RAW_EMAIL).buffer;
     const { env, written, puts } = fakeEnv(recipient.spkiB64, { user_id: 'user-1', state: 'active' });
 
-    await handleInboundEmail(env, raw, 'Alice@Flaxia.App');
+    await handleInboundEmail(env, raw, 'Preview@Flaxia.App', 'alice@example.com');
 
-    assert.equal(puts.length, 1, 'one payload object is written');
+    assert.equal(puts.length, 1, 'one encrypted payload object is written');
     const stored = puts[0].value;
-    assert.notDeepEqual(Array.from(stored), Array.from(new Uint8Array(raw)), 'payload must not be stored as plaintext');
+    assert.notDeepEqual(Array.from(stored), Array.from(new TextEncoder().encode(RAW_EMAIL)));
 
     const thread = written.find((statement) => statement.sql.includes('INSERT INTO mail_threads'));
-    assert.ok(thread, 'the message thread row must be created for the FK');
+    assert.ok(thread, 'the message thread row must be created');
     assert.equal(thread.params[1], 'user-1');
 
     const message = written.find((statement) => statement.sql.includes('INSERT INTO mail_messages'));
     assert.ok(message, 'message row is inserted');
     const messageId = message.params[0] as string;
-    const payloadIv = message.params[6] as string;
-    assert.ok(payloadIv, 'payload IV is persisted with the message');
+    const fromAddr = message.params[4] as string;
+    const subjectEnc = message.params[7] as string;
+    const metaEnc = message.params[8] as string;
+    const payloadIv = message.params[19] as string;
+    assert.equal(fromAddr, 'alice@example.com');
+    assert.ok(subjectEnc && metaEnc && payloadIv);
 
     const keys = written.find((statement) => statement.sql.includes('INSERT INTO mail_message_keys'));
     assert.ok(keys, 'wrapped content key row is inserted');
-    assert.equal(keys.params[2], 1, 'the identity key version is persisted with the wrap');
+    assert.equal(keys.params[2], 1, 'the identity key version is persisted');
 
     const contentKey = await unwrapContentKey(
       {
@@ -104,10 +128,23 @@ describe('mail inbound ingest', () => {
       },
       recipient.pkcs8B64,
       messageId,
-      'alice@flaxia.app',
+      'preview@flaxia.app',
     );
-    const plaintext = await decryptPayload(contentKey, payloadIv, stored, messageId);
-    assert.equal(new TextDecoder().decode(plaintext), rawText);
+
+    const meta = JSON.parse(await decryptString(contentKey, metaEnc, metaInfo(messageId))) as {
+      subject: string;
+      from_name: string;
+      snippet: string;
+    };
+    assert.equal(meta.subject, 'Hello from the outside');
+    assert.equal(meta.from_name, 'Alice');
+    assert.match(meta.snippet, /Hello body/);
+    assert.equal(await decryptString(contentKey, subjectEnc, subjectInfo(messageId)), 'Hello from the outside');
+
+    const payload = JSON.parse(
+      new TextDecoder().decode(await decryptPayload(contentKey, payloadIv, stored, messageId)),
+    ) as { text: string };
+    assert.equal(payload.text.trim(), 'Hello body');
   });
 
   it('rejects an unknown recipient with a 550 code', async () => {
@@ -115,7 +152,7 @@ describe('mail inbound ingest', () => {
     const { env } = fakeEnv(recipient.spkiB64, null);
 
     await assert.rejects(
-      handleInboundEmail(env, new ArrayBuffer(8), 'nobody@flaxia.app'),
+      handleInboundEmail(env, new TextEncoder().encode(RAW_EMAIL).buffer, 'nobody@flaxia.app'),
       (err: { code?: number }) => err.code === 550,
     );
   });

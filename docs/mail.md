@@ -1,6 +1,6 @@
 # Flaxia Mail
 
-**Status:** P0/P1 foundation in progress (apex cutover approved).
+**Status:** P1 foundation + P2 receive/read implemented in code (inbound stays disabled until the P2 cutover).
 
 Flaxia Mail is a real mailbox on `@flaxia.app`: it receives mail from the
 public SMTP network, sends mail to external recipients, and exposes a webmail
@@ -325,7 +325,13 @@ updating the current pointer.
 ### `mail_threads`
 
 `id`, `user_id`, `subject_enc`, `last_message_at`, `message_count`,
-`unread_count`, `participants_enc`, `created_at`, `updated_at`.
+`unread_count`, `participants_enc`, `folder`, `thread_key`, `created_at`,
+`updated_at`.
+
+`folder` is the denormalized folder of the latest message (inbox/sent/drafts/
+archive/spam/trash). `thread_key` is the HMAC of the normalized subject used
+only by the subject-fallback threading path (§9.3); it is empty when
+`MAIL_THREAD_SECRET` is not configured.
 
 ### `mail_messages`
 
@@ -354,7 +360,15 @@ updating the current pointer.
 | `deleted_at` | Soft delete |
 
 `meta_enc` must stay small (target < 8 KiB) so listing does not fetch the full
-payload from R2.
+payload from R2. It is an AES-GCM string (`iv.ciphertext`) encrypted with the
+message content key and the AAD `flaxia.mail.meta.v1:<message_id>`. The
+decrypted JSON contains the subject, sender display name, snippet, recipients,
+attachment names and the parsed `Authentication-Results` summary.
+
+`payload_iv` is the AES-GCM IV for the encrypted payload JSON in R2
+(`flaxia.mail.payload.v1:<message_id>`). The payload JSON contains
+`{ text, html, attachments }`; the client decrypts it after unwrapping the
+content key.
 
 ### `mail_message_keys`
 
@@ -372,6 +386,13 @@ Multiple recipients of the same internal message share one ciphertext blob;
 
 `id`, `message_id`, `user_id`, `filename_enc`, `content_type`, `size_bytes`,
 `r2_key`, `content_hash`, `scan_status`, `cid_enc`.
+
+Attachment bytes are encrypted in R2 under
+`mail/<user_id>/<message_id>/attachments/<attachment_id>.enc` with a key
+derived from the message content key (`flaxia.mail.attachment.v1:<attachment_id>`).
+Filenames are encrypted with `flaxia.mail.attachment-name.v1:<attachment_id>`.
+Until the shared scanning pipeline is wired, non-inline attachments quarantine
+the message as spam; executable/script extensions and MIME types are blocked.
 
 ### `mail_labels`, `mail_message_labels`
 
@@ -429,7 +450,8 @@ resolved from the Auth-backed session grant instead of a local credential, per
 | `GET` | `/api/mail/threads` | List threads by folder/label/cursor |
 | `GET` | `/api/mail/threads/:id` | Thread details and encrypted metadata |
 | `GET` | `/api/mail/messages/:id` | Message metadata |
-| `GET` | `/api/mail/messages/:id/payload` | Encrypted payload reference or bytes |
+| `GET` | `/api/mail/messages/:id/payload` | Encrypted payload bytes (ciphertext; client decrypts) |
+| `GET` | `/api/mail/messages/:id/attachments/:attachmentId` | Encrypted attachment bytes |
 | `POST` | `/api/mail/messages` | Send a message |
 | `POST` | `/api/mail/drafts` | Create a draft |
 | `PATCH` | `/api/mail/drafts/:id` | Update a draft |
@@ -456,6 +478,9 @@ Rules:
 - Request and response bodies never include plaintext message content on the
   server side except in the external-send endpoint, which is explicitly
   documented as `tls`.
+- Thread/message list responses carry ciphertext (`subject_enc`, `meta_enc`)
+  plus the recipient's wrapped content key. The client unwraps the key from the
+  Mail identity in the Personal Vault and decrypts metadata/payload locally.
 - Errors use stable codes such as `mail_vault_required`,
   `mail_address_taken`, `mail_quota_exceeded`, `mail_rate_limited`, and
   `mail_send_failed`.
@@ -472,16 +497,19 @@ Rules:
    - Unknown address: reject with `550`. There is no fallback forward.
    - Disabled/frozen account: reject; do not queue.
 3. Enforce size and recipient limits. The MVP accepts at most 10 MiB.
-4. Check SPF/DKIM/DMARC results from the incoming message. Reject clear
-   authentication failures; quarantine ambiguous ones as spam.
+4. Check SPF/DKIM/DMARC results from the incoming message. Quarantine clear
+   authentication failures as spam (never silently deliver them); the parsed
+   summary is stored in `mail_messages.auth_results`.
 5. Parse MIME: text, HTML, attachments, headers, inline CIDs, and the
    original raw message.
 6. Scan attachments through the existing scanning pipeline.
    - Block executable and script attachments by extension and MIME type.
    - If scanning is unavailable, quarantine rather than silently deliver.
+   - P2 implements the blocklist and quarantines non-inline attachments; the
+     shared scanner integration remains a later hardening step.
 7. Generate a content key and wrap it for the recipient identity.
-8. Encrypt payload, attachments, and optional raw MIME; write D1 metadata and
-   R2 objects.
+8. Encrypt metadata, payload JSON, attachments, and optional raw MIME; write
+   D1 metadata and R2 objects.
 9. Delete plaintext staging data.
 10. Thread the message using `References`/`In-Reply-To`; fall back to an HMAC
     of the normalized subject with `MAIL_THREAD_SECRET`.
@@ -745,7 +773,7 @@ address lists. Log ids and counts only.
 |---|---|---|
 | P0 Design/spike | 1–2 weeks | This document, ADRs, Email Worker receive spike, `send_email` spike, ECIES round trip, HTML sanitization spike, confirmed Cloudflare limits |
 | P1 Foundation | 2 weeks | Mail D1/R2/Queue, migrations, address and identity APIs, vault integration, settings UI |
-| P2 Receive/read | 2–3 weeks | Inbound pipeline, MIME parse, encrypted storage, threading, list/thread UI, HTML renderer, notifications |
+| P2 Receive/read | 2–3 weeks | Inbound pipeline, MIME parse, encrypted storage, threading, list/thread UI, HTML renderer, notifications — **implemented in code; enable inbound at cutover** |
 | P3 Send/reply | 2 weeks | Compose, drafts, external SMTP, internal E2EE delivery, Sent, retries, bounces |
 | P4 Mailbox management | 2 weeks | Labels, archive, spam/trash, search, bulk actions, keyboard shortcuts, i18n |
 | P5 Hardening/GA | 2–3 weeks | Security review, load tests, deliverability tuning, abuse controls, monitoring, docs, staged release |

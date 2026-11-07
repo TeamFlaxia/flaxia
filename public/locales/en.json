@@ -1168,5 +1168,9 @@
   "mail.quota_unavailable": "Storage usage is unavailable right now.",
   "mail.external_sends": "{count}/{limit} external sends today",
   "mail.settings_storage": "Storage",
-  "mail.settings_security": "Encryption"
+  "mail.settings_security": "Encryption",
+  "mail.unlock_to_read": "Unlock to read mail",
+  "mail.unlock_to_read_desc": "Your messages are encrypted with the Personal Vault. Unlock it on this device to decrypt the mailbox.",
+  "mail.key_unavailable": "Encrypted mail could not be opened on this device. Unlock the vault and try again.",
+  "mail.payload_unavailable": "This message could not be decrypted."
 }

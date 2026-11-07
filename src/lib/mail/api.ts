@@ -57,6 +57,86 @@ export interface MailThreadList {
   counts?: Partial<Record<MailFolder, number>>;
 }
 
+export interface WrappedMailKey {
+  ephemeral_public_key: string;
+  iv: string;
+  wrapped_content_key: string;
+  key_version: number;
+  recipient_address: string;
+}
+
+export interface EncryptedThreadRow {
+  id: string;
+  folder: MailFolder;
+  last_message_at: string;
+  message_count: number;
+  unread_count: number;
+  message_id: string;
+  subject_enc: string;
+  meta_enc: string;
+  payload_iv: string;
+  blob_id: string;
+  from_addr: string;
+  received_at: string;
+  read_at: string | null;
+  starred_at: string | null;
+  has_attachments: boolean;
+  size_bytes: number;
+  security: MailSecurity;
+  key: WrappedMailKey | null;
+}
+
+export interface EncryptedThreadList {
+  threads: EncryptedThreadRow[];
+  next_cursor?: string;
+  counts?: Partial<Record<MailFolder, number>>;
+}
+
+export interface EncryptedMessageRow {
+  id: string;
+  from_addr: string;
+  to_addr: string;
+  from_name_enc: string;
+  subject_enc: string;
+  meta_enc: string;
+  payload_iv: string;
+  blob_id: string;
+  message_id_hash: string;
+  in_reply_to_hash: string;
+  references_hash: string;
+  sent_at: string | null;
+  received_at: string;
+  size_bytes: number;
+  has_attachments: boolean;
+  read_at: string | null;
+  starred_at: string | null;
+  security: MailSecurity;
+  auth_results: string;
+  spam_score: number;
+  key: WrappedMailKey | null;
+}
+
+export interface EncryptedAttachmentRow {
+  id: string;
+  message_id: string;
+  content_type: string;
+  size_bytes: number;
+  scan_status: string;
+}
+
+export interface EncryptedThreadResponse {
+  thread: {
+    id: string;
+    folder: MailFolder;
+    subject_enc: string;
+    last_message_at: string;
+    message_count: number;
+    unread_count: number;
+  };
+  messages: EncryptedMessageRow[];
+  attachments: EncryptedAttachmentRow[];
+}
+
 export interface MailQuota {
   storage_bytes: number;
   storage_quota_bytes: number;
@@ -144,15 +224,36 @@ export function listThreads(params: {
   cursor?: string;
   limit?: number;
   q?: string;
-}): Promise<MailThreadList> {
+}): Promise<EncryptedThreadList> {
   const search = new URLSearchParams({ folder: params.folder, limit: String(params.limit ?? 30) });
   if (params.cursor) search.set('cursor', params.cursor);
   if (params.q) search.set('q', params.q);
   return request(`/api/mail/threads?${search.toString()}`);
 }
 
-export function getThread(id: string): Promise<MailThreadDetail> {
+export function getThread(id: string): Promise<EncryptedThreadResponse> {
   return request(`/api/mail/threads/${encodeURIComponent(id)}`);
+}
+
+async function binaryRequest(path: string): Promise<Uint8Array> {
+  const res = await fetch(path, { credentials: 'include' });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    const err = new Error(body.error ?? `mail_request_failed:${res.status}`);
+    (err as Error & { status?: number }).status = res.status;
+    throw err;
+  }
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+export function fetchMailPayload(messageId: string): Promise<Uint8Array> {
+  return binaryRequest(`/api/mail/messages/${encodeURIComponent(messageId)}/payload`);
+}
+
+export function fetchMailAttachment(messageId: string, attachmentId: string): Promise<Uint8Array> {
+  return binaryRequest(
+    `/api/mail/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
+  );
 }
 
 export function applyMessageAction(action: string, ids: string[]): Promise<unknown> {
