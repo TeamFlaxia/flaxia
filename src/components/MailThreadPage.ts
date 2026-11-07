@@ -86,10 +86,12 @@ export class MailThreadPage {
           t('mail.key_unavailable') ||
           'Encrypted mail could not be opened on this device. Unlock the vault and try again.';
       } else {
-        const messages: MailMessage[] = [];
-        for (const message of decrypted.messages) {
-          const payload = await reader.decryptPayload(message);
-          messages.push({
+        // Payloads are independent ciphertext blobs; fetch and decrypt them in
+        // parallel instead of racing each message round trip back-to-back.
+        const payloadList = await Promise.all(decrypted.messages.map((message) => reader.decryptPayload(message)));
+        const messages: MailMessage[] = decrypted.messages.map((message, index) => {
+          const payload = payloadList[index];
+          return {
             id: message.id,
             from_name: message.from_name,
             from_address: message.from_address,
@@ -99,8 +101,8 @@ export class MailThreadPage {
             body_html: payload?.html ?? undefined,
             security: message.security,
             attachments: message.attachments,
-          });
-        }
+          };
+        });
         this.thread = {
           id: decrypted.thread.id,
           subject: decrypted.thread.subject,

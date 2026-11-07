@@ -573,8 +573,9 @@ async function messageAttachment(
     return error('mail_invalid_attachment');
   }
   const row = await env.MAIL_DB.prepare(
-    `SELECT r2_key FROM mail_attachments
-     WHERE id = ? AND message_id = ? AND user_id = ?`,
+    `SELECT a.r2_key FROM mail_attachments a
+     JOIN mail_messages m ON m.id = a.message_id AND m.user_id = a.user_id AND m.deleted_at IS NULL
+     WHERE a.id = ? AND a.message_id = ? AND a.user_id = ?`,
   )
     .bind(attachmentId, messageId, userId)
     .first<{ r2_key: string }>();
@@ -640,6 +641,12 @@ async function messageActions(env: MailEnv, userId: string, req: Request): Promi
   }
   if (ids.length === 0 || ids.length > 100 || ids.some((id) => !MESSAGE_ID_PATTERN.test(id))) {
     return error('mail_invalid_message_ids');
+  }
+
+  // The key is claimed up front like other mutations, so a network retry with
+  // the same Idempotency-Key does not apply the batch twice.
+  if (!(await claimIdempotency(env, userId, idempotencyKey(req) as string))) {
+    return json({ ok: true, updated: 0 });
   }
 
   const owned = await env.MAIL_DB.prepare(
@@ -894,6 +901,12 @@ export default {
       }
       if (code === 552) {
         message.setReject('Mailbox quota exceeded');
+        return;
+      }
+      if (code === 554) {
+        // Permanent MIME-level failure (unparseable message, too many
+        // attachments): retrying would never succeed.
+        message.setReject('Message rejected');
         return;
       }
       throw err;

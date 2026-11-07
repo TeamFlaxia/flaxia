@@ -500,6 +500,14 @@ Rules:
 4. Check SPF/DKIM/DMARC results from the incoming message. Quarantine clear
    authentication failures as spam (never silently deliver them); the parsed
    summary is stored in `mail_messages.auth_results`.
+   - Every `Authentication-Results` header is read and the verdicts compared.
+     A client-supplied header is indistinguishable from the MX verdict, so
+     conflicting verdicts (e.g. a forged `pass` prepended before a real
+     `fail`) quarantine the message as `auth_conflict` instead of trusting
+     either header.
+   - Cutover gate: before `MAIL_INBOUND_ENABLED=1`, live-test that Email
+     Routing forwards or overrides pre-existing `Authentication-Results`
+     headers, and revisit step 4 against the observed behavior.
 5. Parse MIME: text, HTML, attachments, headers, inline CIDs, and the
    original raw message.
 6. Scan attachments through the existing scanning pipeline.
@@ -510,6 +518,11 @@ Rules:
 7. Generate a content key and wrap it for the recipient identity.
 8. Encrypt metadata, payload JSON, attachments, and optional raw MIME; write
    D1 metadata and R2 objects.
+   - Ciphertext reaches R2 only after the quota and recipient re-checks; the
+     D1 batch is atomic, so a commit failure discards the staged R2 objects.
+     A crash between the two leaves an orphaned, undecryptable object (the
+     wrapped key exists only in D1); `delete-user` prefix sweeps and the P5
+     clean-up collector reclaim such leftovers.
 9. Delete plaintext staging data.
 10. Thread the message using `References`/`In-Reply-To`; fall back to an HMAC
     of the normalized subject with `MAIL_THREAD_SECRET`.

@@ -236,16 +236,31 @@ mail.get('/threads/:id', async (c) => {
 });
 
 mail.get('/messages/:id', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:message:${user.id}`, 600, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
   const id = c.req.param('id') ?? '';
   return proxy(c, `/internal/messages/${encodeURIComponent(id)}`);
 });
 
 mail.get('/messages/:id/payload', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:payload:${user.id}`, 900, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
   const id = c.req.param('id') ?? '';
   return proxy(c, `/internal/messages/${encodeURIComponent(id)}/payload`);
 });
 
 mail.get('/messages/:id/attachments/:attachmentId', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:payload:${user.id}`, 900, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
   const id = c.req.param('id') ?? '';
   const attachmentId = c.req.param('attachmentId') ?? '';
   return proxy(c, `/internal/messages/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attachmentId)}`);

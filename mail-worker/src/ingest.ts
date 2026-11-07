@@ -2,6 +2,8 @@
 // Inbound pipeline (docs/mail.md §9.1). P2 parses MIME, resolves a thread,
 // encrypts metadata/payload/attachments, and stores only ciphertext + routing
 // metadata. External mail is plaintext during ingestion by design (D5).
+// R2 writes happen only after the quota/recipient checks, and a failed D1
+// batch discards the staged ciphertext (no undecryptable R2 orphans).
 import {
   attachmentKeyInfo,
   attachmentNameInfo,
@@ -14,7 +16,7 @@ import {
   subjectInfo,
   wrapContentKey,
 } from './crypto.ts';
-import { parseInboundEmail } from './parse.ts';
+import { type ParsedInbound, parseInboundEmail } from './parse.ts';
 
 export const MAX_INBOUND_BYTES = 10 * 1024 * 1024;
 export const MAX_STORAGE_BYTES = 512 * 1024 * 1024;
@@ -59,22 +61,32 @@ export async function handleInboundEmail(
     .first<{ public_key: string; key_version: number }>();
   if (!identity) throw new Error('mail_identity_missing');
 
-  const parsed = await parseInboundEmail({
-    raw,
-    envelopeFrom,
-    envelopeTo: normalizedTo,
-    headers,
-    threadSecret: env.MAIL_THREAD_SECRET,
-  });
+  let parsed: ParsedInbound;
+  try {
+    parsed = await parseInboundEmail({
+      raw,
+      envelopeFrom,
+      envelopeTo: normalizedTo,
+      headers,
+      threadSecret: env.MAIL_THREAD_SECRET,
+    });
+  } catch (err) {
+    // Corrupt/depth-limited MIME is a permanent failure; the coded error makes
+    // the email() handler setReject instead of retrying an unparseable message.
+    throw Object.assign(new Error('mail_parse_failed'), { code: 554, cause: err });
+  }
   new Uint8Array(raw).fill(0);
 
-  if (parsed.attachments.length > MAX_ATTACHMENTS) throw new Error('mail_too_many_attachments');
+  if (parsed.attachments.length > MAX_ATTACHMENTS) {
+    throw Object.assign(new Error('mail_too_many_attachments'), { code: 554 });
+  }
 
-  const attachmentBytes = parsed.attachments.reduce((sum, attachment) => sum + attachment.sizeBytes, 0);
   const usage = await env.MAIL_DB.prepare('SELECT storage_bytes FROM mail_usage WHERE user_id = ?')
     .bind(address.user_id)
     .first<{ storage_bytes: number }>();
-  if ((Number(usage?.storage_bytes) || 0) + raw.byteLength + attachmentBytes > MAX_STORAGE_BYTES) {
+  // Attachments are already part of the raw message, so the early gate tallies
+  // raw size only; the exact ciphertext total is re-checked before any R2 write.
+  if ((Number(usage?.storage_bytes) || 0) + raw.byteLength > MAX_STORAGE_BYTES) {
     throw Object.assign(new Error('mail_quota_exceeded'), { code: 552 });
   }
 
@@ -118,7 +130,7 @@ export async function handleInboundEmail(
     }
 
     const r2Key = `mail/${address.user_id}/${messageId}/payload.enc`;
-    await env.MAIL_BUCKET.put(r2Key, encryptedPayload.ciphertext);
+    const staged: Array<{ key: string; bytes: Uint8Array }> = [{ key: r2Key, bytes: encryptedPayload.ciphertext }];
     let storedBytes = encryptedPayload.ciphertext.byteLength;
 
     const attachments: Array<{
@@ -129,6 +141,8 @@ export async function handleInboundEmail(
       r2Key: string;
       scanStatus: string;
     }> = [];
+    // Seal every attachment in memory; the R2 writes happen after the quota and
+    // recipient re-checks below so a rejected message never leaves objects behind.
     for (const attachment of parsed.attachments) {
       const filenameEnc = await encryptString(contentKey, attachment.filename, attachmentNameInfo(attachment.id));
       let attachmentR2Key = '';
@@ -138,7 +152,7 @@ export async function handleInboundEmail(
         try {
           const sealed = await encryptBytes(attachmentKey, attachment.content, attachmentKeyInfo(attachment.id));
           attachmentR2Key = `mail/${address.user_id}/${messageId}/attachments/${attachment.id}.enc`;
-          await env.MAIL_BUCKET.put(attachmentR2Key, sealed.ciphertext);
+          staged.push({ key: attachmentR2Key, bytes: sealed.ciphertext });
           storedBytes += sealed.ciphertext.byteLength;
           scanStatus = 'pending';
         } finally {
@@ -156,6 +170,33 @@ export async function handleInboundEmail(
         r2Key: attachmentR2Key,
         scanStatus,
       });
+    }
+
+    if ((Number(usage?.storage_bytes) || 0) + storedBytes > MAX_STORAGE_BYTES) {
+      throw Object.assign(new Error('mail_quota_exceeded'), { code: 552 });
+    }
+
+    // If the address disappeared during processing, do not write R2 or commit
+    // mailbox data for a dead mailbox.
+    const stillActive = await env.MAIL_DB.prepare('SELECT user_id, state FROM mail_addresses WHERE address = ?')
+      .bind(normalizedTo)
+      .first<{ user_id: string; state: string }>();
+    if (!stillActive || stillActive.state !== 'active' || stillActive.user_id !== address.user_id) {
+      throw Object.assign(new Error('mail_recipient_unknown'), { code: 550 });
+    }
+
+    const discardStaged = (count: number): Promise<unknown> =>
+      Promise.all(staged.slice(0, count).map((object) => env.MAIL_BUCKET.delete(object.key).catch(() => undefined)));
+
+    let written = 0;
+    try {
+      for (const object of staged) {
+        await env.MAIL_BUCKET.put(object.key, object.bytes);
+        written += 1;
+      }
+    } catch (err) {
+      await discardStaged(written);
+      throw err;
     }
 
     // Thread resolution: direct parent first, then a recent subject fallback.
@@ -314,15 +355,15 @@ export async function handleInboundEmail(
       );
     }
 
-    // If the address disappeared during processing, do not commit mailbox data.
-    const stillActive = await env.MAIL_DB.prepare('SELECT user_id, state FROM mail_addresses WHERE address = ?')
-      .bind(normalizedTo)
-      .first<{ user_id: string; state: string }>();
-    if (!stillActive || stillActive.state !== 'active' || stillActive.user_id !== address.user_id) {
-      throw Object.assign(new Error('mail_recipient_unknown'), { code: 550 });
+    try {
+      // The batch is atomic in D1, so an exception here means nothing was
+      // committed: discard the staged ciphertext instead of leaving
+      // undecryptable orphans in R2.
+      await env.MAIL_DB.batch(statements);
+    } catch (err) {
+      await discardStaged(staged.length);
+      throw err;
     }
-
-    await env.MAIL_DB.batch(statements);
   } finally {
     contentKey.fill(0);
   }

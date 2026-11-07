@@ -105,4 +105,48 @@ describe('mail MIME parsing', () => {
     assert.equal(parsed.spam, true);
     assert.equal(parsed.spamReason, 'auth_failed');
   });
+
+  it('quarantines conflicting Authentication-Results headers', async () => {
+    const parsed = await parseInboundEmail({
+      raw: raw(
+        [
+          'From: Spoof <spoof@example.com>',
+          'To: preview@flaxia.app',
+          'Subject: Verify your account',
+          // A client can prepend forged verdicts; the forged pass must not
+          // override the MX verdict, so the conflict quarantines the message.
+          'Authentication-Results: forged.example; spf=pass dkim=pass dmarc=pass',
+          'Authentication-Results: mx.cloudflare.net; spf=fail dkim=fail dmarc=fail',
+          'Content-Type: text/plain; charset=utf-8',
+        ],
+        'Click here',
+      ),
+      envelopeFrom: 'spoof@example.com',
+      envelopeTo: 'preview@flaxia.app',
+    });
+    assert.equal(parsed.auth.ambiguous, true);
+    assert.equal(parsed.spam, true);
+    assert.equal(parsed.spamReason, 'auth_conflict');
+  });
+
+  it('keeps agreeing duplicate Authentication-Results headers unquarantined', async () => {
+    const parsed = await parseInboundEmail({
+      raw: raw(
+        [
+          'From: Alice <alice@example.com>',
+          'To: preview@flaxia.app',
+          'Subject: Hello',
+          'Authentication-Results: mx.cloudflare.net; spf=pass dkim=pass dmarc=pass',
+          'Authentication-Results: mx.cloudflare.net; spf=pass dkim=pass dmarc=pass',
+          'Content-Type: text/plain; charset=utf-8',
+        ],
+        'Hello body',
+      ),
+      envelopeFrom: 'alice@example.com',
+      envelopeTo: 'preview@flaxia.app',
+    });
+    assert.equal(parsed.auth.ambiguous, false);
+    assert.equal(parsed.spam, false);
+    assert.equal(parsed.spamReason, null);
+  });
 });

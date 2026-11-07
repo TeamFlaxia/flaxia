@@ -9,6 +9,8 @@ export interface MailAuthResults {
   dkim: string;
   dmarc: string;
   raw: string;
+  /** Two Authentication-Results headers disagree on a verdict. */
+  ambiguous: boolean;
 }
 
 export interface ParsedAttachment {
@@ -142,7 +144,7 @@ function headerValue(headers: Headers | undefined, name: string): string {
 }
 
 function parseAuthResults(raw: string): MailAuthResults {
-  const result: MailAuthResults = { spf: 'unknown', dkim: 'unknown', dmarc: 'unknown', raw };
+  const result: MailAuthResults = { spf: 'unknown', dkim: 'unknown', dmarc: 'unknown', raw, ambiguous: false };
   for (const match of raw.matchAll(/\b(spf|dkim|dmarc)\s*=\s*([a-z]+)/gi)) {
     const key = match[1]?.toLowerCase();
     const value = match[2]?.toLowerCase();
@@ -152,6 +154,34 @@ function parseAuthResults(raw: string): MailAuthResults {
     else result.dmarc = value;
   }
   return result;
+}
+
+function authHeaders(email: { key: string; value?: string }[], headers?: Headers): string[] {
+  // Every ARH in the message must agree; a client-supplied one before our MX
+  // is indistinguishable from a real verdict, so conflicts are quarantined
+  // instead of trusting the first header. See docs/mail.md §9.1 step 4.
+  const values = email
+    .filter((header) => header.key === 'authentication-results')
+    .map((header) => header.value ?? '')
+    .filter((value) => value.length > 0);
+  if (values.length === 0) {
+    const fallback = headerValue(headers, 'Authentication-Results');
+    if (fallback) values.push(fallback);
+  }
+  return values;
+}
+
+function mergeAuthResults(results: MailAuthResults[]): MailAuthResults {
+  const merged = results[0] ?? { spf: 'unknown', dkim: 'unknown', dmarc: 'unknown', raw: '', ambiguous: false };
+  let ambiguous = false;
+  for (const mechanism of ['spf', 'dkim', 'dmarc'] as const) {
+    const verdicts = new Set(results.map((item) => item[mechanism]).filter((value) => value !== 'unknown'));
+    if (verdicts.size > 1) {
+      ambiguous = true;
+      break;
+    }
+  }
+  return { ...merged, ambiguous };
 }
 
 function extension(filename: string): string {
@@ -196,10 +226,7 @@ export async function parseInboundEmail(input: {
   const text = email.text?.trim() || (email.html ? stripHtml(email.html) : '');
   const html = email.html ?? null;
 
-  const authHeader =
-    email.headers.find((header) => header.key === 'authentication-results')?.value ??
-    headerValue(input.headers, 'Authentication-Results');
-  const auth = parseAuthResults(authHeader);
+  const auth = mergeAuthResults(authHeaders(email.headers, input.headers).map(parseAuthResults));
 
   const messageIdHeader = normalizeMessageId(email.messageId ?? '');
   const inReplyTo = normalizeMessageId(email.inReplyTo ?? '');
@@ -236,13 +263,15 @@ export async function parseInboundEmail(input: {
   const authFailed = auth.dmarc === 'fail' || auth.dmarc === 'reject' || (auth.spf === 'fail' && auth.dkim === 'fail');
   const blocked = attachments.some((attachment) => attachment.blocked);
   const needsScan = attachments.some((attachment) => !attachment.inline && !attachment.blocked);
-  const spamReason = authFailed
-    ? 'auth_failed'
-    : blocked
-      ? 'attachment_blocked'
-      : needsScan
-        ? 'attachment_scan_unavailable'
-        : null;
+  const spamReason = auth.ambiguous
+    ? 'auth_conflict'
+    : authFailed
+      ? 'auth_failed'
+      : blocked
+        ? 'attachment_blocked'
+        : needsScan
+          ? 'attachment_scan_unavailable'
+          : null;
 
   return {
     subject: subject || '(No subject)',

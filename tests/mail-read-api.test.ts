@@ -201,4 +201,26 @@ describe('mail read API', () => {
     assert.equal(await attachment.text(), 'ciphertext:att-key');
     sqlite.close();
   });
+
+  it('stops serving attachment bytes after the parent message is soft-deleted', async () => {
+    const sqlite = database();
+    const envValue = env(sqlite);
+    const payload = JSON.stringify({ action: 'delete', ids: ['msg-2'] });
+    const response = await worker.fetch(
+      await signed(envValue, 'POST', '/internal/messages/actions', payload),
+      envValue,
+    );
+    assert.equal(response.status, 200, await response.clone().text());
+    const attachment = await worker.fetch(
+      await signed(envValue, 'GET', '/internal/messages/msg-2/attachments/att-1'),
+      envValue,
+    );
+    assert.equal(attachment.status, 404, 'a deleted message must not keep serving its attachments');
+    const messagePayload = await worker.fetch(
+      await signed(envValue, 'GET', '/internal/messages/msg-2/payload'),
+      envValue,
+    );
+    assert.equal(messagePayload.status, 404);
+    sqlite.close();
+  });
 });
