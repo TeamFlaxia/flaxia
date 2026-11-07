@@ -54,6 +54,7 @@ const groups = {
     'activitypub-inbox-integrity',
     'ai-index',
     'duplicate-posts',
+    'external-feed',
     'link-preview',
     'link-preview-integration',
     'linucb',
