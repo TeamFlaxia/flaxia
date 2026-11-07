@@ -661,6 +661,14 @@ deploy. The Worker ships with `MAIL_INBOUND_ENABLED=0` and rejects live mail;
 MIME authentication, attachment scanning, threading, and the read UI land in P2.
 Cut over only after P2 is deployed and tested.
 
+**Cutover update (2026-11-07):** P2 (#300) shipped and the Worker was deployed
+with `MAIL_INBOUND_ENABLED=1`; the committed config now carries `"1"` so CI
+`deploy-mail` redeploys stay consistent. Email Routing cutover (catch-all →
+Worker, postmaster/abuse forwarding per §11.1.3) was executed. The §9.1
+step-4 gate (forged `Authentication-Results` behaviour against live Email
+Routing relays) remains an open follow-up; conflicting ARHs quarantine until
+resolved.
+
 1. Existing human Email Routing destinations are **removed**: no catch-all forward, no `MAIL_FALLBACK_FORWARD`. All `@flaxia.app` user routing goes to the Mail Worker; unknown recipients are rejected with 550 at the Worker.
 2. Existing human addresses (`dmarc@`, `security@`, `support@`, `noreply@`, `admin@`, `team@`) become reserved mail addresses handled by the Worker (or explicit reject), never silently forwarded to an external human mailbox.
 3. **Exception (2026-11-06):** `postmaster@flaxia.app` and `abuse@flaxia.app` are forwarded via Cloudflare Email Routing to `teamflaxia@proton.me`. These two addresses are operational mailboxes monitored by TeamFlaxia outside Flaxia Mail, so they are outside the Mail encryption boundary (not E2EE, not encrypted at rest in MAIL_DB). User mail (`username@flaxia.app`) and the catch-all never transit this rule.

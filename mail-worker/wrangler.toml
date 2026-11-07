@@ -36,8 +36,9 @@ dead_letter_queue = "flaxia-mail-dlq"
 
 [vars]
 MAIL_DOMAIN = "flaxia.app"
-# P1 does not accept live mail yet: MIME auth/scanning/threading land in P2.
-# Keep this "0" and do not point Email Routing at the Worker until P2 ships.
-MAIL_INBOUND_ENABLED = "0"
+MAIL_INBOUND_ENABLED = "1"
+# Apex cutover D6 has executed (2026-11-07, post P2 #300): Email Routing
+# catch-all routes live mail to this Worker, so inbound must stay enabled.
+# To disable receiving in an incident, flip this to "0" and redeploy.
 # Apex cutover (D6): human forwarding is deleted. Unknown recipients are
 # rejected by the Worker with 550; there is no fallback mailbox.
