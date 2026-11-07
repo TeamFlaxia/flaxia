@@ -5,6 +5,7 @@ import {
   isLocalTranslateReady,
   isOndeviceUnavailable,
   type LocalAiInferencePayload,
+  preloadLocalAiModel,
   resolveCrowdConsentState,
   runLocalAiInference,
 } from '../lib/crowd-node.js';
@@ -272,6 +273,7 @@ export function createTranslatePage(): { getElement: () => HTMLElement; destroy:
   let activeController: AbortController | null = null;
   let status: TranslateStatus = 'idle';
   let destroyed = false;
+  let preloadInFlight = false;
 
   const updateCounts = () => {
     sourceCount.textContent = `${sourceInput.value.length} / 5000`;
@@ -347,6 +349,18 @@ export function createTranslatePage(): { getElement: () => HTMLElement; destroy:
       } catch (error) {
         if (isOndeviceUnavailable(error)) {
           status = 'preloading';
+          // Warm the model now instead of waiting for the idle preloader,
+          // then translate once it is ready. Guarded to a single in-flight
+          // preload so a persistent failure cannot spin a retry loop.
+          if (!preloadInFlight) {
+            preloadInFlight = true;
+            void preloadLocalAiModel({ model: routedModel, task: payload.task })
+              .catch(() => {})
+              .finally(() => {
+                preloadInFlight = false;
+                if (!destroyed) void translate();
+              });
+          }
         } else {
           status = 'error';
           console.error('Local translate failed:', error);

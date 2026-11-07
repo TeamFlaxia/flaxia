@@ -4,7 +4,7 @@ import { API_ORIGIN, isTauriNativePlatform } from './native-api.ts';
 export const CROWD_ORCHESTRATOR_URL = 'https://crowd.flaxia.app';
 
 /** Pinned `@flaxia/node` version served through the /api/crowd asset proxy. */
-export const CROWD_NODE_VERSION = '0.5.1';
+export const CROWD_NODE_VERSION = '0.6.1';
 
 export const CROWD_SITE_ID = 'flaxia';
 
@@ -303,6 +303,19 @@ export async function runLocalAiInference(payload: LocalAiInferencePayload): Pro
     throw err;
   }
   return run.call(controller, payload);
+}
+
+/**
+ * Download + warm a translate model on this device (Light Inference
+ * preload). No-ops when the node cannot run; resolves once the model is
+ * ready to serve `ondeviceOnly` tasks. Safe to call while the idle
+ * preloader is already warming the same model (idempotent).
+ */
+export async function preloadLocalAiModel(request: { model: string; task: string; dtype?: string }): Promise<void> {
+  const preload = controller?.preloadAiModel;
+  if (!preload || !controller?.isRunning?.()) return;
+  if (getCrowdConsentState() !== 'granted') return;
+  await preload.call(controller, request);
 }
 
 export function isOndeviceUnavailable(error: unknown): boolean {
