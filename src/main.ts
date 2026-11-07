@@ -5,6 +5,7 @@ import './styles/redesign/timeline.css';
 import './styles/redesign/composer.css';
 import './styles/redesign/overlays.css';
 import './styles/redesign/pages.css';
+import './styles/redesign/mail.css';
 import './styles/redesign/command.css';
 import './styles/redesign/rail.css';
 import './styles/redesign/motion.css';
@@ -166,6 +167,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     let downloadPage: PageComponent | null = null;
     let mailPage: PageComponent | null = null;
     let mailSettingsPage: PageComponent | null = null;
+    let mailThreadPage: PageComponent | null = null;
+    let mailComposePage: PageComponent | null = null;
     let cachedContentComponent: { view: string; component: unknown; scrollY: number } | null = null;
     let adminLayout:
       | (PageComponent & { updateMainContent: (el: HTMLElement) => void; setAccessDenied: () => void })
@@ -572,6 +575,14 @@ document.addEventListener('DOMContentLoaded', async () => {
           mailSettingsPage.destroy();
           mailSettingsPage = null;
         }
+        if (mailThreadPage) {
+          mailThreadPage.destroy();
+          mailThreadPage = null;
+        }
+        if (mailComposePage) {
+          mailComposePage.destroy();
+          mailComposePage = null;
+        }
       }
       showPageLoader();
       app.innerHTML = '';
@@ -657,6 +668,19 @@ document.addEventListener('DOMContentLoaded', async () => {
               currentUser: currentUser ? { id: currentUser.id, username: currentUser.username } : null,
             });
             mainContainer.appendChild(mailSettingsPage.getElement());
+          } else if (view === 'mail-thread') {
+            const { createMailThreadPage } = await import('./components/MailThreadPage.js');
+            mailThreadPage = createMailThreadPage({
+              currentUser: currentUser ? { id: currentUser.id, username: currentUser.username } : null,
+              threadId: postId || '',
+            });
+            mainContainer.appendChild(mailThreadPage.getElement());
+          } else if (view === 'mail-compose') {
+            const { createMailComposePage } = await import('./components/MailComposePage.js');
+            mailComposePage = createMailComposePage({
+              currentUser: currentUser ? { id: currentUser.id, username: currentUser.username } : null,
+            });
+            mainContainer.appendChild(mailComposePage.getElement());
           } else {
             const { createMailPage } = await import('./components/MailPage.js');
             mailPage = createMailPage({

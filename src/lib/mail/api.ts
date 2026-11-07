@@ -6,6 +6,57 @@
 
 export type MailSecurity = 'e2ee' | 'at_rest' | 'tls';
 
+export type MailFolder = 'inbox' | 'sent' | 'drafts' | 'archive' | 'spam' | 'trash';
+
+export interface MailAttachment {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+}
+
+export interface MailThreadSummary {
+  id: string;
+  folder: MailFolder;
+  subject: string;
+  snippet: string;
+  from_name: string;
+  from_address: string;
+  date: string;
+  unread: boolean;
+  starred: boolean;
+  has_attachment: boolean;
+  message_count: number;
+  security: MailSecurity;
+}
+
+export interface MailMessage {
+  id: string;
+  from_name: string;
+  from_address: string;
+  to: string[];
+  date: string;
+  body_text: string;
+  body_html?: string;
+  quoted_text?: string;
+  security: MailSecurity;
+  attachments?: MailAttachment[];
+}
+
+export interface MailThreadDetail {
+  id: string;
+  subject: string;
+  security: MailSecurity;
+  labels?: string[];
+  messages: MailMessage[];
+}
+
+export interface MailThreadList {
+  threads: MailThreadSummary[];
+  next_cursor?: string;
+  counts?: Partial<Record<MailFolder, number>>;
+}
+
 export interface MailQuota {
   storage_bytes: number;
   storage_quota_bytes: number;
@@ -80,4 +131,62 @@ export function fetchKeysForAddresses(
   addresses: string[],
 ): Promise<{ keys: Array<{ address: string; public_key: string; key_version: number }> }> {
   return request(`/api/mail/keys?addresses=${encodeURIComponent(addresses.join(','))}`);
+}
+
+export function isMailNotImplemented(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const status = (error as Error & { status?: number }).status;
+  return status === 501 || error.message === 'mail_not_implemented';
+}
+
+export function listThreads(params: {
+  folder: MailFolder;
+  cursor?: string;
+  limit?: number;
+  q?: string;
+}): Promise<MailThreadList> {
+  const search = new URLSearchParams({ folder: params.folder, limit: String(params.limit ?? 30) });
+  if (params.cursor) search.set('cursor', params.cursor);
+  if (params.q) search.set('q', params.q);
+  return request(`/api/mail/threads?${search.toString()}`);
+}
+
+export function getThread(id: string): Promise<MailThreadDetail> {
+  return request(`/api/mail/threads/${encodeURIComponent(id)}`);
+}
+
+export function applyMessageAction(action: string, ids: string[]): Promise<unknown> {
+  return request('/api/mail/messages/actions', {
+    method: 'POST',
+    body: JSON.stringify({ action, ids }),
+  });
+}
+
+export function sendMessage(input: {
+  from: string;
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject: string;
+  text: string;
+  security: MailSecurity;
+}): Promise<unknown> {
+  return request('/api/mail/messages', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export function saveDraft(input: {
+  from: string;
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject: string;
+  text: string;
+}): Promise<unknown> {
+  return request('/api/mail/drafts', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
 }
