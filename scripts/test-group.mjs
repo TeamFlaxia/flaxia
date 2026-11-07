@@ -116,6 +116,7 @@ const groups = {
     'rescreen-quarantined',
     'sandbox-preview-bridge',
     'sandbox-response-policy',
+    'translate',
     'wvfs-cookie-compat',
     'wvfs-game-url',
     'wvfs-image-cors',

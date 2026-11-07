@@ -48,6 +48,7 @@ export class BottomNav {
       { id: 'home', label: t('nav.home'), icon: 'home' as IconName },
       { id: 'explore', label: t('nav.explore'), icon: 'search' as IconName },
       { id: 'arcade', label: t('nav.arcade'), icon: 'game' as IconName },
+      { id: 'translate', label: t('nav.translate'), icon: 'translate' as IconName },
       { id: 'notifications', label: t('nav.notifications'), icon: 'notifications' as IconName },
     ];
 

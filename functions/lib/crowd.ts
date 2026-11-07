@@ -20,6 +20,15 @@ import {
   verifyCrowdWebhook,
 } from '@flaxia/sdk';
 import { stripPostColors } from '../../src/lib/post-colors.ts';
+import {
+  buildPlamoPrompt,
+  isPlamoSupported,
+  M2M100_MODEL_ID,
+  M2M100_TASK,
+  PLAMO_MODEL_ID,
+  PLAMO_TASK,
+  translateModelFor,
+} from '../../src/lib/translate-languages.ts';
 import { postTextSha } from './ai-index.ts';
 import { loadBlocklist, matchBlocklist, matchSignatureEntry } from './scan/blocklist.ts';
 import { clamavVerdict, parseContainerOutput, parseVideoPhashes } from './scan/container-result.ts';
@@ -993,6 +1002,8 @@ export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1
         await handleVectorEmbedResult(url, event, db, env);
       } else if (callbackType === 'file-scan') {
         await handleFileScanResult(url, event, db, env);
+      } else if (callbackType === 'translate') {
+        await handleTranslateResult(url, event, db);
       }
     } else if (event.status === 'failed') {
       console.log(
@@ -1014,6 +1025,8 @@ export async function handleCrowdWebhook(request: Request, env: CrowdEnv, db: D1
         }
       } else if (callbackType === 'file-scan') {
         await handleFileScanTaskFailure(url, event, db);
+      } else if (callbackType === 'translate') {
+        await handleTranslateTaskFailure(url, event, db);
       }
     }
 
@@ -1056,4 +1069,154 @@ export async function applyNsfwTags(db: D1Database, postId: string, tags: string
     .bind(JSON.stringify(hashtags), postId)
     .run();
   return result.success;
+}
+
+// ── Translate (ai-inference, Light Inference backend path) ──
+
+export const TRANSLATE_MODEL_ID = PLAMO_MODEL_ID;
+export const TRANSLATE_TASK = PLAMO_TASK;
+export { M2M100_MODEL_ID, M2M100_TASK, PLAMO_MODEL_ID, PLAMO_TASK };
+
+const TRANSLATE_JOBS_SCHEMA = `task_id TEXT PRIMARY KEY, crowd_task_id TEXT, source_text TEXT NOT NULL, source_lang TEXT NOT NULL, target_lang TEXT NOT NULL, translated_text TEXT, status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','done','failed')), created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
+
+const translateJobsChecked = new WeakSet<D1Database>();
+
+export async function ensureTranslateJobsTable(db: D1Database): Promise<void> {
+  if (translateJobsChecked.has(db)) return;
+  try {
+    await db.prepare(`CREATE TABLE IF NOT EXISTS translate_jobs (${TRANSLATE_JOBS_SCHEMA})`).run();
+    await db.prepare('CREATE INDEX IF NOT EXISTS idx_translate_jobs_created ON translate_jobs(created_at)').run();
+    translateJobsChecked.add(db);
+  } catch (e) {
+    console.error('Failed to ensure translate_jobs table:', e);
+  }
+}
+
+export interface TranslateSubmitResult {
+  jobId: string;
+  crowdTaskId: string;
+}
+
+/**
+ * Submit one translation to Crowd via the `ai-inference` workload.
+ * The text is stored briefly in D1 so the client can poll the result;
+ * it is deleted after the job completes (TTL sweep on read).
+ */
+export async function submitTranslate(
+  db: D1Database,
+  env: CrowdEnv,
+  input: { text: string; sourceLang: string; targetLang: string },
+): Promise<TranslateSubmitResult | null> {
+  const config = crowdConfig(env);
+  if (!config.configured || config.screeningDisabled) return null;
+  const client = getCrowdClient(config);
+  if (!client) return null;
+
+  const jobId = crypto.randomUUID();
+  try {
+    await ensureTranslateJobsTable(db);
+    await db
+      .prepare(
+        'INSERT INTO translate_jobs (task_id, crowd_task_id, source_text, source_lang, target_lang, status) VALUES (?, ?, ?, ?, ?, ?)',
+      )
+      .bind(jobId, null, input.text, input.sourceLang, input.targetLang, 'pending')
+      .run();
+    const callbackUrl = buildCallbackUrl({
+      baseUrl: config.baseUrl,
+      type: 'translate',
+      params: { taskId: jobId },
+    });
+    const { model, task } = translateModelFor(input.sourceLang, input.targetLang);
+    const plamo = isPlamoSupported(input.sourceLang, input.targetLang);
+    // PLaMO is a decoder-only text-generation model: it takes a PFML3 prompt
+    // string as `input` and ignores src_lang/tgt_lang options. M2M100 keeps
+    // the original translation payload shape.
+    const payload = plamo
+      ? {
+          task,
+          model,
+          input: buildPlamoPrompt(input.text, input.sourceLang, input.targetLang),
+          options: { max_new_tokens: 512, do_sample: false },
+        }
+      : {
+          task,
+          model,
+          input: input.text,
+          options: { src_lang: input.sourceLang, tgt_lang: input.targetLang },
+        };
+    const res = await client.submit({
+      workload: 'ai-inference',
+      payload: payload as unknown as Parameters<typeof client.submit>[0]['payload'],
+      callbackUrl,
+      timeoutMs: DEFAULT_WORKLOAD_TIMEOUT_MS['ai-inference'],
+    });
+    await db.prepare('UPDATE translate_jobs SET crowd_task_id = ? WHERE task_id = ?').bind(res.taskId, jobId).run();
+    return { jobId, crowdTaskId: res.taskId };
+  } catch (e) {
+    console.error('Translate submission failed:', e);
+    try {
+      await db
+        .prepare('UPDATE translate_jobs SET status = ?, updated_at = ? WHERE task_id = ?')
+        .bind('failed', new Date().toISOString(), jobId)
+        .run();
+    } catch {
+      /* best effort */
+    }
+    return null;
+  }
+}
+
+function extractTranslateText(event: CrowdWebhookEvent): string | null {
+  const output = extractCallbackOutput(event) as unknown;
+  if (typeof output === 'string' && output) return output;
+  if (Array.isArray(output) && output.length > 0) {
+    const first = output[0] as unknown;
+    if (typeof first === 'string') return first;
+    if (first && typeof first === 'object') {
+      const rec = first as Record<string, unknown>;
+      // M2M100: translation_text; PLaMO text-generation: generated_text
+      const text = rec.translation_text ?? rec.generated_text;
+      if (typeof text === 'string' && text) return text;
+    }
+  }
+  if (output && typeof output === 'object') {
+    const rec = output as Record<string, unknown>;
+    const candidates: unknown[] = [rec.translation_text, rec.generated_text, rec.translated_text, rec.text, rec.output];
+    for (const c of candidates) {
+      if (typeof c === 'string' && c) return c;
+      if (Array.isArray(c) && c.length > 0 && typeof c[0] === 'string') return String(c[0]);
+    }
+  }
+  return null;
+}
+
+async function handleTranslateResult(url: URL, event: CrowdWebhookEvent, db: D1Database): Promise<void> {
+  const jobId = url.searchParams.get('taskId');
+  if (!jobId) return;
+  await ensureTranslateJobsTable(db);
+  const text = extractTranslateText(event);
+  const now = new Date().toISOString();
+  if (text) {
+    await db
+      .prepare('UPDATE translate_jobs SET translated_text = ?, status = ?, updated_at = ? WHERE task_id = ?')
+      .bind(text, 'done', now, jobId)
+      .run();
+  } else {
+    await db
+      .prepare('UPDATE translate_jobs SET status = ?, updated_at = ? WHERE task_id = ?')
+      .bind('failed', now, jobId)
+      .run();
+  }
+  console.log(`Translate webhook done for job ${jobId}: ok=${Boolean(text)}`);
+}
+
+async function handleTranslateTaskFailure(url: URL, event: CrowdWebhookEvent, db: D1Database): Promise<void> {
+  const jobId = url.searchParams.get('taskId');
+  if (!jobId) return;
+  await ensureTranslateJobsTable(db);
+  await db
+    .prepare('UPDATE translate_jobs SET status = ?, updated_at = ? WHERE task_id = ?')
+    .bind('failed', new Date().toISOString(), jobId)
+    .run();
+  console.log(`Translate webhook failed for job ${jobId}: ${event.error || 'unknown'}`);
 }
