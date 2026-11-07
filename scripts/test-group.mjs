@@ -31,6 +31,7 @@ const groups = {
     'mail-internal-auth',
     'mail-parse',
     'mail-read-api',
+    'mail-send-external',
     'mail-send-internal',
     'mail-send-seal',
     'market-auth-session',
