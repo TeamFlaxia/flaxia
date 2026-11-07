@@ -32,5 +32,5 @@ CREATE INDEX idx_external_items_publish
   ON external_items(publish_at DESC);
 
 INSERT INTO external_sources (source, label, feed_url, enabled) VALUES
-  ('arxiv', 'arXiv', 'https://export.arxiv.org/api/query?search_query=all:%2A&sortBy=submittedDate&sortOrder=descending&max_results=50', 1),
-  ('hackernews', 'Hacker News', 'https://hn.algolia.com/api/v1/search_by_date?tags=story&hitsPerPage=50', 1);
+  ('arxiv', 'arXiv', 'https://export.arxiv.org/api/query?search_query=cat:%2A&sortBy=submittedDate&sortOrder=descending&max_results=200', 1),
+  ('hackernews', 'Hacker News', 'https://hn.algolia.com/api/v1/search_by_date?tags=story&hitsPerPage=200', 1);

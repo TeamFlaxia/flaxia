@@ -278,7 +278,9 @@ source dropdown (`arxiv`, `hackernews`).
 
 `GET /api/external-feed?source=<all|arxiv|hackernews>&cursor=<publish_at>,<id>&limit=`
 — newest-first external items in the shape above. Refreshed hourly by the
-backend worker cron (`functions/lib/external-feed.ts`).
+backend worker cron (`functions/lib/external-feed.ts`); the API also fetches
+on demand on the first read so a fresh local database (where the cron never
+runs) still lists items.
 
 ---
 

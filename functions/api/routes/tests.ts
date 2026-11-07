@@ -136,12 +136,12 @@ app.post('/api/test/reset', requireTestEnvironment, async (c) => {
         .bind(
           'arxiv',
           'arXiv',
-          'https://export.arxiv.org/api/query?search_query=all:%2A&sortBy=submittedDate&sortOrder=descending&max_results=50',
+          'https://export.arxiv.org/api/query?search_query=cat:%2A&sortBy=submittedDate&sortOrder=descending&max_results=200',
         )
         .run();
       await db
         .prepare('INSERT OR IGNORE INTO external_sources (source, label, feed_url, enabled) VALUES (?, ?, ?, 1)')
-        .bind('hackernews', 'Hacker News', 'https://hn.algolia.com/api/v1/search_by_date?tags=story&hitsPerPage=50')
+        .bind('hackernews', 'Hacker News', 'https://hn.algolia.com/api/v1/search_by_date?tags=story&hitsPerPage=200')
         .run();
     }
   }
