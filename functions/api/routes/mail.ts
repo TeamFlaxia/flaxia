@@ -207,17 +207,86 @@ mail.post('/report-abuse', async (c) => {
   });
 });
 
+mail.get('/threads', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:threads:${user.id}`, 240, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
+  const search = new URLSearchParams();
+  const folder = c.req.query('folder') ?? 'inbox';
+  const limit = c.req.query('limit') ?? '30';
+  const cursor = c.req.query('cursor');
+  const q = c.req.query('q');
+  search.set('folder', folder);
+  search.set('limit', limit);
+  if (cursor) search.set('cursor', cursor);
+  if (q) search.set('q', q);
+  return proxy(c, `/internal/threads?${search.toString()}`);
+});
+
+mail.get('/threads/:id', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:thread:${user.id}`, 600, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
+  const id = c.req.param('id') ?? '';
+  return proxy(c, `/internal/threads/${encodeURIComponent(id)}`);
+});
+
+mail.get('/messages/:id', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:message:${user.id}`, 600, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
+  const id = c.req.param('id') ?? '';
+  return proxy(c, `/internal/messages/${encodeURIComponent(id)}`);
+});
+
+mail.get('/messages/:id/payload', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:payload:${user.id}`, 900, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
+  const id = c.req.param('id') ?? '';
+  return proxy(c, `/internal/messages/${encodeURIComponent(id)}/payload`);
+});
+
+mail.get('/messages/:id/attachments/:attachmentId', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:payload:${user.id}`, 900, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
+  const id = c.req.param('id') ?? '';
+  const attachmentId = c.req.param('attachmentId') ?? '';
+  return proxy(c, `/internal/messages/${encodeURIComponent(id)}/attachments/${encodeURIComponent(attachmentId)}`);
+});
+
+mail.post('/messages/actions', async (c) => {
+  const user = c.get('user');
+  if (!user) return c.json({ error: 'Unauthorized' }, 401);
+  if (!(await allow(c, `mail:actions:${user.id}`, 1200, 3600))) {
+    return c.json({ error: 'mail_rate_limited' }, 429);
+  }
+  const body = await readSmallBody(c);
+  if (body === null) return c.json({ error: 'mail_request_too_large' }, 413);
+  return proxy(c, '/internal/messages/actions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
+});
+
 // P2/P3 stubs — explicit 501 so the client can feature-detect.
 for (const [method, route] of [
-  ['GET', '/threads'],
-  ['GET', '/threads/:id'],
-  ['GET', '/messages/:id'],
-  ['GET', '/messages/:id/payload'],
   ['POST', '/messages'],
   ['POST', '/drafts'],
   ['PATCH', '/drafts/:id'],
   ['DELETE', '/drafts/:id'],
-  ['POST', '/messages/actions'],
   ['GET', '/labels'],
   ['POST', '/labels'],
   ['PATCH', '/labels/:id'],

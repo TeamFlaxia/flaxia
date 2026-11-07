@@ -14,6 +14,7 @@ import {
 } from '../lib/mail/api.js';
 import { demoThread, isMailPreview } from '../lib/mail/demo.js';
 import { mailBack } from '../lib/mail/navigation.js';
+import { MailReader } from '../lib/mail/reader.js';
 import {
   avatar,
   emptyState,
@@ -24,6 +25,8 @@ import {
   securityChip,
 } from '../lib/mail/ui.js';
 import { getResolvedTheme } from '../lib/theme.js';
+import { isVaultUnlocked, tryDeviceUnlock } from '../lib/vault/session.js';
+import { createVaultUnlockForm } from './VaultUnlockForm.js';
 
 export interface MailThreadPageProps {
   currentUser: { id: string; username: string } | null;
@@ -36,6 +39,7 @@ export class MailThreadPage {
   private thread: MailThreadDetail | null = null;
   private loading = true;
   private notReady = false;
+  private locked = false;
   private loadError: string | null = null;
   private starred = false;
   private bodyEl: HTMLElement | null = null;
@@ -66,8 +70,51 @@ export class MailThreadPage {
       this.renderBody();
       return;
     }
+    if (!isVaultUnlocked()) await tryDeviceUnlock();
+    this.locked = !isVaultUnlocked();
+    if (this.locked) {
+      this.loading = false;
+      this.renderBody();
+      return;
+    }
     try {
-      this.thread = await getThread(this.props.threadId);
+      const encrypted = await getThread(this.props.threadId);
+      const reader = new MailReader(this.expectedAddress());
+      const decrypted = await reader.decryptThread(encrypted);
+      if (!decrypted) {
+        this.loadError =
+          t('mail.key_unavailable') ||
+          'Encrypted mail could not be opened on this device. Unlock the vault and try again.';
+      } else {
+        // Payloads are independent ciphertext blobs; fetch and decrypt them in
+        // parallel instead of racing each message round trip back-to-back.
+        const payloadList = await Promise.all(decrypted.messages.map((message) => reader.decryptPayload(message)));
+        const messages: MailMessage[] = decrypted.messages.map((message, index) => {
+          const payload = payloadList[index];
+          return {
+            id: message.id,
+            from_name: message.from_name,
+            from_address: message.from_address,
+            to: message.to,
+            date: message.date,
+            body_text: payload?.text || t('mail.payload_unavailable') || 'This message could not be decrypted.',
+            body_html: payload?.html ?? undefined,
+            security: message.security,
+            attachments: message.attachments,
+          };
+        });
+        this.thread = {
+          id: decrypted.thread.id,
+          subject: decrypted.thread.subject,
+          security: decrypted.thread.security,
+          labels: decrypted.thread.labels,
+          messages,
+        };
+        void applyMessageAction(
+          'read',
+          messages.map((message) => message.id),
+        ).catch(() => undefined);
+      }
     } catch (error) {
       if (isMailNotImplemented(error)) this.notReady = true;
       else this.loadError = t('mail.load_failed') || 'Could not load this thread.';
@@ -124,7 +171,10 @@ export class MailThreadPage {
       this.starred = !this.starred;
       star.classList.toggle('mail-star--active', this.starred);
       if (!isMailPreview() && this.thread) {
-        void applyMessageAction(this.starred ? 'star' : 'unstar', [this.thread.id]).catch(() => undefined);
+        void applyMessageAction(
+          this.starred ? 'star' : 'unstar',
+          this.thread.messages.map((message) => message.id),
+        ).catch(() => undefined);
       }
     });
     star.classList.add('mail-star');
@@ -145,7 +195,10 @@ export class MailThreadPage {
       this.setReplyStatus(t('mail.preview_action') || 'Preview mode: actions are not applied.');
       return;
     }
-    void applyMessageAction(action, [this.thread.id])
+    void applyMessageAction(
+      action,
+      this.thread.messages.map((message) => message.id),
+    )
       .then(() => mailBack())
       .catch((error) => {
         this.setReplyStatus(
@@ -176,6 +229,25 @@ export class MailThreadPage {
         skeleton.appendChild(card);
       }
       body.appendChild(skeleton);
+      return;
+    }
+
+    if (this.locked) {
+      const empty = emptyState(
+        'lock',
+        t('mail.unlock_to_read') || 'Unlock to read mail',
+        t('mail.unlock_to_read_desc') ||
+          'Your messages are encrypted with the Personal Vault. Unlock it on this device to read this thread.',
+      );
+      empty.appendChild(
+        createVaultUnlockForm({
+          onUnlocked: () => {
+            this.locked = false;
+            void this.init();
+          },
+        }).getElement(),
+      );
+      body.appendChild(empty);
       return;
     }
 

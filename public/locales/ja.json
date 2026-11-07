@@ -1168,5 +1168,9 @@
   "mail.quota_unavailable": "ストレージ使用量を取得できません。",
   "mail.external_sends": "本日の外部送信 {count}/{limit}",
   "mail.settings_storage": "ストレージ",
-  "mail.settings_security": "暗号化"
+  "mail.settings_security": "暗号化",
+  "mail.unlock_to_read": "Vault を解除してメールを読む",
+  "mail.unlock_to_read_desc": "メールは Personal Vault で暗号化されています。この端末で Vault を解除すると復号できます。",
+  "mail.key_unavailable": "この端末では暗号化メールを開けませんでした。Vault を解除して再試行してください。",
+  "mail.payload_unavailable": "このメッセージを復号できませんでした。"
 }

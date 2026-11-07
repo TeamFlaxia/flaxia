@@ -23,6 +23,26 @@ export function attachmentKeyInfo(attachmentId: string): string {
   return `flaxia.mail.attachment.v1:${attachmentId}`;
 }
 
+export function metaInfo(messageId: string): string {
+  return `flaxia.mail.meta.v1:${messageId}`;
+}
+
+export function subjectInfo(messageId: string): string {
+  return `flaxia.mail.subject.v1:${messageId}`;
+}
+
+export function fromNameInfo(messageId: string): string {
+  return `flaxia.mail.from-name.v1:${messageId}`;
+}
+
+export function attachmentNameInfo(attachmentId: string): string {
+  return `flaxia.mail.attachment-name.v1:${attachmentId}`;
+}
+
+export function payloadInfo(messageId: string): string {
+  return `flaxia.mail.payload.v1:${messageId}`;
+}
+
 export function b64encode(bytes: Uint8Array): string {
   let binary = '';
   for (const x of bytes) binary += String.fromCharCode(x);
@@ -39,6 +59,20 @@ export function b64decode(value: string): Uint8Array {
 export async function sha256Hex(value: string): Promise<string> {
   const digest = await subtle.digest('SHA-256', new TextEncoder().encode(value) as BufferSource);
   return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+export async function hmacHex(secret: string, value: string): Promise<string> {
+  const key = await subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret) as BufferSource,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = await subtle.sign('HMAC', key, new TextEncoder().encode(value) as BufferSource);
+  return Array.from(new Uint8Array(signature))
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('');
 }
@@ -158,4 +192,26 @@ export async function encryptPayload(
     plaintext as BufferSource,
   );
   return { iv: b64encode(iv), ciphertext: new Uint8Array(ciphertext) };
+}
+
+/** Encrypt arbitrary bytes with AES-256-GCM and an explicit AAD. */
+export async function encryptBytes(
+  keyBytes: Uint8Array,
+  plaintext: Uint8Array,
+  aad: string,
+): Promise<{ iv: string; ciphertext: Uint8Array }> {
+  const key = await subtle.importKey('raw', keyBytes as BufferSource, 'AES-GCM', false, ['encrypt', 'decrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await subtle.encrypt(
+    { name: 'AES-GCM', iv: iv as BufferSource, additionalData: new TextEncoder().encode(aad) },
+    key,
+    plaintext as BufferSource,
+  );
+  return { iv: b64encode(iv), ciphertext: new Uint8Array(ciphertext) };
+}
+
+/** Encrypt a UTF-8 string; returns an `iv.ciphertext` envelope. */
+export async function encryptString(keyBytes: Uint8Array, plaintext: string, info: string): Promise<string> {
+  const encrypted = await encryptBytes(keyBytes, new TextEncoder().encode(plaintext), info);
+  return `${encrypted.iv}.${b64encode(encrypted.ciphertext)}`;
 }

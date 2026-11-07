@@ -317,6 +317,390 @@ async function unread(env: MailEnv, userId: string): Promise<Response> {
   return json({ unread: Number(row?.unread ?? 0) });
 }
 
+const MAIL_FOLDERS = new Set(['inbox', 'sent', 'drafts', 'archive', 'spam', 'trash']);
+const MESSAGE_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+async function primaryMailAddress(env: MailEnv, userId: string): Promise<string | null> {
+  const row = await env.MAIL_DB.prepare(
+    `SELECT address FROM mail_addresses
+     WHERE user_id = ? AND kind = 'primary' AND state = 'active'
+     LIMIT 1`,
+  )
+    .bind(userId)
+    .first<{ address: string }>();
+  return row?.address ?? null;
+}
+
+async function threadCounts(env: MailEnv, userId: string): Promise<Record<string, number>> {
+  const rows = await env.MAIL_DB.prepare(
+    `SELECT folder, SUM(CASE WHEN unread_count > 0 THEN 1 ELSE 0 END) AS count
+     FROM mail_threads WHERE user_id = ? GROUP BY folder`,
+  )
+    .bind(userId)
+    .all<{ folder: string; count: number }>();
+  const counts: Record<string, number> = {};
+  for (const row of rows.results ?? []) counts[row.folder] = Number(row.count ?? 0);
+  return counts;
+}
+
+async function listThreads(env: MailEnv, userId: string, url: URL): Promise<Response> {
+  const folder = url.searchParams.get('folder') ?? 'inbox';
+  if (!MAIL_FOLDERS.has(folder)) return error('mail_invalid_folder');
+  const limit = Math.min(50, Math.max(1, Number(url.searchParams.get('limit') ?? 30) || 30));
+  const cursor = url.searchParams.get('cursor') ?? '';
+  const address = await primaryMailAddress(env, userId);
+  if (!address) return error('mail_not_activated', 409);
+
+  const rows = await env.MAIL_DB.prepare(
+    `WITH latest AS (
+       SELECT m.*, ROW_NUMBER() OVER (PARTITION BY m.thread_id ORDER BY m.received_at DESC, m.id DESC) AS rn
+       FROM mail_messages m
+       WHERE m.user_id = ? AND m.deleted_at IS NULL
+     )
+     SELECT t.id, t.folder, t.last_message_at, t.message_count, t.unread_count,
+            m.id AS message_id, m.subject_enc, m.meta_enc, m.payload_iv, m.blob_id,
+            m.from_addr, m.received_at, m.read_at, m.starred_at, m.has_attachments,
+            m.size_bytes, m.security,
+            k.ephemeral_public_key, k.iv AS key_iv, k.wrapped_content_key,
+            k.key_version, k.recipient_address
+     FROM mail_threads t
+     JOIN latest m ON m.thread_id = t.id AND m.rn = 1
+     LEFT JOIN mail_message_keys k ON k.message_id = m.id AND k.recipient_address = ?
+     WHERE t.user_id = ? AND t.folder = ? AND (? = '' OR t.last_message_at < ?)
+     ORDER BY t.last_message_at DESC
+     LIMIT ?`,
+  )
+    .bind(userId, address, userId, folder, cursor, cursor, limit)
+    .all<Record<string, unknown>>();
+
+  const threads = (rows.results ?? []).map((row) => ({
+    id: row.id,
+    folder: row.folder,
+    last_message_at: row.last_message_at,
+    message_count: row.message_count,
+    unread_count: row.unread_count,
+    message_id: row.message_id,
+    subject_enc: row.subject_enc,
+    meta_enc: row.meta_enc,
+    payload_iv: row.payload_iv,
+    blob_id: row.blob_id,
+    from_addr: row.from_addr,
+    received_at: row.received_at,
+    read_at: row.read_at,
+    starred_at: row.starred_at,
+    has_attachments: Boolean(row.has_attachments),
+    size_bytes: row.size_bytes,
+    security: row.security,
+    key: row.ephemeral_public_key
+      ? {
+          ephemeral_public_key: row.ephemeral_public_key,
+          iv: row.key_iv,
+          wrapped_content_key: row.wrapped_content_key,
+          key_version: row.key_version,
+          recipient_address: row.recipient_address,
+        }
+      : null,
+  }));
+
+  return json({
+    threads,
+    next_cursor: threads.length === limit ? threads[threads.length - 1]?.last_message_at : undefined,
+    counts: await threadCounts(env, userId),
+  });
+}
+
+async function threadDetail(env: MailEnv, userId: string, threadId: string): Promise<Response> {
+  if (!MESSAGE_ID_PATTERN.test(threadId)) return error('mail_invalid_thread');
+  const thread = await env.MAIL_DB.prepare(
+    'SELECT id, folder, subject_enc, last_message_at, message_count, unread_count FROM mail_threads WHERE id = ? AND user_id = ?',
+  )
+    .bind(threadId, userId)
+    .first<Record<string, unknown>>();
+  if (!thread) return error('mail_thread_not_found', 404);
+
+  const address = await primaryMailAddress(env, userId);
+  if (!address) return error('mail_not_activated', 409);
+
+  const messages = await env.MAIL_DB.prepare(
+    `SELECT m.*, k.ephemeral_public_key, k.iv AS key_iv, k.wrapped_content_key,
+            k.key_version, k.recipient_address
+     FROM mail_messages m
+     LEFT JOIN mail_message_keys k ON k.message_id = m.id AND k.recipient_address = ?
+     WHERE m.thread_id = ? AND m.user_id = ? AND m.deleted_at IS NULL
+     ORDER BY m.received_at ASC, m.id ASC`,
+  )
+    .bind(address, threadId, userId)
+    .all<Record<string, unknown>>();
+
+  const messageIds = (messages.results ?? []).map((message) => String(message.id));
+  const attachments =
+    messageIds.length > 0
+      ? await env.MAIL_DB.prepare(
+          `SELECT id, message_id, content_type, size_bytes, scan_status
+           FROM mail_attachments
+           WHERE user_id = ? AND message_id IN (SELECT value FROM json_each(?))`,
+        )
+          .bind(userId, JSON.stringify(messageIds))
+          .all<Record<string, unknown>>()
+      : { results: [] };
+
+  return json({
+    thread: {
+      id: thread.id,
+      folder: thread.folder,
+      subject_enc: thread.subject_enc,
+      last_message_at: thread.last_message_at,
+      message_count: thread.message_count,
+      unread_count: thread.unread_count,
+    },
+    messages: (messages.results ?? []).map((message) => ({
+      id: message.id,
+      from_addr: message.from_addr,
+      to_addr: message.to_addr,
+      from_name_enc: message.from_name_enc,
+      subject_enc: message.subject_enc,
+      meta_enc: message.meta_enc,
+      payload_iv: message.payload_iv,
+      blob_id: message.blob_id,
+      message_id_hash: message.message_id_hash,
+      in_reply_to_hash: message.in_reply_to_hash,
+      references_hash: message.references_hash,
+      sent_at: message.sent_at,
+      received_at: message.received_at,
+      size_bytes: message.size_bytes,
+      has_attachments: Boolean(message.has_attachments),
+      read_at: message.read_at,
+      starred_at: message.starred_at,
+      security: message.security,
+      auth_results: message.auth_results,
+      spam_score: message.spam_score,
+      key: message.ephemeral_public_key
+        ? {
+            ephemeral_public_key: message.ephemeral_public_key,
+            iv: message.key_iv,
+            wrapped_content_key: message.wrapped_content_key,
+            key_version: message.key_version,
+            recipient_address: message.recipient_address,
+          }
+        : null,
+    })),
+    attachments: attachments.results ?? [],
+  });
+}
+
+async function messageDetail(env: MailEnv, userId: string, messageId: string): Promise<Response> {
+  if (!MESSAGE_ID_PATTERN.test(messageId)) return error('mail_invalid_message');
+  const address = await primaryMailAddress(env, userId);
+  if (!address) return error('mail_not_activated', 409);
+  const message = await env.MAIL_DB.prepare(
+    `SELECT m.*, k.ephemeral_public_key, k.iv AS key_iv, k.wrapped_content_key,
+            k.key_version, k.recipient_address
+     FROM mail_messages m
+     LEFT JOIN mail_message_keys k ON k.message_id = m.id AND k.recipient_address = ?
+     WHERE m.id = ? AND m.user_id = ? AND m.deleted_at IS NULL`,
+  )
+    .bind(address, messageId, userId)
+    .first<Record<string, unknown>>();
+  if (!message) return error('mail_message_not_found', 404);
+  const attachments = await env.MAIL_DB.prepare(
+    `SELECT id, content_type, size_bytes, scan_status
+     FROM mail_attachments WHERE message_id = ? AND user_id = ?`,
+  )
+    .bind(messageId, userId)
+    .all<Record<string, unknown>>();
+  return json({
+    message: {
+      id: message.id,
+      from_addr: message.from_addr,
+      to_addr: message.to_addr,
+      from_name_enc: message.from_name_enc,
+      subject_enc: message.subject_enc,
+      meta_enc: message.meta_enc,
+      payload_iv: message.payload_iv,
+      blob_id: message.blob_id,
+      message_id_hash: message.message_id_hash,
+      in_reply_to_hash: message.in_reply_to_hash,
+      references_hash: message.references_hash,
+      sent_at: message.sent_at,
+      received_at: message.received_at,
+      size_bytes: message.size_bytes,
+      has_attachments: Boolean(message.has_attachments),
+      read_at: message.read_at,
+      starred_at: message.starred_at,
+      security: message.security,
+      auth_results: message.auth_results,
+      spam_score: message.spam_score,
+      key: message.ephemeral_public_key
+        ? {
+            ephemeral_public_key: message.ephemeral_public_key,
+            iv: message.key_iv,
+            wrapped_content_key: message.wrapped_content_key,
+            key_version: message.key_version,
+            recipient_address: message.recipient_address,
+          }
+        : null,
+    },
+    attachments: attachments.results ?? [],
+  });
+}
+
+async function messagePayload(env: MailEnv, userId: string, messageId: string): Promise<Response> {
+  if (!MESSAGE_ID_PATTERN.test(messageId)) return error('mail_invalid_message');
+  const row = await env.MAIL_DB.prepare(
+    'SELECT blob_id, user_id FROM mail_messages WHERE id = ? AND user_id = ? AND deleted_at IS NULL',
+  )
+    .bind(messageId, userId)
+    .first<{ blob_id: string }>();
+  if (!row?.blob_id) return error('mail_message_not_found', 404);
+  const object = await env.MAIL_BUCKET.get(row.blob_id);
+  if (!object) return error('mail_message_not_found', 404);
+  return new Response(object.body, {
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  });
+}
+
+async function messageAttachment(
+  env: MailEnv,
+  userId: string,
+  messageId: string,
+  attachmentId: string,
+): Promise<Response> {
+  if (!MESSAGE_ID_PATTERN.test(messageId) || !MESSAGE_ID_PATTERN.test(attachmentId)) {
+    return error('mail_invalid_attachment');
+  }
+  const row = await env.MAIL_DB.prepare(
+    `SELECT a.r2_key FROM mail_attachments a
+     JOIN mail_messages m ON m.id = a.message_id AND m.user_id = a.user_id AND m.deleted_at IS NULL
+     WHERE a.id = ? AND a.message_id = ? AND a.user_id = ?`,
+  )
+    .bind(attachmentId, messageId, userId)
+    .first<{ r2_key: string }>();
+  if (!row?.r2_key) return error('mail_attachment_not_found', 404);
+  const object = await env.MAIL_BUCKET.get(row.r2_key);
+  if (!object) return error('mail_attachment_not_found', 404);
+  return new Response(object.body, {
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  });
+}
+
+async function refreshThreads(env: MailEnv, userId: string, threadIds: string[]): Promise<void> {
+  for (const threadId of threadIds) {
+    await env.MAIL_DB.batch([
+      env.MAIL_DB.prepare(
+        `UPDATE mail_threads SET
+           folder = COALESCE((
+             SELECT folder FROM mail_messages
+             WHERE thread_id = ? AND user_id = ? AND deleted_at IS NULL
+             ORDER BY received_at DESC LIMIT 1
+           ), folder),
+           last_message_at = COALESCE((
+             SELECT received_at FROM mail_messages
+             WHERE thread_id = ? AND user_id = ? AND deleted_at IS NULL
+             ORDER BY received_at DESC LIMIT 1
+           ), last_message_at),
+           message_count = (
+             SELECT COUNT(*) FROM mail_messages
+             WHERE thread_id = ? AND user_id = ? AND deleted_at IS NULL
+           ),
+           unread_count = (
+             SELECT COUNT(*) FROM mail_messages
+             WHERE thread_id = ? AND user_id = ? AND deleted_at IS NULL
+               AND folder = 'inbox' AND read_at IS NULL
+           ),
+           updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE id = ? AND user_id = ?`,
+      ).bind(threadId, userId, threadId, userId, threadId, userId, threadId, userId, threadId, userId),
+      env.MAIL_DB.prepare(
+        `DELETE FROM mail_threads
+         WHERE id = ? AND user_id = ?
+           AND NOT EXISTS (
+             SELECT 1 FROM mail_messages
+             WHERE thread_id = ? AND user_id = ?
+           )`,
+      ).bind(threadId, userId, threadId, userId),
+    ]);
+  }
+}
+
+async function messageActions(env: MailEnv, userId: string, req: Request): Promise<Response> {
+  if (!idempotencyKey(req)) return error('mail_idempotency_required', 400);
+  const body = await readJson(req);
+  if (!body) return error('mail_invalid_body');
+  const action = typeof body.action === 'string' ? body.action : '';
+  const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === 'string') : [];
+  if (!['read', 'unread', 'star', 'unstar', 'archive', 'spam', 'trash', 'restore', 'delete'].includes(action)) {
+    return error('mail_invalid_action');
+  }
+  if (ids.length === 0 || ids.length > 100 || ids.some((id) => !MESSAGE_ID_PATTERN.test(id))) {
+    return error('mail_invalid_message_ids');
+  }
+
+  // The key is claimed up front like other mutations, so a network retry with
+  // the same Idempotency-Key does not apply the batch twice.
+  if (!(await claimIdempotency(env, userId, idempotencyKey(req) as string))) {
+    return json({ ok: true, updated: 0 });
+  }
+
+  const owned = await env.MAIL_DB.prepare(
+    `SELECT id, thread_id FROM mail_messages
+     WHERE user_id = ? AND id IN (SELECT value FROM json_each(?)) AND deleted_at IS NULL`,
+  )
+    .bind(userId, JSON.stringify(ids))
+    .all<{ id: string; thread_id: string }>();
+  const rows = owned.results ?? [];
+  if (rows.length === 0) return json({ ok: true, updated: 0 });
+  const ownedIds = rows.map((row) => row.id);
+  const threadIds = Array.from(new Set(rows.map((row) => row.thread_id)));
+
+  let set = '';
+  switch (action) {
+    case 'read':
+      set = "read_at = COALESCE(read_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))";
+      break;
+    case 'unread':
+      set = 'read_at = NULL';
+      break;
+    case 'star':
+      set = "starred_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')";
+      break;
+    case 'unstar':
+      set = 'starred_at = NULL';
+      break;
+    case 'archive':
+      set = "folder = 'archive'";
+      break;
+    case 'spam':
+      set = "folder = 'spam'";
+      break;
+    case 'trash':
+      set = "folder = 'trash'";
+      break;
+    case 'restore':
+      set = "folder = 'inbox'";
+      break;
+    case 'delete':
+      set = "deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), folder = 'trash'";
+      break;
+  }
+
+  await env.MAIL_DB.prepare(
+    `UPDATE mail_messages SET ${set}
+     WHERE user_id = ? AND id IN (SELECT value FROM json_each(?)) AND deleted_at IS NULL`,
+  )
+    .bind(userId, JSON.stringify(ownedIds))
+    .run();
+  await refreshThreads(env, userId, threadIds);
+  return json({ ok: true, updated: ownedIds.length });
+}
+
 async function deleteUserData(env: MailEnv, userId: string): Promise<Response> {
   // User ids are database identifiers; reject path/prefix injection anyway
   // because this id is interpolated into an R2 prefix.
@@ -355,6 +739,9 @@ async function deleteUserData(env: MailEnv, userId: string): Promise<Response> {
         'DELETE FROM mail_message_keys WHERE message_id IN (SELECT id FROM mail_messages WHERE user_id = ?)',
       ).bind(userId),
       env.MAIL_DB.prepare('DELETE FROM mail_message_labels WHERE user_id = ?').bind(userId),
+      env.MAIL_DB.prepare('DELETE FROM mail_blobs WHERE id IN (SELECT id FROM mail_messages WHERE user_id = ?)').bind(
+        userId,
+      ),
       env.MAIL_DB.prepare('DELETE FROM mail_attachments WHERE user_id = ?').bind(userId),
       env.MAIL_DB.prepare('DELETE FROM mail_messages WHERE user_id = ?').bind(userId),
       env.MAIL_DB.prepare('DELETE FROM mail_threads WHERE user_id = ?').bind(userId),
@@ -443,6 +830,30 @@ async function handleInternal(env: MailEnv, req: Request, userId: string): Promi
   if (method === 'PUT' && url.pathname === '/internal/keys/me') return publishMyKey(env, userId, req);
   if (method === 'GET' && url.pathname === '/internal/keys') return lookupKeys(env, url);
   if (method === 'POST' && url.pathname === '/internal/report-abuse') return reportAbuse(env, userId, req);
+  if (method === 'GET' && url.pathname === '/internal/threads') return listThreads(env, userId, url);
+  if (method === 'POST' && url.pathname === '/internal/messages/actions') return messageActions(env, userId, req);
+
+  const threadMatch = /^\/internal\/threads\/([^/]+)$/.exec(url.pathname);
+  if (method === 'GET' && threadMatch) return threadDetail(env, userId, decodeURIComponent(threadMatch[1] ?? ''));
+
+  const messageMatch = /^\/internal\/messages\/([^/]+)$/.exec(url.pathname);
+  if (method === 'GET' && messageMatch) return messageDetail(env, userId, decodeURIComponent(messageMatch[1] ?? ''));
+
+  const payloadMatch = /^\/internal\/messages\/([^/]+)\/payload$/.exec(url.pathname);
+  if (method === 'GET' && payloadMatch) {
+    return messagePayload(env, userId, decodeURIComponent(payloadMatch[1] ?? ''));
+  }
+
+  const attachmentMatch = /^\/internal\/messages\/([^/]+)\/attachments\/([^/]+)$/.exec(url.pathname);
+  if (method === 'GET' && attachmentMatch) {
+    return messageAttachment(
+      env,
+      userId,
+      decodeURIComponent(attachmentMatch[1] ?? ''),
+      decodeURIComponent(attachmentMatch[2] ?? ''),
+    );
+  }
+
   if (method === 'DELETE' && url.pathname === '/internal/delete-user') return deleteUserData(env, userId);
 
   return error('mail_not_implemented', 501);
@@ -481,7 +892,7 @@ export default {
         message.setReject('Message too large');
         return;
       }
-      await handleInboundEmail(env, raw, message.to);
+      await handleInboundEmail(env, raw, message.to, message.from, message.headers);
     } catch (err) {
       const code = (err as { code?: number }).code;
       if (code === 550) {
@@ -490,6 +901,12 @@ export default {
       }
       if (code === 552) {
         message.setReject('Mailbox quota exceeded');
+        return;
+      }
+      if (code === 554) {
+        // Permanent MIME-level failure (unparseable message, too many
+        // attachments): retrying would never succeed.
+        message.setReject('Message rejected');
         return;
       }
       throw err;

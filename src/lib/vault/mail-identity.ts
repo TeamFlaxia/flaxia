@@ -108,3 +108,16 @@ export async function loadMailIdentity(): Promise<MailIdentityMaterial | null> {
     privateKeyPkcs8B64: newest.privateKeyPkcs8B64,
   };
 }
+
+/** Load the identity for an old message's key version (rotation keeps old keys). */
+export async function loadMailIdentityForVersion(keyVersion: number): Promise<MailIdentityMaterial | null> {
+  if (!getVaultKey()) return null;
+  const items = await listVaultItems<StoredMailIdentity>('mail_identity');
+  const found = items.find((item) => item.value.keyVersion === keyVersion)?.value;
+  if (!found) return null;
+  return {
+    keyVersion: found.keyVersion,
+    publicKeySpkiB64: found.publicKeySpkiB64,
+    privateKeyPkcs8B64: found.privateKeyPkcs8B64,
+  };
+}
