@@ -5,7 +5,8 @@ import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { stripPostColors } from '../lib/post-colors.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
-import { Post, PostCardMode } from '../types/post.js';
+import { ExternalItem, Post, PostCardMode } from '../types/post.js';
+import { createExternalItemCard } from './ExternalItemCard.js';
 import { createPostCard } from './PostCard.js';
 
 interface SearchPageProps {
@@ -40,6 +41,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
   }> = [];
   let allPosts: Post[] = [];
   let allArcade: Post[] = [];
+  let allExternal: ExternalItem[] = [];
 
   const container = document.createElement('div');
   container.className = 'search-page';
@@ -322,6 +324,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       ]);
       const postsData = (await postsRes.json()) as {
         results: Post[];
+        external_results?: ExternalItem[];
         users?: Array<{
           id: string;
           username: string;
@@ -337,6 +340,7 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
 
       allUsers = postsData.users || [];
       allPosts = postsData.results || [];
+      allExternal = postsData.external_results || [];
       allArcade = arcadeData.results || [];
 
       content.removeChild(loadingEl);
@@ -410,6 +414,16 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       renderPosts(allPosts);
     }
 
+    // External sources section (arXiv / Hacker News)
+    if ((showAll || activeFilter === 'posts') && allExternal.length > 0) {
+      anyVisible = true;
+      const sectionTitle = document.createElement('div');
+      sectionTitle.className = 'search-section-label';
+      sectionTitle.textContent = t('timeline.source_label');
+      content.appendChild(sectionTitle);
+      renderExternal(allExternal);
+    }
+
     if (!anyVisible) {
       const empty = document.createElement('div');
       empty.className = 'page-empty';
@@ -469,6 +483,12 @@ export function createSearchPage({ query, type = 'posts', currentUser, sandboxOr
       userItem.appendChild(avatar);
       userItem.appendChild(userInfo);
       content.appendChild(userItem);
+    });
+  };
+
+  const renderExternal = (items: ExternalItem[]) => {
+    items.forEach((item) => {
+      content.appendChild(createExternalItemCard(item).getElement());
     });
   };
 

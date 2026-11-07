@@ -1090,6 +1090,16 @@
   outline-offset: -3px;
 }
 
+.feed-source-select {
+  appearance: auto;
+  background: transparent;
+}
+
+.feed-source-select:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .feed-reload-btn {
   flex: 0 0 auto;
   margin-left: auto;

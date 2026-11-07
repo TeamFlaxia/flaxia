@@ -34,7 +34,19 @@ interface Env {
 export default {
   // Triggered by `triggers.crons` in wrangler.toml.worker — exports the
   // anonymized Arcade dwell dataset and uploads it to HuggingFace (optional).
-  async scheduled(_event: ScheduledEvent, env: Env): Promise<void> {
+  async scheduled(event: ScheduledEvent, env: Env): Promise<void> {
+    // Hourly cron only refreshes the external feed; the daily jobs below
+    // must not run hourly.
+    if (event.cron === '0 * * * *') {
+      try {
+        const { refreshExternalFeed } = await import('./lib/external-feed');
+        const counts = await refreshExternalFeed(env);
+        console.log(`External feed refresh finished: arxiv=${counts.arxiv} hackernews=${counts.hackernews}`);
+      } catch (error) {
+        console.error('External feed refresh failed:', (error as Error).message);
+      }
+      return;
+    }
     try {
       const { runDatasetExport } = await import('./lib/dataset-export');
       const count = await runDatasetExport(env);

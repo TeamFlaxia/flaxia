@@ -265,6 +265,21 @@ are image URLs; non-image legacy values are rendered as a name-only badge.
 
 `GET /api/search?q=<query>&type=<posts|users|hashtags>`
 
+With `type=posts`, the response also carries `external_results`: matching
+arXiv / Hacker News items (`id, title, summary, url, source, source_label,
+publish_at, author, tags`) from the external feed.
+
+---
+
+## External Feeds
+
+`GET /api/external-feed/sources` — enabled sources for the timeline
+source dropdown (`arxiv`, `hackernews`).
+
+`GET /api/external-feed?source=<all|arxiv|hackernews>&cursor=<publish_at>,<id>&limit=`
+— newest-first external items in the shape above. Refreshed hourly by the
+backend worker cron (`functions/lib/external-feed.ts`).
+
 ---
 
 ## Notifications
