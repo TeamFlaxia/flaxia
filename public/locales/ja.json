@@ -1199,5 +1199,6 @@
   "translate.status_remote": "ネットワーク",
   "translate.status_pending": "待機中…",
   "translate.status_preloading": "ダウンロード中…",
-  "translate.status_error": "失敗"
+  "translate.status_error": "失敗",
+  "translate.credit": "Built with PLaMo — 翻訳結果は PLaMo 3 Translate モデル（PLaMo Community License）による生成物です。"
 }

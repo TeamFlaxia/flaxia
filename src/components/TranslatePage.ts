@@ -12,12 +12,13 @@ import { getLocale, t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import {
+  buildPlamoPrompt,
+  isPlamoSupported,
   loadTranslateMode,
   saveTranslateMode,
   TRANSLATE_LANGUAGES,
-  TRANSLATE_MODEL_ID,
-  TRANSLATE_TASK,
   type TranslateMode,
+  translateModelFor,
 } from '../lib/translate-languages.js';
 
 export interface TranslatePageProps {
@@ -32,17 +33,38 @@ function normalizeTranslateOutput(output: unknown): string {
   if (Array.isArray(output) && output.length > 0) {
     const first = output[0] as unknown;
     if (typeof first === 'string') return first;
-    if (first && typeof first === 'object' && 'translation_text' in (first as Record<string, unknown>)) {
-      return String((first as Record<string, unknown>).translation_text ?? '');
+    if (first && typeof first === 'object') {
+      const rec = first as Record<string, unknown>;
+      const value = rec.translation_text ?? rec.generated_text ?? rec.translated_text ?? rec.text;
+      if (typeof value === 'string') return value;
     }
   }
   if (output && typeof output === 'object') {
     const rec = output as Record<string, unknown>;
-    const value = rec.translation_text ?? rec.translated_text ?? rec.text ?? rec.output;
+    const value = rec.translation_text ?? rec.generated_text ?? rec.translated_text ?? rec.text ?? rec.output;
     if (typeof value === 'string') return value;
     if (Array.isArray(value) && typeof value[0] === 'string') return String(value[0]);
   }
   return String(output ?? '');
+}
+
+/** Build the local ai-inference payload for the routed model. */
+function localPayload(text: string, sourceLang: string, targetLang: string): LocalAiInferencePayload {
+  const { model, task } = translateModelFor(sourceLang, targetLang);
+  if (isPlamoSupported(sourceLang, targetLang)) {
+    return {
+      task,
+      model,
+      input: buildPlamoPrompt(text, sourceLang, targetLang),
+      options: { max_new_tokens: 512, do_sample: false, ondeviceOnly: true },
+    };
+  }
+  return {
+    task,
+    model,
+    input: text,
+    options: { src_lang: sourceLang, tgt_lang: targetLang, ondeviceOnly: true },
+  };
 }
 
 function pollRemote(jobId: string, signal: AbortSignal): Promise<string> {
@@ -241,6 +263,11 @@ export function createTranslatePage(): { getElement: () => HTMLElement; destroy:
   hint.textContent = t('translate.hint');
   element.appendChild(hint);
 
+  const credit = document.createElement('p');
+  credit.className = 'translate-credit';
+  credit.textContent = t('translate.credit');
+  element.appendChild(credit);
+
   let debounce: ReturnType<typeof setTimeout> | null = null;
   let activeController: AbortController | null = null;
   let status: TranslateStatus = 'idle';
@@ -298,13 +325,9 @@ export function createTranslatePage(): { getElement: () => HTMLElement; destroy:
       return;
     }
 
+    const routedModel = translateModelFor(detected, target).model;
     if (mode === 'ondevice-only') {
-      const payload: LocalAiInferencePayload = {
-        task: TRANSLATE_TASK,
-        model: TRANSLATE_MODEL_ID,
-        input: text,
-        options: { src_lang: detected, tgt_lang: target, ondeviceOnly: true },
-      };
+      const payload: LocalAiInferencePayload = localPayload(text, detected, target);
       const canLocal =
         canRunFlaxiaNode() &&
         (await resolveCrowdConsentState().catch(() => 'unset' as const)) === 'granted' &&
@@ -314,7 +337,7 @@ export function createTranslatePage(): { getElement: () => HTMLElement; destroy:
         updateStatus();
         return;
       }
-      status = isLocalTranslateReady(TRANSLATE_MODEL_ID) ? 'local' : 'preloading';
+      status = isLocalTranslateReady(routedModel) ? 'local' : 'preloading';
       updateStatus();
       try {
         const result = await runLocalAiInference(payload);
@@ -335,16 +358,11 @@ export function createTranslatePage(): { getElement: () => HTMLElement; destroy:
 
     // Off-device allowed: try local first, else fall back to Pages /api/translate
     if (canRunFlaxiaNode() && isCrowdNodeRunning() && getCrowdConsentState() === 'granted') {
-      if (isLocalTranslateReady(TRANSLATE_MODEL_ID)) {
+      if (isLocalTranslateReady(routedModel)) {
         status = 'local';
         updateStatus();
         try {
-          const result = await runLocalAiInference({
-            task: TRANSLATE_TASK,
-            model: TRANSLATE_MODEL_ID,
-            input: text,
-            options: { src_lang: detected, tgt_lang: target, ondeviceOnly: true },
-          });
+          const result = await runLocalAiInference(localPayload(text, detected, target));
           if (destroyed) return;
           resultInput.value = normalizeTranslateOutput(result.output);
           status = 'local';

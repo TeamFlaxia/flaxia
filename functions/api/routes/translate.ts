@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { hasReservedPlamoTokens } from '../../../src/lib/translate-languages.ts';
 import { ensureTranslateJobsTable, submitTranslate } from '../../lib/crowd';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import type { Bindings, Variables } from '../types';
@@ -62,6 +63,9 @@ translate.post('/translate', async (c) => {
   }
   if (text.length > 5_000) {
     return c.json({ error: 'Text exceeds 5000 characters' }, 400);
+  }
+  if (hasReservedPlamoTokens(text)) {
+    return c.json({ error: 'Text contains reserved tokens' }, 400);
   }
   if (!SUPPORTED.has(sourceLang) || !SUPPORTED.has(targetLang)) {
     return c.json({ error: 'Unsupported language' }, 400);
