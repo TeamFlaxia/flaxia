@@ -16,8 +16,19 @@ export function goToMailThread(id: string): void {
   goToMailView('mail-thread', `/mail/thread/${encodeURIComponent(id)}`, id);
 }
 
-export function goToMailCompose(): void {
+// Draft ids ride in-memory: the compose route has no stable path segment, and a
+// hard reload of /mail/compose should open a blank composer.
+let pendingDraftId = '';
+
+export function goToMailCompose(draftId?: string): void {
+  pendingDraftId = draftId ?? '';
   goToMailView('mail-compose', '/mail/compose');
+}
+
+export function takePendingDraftId(): string {
+  const id = pendingDraftId;
+  pendingDraftId = '';
+  return id;
 }
 
 export function goToMailSettings(): void {

@@ -9,6 +9,7 @@ import {
   type EncryptedThreadList,
   type EncryptedThreadResponse,
   type EncryptedThreadRow,
+  fetchMailAttachment,
   fetchMailPayload,
   type MailAttachment,
   type MailMessage,
@@ -16,7 +17,7 @@ import {
   type MailThreadDetail,
   type MailThreadSummary,
 } from './api.js';
-import { decryptPayload, decryptString, metaInfo, unwrapContentKey } from './crypto.js';
+import { decryptAttachment, decryptPayload, decryptString, metaInfo, unwrapContentKey } from './crypto.js';
 
 export interface MailMetadata {
   subject: string;
@@ -53,21 +54,40 @@ export interface DecryptedMessage extends MailMessage {
   blobId: string;
   readAt: string | null;
   spamScore: number;
+  /** Logical message id used as the AEAD AAD (falls back to the row id). */
+  aadId: string;
+  messageIdHash: string;
 }
 
 export interface DecryptedThread {
   thread: Pick<MailThreadDetail, 'id' | 'subject' | 'security' | 'labels'>;
   messages: DecryptedMessage[];
-  attachments: Array<{ id: string; messageId: string; contentType: string; sizeBytes: number; scanStatus: string }>;
+  attachments: Array<{
+    id: string;
+    messageId: string;
+    aadId: string;
+    iv: string;
+    contentType: string;
+    sizeBytes: number;
+    scanStatus: string;
+  }>;
 }
 
-function toAttachment(meta: MailMetadata): MailAttachment[] {
-  return (meta.attachments ?? []).map((attachment) => ({
-    id: attachment.id,
-    filename: attachment.filename,
-    content_type: attachment.content_type,
-    size_bytes: attachment.size_bytes,
-  }));
+function toAttachment(
+  meta: MailMetadata,
+  rows: Array<{ id: string; aad_id: string; iv: string; content_type: string; size_bytes: number }>,
+): MailAttachment[] {
+  return (meta.attachments ?? []).map((attachment) => {
+    const row = rows.find((entry) => (entry.aad_id || entry.id) === attachment.id);
+    return {
+      id: row?.id ?? attachment.id,
+      filename: attachment.filename,
+      content_type: attachment.content_type,
+      size_bytes: attachment.size_bytes,
+      aad_id: row ? row.aad_id || row.id : attachment.id,
+      iv: row?.iv ?? '',
+    };
+  });
 }
 
 export class MailReader {
@@ -124,10 +144,11 @@ export class MailReader {
   }
 
   private async decryptThreadRow(row: EncryptedThreadRow): Promise<DecryptedThreadSummary | null> {
-    const content = await this.contentKey(row.message_id, row.key);
+    const aadId = row.aad_id || row.message_id;
+    const content = await this.contentKey(aadId, row.key);
     if (!content) return null;
     try {
-      const meta = await this.decryptMetadata(content.key, row.message_id, row.meta_enc);
+      const meta = await this.decryptMetadata(content.key, aadId, row.meta_enc);
       return {
         id: row.id,
         folder: row.folder,
@@ -156,9 +177,10 @@ export class MailReader {
     let security: MailSecurity = 'at_rest';
 
     for (const row of response.messages) {
-      const content = await this.contentKey(row.id, row.key);
+      const aadId = row.aad_id || row.id;
+      const content = await this.contentKey(aadId, row.key);
       if (!content) continue;
-      const meta = await this.decryptMetadata(content.key, row.id, row.meta_enc).catch(() => null);
+      const meta = await this.decryptMetadata(content.key, aadId, row.meta_enc).catch(() => null);
       if (!meta) {
         content.key.fill(0);
         continue;
@@ -173,12 +195,17 @@ export class MailReader {
         date: row.received_at,
         body_text: '',
         security: row.security,
-        attachments: toAttachment(meta),
+        attachments: toAttachment(
+          meta,
+          response.attachments.filter((attachment) => attachment.message_id === row.id),
+        ),
         contentKey: content.key,
         payloadIv: row.payload_iv,
         blobId: row.blob_id,
         readAt: row.read_at,
         spamScore: Number(row.spam_score) || 0,
+        aadId,
+        messageIdHash: row.message_id_hash,
       };
       messages.push(message);
     }
@@ -190,6 +217,8 @@ export class MailReader {
       attachments: response.attachments.map((attachment) => ({
         id: attachment.id,
         messageId: attachment.message_id,
+        aadId: attachment.aad_id || attachment.id,
+        iv: attachment.iv ?? '',
         contentType: attachment.content_type,
         sizeBytes: attachment.size_bytes,
         scanStatus: attachment.scan_status,
@@ -200,7 +229,12 @@ export class MailReader {
   async decryptPayload(message: DecryptedMessage): Promise<MailPayload | null> {
     try {
       const ciphertext = await fetchMailPayload(message.id);
-      const plaintext = await decryptPayload(message.contentKey, message.payloadIv, ciphertext, message.id);
+      const plaintext = await decryptPayload(
+        message.contentKey,
+        message.payloadIv,
+        ciphertext,
+        message.aadId || message.id,
+      );
       return JSON.parse(new TextDecoder().decode(plaintext)) as MailPayload;
     } catch {
       return null;
@@ -211,6 +245,12 @@ export class MailReader {
     const plaintext = await decryptString(contentKey, metaEnc, metaInfo(messageId));
     return JSON.parse(plaintext) as MailMetadata;
   }
+}
+
+/** Fetch and decrypt one attachment for download. */
+export async function downloadAttachment(message: DecryptedMessage, attachment: MailAttachment): Promise<Uint8Array> {
+  const ciphertext = await fetchMailAttachment(message.id, attachment.id);
+  return decryptAttachment(message.contentKey, attachment.aad_id || attachment.id, attachment.iv ?? '', ciphertext);
 }
 
 export type { EncryptedMessageRow };

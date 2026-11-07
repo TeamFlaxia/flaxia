@@ -356,6 +356,7 @@ only by the subject-fallback threading path (§9.3); it is empty when
 | `spam_score` | Optional heuristic score |
 | `blob_id` | Encrypted payload blob |
 | `payload_iv` | Base64 AES-GCM IV for the encrypted payload |
+| `aad_id` | Logical message id used as the AEAD AAD; every mailbox fan-out copy shares it. Empty for rows whose id is the AAD (inbound) |
 | `raw_blob_key` | Encrypted original MIME, optional |
 | `deleted_at` | Soft delete |
 
@@ -366,9 +367,11 @@ decrypted JSON contains the subject, sender display name, snippet, recipients,
 attachment names and the parsed `Authentication-Results` summary.
 
 `payload_iv` is the AES-GCM IV for the encrypted payload JSON in R2
-(`flaxia.mail.payload.v1:<message_id>`). The payload JSON contains
+(`flaxia.mail.payload.v1:<aad_id || message id>`). The payload JSON contains
 `{ text, html, attachments }`; the client decrypts it after unwrapping the
-content key.
+content key. Internal send fans one logical message out to one row per mailbox,
+so each copy has its own server-generated row id but carries the client's
+logical id in `aad_id`; readers prefer `aad_id` and fall back to the row id.
 
 ### `mail_message_keys`
 
@@ -379,18 +382,21 @@ another row for the sender's own address.
 ### `mail_blobs`
 
 `id`, `r2_key`, `size_bytes`, `content_hash`, `ref_count`, `created_at`.
-Multiple recipients of the same internal message share one ciphertext blob;
-`ref_count` drives garbage collection.
+Each mailbox copy currently stores its own ciphertext blob under its own
+`mail/<user_id>/` prefix, so account deletion and quota accounting stay
+per-mailbox; `ref_count` is reserved for a later dedupe/GC pass.
 
 ### `mail_attachments`
 
 `id`, `message_id`, `user_id`, `filename_enc`, `content_type`, `size_bytes`,
-`r2_key`, `content_hash`, `scan_status`, `cid_enc`.
+`r2_key`, `content_hash`, `scan_status`, `cid_enc`, `aad_id`, `iv`.
 
 Attachment bytes are encrypted in R2 under
 `mail/<user_id>/<message_id>/attachments/<attachment_id>.enc` with a key
-derived from the message content key (`flaxia.mail.attachment.v1:<attachment_id>`).
-Filenames are encrypted with `flaxia.mail.attachment-name.v1:<attachment_id>`.
+derived from the message content key (`flaxia.mail.attachment.v1:<aad_id>`).
+`aad_id` is the logical attachment id and `iv` the AES-GCM IV (the blob itself
+stays pure ciphertext). Filenames are encrypted with
+`flaxia.mail.attachment-name.v1:<aad_id>`.
 Until the shared scanning pipeline is wired, non-inline attachments quarantine
 the message as spam; executable/script extensions and MIME types are blocked.
 
@@ -454,6 +460,10 @@ resolved from the Auth-backed session grant instead of a local credential, per
 | `GET` | `/api/mail/messages/:id/attachments/:attachmentId` | Encrypted attachment bytes |
 | `POST` | `/api/mail/messages` | Send a message |
 | `POST` | `/api/mail/drafts` | Create a draft |
+| `GET` | `/api/mail/drafts` | List drafts (encrypted metadata + wrapped key) |
+| `GET` | `/api/mail/drafts/:id` | Draft metadata and attachments |
+| `GET` | `/api/mail/drafts/:id/payload` | Draft ciphertext bytes |
+| `GET` | `/api/mail/drafts/:id/attachments/:attachmentId` | Draft attachment ciphertext |
 | `PATCH` | `/api/mail/drafts/:id` | Update a draft |
 | `DELETE` | `/api/mail/drafts/:id` | Delete a draft |
 | `POST` | `/api/mail/messages/actions` | Batch read/star/archive/spam/trash/restore/delete |
@@ -477,7 +487,8 @@ Rules:
 - Pagination uses opaque cursors, not offsets.
 - Request and response bodies never include plaintext message content on the
   server side except in the external-send endpoint, which is explicitly
-  documented as `tls`.
+  documented as `tls`. Internal send (`POST /api/mail/messages`) and drafts post
+  only ciphertext plus envelope routing values (From/To/Cc/Bcc).
 - Thread/message list responses carry ciphertext (`subject_enc`, `meta_enc`)
   plus the recipient's wrapped content key. The client unwraps the key from the
   Mail identity in the Personal Vault and decrypts metadata/payload locally.
@@ -564,6 +575,21 @@ at-rest protection for that window.
 The external-send path must guard against header injection by rejecting CR/LF
 in address and subject fields and by encoding non-ASCII headers per RFC 2047.
 
+**Fan-out and storage (implemented).** One logical message becomes one row per
+mailbox (each with a server row id and the client's logical id in `aad_id`),
+plus a Sent copy for the sender. Every copy stores its own ciphertext blobs so
+quota and deletion stay per-mailbox. The worker validates that the sender owns
+the From address, that every recipient has an active mailbox and a published
+key at the version the client wrapped, and that a reply's `thread_id` /
+`in_reply_to_hash` belong to the sender. Recipient copies never carry the Bcc
+list; only envelope routing values are visible to the server. Attachments are
+sealed per copy with the derived key and stored with their IV.
+
+**Drafts.** Drafts use the same envelope but wrap the content key for the
+sender only and live under `direction='draft'` / `folder='drafts'` with their
+own one-message thread. They are listed, reopened, updated, and deleted through
+`/api/mail/drafts*`; the Drafts folder in the mailbox uses that API.
+
 ### 9.3 Threading
 
 - Store hashes of `Message-ID`, `In-Reply-To`, and `References`, not the raw
@@ -628,7 +654,9 @@ Mobile collapses to a list/detail pair. Add a Mail item and unread badge to
 - A security indicator per message: `E2EE`, `Encrypted at rest`, or `TLS only`.
 - Warn when an external recipient is added: "External recipients can read this
   message. Flaxia encryption does not apply."
-- Drafts are encrypted and survive reload when the vault is unlocked.
+- Drafts are encrypted with the same envelope (key wrapped for the sender only)
+  and survive reload when the vault is unlocked; the Drafts folder lists and
+  reopens them in the composer.
 
 ### Search
 
@@ -795,7 +823,7 @@ address lists. Log ids and counts only.
 | P0 Design/spike | 1–2 weeks | This document, ADRs, Email Worker receive spike, `send_email` spike, ECIES round trip, HTML sanitization spike, confirmed Cloudflare limits |
 | P1 Foundation | 2 weeks | Mail D1/R2/Queue, migrations, address and identity APIs, vault integration, settings UI |
 | P2 Receive/read | 2–3 weeks | Inbound pipeline, MIME parse, encrypted storage, threading, list/thread UI, HTML renderer, notifications — **implemented in code; enable inbound at cutover** |
-| P3 Send/reply | 2 weeks | Compose, drafts, external SMTP, internal E2EE delivery, Sent, retries, bounces |
+| P3 Send/reply | 2 weeks | Compose, drafts, external SMTP, internal E2EE delivery, Sent, retries, bounces — **internal E2EE send, replies, attachments, and encrypted drafts implemented; external SMTP pending** |
 | P4 Mailbox management | 2 weeks | Labels, archive, spam/trash, search, bulk actions, keyboard shortcuts, i18n |
 | P5 Hardening/GA | 2–3 weeks | Security review, load tests, deliverability tuning, abuse controls, monitoring, docs, staged release |
 

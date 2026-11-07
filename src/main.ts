@@ -677,8 +677,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             mainContainer.appendChild(mailThreadPage.getElement());
           } else if (view === 'mail-compose') {
             const { createMailComposePage } = await import('./components/MailComposePage.js');
+            const { takePendingDraftId } = await import('./lib/mail/navigation.js');
             mailComposePage = createMailComposePage({
               currentUser: currentUser ? { id: currentUser.id, username: currentUser.username } : null,
+              draftId: takePendingDraftId() || undefined,
             });
             mainContainer.appendChild(mailComposePage.getElement());
           } else {

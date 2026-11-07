@@ -4,25 +4,22 @@
 // authenticated user id. The Worker never trusts a bare user id.
 import { RESERVED_LOCALS } from '../../src/lib/mail/address.ts';
 import { isValidP256SpkiB64, sha256Hex } from './crypto.ts';
+import { claimIdempotency, error, idempotencyKey, json, readJsonBody } from './http.ts';
 import { handleInboundEmail, type MailEnv } from './ingest.ts';
+import {
+  handleCreateDraft,
+  handleDeleteDraft,
+  handleDraftAttachment,
+  handleDraftDetail,
+  handleDraftPayload,
+  handleInternalSend,
+  handleListDrafts,
+  handleUpdateDraft,
+} from './send.ts';
 
 const MIME_MAX = 10 * 1024 * 1024;
 const MAX_INTERNAL_BODY = 16 * 1024;
 const MAX_KEY_LOOKUP = 50;
-const IDEMPOTENCY_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
-
-type Json = Record<string, unknown>;
-
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
-function error(code: string, status = 400): Response {
-  return json({ error: code }, status);
-}
 
 async function hmac(secret: string, message: string): Promise<string> {
   const key = await crypto.subtle.importKey(
@@ -60,30 +57,6 @@ export async function verifyInternal(env: MailEnv, req: Request, body: string): 
   return diff === 0 ? userId : null;
 }
 
-function idempotencyKey(req: Request): string | null {
-  const value = req.headers.get('Idempotency-Key');
-  return value && IDEMPOTENCY_PATTERN.test(value) ? value : null;
-}
-
-async function claimIdempotency(env: MailEnv, userId: string, key: string): Promise<boolean> {
-  const result = await env.MAIL_DB.prepare(
-    'INSERT OR IGNORE INTO mail_idempotency_keys (user_id, idempotency_key) VALUES (?, ?)',
-  )
-    .bind(userId, key)
-    .run();
-  if ((result.meta.changes ?? 0) === 0) return false;
-
-  // Opportunistic retention sweep; the table is operational, not archival.
-  await env.MAIL_DB.prepare(
-    `DELETE FROM mail_idempotency_keys
-     WHERE user_id = ? AND created_at < strftime('%Y-%m-%dT%H:%M:%fZ','now','-30 days')`,
-  )
-    .bind(userId)
-    .run()
-    .catch(() => {});
-  return true;
-}
-
 function normalizeAddress(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase();
@@ -99,18 +72,6 @@ function normalizeAddress(value: unknown): string | null {
 function addressMatchesDomain(address: string, env: MailEnv): boolean {
   const domain = (env.MAIL_DOMAIN ?? 'flaxia.app').toLowerCase();
   return address.endsWith(`@${domain}`);
-}
-
-async function readJson(req: Request): Promise<Json | null> {
-  const text = await req.text();
-  if (text.length === 0 || text.length > MAX_INTERNAL_BODY) return null;
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-    return parsed as Json;
-  } catch {
-    return null;
-  }
 }
 
 function parseKeyVersion(value: unknown): number | null {
@@ -129,7 +90,7 @@ async function listAddresses(env: MailEnv, userId: string): Promise<Response> {
 
 async function activateAddress(env: MailEnv, userId: string, req: Request): Promise<Response> {
   if (!idempotencyKey(req)) return error('mail_idempotency_required', 400);
-  const body = await readJson(req);
+  const body = await readJsonBody(req, MAX_INTERNAL_BODY);
   if (!body) return error('mail_invalid_body');
 
   const address = normalizeAddress(body.address);
@@ -221,7 +182,7 @@ async function getMyKey(env: MailEnv, userId: string): Promise<Response> {
 
 async function publishMyKey(env: MailEnv, userId: string, req: Request): Promise<Response> {
   if (!idempotencyKey(req)) return error('mail_idempotency_required', 400);
-  const body = await readJson(req);
+  const body = await readJsonBody(req, MAX_INTERNAL_BODY);
   if (!body) return error('mail_invalid_body');
 
   const publicKey = body.public_key;
@@ -286,7 +247,7 @@ async function lookupKeys(env: MailEnv, url: URL): Promise<Response> {
 async function reportAbuse(env: MailEnv, userId: string, req: Request): Promise<Response> {
   const key = idempotencyKey(req);
   if (!key) return error('mail_idempotency_required', 400);
-  const body = await readJson(req);
+  const body = await readJsonBody(req, MAX_INTERNAL_BODY);
   if (!body) return error('mail_invalid_body');
   const messageId = typeof body.message_id === 'string' ? body.message_id.trim() : '';
   if (messageId.length > 128) return error('mail_invalid_message_id');
@@ -358,7 +319,7 @@ async function listThreads(env: MailEnv, userId: string, url: URL): Promise<Resp
        WHERE m.user_id = ? AND m.deleted_at IS NULL
      )
      SELECT t.id, t.folder, t.last_message_at, t.message_count, t.unread_count,
-            m.id AS message_id, m.subject_enc, m.meta_enc, m.payload_iv, m.blob_id,
+            m.id AS message_id, m.subject_enc, m.meta_enc, m.payload_iv, m.blob_id, m.aad_id,
             m.from_addr, m.received_at, m.read_at, m.starred_at, m.has_attachments,
             m.size_bytes, m.security,
             k.ephemeral_public_key, k.iv AS key_iv, k.wrapped_content_key,
@@ -384,6 +345,7 @@ async function listThreads(env: MailEnv, userId: string, url: URL): Promise<Resp
     meta_enc: row.meta_enc,
     payload_iv: row.payload_iv,
     blob_id: row.blob_id,
+    aad_id: row.aad_id,
     from_addr: row.from_addr,
     received_at: row.received_at,
     read_at: row.read_at,
@@ -436,7 +398,7 @@ async function threadDetail(env: MailEnv, userId: string, threadId: string): Pro
   const attachments =
     messageIds.length > 0
       ? await env.MAIL_DB.prepare(
-          `SELECT id, message_id, content_type, size_bytes, scan_status
+          `SELECT id, message_id, aad_id, iv, content_type, size_bytes, scan_status
            FROM mail_attachments
            WHERE user_id = ? AND message_id IN (SELECT value FROM json_each(?))`,
         )
@@ -462,6 +424,7 @@ async function threadDetail(env: MailEnv, userId: string, threadId: string): Pro
       meta_enc: message.meta_enc,
       payload_iv: message.payload_iv,
       blob_id: message.blob_id,
+      aad_id: message.aad_id,
       message_id_hash: message.message_id_hash,
       in_reply_to_hash: message.in_reply_to_hash,
       references_hash: message.references_hash,
@@ -503,7 +466,7 @@ async function messageDetail(env: MailEnv, userId: string, messageId: string): P
     .first<Record<string, unknown>>();
   if (!message) return error('mail_message_not_found', 404);
   const attachments = await env.MAIL_DB.prepare(
-    `SELECT id, content_type, size_bytes, scan_status
+    `SELECT id, aad_id, iv, content_type, size_bytes, scan_status
      FROM mail_attachments WHERE message_id = ? AND user_id = ?`,
   )
     .bind(messageId, userId)
@@ -518,6 +481,7 @@ async function messageDetail(env: MailEnv, userId: string, messageId: string): P
       meta_enc: message.meta_enc,
       payload_iv: message.payload_iv,
       blob_id: message.blob_id,
+      aad_id: message.aad_id,
       message_id_hash: message.message_id_hash,
       in_reply_to_hash: message.in_reply_to_hash,
       references_hash: message.references_hash,
@@ -632,7 +596,7 @@ async function refreshThreads(env: MailEnv, userId: string, threadIds: string[])
 
 async function messageActions(env: MailEnv, userId: string, req: Request): Promise<Response> {
   if (!idempotencyKey(req)) return error('mail_idempotency_required', 400);
-  const body = await readJson(req);
+  const body = await readJsonBody(req, MAX_INTERNAL_BODY);
   if (!body) return error('mail_invalid_body');
   const action = typeof body.action === 'string' ? body.action : '';
   const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === 'string') : [];
@@ -832,6 +796,32 @@ async function handleInternal(env: MailEnv, req: Request, userId: string): Promi
   if (method === 'POST' && url.pathname === '/internal/report-abuse') return reportAbuse(env, userId, req);
   if (method === 'GET' && url.pathname === '/internal/threads') return listThreads(env, userId, url);
   if (method === 'POST' && url.pathname === '/internal/messages/actions') return messageActions(env, userId, req);
+  if (method === 'POST' && url.pathname === '/internal/send') return handleInternalSend(env, userId, req);
+  if (method === 'GET' && url.pathname === '/internal/drafts') return handleListDrafts(env, userId);
+  if (method === 'POST' && url.pathname === '/internal/drafts') return handleCreateDraft(env, userId, req);
+
+  const draftMatch = /^\/internal\/drafts\/([^/]+)$/.exec(url.pathname);
+  if (draftMatch) {
+    const draftId = decodeURIComponent(draftMatch[1] ?? '');
+    if (method === 'GET') return handleDraftDetail(env, userId, draftId);
+    if (method === 'PATCH') return handleUpdateDraft(env, userId, draftId, req);
+    if (method === 'DELETE') return handleDeleteDraft(env, userId, draftId);
+  }
+
+  const draftPayloadMatch = /^\/internal\/drafts\/([^/]+)\/payload$/.exec(url.pathname);
+  if (method === 'GET' && draftPayloadMatch) {
+    return handleDraftPayload(env, userId, decodeURIComponent(draftPayloadMatch[1] ?? ''));
+  }
+
+  const draftAttachmentMatch = /^\/internal\/drafts\/([^/]+)\/attachments\/([^/]+)$/.exec(url.pathname);
+  if (method === 'GET' && draftAttachmentMatch) {
+    return handleDraftAttachment(
+      env,
+      userId,
+      decodeURIComponent(draftAttachmentMatch[1] ?? ''),
+      decodeURIComponent(draftAttachmentMatch[2] ?? ''),
+    );
+  }
 
   const threadMatch = /^\/internal\/threads\/([^/]+)$/.exec(url.pathname);
   if (method === 'GET' && threadMatch) return threadDetail(env, userId, decodeURIComponent(threadMatch[1] ?? ''));

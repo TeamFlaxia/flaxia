@@ -105,3 +105,30 @@ export function avatar(name: string, className = 'mail-avatar'): HTMLElement {
   node.setAttribute('aria-hidden', 'true');
   return node;
 }
+
+/** Map a mail API error to a user-facing i18n key (send/draft paths). */
+export function mailErrorKey(error: unknown): string {
+  const code = error instanceof Error ? error.message : '';
+  const status = (error as { status?: number } | null)?.status;
+  if (status === 501 || code === 'mail_not_implemented') return 'mail.not_ready_send';
+  switch (code) {
+    case 'mail_external_unavailable':
+      return 'mail.external_unavailable';
+    case 'mail_quota_exceeded':
+      return 'mail.quota_full';
+    case 'mail_rate_limited':
+      return 'mail.send_rate_limited';
+    case 'mail_key_rotated':
+      return 'mail.key_rotated';
+    case 'mail_too_large':
+      return 'mail.attachment_too_large';
+    case 'mail_too_many_attachments':
+      return 'mail.attachment_too_many';
+    case 'mail_not_activated':
+      return 'mail.not_activated';
+    case 'mail_key_unavailable':
+      return 'mail.key_unavailable';
+    default:
+      return 'mail.send_failed';
+  }
+}

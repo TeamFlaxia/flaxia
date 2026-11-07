@@ -10,11 +10,11 @@ import {
   isMailNotImplemented,
   type MailMessage,
   type MailThreadDetail,
-  sendMessage,
 } from '../lib/mail/api.js';
 import { demoThread, isMailPreview } from '../lib/mail/demo.js';
 import { mailBack } from '../lib/mail/navigation.js';
-import { MailReader } from '../lib/mail/reader.js';
+import { type DecryptedMessage, downloadAttachment, MailReader } from '../lib/mail/reader.js';
+import { sendCompose } from '../lib/mail/send.js';
 import {
   avatar,
   emptyState,
@@ -22,6 +22,7 @@ import {
   formatMailDate,
   iconButton,
   mailButton,
+  mailErrorKey,
   securityChip,
 } from '../lib/mail/ui.js';
 import { getResolvedTheme } from '../lib/theme.js';
@@ -47,6 +48,7 @@ export class MailThreadPage {
   private subtitleEl: HTMLElement | null = null;
   private replyStatus: HTMLElement | null = null;
   private destroyed = false;
+  private decryptedMessages: DecryptedMessage[] = [];
 
   constructor(props: MailThreadPageProps) {
     this.props = props;
@@ -88,6 +90,7 @@ export class MailThreadPage {
       } else {
         // Payloads are independent ciphertext blobs; fetch and decrypt them in
         // parallel instead of racing each message round trip back-to-back.
+        this.decryptedMessages = decrypted.messages;
         const payloadList = await Promise.all(decrypted.messages.map((message) => reader.decryptPayload(message)));
         const messages: MailMessage[] = decrypted.messages.map((message, index) => {
           const payload = payloadList[index];
@@ -368,7 +371,8 @@ export class MailThreadPage {
       const list = document.createElement('div');
       list.className = 'mail-attachment-list';
       for (const attachment of attachments) {
-        const item = document.createElement('div');
+        const item = document.createElement('button');
+        item.type = 'button';
         item.className = 'mail-attachment';
         item.appendChild(icon('paperclip', { width: '13', height: '13' }));
         const name = document.createElement('span');
@@ -378,6 +382,13 @@ export class MailThreadPage {
         size.textContent = formatBytes(attachment.size_bytes);
         item.appendChild(name);
         item.appendChild(size);
+        const source = this.decryptedMessages.find((entry) => entry.id === message.id);
+        if (source && attachment.iv) {
+          item.addEventListener('click', () => void this.download(source, attachment, item));
+        } else {
+          item.disabled = true;
+          item.classList.add('mail-attachment--unavailable');
+        }
         list.appendChild(item);
       }
       card.appendChild(list);
@@ -432,22 +443,31 @@ export class MailThreadPage {
         return;
       }
       const last = this.thread.messages[this.thread.messages.length - 1];
+      const lastDecrypted = this.decryptedMessages.find((entry) => entry.id === last?.id);
+      const to = last?.from_address ? [last.from_address] : [];
       send.disabled = true;
-      void sendMessage({
-        from: this.expectedAddress(),
-        to: [last?.from_address ?? ''],
-        subject: `Re: ${this.thread.subject}`,
-        text,
-        security: this.thread.security,
-      })
+      void sendCompose(
+        {
+          from: this.expectedAddress(),
+          to,
+          cc: [],
+          bcc: [],
+          subject: this.thread.subject.startsWith('Re:') ? this.thread.subject : `Re: ${this.thread.subject}`,
+          text,
+          attachments: [],
+        },
+        {
+          fromName: this.props.currentUser?.username ?? '',
+          threadId: this.thread.id,
+          inReplyToHash: lastDecrypted?.messageIdHash || undefined,
+        },
+      )
         .then(() => {
           textarea.value = '';
           status.textContent = t('mail.reply_sent') || 'Reply sent.';
         })
         .catch((error) => {
-          status.textContent = isMailNotImplemented(error)
-            ? t('mail.not_ready_send') || 'Sending arrives with the next Mail release.'
-            : t('mail.send_failed') || 'Could not send the reply.';
+          status.textContent = t(mailErrorKey(error)) || t('mail.send_failed') || 'Could not send the reply.';
         })
         .finally(() => {
           send.disabled = false;
@@ -460,6 +480,27 @@ export class MailThreadPage {
     return reply;
   }
 
+  private async download(
+    message: DecryptedMessage,
+    attachment: NonNullable<MailMessage['attachments']>[number],
+    button: HTMLButtonElement,
+  ): Promise<void> {
+    button.disabled = true;
+    try {
+      const bytes = await downloadAttachment(message, attachment);
+      const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: attachment.content_type }));
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = attachment.filename || 'attachment';
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch {
+      this.setReplyStatus(t('mail.attachment_unavailable') || 'This attachment could not be opened.');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   private setReplyStatus(text: string): void {
     if (this.replyStatus) this.replyStatus.textContent = text;
   }
@@ -470,6 +511,8 @@ export class MailThreadPage {
 
   destroy(): void {
     this.destroyed = true;
+    for (const message of this.decryptedMessages) message.contentKey.fill(0);
+    this.decryptedMessages = [];
     this.element.remove();
   }
 }

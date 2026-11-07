@@ -1,15 +1,19 @@
-// Mail compose (docs/mail.md §10). The form is ready for P3; while the send
-// endpoint is 501 it reports that clearly instead of pretending to send.
+// Mail compose (docs/mail.md §10). Seals the message client-side and posts only
+// ciphertext for internal Flaxia recipients; drafts are encrypted the same way
+// and can be reopened from the Drafts folder.
 import { t } from '../lib/i18n.js';
 import { icon } from '../lib/icons.js';
 import { primaryAddressForUsername } from '../lib/mail/address.js';
-import { isMailNotImplemented, type MailSecurity, saveDraft, sendMessage } from '../lib/mail/api.js';
+import { deleteDraft, type MailSecurity } from '../lib/mail/api.js';
 import { isMailPreview } from '../lib/mail/demo.js';
 import { mailBack } from '../lib/mail/navigation.js';
-import { formatBytes, mailButton, securityChip } from '../lib/mail/ui.js';
+import { type ComposeAttachmentInput, type ComposeFields, MAX_ATTACHMENTS, MAX_SEND_BYTES } from '../lib/mail/seal.js';
+import { openDraft, saveComposeDraft, sendCompose } from '../lib/mail/send.js';
+import { formatBytes, mailButton, mailErrorKey, securityChip } from '../lib/mail/ui.js';
 
 export interface MailComposePageProps {
   currentUser: { id: string; username: string } | null;
+  draftId?: string;
 }
 
 export class MailComposePage {
@@ -21,9 +25,15 @@ export class MailComposePage {
   private chipHost: HTMLElement | null = null;
   private attachmentsEl: HTMLElement | null = null;
   private files: File[] = [];
+  private form: HTMLFormElement | null = null;
+  private sendButton: HTMLButtonElement | null = null;
+  private draftButton: HTMLButtonElement | null = null;
+  private draftId = '';
+  private busy = false;
 
   constructor(props: MailComposePageProps) {
     this.props = props;
+    this.draftId = props.draftId ?? '';
     this.element = document.createElement('div');
     this.element.className = 'mail-compose-page';
     void this.render();
@@ -68,6 +78,7 @@ export class MailComposePage {
       event.preventDefault();
       void this.send(form);
     });
+    this.form = form;
 
     form.appendChild(this.buildField(t('mail.from') || 'From', this.fromAddress(), true));
 
@@ -141,12 +152,19 @@ export class MailComposePage {
     toolbar.appendChild(attach);
     const draft = mailButton(t('mail.save_draft') || 'Save draft', 'secondary', 'save');
     draft.addEventListener('click', () => void this.draft(form));
+    this.draftButton = draft;
     toolbar.appendChild(draft);
+    if (this.draftId) {
+      const remove = mailButton(t('mail.delete_draft') || 'Delete draft', 'ghost', 'trash');
+      remove.addEventListener('click', () => void this.removeDraft(remove));
+      toolbar.appendChild(remove);
+    }
     this.statusEl = document.createElement('span');
     this.statusEl.className = 'mail-compose-status';
     toolbar.appendChild(this.statusEl);
     const send = mailButton(t('mail.send') || 'Send', 'primary', 'send');
     send.type = 'submit';
+    this.sendButton = send;
     toolbar.appendChild(send);
     form.appendChild(toolbar);
 
@@ -156,6 +174,8 @@ export class MailComposePage {
 
     this.element.appendChild(form);
     body.focus();
+
+    if (this.draftId) void this.restore(this.draftId);
   }
 
   private buildField(labelText: string, value: string, readonly = false): HTMLElement {
@@ -233,9 +253,35 @@ export class MailComposePage {
     if (this.statusEl) this.statusEl.textContent = text;
   }
 
+  private setBusy(busy: boolean): void {
+    this.busy = busy;
+    if (this.sendButton) this.sendButton.disabled = busy;
+    if (this.draftButton) this.draftButton.disabled = busy;
+  }
+
+  private async buildFields(form: HTMLFormElement): Promise<ComposeFields> {
+    if (this.files.length > MAX_ATTACHMENTS) throw new Error('mail_too_many_attachments');
+    let total = 0;
+    const attachments: ComposeAttachmentInput[] = [];
+    for (const file of this.files) {
+      total += file.size;
+      if (total > MAX_SEND_BYTES) throw new Error('mail_too_large');
+      attachments.push({ name: file.name, type: file.type, bytes: new Uint8Array(await file.arrayBuffer()) });
+    }
+    return {
+      from: this.fromAddress(),
+      to: this.recipients(form, 'to'),
+      cc: this.recipients(form, 'cc'),
+      bcc: this.recipients(form, 'bcc'),
+      subject: this.formValue(form, 'subject'),
+      text: this.formValue(form, 'text'),
+      attachments,
+    };
+  }
+
   private async send(form: HTMLFormElement): Promise<void> {
-    const to = this.recipients(form, 'to');
-    if (to.length === 0) {
+    if (this.busy) return;
+    if (this.recipients(form, 'to').length === 0) {
       this.setStatus(t('mail.no_recipient') || 'Add at least one recipient.');
       return;
     }
@@ -243,50 +289,79 @@ export class MailComposePage {
       this.setStatus(t('mail.preview_send') || 'Preview mode: the message is not sent.');
       return;
     }
+    this.setBusy(true);
     this.setStatus(t('mail.sending') || 'Sending…');
     try {
-      await sendMessage({
-        from: this.fromAddress(),
-        to,
-        cc: this.recipients(form, 'cc'),
-        bcc: this.recipients(form, 'bcc'),
-        subject: this.formValue(form, 'subject'),
-        text: this.formValue(form, 'text'),
-        security: this.security,
-      });
+      const fields = await this.buildFields(form);
+      await sendCompose(fields, { fromName: this.props.currentUser?.username ?? '' });
       this.setStatus(t('mail.sent') || 'Message sent.');
       mailBack();
     } catch (error) {
-      this.setStatus(
-        isMailNotImplemented(error)
-          ? t('mail.not_ready_send') || 'Sending arrives with the next Mail release.'
-          : t('mail.send_failed') || 'Could not send the message.',
-      );
+      this.setStatus(t(mailErrorKey(error)) || t('mail.send_failed') || 'Could not send the message.');
+    } finally {
+      this.setBusy(false);
     }
   }
 
   private async draft(form: HTMLFormElement): Promise<void> {
+    if (this.busy) return;
     if (isMailPreview()) {
       this.setStatus(t('mail.preview_draft') || 'Preview mode: the draft is not saved.');
       return;
     }
+    this.setBusy(true);
     this.setStatus(t('mail.saving_draft') || 'Saving draft…');
     try {
-      await saveDraft({
-        from: this.fromAddress(),
-        to: this.recipients(form, 'to'),
-        cc: this.recipients(form, 'cc'),
-        bcc: this.recipients(form, 'bcc'),
-        subject: this.formValue(form, 'subject'),
-        text: this.formValue(form, 'text'),
-      });
+      const fields = await this.buildFields(form);
+      const id = await saveComposeDraft(
+        fields,
+        { fromName: this.props.currentUser?.username ?? '' },
+        this.draftId || undefined,
+      );
+      this.draftId = id;
       this.setStatus(t('mail.draft_saved') || 'Draft saved.');
     } catch (error) {
-      this.setStatus(
-        isMailNotImplemented(error)
-          ? t('mail.not_ready_draft') || 'Drafts arrive with the next Mail release.'
-          : t('mail.save_failed') || 'Could not save the draft.',
+      this.setStatus(t(mailErrorKey(error)) || t('mail.save_failed') || 'Could not save the draft.');
+    } finally {
+      this.setBusy(false);
+    }
+  }
+
+  private async removeDraft(button: HTMLButtonElement): Promise<void> {
+    if (!this.draftId || this.busy) return;
+    button.disabled = true;
+    try {
+      await deleteDraft(this.draftId);
+      this.draftId = '';
+      mailBack();
+    } catch (error) {
+      this.setStatus(t(mailErrorKey(error)) || t('mail.save_failed') || 'Could not delete the draft.');
+      button.disabled = false;
+    }
+  }
+
+  private async restore(draftId: string): Promise<void> {
+    const form = this.form;
+    if (!form) return;
+    this.setStatus(t('mail.draft_opening') || 'Opening draft…');
+    try {
+      const { fields } = await openDraft(draftId);
+      const setValue = (name: string, value: string): void => {
+        const input = form.elements.namedItem(name) as HTMLInputElement | HTMLTextAreaElement | null;
+        if (input) input.value = value;
+      };
+      setValue('to', fields.to.join(', '));
+      setValue('cc', fields.cc.join(', '));
+      setValue('subject', fields.subject);
+      setValue('text', fields.text);
+      this.files = fields.attachments.map(
+        (attachment) => new File([attachment.bytes as BlobPart], attachment.name, { type: attachment.type }),
       );
+      this.renderAttachments();
+      this.updateSecurity(form);
+      this.setStatus('');
+    } catch (error) {
+      this.setStatus(t(mailErrorKey(error)) || t('mail.draft_open_failed') || 'This draft could not be opened.');
     }
   }
 
