@@ -19,12 +19,14 @@ describe('translate model routing', () => {
     assert.equal(translateModelFor('ja', 'en').task, 'text-generation');
   });
 
-  it('falls back to M2M100 for Korean in either direction', () => {
+  it('falls back to M2M100 for Korean source, allows Korean target', () => {
     assert.equal(isPlamoSupported('ko', 'en'), false);
-    assert.equal(isPlamoSupported('ja', 'ko'), false);
+    assert.equal(isPlamoSupported('ko', 'ja'), false);
     assert.equal(translateModelFor('ko', 'en').model, M2M100_MODEL_ID);
-    assert.equal(translateModelFor('ja', 'ko').model, M2M100_MODEL_ID);
     assert.equal(translateModelFor('ko', 'en').task, 'translation');
+    // Decoder was fixed in rev 1c8417ee (ByteFallback), so ja->ko works.
+    assert.equal(isPlamoSupported('ja', 'ko'), true);
+    assert.equal(translateModelFor('ja', 'ko').model, PLAMO_MODEL_ID);
   });
 
   it('falls back to M2M100 for languages PLaMO does not list', () => {

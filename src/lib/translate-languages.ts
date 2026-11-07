@@ -46,7 +46,7 @@ export function languageName(code: string, isJa: boolean): string {
 
 /** PLaMo 3 Translate 0.8B (ONNX, Transformers.js). Default for most pairs. */
 export const PLAMO_MODEL_ID = 'TeamFlaxia/plamo-3-translate-0.8b-onnx';
-export const PLAMO_MODEL_REVISION = '1d7e8fee47003c9026b97d7796111a054e7e03d2';
+export const PLAMO_MODEL_REVISION = '1c8417ee1a72442440ad515b02f99186c81fd08a';
 export const PLAMO_TASK = 'text-generation';
 /** M2M100 fallback for pairs where PLaMO is not usable (see below). */
 export const M2M100_MODEL_ID = 'Xenova/m2m100_418M';
@@ -113,14 +113,17 @@ const PLAMO_SUPPORTED = new Set([
 ]);
 
 /**
- * Whether a pair should use PLaMO. Korean is excluded in both directions:
- * the ONNX tokenizer has no token for at least one common Hangul syllable
- * (verified locally: ko→en / ko→ja hallucinate, ja→ko emits byte mojibake),
- * while M2M100 handles it correctly. Portuguese, Swedish, Turkish and
- * Ukrainian are not in PLaMO's supported list, so they also fall back.
+ * Whether a pair should use PLaMO. Korean as a *source* is excluded:
+ * Transformers.js' Unigram encoder ignores `byte_fallback`, so Hangul
+ * syllables missing from the vocab (e.g. 녕 in 안녕하세요) become `<unk>`
+ * and the model hallucinates (verified locally: ko→en/ja). Korean as a
+ * *target* is fine since the model repo's rev 1c8417ee fixed the
+ * tokenizer decoder to ByteFallback, so ja→ko now decodes correctly.
+ * Portuguese, Swedish, Turkish and Ukrainian are not in PLaMO's
+ * supported list, so they also fall back to M2M100.
  */
 export function isPlamoSupported(sourceLang: string, targetLang: string): boolean {
-  if (sourceLang === 'ko' || targetLang === 'ko') return false;
+  if (sourceLang === 'ko') return false;
   return PLAMO_SUPPORTED.has(sourceLang) && PLAMO_SUPPORTED.has(targetLang);
 }
 
