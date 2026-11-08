@@ -586,6 +586,19 @@
   color: var(--text-primary);
 }
 
+.nav-user-popup-item--active {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.nav-user-popup-item--active .nav-popup-icon {
+  color: var(--accent-text);
+}
+
+.nav-user-popup-item .nav-dm-badge {
+  margin-left: auto;
+}
+
 .nav-user-popup-item:active {
   background: var(--bg-active);
 }

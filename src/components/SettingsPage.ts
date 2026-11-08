@@ -21,6 +21,7 @@ import {
   stopCrowdNode,
 } from '../lib/crowd-node.js';
 import { getLocale, setLocale, t } from '../lib/i18n.js';
+import { icon } from '../lib/icons.js';
 import { applyNameColor } from '../lib/name-color.js';
 import { nativeApiHref } from '../lib/native-api.js';
 import { passwordLengthError } from '../lib/password-policy.js';
@@ -91,6 +92,11 @@ function createSettingsTwoPane() {
   const heading = document.createElement('h1');
   heading.textContent = t('settings.title');
   heading.tabIndex = -1;
+  const titleIcon = document.createElement('span');
+  titleIcon.className = 'settings-title-icon';
+  titleIcon.setAttribute('aria-hidden', 'true');
+  titleIcon.appendChild(icon('settings', { width: '18', height: '18' }));
+  heading.insertBefore(titleIcon, heading.firstChild);
   header.appendChild(back);
   header.appendChild(heading);
   container.appendChild(header);

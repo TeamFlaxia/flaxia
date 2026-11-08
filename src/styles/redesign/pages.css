@@ -807,6 +807,15 @@
   line-height: 1.3;
   letter-spacing: -0.01em;
   overflow-wrap: anywhere;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-header .settings-title-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--accent-text);
 }
 
 .settings-back {

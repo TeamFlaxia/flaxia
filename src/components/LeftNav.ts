@@ -196,16 +196,10 @@ export class LeftNav {
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
         { id: 'notifications', text: t('nav.notifications'), icon: 'notifications' },
-        { id: 'mail', text: t('nav.mail'), icon: 'mail' },
         { id: 'bookmarks', text: t('nav.bookmarks'), icon: 'bookmark' },
       ] as const;
       items.forEach((item) => {
-        const unread =
-          item.id === 'notifications'
-            ? this.props.unreadCount || 0
-            : item.id === 'mail'
-              ? this.props.mailUnreadCount || 0
-              : 0;
+        const unread = item.id === 'notifications' ? this.props.unreadCount || 0 : 0;
         navItems.appendChild(this.createNavItem(item.id, item.text, item.icon as IconName, unread));
       });
     } else {
@@ -377,6 +371,7 @@ export class LeftNav {
 
     const menuItems = [
       { id: 'profile', text: t('nav.profile'), icon: 'profile' },
+      { id: 'mail', text: t('nav.mail'), icon: 'mail' },
       { id: 'settings', text: t('nav.settings'), icon: 'settings' },
     ];
 
@@ -392,6 +387,13 @@ export class LeftNav {
       labelWrap.textContent = item.text;
       popupItem.appendChild(iconWrap);
       popupItem.appendChild(labelWrap);
+      if (item.id === 'mail' && (this.props.mailUnreadCount || 0) > 0) {
+        const badge = document.createElement('span');
+        badge.className = 'nav-dm-badge';
+        const count = this.props.mailUnreadCount || 0;
+        badge.textContent = count >= 99 ? '99+' : formatCount(count);
+        popupItem.appendChild(badge);
+      }
 
       popupItem.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -580,6 +582,13 @@ export class LeftNav {
       navItem.classList.toggle('nav-item--active', isActive);
       navItem.setAttribute('aria-current', isActive ? 'page' : 'false');
     });
+    this.element.querySelectorAll('.nav-user-popup-item').forEach((popupItem) => {
+      const navId = popupItem.getAttribute('data-nav-id');
+      const isActive = navId === item;
+      popupItem.classList.toggle('nav-user-popup-item--active', isActive);
+      if (isActive) popupItem.setAttribute('aria-current', 'page');
+      else popupItem.removeAttribute('aria-current');
+    });
   }
 
   public getActiveItem(): string {
@@ -591,7 +600,9 @@ export class LeftNav {
   }
 
   private setNavBadge(navId: string, count: number): void {
-    const item = this.element.querySelector(`.nav-item[data-nav-id="${navId}"]`) as HTMLElement | null;
+    // Mail lives in the ⋯ popup now; update its badge there, guard the rail.
+    const popupItem = this.element.querySelector(`.nav-user-popup-item[data-nav-id="${navId}"]`) as HTMLElement | null;
+    const item = (this.element.querySelector(`.nav-item[data-nav-id="${navId}"]`) as HTMLElement | null) ?? popupItem;
     if (!item) return;
 
     const existingBadge = item.querySelector('.nav-dm-badge') as HTMLElement | null;
@@ -712,17 +723,11 @@ export function updateLeftNavUser(
         { id: 'explore', text: t('nav.explore'), icon: 'explore' },
         { id: 'arcade', text: t('nav.arcade'), icon: 'arcade' },
         { id: 'notifications', text: t('nav.notifications'), icon: 'notifications' },
-        { id: 'mail', text: t('nav.mail'), icon: 'mail' },
         { id: 'bookmarks', text: t('nav.bookmarks'), icon: 'bookmark' },
       ] as const;
 
       items.forEach((item) => {
-        const count =
-          item.id === 'notifications'
-            ? (leftNav.props.unreadCount ?? 0)
-            : item.id === 'mail'
-              ? (leftNav.props.mailUnreadCount ?? 0)
-              : 0;
+        const count = item.id === 'notifications' ? (leftNav.props.unreadCount ?? 0) : 0;
         const navItem = document.createElement('button');
         navItem.type = 'button';
         navItem.className = `nav-item${leftNav.getActiveItem() === item.id ? ' nav-item--active' : ''}`;
