@@ -31,7 +31,7 @@ import {
 } from '../../lib/attachments';
 import { getMeWithSession, getSessionToken } from '../../lib/auth';
 import { getUserPlan } from '../../lib/billing';
-import { embedPost, isImageKey, screenPostImages } from '../../lib/crowd';
+import { embedPost, isImageKey, type PostMediaInput, screenPostImages, tagPost } from '../../lib/crowd';
 import { validateImageDimensions } from '../../lib/image-dimensions';
 import { sendPushToAll } from '../../lib/notify';
 import { clampLimit } from '../../lib/pagination';
@@ -2128,7 +2128,29 @@ posts.post('/posts/commit', requireAuth, async (c) => {
 
     await refreshUserTrustSafe(c.env.DB, userId);
 
-    runInBackground(c, () => embedPost(c.env.DB, c.env, fullPost.id, fullPost.text), 'Background embed failed');
+    // Media for multimodal embed + AI tagging: game posts contribute their
+    // thumbnail, attachments contribute image/audio/video keys.
+    const media: PostMediaInput = {
+      imageKeys: [
+        ...(isImageKey(fullPost.gif_key) ? [fullPost.gif_key] : []),
+        ...(isImageKey(fullPost.thumbnail_key) ? [fullPost.thumbnail_key] : []),
+        ...imageAttachmentKeys(fullPost.attachments),
+      ],
+      audioKey: (fullPost.attachments as Array<AttachmentRecord> | undefined)?.find((a) => a.kind === 'audio')?.r2_key,
+      videoKey: (fullPost.attachments as Array<AttachmentRecord> | undefined)?.find((a) => a.kind === 'video')?.r2_key,
+    };
+    const hasMedia = (media.imageKeys?.length ?? 0) > 0 || Boolean(media.audioKey) || Boolean(media.videoKey);
+
+    runInBackground(
+      c,
+      () => embedPost(c.env.DB, c.env, fullPost.id, fullPost.text, hasMedia ? media : undefined),
+      'Background embed failed',
+    );
+    runInBackground(
+      c,
+      () => tagPost(c.env.DB, c.env, fullPost.id, fullPost.text, hasMedia ? media : undefined),
+      'Background AI tag failed',
+    );
 
     // Screen every image the post carries, not just the first: reconcile the
     // scan rows with the current key list, then submit what the throttle allows.
