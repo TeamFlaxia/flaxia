@@ -134,6 +134,7 @@ const groups = {
     'app-update',
     'billing',
     'capacitor-security-config',
+    'data-saver',
     'dataset-export',
     'deploy-config',
     'device-platform',
