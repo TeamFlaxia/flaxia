@@ -38,14 +38,15 @@ export function createDataSaverPlaceholder(buttonLabel: string, onLoad: () => vo
   button.type = 'button';
   button.textContent = buttonLabel;
   button.style.cssText = `
-    background: var(--accent);
-    color: var(--text-inverse, #fff);
-    border: none;
+    background: #22c55e;
+    color: #052e16;
+    border: 1px solid #16a34a;
     border-radius: 9999px;
     padding: 0.5rem 1.25rem;
     cursor: pointer;
     font-size: 0.875rem;
-    font-weight: 600;
+    font-weight: 700;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   `;
 
   button.addEventListener('click', (e) => {
