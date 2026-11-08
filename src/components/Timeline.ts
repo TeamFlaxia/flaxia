@@ -4,6 +4,7 @@ import { t } from '../lib/i18n.js';
 import { createInfiniteScroll } from '../lib/infinite-scroll.js';
 import { injectAds } from '../lib/inject-ads.js';
 import { createLoadingSpinner, createSkeletonCards } from '../lib/loading-ui.js';
+import { isModalOpen } from '../lib/modal-state.js';
 import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { rankCandidates } from '../lib/recommendation/rank.js';
@@ -55,6 +56,7 @@ export class Timeline {
 
   // Store bound event handlers for proper cleanup
   private boundHandleProfileUpdate: () => void;
+  private boundHandleModeShortcut: (event: KeyboardEvent) => void;
 
   constructor(props: TimelineProps) {
     this.props = props;
@@ -74,6 +76,7 @@ export class Timeline {
 
     // Initialize bound event handlers for proper cleanup
     this.boundHandleProfileUpdate = this.handleProfileUpdate.bind(this);
+    this.boundHandleModeShortcut = this.handleModeShortcut.bind(this);
 
     this.infiniteScroll = createInfiniteScroll({
       onLoadMore: () => this.loadMorePosts(),
@@ -157,6 +160,7 @@ export class Timeline {
       const followingBtn = document.createElement('button');
       followingBtn.className = 'feed-toggle-btn';
       followingBtn.textContent = t('timeline.following');
+      followingBtn.title = t('timeline.following_title');
       followingBtn.dataset.mode = 'following';
       if (this.state.mode === 'following') {
         followingBtn.classList.add('active');
@@ -167,6 +171,7 @@ export class Timeline {
     const forYouBtn = document.createElement('button');
     forYouBtn.className = 'feed-toggle-btn';
     forYouBtn.textContent = t('timeline.for_you');
+    forYouBtn.title = t('timeline.for_you_title');
     forYouBtn.dataset.mode = 'foryou';
     if (this.state.mode === 'foryou') {
       forYouBtn.classList.add('active');
@@ -176,6 +181,7 @@ export class Timeline {
     const globalBtn = document.createElement('button');
     globalBtn.className = 'feed-toggle-btn';
     globalBtn.textContent = t('timeline.global');
+    globalBtn.title = t('timeline.global_title');
     globalBtn.dataset.mode = 'global';
     if (this.state.mode === 'global') {
       globalBtn.classList.add('active');
@@ -349,6 +355,38 @@ export class Timeline {
       if (post && post.id) this.handleNewPost(post);
     }) as EventListener;
     window.addEventListener('postCreated', this.composeRequestHandler);
+
+    // Alt+1/2/3 feed switching, active only while this timeline is mounted.
+    window.addEventListener('keydown', this.boundHandleModeShortcut);
+  }
+
+  private handleModeShortcut(event: KeyboardEvent): void {
+    if (event.defaultPrevented || event.isComposing) return;
+    if (!event.altKey || event.metaKey || event.ctrlKey) return;
+    if (document.querySelector('.cmd-overlay:not([hidden])') || isModalOpen()) return;
+
+    const target = event.target;
+    if (target instanceof HTMLElement) {
+      if (target.isContentEditable) return;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+    }
+
+    const codeMap: Record<string, 'following' | 'foryou' | 'global'> = {
+      Digit1: 'following',
+      Digit2: 'foryou',
+      Digit3: 'global',
+    };
+    const keyMap: Record<string, 'following' | 'foryou' | 'global'> = {
+      '1': 'following',
+      '2': 'foryou',
+      '3': 'global',
+    };
+    const mode = codeMap[event.code] ?? keyMap[event.key];
+    if (!mode) return;
+    if (mode === 'following' && !this.props.currentUser) return;
+
+    event.preventDefault();
+    this.switchMode(mode);
   }
 
   private handleNewPost(post: Post): void {
@@ -1021,6 +1059,7 @@ export class Timeline {
     }
 
     // Clean up window event listeners
+    window.removeEventListener('keydown', this.boundHandleModeShortcut);
     window.removeEventListener('profileUpdated', this.boundHandleProfileUpdate);
     if (this.postUpdatedHandler) {
       window.removeEventListener('postUpdated', this.postUpdatedHandler);
