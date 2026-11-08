@@ -1,3 +1,6 @@
+import { t } from './i18n.js';
+import { isDataSaverEnabled } from './settings.js';
+
 export interface LinkPreviewData {
   title: string;
   description: string;
@@ -73,7 +76,12 @@ export function createLinkPreviewCard(data: LinkPreviewData): HTMLElement {
       `;
 
       const img = document.createElement('img');
-      img.src = thumbnailSrc;
+      // Data-saver: external thumbnails (YouTube OG images) can be heavy.
+      // Show a tap gate first and only set src after the tap.
+      const dataSaverPending = isDataSaverEnabled();
+      if (!dataSaverPending) {
+        img.src = thumbnailSrc;
+      }
       img.loading = 'lazy';
       img.style.cssText = `
         position: absolute;
@@ -83,6 +91,32 @@ export function createLinkPreviewCard(data: LinkPreviewData): HTMLElement {
         height: 100%;
         object-fit: cover;
       `;
+      if (dataSaverPending) {
+        const gateLabel = document.createElement('div');
+        gateLabel.style.cssText = `
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          background: rgba(0,0,0,0.65);
+          color: #fff;
+          border-radius: 9999px;
+          padding: 0.5rem 1rem;
+          font-size: 0.8rem;
+          cursor: pointer;
+        `;
+        gateLabel.textContent = t('media.data_saver_placeholder');
+        gateLabel.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          img.src = thumbnailSrc;
+          gateLabel.remove();
+        });
+        imgContainer.appendChild(img);
+        imgContainer.appendChild(gateLabel);
+      } else {
+        imgContainer.appendChild(img);
+      }
       img.onerror = () => {
         imgContainer.innerHTML = '';
         imgContainer.style.cssText = `
@@ -107,7 +141,6 @@ export function createLinkPreviewCard(data: LinkPreviewData): HTMLElement {
         fallbackIcon.textContent = '\u{1F310}';
         imgContainer.appendChild(fallbackIcon);
       };
-      imgContainer.appendChild(img);
 
       if (youtubeId) {
         const playBadge = document.createElement('div');

@@ -1,5 +1,6 @@
 import type { Game } from '../types/game.js';
 import { isArcadeGameAvailable } from './arcade-availability.js';
+import { isDataSaverEnabled } from './settings.js';
 
 const MAX_PROBES = 8;
 const MAX_AVAILABLE_PROBE_AGE_MS = 120_000;
@@ -32,6 +33,9 @@ export class ArcadeAvailabilityPrefetch {
 
   prefetch(game: Game): Promise<boolean> {
     if (this.destroyed) return Promise.resolve(true);
+    // Data-saver: skip speculative HEAD probes entirely. The real fetch
+    // still happens on demand when the user swipes to the game.
+    if (isDataSaverEnabled()) return Promise.resolve(true);
     const key = `${game.type}:${game.postId}:${game.id}`;
     const existing = this.probes.get(key);
     if (existing) {

@@ -1,10 +1,14 @@
+import { createDataSaverPlaceholder } from '../lib/data-saver.js';
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { isDataSaverEnabled } from '../lib/settings.js';
 
 export interface VideoPlayerProps {
   gifKey: string;
   postId: string;
   src?: string;
+  /** Set by the data-saver tap-to-load placeholder once the user tapped. */
+  dataSaverConfirmed?: boolean;
 }
 
 function formatTime(seconds: number): string {
@@ -42,6 +46,16 @@ export function createVideoPlayer(props: VideoPlayerProps): HTMLElement {
     fallback.className = 'video-player-error';
     fallback.textContent = t('video_player.no_video');
     return fallback;
+  }
+
+  // Data-saver: don't fetch video bytes until the user taps.
+  if (!props.dataSaverConfirmed && isDataSaverEnabled()) {
+    const placeholder = createDataSaverPlaceholder(t('media.data_saver_load_video'), () => {
+      const real = createVideoPlayer({ ...props, dataSaverConfirmed: true });
+      placeholder.replaceWith(real);
+    });
+    placeholder.classList.add('video-player');
+    return placeholder;
   }
 
   const container = document.createElement('div');

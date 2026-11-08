@@ -2,6 +2,7 @@ import { adImpressionTracker } from '../lib/ad-impression-tracker.js';
 import { ADSENSE_INLINE_BOOTSTRAP } from '../lib/adsense-bootstrap.js';
 import { t } from '../lib/i18n.js';
 import { nativeApiHref } from '../lib/native-api.js';
+import { isDataSaverEnabled } from '../lib/settings.js';
 import { executeUniversalZip, UniversalZipExecutorHandle } from '../lib/zip-manager.js';
 import { Ad } from '../types/post.js';
 import { executeFlash, FlashPlayerHandle } from './FlashPlayer.js';
@@ -430,8 +431,46 @@ export function createAdCard(ad: Ad): HTMLElement {
     `;
   }
 
-  // Render based on payload_type and ad_type
-  if (ad.ad_type === 'admax') {
+  // Data-saver: deprioritize ads — render a tap gate instead of auto-loading
+  // via IntersectionObserver. Impressions are only tracked after the tap.
+  if (isDataSaverEnabled() && (ad.ad_type === 'admax' || ad.payload_type !== null)) {
+    const gate = document.createElement('button');
+    gate.type = 'button';
+    gate.textContent = t('media.data_saver_load_ad');
+    gate.style.cssText = `
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: var(--accent);
+      color: var(--text-inverse, #fff);
+      border: none;
+      border-radius: 9999px;
+      padding: 0.5rem 1.25rem;
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 600;
+    `;
+    gate.addEventListener('click', (e) => {
+      e.stopPropagation();
+      gate.remove();
+      mountAdStage(ad, adPlaceholder);
+      adImpressionTracker.trackImpression(ad.id);
+    });
+    const hint = document.createElement('div');
+    hint.textContent = t('media.data_saver_placeholder');
+    hint.style.cssText = `
+      position: absolute;
+      top: 18%;
+      left: 50%;
+      transform: translateX(-50%);
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      text-align: center;
+    `;
+    adPlaceholder.appendChild(hint);
+    adPlaceholder.appendChild(gate);
+  } else if (ad.ad_type === 'admax') {
     // Admax ads use lazy loading
     const observer = new IntersectionObserver(
       (entries) => {

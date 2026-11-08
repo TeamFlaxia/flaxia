@@ -8,6 +8,12 @@ import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { rankCandidates } from '../lib/recommendation/rank.js';
 import { decodeVector, type EncodedVector } from '../lib/recommendation/vector-codec.js';
+import {
+  DATA_SAVER_AD_SPACING_MULTIPLIER,
+  getForYouBatchSize,
+  getTimelinePageSize,
+  isDataSaverEnabled,
+} from '../lib/settings.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { getRecommendationProfile, type RecommendationProfile } from '../lib/vault/recommendation-profile.js';
 import { Ad, isAd, Post, PostCardMode, TimelineItem, TimelineProps, TimelineState } from '../types/post.js';
@@ -21,6 +27,18 @@ interface ClientRankedPostsResponse {
   vectors?: Record<string, EncodedVector>;
   vector_meta?: { dim?: number };
   base_scores?: Record<string, number>;
+}
+
+/**
+ * Headers for timeline API fetches. In data-saver mode we forward the
+ * browser's `Save-Data: on` hint so the edge/server can serve reduced
+ * payloads where supported.
+ */
+function saveDataFetchInit(): RequestInit {
+  return {
+    credentials: 'include',
+    ...(isDataSaverEnabled() ? { headers: { 'Save-Data': 'on' } } : {}),
+  };
 }
 
 export class Timeline {
@@ -609,15 +627,13 @@ export class Timeline {
     cursor?: string,
   ): Promise<{ queue: Post[]; nextCursor?: string } | null> {
     const params = new URLSearchParams({
-      limit: '100',
+      limit: String(getForYouBatchSize()),
       client_rank: '1',
       include_vectors: '1',
     });
     if (cursor) params.set('cursor', cursor);
 
-    const response = await fetch(`/api/posts/recommended?${params.toString()}`, {
-      credentials: 'include',
-    });
+    const response = await fetch(`/api/posts/recommended?${params.toString()}`, saveDataFetchInit());
     if (!response.ok) return null;
 
     const data = (await response.json()) as ClientRankedPostsResponse;
@@ -645,7 +661,8 @@ export class Timeline {
   private async appendNextForYouPage(generation: number): Promise<boolean> {
     if (!this.forYouProfile) return false;
 
-    let page = this.takeForYouPage(20);
+    const pageSize = getTimelinePageSize();
+    let page = this.takeForYouPage(pageSize);
     while (page.length === 0 && this.state.cursor) {
       const previousCursor = this.state.cursor;
       const batch = await this.fetchForYouBatch(this.forYouProfile, previousCursor);
@@ -653,7 +670,7 @@ export class Timeline {
       if (!batch) return false;
       this.forYouQueue = batch.queue;
       this.state.cursor = batch.nextCursor;
-      page = this.takeForYouPage(20);
+      page = this.takeForYouPage(pageSize);
       if (batch.queue.length === 0 && (!batch.nextCursor || batch.nextCursor === previousCursor)) {
         this.state.cursor = undefined;
         break;
@@ -685,7 +702,7 @@ export class Timeline {
           if (batch && (batch.queue.length > 0 || batch.nextCursor)) {
             this.forYouProfile = profile;
             this.forYouQueue = batch.queue;
-            const firstPage = this.takeForYouPage(20);
+            const firstPage = this.takeForYouPage(getTimelinePageSize());
             const postsWithAds = injectAds(firstPage, this.state.ads, this.state.everyN);
             this.state.posts = postsWithAds;
             this.state.cursor = batch.nextCursor;
@@ -699,9 +716,7 @@ export class Timeline {
       }
 
       const url = this.buildApiUrl();
-      const response = await fetch(url, {
-        credentials: 'include',
-      });
+      const response = await fetch(url, saveDataFetchInit());
 
       if (!response.ok) {
         throw new Error('Failed to fetch posts');
@@ -727,7 +742,8 @@ export class Timeline {
 
       this.state.cursor = data.next_cursor || postsArray.at(-1)?.created_at || this.state.cursor;
 
-      this.state.hasMore = this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === 20;
+      this.state.hasMore =
+        this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === getTimelinePageSize();
       this.element.querySelector('.offline-empty')?.remove();
       this.renderPostList();
 
@@ -767,6 +783,10 @@ export class Timeline {
       const configData = (await configRes.json()) as { every_n: number };
       this.state.everyN = configData.every_n;
     }
+    // Data-saver: deprioritize ads by spacing them further apart.
+    if (isDataSaverEnabled()) {
+      this.state.everyN = Math.max(1, this.state.everyN) * DATA_SAVER_AD_SPACING_MULTIPLIER;
+    }
   }
 
   private async loadMorePosts(): Promise<void> {
@@ -785,9 +805,7 @@ export class Timeline {
       }
 
       const url = this.buildApiUrl(this.state.cursor);
-      const response = await fetch(url, {
-        credentials: 'include',
-      });
+      const response = await fetch(url, saveDataFetchInit());
 
       if (!response.ok) {
         throw new Error('Failed to fetch more posts');
@@ -813,7 +831,8 @@ export class Timeline {
 
       this.state.cursor = data.next_cursor || postsArray.at(-1)?.created_at || this.state.cursor;
 
-      this.state.hasMore = this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === 20;
+      this.state.hasMore =
+        this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === getTimelinePageSize();
       this.appendPosts(postsWithAds);
 
       if (newPosts.length === 0 && this.state.mode === 'foryou' && this.state.hasMore && data.next_cursor) {
@@ -860,7 +879,7 @@ export class Timeline {
 
   private buildApiUrl(cursor?: string): string {
     const params = new URLSearchParams();
-    params.set('limit', '20');
+    params.set('limit', String(getTimelinePageSize()));
 
     if (cursor) {
       params.set('cursor', cursor);
