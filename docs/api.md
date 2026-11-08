@@ -269,18 +269,28 @@ With `type=posts`, the response also carries `external_results`: matching
 arXiv / Hacker News items (`id, title, summary, url, source, source_label,
 publish_at, author, tags`) from the external feed.
 
+`GET /api/posts/trending?sources=flaxia,arxiv,hackernews&cursor=&limit=`
+— trending timeline with multi-source selection. Default is `flaxia` only.
+When external sources are selected, the response adds a unified `items`
+array (`{kind: 'post'|'external', score, ...}`) interleaved by computed
+trending score, plus `posts` (Flaxia subset). Scores use the same decay
+family as native posts (`computeExternalScore`); the cursor is
+`<score>,<created_at|publish_at>,<id>,<asOf>` (the trailing `asOf` freezes
+the external-score clock across pages).
+
 ---
 
 ## External Feeds
 
-`GET /api/external-feed/sources` — enabled sources for the timeline
-source dropdown (`arxiv`, `hackernews`).
+`GET /api/external-feed/sources` — enabled sources for the explore
+multi-select (`arxiv`, `hackernews`).
 
-`GET /api/external-feed?source=<all|arxiv|hackernews>&cursor=<publish_at>,<id>&limit=`
-— newest-first external items in the shape above. Refreshed hourly by the
-backend worker cron (`functions/lib/external-feed.ts`); the API also fetches
-on demand on the first read so a fresh local database (where the cron never
-runs) still lists items.
+`GET /api/external-feed?sources=arxiv,hackernews&cursor=<score>,<publish_at>,<id>,<asOf>&limit=`
+— external items ranked by computed trending score (not `publish_at`).
+The legacy `?source=all|arxiv|hackernews` form is still accepted.
+Refreshed hourly by the backend worker cron (`functions/lib/external-feed.ts`);
+the API also fetches on demand on the first read so a fresh local database
+(where the cron never runs) still lists items.
 
 ---
 

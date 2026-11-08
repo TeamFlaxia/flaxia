@@ -49,6 +49,46 @@ export function freshnessBoost(createdAt: string): number {
   return 1 + FRESHNESS_BOOST_MAX * decay;
 }
 
+/**
+ * External items (arXiv / Hacker News) have no local engagement
+ * (fresh / reply / impressions), so their trending score is built from
+ * the same time-decay as native posts with a neutral engagement base:
+ *
+ *   base_score = 1 / (hours + 2)^1.5
+ *
+ * multiplied by item quality, the freshness boost, and a source weight.
+ * The score is computed on read (never stored): a stored value would go
+ * stale as the decay window moves.
+ */
+export const EXTERNAL_SOURCE_WEIGHTS: Record<string, number> = {
+  arxiv: 1.0,
+  hackernews: 1.0,
+};
+
+export function computeExternalQuality(title: string, summary: string): number {
+  const titleLen = title?.length || 0;
+  const titleScore = titleLen >= 10 && titleLen <= 100 ? 1.0 : titleLen >= 5 && titleLen <= 200 ? 0.7 : 0.3;
+  // Hacker News items carry no summary; do not tank them for missing
+  // content the source never provides.
+  const summaryScore = summary && summary.length > 0 ? 1.0 : 0.85;
+  return titleScore * summaryScore;
+}
+
+export function computeExternalScore(
+  item: { title: string; summary: string; publishAt: string; source: string },
+  nowMs: number = Date.now(),
+): number {
+  const publishMs = new Date(item.publishAt).getTime();
+  const hoursAgo = Number.isNaN(publishMs) ? 0 : Math.max(0, (nowMs - publishMs) / 3600000);
+  const baseScore = 1.0 / Math.pow(hoursAgo + 2.0, 1.5);
+  const qualityScore = computeExternalQuality(item.title, item.summary);
+  const sourceWeight = EXTERNAL_SOURCE_WEIGHTS[item.source] ?? 1.0;
+  // Same half-life freshness boost as native posts.
+  const decay = Math.pow(0.5, hoursAgo / FRESHNESS_HALF_LIFE_HOURS);
+  const freshness = 1 + FRESHNESS_BOOST_MAX * decay;
+  return baseScore * qualityScore * sourceWeight * freshness;
+}
+
 export function computeAuthorQuality(params: {
   freshRatio: number;
   replyRate: number;

@@ -10,41 +10,10 @@ import { rankCandidates } from '../lib/recommendation/rank.js';
 import { decodeVector, type EncodedVector } from '../lib/recommendation/vector-codec.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
 import { getRecommendationProfile, type RecommendationProfile } from '../lib/vault/recommendation-profile.js';
-import {
-  Ad,
-  ExternalItem,
-  FeedSource,
-  isAd,
-  isExternal,
-  Post,
-  PostCardMode,
-  TimelineItem,
-  TimelineProps,
-  TimelineState,
-} from '../types/post.js';
+import { Ad, isAd, Post, PostCardMode, TimelineItem, TimelineProps, TimelineState } from '../types/post.js';
 import { createAdCard } from './AdCard.js';
-import { createExternalItemCard } from './ExternalItemCard.js';
 import { createPostCard } from './PostCard.js';
 import { createPostComposer, PostComposer } from './PostComposer.js';
-
-type TimelineCard = {
-  getElement: () => HTMLElement;
-  destroy: () => void;
-  handleReplyTogglePublic?: () => void;
-  updatePost?: (update: Partial<Post>) => void;
-};
-
-const FEED_SOURCE_KEY = 'flaxia_feed_source';
-
-function readFeedSource(): FeedSource {
-  try {
-    const raw = localStorage.getItem(FEED_SOURCE_KEY);
-    if (raw === 'arxiv' || raw === 'hackernews' || raw === 'all') return raw;
-  } catch {
-    // localStorage unavailable; fall back to Flaxia
-  }
-  return 'flaxia';
-}
 
 interface ClientRankedPostsResponse {
   posts?: Post[];
@@ -58,7 +27,7 @@ export class Timeline {
   private element: HTMLElement;
   private props: TimelineProps;
   private state: TimelineState;
-  private postCards: Map<string, TimelineCard> = new Map();
+  private postCards: Map<string, ReturnType<typeof createPostCard>> = new Map();
   private seenPostIds: Set<string> = new Set();
   private duplicatePageStreak = 0;
   private forYouQueue: Post[] = [];
@@ -91,7 +60,6 @@ export class Timeline {
     this.props = props;
     this.state = {
       mode: 'foryou',
-      feedSource: readFeedSource(),
       hashtag: '',
       posts: [],
       ads: [],
@@ -213,37 +181,6 @@ export class Timeline {
       globalBtn.classList.add('active');
     }
     container.appendChild(globalBtn);
-
-    const sourceSelect = document.createElement('select');
-    sourceSelect.className = 'feed-toggle-btn feed-source-select';
-    sourceSelect.setAttribute('aria-label', t('timeline.source_label'));
-    sourceSelect.title = t('timeline.source_label');
-    const sourceOptions: Array<{ value: FeedSource; labelKey: string }> = [
-      { value: 'flaxia', labelKey: 'timeline.source_flaxia' },
-      { value: 'arxiv', labelKey: 'timeline.source_arxiv' },
-      { value: 'hackernews', labelKey: 'timeline.source_hacker_news' },
-      { value: 'all', labelKey: 'timeline.source_all' },
-    ];
-    for (const option of sourceOptions) {
-      const opt = document.createElement('option');
-      opt.value = option.value;
-      opt.textContent = t(option.labelKey);
-      if (this.state.feedSource === option.value) opt.selected = true;
-      sourceSelect.appendChild(opt);
-    }
-    sourceSelect.disabled = this.state.mode === 'following';
-    sourceSelect.addEventListener('change', () => {
-      const value = sourceSelect.value as FeedSource;
-      if (value === this.state.feedSource) return;
-      this.state.feedSource = value;
-      try {
-        localStorage.setItem(FEED_SOURCE_KEY, value);
-      } catch {
-        // Non-fatal: selection simply won't persist.
-      }
-      this.resetAndLoadPosts();
-    });
-    container.appendChild(sourceSelect);
 
     const reloadBtn = document.createElement('button');
     reloadBtn.className = 'feed-toggle-btn feed-reload-btn';
@@ -437,7 +374,7 @@ export class Timeline {
     const postCard = this.postCards.get(postId);
     if (postCard) {
       // PostCard will handle showing/hiding its inline reply composer
-      postCard.handleReplyTogglePublic?.();
+      postCard.handleReplyTogglePublic();
     }
   }
 
@@ -473,9 +410,6 @@ export class Timeline {
         btn.classList.add('active');
       }
     });
-
-    const sourceSelect = this.element.querySelector('.feed-source-select') as HTMLSelectElement | null;
-    if (sourceSelect) sourceSelect.disabled = mode === 'following';
 
     // Reset and load posts (hashtag input is always hidden now)
     this.resetAndLoadPosts();
@@ -641,10 +575,7 @@ export class Timeline {
     this.headObserver.observe(this.headSentinel);
   }
 
-  private buildPostCard(item: Post | ExternalItem): TimelineCard {
-    if (isExternal(item)) {
-      return createExternalItemCard(item);
-    }
+  private buildPostCard(item: Post): ReturnType<typeof createPostCard> {
     return createPostCard({
       post: item,
       currentUser: this.props.currentUser,
@@ -745,7 +676,7 @@ export class Timeline {
     this.updateLoadMoreButton();
 
     try {
-      if (this.state.mode === 'foryou' && this.props.currentUser && !this.isExternalFeed()) {
+      if (this.state.mode === 'foryou' && this.props.currentUser) {
         const profile = await getRecommendationProfile();
         if (this.destroyed || generation !== this.loadGeneration) return;
         if (profile) {
@@ -776,19 +707,11 @@ export class Timeline {
         throw new Error('Failed to fetch posts');
       }
 
-      const data = (await response.json()) as {
-        posts?: Post[];
-        items?: ExternalItem[];
-        next_cursor?: string;
-      };
+      const data = (await response.json()) as { posts?: Post[]; next_cursor?: string };
       if (this.destroyed || generation !== this.loadGeneration) return;
 
       // Ensure posts is an array (handle unexpected API responses)
-      const postsArray: Array<Post | ExternalItem> = Array.isArray(data.posts)
-        ? data.posts
-        : Array.isArray(data.items)
-          ? data.items
-          : [];
+      const postsArray = Array.isArray(data.posts) ? data.posts : [];
 
       // The same post can be returned twice if a feed's ranking shifts between
       // pages. Never render a post twice in one timeline.
@@ -802,12 +725,9 @@ export class Timeline {
       const postsWithAds = injectAds(uniquePosts, this.state.ads, this.state.everyN);
       this.state.posts = postsWithAds;
 
-      const lastItem = postsArray.at(-1);
-      this.state.cursor =
-        data.next_cursor || (lastItem && !isExternal(lastItem) ? lastItem.created_at : undefined) || this.state.cursor;
+      this.state.cursor = data.next_cursor || postsArray.at(-1)?.created_at || this.state.cursor;
 
-      this.state.hasMore =
-        this.state.mode === 'foryou' || this.isExternalFeed() ? Boolean(data.next_cursor) : postsArray.length === 20;
+      this.state.hasMore = this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === 20;
       this.element.querySelector('.offline-empty')?.remove();
       this.renderPostList();
 
@@ -873,19 +793,11 @@ export class Timeline {
         throw new Error('Failed to fetch more posts');
       }
 
-      const data = (await response.json()) as {
-        posts?: Post[];
-        items?: ExternalItem[];
-        next_cursor?: string;
-      };
+      const data = (await response.json()) as { posts?: Post[]; next_cursor?: string };
       if (this.destroyed || generation !== this.loadGeneration) return;
 
       // Ensure posts is an array (handle unexpected API responses)
-      const postsArray: Array<Post | ExternalItem> = Array.isArray(data.posts)
-        ? data.posts
-        : Array.isArray(data.items)
-          ? data.items
-          : [];
+      const postsArray = Array.isArray(data.posts) ? data.posts : [];
 
       // Skip posts already rendered. A ranking shift between pages can put a
       // seen post above the cursor again; without this guard the feed loops.
@@ -899,12 +811,9 @@ export class Timeline {
       const postsWithAds = injectAds(newPosts, this.state.ads, this.state.everyN);
       this.state.posts = [...this.state.posts, ...postsWithAds];
 
-      const lastItem = postsArray.at(-1);
-      this.state.cursor =
-        data.next_cursor || (lastItem && !isExternal(lastItem) ? lastItem.created_at : undefined) || this.state.cursor;
+      this.state.cursor = data.next_cursor || postsArray.at(-1)?.created_at || this.state.cursor;
 
-      this.state.hasMore =
-        this.state.mode === 'foryou' || this.isExternalFeed() ? Boolean(data.next_cursor) : postsArray.length === 20;
+      this.state.hasMore = this.state.mode === 'foryou' ? Boolean(data.next_cursor) : postsArray.length === 20;
       this.appendPosts(postsWithAds);
 
       if (newPosts.length === 0 && this.state.mode === 'foryou' && this.state.hasMore && data.next_cursor) {
@@ -949,21 +858,12 @@ export class Timeline {
     this.pruneOffscreenCards();
   }
 
-  private isExternalFeed(): boolean {
-    return this.state.feedSource !== 'flaxia' && this.state.mode !== 'following';
-  }
-
   private buildApiUrl(cursor?: string): string {
     const params = new URLSearchParams();
     params.set('limit', '20');
 
     if (cursor) {
       params.set('cursor', cursor);
-    }
-
-    if (this.isExternalFeed()) {
-      params.set('source', this.state.feedSource);
-      return `/api/external-feed?${params.toString()}`;
     }
 
     if (this.state.mode === 'following') {

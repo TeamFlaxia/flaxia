@@ -1770,6 +1770,45 @@
   box-shadow: var(--shadow-xs);
 }
 
+.explore-source-select {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.explore-source-summary {
+  padding: 6px 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  list-style: none;
+}
+
+.explore-source-summary::-webkit-details-marker {
+  display: none;
+}
+
+.explore-source-options {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 6px 10px 10px;
+}
+
+.explore-source-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+
 .explore-content {
   padding: 0 0 32px;
 }

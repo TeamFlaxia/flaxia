@@ -38,7 +38,13 @@ import { clampLimit } from '../../lib/pagination';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import { submitFileScans } from '../../lib/scan/clamav';
 import { runInBackground, scanUploadSync } from '../../lib/scan/index';
-import { computeAuthorQuality, computeQualityScore, freshnessBoost, getTypeWeights } from '../../lib/scoring';
+import {
+  computeAuthorQuality,
+  computeExternalScore,
+  computeQualityScore,
+  freshnessBoost,
+  getTypeWeights,
+} from '../../lib/scoring';
 import { RECOMMENDATION_MIN_TRUST, refreshUserTrustSafe } from '../../lib/trust';
 import { fetchWithSsrfGuard } from '../../lib/url-guard';
 import {
@@ -354,9 +360,27 @@ posts.get('/posts', async (c) => {
 });
 
 // GET /api/posts/trending - get trending posts based on engagement and time decay
+// ?sources=flaxia,arxiv,hackernews selects which sources to interleave.
+// Default is flaxia only (existing behaviour). External items are scored
+// with computeExternalScore so they share the same decay family as posts.
 posts.get('/posts/trending', async (c) => {
   try {
     const limit = clampLimit(c.req.query('limit'), 20, 50);
+    const sourcesParam = c.req.query('sources');
+    const requestedSources = sourcesParam
+      ? sourcesParam
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : ['flaxia'];
+    const allowedSources = new Set(['flaxia', 'arxiv', 'hackernews']);
+    if (requestedSources.length === 0 || requestedSources.some((s) => !allowedSources.has(s))) {
+      return c.json({ error: 'Unknown source' }, 400);
+    }
+    const sourceSet = new Set(requestedSources);
+    const includeFlaxia = sourceSet.has('flaxia');
+    const externalSources = ['arxiv', 'hackernews'].filter((s) => sourceSet.has(s));
+    const includeExternal = externalSources.length > 0;
     const cursor = c.req.query('cursor');
     const parts = cursor ? cursor.split(',') : [];
     const cursorScore = parts[0] || null;
@@ -364,6 +388,11 @@ posts.get('/posts/trending', async (c) => {
     const cursorId = parts[2] || null;
     let numericScore = cursorScore !== null ? parseFloat(cursorScore) : null;
     if (Number.isNaN(numericScore!)) numericScore = null;
+    // External scores decay with time; the cursor carries the reference
+    // time so later pages rank with a frozen clock (posts keep the
+    // existing API-clock behaviour, clients dedupe by id).
+    const parsedAsOf = parts[3] !== undefined ? Number(parts[3]) : Number.NaN;
+    const externalAsOf = !Number.isNaN(parsedAsOf) && parsedAsOf > 0 ? parsedAsOf : Date.now();
 
     if (!c.env.DB) {
       return c.json({ error: 'Database not available' }, 500);
@@ -377,8 +406,10 @@ posts.get('/posts/trending', async (c) => {
       currentUserId = sessionData.user.id;
     }
 
-    // Try cache hit (only for non-cursor requests)
-    if (!cursor) {
+    // Try cache hit (only for non-cursor requests). Mixed-source feeds
+    // bypass this cache: the cached shape is flaxia-only and the merged
+    // ranking is cheap to recompute.
+    if (!cursor && !includeExternal) {
       const cacheKey = makeCacheKey('trending', c, `${limit}`, false);
       const cached = await kvCacheGet<{ posts: Record<string, unknown>[] }>(c, cacheKey);
       if (cached) {
@@ -408,9 +439,11 @@ posts.get('/posts/trending', async (c) => {
     `;
     const params: Array<unknown> = [trendingFetchLimit];
 
-    const result = await c.env.DB.prepare(query)
-      .bind(...params)
-      .all();
+    const result = includeFlaxia
+      ? await c.env.DB.prepare(query)
+          .bind(...params)
+          .all()
+      : { results: [] as Record<string, unknown>[] };
     const rawPosts = (result.results || []) as Record<string, unknown>[];
 
     // Compute author quality scores per user
@@ -474,44 +507,122 @@ posts.get('/posts/trending', async (c) => {
       return { post: p, score: rawScore * qualityScore * typeFactor * authorQuality * fresh };
     });
 
-    // Cursor filtering and sorting
-    let filtered = scored;
-    if (numericScore !== null && cursorCreatedAt) {
-      filtered = scored.filter((s) => {
-        const ca = String(s.post.created_at || '');
-        const id = String(s.post.id || '');
-        return (
-          s.score < numericScore! ||
-          (s.score === numericScore && ca < cursorCreatedAt!) ||
-          (s.score === numericScore && ca === cursorCreatedAt && id < cursorId!)
+    // Fetch external candidates and score them with the same decay family
+    // so they can be interleaved with native posts by score.
+    type UnifiedEntry =
+      | { kind: 'post'; score: number; time: string; id: string; post: Record<string, unknown> }
+      | { kind: 'external'; score: number; time: string; id: string; item: Record<string, unknown> };
+    const postEntries: UnifiedEntry[] = scored.map((s) => ({
+      kind: 'post' as const,
+      score: s.score,
+      time: String(s.post.created_at || ''),
+      id: String(s.post.id || ''),
+      post: s.post,
+    }));
+
+    let externalEntries: UnifiedEntry[] = [];
+    if (includeExternal) {
+      const placeholders = externalSources.map(() => '?').join(',');
+      const externalResult = await c.env.DB.prepare(
+        `SELECT ei.id, ei.title, ei.summary, ei.url, ei.source, es.label AS source_label,
+                ei.publish_at, ei.author, ei.tags
+         FROM external_items ei
+         JOIN external_sources es ON es.source = ei.source
+         WHERE ei.source IN (${placeholders})
+           AND ei.publish_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')
+         ORDER BY ei.publish_at DESC, ei.id DESC
+         LIMIT ?`,
+      )
+        .bind(...externalSources, trendingFetchLimit)
+        .all<{
+          id: string;
+          title: string;
+          summary: string;
+          url: string;
+          source: string;
+          source_label: string;
+          publish_at: string;
+          author: string;
+          tags: string;
+        }>();
+      externalEntries = (externalResult.results || []).map((row) => {
+        let tags: string[] = [];
+        try {
+          const parsed: unknown = JSON.parse(row.tags || '[]');
+          if (Array.isArray(parsed)) tags = parsed.filter((t): t is string => typeof t === 'string');
+        } catch {
+          tags = [];
+        }
+        const score = computeExternalScore(
+          {
+            title: row.title,
+            summary: row.summary,
+            publishAt: row.publish_at,
+            source: row.source,
+          },
+          externalAsOf,
         );
+        return {
+          kind: 'external' as const,
+          score,
+          time: String(row.publish_at || ''),
+          id: String(row.id || ''),
+          item: {
+            id: row.id,
+            title: row.title,
+            summary: row.summary,
+            url: row.url,
+            source: row.source,
+            source_label: row.source_label,
+            publish_at: row.publish_at,
+            author: row.author,
+            tags,
+            score,
+          },
+        };
       });
+    }
+
+    // Cursor filtering and sorting (unified score/time/id order)
+    let filtered: UnifiedEntry[] = [...postEntries, ...externalEntries];
+    if (numericScore !== null && cursorCreatedAt) {
+      filtered = filtered.filter(
+        (s) =>
+          s.score < numericScore! ||
+          (s.score === numericScore! && s.time < cursorCreatedAt!) ||
+          (s.score === numericScore! && s.time === cursorCreatedAt! && s.id < cursorId!),
+      );
     }
 
     filtered.sort((a, b) => {
       const diff = b.score - a.score;
       if (diff !== 0) return diff;
-      const ca = String(b.post.created_at || '').localeCompare(String(a.post.created_at || ''));
+      const ca = b.time.localeCompare(a.time);
       if (ca !== 0) return ca;
-      return String(b.post.id || '').localeCompare(String(a.post.id || ''));
+      return b.id.localeCompare(a.id);
     });
 
     const page = filtered.slice(0, limit);
 
     // Build enriched posts (unfiltered, so the shared cache stays block-free)
-    const posts = page.map((s) => {
-      const p = s.post;
-      p.score = s.score;
-      return p;
-    });
+    const posts = page
+      .filter((s): s is Extract<UnifiedEntry, { kind: 'post' }> => s.kind === 'post')
+      .map((s) => {
+        const p = s.post;
+        p.score = s.score;
+        return p;
+      });
 
     // Re-apply the current user's block list for the response only.
     const visiblePosts = await filterBlockedAuthors(c.env.DB, currentUserId, posts);
+    const visiblePostIds = new Set(visiblePosts.map((p) => String((p as Record<string, unknown>).id || '')));
 
     await enrichFeedPosts(visiblePosts as PostRow[], c.env.DB, currentUserId);
 
-    // Write to cache (non-cursor only)
-    if (!cursor && c.env.CACHE) {
+    const visibleItems = includeExternal ? page.filter((s) => s.kind === 'external' || visiblePostIds.has(s.id)) : [];
+
+    // Write to cache (non-cursor only, flaxia-only feeds)
+    if (!cursor && !includeExternal && c.env.CACHE) {
       const cacheKey = makeCacheKey('trending', c, `${limit}`, false);
       const cacheData = {
         posts: posts.map((p: Record<string, unknown>) => ({ ...p, is_freshed: false, is_bookmarked: false })),
@@ -523,10 +634,24 @@ posts.get('/posts/trending', async (c) => {
       await kvCacheSet(c, cacheKey, cacheData, 60);
     }
 
-    const nextCursor =
-      visiblePosts.length > 0
-        ? `${(visiblePosts[visiblePosts.length - 1] as Record<string, unknown>).score},${(visiblePosts[visiblePosts.length - 1] as Record<string, unknown>).created_at},${(visiblePosts[visiblePosts.length - 1] as Record<string, unknown>).id}`
-        : null;
+    const hasMoreBeyondPage = filtered.length > page.length || visibleItems.length < page.length;
+    const lastVisible = includeExternal ? visibleItems[visibleItems.length - 1] : undefined;
+    const nextCursor = !hasMoreBeyondPage
+      ? null
+      : lastVisible
+        ? `${lastVisible.score},${lastVisible.time},${lastVisible.id},${externalAsOf}`
+        : visiblePosts.length > 0
+          ? `${(visiblePosts[visiblePosts.length - 1] as Record<string, unknown>).score},${(visiblePosts[visiblePosts.length - 1] as Record<string, unknown>).created_at},${(visiblePosts[visiblePosts.length - 1] as Record<string, unknown>).id}`
+          : null;
+
+    if (includeExternal) {
+      const items = visibleItems.map((s) =>
+        s.kind === 'post'
+          ? { kind: 'post' as const, score: s.score, ...s.post }
+          : { kind: 'external' as const, ...s.item },
+      );
+      return c.json({ posts: visiblePosts, items, next_cursor: nextCursor });
+    }
 
     return c.json({ posts: visiblePosts, next_cursor: nextCursor });
   } catch (error: unknown) {

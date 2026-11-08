@@ -1,6 +1,6 @@
-import { Ad, TimelineItem } from '../types/post.js';
+import { Ad, Post, TimelineItem } from '../types/post.js';
 
-export function injectAds<T extends TimelineItem>(posts: T[], ads: Ad[], everyN: number): TimelineItem[] {
+export function injectAds(posts: Post[], ads: Ad[], everyN: number): TimelineItem[] {
   if (!ads.length) return posts;
   const shuffled = [...ads].sort(() => Math.random() - 0.5);
   const result: TimelineItem[] = [];

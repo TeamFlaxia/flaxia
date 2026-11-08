@@ -1,13 +1,13 @@
 import { Post } from '../types/post.js';
 
-type PostCardLike = { updatePost?: (update: Partial<Post>) => void };
+type PostCardLike = { updatePost: (update: Partial<Post>) => void };
 
 export function createPostUpdatedHandler(postCards: Map<string, PostCardLike>): (e: Event) => void {
   return (e: Event) => {
     const detail = (e as CustomEvent).detail;
     if (!detail?.postId) return;
     const card = postCards.get(detail.postId);
-    if (card && card.updatePost) {
+    if (card) {
       const update: Partial<Post> = {};
       if (detail.isFreshed !== undefined) update.is_freshed = detail.isFreshed;
       if (detail.freshCount !== undefined) update.fresh_count = detail.freshCount;

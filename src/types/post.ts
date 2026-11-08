@@ -226,7 +226,6 @@ export interface TimelineProps {
 
 export interface TimelineState {
   mode: 'following' | 'foryou' | 'global';
-  feedSource: FeedSource;
   hashtag: string;
   posts: TimelineItem[];
   ads: Ad[];
@@ -270,7 +269,7 @@ export interface AdminAd {
   interaction_count?: number;
 }
 
-export type FeedSource = 'flaxia' | 'arxiv' | 'hackernews' | 'all';
+export type ExploreSource = 'flaxia' | 'arxiv' | 'hackernews';
 
 export interface ExternalItem {
   id: string;
@@ -282,14 +281,19 @@ export interface ExternalItem {
   publish_at: string;
   author: string;
   tags: string[];
+  /** Trending score (same decay family as native posts); computed on read. */
+  score?: number;
 }
 
-export type TimelineItem = Post | Ad | ExternalItem;
+export type TimelineItem = Post | Ad;
 
 export function isAd(item: TimelineItem): item is Ad {
   return 'payload_type' in item;
 }
 
-export function isExternal(item: TimelineItem): item is ExternalItem {
-  return 'source_label' in item && 'publish_at' in item;
+/** Explore feed item: a native post or a scored external item. */
+export type ExploreFeedItem = Post | ExternalItem;
+
+export function isExternal(item: ExploreFeedItem): item is ExternalItem {
+  return 'source_label' in item && 'publish_at' in item && !('text' in item);
 }

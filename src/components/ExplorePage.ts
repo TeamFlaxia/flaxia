@@ -11,8 +11,34 @@ import { openPostModal } from '../lib/post-modal.js';
 import { createPostUpdatedHandler } from '../lib/post-update.js';
 import { updateMetaTags } from '../lib/seo-meta.js';
 import { pushSpaHistory } from '../lib/spa-history.js';
-import { Post } from '../types/post.js';
+import { ExploreFeedItem, ExploreSource, isExternal, Post } from '../types/post.js';
+import { createExternalItemCard } from './ExternalItemCard.js';
 import { createPostCard } from './PostCard.js';
+
+type TrendingFeedItem = ExploreFeedItem & { score?: number };
+type TrendingResponseItem = { kind?: string; score?: number } & Record<string, unknown>;
+
+const EXPLORE_SOURCE_KEY = 'flaxia_explore_sources';
+const EXPLORE_SOURCES: ExploreSource[] = ['flaxia', 'arxiv', 'hackernews'];
+
+function readExploreSources(): ExploreSource[] {
+  try {
+    const raw = localStorage.getItem(EXPLORE_SOURCE_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    if (Array.isArray(parsed)) {
+      const selected = parsed.filter((s): s is ExploreSource => EXPLORE_SOURCES.includes(s as ExploreSource));
+      if (selected.length > 0) return selected;
+    }
+  } catch {
+    // localStorage unavailable or invalid; fall back to Flaxia only.
+  }
+  return ['flaxia'];
+}
+
+function toExploreFeedItem(entry: TrendingResponseItem): TrendingFeedItem {
+  const { kind: _kind, ...rest } = entry;
+  return rest as unknown as TrendingFeedItem;
+}
 
 export interface ExplorePageProps {
   tag?: string;
@@ -40,7 +66,7 @@ interface ArcadeGame {
 export class ExplorePage {
   private element: HTMLElement;
   private props: ExplorePageProps;
-  private posts: Post[] = [];
+  private posts: TrendingFeedItem[] = [];
   private arcadePosts: ArcadeGame[] = [];
   private userSuggestions: Array<{
     id: string;
@@ -211,7 +237,89 @@ export class ExplorePage {
 
     section.appendChild(filterBar);
 
+    section.appendChild(this.createSourceSelect());
+
     return section;
+  }
+
+  private createSourceSelect(): HTMLElement {
+    const details = document.createElement('details');
+    details.className = 'explore-source-select';
+    if (this.props.tag) details.style.display = 'none';
+
+    const summary = document.createElement('summary');
+    summary.className = 'explore-source-summary';
+    summary.textContent = t('explore.source_label');
+    details.appendChild(summary);
+
+    const options = document.createElement('div');
+    options.className = 'explore-source-options';
+    const selected = new Set<ExploreSource>(readExploreSources());
+    for (const source of EXPLORE_SOURCES) {
+      const label = document.createElement('label');
+      label.className = 'explore-source-option';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.value = source;
+      checkbox.checked = selected.has(source);
+      checkbox.addEventListener('change', () => this.onSourceSelectionChange());
+      const text = document.createElement('span');
+      text.textContent = t(`explore.source_${source === 'hackernews' ? 'hacker_news' : source}`);
+      label.appendChild(checkbox);
+      label.appendChild(text);
+      options.appendChild(label);
+    }
+    details.appendChild(options);
+
+    return details;
+  }
+
+  private getSelectedSources(): ExploreSource[] {
+    const checked = Array.from(
+      this.element.querySelectorAll<HTMLInputElement>('.explore-source-option input[type="checkbox"]'),
+    )
+      .filter((input) => input.checked)
+      .map((input) => input.value as ExploreSource)
+      .filter((s): s is ExploreSource => EXPLORE_SOURCES.includes(s));
+    return checked.length > 0 ? checked : ['flaxia'];
+  }
+
+  private onSourceSelectionChange(): void {
+    const checkboxes = Array.from(
+      this.element.querySelectorAll<HTMLInputElement>('.explore-source-option input[type="checkbox"]'),
+    );
+    if (!checkboxes.some((input) => input.checked)) {
+      const flaxia = checkboxes.find((input) => input.value === 'flaxia');
+      if (flaxia) flaxia.checked = true;
+    }
+    const selected = this.getSelectedSources();
+    try {
+      localStorage.setItem(EXPLORE_SOURCE_KEY, JSON.stringify(selected));
+    } catch {
+      // Non-fatal: selection simply won't persist.
+    }
+    this.resetAndReloadTrending();
+  }
+
+  private resetAndReloadTrending(): void {
+    this.posts = [];
+    this.cursor = undefined;
+    this.hasMore = true;
+    this.postCards.clear();
+    const postsContainer = this.element.querySelector('.explore-posts') as HTMLElement | null;
+    if (postsContainer) postsContainer.innerHTML = '';
+    if (this.activeFilter === 'posts' && !this.props.tag) {
+      void this.loadContent();
+    }
+  }
+
+  private buildTrendingUrl(cursor?: string): string {
+    const params = new URLSearchParams({
+      limit: '10',
+      sources: this.getSelectedSources().join(','),
+    });
+    if (cursor) params.set('cursor', cursor);
+    return `/api/posts/trending?${params.toString()}`;
   }
 
   private setupEventListeners(): void {
@@ -473,22 +581,12 @@ export class ExplorePage {
       let url = '';
       if (this.props.tag) {
         url = `/api/posts?hashtag=${encodeURIComponent(this.props.tag)}&limit=10`;
+        if (this.cursor) url += `&cursor=${encodeURIComponent(this.cursor)}`;
       } else if (this.activeFilter === 'arcade') {
         url = `/api/games?limit=10`;
+        if (this.cursor) url += `&cursor=${encodeURIComponent(this.cursor)}`;
       } else {
-        url = `/api/posts/trending?limit=10`;
-      }
-
-      if (this.cursor) {
-        if (this.props.tag) {
-          url += `&cursor=${encodeURIComponent(this.cursor)}`;
-        } else if (this.activeFilter === 'arcade') {
-          url += `&cursor=${encodeURIComponent(this.cursor)}`;
-        } else if (this.cursor.includes(',')) {
-          url += `&cursor=${encodeURIComponent(this.cursor)}`;
-        } else {
-          this.cursor = undefined;
-        }
+        url = this.buildTrendingUrl(this.cursor);
       }
 
       const response = await fetch(url);
@@ -507,19 +605,36 @@ export class ExplorePage {
           this.showEndOfPosts();
         }
       } else {
-        const data = (await response.json()) as { posts: Post[] };
-        const newPosts = data.posts || [];
+        const data = (await response.json()) as {
+          posts?: Post[];
+          items?: TrendingResponseItem[];
+          next_cursor?: string | null;
+        };
+        const allNewPosts: TrendingFeedItem[] = Array.isArray(data.items)
+          ? data.items.map(toExploreFeedItem)
+          : ((data.posts || []) as TrendingFeedItem[]);
+        // Score cursors decay between requests, so the last item of the
+        // previous page can reappear; never render an id twice.
+        const seenIds = new Set(this.posts.map((item) => item.id));
+        const newPosts = allNewPosts.filter((item) => !seenIds.has(item.id));
 
         if (newPosts.length > 0) {
           this.posts.push(...newPosts);
-          if (!this.props.tag) {
-            const lastPost = newPosts[newPosts.length - 1] as Post & { score: number };
-            this.cursor = `${lastPost.score},${lastPost.created_at}`;
+          if (!this.props.tag && data.next_cursor) {
+            this.cursor = data.next_cursor;
+          } else if (!this.props.tag) {
+            const last = newPosts[newPosts.length - 1] as TrendingFeedItem & { score?: number };
+            const time = isExternal(last) ? (last as { publish_at: string }).publish_at : (last as Post).created_at;
+            this.cursor = `${last.score ?? 0},${time},${last.id}`;
           } else {
-            this.cursor = newPosts[newPosts.length - 1].created_at;
+            this.cursor = (newPosts[newPosts.length - 1] as Post).created_at;
           }
-          this.hasMore = newPosts.length === 10;
+          this.hasMore = Array.isArray(data.items) ? Boolean(data.next_cursor) : newPosts.length === 10;
           this.renderPosts();
+        } else if (allNewPosts.length > 0 && data.next_cursor) {
+          // Whole page was duplicates; advance the cursor and keep going.
+          this.cursor = data.next_cursor;
+          this.hasMore = true;
         } else {
           this.hasMore = false;
           this.showEndOfPosts();
@@ -550,7 +665,7 @@ export class ExplorePage {
 
   private async loadTrendingContent(): Promise<void> {
     // Load both trending tags and trending posts
-    const [tagsRes, postsRes] = await Promise.all([fetch('/api/tags/trending'), fetch('/api/posts/trending?limit=10')]);
+    const [tagsRes, postsRes] = await Promise.all([fetch('/api/tags/trending'), fetch(this.buildTrendingUrl())]);
 
     if (tagsRes.ok) {
       const tagsData = (await tagsRes.json()) as {
@@ -560,8 +675,15 @@ export class ExplorePage {
     }
 
     if (postsRes.ok) {
-      const postsData = (await postsRes.json()) as { posts: Post[] };
-      this.handleNewPosts(postsData.posts || []);
+      const postsData = (await postsRes.json()) as {
+        posts?: Post[];
+        items?: TrendingResponseItem[];
+        next_cursor?: string | null;
+      };
+      const newPosts: TrendingFeedItem[] = Array.isArray(postsData.items)
+        ? postsData.items.map(toExploreFeedItem)
+        : ((postsData.posts || []) as TrendingFeedItem[]);
+      this.handleNewPosts(newPosts, postsData.next_cursor ?? undefined, Array.isArray(postsData.items));
     }
   }
 
@@ -595,11 +717,19 @@ export class ExplorePage {
     }
   }
 
-  private handleNewPosts(newPosts: Post[]): void {
+  private handleNewPosts(newPosts: TrendingFeedItem[], nextCursor?: string, mixedFeed = false): void {
     if (newPosts.length > 0) {
       this.posts.push(...newPosts);
-      this.cursor = newPosts[newPosts.length - 1].created_at;
-      this.hasMore = newPosts.length === 10;
+      if (nextCursor) {
+        this.cursor = nextCursor;
+      } else if (!this.props.tag) {
+        const last = newPosts[newPosts.length - 1] as TrendingFeedItem & { score?: number };
+        const time = isExternal(last) ? (last as { publish_at: string }).publish_at : (last as Post).created_at;
+        this.cursor = `${last.score ?? 0},${time},${last.id}`;
+      } else {
+        this.cursor = (newPosts[newPosts.length - 1] as Post).created_at;
+      }
+      this.hasMore = mixedFeed ? Boolean(nextCursor) : newPosts.length === 10;
       this.renderPosts();
     } else {
       this.hasMore = false;
@@ -632,6 +762,12 @@ export class ExplorePage {
     const trendingTags = this.element.querySelector('.explore-trending-tags') as HTMLElement;
     if (trendingTags) {
       trendingTags.style.display = filter === 'posts' ? 'block' : 'none';
+    }
+
+    // Source multi-select only applies to the posts (trending) timeline.
+    const sourceSelect = this.element.querySelector('.explore-source-select') as HTMLElement | null;
+    if (sourceSelect) {
+      sourceSelect.style.display = filter === 'posts' && !this.props.tag ? 'block' : 'none';
     }
 
     // Reset and load content for the new filter
@@ -750,7 +886,12 @@ export class ExplorePage {
     const fragment = document.createDocumentFragment();
     const startIndex = postsContainer.children.length;
 
-    this.posts.slice(startIndex).forEach((post) => {
+    this.posts.slice(startIndex).forEach((item) => {
+      if (isExternal(item)) {
+        fragment.appendChild(createExternalItemCard(item).getElement());
+        return;
+      }
+      const post = item as Post;
       const postCard = createPostCard({
         post,
         sandboxOrigin: this.props.sandboxOrigin,
