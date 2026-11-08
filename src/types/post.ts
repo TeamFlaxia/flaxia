@@ -184,6 +184,8 @@ export interface GifPreviewProps {
   gallery?: string[];
   /** Index of this image inside `gallery`. */
   galleryIndex?: number;
+  /** Set by the data-saver tap-to-load placeholder once the user tapped. */
+  dataSaverConfirmed?: boolean;
 }
 
 export interface SandboxFrameProps {

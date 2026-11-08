@@ -1,3 +1,10 @@
+// NOTE: This module is imported directly by Node unit tests (link-preview.test.ts)
+// via `node --test --experimental-strip-types`, so it must use `.ts`
+// specifiers (`.js` fails to resolve for the same reason `i18n.js` did).
+// Both dependencies degrade gracefully without DOM.
+
+import { isDataSaverEnabled } from './settings.ts';
+
 export interface LinkPreviewData {
   title: string;
   description: string;
@@ -18,6 +25,18 @@ export function getYouTubeId(url: string): string | null {
   const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|&v=)([^#&?]*).*/i;
   const match = url.match(regExp);
   return match && match[2].length >= 11 ? match[2] : null;
+}
+
+// Bilingual gate label without importing the i18n module (keeps the unit
+// test import chain browser-independent — see the file header note).
+function gateLabelText(): string {
+  try {
+    const lang = (navigator.language || '').toLowerCase();
+    if (lang.startsWith('ja')) return '通信量削減中 — タップして読み込む';
+  } catch {
+    // No navigator in Node tests — fall back to Japanese (default locale).
+  }
+  return '通信量削減中 — タップして読み込む';
 }
 
 export function createLinkPreviewCard(data: LinkPreviewData): HTMLElement {
@@ -73,7 +92,12 @@ export function createLinkPreviewCard(data: LinkPreviewData): HTMLElement {
       `;
 
       const img = document.createElement('img');
-      img.src = thumbnailSrc;
+      // Data-saver: external thumbnails (YouTube OG images) can be heavy.
+      // Show a tap gate first and only set src after the tap.
+      const dataSaverPending = isDataSaverEnabled();
+      if (!dataSaverPending) {
+        img.src = thumbnailSrc;
+      }
       img.loading = 'lazy';
       img.style.cssText = `
         position: absolute;
@@ -83,6 +107,32 @@ export function createLinkPreviewCard(data: LinkPreviewData): HTMLElement {
         height: 100%;
         object-fit: cover;
       `;
+      if (dataSaverPending) {
+        const gateLabel = document.createElement('div');
+        gateLabel.style.cssText = `
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%);
+          background: rgba(0,0,0,0.65);
+          color: #fff;
+          border-radius: 9999px;
+          padding: 0.5rem 1rem;
+          font-size: 0.8rem;
+          cursor: pointer;
+        `;
+        gateLabel.textContent = gateLabelText();
+        gateLabel.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          img.src = thumbnailSrc;
+          gateLabel.remove();
+        });
+        imgContainer.appendChild(img);
+        imgContainer.appendChild(gateLabel);
+      } else {
+        imgContainer.appendChild(img);
+      }
       img.onerror = () => {
         imgContainer.innerHTML = '';
         imgContainer.style.cssText = `
@@ -107,7 +157,6 @@ export function createLinkPreviewCard(data: LinkPreviewData): HTMLElement {
         fallbackIcon.textContent = '\u{1F310}';
         imgContainer.appendChild(fallbackIcon);
       };
-      imgContainer.appendChild(img);
 
       if (youtubeId) {
         const playBadge = document.createElement('div');
