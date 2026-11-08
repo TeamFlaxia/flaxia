@@ -43,8 +43,8 @@
   --accent: #22c55e;
   --accent-hover: #4ade80;
   --accent-dark: #16a34a;
-  --accent-soft: rgba(34, 197, 94, 0.12);
-  --accent-text: #16a34a;
+  --accent-soft: rgba(34, 197, 94, 0.18);
+  --accent-text: #4ade80;
   --on-accent: #052e16;
   --gradient-accent: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
   --gradient-accent-hover: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
@@ -65,7 +65,7 @@
   --warning: #f59e0b;
   --link: var(--accent-text);
   --link-hover: var(--accent-hover);
-  --ring: rgba(34, 197, 94, 0.35);
+  --ring: rgba(34, 197, 94, 0.45);
 
   /* Flaxia+ post text colours (WCAG-checked for the light canvas). */
   --post-color-red: #b91c1c;
