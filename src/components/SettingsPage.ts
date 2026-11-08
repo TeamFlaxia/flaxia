@@ -153,7 +153,15 @@ function createSettingsTwoPane() {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'settings-nav-item';
-    button.textContent = t(category.titleKey);
+    const navIcon = document.createElement('span');
+    navIcon.className = 'settings-nav-icon';
+    navIcon.setAttribute('aria-hidden', 'true');
+    navIcon.appendChild(icon(category.iconName as Parameters<typeof icon>[0], { width: '16', height: '16' }));
+    const navLabel = document.createElement('span');
+    navLabel.className = 'settings-nav-label';
+    navLabel.textContent = t(category.titleKey);
+    button.appendChild(navIcon);
+    button.appendChild(navLabel);
     button.addEventListener('click', () => showCategory(category.id));
     group.appendChild(button);
     items.set(category.id, button);
