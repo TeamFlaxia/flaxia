@@ -39,8 +39,14 @@ async function metaPut(meta: TileCacheMeta): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction('tiles', 'readwrite');
     tx.objectStore('tiles').put(meta);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
   });
 }
 
@@ -48,8 +54,14 @@ async function metaGet(url: string): Promise<TileCacheMeta | null> {
   const db = await openMetaDb();
   return new Promise((resolve, reject) => {
     const req = db.transaction('tiles', 'readonly').objectStore('tiles').get(url);
-    req.onsuccess = () => resolve((req.result as TileCacheMeta | undefined) ?? null);
-    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      db.close();
+      resolve((req.result as TileCacheMeta | undefined) ?? null);
+    };
+    req.onerror = () => {
+      db.close();
+      reject(req.error);
+    };
   });
 }
 
@@ -57,8 +69,14 @@ async function metaGetAll(): Promise<TileCacheMeta[]> {
   const db = await openMetaDb();
   return new Promise((resolve, reject) => {
     const req = db.transaction('tiles', 'readonly').objectStore('tiles').getAll();
-    req.onsuccess = () => resolve((req.result as TileCacheMeta[]) ?? []);
-    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      db.close();
+      resolve((req.result as TileCacheMeta[]) ?? []);
+    };
+    req.onerror = () => {
+      db.close();
+      reject(req.error);
+    };
   });
 }
 
@@ -78,8 +96,14 @@ async function metaDelete(url: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction('tiles', 'readwrite');
     tx.objectStore('tiles').delete(url);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
   });
 }
 
@@ -88,8 +112,14 @@ async function metaClear(): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction('tiles', 'readwrite');
     tx.objectStore('tiles').clear();
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    tx.onerror = () => {
+      db.close();
+      reject(tx.error);
+    };
   });
 }
 
@@ -141,8 +171,20 @@ export async function requestStoragePersistence(): Promise<boolean> {
 }
 
 const inFlight = new Map<string, Promise<ArrayBuffer>>();
+// Background revalidation is bounded: each cache hit used to fire one fetch,
+// one Cache.put and one full eviction scan, so panning across cached tiles
+// saturated the radio/IDB and could push other requests past their budgets.
+const MAX_CONCURRENT_REVALIDATIONS = 4;
+const REVALIDATE_COOLDOWN_MS = 60_000;
+let activeRevalidations = 0;
+const lastRevalidatedAt = new Map<string, number>();
 
 async function revalidateInBackground(url: string, cache: Cache, etag: string | null): Promise<void> {
+  const now = Date.now();
+  const last = lastRevalidatedAt.get(url) ?? 0;
+  if (now - last < REVALIDATE_COOLDOWN_MS || activeRevalidations >= MAX_CONCURRENT_REVALIDATIONS) return;
+  lastRevalidatedAt.set(url, now);
+  activeRevalidations++;
   try {
     const headers: Record<string, string> = { Accept: 'application/vnd.mapbox-vector-tile' };
     if (etag) headers['If-None-Match'] = etag;
@@ -163,6 +205,8 @@ async function revalidateInBackground(url: string, cache: Cache, etag: string | 
     await evictIfNeeded(cache);
   } catch {
     // Background revalidation is best-effort; the cached copy is already returned.
+  } finally {
+    activeRevalidations--;
   }
 }
 
@@ -218,6 +262,18 @@ export async function handleTileFetch(
   const cache = await caches.open(TILE_CACHE_NAME);
   const cached = await cache.match(url);
   if (cached) {
+    // Expired tiles are refreshed from the network; the stale copy is only
+    // served when that refresh itself fails.
+    const storedAt = Number(cached.headers.get('X-Stored-At'));
+    if (Number.isFinite(storedAt) && storedAt > 0 && Date.now() - storedAt > TILE_CACHE_MAX_AGE_MS) {
+      try {
+        return await fetchAndStoreTile(url, cache, signal, onEvent);
+      } catch {
+        const stale = await cached.arrayBuffer();
+        onEvent?.('hit', url);
+        return stale;
+      }
+    }
     const buf = await cached.arrayBuffer();
     const etag = cached.headers.get('ETag');
     await metaTouch(url, buf.byteLength, etag).catch(() => undefined);

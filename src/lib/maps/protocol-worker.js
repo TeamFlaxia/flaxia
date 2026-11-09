@@ -7,6 +7,10 @@
 // sync with TILE_CACHE_NAME in cache.ts (200MB / 7d LRU lives there and
 // is shared through the same Cache Storage + IndexedDB metadata).
 const CACHE_NAME = 'flaxia-tiles-v1';
+const MAX_BYTES = 200 * 1024 * 1024;
+const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_CONCURRENT_REVALIDATIONS = 4;
+const REVALIDATE_COOLDOWN_MS = 60_000;
 
 function openMetaDb() {
   return new Promise((resolve, reject) => {
@@ -41,15 +45,87 @@ async function metaTouch(url, size, etag) {
     await new Promise((resolve, reject) => {
       const tx = db.transaction('tiles', 'readwrite');
       tx.objectStore('tiles').put(meta);
-      tx.oncomplete = () => resolve(undefined);
-      tx.onerror = () => reject(tx.error);
+      tx.oncomplete = () => {
+        db.close();
+        resolve(undefined);
+      };
+      tx.onerror = () => {
+        db.close();
+        reject(tx.error);
+      };
     });
   } catch {
     // IndexedDB is unavailable in some workers; the tile payload is unaffected.
   }
 }
 
+async function metaGetAll() {
+  try {
+    const db = await openMetaDb();
+    const records = await new Promise((resolve, reject) => {
+      const req = db.transaction('tiles', 'readonly').objectStore('tiles').getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+    db.close();
+    return records;
+  } catch {
+    return [];
+  }
+}
+
+async function metaDelete(url) {
+  try {
+    const db = await openMetaDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('tiles', 'readwrite');
+      tx.objectStore('tiles').delete(url);
+      tx.oncomplete = () => {
+        db.close();
+        resolve(undefined);
+      };
+      tx.onerror = () => {
+        db.close();
+        reject(tx.error);
+      };
+    });
+  } catch {
+    // Meta cleanup is best-effort.
+  }
+}
+
+async function evictIfNeeded(cache) {
+  const metas = await metaGetAll();
+  const now = Date.now();
+  const expired = metas.filter((m) => now - m.storedAt >= MAX_AGE_MS);
+  for (const m of expired) {
+    await cache.delete(m.url);
+    await metaDelete(m.url);
+  }
+  const alive = metas.filter((m) => !expired.includes(m));
+  let total = alive.reduce((sum, m) => sum + m.size, 0);
+  if (total <= MAX_BYTES) return;
+  const sorted = [...alive].sort((a, b) => a.lastAccess - b.lastAccess);
+  for (const m of sorted) {
+    if (total <= MAX_BYTES) break;
+    const deleted = await cache.delete(m.url);
+    if (deleted) {
+      await metaDelete(m.url);
+      total -= m.size;
+    }
+  }
+}
+
+let activeRevalidations = 0;
+const lastRevalidatedAt = new Map();
+const inFlight = new Map();
+
 async function revalidateInBackground(url, cache, etag) {
+  const now = Date.now();
+  const last = lastRevalidatedAt.get(url) || 0;
+  if (now - last < REVALIDATE_COOLDOWN_MS || activeRevalidations >= MAX_CONCURRENT_REVALIDATIONS) return;
+  lastRevalidatedAt.set(url, now);
+  activeRevalidations++;
   try {
     const headers = { Accept: 'application/vnd.mapbox-vector-tile' };
     if (etag) headers['If-None-Match'] = etag;
@@ -67,21 +143,15 @@ async function revalidateInBackground(url, cache, etag) {
       }),
     );
     await metaTouch(url, body.byteLength, res.headers.get('ETag') || null);
+    await evictIfNeeded(cache);
   } catch {
     // Best-effort; the cached copy has already been returned to the map.
+  } finally {
+    activeRevalidations--;
   }
 }
 
-async function handleTileFetch(url, signal) {
-  const cache = await caches.open(CACHE_NAME);
-  const cached = await cache.match(url);
-  if (cached) {
-    const buf = await cached.arrayBuffer();
-    const etag = cached.headers.get('ETag');
-    await metaTouch(url, buf.byteLength, etag).catch(() => undefined);
-    void revalidateInBackground(url, cache, etag).catch(() => undefined);
-    return buf;
-  }
+async function fetchAndStoreTile(url, cache, signal) {
   const res = await fetch(url, {
     mode: 'cors',
     headers: { Accept: 'application/vnd.mapbox-vector-tile' },
@@ -101,10 +171,39 @@ async function handleTileFetch(url, signal) {
       }),
     );
     await metaTouch(url, body.byteLength, res.headers.get('ETag') || null);
+    await evictIfNeeded(cache);
   } catch {
     // Cache storage failure must not break the visible tile.
   }
   return body;
+}
+
+async function handleTileFetch(url, signal) {
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(url);
+  if (cached) {
+    const storedAt = Number(cached.headers.get('X-Stored-At'));
+    if (Number.isFinite(storedAt) && storedAt > 0 && Date.now() - storedAt > MAX_AGE_MS) {
+      try {
+        return await fetchAndStoreTile(url, cache, signal);
+      } catch {
+        const stale = await cached.arrayBuffer();
+        return stale;
+      }
+    }
+    const buf = await cached.arrayBuffer();
+    const etag = cached.headers.get('ETag');
+    await metaTouch(url, buf.byteLength, etag).catch(() => undefined);
+    void revalidateInBackground(url, cache, etag).catch(() => undefined);
+    return buf;
+  }
+  const pending = inFlight.get(url);
+  if (pending) return pending;
+  const task = fetchAndStoreTile(url, cache, signal).finally(() => {
+    inFlight.delete(url);
+  });
+  inFlight.set(url, task);
+  return task;
 }
 
 self.addProtocol('flaxia', async (params, abortController) => {
