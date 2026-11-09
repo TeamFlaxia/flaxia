@@ -5,6 +5,7 @@ import './styles/redesign/timeline.css';
 import './styles/redesign/composer.css';
 import './styles/redesign/overlays.css';
 import './styles/redesign/pages.css';
+import './styles/redesign/maps.css';
 import './styles/redesign/mail.css';
 import './styles/redesign/command.css';
 import './styles/redesign/rail.css';
@@ -141,6 +142,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       | 'admin'
       | 'settings'
       | 'arcade'
+      | 'maps'
       | 'billing-success'
       | 'billing-canceled'
       | 'download'
@@ -162,6 +164,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     let notificationsPage: NotificationsPage | null = null;
     let settingsPage: ReturnType<typeof import('./components/SettingsPage.js').createSettingsPage> | null = null;
     let arcadePage: ArcadePageHandle | null = null;
+    let mapsPage: PageComponent | null = null;
     let searchPage: PageComponent | null = null;
     let bookmarksPage: BookmarksPage | null = null;
     let downloadPage: PageComponent | null = null;
@@ -558,6 +561,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (arcadePage) {
           arcadePage.destroy();
           arcadePage = null;
+        }
+        if (mapsPage) {
+          mapsPage.destroy();
+          mapsPage = null;
         }
         if (searchPage) {
           searchPage.destroy();
@@ -1025,6 +1032,42 @@ document.addEventListener('DOMContentLoaded', async () => {
           hidePageLoader();
 
           // Setup mobile left nav
+          setupMobileLeftNav(leftNav.getElement());
+
+          return;
+        }
+
+        if (view === 'maps') {
+          currentView = 'maps';
+          currentPostId = null;
+          _currentUsername = null;
+          currentTag = null;
+
+          const mainContainer = document.createElement('div');
+          mainContainer.className = 'main-container';
+
+          const leftNav = await lazyCreateLeftNav({
+            activeItem: 'maps',
+            unreadCount: unreadNotificationCount,
+            mailUnreadCount,
+            currentUser: currentUser || undefined,
+            ...leftNavHandlers(),
+          });
+
+          leftNavInstances.add(leftNav);
+
+          const { createMapsPage } = await import('./components/MapsPage.js');
+          mapsPage = createMapsPage();
+
+          const rightPanel = await lazyCreateRightPanel();
+
+          mainContainer.appendChild(leftNav.getElement());
+          mainContainer.appendChild(markMainContent(mapsPage.getElement()));
+          mainContainer.appendChild(rightPanel.getElement());
+
+          app.appendChild(mainContainer);
+          hidePageLoader();
+
           setupMobileLeftNav(leftNav.getElement());
 
           return;
@@ -1581,6 +1624,16 @@ document.addEventListener('DOMContentLoaded', async () => {
           run: () => {
             pushSpaHistory('/arcade');
             void navigateTo('arcade');
+          },
+        },
+        {
+          id: 'maps',
+          label: t('nav.maps'),
+          group: navigationGroup,
+          keywords: 'maps weather',
+          run: () => {
+            pushSpaHistory('/maps');
+            void navigateTo('maps');
           },
         },
         {
