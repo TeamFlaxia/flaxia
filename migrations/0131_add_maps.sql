@@ -24,7 +24,7 @@ INSERT OR IGNORE INTO maps_places (id, name, name_norm, lat, lon, kind, city_id)
   ('roppongi', '六本木', '六本木', 35.6627, 139.7316, 'landmark', 'tokyo'),
   ('shimokitazawa', '下北沢', '下北沢', 35.6612, 139.6689, 'station', 'tokyo'),
   ('harajuku', '原宿', '原宿', 35.6702, 139.7022, 'station', 'tokyo'),
-  ('oosaka', '大阪', '大阪', 34.6937, 135.5023, 'city', 'osaka'),
+  ('osaka', '大阪', '大阪', 34.6937, 135.5023, 'city', 'osaka'),
   ('osaka-station', '大阪駅', '大阪駅', 34.7025, 135.4958, 'station', 'osaka'),
   ('umeda', '梅田', '梅田', 34.7050, 135.4910, 'station', 'osaka'),
   ('shinsaibashi', '心斎橋', '心斎橋', 34.6751, 135.5006, 'landmark', 'osaka'),

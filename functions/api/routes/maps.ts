@@ -91,7 +91,6 @@ function isValidCitySlug(value: string): boolean {
 }
 
 function toWeatherPoints(data: MetResponse): WeatherPoint[] {
-  const units = data.properties?.meta?.units ?? {};
   return (data.properties?.timeseries ?? []).slice(0, 48).map((row) => {
     const details = row.data?.instant?.details ?? {};
     const nextOne = row.data?.nextOneHours;
@@ -101,7 +100,6 @@ function toWeatherPoints(data: MetResponse): WeatherPoint[] {
     const windKey = Object.keys(details).find((k) => k.includes('wind_speed'));
     const windDirKey = Object.keys(details).find((k) => k.includes('wind_from_direction'));
     const precip = nextOne?.details?.precipitation_amount ?? nextSix?.details?.precipitation_amount ?? null;
-    void units;
     return {
       time: row.time,
       temperature: tempKey ? details[tempKey] : null,
@@ -157,16 +155,18 @@ maps.get('/maps/geocode', async (c) => {
   if (!q) {
     return c.json({ places: [] });
   }
+  const escaped = q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+  const pattern = `%${escaped}%`;
   const limit = 10;
   let places: MapsPlace[] = [];
   try {
     const rows = await c.env.DB.prepare(
       `SELECT id, name, lat, lon, kind, city_id FROM maps_places
-       WHERE name LIKE ? OR name_norm LIKE ? COLLATE NOCASE
+       WHERE name LIKE ? ESCAPE '\\' OR name_norm LIKE ? ESCAPE '\\' COLLATE NOCASE
        ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END, LENGTH(name)
        LIMIT ?`,
     )
-      .bind(`%${q}%`, `%${q}%`, q, limit)
+      .bind(pattern, pattern, q, limit)
       .all<{ id: string; name: string; lat: number; lon: number; kind: string; city_id: string }>();
     places = (rows.results ?? []).map((r) => ({
       id: r.id,

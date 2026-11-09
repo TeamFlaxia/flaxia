@@ -13,6 +13,9 @@ const DEFAULT_CITIES = [
   { id: 'world', bbox: '-180,-90,180,90', maxZoom: 10 },
 ];
 
+const CITY_SLUG = /^[a-z0-9][a-z0-9-]{1,63}$/;
+const BBOX_PATTERN = /^-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?,-?\d+(\.\d+)?$/;
+
 function parseArgs(argv) {
   let outDir = join(root, 'maps-packs');
   let cities = null;
@@ -24,13 +27,19 @@ function parseArgs(argv) {
       const id = String(argv[++i] || '').trim();
       const bbox = String(argv[++i] || '').trim();
       const maxZoom = Number(argv[++i] || 15);
-      if (!id || !bbox) {
+      if (
+        !CITY_SLUG.test(id) ||
+        !BBOX_PATTERN.test(bbox) ||
+        !Number.isInteger(maxZoom) ||
+        maxZoom < 0 ||
+        maxZoom > 22
+      ) {
         console.error(
-          'usage: node scripts/build-maps-packs.mjs [--out <dir>] [--city <slug> "<lonMin,latMin,lonMax,latMax>" <maxZoom>]',
+          'invalid --city arguments: <slug> must match [a-z0-9-]{2,64}, <bbox> must be lonMin,latMin,lonMax,latMax, <maxZoom> must be 0-22',
         );
         process.exit(1);
       }
-      cities = [{ id, bbox, maxZoom: Number.isFinite(maxZoom) ? maxZoom : 15 }];
+      cities = [{ id, bbox, maxZoom }];
       break;
     } else if (!arg.startsWith('--')) {
       outDir = arg;
@@ -49,10 +58,10 @@ async function main() {
     const buildSh = join(cityDir, 'build.sh');
     const script = `#!/bin/bash
 set -euo pipefail
-CITY=${city.id}
-BBOX=${city.bbox}
-MAXZOOM=${city.maxZoom}
-planetiler --bbox=$BBOX --maxzoom=$MAXZOOM --output=map.pmtiles
+CITY='${city.id}'
+BBOX='${city.bbox}'
+MAXZOOM='${city.maxZoom}'
+planetiler --bbox="$BBOX" --maxzoom="$MAXZOOM" --output=map.pmtiles
 valhalla_build_config --inline-config '{"type":"json","layers":[{"id":"auto","name":"auto"}]}' > valhalla.json
 valhalla_build_tiles --inline-config valhalla.json -c tile_extract.txt
 valhalla_build_extract --inline-config valhalla.json --input valhalla_tiles --output valhalla.tar

@@ -1,6 +1,13 @@
 import type { Map as MapLibreMap, Marker as MapLibreMarker } from 'maplibre-gl';
 import { t } from '../lib/i18n.js';
-import { clearTileCache, getTileCacheStats, handleTileFetch, requestStoragePersistence } from '../lib/maps/cache.js';
+import {
+  clearTileCache,
+  getTileCacheStats,
+  handleTileFetch,
+  requestStoragePersistence,
+  rewriteTileUrl,
+  unwrapTileUrl,
+} from '../lib/maps/cache.js';
 import { createPageHeader } from '../lib/page-header.js';
 import { updateMetaTags } from '../lib/seo-meta.js';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -95,6 +102,22 @@ const FALLBACK_CITIES: City[] = [
   },
 ];
 
+const MAX_PACK_BYTES = 100 * 1024 * 1024;
+
+function symbolLabel(symbol: string | null): string {
+  if (!symbol) return '';
+  const s = symbol.toLowerCase();
+  if (s.startsWith('clearsky')) return '晴れ';
+  if (s.startsWith('fair')) return '晴れ時々曇り';
+  if (s.startsWith('cloudy')) return '曇り';
+  if (s.startsWith('fog')) return '霧';
+  if (s.includes('thunder')) return '雷雨';
+  if (s.startsWith('rain')) return '雨';
+  if (s.startsWith('snow')) return '雪';
+  if (s.startsWith('sleet')) return 'みぞれ';
+  return symbol;
+}
+
 function areaSlug(lat: number, lon: number): string {
   const la = Math.round(lat * 100);
   const lo = Math.round(lon * 100);
@@ -126,6 +149,7 @@ export class MapsPage {
   private tileHits = 0;
   private tileMisses = 0;
   private styleUrl = 'https://tiles.openfreemap.org/styles/liberty';
+  private packAbort: AbortController | null = null;
 
   constructor(_props: MapsPageProps = {}) {
     updateMetaTags({
@@ -147,6 +171,7 @@ export class MapsPage {
     this.destroyed = true;
     this.weatherAbort?.abort();
     this.searchAbort?.abort();
+    this.packAbort?.abort();
     if (this.maplibre && this.protocolRegistered) {
       try {
         this.maplibre.removeProtocol('flaxia');
@@ -442,9 +467,12 @@ export class MapsPage {
       this.maplibre = maplibre;
       const workerUrl = (await import('maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url')).default;
       maplibre.setWorkerUrl(workerUrl);
+      const protocolUrl = (await import('../lib/maps/protocol-worker.js?url')).default;
+      await maplibre.importScriptInWorkers(protocolUrl);
+      if (this.destroyed) return;
       const styleUrl: string = this.styleUrl;
       maplibre.addProtocol('flaxia', async (params, abortController) => {
-        const url = params.url.slice('flaxia://'.length);
+        const url = unwrapTileUrl(params.url);
         const data = await handleTileFetch(url, abortController.signal, (kind) => {
           if (kind === 'hit') this.tileHits += 1;
           if (kind === 'miss') this.tileMisses += 1;
@@ -460,6 +488,11 @@ export class MapsPage {
         zoom: this.zoom,
         attributionControl: { compact: true },
         maxTileCacheZoomLevels: 3,
+        // Route vector-tile requests through the on-device cache protocol.
+        transformRequest: (url) => {
+          const rewritten = rewriteTileUrl(url);
+          return rewritten ? { url: rewritten } : undefined;
+        },
       });
       this.map = map;
       map.addControl(new maplibre.NavigationControl({}), 'bottom-right');
@@ -488,10 +521,6 @@ export class MapsPage {
         fallback.textContent = '地図を表示できませんでした。ブラウザのWebGLを有効にしてください。';
       }
     }
-  }
-
-  private getStyleUrl(): string {
-    return this.styleUrl;
   }
 
   private centerOnMap(lat: number, lon: number, zoom: number): void {
@@ -689,7 +718,7 @@ export class MapsPage {
       temp.textContent = current?.temperature != null ? `${Math.round(current.temperature)}°` : '--';
       const symbol = document.createElement('span');
       symbol.className = 'maps-weather-symbol';
-      symbol.textContent = current?.symbol ?? '';
+      symbol.textContent = symbolLabel(current?.symbol ?? null);
       cur.appendChild(temp);
       cur.appendChild(symbol);
       body.appendChild(cur);
@@ -709,7 +738,7 @@ export class MapsPage {
         const tempEl = document.createElement('div');
         tempEl.textContent = point.temperature != null ? `${Math.round(point.temperature)}°` : '--';
         const s = document.createElement('div');
-        s.textContent = point.symbol ?? '';
+        s.textContent = symbolLabel(point.symbol);
         h.appendChild(time);
         h.appendChild(tempEl);
         h.appendChild(s);
@@ -729,40 +758,61 @@ export class MapsPage {
     if (progress) {
       progress.hidden = false;
     }
+    const controller = new AbortController();
+    this.packAbort?.abort();
+    this.packAbort = controller;
     try {
-      const res = await fetch(`/api/maps/packs/${this.activeCity.id}/pmtiles`);
+      const res = await fetch(`/api/maps/packs/${this.activeCity.id}/pmtiles`, {
+        signal: controller.signal,
+      });
       if (!res.ok || !res.body) {
         if (status) status.textContent = `${this.activeCity.name}: 未配信（ライブ表示中）`;
-        if (progress) progress.hidden = true;
         return;
       }
       const total = Number(res.headers.get('Content-Length') || 0);
-      const reader = res.body.getReader();
-      const chunks: Uint8Array[] = [];
-      let received = 0;
-      for (;;) {
-        const part = await reader.read();
-        if (part.done) break;
-        chunks.push(part.value);
-        received += part.value.length;
-        if (bar && total > 0) {
-          bar.style.width = `${Math.round((received / total) * 100)}%`;
-        }
+      if (total > MAX_PACK_BYTES) {
+        if (status) status.textContent = `${this.activeCity.name}: パックが上限（100MB）を超えています`;
+        return;
       }
-      const blob = new Blob(chunks as BlobPart[], { type: 'application/octet-stream' });
+      let received = 0;
+      const counting = new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, encoder) {
+          received += chunk.byteLength;
+          if (received > MAX_PACK_BYTES) {
+            encoder.error(new Error('pack too large'));
+            return;
+          }
+          if (bar && total > 0) {
+            bar.style.width = `${Math.round((received / total) * 100)}%`;
+          }
+          encoder.enqueue(chunk);
+        },
+      });
+      const streamed = res.body.pipeThrough(counting);
       const cache = await caches.open('flaxia-maps-packs');
-      await cache.put(`/api/maps/packs/${this.activeCity.id}/pmtiles`, new Response(blob));
-      if (status) status.textContent = `${this.activeCity.name}: 取得済み (${Math.round(blob.size / 1024 / 1024)}MB)`;
-    } catch {
-      if (status) status.textContent = `${this.activeCity.name}: 取得に失敗しました`;
+      // Stream into Cache Storage instead of buffering the whole pack in memory.
+      await cache.put(
+        `/api/maps/packs/${this.activeCity.id}/pmtiles`,
+        new Response(streamed, { headers: { 'Content-Type': 'application/octet-stream' } }),
+      );
+      if (status) status.textContent = `${this.activeCity.name}: 取得済み (${Math.round(received / 1024 / 1024)}MB)`;
+    } catch (error) {
+      if ((error as { name?: string }).name === 'AbortError') return;
+      if (status) {
+        status.textContent =
+          (error as { message?: string }).message === 'pack too large'
+            ? `${this.activeCity.name}: パックが上限（100MB）を超えています`
+            : `${this.activeCity.name}: 取得に失敗しました`;
+      }
     } finally {
+      if (this.packAbort === controller) this.packAbort = null;
       if (progress) progress.hidden = true;
     }
   }
 
   private async searchRoute(fromText: string, toText: string, mode: string): Promise<void> {
     const note = this.element.querySelector('[data-testid="maps-route-note"]');
-    void mode;
+    const modeLabel = mode === 'pedestrian' ? '徒歩' : mode === 'bicycle' ? '自転車' : '車';
     if (!fromText || !toText) {
       if (note) note.textContent = '出発地と目的地を入力してください';
       return;
@@ -777,10 +827,11 @@ export class MapsPage {
       return;
     }
     if (!this.activeCity.valhallaPublished) {
-      if (note) note.textContent = `${this.activeCity.name}の経路タイルは未配信です。配信後に経路案内します。`;
+      if (note)
+        note.textContent = `${this.activeCity.name}の経路タイルは未配信です。配信後に${modeLabel}の経路案内をします。`;
       return;
     }
-    if (note) note.textContent = '経路計算は都市タイル配布後に有効化されます';
+    if (note) note.textContent = `経路計算（${modeLabel}）は都市タイル配布後に有効化されます`;
   }
 
   private async findPlace(query: string): Promise<Place | null> {

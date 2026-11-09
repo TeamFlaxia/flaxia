@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +8,17 @@ const SOURCE_URL = process.env.GEONAMES_URL || 'https://download.geonames.org/ex
 const DB_NAME = process.env.D1_DB || 'flaxia';
 const REMOTE = process.env.D1_REMOTE === '1';
 const BATCH = 500;
+
+if (!/^[A-Za-z0-9_-]+$/.test(DB_NAME)) {
+  console.error('D1_DB must be a plain identifier');
+  process.exit(1);
+}
+
+function run(cmd, args, opts = {}) {
+  const result = spawnSync(cmd, args, { stdio: 'inherit', ...opts });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`${cmd} failed with exit code ${result.status} (${args.join(' ')})`);
+}
 
 function slugify(value) {
   return (
@@ -28,10 +39,13 @@ async function main() {
   const dir = mkdtempSync(join(tmpdir(), 'flaxia-geonames-'));
   const zipPath = join(dir, 'cities500.zip');
   console.log(`downloading ${SOURCE_URL}`);
-  execSync(`curl -fL -o ${zipPath} ${SOURCE_URL}`, { stdio: 'inherit' });
+  run('curl', ['-fL', '-o', zipPath, SOURCE_URL]);
   const admZipPath = join(dir, 'cities500.txt');
   if (!existsSync(admZipPath)) {
-    execSync(`unzip -p ${zipPath} cities500.txt > ${admZipPath}`, { stdio: 'inherit' });
+    const result = spawnSync('unzip', ['-p', zipPath, 'cities500.txt'], { maxBuffer: 256 * 1024 * 1024 });
+    if (result.error) throw result.error;
+    if (result.status !== 0) throw new Error('unzip failed');
+    writeFileSync(admZipPath, result.stdout);
   }
   const txt = readFileSync(admZipPath, 'utf8');
   const lines = txt.split('\n').filter(Boolean);
@@ -42,16 +56,15 @@ async function main() {
     const geonameid = cols[0];
     const name = cols[1];
     const asciiname = cols[2];
-    const lat = cols[4];
-    const lon = cols[5];
+    const lat = Number(cols[4]);
+    const lon = Number(cols[5]);
     const country = cols[8] || 'xx';
-    if (!geonameid || !name || !lat || !lon) continue;
+    if (!/^\d+$/.test(geonameid || '') || !name || !Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    if (lat < -90 || lat > 90 || lon < -180 || lon > 180) continue;
     const id = `gn-${geonameid}`;
     const norm = (asciiname || name).toLowerCase();
     const cityId = slugify(`${name}-${country.toLowerCase()}`);
-    values.push(
-      `('${id}','${sqlEscape(name)}','${sqlEscape(norm)}',${Number(lat)},${Number(lon)},'city','${sqlEscape(cityId)}')`,
-    );
+    values.push(`('${id}','${sqlEscape(name)}','${sqlEscape(norm)}',${lat},${lon},'city','${sqlEscape(cityId)}')`);
     if (values.length >= BATCH) {
       await flush(values.splice(0, values.length), dir);
     }
@@ -62,10 +75,9 @@ async function main() {
 
 async function flush(rows, dir) {
   const sql = `INSERT OR IGNORE INTO maps_places (id, name, name_norm, lat, lon, kind, city_id) VALUES ${rows.join(',')};`;
-  const sqlPath = join(dir, `batch-${Date.now()}.sql`);
+  const sqlPath = join(dir, `batch-${Date.now()}-${Math.floor(Math.random() * 1e9)}.sql`);
   writeFileSync(sqlPath, sql, 'utf8');
-  const flag = REMOTE ? '--remote' : '--local';
-  execSync(`wrangler d1 execute ${DB_NAME} ${flag} --file ${sqlPath} --json`, { stdio: 'inherit' });
+  run('wrangler', ['d1', 'execute', DB_NAME, REMOTE ? '--remote' : '--local', '--file', sqlPath, '--json']);
 }
 
 main().catch((e) => {

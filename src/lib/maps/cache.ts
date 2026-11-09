@@ -1,6 +1,15 @@
 export const TILE_CACHE_NAME = 'flaxia-tiles-v1';
 export const TILE_CACHE_MAX_BYTES = 200 * 1024 * 1024;
 export const TILE_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+export const TILE_ORIGIN = 'https://tiles.openfreemap.org/tiles/';
+
+export function rewriteTileUrl(url: string): string | null {
+  return url.startsWith(TILE_ORIGIN) ? `flaxia://${url}` : null;
+}
+
+export function unwrapTileUrl(url: string): string {
+  return url.startsWith('flaxia://') ? url.slice('flaxia://'.length) : url;
+}
 
 export interface TileCacheMeta {
   url: string;
@@ -35,12 +44,32 @@ async function metaPut(meta: TileCacheMeta): Promise<void> {
   });
 }
 
+async function metaGet(url: string): Promise<TileCacheMeta | null> {
+  const db = await openMetaDb();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction('tiles', 'readonly').objectStore('tiles').get(url);
+    req.onsuccess = () => resolve((req.result as TileCacheMeta | undefined) ?? null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
 async function metaGetAll(): Promise<TileCacheMeta[]> {
   const db = await openMetaDb();
   return new Promise((resolve, reject) => {
     const req = db.transaction('tiles', 'readonly').objectStore('tiles').getAll();
     req.onsuccess = () => resolve((req.result as TileCacheMeta[]) ?? []);
     req.onerror = () => reject(req.error);
+  });
+}
+
+async function metaTouch(url: string, size: number, etag: string | null): Promise<void> {
+  const existing = await metaGet(url);
+  await metaPut({
+    url,
+    size,
+    lastAccess: Date.now(),
+    etag,
+    storedAt: existing?.storedAt ?? Date.now(),
   });
 }
 
@@ -67,33 +96,21 @@ async function metaClear(): Promise<void> {
 async function evictIfNeeded(cache: Cache): Promise<void> {
   const metas = await metaGetAll();
   const now = Date.now();
-  const pruned = metas.filter((m) => now - m.storedAt < TILE_CACHE_MAX_AGE_MS);
-  for (const m of metas) {
-    if (!pruned.includes(m)) {
-      await cache.delete(m.url);
-      await metaDelete(m.url);
-    }
+  const expired = metas.filter((m) => now - m.storedAt >= TILE_CACHE_MAX_AGE_MS);
+  for (const m of expired) {
+    await cache.delete(m.url);
+    await metaDelete(m.url);
   }
-  let total = pruned.reduce((sum, m) => sum + m.size, 0);
+  const alive = metas.filter((m) => !expired.includes(m));
+  let total = alive.reduce((sum, m) => sum + m.size, 0);
   if (total <= TILE_CACHE_MAX_BYTES) return;
-  const sorted = [...pruned].sort((a, b) => a.lastAccess - b.lastAccess);
+  const sorted = [...alive].sort((a, b) => a.lastAccess - b.lastAccess);
   for (const m of sorted) {
     if (total <= TILE_CACHE_MAX_BYTES) break;
     const deleted = await cache.delete(m.url);
     if (deleted) {
       await metaDelete(m.url);
       total -= m.size;
-    }
-  }
-  const estimate = await navigator.storage?.estimate?.();
-  if (estimate && estimate.quota && estimate.usage) {
-    if (estimate.usage > estimate.quota * 0.8 && total > 0) {
-      const metas2 = await metaGetAll();
-      const sorted2 = [...metas2].sort((a, b) => a.lastAccess - b.lastAccess);
-      for (const m of sorted2.slice(0, Math.ceil(sorted2.length / 2))) {
-        await cache.delete(m.url);
-        await metaDelete(m.url);
-      }
     }
   }
 }
@@ -123,6 +140,76 @@ export async function requestStoragePersistence(): Promise<boolean> {
   return false;
 }
 
+const inFlight = new Map<string, Promise<ArrayBuffer>>();
+
+async function revalidateInBackground(url: string, cache: Cache, etag: string | null): Promise<void> {
+  try {
+    const headers: Record<string, string> = { Accept: 'application/vnd.mapbox-vector-tile' };
+    if (etag) headers['If-None-Match'] = etag;
+    const res = await fetch(url, { mode: 'cors', headers });
+    if (res.status === 304 || !res.ok) return;
+    const body = await res.arrayBuffer();
+    await cache.put(
+      url,
+      new Response(body, {
+        headers: {
+          'Content-Type': 'application/vnd.mapbox-vector-tile',
+          ETag: res.headers.get('ETag') ?? '',
+          'X-Stored-At': String(Date.now()),
+        },
+      }),
+    );
+    await metaTouch(url, body.byteLength, res.headers.get('ETag') ?? null);
+    await evictIfNeeded(cache);
+  } catch {
+    // Background revalidation is best-effort; the cached copy is already returned.
+  }
+}
+
+async function fetchAndStoreTile(
+  url: string,
+  cache: Cache,
+  signal?: AbortSignal,
+  onEvent?: (kind: 'hit' | 'miss' | 'offline', url: string) => void,
+): Promise<ArrayBuffer> {
+  try {
+    const res = await fetch(url, {
+      mode: 'cors',
+      headers: { Accept: 'application/vnd.mapbox-vector-tile' },
+      signal,
+    });
+    if (!res.ok) throw new Error(`tile ${res.status}`);
+    const body = await res.arrayBuffer();
+    onEvent?.('miss', url);
+    try {
+      await cache.put(
+        url,
+        new Response(body, {
+          headers: {
+            'Content-Type': 'application/vnd.mapbox-vector-tile',
+            ETag: res.headers.get('ETag') ?? '',
+            'X-Stored-At': String(Date.now()),
+          },
+        }),
+      );
+      await metaTouch(url, body.byteLength, res.headers.get('ETag') ?? null);
+      await evictIfNeeded(cache);
+    } catch {
+      // Cache storage may be full or unavailable; the fetched tile is still returned.
+      const metas = await metaGetAll().catch(() => [] as TileCacheMeta[]);
+      const sorted = [...metas].sort((a, b) => a.lastAccess - b.lastAccess);
+      for (const m of sorted.slice(0, Math.ceil(sorted.length / 2))) {
+        await cache.delete(m.url).catch(() => false);
+        await metaDelete(m.url).catch(() => undefined);
+      }
+    }
+    return body;
+  } catch (error) {
+    onEvent?.('offline', url);
+    throw error;
+  }
+}
+
 export async function handleTileFetch(
   url: string,
   signal?: AbortSignal,
@@ -133,84 +220,16 @@ export async function handleTileFetch(
   if (cached) {
     const buf = await cached.arrayBuffer();
     const etag = cached.headers.get('ETag');
-    void metaPut({
-      url,
-      size: buf.byteLength,
-      lastAccess: Date.now(),
-      etag,
-      storedAt: Date.now(),
-    });
+    await metaTouch(url, buf.byteLength, etag).catch(() => undefined);
     onEvent?.('hit', url);
-    const revalidateHeaders: Record<string, string> = { Accept: 'application/vnd.mapbox-vector-tile' };
-    if (etag) revalidateHeaders['If-None-Match'] = etag;
-    fetch(url, { mode: 'cors', headers: revalidateHeaders, signal })
-      .then(async (res) => {
-        if (res.status === 304) return;
-        if (!res.ok) return;
-        const body = await res.arrayBuffer();
-        await cache.put(
-          url,
-          new Response(body, {
-            headers: {
-              'Content-Type': 'application/vnd.mapbox-vector-tile',
-              ETag: res.headers.get('ETag') ?? '',
-              'X-Stored-At': String(Date.now()),
-            },
-          }),
-        );
-        await metaPut({
-          url,
-          size: body.byteLength,
-          lastAccess: Date.now(),
-          etag: res.headers.get('ETag'),
-          storedAt: Date.now(),
-        });
-        await evictIfNeeded(cache);
-      })
-      .catch(() => undefined);
+    void revalidateInBackground(url, cache, etag);
     return buf;
   }
-  try {
-    const res = await fetch(url, {
-      mode: 'cors',
-      headers: { Accept: 'application/vnd.mapbox-vector-tile' },
-      signal,
-    });
-    if (!res.ok) throw new Error(`tile ${res.status}`);
-    const body = await res.arrayBuffer();
-    onEvent?.('miss', url);
-    await cache
-      .put(
-        url,
-        new Response(body, {
-          headers: {
-            'Content-Type': 'application/vnd.mapbox-vector-tile',
-            ETag: res.headers.get('ETag') ?? '',
-            'X-Stored-At': String(Date.now()),
-          },
-        }),
-      )
-      .then(async () => {
-        await metaPut({
-          url,
-          size: body.byteLength,
-          lastAccess: Date.now(),
-          etag: res.headers.get('ETag'),
-          storedAt: Date.now(),
-        });
-        await evictIfNeeded(cache);
-      })
-      .catch(async () => {
-        const metas = await metaGetAll();
-        const sorted = [...metas].sort((a, b) => a.lastAccess - b.lastAccess);
-        for (const m of sorted.slice(0, Math.ceil(sorted.length / 2))) {
-          await cache.delete(m.url);
-          await metaDelete(m.url);
-        }
-      });
-    return body;
-  } catch (error) {
-    onEvent?.('offline', url);
-    throw error;
-  }
+  const pending = inFlight.get(url);
+  if (pending) return pending;
+  const task = fetchAndStoreTile(url, cache, signal, onEvent).finally(() => {
+    inFlight.delete(url);
+  });
+  inFlight.set(url, task);
+  return task;
 }
