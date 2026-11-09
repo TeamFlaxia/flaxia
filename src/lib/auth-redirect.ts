@@ -30,9 +30,43 @@ function safeReturnPath(raw: string): string {
   return raw;
 }
 
+function storageRead(): string | null {
+  // sessionStorage is lost when the OS evicts the backgrounded WebView while
+  // the user is in the system browser. localStorage survives that; read the
+  // legacy sessionStorage value too for upgrades from older builds.
+  try {
+    return localStorage.getItem(PENDING_KEY) ?? sessionStorage.getItem(PENDING_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function storageWrite(value: string): void {
+  try {
+    localStorage.setItem(PENDING_KEY, value);
+  } catch {
+    // Fall through to sessionStorage below (best-effort outside the WebView).
+  }
+  try {
+    sessionStorage.setItem(PENDING_KEY, value);
+  } catch {
+    // Both stores unavailable: the flow cannot complete, but do not throw.
+  }
+}
+
+function storageClear(): void {
+  for (const store of [localStorage, sessionStorage]) {
+    try {
+      store.removeItem(PENDING_KEY);
+    } catch {
+      // best-effort
+    }
+  }
+}
+
 function readPending(): PendingAuth | null {
   try {
-    const value = JSON.parse(sessionStorage.getItem(PENDING_KEY) ?? 'null') as Partial<PendingAuth> | null;
+    const value = JSON.parse(storageRead() ?? 'null') as Partial<PendingAuth> | null;
     if (
       !value ||
       typeof value.verifier !== 'string' ||
@@ -49,6 +83,17 @@ function readPending(): PendingAuth | null {
 
 async function openExternal(url: string): Promise<void> {
   if (isCapacitorNativePlatform()) {
+    // `@capacitor/browser` opens an in-app browser (Custom Tab /
+    // SFSafariViewController), which can refuse the flaxia:// return. Prefer
+    // the system browser through AppLauncher so the deep link is routed by
+    // the OS straight back into the app; fall back to Browser.open.
+    try {
+      const { AppLauncher } = await import('@capacitor/app-launcher');
+      const result = await AppLauncher.openUrl({ url });
+      if (result.completed) return;
+    } catch {
+      // fall through to Browser.open
+    }
     const { Browser } = await import('@capacitor/browser');
     await Browser.open({ url });
     return;
@@ -75,7 +120,7 @@ export async function beginNativeAuthRedirect(
     state: randomToken(),
     returnTo: safeReturnPath(returnTo),
   };
-  sessionStorage.setItem(PENDING_KEY, JSON.stringify(pending));
+  storageWrite(JSON.stringify(pending));
   const target = new URL('/login', AUTH_ORIGIN);
   target.searchParams.set('code_challenge', await challengeFor(pending.verifier));
   target.searchParams.set('state', pending.state);
@@ -86,34 +131,55 @@ export async function beginNativeAuthRedirect(
   try {
     await openExternal(target.toString());
     return true;
-  } catch {
-    sessionStorage.removeItem(PENDING_KEY);
+  } catch (error) {
+    console.warn('[auth] could not open the sign-in browser', error);
+    storageClear();
     return false;
   }
 }
 
 async function redeemCode(callbackUrl: string): Promise<void> {
   const pending = readPending();
-  if (!pending) return;
+  if (!pending) {
+    console.warn('[auth] deep-link callback ignored: no pending sign-in (verifier lost?)', callbackUrl);
+    return;
+  }
   let url: URL;
   try {
     url = new URL(callbackUrl);
   } catch {
+    console.warn('[auth] deep-link callback ignored: unparsable URL', callbackUrl);
     return;
   }
   const code = url.searchParams.get('code');
   const state = url.searchParams.get('state');
-  if (!code || !state || state !== pending.state) return;
-  // Single-use: drop the verifier before any network activity.
-  sessionStorage.removeItem(PENDING_KEY);
-  const response = await fetch('/api/auth/flaxia/exchange', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ code, verifier: pending.verifier }),
-  });
+  if (!code || !state || state !== pending.state) {
+    console.warn('[auth] deep-link callback ignored: missing code or state mismatch');
+    storageClear();
+    window.location.replace('/login?error=state_mismatch');
+    return;
+  }
+  // The verifier stays until the exchange answers, so a transient network
+  // failure cannot strand an otherwise-valid one-time code.
+  let response: Response;
+  try {
+    response = await fetch('/api/auth/flaxia/exchange', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, verifier: pending.verifier }),
+    });
+  } catch (error) {
+    console.warn('[auth] code exchange request failed', error);
+    storageClear();
+    window.location.replace('/login?error=network');
+    return;
+  }
+  storageClear();
   if (!response.ok) {
-    window.location.replace('/home');
+    const body = await response.text().catch(() => '');
+    console.warn(`[auth] code exchange rejected with ${response.status}: ${body.slice(0, 200)}`);
+    window.location.replace(`/login?error=exchange_${response.status}`);
     return;
   }
   window.location.replace(safeReturnPath(pending.returnTo));
