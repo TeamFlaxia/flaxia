@@ -3,12 +3,16 @@ export const TILE_CACHE_MAX_BYTES = 200 * 1024 * 1024;
 export const TILE_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 export const TILE_ORIGIN = 'https://tiles.openfreemap.org/tiles/';
 
+// Tile URLs use their own scheme so they can never collide with the native
+// auth deep link (flaxia://auth/callback) that the apps register at OS level.
+const TILE_SCHEME = 'flaxia-tiles://';
+
 export function rewriteTileUrl(url: string): string | null {
-  return url.startsWith(TILE_ORIGIN) ? `flaxia://${url}` : null;
+  return url.startsWith(TILE_ORIGIN) ? `${TILE_SCHEME}${url}` : null;
 }
 
 export function unwrapTileUrl(url: string): string {
-  return url.startsWith('flaxia://') ? url.slice('flaxia://'.length) : url;
+  return url.startsWith(TILE_SCHEME) ? url.slice(TILE_SCHEME.length) : url;
 }
 
 export interface TileCacheMeta {

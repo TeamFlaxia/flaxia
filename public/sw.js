@@ -1,4 +1,4 @@
-const CACHE_NAME = 'flaxia-v2';
+const CACHE_NAME = 'flaxia-v3';
 const OFFLINE_FALLBACK = '/offline';
 
 self.addEventListener('install', (event) => {
@@ -35,11 +35,10 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets with hash in filename: cache-first
-  if (
-    url.pathname.startsWith('/assets/') &&
-    (url.pathname.match(/-[a-zA-Z0-9]{8}\./) || url.pathname.endsWith('.css'))
-  ) {
+  // Static assets with a content hash in the filename: cache-first.
+  // Un-hashed assets (including plain .css) are NOT pinned: a cache-first
+  // copy of a file whose URL never changes is served stale forever.
+  if (url.pathname.startsWith('/assets/') && url.pathname.match(/-[a-zA-Z0-9]{8}\./)) {
     event.respondWith(cacheFirst(request));
     return;
   }

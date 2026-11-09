@@ -115,6 +115,17 @@ Unbookmarked game payloads, external game services, standalone audio/video and
 documents are not downloaded for offline playback.
 The browser/PWA service-worker policy is unchanged.
 
+## Diagnostics
+
+The offline layer records connectivity transitions (read gating, cache
+fallbacks, probe failures/recovery) in a bounded in-memory ring
+(`src/lib/diagnostics.ts`, max 200 events). Nothing leaves the device; the
+buffer is exposed for inspection as `window.__flaxiaDiagnostics` (WebView
+CDP or `getDiagnostics()` in the page console). When a field report says
+"online but offline", compare the event timestamps against the reported
+`document.documentElement.dataset.offline` state and the probe outcomes to
+tell a stale `navigator.onLine` apart from a genuine outage.
+
 ## Verification
 
 Run the offline-client, native-fetch, native-api, and capacitor-security-config

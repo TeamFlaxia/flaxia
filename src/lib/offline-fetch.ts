@@ -1,3 +1,4 @@
+import { logEvent } from './diagnostics.ts';
 import type { OfflineStore } from './offline-store.ts';
 
 const MAX_AGE = 7 * 24 * 60 * 60 * 1000;
@@ -139,12 +140,14 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
     if (reconnected) {
       reachable = true;
       clearRetry();
+      logEvent('offline-fetch', 'probe_recovered');
       options.setOffline(false);
       return;
     }
     // A failed probe invalidates any earlier proof of reachability.
     reachable = false;
     retryIndex++;
+    logEvent('offline-fetch', 'probe_failed', { retryIndex });
     options.setOffline(true);
     scheduleRetry();
   };
@@ -205,6 +208,7 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
       const record = cacheable ? await safely(() => store.get(key)) : undefined;
       if (request.signal.aborted) throw new DOMException('The request was aborted', 'AbortError');
       if (record && generation === currentGeneration && now() - record.savedAt <= MAX_AGE) {
+        logEvent('offline-fetch', 'fallback_cache', { method: request.method, path: url.pathname });
         return new Response(record.body, {
           headers: {
             'Content-Type': record.body.type,
@@ -215,14 +219,20 @@ export function createOfflineFetch(networkFetch: typeof fetch, options: OfflineF
         });
       }
       if (record && now() - record.savedAt > MAX_AGE) await safely(() => store.delete(key));
-      if (request.method !== 'GET' && request.method !== 'HEAD')
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        logEvent('offline-fetch', 'fallback_throw', { method: request.method, path: url.pathname });
         throw new TypeError('This action requires an internet connection');
+      }
+      logEvent('offline-fetch', 'fallback_denied', { method: request.method, path: url.pathname });
       return new Response(JSON.stringify({ error: 'offline_unavailable' }), {
         status: 503,
         headers: { 'Content-Type': 'application/json', 'X-Flaxia-Offline': '1', 'Cache-Control': 'no-store' },
       });
     };
-    if (!options.isOnline() && !reachable && !authRequest) return fallback();
+    if (!options.isOnline() && !reachable && !authRequest) {
+      logEvent('offline-fetch', 'read_gated', { path: url.pathname });
+      return fallback();
+    }
     const controller = new AbortController();
     const abort = () => controller.abort(request.signal.reason);
     request.signal.addEventListener('abort', abort, { once: true });
