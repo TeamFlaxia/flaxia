@@ -7,7 +7,20 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright')
 mkdirSync('android-gui-artifacts', { recursive: true });
 const adb = (...args) => execFileSync('adb', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trim();
 const app = 'app.flaxia.app';
-const start = () => console.log(adb('shell', 'am', 'start', '-W', '-n', app + '/.MainActivity'));
+function waitForDevice() {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      execFileSync('adb', ['wait-for-device'], { timeout: 60_000, stdio: 'ignore' });
+      return;
+    } catch (error) {
+      if (attempt === 2) throw error;
+    }
+  }
+}
+const start = () => {
+  waitForDevice();
+  console.log(adb('shell', 'am', 'start', '-W', '-n', app + '/.MainActivity'));
+};
 async function connect() {
   let lastError;
   for (let attempt = 0; attempt < 60; attempt++) {
@@ -150,13 +163,19 @@ async function onlinePhase() {
 }
 async function offlinePhase() {
   current = await connect();
-  await current.page.locator('.post-card').first().waitFor({ timeout: 90000 });
   await current.page.waitForFunction(() => document.documentElement.dataset.offline === 'true', null, {
+    timeout: 90000,
+  });
+  // The offline snapshot is restored asynchronously; wait for it while the
+  // document is already offline instead of counting a card that may be
+  // replaced by the cold-start render.
+  await current.page.waitForFunction(() => document.querySelectorAll('.post-card').length > 0, null, {
     timeout: 90000,
   });
   return current.page.locator('.post-card').count();
 }
 try {
+  waitForDevice();
   adb('install', '-r', 'android/app/build/outputs/apk/debug/app-debug.apk');
   adb('shell', 'svc', 'wifi', 'enable');
   adb('shell', 'svc', 'data', 'enable');
@@ -167,9 +186,11 @@ try {
       online = await onlinePhase();
       break;
     } catch (error) {
-      if (attempt >= 3 || !targetClosed(error)) throw error;
-      console.log(`WebView target closed during online phase (attempt ${attempt}); reconnecting`);
+      if (attempt >= 3) throw error;
+      console.log(`Online phase failed (attempt ${attempt}): ${String(error)}; retrying`);
       await disconnect();
+      adb('shell', 'svc', 'wifi', 'enable');
+      adb('shell', 'svc', 'data', 'enable');
       start();
     }
   }
@@ -185,9 +206,11 @@ try {
       offline = await offlinePhase();
       break;
     } catch (error) {
-      if (attempt >= 3 || !targetClosed(error)) throw error;
-      console.log(`WebView target closed during offline phase (attempt ${attempt}); reconnecting`);
+      if (attempt >= 3) throw error;
+      console.log(`Offline phase failed (attempt ${attempt}): ${String(error)}; retrying`);
       await disconnect();
+      adb('shell', 'am', 'force-stop', app);
+      start();
     }
   }
   assert.ok(online > 0 && offline > 0);
