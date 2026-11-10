@@ -150,9 +150,19 @@ async function onlinePhase() {
   await current.page.locator('.timeline').waitFor({ timeout: 60000 });
   console.log('API probe:', JSON.stringify(await probe()));
   await current.page.locator('.post-card').first().waitFor({ timeout: 90000 });
-  const count = await current.page.locator('.post-card').count();
+  const count = await postCount(current.page);
   await current.page.screenshot({ path: 'android-gui-artifacts/timeline-online.png' });
   return count;
+}
+async function postCount(page) {
+  // The timeline can re-render right after the first card appears. Retry the
+  // count briefly instead of failing on a transient zero.
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const count = await page.locator('.post-card').count();
+    if (count > 0) return count;
+    await page.waitForTimeout(250);
+  }
+  return 0;
 }
 async function offlinePhase() {
   current = await connect();
@@ -165,7 +175,7 @@ async function offlinePhase() {
   await current.page.waitForFunction(() => document.querySelectorAll('.post-card').length > 0, null, {
     timeout: 90000,
   });
-  return current.page.locator('.post-card').count();
+  return postCount(current.page);
 }
 try {
   waitForDevice();
@@ -209,6 +219,7 @@ try {
       start();
     }
   }
+  console.log(`Timeline post counts: online=${online} offline=${offline}`);
   assert.ok(online > 0 && offline > 0);
   await current.page.screenshot({ path: 'android-gui-artifacts/timeline-offline-cold-start.png' });
   waitForDevice();
