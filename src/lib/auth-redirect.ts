@@ -30,12 +30,9 @@ function safeReturnPath(raw: string): string {
   return raw;
 }
 
-function storageRead(): string | null {
-  // sessionStorage is lost when the OS evicts the backgrounded WebView while
-  // the user is in the system browser. localStorage survives that; read the
-  // legacy sessionStorage value too for upgrades from older builds.
+function readStore(store: Storage): string | null {
   try {
-    return localStorage.getItem(PENDING_KEY) ?? sessionStorage.getItem(PENDING_KEY);
+    return store.getItem(PENDING_KEY);
   } catch {
     return null;
   }
@@ -64,9 +61,10 @@ function storageClear(): void {
   }
 }
 
-function readPending(): PendingAuth | null {
+function parsePending(raw: string | null): PendingAuth | null {
+  if (!raw) return null;
   try {
-    const value = JSON.parse(storageRead() ?? 'null') as Partial<PendingAuth> | null;
+    const value = JSON.parse(raw) as Partial<PendingAuth> | null;
     if (
       !value ||
       typeof value.verifier !== 'string' ||
@@ -79,6 +77,14 @@ function readPending(): PendingAuth | null {
   } catch {
     return null;
   }
+}
+
+function readPending(): PendingAuth | null {
+  // localStorage survives the OS evicting the backgrounded WebView while the
+  // user is in the system browser; sessionStorage is kept for upgrades from
+  // older builds. Validate each value so a corrupt legacy entry cannot hide a
+  // valid one.
+  return parsePending(readStore(localStorage)) ?? parsePending(readStore(sessionStorage));
 }
 
 async function openExternal(url: string): Promise<void> {
@@ -139,16 +145,23 @@ export async function beginNativeAuthRedirect(
 }
 
 async function redeemCode(callbackUrl: string): Promise<void> {
-  const pending = readPending();
-  if (!pending) {
-    console.warn('[auth] deep-link callback ignored: no pending sign-in (verifier lost?)', callbackUrl);
-    return;
-  }
   let url: URL;
   try {
     url = new URL(callbackUrl);
   } catch {
     console.warn('[auth] deep-link callback ignored: unparsable URL', callbackUrl);
+    return;
+  }
+  // Only the auth return URI may consume or clear a pending PKCE verifier.
+  // Any other flaxia:// link (a future feature, or a malicious page opening
+  // the custom scheme) must not be able to cancel an in-flight sign-in.
+  if (url.protocol !== 'flaxia:' || url.host !== 'auth' || url.pathname !== '/callback') {
+    console.warn('[auth] deep-link callback ignored: not the auth return URI');
+    return;
+  }
+  const pending = readPending();
+  if (!pending) {
+    console.warn('[auth] deep-link callback ignored: no pending sign-in (verifier lost?)');
     return;
   }
   const code = url.searchParams.get('code');

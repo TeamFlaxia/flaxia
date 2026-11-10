@@ -316,7 +316,7 @@ jobs:
           echo "Verified Android APK signature and versionCode: $APK_VERSION_CODE"
           # Native sign-in returns via flaxia://auth/callback; the merged
           # manifest of the shipped APK must contain the deep-link filter.
-          if ! "$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt" dump xmltree "$APK_PATH" AndroidManifest.xml | grep -q 'flaxia'; then
+          if ! "$ANDROID_SDK_ROOT/build-tools/36.0.0/aapt" dump xmltree "$APK_PATH" AndroidManifest.xml | grep -q 'android:scheme.*flaxia'; then
             echo "::error::Release APK AndroidManifest does not register the flaxia:// deep link — native login would be impossible."
             exit 1
           fi
