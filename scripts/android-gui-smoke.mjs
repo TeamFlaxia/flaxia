@@ -7,7 +7,35 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ?? 'playwright')
 mkdirSync('android-gui-artifacts', { recursive: true });
 const adb = (...args) => execFileSync('adb', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trim();
 const app = 'app.flaxia.app';
-const start = () => console.log(adb('shell', 'am', 'start', '-W', '-n', app + '/.MainActivity'));
+const sleepSync = (seconds) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, seconds * 1000);
+// The emulator occasionally drops off adb mid-run ("device offline") and comes
+// back a few seconds later. Wait for it to reconnect instead of failing the job.
+function deviceOnline() {
+  try {
+    return execFileSync('adb', ['get-state'], { encoding: 'utf8' }).trim() === 'device';
+  } catch {
+    return false;
+  }
+}
+function waitForDevice(attempts = 60) {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (deviceOnline()) return true;
+    sleepSync(1);
+  }
+  return false;
+}
+function start() {
+  const transient = /device offline|no devices|more than one device|device not found/i;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    waitForDevice(30);
+    try {
+      return console.log(adb('shell', 'am', 'start', '-W', '-n', app + '/.MainActivity'));
+    } catch (error) {
+      if (!transient.test(String(error))) throw error;
+    }
+  }
+  return console.log(adb('shell', 'am', 'start', '-W', '-n', app + '/.MainActivity'));
+}
 async function connect() {
   let lastError;
   for (let attempt = 0; attempt < 60; attempt++) {
@@ -136,6 +164,18 @@ const probe = () =>
       direct,
     };
   });
+// The timeline can re-render between the existence check and the count, so a
+// single sample can observe 0 cards even though posts are on screen. Retry
+// until the count is stable and non-zero.
+async function countPostCards(page) {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    await page.locator('.post-card').first().waitFor({ timeout: 90000 });
+    const count = await page.locator('.post-card').count();
+    if (count > 0) return count;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  return 0;
+}
 async function onlinePhase() {
   current = await connect();
   await waitForNetwork(current.page);
@@ -143,8 +183,7 @@ async function onlinePhase() {
   await current.page.reload();
   await current.page.locator('.timeline').waitFor({ timeout: 60000 });
   console.log('API probe:', JSON.stringify(await probe()));
-  await current.page.locator('.post-card').first().waitFor({ timeout: 90000 });
-  const count = await current.page.locator('.post-card').count();
+  const count = await countPostCards(current.page);
   await current.page.screenshot({ path: 'android-gui-artifacts/timeline-online.png' });
   return count;
 }
@@ -154,7 +193,7 @@ async function offlinePhase() {
   await current.page.waitForFunction(() => document.documentElement.dataset.offline === 'true', null, {
     timeout: 90000,
   });
-  return current.page.locator('.post-card').count();
+  return countPostCards(current.page);
 }
 try {
   adb('install', '-r', 'android/app/build/outputs/apk/debug/app-debug.apk');
