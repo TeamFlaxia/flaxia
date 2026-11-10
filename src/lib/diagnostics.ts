@@ -21,7 +21,13 @@ const events: DiagnosticEvent[] = [];
 function exposeGlobal(): void {
   try {
     const w = window as unknown as { __flaxiaDiagnostics?: DiagnosticEvent[] };
-    if (!w.__flaxiaDiagnostics) w.__flaxiaDiagnostics = events;
+    if (Object.hasOwn(w, '__flaxiaDiagnostics')) return;
+    // Expose a fresh snapshot on every read so page scripts (or the WebView
+    // console) can inspect events without being able to mutate the ring.
+    Object.defineProperty(w, '__flaxiaDiagnostics', {
+      configurable: true,
+      get: () => getDiagnostics(),
+    });
   } catch {
     // Non-browser environments (node tests) have no window to expose on.
   }
@@ -49,3 +55,5 @@ export function getDiagnostics(): DiagnosticEvent[] {
 export function clearDiagnostics(): void {
   events.length = 0;
 }
+
+exposeGlobal();

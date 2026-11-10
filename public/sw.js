@@ -15,7 +15,10 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => {
-      return Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)));
+      // Only purge old app-shell caches. Tile caches (`flaxia-tiles-*`) and
+      // downloaded map packs must survive a shell upgrade or offline maps
+      // would be wiped on every deploy.
+      return Promise.all(keys.filter((k) => k.startsWith('flaxia-v') && k !== CACHE_NAME).map((k) => caches.delete(k)));
     }),
   );
   self.clients.claim();
