@@ -95,13 +95,6 @@ async function waitForNetwork(page) {
   }
   throw new Error('Device cannot reach the production API: ' + JSON.stringify(last));
 }
-// The emulator occasionally drops the WebView DevTools target while the app
-// keeps rendering. Reconnect and retry the phase instead of failing the job.
-function targetClosed(error) {
-  return /Target page, context or browser has been closed|Target closed|Session closed|Browser has been closed/i.test(
-    String(error),
-  );
-}
 async function disconnect() {
   await current?.browser.close().catch(() => {});
   current = undefined;
@@ -218,16 +211,26 @@ try {
   }
   assert.ok(online > 0 && offline > 0);
   await current.page.screenshot({ path: 'android-gui-artifacts/timeline-offline-cold-start.png' });
+  waitForDevice();
   adb('shell', 'svc', 'wifi', 'enable');
+  adb('shell', 'svc', 'data', 'enable');
   for (let attempt = 1; ; attempt++) {
     try {
-      await current.page.waitForFunction(() => navigator.onLine, null, { timeout: 60000 });
+      // navigator.onLine can stay false in the WebView after the emulator
+      // network returns. The app's probe is authoritative, so ask it to retry
+      // and wait for the document state it publishes.
+      await current.page.evaluate(() => window.dispatchEvent(new Event('flaxiaRetryConnectivity')));
+      await current.page.waitForFunction(() => document.documentElement.dataset.offline === 'false', null, {
+        timeout: 90000,
+      });
       break;
     } catch (error) {
-      if (attempt >= 3 || !targetClosed(error)) throw error;
-      console.log(`WebView target closed while restoring connectivity (attempt ${attempt}); reconnecting`);
+      if (attempt >= 3) throw error;
+      console.log(`Connectivity did not recover (attempt ${attempt}): ${String(error)}; retrying`);
       await disconnect();
       waitForDevice();
+      adb('shell', 'svc', 'wifi', 'enable');
+      adb('shell', 'svc', 'data', 'enable');
       current = await connect();
     }
   }
