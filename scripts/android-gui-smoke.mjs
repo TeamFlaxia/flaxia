@@ -177,6 +177,7 @@ async function offlinePhase() {
 try {
   waitForDevice();
   adb('install', '-r', 'android/app/build/outputs/apk/debug/app-debug.apk');
+  waitForDevice();
   adb('shell', 'svc', 'wifi', 'enable');
   adb('shell', 'svc', 'data', 'enable');
   start();
@@ -189,6 +190,7 @@ try {
       if (attempt >= 3) throw error;
       console.log(`Online phase failed (attempt ${attempt}): ${String(error)}; retrying`);
       await disconnect();
+      waitForDevice();
       adb('shell', 'svc', 'wifi', 'enable');
       adb('shell', 'svc', 'data', 'enable');
       start();
@@ -209,6 +211,7 @@ try {
       if (attempt >= 3) throw error;
       console.log(`Offline phase failed (attempt ${attempt}): ${String(error)}; retrying`);
       await disconnect();
+      waitForDevice();
       adb('shell', 'am', 'force-stop', app);
       start();
     }
@@ -224,6 +227,7 @@ try {
       if (attempt >= 3 || !targetClosed(error)) throw error;
       console.log(`WebView target closed while restoring connectivity (attempt ${attempt}); reconnecting`);
       await disconnect();
+      waitForDevice();
       current = await connect();
     }
   }
