@@ -1,14 +1,22 @@
 export const TILE_CACHE_NAME = 'flaxia-tiles-v1';
 export const TILE_CACHE_MAX_BYTES = 200 * 1024 * 1024;
 export const TILE_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-export const TILE_ORIGIN = 'https://tiles.openfreemap.org/tiles/';
+// The Liberty style serves vector tiles from /planet/; /tiles/ is kept for
+// older style revisions. Raster layers stay on the browser HTTP cache.
+export const TILE_ORIGINS = ['https://tiles.openfreemap.org/planet/', 'https://tiles.openfreemap.org/tiles/'] as const;
 
-export function rewriteTileUrl(url: string): string | null {
-  return url.startsWith(TILE_ORIGIN) ? `flaxia://${url}` : null;
+export function isTileUrl(url: string): boolean {
+  return TILE_ORIGINS.some((origin) => url.startsWith(origin));
 }
 
-export function unwrapTileUrl(url: string): string {
-  return url.startsWith('flaxia://') ? url.slice('flaxia://'.length) : url;
+export function rewriteTileUrl(url: string): string | null {
+  return isTileUrl(url) ? `flaxia://${url}` : null;
+}
+
+export function unwrapTileUrl(url: string): string | null {
+  if (!url.startsWith('flaxia://')) return null;
+  const inner = url.slice('flaxia://'.length);
+  return isTileUrl(inner) ? inner : null;
 }
 
 export interface TileCacheMeta {

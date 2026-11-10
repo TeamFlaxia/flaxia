@@ -143,6 +143,7 @@ const groups = {
     'mail-mime-guard',
     'mail-routing',
     'mail-search',
+    'maps',
     'native-api',
     'native-crowd',
     'native-fetch',

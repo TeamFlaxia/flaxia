@@ -142,6 +142,8 @@ export class MapsPage {
   private destroyed = false;
   private weatherAbort: AbortController | null = null;
   private searchAbort: AbortController | null = null;
+  private searchSeq = 0;
+  private routeAbort: AbortController | null = null;
   private map: MapLibreMap | null = null;
   private marker: MapLibreMarker | null = null;
   private maplibre: typeof import('maplibre-gl') | null = null;
@@ -171,6 +173,7 @@ export class MapsPage {
     this.destroyed = true;
     this.weatherAbort?.abort();
     this.searchAbort?.abort();
+    this.routeAbort?.abort();
     this.packAbort?.abort();
     if (this.maplibre && this.protocolRegistered) {
       try {
@@ -473,6 +476,7 @@ export class MapsPage {
       const styleUrl: string = this.styleUrl;
       maplibre.addProtocol('flaxia', async (params, abortController) => {
         const url = unwrapTileUrl(params.url);
+        if (!url) throw new Error('Unsupported tile URL');
         const data = await handleTileFetch(url, abortController.signal, (kind) => {
           if (kind === 'hit') this.tileHits += 1;
           if (kind === 'miss') this.tileMisses += 1;
@@ -581,12 +585,15 @@ export class MapsPage {
 
   private async onSearchInput(query: string, suggestions: HTMLElement): Promise<void> {
     const q = query.trim();
+    const seq = ++this.searchSeq;
     if (q.length < 1) {
+      this.searchAbort?.abort();
       suggestions.hidden = true;
       suggestions.innerHTML = '';
       return;
     }
     const places = await this.searchPlaces(q);
+    if (this.destroyed || seq !== this.searchSeq) return;
     suggestions.innerHTML = '';
     if (places.length === 0) {
       suggestions.hidden = true;
@@ -668,8 +675,9 @@ export class MapsPage {
   private async loadCities(): Promise<void> {
     try {
       const res = await fetch('/api/maps/cities', { credentials: 'include' });
-      if (!res.ok) return;
+      if (!res.ok || this.destroyed) return;
       const data = (await res.json()) as { cities: City[]; style?: string };
+      if (this.destroyed) return;
       if (data.style) {
         this.styleUrl = data.style;
         if (this.map) {
@@ -762,7 +770,8 @@ export class MapsPage {
     this.packAbort?.abort();
     this.packAbort = controller;
     try {
-      const res = await fetch(`/api/maps/packs/${this.activeCity.id}/pmtiles`, {
+      const packPath = `/api/maps/packs/${encodeURIComponent(this.activeCity.id)}/pmtiles`;
+      const res = await fetch(packPath, {
         signal: controller.signal,
       });
       if (!res.ok || !res.body) {
@@ -771,6 +780,7 @@ export class MapsPage {
       }
       const total = Number(res.headers.get('Content-Length') || 0);
       if (total > MAX_PACK_BYTES) {
+        await res.body.cancel().catch(() => undefined);
         if (status) status.textContent = `${this.activeCity.name}: パックが上限（100MB）を超えています`;
         return;
       }
@@ -791,10 +801,7 @@ export class MapsPage {
       const streamed = res.body.pipeThrough(counting);
       const cache = await caches.open('flaxia-maps-packs');
       // Stream into Cache Storage instead of buffering the whole pack in memory.
-      await cache.put(
-        `/api/maps/packs/${this.activeCity.id}/pmtiles`,
-        new Response(streamed, { headers: { 'Content-Type': 'application/octet-stream' } }),
-      );
+      await cache.put(packPath, new Response(streamed, { headers: { 'Content-Type': 'application/octet-stream' } }));
       if (status) status.textContent = `${this.activeCity.name}: 取得済み (${Math.round(received / 1024 / 1024)}MB)`;
     } catch (error) {
       if ((error as { name?: string }).name === 'AbortError') return;
@@ -817,7 +824,14 @@ export class MapsPage {
       if (note) note.textContent = '出発地と目的地を入力してください';
       return;
     }
-    const [from, to] = await Promise.all([this.findPlace(fromText), this.findPlace(toText)]);
+    this.routeAbort?.abort();
+    const routeAbort = new AbortController();
+    this.routeAbort = routeAbort;
+    const [from, to] = await Promise.all([
+      this.findPlace(fromText, routeAbort.signal),
+      this.findPlace(toText, routeAbort.signal),
+    ]);
+    if (this.destroyed) return;
     if (from) {
       this.centerOnMap(from.lat, from.lon, 13);
       this.placeMarker(from.lat, from.lon);
@@ -834,14 +848,17 @@ export class MapsPage {
     if (note) note.textContent = `経路計算（${modeLabel}）は都市タイル配布後に有効化されます`;
   }
 
-  private async findPlace(query: string): Promise<Place | null> {
-    this.searchAbort?.abort();
-    const controller = new AbortController();
-    this.searchAbort = controller;
+  private async findPlace(query: string, signal?: AbortSignal): Promise<Place | null> {
+    let controller: AbortController | null = null;
+    if (!signal) {
+      this.searchAbort?.abort();
+      controller = new AbortController();
+      this.searchAbort = controller;
+    }
     try {
       const res = await fetch(`/api/maps/geocode?q=${encodeURIComponent(query)}`, {
         credentials: 'include',
-        signal: controller.signal,
+        signal: signal ?? controller?.signal,
       });
       if (!res.ok) return null;
       const data = (await res.json()) as { places: Place[] };

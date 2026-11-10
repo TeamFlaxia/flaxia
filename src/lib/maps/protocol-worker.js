@@ -9,8 +9,13 @@
 const CACHE_NAME = 'flaxia-tiles-v1';
 const MAX_BYTES = 200 * 1024 * 1024;
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const TILE_ORIGINS = ['https://tiles.openfreemap.org/planet/', 'https://tiles.openfreemap.org/tiles/'];
 const MAX_CONCURRENT_REVALIDATIONS = 4;
 const REVALIDATE_COOLDOWN_MS = 60_000;
+
+function isTileUrl(url) {
+  return TILE_ORIGINS.some((origin) => url.startsWith(origin));
+}
 
 function openMetaDb() {
   return new Promise((resolve, reject) => {
@@ -90,29 +95,33 @@ async function metaDelete(url) {
       };
     });
   } catch {
-    // Meta cleanup is best-effort.
+    // Metadata is best-effort; never fail a tile response over it.
   }
 }
 
 async function evictIfNeeded(cache) {
-  const metas = await metaGetAll();
-  const now = Date.now();
-  const expired = metas.filter((m) => now - m.storedAt >= MAX_AGE_MS);
-  for (const m of expired) {
-    await cache.delete(m.url);
-    await metaDelete(m.url);
-  }
-  const alive = metas.filter((m) => !expired.includes(m));
-  let total = alive.reduce((sum, m) => sum + m.size, 0);
-  if (total <= MAX_BYTES) return;
-  const sorted = [...alive].sort((a, b) => a.lastAccess - b.lastAccess);
-  for (const m of sorted) {
-    if (total <= MAX_BYTES) break;
-    const deleted = await cache.delete(m.url);
-    if (deleted) {
+  try {
+    const metas = await metaGetAll();
+    const now = Date.now();
+    const expired = metas.filter((m) => now - m.storedAt >= MAX_AGE_MS);
+    for (const m of expired) {
+      await cache.delete(m.url);
       await metaDelete(m.url);
-      total -= m.size;
     }
+    const alive = metas.filter((m) => !expired.includes(m));
+    let total = alive.reduce((sum, m) => sum + m.size, 0);
+    if (total <= MAX_BYTES) return;
+    const sorted = [...alive].sort((a, b) => a.lastAccess - b.lastAccess);
+    for (const m of sorted) {
+      if (total <= MAX_BYTES) break;
+      const deleted = await cache.delete(m.url);
+      if (deleted) {
+        await metaDelete(m.url);
+        total -= m.size;
+      }
+    }
+  } catch {
+    // Eviction is best-effort; the tile has already been stored.
   }
 }
 
@@ -208,6 +217,7 @@ async function handleTileFetch(url, signal) {
 
 self.addProtocol('flaxia', async (params, abortController) => {
   const url = params.url.slice('flaxia://'.length);
+  if (!isTileUrl(url)) throw new Error('Unsupported tile URL');
   const data = await handleTileFetch(url, abortController.signal);
   return { data };
 });

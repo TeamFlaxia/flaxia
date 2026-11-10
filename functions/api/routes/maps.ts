@@ -90,6 +90,10 @@ function isValidCitySlug(value: string): boolean {
   return CITY_SLUG.test(value);
 }
 
+function toNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 function toWeatherPoints(data: MetResponse): WeatherPoint[] {
   return (data.properties?.timeseries ?? []).slice(0, 48).map((row) => {
     const details = row.data?.instant?.details ?? {};
@@ -101,12 +105,12 @@ function toWeatherPoints(data: MetResponse): WeatherPoint[] {
     const windDirKey = Object.keys(details).find((k) => k.includes('wind_from_direction'));
     const precip = nextOne?.details?.precipitation_amount ?? nextSix?.details?.precipitation_amount ?? null;
     return {
-      time: row.time,
-      temperature: tempKey ? details[tempKey] : null,
-      humidity: humKey ? details[humKey] : null,
-      windSpeed: windKey ? details[windKey] : null,
-      windDirection: windDirKey ? details[windDirKey] : null,
-      precipitation: precip,
+      time: typeof row.time === 'string' ? row.time : '',
+      temperature: tempKey ? toNumber(details[tempKey]) : null,
+      humidity: humKey ? toNumber(details[humKey]) : null,
+      windSpeed: windKey ? toNumber(details[windKey]) : null,
+      windDirection: windDirKey ? toNumber(details[windDirKey]) : null,
+      precipitation: toNumber(precip),
       symbol: nextOne?.summary?.symbolCode ?? nextSix?.summary?.symbolCode ?? null,
     };
   });
@@ -140,6 +144,7 @@ maps.get('/maps/cities', async (c) => {
   );
   const worldPublished = await packPublished(c, 'world', 'map.pmtiles');
   const styleUrl = c.env.MAPS_STYLE_URL?.trim() || 'https://tiles.openfreemap.org/styles/liberty';
+  c.header('Cache-Control', 'public, max-age=60');
   return c.json({ cities, world: { id: 'world', pmtilesPublished: worldPublished }, style: styleUrl });
 });
 
@@ -179,6 +184,7 @@ maps.get('/maps/geocode', async (c) => {
   } catch {
     return c.json({ places: [], error: 'geocode unavailable' }, 500);
   }
+  c.header('Cache-Control', 'public, max-age=300');
   return c.json({ places });
 });
 
@@ -190,9 +196,13 @@ maps.get('/maps/weather', async (c) => {
   if (!limited) {
     return c.json({ error: 'Rate limit exceeded' }, 429);
   }
-  const latRaw = Number(c.req.query('lat'));
-  const lonRaw = Number(c.req.query('lon'));
+  const latParam = c.req.query('lat');
+  const lonParam = c.req.query('lon');
+  const latRaw = Number(latParam);
+  const lonRaw = Number(lonParam);
   if (
+    !latParam?.trim() ||
+    !lonParam?.trim() ||
     !Number.isFinite(latRaw) ||
     !Number.isFinite(lonRaw) ||
     latRaw < -90 ||
@@ -207,6 +217,7 @@ maps.get('/maps/weather', async (c) => {
   const cacheKey = `maps-weather:${lat.toFixed(2)},${lon.toFixed(2)}`;
   const cached = await kvCacheGet<WeatherCache>(c, cacheKey);
   if (cached) {
+    c.header('Cache-Control', 'public, max-age=600');
     return c.json(cached);
   }
   const upstreamUrl = `https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}`;
@@ -217,6 +228,7 @@ maps.get('/maps/weather', async (c) => {
         'User-Agent': 'FlaxiaMaps/1.0 (+https://flaxia.app)',
         Accept: 'application/json',
       },
+      signal: AbortSignal.timeout(5_000),
     });
   } catch {
     return c.json({ error: 'Weather upstream unavailable' }, 502);
@@ -237,6 +249,7 @@ maps.get('/maps/weather', async (c) => {
     points: toWeatherPoints(data),
   };
   await kvCacheSet(c, cacheKey, payload, 600);
+  c.header('Cache-Control', 'public, max-age=600');
   return c.json(payload);
 });
 
@@ -274,7 +287,7 @@ maps.get('/maps/packs/:city/:kind', async (c) => {
       return c.json({ error: 'Pack not published' }, 404);
     }
     return new Response(object.body, {
-      headers: { ...baseHeaders, 'Content-Length': fileSize.toString() },
+      headers: { ...baseHeaders, 'Content-Length': (object.size ?? fileSize).toString() },
     });
   }
   if (fileSize <= 0) {
