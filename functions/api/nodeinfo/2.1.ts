@@ -24,32 +24,34 @@ app.get('/', async (c) => {
     const nodeInfo = {
       version: '2.1',
       software: {
-        name: 'flexia',
+        name: 'flaxia',
         version: '1.0.0',
-        repository: 'https://github.com/RemydreScarlet/flexia',
-        homepage: 'https://github.com/RemydreScarlet/flexia',
+        repository: 'https://github.com/TeamFlaxia/flaxia',
+        homepage: 'https://flaxia.app',
       },
       protocols: ['activitypub'],
       services: {
-        outbound: [],
+        // The instance serves the ActivityPub inbox and delivers the
+        // activities of its accounts to other instances.
         inbound: [],
+        outbound: [],
       },
+      openRegistrations: true,
       usage: {
         users: {
           total: userCount?.count || 0,
-          activeMonth: userCount?.count || 0, // Simplified - all users considered active
+          activeMonth: userCount?.count || 0,
           activeHalfyear: userCount?.count || 0,
         },
         localPosts: postCount?.count || 0,
-        localComments: 0, // Flexia doesn't have separate comments
+        localComments: 0,
       },
-      openRegistrations: true, // Assuming registration is open
       metadata: {
-        nodeName: 'Flexia Instance',
-        nodeDescription: 'A Flexia ActivityPub instance',
+        nodeName: 'Flaxia',
+        nodeDescription: 'A Flaxia instance',
         maintainer: {
-          name: 'Flexia Admin',
-          email: 'admin@flexia.example',
+          name: 'Flaxia',
+          email: 'admin@flaxia.app',
         },
       },
     };

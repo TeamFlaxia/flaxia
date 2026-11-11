@@ -14,7 +14,7 @@ app.get('/', async (c) => {
     links: [
       {
         rel: 'http://nodeinfo.diaspora.software/ns/schema/2.1',
-        href: `${c.env.BASE_URL}/nodeinfo/2.1`,
+        href: `${c.env.BASE_URL}/api/nodeinfo/2.1`,
       },
     ],
   };

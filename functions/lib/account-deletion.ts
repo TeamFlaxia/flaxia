@@ -21,6 +21,57 @@ function chunkIds(ids: string[], size: number): string[][] {
 }
 
 /**
+ * Tell the followers of a deleted account that the account is gone.
+ *
+ * Without the Delete activity the followers keep the posts of the account
+ * and its actor document stays resolvable, so the account would linger in
+ * every timeline it ever posted in.
+ */
+async function deliverActorDeletion(env: Env, userId: string): Promise<void> {
+  const queue = env.AP_DELIVERY_QUEUE as Queue | undefined;
+  const baseUrl = env.BASE_URL as string | undefined;
+  if (!queue || !baseUrl) return;
+
+  const user = await env.DB.prepare('SELECT username FROM users WHERE id = ?')
+    .bind(userId)
+    .first<{ username: string }>();
+  if (!user) return;
+
+  const followers = await env.DB.prepare('SELECT inbox_url, shared_inbox_url FROM ap_followers WHERE local_user_id = ?')
+    .bind(userId)
+    .all<{ inbox_url: string; shared_inbox_url: string | null }>();
+
+  const inboxes = new Set<string>();
+  for (const follower of followers.results ?? []) {
+    const inbox = follower.shared_inbox_url || follower.inbox_url;
+    if (inbox) inboxes.add(inbox);
+  }
+  if (inboxes.size === 0) return;
+
+  const activity = {
+    '@context': ['https://www.w3.org/ns/activitystreams'],
+    id: `${baseUrl}/activities/delete-actor-${userId}`,
+    type: 'Delete',
+    actor: `${baseUrl}/api/actors/${user.username}`,
+    object: {
+      id: `${baseUrl}/api/actors/${user.username}`,
+      type: 'Tombstone',
+      formerType: 'Person',
+    },
+    to: ['https://www.w3.org/ns/activitystreams#Public'],
+  };
+
+  for (const inboxUrl of inboxes) {
+    await queue.send({
+      type: 'delivery',
+      inboxUrl,
+      activity,
+      senderUsername: user.username,
+    });
+  }
+}
+
+/**
  * Deletes a user account along with all related data: posts (and their reply
  * trees), notifications, follows, profiles, and the associated files stored in R2.
  *
@@ -36,6 +87,8 @@ export async function deleteAccount(
 ): Promise<void> {
   const db = env.DB;
   const deletionJobs = direct ? 'flaxia_direct_deletion_jobs' : 'flaxia_auth_deletion_jobs';
+
+  await deliverActorDeletion(env, userId);
 
   // Collect the user's own posts plus every post in their reply trees. Deleting
   // the whole tree avoids orphaned parent_id/root_id references.
