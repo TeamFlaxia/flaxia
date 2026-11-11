@@ -37,8 +37,9 @@ test('the inbox verifies the signature and the digest before a delivery is queue
 
 test('ActivityPub does not sign shared-inbox actor lookups using arbitrary local keys', () => {
   const api = readFileSync(new URL('../functions/api/routes/activitypub.ts', import.meta.url), 'utf8');
+  const keys = readFileSync(new URL('../functions/lib/activitypub/keys.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(api, /SELECT ak\.private_key_pem, u\.username/);
-  assert.match(api, /INSERT OR IGNORE INTO actor_keys/);
+  assert.match(keys, /INSERT OR IGNORE INTO actor_keys/);
   assert.equal((api.match(/app\.get\('\/api\/\.well-known\/webfinger'/g) ?? []).length, 1);
 });
 

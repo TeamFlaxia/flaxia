@@ -9,6 +9,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
+import { exportPrivateKey, exportPublicKey, generateKeyPair } from '../../functions/lib/activitypub/crypto.ts';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -93,6 +94,11 @@ export async function seedLocalUser(
   db: TestDatabase,
   options: { id: string; username: string; displayName?: string; publicKeyPem?: string; privateKeyPem?: string },
 ): Promise<void> {
+  // The key has to be a real one: the instance signs its requests to a
+  // remote instance with it.
+  const pair = await generateKeyPair();
+  const publicKeyPem = options.publicKeyPem ?? (await exportPublicKey(pair.publicKey));
+  const privateKeyPem = options.privateKeyPem ?? (await exportPrivateKey(pair.privateKey));
   await db
     .prepare(
       `INSERT INTO users (id, email, password_hash, username, display_name, bio, created_at)
@@ -103,10 +109,6 @@ export async function seedLocalUser(
 
   await db
     .prepare('INSERT INTO actor_keys (user_id, public_key_pem, private_key_pem) VALUES (?, ?, ?)')
-    .bind(
-      options.id,
-      options.publicKeyPem ?? '-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----',
-      options.privateKeyPem ?? '-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----',
-    )
+    .bind(options.id, publicKeyPem, privateKeyPem)
     .run();
 }
