@@ -1,0 +1,75 @@
+# The peer of the federation test: Mastodon.
+#
+# Mastodon needs more than GoToSocial: a database, a cache, the web process,
+# the streaming process and the background worker. The ports are published on
+# the host, so the instance under test reaches it like a local instance.
+#
+# The image is pinned, so the test does not change with a new release.
+services:
+  db:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - ./data/redis:/data
+
+  web:
+    image: ghcr.io/mastodon/mastodon:v4.7.5
+    command: bundle exec puma -C config/puma.rb
+    environment:
+      DATABASE_URL: postgres://postgres@db:5432/mastodon
+      REDIS_URL: redis://redis:6379
+      RAILS_ENV: development
+      NODE_ENV: development
+      WEB_DOMAIN: localhost:8080
+      LOCAL_DOMAIN: localhost:8080
+      SECRET_KEY_BASE: federation-test-secret-key-base-federation-test-secret-key-base
+      OTP_SECRET: federation-test-otp-secret
+      VAPID_PRIVATE_KEY: federation-test-vapid-private-key
+      VAPID_PUBLIC_KEY: federation-test-vapid-public-key
+      # The instance under test runs on the same machine and speaks plain http.
+      ALLOW_PRIVATE_ADDRESSES: 'true'
+      ALLOW_FEDERATION_WITHOUT_SSL: 'true'
+    depends_on:
+      - db
+      - redis
+    ports:
+      - '127.0.0.1:8080:3000'
+    volumes:
+      - ./data/system:/mastodon/public/system
+
+  streaming:
+    image: ghcr.io/mastodon/mastodon-streaming:v4.7.5
+    command: node ./streaming
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: mastodon
+      DB_USER: postgres
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      NODE_ENV: development
+    depends_on:
+      - db
+      - redis
+    ports:
+      - '127.0.0.1:4000:4000'
+
+  sidekiq:
+    image: ghcr.io/mastodon/mastodon:v4.7.5
+    command: bundle exec sidekiq
+    environment:
+      DATABASE_URL: postgres://postgres@db:5432/mastodon
+      REDIS_URL: redis://redis:6379
+      RAILS_ENV: development
+      NODE_ENV: development
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./data/system:/mastodon/public/system
