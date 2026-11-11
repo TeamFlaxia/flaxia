@@ -1,158 +1,188 @@
 /// <reference types="@cloudflare/workers-types" />
 
-import { stripPostColors } from '../../../src/lib/post-colors.ts';
+import { actorUrl, noteUrl, profileUrl } from './actor.ts';
+import { activityContext, PUBLIC_COLLECTION } from './context.ts';
+import { extractHashtags, textToHtml } from './text.ts';
 
-interface Post {
+/**
+ * Federated Note objects.
+ *
+ * A Note is the object Flaxia publishes for a post. It carries the audience
+ * (`to`/`cc`), the mentions and hashtags as `tag` entries, the attachments as
+ * `attachment` entries and the reply link. Everything a peer needs to render
+ * the post lives in the object, so no extra fetches are required.
+ */
+
+export type Visibility = 'public' | 'unlisted' | 'private' | 'direct';
+
+export interface NoteTag {
+  type: 'Mention' | 'Hashtag';
+  name: string;
+  href: string;
+}
+
+export interface NoteAttachment {
+  type: 'Document' | 'Image';
+  mediaType: string;
+  url: string;
+  name?: string;
+}
+
+export interface NoteUser {
+  id: string;
+  username: string;
+  display_name: string | null;
+}
+
+export interface NoteInput {
   id: string;
   text: string;
   created_at: string;
-}
-
-interface User {
-  id: string;
-  username: string;
-  display_name: string;
-}
-
-/**
- * Build an ActivityPub Note object from a post
- */
-interface PostWithExtras extends Post {
-  visibility?: string;
+  visibility?: Visibility;
   parent_id?: string | null;
   root_id?: string | null;
+  sensitive?: boolean;
+  attachments?: NoteAttachment[];
+  /** Mentioned accounts: local ones carry a username, remote ones an actor URL. */
+  mentions?: Array<{ username: string; url?: string; domain?: string }>;
 }
 
-interface NoteObject {
-  '@context': string;
+export interface NoteObject {
+  '@context': string[];
   id: string;
-  type: string;
+  type: 'Note';
   attributedTo: string;
   content: string;
   published: string;
   url: string;
   to: string[];
   cc: string[];
+  tag?: NoteTag[];
+  attachment?: NoteAttachment[];
   inReplyTo?: string;
+  replies?: { id: string; type: string; collection: { id: string; type: string; totalItems: number } };
+  sensitive?: boolean;
+  source?: { content: string; mediaType: string };
 }
 
-function escapeHtml(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+export interface AudienceOptions {
+  followersUrl: string;
+  mentionUrls?: string[];
 }
 
-function isValidUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
-  } catch {
-    return false;
+/**
+ * Map a visibility to the ActivityPub audience.
+ *
+ * `public` reaches the whole network, `unlisted` only the followers of the
+ * author, `private` the followers of the author without the public marker and
+ * `direct` the mentioned accounts only.
+ */
+export function audienceFor(
+  visibility: Visibility,
+  { followersUrl, mentionUrls = [] }: AudienceOptions,
+): {
+  to: string[];
+  cc: string[];
+} {
+  const mentions = mentionUrls.filter((url) => url && url !== followersUrl);
+  switch (visibility) {
+    case 'unlisted':
+      return { to: [followersUrl, ...mentions], cc: [PUBLIC_COLLECTION] };
+    case 'private':
+      return { to: [followersUrl, ...mentions], cc: [] };
+    case 'direct':
+      return { to: [...mentions], cc: [] };
+    case 'public':
+    default:
+      return { to: [PUBLIC_COLLECTION], cc: [followersUrl, ...mentions] };
   }
 }
 
-function textToHtml(text: string, baseUrl: string): string {
-  // Remote servers cannot render our color markers; federate plain text.
-  const escaped = escapeHtml(stripPostColors(text).replace(/\\\{/g, '{'));
-  // Convert URLs to links
-  const withLinks = escaped.replace(/(https?:\/\/[^\s<]+)/g, (match) => {
-    if (!isValidUrl(match)) return match;
-    return '<a href="' + match + '" target="_blank" rel="nofollow noopener noreferrer">' + match + '</a>';
-  });
-  // Convert @mentions to links
-  const withMentions = withLinks.replace(
-    /@([a-zA-Z0-9_]{1,20})/g,
-    '<span class="h-card"><a href="' + baseUrl + '/actors/$1" class="u-url mention">@<span>$1</span></a></span>',
-  );
-  // Convert #hashtags to links
-  const withHashtags = withMentions.replace(
-    /#([^\s<]+)/g,
-    '<a href="' + baseUrl + '/tags/$1" class="hashtag" rel="tag">#<span>$1</span></a>',
-  );
-  // Wrap in paragraph
-  return `<p>${withHashtags}</p>`;
-}
-
+/**
+ * Build the Note object of a post.
+ */
 export function buildNoteObject(
-  post: PostWithExtras,
-  user: User,
+  post: NoteInput,
+  user: NoteUser,
   baseUrl: string,
-  mentionActorUrls?: string[],
+  options: AudienceOptions & { mentionHandles?: Record<string, string> } = { followersUrl: '' },
 ): NoteObject {
-  const noteId = `${baseUrl}/notes/${post.id}`;
-  const actorUrl = `${baseUrl}/api/actors/${user.username}`;
+  const followersUrl = options.followersUrl || `${actorUrl(baseUrl, user.username)}/followers`;
+  const actor = actorUrl(baseUrl, user.username);
+  const id = noteUrl(baseUrl, post.id);
 
-  const cc: string[] = [`${baseUrl}/api/actors/${user.username}/followers`];
+  const mentionUrls = (post.mentions ?? [])
+    .map((mention) => mention.url)
+    .filter((url): url is string => typeof url === 'string' && url.length > 0);
 
-  if (mentionActorUrls && mentionActorUrls.length > 0) {
-    for (const url of mentionActorUrls) {
-      if (!cc.includes(url)) {
-        cc.push(url);
-      }
-    }
+  const { to, cc } = audienceFor(post.visibility ?? 'public', { followersUrl, mentionUrls });
+
+  const mentionHandles: Record<string, string> = { ...(options.mentionHandles ?? {}) };
+  for (const mention of post.mentions ?? []) {
+    if (!mention.url) continue;
+    const key = mention.domain ? `${mention.username}@${mention.domain}` : mention.username;
+    mentionHandles[key] = mention.url;
+  }
+
+  const tags: NoteTag[] = [];
+  for (const mention of post.mentions ?? []) {
+    const href = mention.url ?? (mention.domain ? undefined : profileUrl(baseUrl, mention.username));
+    if (!href) continue;
+    tags.push({
+      type: 'Mention',
+      name: mention.domain ? `@${mention.username}@${mention.domain}` : `@${mention.username}`,
+      href,
+    });
+  }
+  for (const hashtag of extractHashtags(post.text)) {
+    tags.push({
+      type: 'Hashtag',
+      name: `#${hashtag}`,
+      href: `${baseUrl}/tags/${encodeURIComponent(hashtag)}`,
+    });
   }
 
   const note: NoteObject = {
-    '@context': 'https://www.w3.org/ns/activitystreams',
-    id: noteId,
+    '@context': activityContext(),
+    id,
     type: 'Note',
-    attributedTo: actorUrl,
-    content: textToHtml(post.text, baseUrl),
+    attributedTo: actor,
+    content: textToHtml(post.text, baseUrl, mentionHandles),
     published: post.created_at,
-    url: noteId,
-    to: ['https://www.w3.org/ns/activitystreams#Public'],
+    url: id,
+    to,
     cc,
   };
 
+  if (tags.length > 0) note.tag = tags;
+  if (post.attachments && post.attachments.length > 0) note.attachment = post.attachments;
+  if (post.parent_id) note.inReplyTo = noteUrl(baseUrl, post.parent_id);
   if (post.parent_id) {
-    note.inReplyTo = `${baseUrl}/notes/${post.parent_id}`;
+    note.replies = {
+      id: `${id}/replies`,
+      type: 'Collection',
+      collection: { id: `${id}/replies`, type: 'Collection', totalItems: 0 },
+    };
   }
+  if (post.sensitive) note.sensitive = true;
 
   return note;
 }
 
 /**
- * Build a Create activity for a Note
+ * Wrap a Note in a Create activity.
  */
-export function buildCreateActivity(note: NoteObject, user: User, baseUrl: string): object {
-  const noteId = note.id;
-  const actorUrl = `${baseUrl}/api/actors/${user.username}`;
-
-  // Extract post ID from note URL to create activity ID
-  const postId = noteId.split('/notes/')[1];
-  const activityId = `${baseUrl}/activities/create-${postId}`;
-
-  const to = note.to || [];
-  const cc = note.cc || [];
-
+export function buildCreateActivity(note: NoteObject, user: NoteUser, baseUrl: string): Record<string, unknown> {
+  const actor = actorUrl(baseUrl, user.username);
+  const postId = note.id.split('/notes/')[1] ?? note.id;
   return {
-    '@context': 'https://www.w3.org/ns/activitystreams',
-    id: activityId,
+    '@context': activityContext(),
+    id: `${baseUrl}/activities/create-${postId}`,
     type: 'Create',
-    actor: actorUrl,
+    actor,
     object: note,
-    to: to,
-    cc: cc,
-    published: new Date().toISOString(),
-  };
-}
-
-/**
- * Build a Delete activity for a Note
- */
-export function buildDeleteActivity(noteId: string, user: User, baseUrl: string): object {
-  const actorUrl = `${baseUrl}/api/actors/${user.username}`;
-  const activityId = `${baseUrl}/activities/delete-${noteId}`;
-
-  return {
-    '@context': 'https://www.w3.org/ns/activitystreams',
-    id: activityId,
-    type: 'Delete',
-    actor: actorUrl,
-    object: {
-      id: noteId,
-      type: 'Tombstone',
-    },
-    to: ['https://www.w3.org/ns/activitystreams#Public'],
-    cc: [`${baseUrl}/api/actors/${user.username}/followers`],
+    to: note.to ?? [],
+    cc: note.cc ?? [],
     published: new Date().toISOString(),
   };
 }

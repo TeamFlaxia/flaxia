@@ -11,7 +11,8 @@ import {
 } from '../../../src/lib/recommendation/vector-codec.ts';
 import { copyHtmlToWvfs, extractZipToR2 } from '../../../src/lib/wvfs-zip-server';
 import type { ReportCategory } from '../../../src/types/post';
-import { buildCreateActivity, buildDeleteActivity, buildNoteObject } from '../../lib/activitypub/note';
+import { buildDeleteActivity } from '../../lib/activitypub/activities';
+import { buildCreateActivity, buildNoteObject } from '../../lib/activitypub/note';
 import {
   type AttachmentInput,
   type AttachmentKind,
@@ -2057,17 +2058,31 @@ posts.post('/posts/commit', requireAuth, async (c) => {
         } | null;
 
         if (post && post.status === 'published') {
-          // Build mention actor URLs for CC
-          const mentionActorUrls: string[] = [];
+          // Build the audience of the Note: mentioned accounts are addressed
+          // directly, everybody else reaches the post through the followers
+          // collection of the author.
+          let mentions: Array<{ username: string; url: string }> = [];
           try {
             if (post.mentions) {
               const mentionData = JSON.parse(post.mentions) as Array<{ username: string; user_id: string }>;
-              for (const m of mentionData) {
-                mentionActorUrls.push(`${c.env.BASE_URL}/api/actors/${m.username}`);
-              }
+              mentions = mentionData.map((m) => ({
+                username: m.username,
+                url: `${c.env.BASE_URL}/api/actors/${m.username}`,
+              }));
             }
           } catch {}
-          const note = buildNoteObject(post, user, c.env.BASE_URL, mentionActorUrls);
+          const note = buildNoteObject(
+            {
+              id: post.id,
+              text: post.text,
+              created_at: post.created_at,
+              visibility: 'public',
+              mentions,
+            },
+            user,
+            c.env.BASE_URL,
+            { followersUrl: `${c.env.BASE_URL}/api/actors/${user.username}/followers` },
+          );
           const activity = buildCreateActivity(note, user, c.env.BASE_URL);
 
           // Get followers from ap_followers
@@ -3958,9 +3973,9 @@ posts.delete('/posts/:id', requireAuth, async (c) => {
     if (post && post.status === 'published') {
       try {
         const user = c.get('user');
-        if (user) {
+        if (user?.username) {
           const noteId = `${c.env.BASE_URL}/notes/${postId}`;
-          const activity = buildDeleteActivity(noteId, user, c.env.BASE_URL);
+          const activity = buildDeleteActivity(c.env.BASE_URL, user.username, noteId, postId ?? 'unknown');
 
           // Get all followers to deliver to
           const followers = await c.env.DB.prepare(`
