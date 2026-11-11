@@ -2045,7 +2045,7 @@ posts.post('/posts/commit', requireAuth, async (c) => {
         .bind(userId)
         .first()) as { id: string; username: string; display_name: string } | null;
 
-      if (user && c.env.AP_DELIVERY_QUEUE) {
+      if (user) {
         // Get post details including mentions
         const post = (await c.env.DB.prepare('SELECT id, text, created_at, status, mentions FROM posts WHERE id = ?')
           .bind(postId)
@@ -2749,8 +2749,6 @@ async function deliverReloadActivity(
   currentUser: { id: string; username: string },
   activity: Record<string, unknown>,
 ): Promise<void> {
-  if (!c.env.AP_DELIVERY_QUEUE) return;
-
   try {
     await deliverToFollowers(c.env, {
       userId: currentUser.id,

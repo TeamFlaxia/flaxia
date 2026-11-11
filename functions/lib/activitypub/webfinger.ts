@@ -48,7 +48,6 @@ export async function webfingerResponse(env: WebFingerEnv, resource: string | un
     contentType: 'application/jrd+json',
     body: {
       subject: `acct:${user.username}@${domain}`,
-      aliases: [profileUrl(env.BASE_URL, user.username)],
       links: [
         {
           rel: 'self',

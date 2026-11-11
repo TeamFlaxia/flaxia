@@ -91,7 +91,8 @@ test('delivery cannot follow an inbox redirect to an unchecked destination', asy
   let retried = false;
   globalThis.fetch = async (_input, init) => {
     requests++;
-    assert.equal(init?.redirect, 'error');
+    // A redirect is not followed: the signature is bound to the inbox.
+    assert.equal(init?.redirect, 'manual');
     throw new TypeError('Redirect refused');
   };
   try {

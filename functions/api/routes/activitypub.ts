@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
 import { actorCollectionUrls, actorUrl, buildActorDocument, noteUrl } from '../../lib/activitypub/actor.ts';
 import { AS2_CONTEXT, activityContentType } from '../../lib/activitypub/context.ts';
-import { exportPrivateKey, exportPublicKey, generateKeyPair } from '../../lib/activitypub/crypto';
 import { handlePersonalInbox, handleSharedInbox } from '../../lib/activitypub/inbox';
+import { ensureActorKey } from '../../lib/activitypub/keys';
 import { buildCreateActivity, buildNoteObject } from '../../lib/activitypub/note';
 import { webfingerResponse } from '../../lib/activitypub/webfinger';
 import type { Bindings, Variables } from '../types';
@@ -16,32 +16,6 @@ function jsonLd(contentType: string, body: unknown): Response {
     status: 200,
     headers: { 'Content-Type': contentType },
   });
-}
-
-/** The actor key of a local account, created on first use. */
-async function ensureActorKey(db: Bindings['DB'], userId: string): Promise<string> {
-  const keyRecord = await db
-    .prepare('SELECT public_key_pem FROM actor_keys WHERE user_id = ?')
-    .bind(userId)
-    .first<{ public_key_pem: string }>();
-  if (keyRecord?.public_key_pem) return keyRecord.public_key_pem;
-
-  const keyPair = await generateKeyPair();
-  const generatedPublicKey = await exportPublicKey(keyPair.publicKey);
-  // Concurrent GETs must never replace an already published actor key.
-  await db
-    .prepare(
-      `INSERT OR IGNORE INTO actor_keys (user_id, public_key_pem, private_key_pem, created_at)
-       VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`,
-    )
-    .bind(userId, generatedPublicKey, await exportPrivateKey(keyPair.privateKey))
-    .run();
-  const stored = await db
-    .prepare('SELECT public_key_pem FROM actor_keys WHERE user_id = ?')
-    .bind(userId)
-    .first<{ public_key_pem: string }>();
-  if (!stored) throw new Error('Actor key could not be initialized');
-  return stored.public_key_pem;
 }
 
 interface LocalActorUser {

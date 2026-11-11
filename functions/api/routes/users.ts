@@ -4,7 +4,9 @@ import { normalizeNameColor } from '../../../src/lib/name-color';
 import { isValidB64, isValidVaultKdfParams, isValidWrappedKey } from '../../../src/lib/vault/primitives';
 import { deleteAccount } from '../../lib/account-deletion';
 import { buildFollowActivity, buildUndoActivity } from '../../lib/activitypub/activities';
-import { resolveRemoteActor } from '../../lib/activitypub/fetch';
+import { deliverToInbox } from '../../lib/activitypub/delivery';
+import { fetchFederationDocument, isPrivatePeerAllowed, resolveRemoteActor } from '../../lib/activitypub/fetch';
+import { actorPrivateKey, ensureActorKey } from '../../lib/activitypub/keys';
 import { enrichPostsWithAttachments } from '../../lib/attachments';
 import {
   clearSessionCookie,
@@ -237,20 +239,39 @@ users.post('/remote-follow', requireAuth, async (c) => {
 
     const localUser = user;
 
-    const webfingerUrl = `https://${domain}/.well-known/webfinger?resource=acct:${remoteUsername}@${domain}`;
-    let wfResponse: Response;
-    try {
-      wfResponse = (await fetchRemoteJson(webfingerUrl, 'application/jrd+json, application/json')).response;
-    } catch (error: unknown) {
-      if (error instanceof SsrfError) return c.json({ error: 'Invalid target domain' }, 400);
-      throw error;
+    // A remote instance is reached over https. An instance that runs next to
+    // this one (the federation test peer) may serve plain http, but only when
+    // it is on the list of allowed private peers.
+    const origins = [`https://${domain}`];
+    if (isPrivatePeerAllowed(c.env, domain)) origins.push(`http://${domain}`);
+
+    // The key of the account signs the requests: an instance that runs in
+    // secure mode only answers a signed request. The key is created when the
+    // account federates for the first time.
+    await ensureActorKey(c.env.DB, localUser.id);
+    const privateKeyPem = await actorPrivateKey(c.env.DB, localUser.id);
+    const signOptions = privateKeyPem
+      ? {
+          privateKeyPem,
+          keyId: `${c.env.BASE_URL}/api/actors/${localUser.username}#main-key`,
+        }
+      : {};
+
+    let wfData: { links?: Array<{ rel: string; href?: string; type?: string }> } | null = null;
+    for (const origin of origins) {
+      const webfingerUrl = `${origin}/.well-known/webfinger?resource=acct:${remoteUsername}@${domain}`;
+      const response = await fetchFederationDocument(webfingerUrl, c.env, {
+        headers: { Accept: 'application/jrd+json, application/json' },
+        ...signOptions,
+      });
+      if (!response || !response.ok) continue;
+      wfData = (await response.json()) as { links?: Array<{ rel: string; href?: string; type?: string }> };
+      break;
     }
 
-    if (!wfResponse.ok) {
+    if (!wfData) {
       return c.json({ error: 'Could not resolve remote user' }, 404);
     }
-
-    const wfData = (await wfResponse.json()) as { links?: Array<{ rel: string; href?: string; type?: string }> };
     const selfLink = wfData.links?.find((l: { rel: string }) => l.rel === 'self');
     if (!selfLink?.href) {
       return c.json({ error: 'Remote user has no ActivityPub actor link' }, 400);
@@ -259,7 +280,7 @@ users.post('/remote-follow', requireAuth, async (c) => {
     // The actor document is the source of truth for the inbox: it is only
     // accepted when it lives on the same origin as the actor and when it
     // points at a public inbox.
-    const actor = await resolveRemoteActor(selfLink.href, c.env);
+    const actor = await resolveRemoteActor(selfLink.href, c.env, signOptions);
     if (!actor) {
       return c.json({ error: 'Could not fetch remote actor' }, 404);
     }
@@ -313,14 +334,11 @@ users.post('/remote-follow', requireAuth, async (c) => {
 
     const followActivity = buildFollowActivity(c.env.BASE_URL, localUser.username, actorUrl, followId);
 
-    if (c.env.AP_DELIVERY_QUEUE) {
-      await c.env.AP_DELIVERY_QUEUE.send({
-        type: 'delivery',
-        inboxUrl,
-        activity: followActivity,
-        senderUsername: localUser.username,
-      });
-    }
+    await deliverToInbox(c.env, {
+      inboxUrl,
+      username: localUser.username,
+      activity: followActivity,
+    });
 
     await c.env.DB.prepare('UPDATE ap_following SET status = ? WHERE id = ?').bind('sent', followId).run();
 
@@ -400,12 +418,11 @@ users.delete('/remote-follow', requireAuth, async (c) => {
       to: [actorUrl],
     });
 
-    if (c.env.AP_DELIVERY_QUEUE && following.target_inbox_url) {
-      await c.env.AP_DELIVERY_QUEUE.send({
-        type: 'delivery',
+    if (following.target_inbox_url) {
+      await deliverToInbox(c.env, {
         inboxUrl: following.target_inbox_url,
+        username: localUser.username,
         activity: undoActivity,
-        senderUsername: localUser.username,
       });
     }
 
