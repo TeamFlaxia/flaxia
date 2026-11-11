@@ -38,7 +38,7 @@ const MAX_INBOX_TARGETS = 10;
 
 export type InboxFailure =
   | { ok: false; status: number; error: string }
-  | { ok: true; activity: Record<string, unknown>; actorId: string; username: string | null };
+  | { ok: true; activity: Record<string, unknown>; actorId: string };
 
 /** Read the body of an inbox request, rejecting oversized payloads. */
 export async function readInboxBody(req: Request): Promise<string | null> {
@@ -167,7 +167,7 @@ export async function verifyIncomingActivity(env: InboxEnv, req: Request, body: 
     return { ok: false, status: 401, error: 'Invalid Digest' };
   }
 
-  return { ok: true, activity, actorId, username: null };
+  return { ok: true, activity, actorId };
 }
 
 /**
