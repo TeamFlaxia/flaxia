@@ -123,8 +123,10 @@ const groups = {
   ],
   activitypub: [
     'activitypub-delivery',
+    'activitypub-discovery',
     'activitypub-dlq-config',
     'activitypub-dlq-provision',
+    'activitypub-inbox',
     'activitypub-inbox-handlers',
     'activitypub-inbox-integrity',
     'activitypub-note',

@@ -105,6 +105,14 @@ export function buildSigningString(request: Request, headers: string[]): string 
       lines.push(`(request-target): ${method} ${path}`);
     } else if (normalized === '(created)') {
       lines.push('(created): 0');
+    } else if (normalized === 'host') {
+      // The host is not always part of the request headers: a runtime that
+      // strips it still lets the URL name the host the request addresses.
+      const value = request.headers.get('host') ?? hostOf(request.url);
+      if (!value) {
+        throw new Error('Missing required header: host');
+      }
+      lines.push(`host: ${value}`);
     } else {
       const value = request.headers.get(normalized);
       if (value === null) {
@@ -177,7 +185,7 @@ export async function verifyHttpSignature(
 
     const requestHost = request.headers.get('host') ?? hostOf(request.url);
     if (parsed.headers.includes('host')) {
-      const signedHost = request.headers.get('host');
+      const signedHost = request.headers.get('host') ?? hostOf(request.url);
       if (!signedHost || signedHost !== requestHost) return false;
     } else if (options.expectedHost && requestHost !== options.expectedHost) {
       // The peer did not bind the signature to a host, so it must at least be
