@@ -94,6 +94,33 @@ export function localActorUsername(value: unknown, baseUrl: string): string | nu
 }
 
 /**
+ * Extract the local username a profile URL points at.
+ *
+ * A mention of a local account is published with the URL of its profile
+ * page, so the mentioned account has to be resolved from that URL. Remote
+ * mentions carry the URL of the remote actor and are ignored here.
+ */
+export function localProfileUsername(value: unknown, baseUrl: string): string | null {
+  if (typeof value !== 'string') return null;
+  let parsed: URL;
+  let base: URL;
+  try {
+    parsed = new URL(value);
+    base = new URL(baseUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.origin !== base.origin) return null;
+  const match = parsed.pathname.match(/^\/(?:api\/)?users\/([^/]+)/);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Parse a WebFinger `resource` parameter.
  *
  * Peers use both `acct:user@domain` and the URL form

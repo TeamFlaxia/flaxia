@@ -12,9 +12,7 @@ import {
   renderProfileHeader,
   type UserRow,
 } from '../../src/lib/render-html';
-import { resolveActorPublicKey } from '../lib/activitypub/fetch';
-import { verifyDigest, verifyHttpSignature } from '../lib/activitypub/signature';
-import { checkRateLimit, getClientIp } from '../lib/rate-limit';
+import { handlePersonalInbox } from '../lib/activitypub/inbox';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import { renderBreadcrumbJsonLd, renderSsrFooter, renderSsrHeader, renderSsrLayoutCss } from '../lib/ssr-layout';
 
@@ -24,9 +22,6 @@ type Bindings = {
   AP_DELIVERY_QUEUE: Queue;
   CACHE: KVNamespace;
 };
-
-/** Shared inbox body cap with the API inbox endpoints (small JSON docs). */
-const MAX_INBOX_BODY_BYTES = 256 * 1024;
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -264,131 +259,12 @@ app.get('*', async (c) => {
 
 // POST /users/:username/inbox - ActivityPub inbox endpoint
 app.post('/inbox', async (c) => {
-  try {
-    const contentType = c.req.header('content-type') || '';
-    if (!contentType.includes('application/activity+json')) {
-      return c.json({ error: 'Invalid content type' }, 400);
-    }
-
-    const url = new URL(c.req.url);
-    const username = url.pathname.split('/users/')[1]?.split('/inbox')[0] ?? '';
-
-    if (!username) {
-      return c.json({ error: 'Username required' }, 400);
-    }
-
-    if (!c.env.DB) {
-      return c.json({ error: 'Database not available' }, 500);
-    }
-
-    const targetUser = (await c.env.DB.prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE')
-      .bind(username)
-      .first()) as { id: string } | null;
-
-    if (!targetUser) {
-      return c.json({ error: 'User not found' }, 404);
-    }
-
-    const allowed = await checkRateLimit(c.env.CACHE, `ap:inbox:${getClientIp(c.req.raw)}`, {
-      maxRequests: 60,
-      windowSeconds: 60,
-    });
-    if (!allowed) {
-      return c.json({ error: 'Rate limit exceeded' }, 429);
-    }
-
-    const declared = Number(c.req.header('content-length') || 0);
-    if (Number.isFinite(declared) && declared > MAX_INBOX_BODY_BYTES) {
-      return c.json({ error: 'Inbox body too large' }, 413);
-    }
-    const body = await c.req.text();
-    if (body.length > MAX_INBOX_BODY_BYTES) {
-      return c.json({ error: 'Inbox body too large' }, 413);
-    }
-    let activity: Record<string, unknown>;
-    try {
-      activity = JSON.parse(body) as Record<string, unknown>;
-    } catch {
-      return c.json({ error: 'Invalid JSON' }, 400);
-    }
-
-    const actorId = activity.actor;
-    if (!actorId || typeof actorId !== 'string') {
-      return c.json({ error: 'Invalid actor' }, 400);
-    }
-
-    // #116: same keyId/actor origin binding as the API inboxes (H-5).
-    // Without it a key from one origin could vouch for another's actor.
-    const signatureHeader = c.req.header('Signature');
-    if (signatureHeader) {
-      const keyIdMatch = signatureHeader.match(/keyId="([^"]+)"/);
-      if (keyIdMatch) {
-        try {
-          const keyIdOrigin = new URL(keyIdMatch[1]).origin;
-          const actorOrigin = new URL(actorId).origin;
-          if (keyIdOrigin !== actorOrigin) {
-            console.error(`keyId origin ${keyIdOrigin} does not match actor origin ${actorOrigin}`);
-            return c.json({ error: 'Invalid HTTP Signature: keyId/actor origin mismatch' }, 401);
-          }
-        } catch {
-          return c.json({ error: 'Invalid keyId or actor URL' }, 400);
-        }
-      }
-    }
-
-    // Try to get local user's keys for signed fetch (authorized fetch support)
-    let signKeyPem: string | undefined;
-    let signKeyId: string | undefined;
-    try {
-      const keyRecord = (await c.env.DB.prepare(
-        `SELECT ak.private_key_pem FROM actor_keys ak
-         JOIN users u ON u.id = ak.user_id
-         WHERE u.username = ? COLLATE NOCASE`,
-      )
-        .bind(username)
-        .first()) as { private_key_pem: string } | null;
-      if (keyRecord?.private_key_pem) {
-        signKeyPem = keyRecord.private_key_pem;
-        signKeyId = `${c.env.BASE_URL}/api/actors/${username}#main-key`;
-      }
-    } catch {
-      // Proceed without signing
-    }
-
-    // Verify HTTP Signature (with signed fetch if keys available)
-    const publicKeyPem = await resolveActorPublicKey(actorId, c.env, signKeyId, { privateKeyPem: signKeyPem });
-    if (!publicKeyPem) {
-      return c.json({ error: 'Could not fetch actor public key' }, 401);
-    }
-
-    const sigValid = await verifyHttpSignature(c.req.raw, publicKeyPem);
-    if (!sigValid) {
-      return c.json({ error: 'Invalid HTTP Signature' }, 401);
-    }
-
-    const digestValid = await verifyDigest(c.req.raw, body);
-    if (!digestValid) {
-      return c.json({ error: 'Invalid Digest' }, 401);
-    }
-
-    // Queue for async processing
-    if (c.env.AP_DELIVERY_QUEUE) {
-      await c.env.AP_DELIVERY_QUEUE.send({
-        type: 'inbox' as const,
-        username,
-        activity,
-        actorId,
-      });
-    }
-
-    return c.json({ ok: true }, 202);
-  } catch (error: unknown) {
-    console.error('Inbox error:', error);
-    return c.json(
-      { error: 'Inbox processing failed', details: (error as { message?: string })?.message || 'Unknown error' },
-      500,
-    );
+  const url = new URL(c.req.url);
+  const username = url.pathname.split('/users/')[1]?.split('/inbox')[0] ?? '';
+  if (!username) {
+    return c.json({ error: 'Username required' }, 400);
   }
+  return handlePersonalInbox(c.env, c.req.raw, username);
 });
 
 export async function onRequest(context: {

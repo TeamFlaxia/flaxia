@@ -92,8 +92,8 @@ export function audienceFor(
       return { to: [followersUrl, ...mentions], cc: [] };
     case 'direct':
       return { to: [...mentions], cc: [] };
-    case 'public':
     default:
+      // public
       return { to: [PUBLIC_COLLECTION], cc: [followersUrl, ...mentions] };
   }
 }
