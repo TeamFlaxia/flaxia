@@ -2,7 +2,9 @@
 
 import { buildAcceptActivity } from './activities.ts';
 import { actorUrl, localProfileUsername, noteUrl } from './actor.ts';
+import { deliverToInbox } from './delivery.ts';
 import { type FederationEnv, resolveRemoteActor } from './fetch.ts';
+import { actorSignOptions } from './keys.ts';
 import { htmlToText } from './text.ts';
 
 /**
@@ -318,7 +320,9 @@ async function handleFollow(
   }
 
   // The actor document carries the inbox the Accept has to be delivered to.
-  const actor = await resolveRemoteActor(actorId, env);
+  // The request is signed: an instance that runs in secure mode only answers
+  // a signed request.
+  const actor = await resolveRemoteActor(actorId, env, await actorSignOptions(env.DB, env.BASE_URL, username));
   const inboxUrl = actor?.inbox ?? actorId;
   const sharedInboxUrl = actor?.sharedInbox ?? null;
 
@@ -421,8 +425,6 @@ async function sendAccept(
   actorId: string,
   inboxUrl: string,
 ): Promise<void> {
-  if (!env.AP_DELIVERY_QUEUE) return;
-
   const key = await env.DB.prepare(`
     SELECT ak.private_key_pem FROM actor_keys ak JOIN users u ON u.id = ak.user_id WHERE u.username = ? COLLATE NOCASE
   `)
@@ -434,13 +436,8 @@ async function sendAccept(
   }
 
   const accept = buildAcceptActivity(env.BASE_URL, username, followActivity, randomId());
-  await env.AP_DELIVERY_QUEUE.send({
-    type: 'delivery',
-    inboxUrl,
-    activity: accept,
-    senderUsername: username,
-  });
-  console.log('Queued Accept for follower:', actorId);
+  await deliverToInbox(env, { inboxUrl, username, activity: accept });
+  console.log('Sent Accept to the follower:', actorId);
 }
 
 async function handleAccept(

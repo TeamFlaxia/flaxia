@@ -168,9 +168,10 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
       method: 'POST',
       headers: headers,
       body: body,
-      // The signature is bound to this inbox. Following a remote redirect
-      // would forward signed requests to an unchecked destination.
-      redirect: 'error',
+      // The signature is bound to this inbox. A remote redirect is not
+      // followed: it would forward a signed request to an unchecked
+      // destination.
+      redirect: 'manual',
       signal: controller.signal,
     });
 
@@ -180,6 +181,12 @@ async function handleDeliveryActivity(msg: DeliveryMessage, env: Env, message: M
 
     if (response.ok) {
       console.log('ActivityPub delivery successful:', (activity as { type: string }).type);
+      message.ack();
+    } else if (response.status >= 300 && response.status < 400) {
+      console.error('ActivityPub delivery was redirected:', {
+        status: response.status,
+        activityType: (activity as { type: string }).type,
+      });
       message.ack();
     } else {
       console.error('ActivityPub delivery failed:', {

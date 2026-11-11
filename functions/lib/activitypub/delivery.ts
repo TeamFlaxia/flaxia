@@ -1,6 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 
-import { resolveRemoteActor } from './fetch.ts';
+import { type FederationEnv, resolveRemoteActor } from './fetch.ts';
+import { signRequest } from './signature.ts';
 
 /**
  * Delivery of activities to remote instances.
@@ -11,7 +12,7 @@ import { resolveRemoteActor } from './fetch.ts';
  * sends a single activity to each of them.
  */
 
-export interface DeliveryEnv {
+export interface DeliveryEnv extends FederationEnv {
   DB: D1Database;
   BASE_URL: string;
   AP_DELIVERY_QUEUE?: Queue;
@@ -20,6 +21,71 @@ export interface DeliveryEnv {
 export interface DeliveryActivity {
   type?: string;
   [key: string]: unknown;
+}
+
+/**
+ * True when the activities are delivered without the queue.
+ */
+export function isDirectDelivery(env: DeliveryEnv): boolean {
+  return env.AP_DIRECT_DELIVERY === '1' || env.AP_DIRECT_DELIVERY === 'true';
+}
+
+/**
+ * Deliver an activity to an inbox right away.
+ *
+ * The activity is signed with the key of the sending account, exactly like a
+ * queued delivery does.
+ */
+export async function deliverDirect(
+  env: DeliveryEnv,
+  options: { inboxUrl: string; username: string; activity: DeliveryActivity },
+): Promise<boolean> {
+  const key = await env.DB.prepare(
+    `SELECT ak.private_key_pem FROM actor_keys ak JOIN users u ON u.id = ak.user_id
+     WHERE u.username = ? COLLATE NOCASE`,
+  )
+    .bind(options.username)
+    .first<{ private_key_pem: string }>();
+  if (!key?.private_key_pem) {
+    console.error('No private key found for user:', options.username);
+    return false;
+  }
+
+  const keyId = `${env.BASE_URL}/api/actors/${options.username}#main-key`;
+  const body = JSON.stringify(options.activity);
+  const headers = await signRequest(options.inboxUrl, body, key.private_key_pem, keyId);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(options.inboxUrl, {
+      method: 'POST',
+      headers,
+      body,
+      // A redirect is not followed: the signature is bound to the inbox it
+      // was made for.
+      redirect: 'manual',
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      console.error('Direct ActivityPub delivery failed:', {
+        status: response.status,
+        activityType: options.activity.type,
+      });
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error('Direct ActivityPub delivery failed:', {
+      name: (error as Error).name,
+      message: (error as Error).message,
+      inboxUrl: options.inboxUrl,
+      activityType: options.activity.type,
+    });
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /**
@@ -51,15 +117,12 @@ export async function deliverToFollowers(
   env: DeliveryEnv,
   options: { userId: string; username: string; activity: DeliveryActivity },
 ): Promise<number> {
-  if (!env.AP_DELIVERY_QUEUE) return 0;
-
   const inboxes = await collectFollowerInboxes(env, options.userId);
   for (const inboxUrl of inboxes) {
-    await env.AP_DELIVERY_QUEUE.send({
-      type: 'delivery',
+    await deliverToInbox(env, {
       inboxUrl,
+      username: options.username,
       activity: options.activity,
-      senderUsername: options.username,
     });
   }
   return inboxes.length;
@@ -72,6 +135,10 @@ export async function deliverToInbox(
   env: DeliveryEnv,
   options: { inboxUrl: string; username: string; activity: DeliveryActivity },
 ): Promise<void> {
+  if (isDirectDelivery(env)) {
+    await deliverDirect(env, options);
+    return;
+  }
   if (!env.AP_DELIVERY_QUEUE) return;
   await env.AP_DELIVERY_QUEUE.send({
     type: 'delivery',

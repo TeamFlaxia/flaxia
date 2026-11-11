@@ -22,6 +22,12 @@ export interface InboxEnv {
   AP_DELIVERY_QUEUE?: Queue;
   ENVIRONMENT?: string;
   AP_ALLOWED_PRIVATE_PEERS?: string;
+  /**
+   * Process the activity right away. The local development server has no
+   * queue consumer, so a queued activity would never be handled. The binding
+   * does not exist in production.
+   */
+  AP_DIRECT_DELIVERY?: string;
 }
 
 /** Activities are small JSON documents. */
@@ -165,7 +171,10 @@ export async function verifyIncomingActivity(env: InboxEnv, req: Request, body: 
 }
 
 /**
- * Queue an activity for the local accounts it addresses.
+ * Hand an activity to the local accounts it addresses.
+ *
+ * The activity is queued so it is processed by the queue worker. Without a
+ * consumer (the local development server) it is handled right away.
  */
 async function enqueueForTargets(
   env: InboxEnv,
@@ -173,6 +182,25 @@ async function enqueueForTargets(
   activity: Record<string, unknown>,
   actorId: string,
 ): Promise<number> {
+  if (env.AP_DIRECT_DELIVERY === '1' || env.AP_DIRECT_DELIVERY === 'true') {
+    const { handleIncomingActivity } = await import('./handlers.ts');
+    for (const username of targets) {
+      await handleIncomingActivity(
+        {
+          DB: env.DB,
+          BASE_URL: env.BASE_URL,
+          AP_DELIVERY_QUEUE: env.AP_DELIVERY_QUEUE,
+          ENVIRONMENT: env.ENVIRONMENT,
+          AP_ALLOWED_PRIVATE_PEERS: env.AP_ALLOWED_PRIVATE_PEERS,
+          AP_DIRECT_DELIVERY: env.AP_DIRECT_DELIVERY,
+          CACHE: env.CACHE,
+        },
+        { activity, actorId, username },
+      );
+    }
+    return targets.length;
+  }
+
   if (!env.AP_DELIVERY_QUEUE) return 0;
   let queued = 0;
   for (const username of targets) {
