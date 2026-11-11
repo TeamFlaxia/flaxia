@@ -1,6 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 
 import { checkUrlForSsrf, SsrfError } from '../url-guard.ts';
+import { importPrivateKey } from './crypto.ts';
 
 /**
  * Network access for ActivityPub.
@@ -12,12 +13,20 @@ import { checkUrlForSsrf, SsrfError } from '../url-guard.ts';
  * explicit allow list that is ignored outside of test and development.
  */
 
+/** The user agent the instance sends to the other instances. */
+export const USER_AGENT = 'Flaxia/1.0 (+https://flaxia.app)';
+
 export interface FederationEnv {
   BASE_URL?: string;
   /** Deployment environment. Private peers are only allowed in test/development. */
   ENVIRONMENT?: string;
   /** Comma separated list of host names that may be private. Test/development only. */
   AP_ALLOWED_PRIVATE_PEERS?: string;
+  /**
+   * Deliver the activities without the queue. The local development server
+   * has no queue consumer. The binding does not exist in production.
+   */
+  AP_DIRECT_DELIVERY?: string;
   CACHE?: KVNamespace;
 }
 
@@ -46,8 +55,18 @@ export function isPrivatePeerAllowed(env: FederationEnv, hostname: string): bool
     .map((entry) => entry.trim().toLowerCase())
     .filter(Boolean);
   if (allowed.length === 0) return false;
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const host = hostWithoutPort(hostname);
   return allowed.some((entry) => host === entry || host.endsWith(`.${entry}`));
+}
+
+/** The host of a URL without its port. */
+function hostWithoutPort(hostname: string): string {
+  const raw = hostname.toLowerCase();
+  if (raw.startsWith('[')) {
+    const end = raw.indexOf(']');
+    return end > 0 ? raw.slice(1, end) : raw;
+  }
+  return raw.split(':')[0];
 }
 
 function isAllowlisted(url: URL, env: FederationEnv): boolean {
@@ -77,8 +96,25 @@ export async function fetchFederationDocument(
 
   const headers: Record<string, string> = {
     Accept: 'application/activity+json, application/ld+json',
+    // Some instances refuse a request without a user agent.
+    'User-Agent': USER_AGENT,
     ...(options.headers ?? {}),
   };
+
+  // A peer that runs in secure mode only answers a request that is signed.
+  // The date of the signature and the date of the request are the same, so
+  // the signature stays valid when the request is sent.
+  if (options.privateKeyPem && options.keyId) {
+    const date = new Date().toUTCString();
+    const signingString = [
+      `(request-target): get ${current.pathname}${current.search}`,
+      `host: ${current.host}`,
+      `date: ${date}`,
+    ].join('\n');
+    const signature = await signWithKey(options.privateKeyPem, signingString);
+    headers.Date = date;
+    headers.Signature = `keyId="${options.keyId}",algorithm="rsa-sha256",headers="(request-target) host date",signature="${signature}"`;
+  }
 
   for (let hop = 0; hop <= 5; hop++) {
     if (!isAllowlisted(current, env)) {
@@ -140,6 +176,14 @@ export async function fetchActivityPubJson(
   } catch {
     return null;
   }
+}
+
+/** Sign a string with the private key of an actor. */
+async function signWithKey(privateKeyPem: string, signingString: string): Promise<string> {
+  const key = await importPrivateKey(privateKeyPem);
+  const encoder = new TextEncoder();
+  const signatureBuffer = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, encoder.encode(signingString));
+  return btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)));
 }
 
 function extractPublicKeyPem(document: Record<string, unknown> | null): string | null {

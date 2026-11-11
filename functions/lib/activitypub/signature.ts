@@ -297,6 +297,8 @@ export async function signRequest(url: string, body: string, privateKeyPem: stri
   headers.set('Date', date);
   headers.set('Digest', `sha-256=${digest}`);
   headers.set('Content-Type', 'application/activity+json');
+  // Some instances refuse a delivery without a user agent.
+  headers.set('User-Agent', 'Flaxia/1.0 (+https://flaxia.app)');
 
   const parsedUrl = new URL(url);
   const path = parsedUrl.pathname + parsedUrl.search;
@@ -328,6 +330,7 @@ export async function signedFetch(url: string, privateKeyPem: string, keyId: str
   try {
     const headers = new Headers();
     headers.set('Accept', 'application/activity+json, application/ld+json');
+    headers.set('User-Agent', 'Flaxia/1.0 (+https://flaxia.app)');
     const date = new Date().toUTCString();
     headers.set('Date', date);
 
