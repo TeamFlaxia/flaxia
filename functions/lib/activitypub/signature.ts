@@ -1,47 +1,142 @@
 /// <reference types="@cloudflare/workers-types" />
-import { fetchWithSsrfGuard, parsePublicHttpUrl, SsrfError } from '../url-guard.ts';
+
 import { importPublicKey } from './crypto.ts';
 
 /**
- * Parse Signature header
+ * HTTP Signatures (draft-cavage-http-signatures-12) for ActivityPub.
+ *
+ * The module is deliberately free of network access: it only parses,
+ * builds and verifies signatures. Fetching the key that a signature refers to
+ * lives in `fetch.ts`, which applies the SSRF guard.
  */
-interface SignatureHeader {
+
+export interface SignatureHeader {
   keyId: string;
   headers: string[];
   signature: string;
   algorithm?: string;
+  /** Unix seconds; when present the signature is only valid from that moment. */
+  created?: number;
+  /** Unix seconds; when present the signature expires at that moment. */
+  expires?: number;
 }
 
-function parseSignatureHeader(signatureHeader: string): SignatureHeader {
-  const result: Record<string, unknown> = {};
-  const regex = /(\w+)=("(?:\\.|[^"])*"|[^,]+)/g;
+export interface VerifyOptions {
+  /**
+   * Host the request is expected to be addressed to. Used when the peer did
+   * not sign the `host` header: a signature that does not bind the host must
+   * not be accepted for a host other than the actor's own origin.
+   */
+  expectedHost?: string;
+  /** Maximum accepted clock skew of the `Date` header, in milliseconds. */
+  maxSkewMs?: number;
+  /** Verify the `created`/`expires` parameters of the signature. */
+  now?: number;
+}
+
+const DEFAULT_MAX_SKEW_MS = 30 * 60 * 1000;
+
+/**
+ * Parse a `Signature` header.
+ *
+ * Peers differ in quoting and in the order of the parameters, so the parser
+ * accepts quoted and unquoted values and tolerates escaped quotes.
+ */
+export function parseSignatureHeader(signatureHeader: string): SignatureHeader {
+  const result: Record<string, string | string[]> = {};
+  const regex = /([a-zA-Z]+)=("(?:\\.|[^"])*"|[^,]+)/g;
   let match: RegExpExecArray | null;
   while ((match = regex.exec(signatureHeader)) !== null) {
-    const key = match[1];
-    let value = match[2];
+    const key = match[1].toLowerCase();
+    let value = match[2].trim();
     if (value.startsWith('"') && value.endsWith('"')) {
       value = value.substring(1, value.length - 1).replace(/\\"/g, '"');
     }
     if (key === 'headers') {
-      result[key] = value.split(' ');
+      result[key] = value.split(/\s+/).filter(Boolean);
     } else {
       result[key] = value;
     }
   }
 
-  if (!result.keyId || !result.headers || !result.signature) {
+  const keyId = result.keyid;
+  const headers = result.headers;
+  const signature = result.signature;
+  if (typeof keyId !== 'string' || !Array.isArray(headers) || typeof signature !== 'string') {
     throw new Error('Invalid signature header format: missing required fields');
   }
+  if (headers.length === 0) {
+    throw new Error('Invalid signature header format: no signed headers');
+  }
 
-  const headers = (result.headers as string[]).map((header) => header.toLowerCase());
-  result.headers = headers;
-  return result as unknown as SignatureHeader;
+  const parsed: SignatureHeader = {
+    keyId,
+    headers: headers.map((header) => header.toLowerCase()),
+    signature,
+  };
+  if (typeof result.algorithm === 'string') parsed.algorithm = result.algorithm;
+  if (typeof result.created === 'string') {
+    const created = Number.parseInt(result.created, 10);
+    if (Number.isFinite(created)) parsed.created = created;
+  }
+  if (typeof result.expires === 'string') {
+    const expires = Number.parseInt(result.expires, 10);
+    if (Number.isFinite(expires)) parsed.expires = expires;
+  }
+  return parsed;
 }
 
 /**
- * Verify HTTP Signature
+ * Build the signing string of a request.
+ *
+ * `(request-target)` is expanded to the method and the request target, every
+ * other entry is the header value with the original casing preserved for the
+ * header name in lower case.
  */
-export async function verifyHttpSignature(request: Request, publicKeyPem: string): Promise<boolean> {
+export function buildSigningString(request: Request, headers: string[]): string {
+  const url = new URL(request.url);
+  const lines: string[] = [];
+
+  for (const header of headers) {
+    const normalized = header.toLowerCase();
+    if (normalized === '(request-target)') {
+      const method = request.method.toLowerCase();
+      const path = url.pathname + url.search;
+      lines.push(`(request-target): ${method} ${path}`);
+    } else if (normalized === '(created)') {
+      lines.push('(created): 0');
+    } else {
+      const value = request.headers.get(normalized);
+      if (value === null) {
+        throw new Error(`Missing required header: ${normalized}`);
+      }
+      lines.push(`${normalized}: ${value}`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Verify the HTTP signature of a request.
+ *
+ * The signed header list must always cover the request target and the date.
+ * A request with a body must additionally cover the digest, otherwise the
+ * body could be replaced without invalidating the signature.
+ */
+export async function verifyHttpSignature(
+  request: Request,
+  publicKeyPem: string,
+  options: VerifyOptions = {},
+): Promise<boolean> {
   try {
     const signatureHeader = request.headers.get('Signature');
     if (!signatureHeader) {
@@ -51,31 +146,44 @@ export async function verifyHttpSignature(request: Request, publicKeyPem: string
     let parsed: SignatureHeader;
     try {
       parsed = parseSignatureHeader(signatureHeader);
-    } catch (_error) {
+    } catch {
       return false;
     }
+
+    const maxSkewMs = options.maxSkewMs ?? DEFAULT_MAX_SKEW_MS;
+    const now = options.now ?? Date.now();
 
     const dateHeader = request.headers.get('Date');
     if (!dateHeader) {
       return false;
     }
-
-    const dateParsed = new Date(dateHeader);
-    const requestTime = dateParsed.getTime();
+    const requestTime = new Date(dateHeader).getTime();
     if (Number.isNaN(requestTime)) {
       return false;
     }
-
-    const now = Date.now();
-    const thirtyMinutes = 30 * 60 * 1000;
-
-    if (Math.abs(now - requestTime) > thirtyMinutes) {
+    if (Math.abs(now - requestTime) > maxSkewMs) {
       return false;
     }
 
-    const required =
-      request.method === 'POST' ? ['(request-target)', 'host', 'date', 'digest'] : ['(request-target)', 'host', 'date'];
+    if (parsed.created !== undefined && parsed.created * 1000 > now + maxSkewMs) {
+      return false;
+    }
+    if (parsed.expires !== undefined && parsed.expires * 1000 < now - maxSkewMs) {
+      return false;
+    }
+
+    const required = request.method === 'POST' ? ['(request-target)', 'date', 'digest'] : ['(request-target)', 'date'];
     if (!required.every((header) => parsed.headers.includes(header))) return false;
+
+    const requestHost = request.headers.get('host') ?? hostOf(request.url);
+    if (parsed.headers.includes('host')) {
+      const signedHost = request.headers.get('host');
+      if (!signedHost || signedHost !== requestHost) return false;
+    } else if (options.expectedHost && requestHost !== options.expectedHost) {
+      // The peer did not bind the signature to a host, so it must at least be
+      // addressed to the host the actor lives on.
+      return false;
+    }
 
     const signingString = buildSigningString(request, parsed.headers);
     const publicKey = await importPublicKey(publicKeyPem);
@@ -102,133 +210,43 @@ export async function verifyHttpSignature(request: Request, publicKeyPem: string
       const signingStringArray = encoder.encode(signingString);
 
       return await crypto.subtle.verify('RSASSA-PKCS1-v1_5', publicKey, signatureArray, signingStringArray);
-    } catch (_error) {
+    } catch {
       return false;
     }
-  } catch (_error) {
+  } catch {
     return false;
   }
 }
 
 /**
- * Build signing string from headers
- */
-function buildSigningString(request: Request, headers: string[]): string {
-  const url = new URL(request.url);
-  const lines: string[] = [];
-
-  for (const header of headers) {
-    const normalized = header.toLowerCase();
-    if (normalized === '(request-target)') {
-      const method = request.method.toLowerCase();
-      const path = url.pathname + url.search;
-      lines.push(`(request-target): ${method} ${path}`);
-    } else {
-      const value = request.headers.get(normalized);
-      if (value === null) {
-        throw new Error(`Missing required header: ${normalized}`);
-      }
-      lines.push(`${normalized}: ${value}`);
-    }
-  }
-
-  return lines.join('\n');
-}
-
-/**
- * Verify Digest header
+ * Verify the `Digest` header of a request against its body.
  */
 export async function verifyDigest(request: Request, body: string): Promise<boolean> {
   try {
     const digestHeader = request.headers.get('Digest');
     if (!digestHeader) {
-      console.error('Missing Digest header');
       return false;
     }
 
-    // Parse Digest header (e.g., "SHA-256=xyz123...")
     const match = digestHeader.match(/sha-256=([A-Za-z0-9+/=]+)/i);
     if (!match) {
-      console.error('Invalid Digest header format');
       return false;
     }
 
     const expectedDigest = match[1];
-
-    // Calculate actual digest
     const encoder = new TextEncoder();
-    const data = encoder.encode(body);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(body));
     const hashArray = new Uint8Array(hashBuffer);
     const actualDigest = btoa(String.fromCharCode(...hashArray));
 
     return expectedDigest === actualDigest;
-  } catch (error) {
-    console.error('Digest verification error:', error);
+  } catch {
     return false;
   }
 }
 
 /**
- * Fetch actor's public key from their URL
- * Optionally signs the request if privateKeyPem and keyId are provided (for authorized fetch)
- *
- * The actor URL is attacker-controlled (it arrives in the unsigned inbox
- * body), so it goes through the shared SSRF guard: only public http(s)
- * targets pass, every redirect hop is re-validated, and fetches time out.
- */
-export async function fetchActorPublicKey(
-  actorUrl: string,
-  privateKeyPem?: string,
-  keyId?: string,
-): Promise<string | null> {
-  try {
-    let response: Response | null = null;
-
-    // If signing keys provided, use signed fetch
-    if (privateKeyPem && keyId) {
-      response = await signedFetch(actorUrl, privateKeyPem, keyId);
-    }
-
-    // Fall back to unsigned fetch if signed fetch failed or no keys provided
-    if (!response || !response.ok) {
-      try {
-        response = await fetchWithSsrfGuard(actorUrl, {
-          headers: {
-            Accept: 'application/activity+json, application/ld+json',
-          },
-          timeoutMs: 10000,
-        });
-      } catch (error: unknown) {
-        if (error instanceof SsrfError) {
-          console.error('Refusing actor fetch:', (error as Error).message);
-          return null;
-        }
-        throw error;
-      }
-    }
-
-    if (!response || !response.ok) {
-      console.error(`Failed to fetch actor: ${response?.status}`);
-      return null;
-    }
-
-    const actor = (await response.json()) as { publicKey?: { publicKeyPem?: string } };
-
-    if (!actor.publicKey || !actor.publicKey.publicKeyPem) {
-      console.error('Actor missing publicKey.publicKeyPem');
-      return null;
-    }
-
-    return actor.publicKey.publicKeyPem;
-  } catch (error) {
-    console.error('Error fetching actor public key:', error);
-    return null;
-  }
-}
-
-/**
- * Import private key from PEM format
+ * Import a private key from PEM format.
  */
 async function importPrivateKey(pem: string): Promise<CryptoKey> {
   const pemHeader = '-----BEGIN PRIVATE KEY-----';
@@ -254,29 +272,24 @@ async function importPrivateKey(pem: string): Promise<CryptoKey> {
 }
 
 /**
- * Sign an outgoing ActivityPub request with HTTP Signature
+ * Sign an outgoing ActivityPub request with an HTTP signature.
+ *
+ * The signature covers the request target, the host, the date and the digest
+ * of the body, which is what every current implementation expects.
  */
 export async function signRequest(url: string, body: string, privateKeyPem: string, keyId: string): Promise<Headers> {
   const headers = new Headers();
 
-  // Calculate digest
   const encoder = new TextEncoder();
-  const bodyArray = encoder.encode(body);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', bodyArray);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(body));
   const hashArray = new Uint8Array(hashBuffer);
   const digest = btoa(String.fromCharCode(...hashArray));
 
-  // Set Date header
   const date = new Date().toUTCString();
   headers.set('Date', date);
-
-  // Set Digest header
   headers.set('Digest', `sha-256=${digest}`);
-
-  // Set Content-Type
   headers.set('Content-Type', 'application/activity+json');
 
-  // Build signing string
   const parsedUrl = new URL(url);
   const path = parsedUrl.pathname + parsedUrl.search;
   const signingString = [
@@ -286,20 +299,11 @@ export async function signRequest(url: string, body: string, privateKeyPem: stri
     `digest: sha-256=${digest}`,
   ].join('\n');
 
-  // Import private key. Never log the signing string or signature: either can
-  // expose request details, and the signature can be replayed during its date window.
   const privateKey = await importPrivateKey(privateKeyPem);
-
-  // Sign
-  const signingArray = encoder.encode(signingString);
-
-  const signatureBuffer = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privateKey, signingArray);
-
-  // Convert signature to base64 (not base64url)
+  const signatureBuffer = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privateKey, encoder.encode(signingString));
   const signatureArray = new Uint8Array(signatureBuffer);
   const signature = btoa(String.fromCharCode(...signatureArray));
 
-  // Set Signature header
   headers.set(
     'Signature',
     `keyId="${keyId}",algorithm="rsa-sha256",headers="(request-target) host date digest",signature="${signature}"`,
@@ -314,30 +318,18 @@ export async function signRequest(url: string, body: string, privateKeyPem: stri
  */
 export async function signedFetch(url: string, privateKeyPem: string, keyId: string): Promise<Response | null> {
   try {
-    // The URL is remote input: reject non-public targets before signing.
-    // Redirects are not followed (the signature covers the request target,
-    // so a hop would invalidate it anyway).
-    try {
-      parsePublicHttpUrl(url);
-    } catch {
-      return null;
-    }
     const headers = new Headers();
     headers.set('Accept', 'application/activity+json, application/ld+json');
-    headers.set('Date', new Date().toUTCString());
+    const date = new Date().toUTCString();
+    headers.set('Date', date);
 
     const parsedUrl = new URL(url);
     const path = parsedUrl.pathname + parsedUrl.search;
-    const signingString = [
-      `(request-target): get ${path}`,
-      `host: ${parsedUrl.host}`,
-      `date: ${headers.get('Date')}`,
-    ].join('\n');
+    const signingString = [`(request-target): get ${path}`, `host: ${parsedUrl.host}`, `date: ${date}`].join('\n');
 
     const encoder = new TextEncoder();
-    const signingArray = encoder.encode(signingString);
     const privateKey = await importPrivateKey(privateKeyPem);
-    const signatureBuffer = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privateKey, signingArray);
+    const signatureBuffer = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', privateKey, encoder.encode(signingString));
     const signatureArray = new Uint8Array(signatureBuffer);
     const signature = btoa(String.fromCharCode(...signatureArray));
 
@@ -355,7 +347,6 @@ export async function signedFetch(url: string, privateKeyPem: string, keyId: str
 
     return response;
   } catch {
-    console.error('Signed GET request failed');
     return null;
   }
 }

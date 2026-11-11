@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import { exportPrivateKey, exportPublicKey, generateKeyPair } from '../../lib/activitypub/crypto';
+import { resolveActorPublicKey } from '../../lib/activitypub/fetch';
 import { buildCreateActivity, buildNoteObject } from '../../lib/activitypub/note';
-import { fetchActorPublicKey, verifyDigest, verifyHttpSignature } from '../../lib/activitypub/signature';
+import { verifyDigest, verifyHttpSignature } from '../../lib/activitypub/signature';
 import { checkRateLimit, getClientIp } from '../../lib/rate-limit';
 import type { Bindings, Variables } from '../types';
 
@@ -263,7 +264,7 @@ app.post('/api/actors/:username/inbox', async (c) => {
     }
 
     // Verify HTTP Signature (with signed fetch if keys available)
-    const publicKeyPem = await fetchActorPublicKey(actorId, signKeyPem, signKeyId);
+    const publicKeyPem = await resolveActorPublicKey(actorId, c.env, signKeyId, { privateKeyPem: signKeyPem });
     if (!publicKeyPem) {
       return c.json({ error: 'Could not fetch actor public key' }, 401);
     }
@@ -372,7 +373,7 @@ app.post('/api/inbox', async (c) => {
     // Shared inbox is not owned by any one local user. Do not sign remote
     // actor lookups with a randomly selected user's private key: doing so
     // leaks that user's identity to an unrelated remote instance.
-    const publicKeyPem = await fetchActorPublicKey(actorId);
+    const publicKeyPem = await resolveActorPublicKey(actorId, c.env);
     if (!publicKeyPem) {
       return c.json({ error: 'Could not fetch actor public key' }, 401);
     }

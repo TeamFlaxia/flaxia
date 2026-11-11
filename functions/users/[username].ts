@@ -12,7 +12,8 @@ import {
   renderProfileHeader,
   type UserRow,
 } from '../../src/lib/render-html';
-import { fetchActorPublicKey, verifyDigest, verifyHttpSignature } from '../lib/activitypub/signature';
+import { resolveActorPublicKey } from '../lib/activitypub/fetch';
+import { verifyDigest, verifyHttpSignature } from '../lib/activitypub/signature';
 import { checkRateLimit, getClientIp } from '../lib/rate-limit';
 import { SPA_HEAD_TAGS } from '../lib/ssr-head.generated';
 import { renderBreadcrumbJsonLd, renderSsrFooter, renderSsrHeader, renderSsrLayoutCss } from '../lib/ssr-layout';
@@ -355,7 +356,7 @@ app.post('/inbox', async (c) => {
     }
 
     // Verify HTTP Signature (with signed fetch if keys available)
-    const publicKeyPem = await fetchActorPublicKey(actorId, signKeyPem, signKeyId);
+    const publicKeyPem = await resolveActorPublicKey(actorId, c.env, signKeyId, { privateKeyPem: signKeyPem });
     if (!publicKeyPem) {
       return c.json({ error: 'Could not fetch actor public key' }, 401);
     }
